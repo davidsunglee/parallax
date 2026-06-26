@@ -23,6 +23,7 @@ Its fields:
 | `model` | yes | path (relative to `core/compatibility/`) to the model descriptor |
 | `tags` | yes | module/feature tags (e.g. `["m2", "eq"]`); drive coverage + test selection |
 | `operation` | yes | a canonical M2 algebra node, validated against the operation schema |
+| `equivalentEncodings` | no | alternate surface encodings of `operation` (e.g. a prefix vs a fluent spelling); each MUST canonicalize to `operation` |
 | `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit — a single statement, or an **ordered list** of statements (one per deep-fetch level) |
 | `binds` | no | bind values for the `?` placeholders (default `[]`): a flat list for a single statement, or a list-of-lists for a multi-statement case |
 | `referenceSql` | conditional | an independent naive oracle (see below); for a deep fetch it is the naive single-statement oracle for the **root** row set |
@@ -72,7 +73,11 @@ the harness asserts:
    sorted binds, whitespace-collapsed, deterministic clause order).
 4. **Serde round-trip** — `serialize(deserialize(x)) == x` for **both** the
    `operation` encoding *and* the model descriptor (the descriptor **is** the
-   serialized metamodel), in **both** JSON and YAML.
+   serialized metamodel), in **both** JSON and YAML. When a case declares
+   `equivalentEncodings`, each alternate encoding MUST canonicalize (via the same
+   serde seam) to the case's `operation` — a dialect-agnostic check that proves
+   precedence / serialization fidelity (a prefix and a fluent surface of the same
+   grouped predicate denote one canonical node) in the fixture itself.
 
 A fifth layer — **round-trip-count consistency** — applies to relationship /
 deep-fetch cases: the number of golden SQL statements equals the declared

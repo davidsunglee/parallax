@@ -1,0 +1,26 @@
+# varianceSample — SAMPLE variance (n − 1), with the TWO-COLUMN read.
+#
+# Over the 5 order_item quantities {2,1,4,3,5} (mean 3, Σ(x−μ)² = 10):
+#   var_samp(quantity) = 10/(5−1) = 2.5
+#   count(quantity)    = 5
+# var_samp is the square of stddev_samp (0406: 1.5811388300841898² = 2.5), so the
+# pair cross-checks. Like every stdDev*/variance* aggregate it emits BOTH the
+# statistic and a companion sample count (the two-column read). The independent
+# referenceSql proves golden == reference == expected against real Postgres,
+# pinning the var_samp SQL mapping, which no fixture exercised before.
+model: models/orders.yaml
+tags: [m2, m3, aggregate, variance, varianceSample, twoColumn]
+operation:
+  groupBy:
+    operand:
+      all: {}
+    aggregates:
+      - varianceSample: { attr: OrderItem.quantity, as: quantity_variance }
+      - count: { attr: OrderItem.quantity, as: sample_count }
+goldenSql:
+  postgres: select var_samp(t0.quantity) quantity_variance, count(t0.quantity) sample_count from order_item t0
+binds: []
+referenceSql: select var_samp(quantity) as quantity_variance, count(quantity) as sample_count from order_item
+expectedRows:
+  - { quantity_variance: 2.5, sample_count: 5 }
+roundTrips: 1
