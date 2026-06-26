@@ -1,0 +1,18 @@
+# distinct — deduplicate the result. Projecting only the boolean `active` column
+# over six rows (4 true, 2 false) collapses to the two distinct values. This is
+# the case where the golden SQL's projection is narrower than the usual
+# id/name pair, so the expected rows carry only `active`.
+model: models/orders.yaml
+tags: [m2, distinct, directive]
+operation:
+  distinct:
+    operand:
+      all: {}
+goldenSql:
+  postgres: select distinct t0.active from orders t0
+binds: []
+referenceSql: select distinct active from orders
+expectedRows:
+  - { active: true }
+  - { active: false }
+roundTrips: 1

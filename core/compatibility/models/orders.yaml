@@ -1,10 +1,14 @@
-# Walking-skeleton model: one non-temporal entity.
+# Order model: one non-temporal entity.
 #
 # This file is a model descriptor — an instance of
 # core/schemas/metamodel.schema.json. It is intentionally pure metadata: no
 # fixture rows live here (the descriptor IS the serialized M1 metamodel, and the
 # metamodel schema forbids extra top-level keys). Row data for a model lives in
 # the sibling core/compatibility/fixtures/<model-stem>.yaml file.
+#
+# Phase 2 extends the entity with string / decimal / nullable / boolean columns
+# so the operation algebra's range, null, string, and membership predicates have
+# attributes to exercise.
 entity:
   name: Order
   namespace: parallax.compatibility
@@ -21,3 +25,17 @@ entity:
       type: string
       column: name
       maxLength: 255
+    - name: sku
+      type: string
+      column: sku
+      maxLength: 32
+      nullable: true
+    - name: qty
+      type: int32
+      column: qty
+    - name: price
+      type: decimal(18,2)
+      column: price
+    - name: active
+      type: boolean
+      column: active

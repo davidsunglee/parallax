@@ -1,0 +1,23 @@
+# orderBy (ascending, default direction) + limit — the lowest 3 ids. Ascending
+# is the default direction, so the canonical SQL emits the bare `asc` keyword for
+# clarity and limits to 3, selecting ids 1, 2, 3 via the ordering.
+model: models/orders.yaml
+tags: [m2, orderBy, limit, directive]
+operation:
+  limit:
+    count: 3
+    operand:
+      orderBy:
+        keys:
+          - { attr: Order.id, direction: asc }
+        operand:
+          all: {}
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 order by t0.id asc limit ?
+binds: [3]
+referenceSql: select id, name from orders order by id asc limit 3
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 2, name: Linus }
+  - { id: 3, name: ada }
+roundTrips: 1

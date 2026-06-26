@@ -54,40 +54,112 @@ against the model. Examples:
 
 ## Operation set (this phase)
 
-The full algebra is large; this phase introduces the two query identities and
-the canonical equality predicate. Later phases add the full equality/range, null,
-string, membership, boolean, relationship, directive, temporal, and aggregate
-nodes.
+This phase completes the **full non-temporal predicate algebra for single-entity
+queries**, plus the result-shaping directives. Each node below carries a single
+canonical serialization; an implementation **MUST** support every node and
+**MUST** round-trip it through serde unchanged.
 
-| Category | Operation | Meaning |
+### Identities
+
+| Operation | Encoding | Meaning |
 |---|---|---|
-| Identity | `all` | no filter — selects every row |
-| Identity | `none` | the empty result — matches nothing |
-| Equality | `eq` | typed attribute equality (`attr` = `value`) |
+| `all` | `{ "all": {} }` | the identity — selects every row (no `WHERE`) |
+| `none` | `{ "none": {} }` | the absorbing element — matches nothing |
 
-- **`all`** — the identity of the algebra; lowers to a `SELECT` with no `WHERE`.
-- **`none`** — the absorbing element; lowers to a query that returns no rows. It
-  is the dual of `all` and is defined now so the schema's identity pair is
-  complete; it gains a dedicated fixture alongside the boolean combinators in a
-  later phase.
-- **`eq`** — `{ "eq": { "attr": "Class.attribute", "value": <literal> } }`. The
-  value becomes a bind placeholder in the golden SQL.
+`none` is the dual of `all`; it lowers to an unsatisfiable predicate.
 
-## Forward map of the full algebra
+### Equality and range
 
-For orientation, later phases fill in (each node carries a canonical
-serialization):
+Each takes `{ "attr": "Class.attribute", "value": <literal> }`. The value becomes
+a bind placeholder in the golden SQL.
 
-- Equality / range: `notEq`, `greaterThan`, `greaterThanEquals`, `lessThan`,
-  `lessThanEquals`, `between`.
-- Null: `isNull`, `isNotNull`.
-- String: `like`, `notLike`, `startsWith`, `endsWith`, `contains`, and
-  case-insensitive variants.
-- Membership: `in(values)`, `notIn(values)`, `in(subquery)`.
-- Boolean: `and`, `or`, `not`, and a first-class `group` node (precedence and
-  serialization fidelity).
-- Relationship: `navigate(rel) → predicate`, `exists`, `notExists`.
-- Directives: `orderBy`, `limit`, `distinct`, `deepFetch`.
+| Operation | SQL operator |
+|---|---|
+| `eq` | `=` |
+| `notEq` | `<>` |
+| `greaterThan` | `>` |
+| `greaterThanEquals` | `>=` |
+| `lessThan` | `<` |
+| `lessThanEquals` | `<=` |
+
+`between` is a convenience over a bounded pair and takes
+`{ "attr", "lower", "upper" }`; it lowers to `attr between ? and ?` (two ordered
+binds: lower, then upper) and is equivalent to `>= lower AND <= upper`.
+
+### Null
+
+`isNull` / `isNotNull` take `{ "attr": "Class.attribute" }`. Per SQL three-valued
+logic, `isNotNull` excludes NULL rows; `notLike`/`notIn`/`notEq` against a NULL
+column likewise yield NULL (not true) and so exclude that row.
+
+### String
+
+The string predicates take `{ "attr", "value", "caseInsensitive"? }`
+(`caseInsensitive` defaults to `false`).
+
+| Operation | Pattern semantics |
+|---|---|
+| `like` / `notLike` | `value` **is** the SQL pattern: `%` and `_` are wildcards |
+| `startsWith` | `value` is a **literal** prefix ⇒ pattern `value%` |
+| `endsWith` | `value` is a **literal** suffix ⇒ pattern `%value` |
+| `contains` | `value` is a **literal** infix ⇒ pattern `%value%` |
+
+**Wildcard / escape rule.** For the affix forms (`startsWith`/`endsWith`/
+`contains`) the implementation **MUST** escape any `%`, `_`, or escape character
+occurring in the literal `value` before wrapping it with the affix wildcards, so
+the literal matches literally. The canonical escape character is the backslash
+(`\`), rendered with an explicit `escape ?` (or `escape '\'`) clause whenever the
+pattern contains an escape sequence. `like`/`notLike` do **not** escape — their
+`value` is already a pattern.
+
+**Case-insensitive rule.** When `caseInsensitive` is `true`, both the column and
+the pattern are folded with `lower(...)`: `lower(attr) like lower(?)`. (A language
+MAY use a dialect-native case-insensitive operator behind the M3 seam; the golden
+SQL fixes the portable `lower(...)` form.)
+
+### Membership
+
+`in` / `notIn` take `{ "attr", "values": [ … ] }` (non-empty). Each value is a
+bind, in list order; the SQL is `attr in (?, ?, …)`. The `in(subquery)` form is
+introduced with relationships in a later phase.
+
+### Boolean combinators
+
+| Operation | Encoding |
+|---|---|
+| `and` | `{ "and": { "operands": [ op, op, … ] } }` (≥2 operands) |
+| `or` | `{ "or": { "operands": [ op, op, … ] } }` (≥2 operands) |
+| `not` | `{ "not": { "operand": op } }` |
+| `group` | `{ "group": { "operand": op } }` |
+
+Operand **order is significant** (it is preserved through serde and drives bind
+order). The first-class **`group`** node explicitly nests a sub-expression so
+precedence round-trips unambiguously: a *prefix* surface (`group(a.or(b)).and(c)`)
+and a *fluent* surface (`a.or(b).group().and(c)`) are per-language DX only and
+**MUST** serialize to the same canonical `group` node. Because `and` binds tighter
+than `or`, `(a or b) and c` requires a `group`, whereas `a or b and c` parses as
+`a or (b and c)` and needs none — the two are distinct canonical nodes with
+distinct golden SQL.
+
+### Result-shaping directives
+
+Directives wrap an inner operation rather than filtering:
+
+| Operation | Encoding | Effect |
+|---|---|---|
+| `orderBy` | `{ "orderBy": { "operand", "keys": [ { "attr", "direction"? } ] } }` | order rows; `direction` ∈ `asc` (default) / `desc` |
+| `limit` | `{ "limit": { "operand", "count" } }` | cap the row count |
+| `distinct` | `{ "distinct": { "operand" } }` | deduplicate rows |
+
+`deepFetch` (eager relationship fetch) is introduced with relationships in a
+later phase.
+
+## Forward map of the rest of the algebra
+
+For orientation, later phases fill in:
+
+- Relationship: `navigate(rel) → predicate`, `exists`, `notExists`, the
+  `in(subquery)` membership form, and the `deepFetch` directive.
 - Temporal (M7): `asOf`, `asOfRange`, `history`.
 - Aggregate (M2 sub-area): `sum`/`avg`/`count`/`min`/`max`/`stdDev*`/`variance*`,
   `groupBy`, and having comparators.

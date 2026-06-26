@@ -13,5 +13,8 @@ binds: []
 expectedRows:
   - { id: 1, name: Ada }
   - { id: 2, name: Linus }
+  - { id: 3, name: ada }
+  - { id: 4, name: Margaret }
+  - { id: 5, name: Alan }
   - { id: 42, name: Grace }
 roundTrips: 1

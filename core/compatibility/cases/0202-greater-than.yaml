@@ -1,0 +1,15 @@
+# greaterThan — strict `>` range predicate.
+model: models/orders.yaml
+tags: [m2, greaterThan]
+operation:
+  greaterThan:
+    attr: Order.qty
+    value: 20
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.qty > ?
+binds: [20]
+referenceSql: select id, name from orders where qty > 20
+expectedRows:
+  - { id: 5, name: Alan }
+  - { id: 42, name: Grace }
+roundTrips: 1

@@ -1,0 +1,17 @@
+# in(values) — set membership against a literal list. Each value becomes a bind,
+# in list order.
+model: models/orders.yaml
+tags: [m2, in, membership]
+operation:
+  in:
+    attr: Order.id
+    values: [1, 2, 42]
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)
+binds: [1, 2, 42]
+referenceSql: select id, name from orders where id in (1, 2, 42)
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 2, name: Linus }
+  - { id: 42, name: Grace }
+roundTrips: 1

@@ -1,0 +1,24 @@
+# orderBy + limit — directives composed over `all`. Ordering by qty descending
+# and capping at 2 rows makes the ordering OBSERVABLE through row membership (the
+# top-2 by qty are ids 42 and 5), so the order-insensitive result comparison
+# still proves the directive. The directives lower after the predicate, in the
+# canonical clause order `... order by ... limit ...`.
+model: models/orders.yaml
+tags: [m2, orderBy, limit, directive]
+operation:
+  limit:
+    count: 2
+    operand:
+      orderBy:
+        keys:
+          - { attr: Order.qty, direction: desc }
+        operand:
+          all: {}
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 order by t0.qty desc limit ?
+binds: [2]
+referenceSql: select id, name from orders order by qty desc limit 2
+expectedRows:
+  - { id: 5, name: Alan }
+  - { id: 42, name: Grace }
+roundTrips: 1

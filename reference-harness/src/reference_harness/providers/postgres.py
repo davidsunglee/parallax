@@ -60,9 +60,14 @@ class PostgresProvider:
         # The harness stores golden SQL with `?` placeholders (M3); psycopg uses
         # `%s`. Translate positional placeholders for execution. `?` never
         # appears literally in our SQL outside a placeholder position.
-        pg_sql = sql.replace("?", "%s")
         with self._conn.cursor() as cur:
-            cur.execute(pg_sql, tuple(binds))
+            if binds:
+                cur.execute(sql.replace("?", "%s"), tuple(binds))
+            else:
+                # No binds: execute the SQL verbatim with NO params, so psycopg
+                # does not treat literal `%` (e.g. a `like '%a%'` pattern in a
+                # naive referenceSql) as a parameter placeholder.
+                cur.execute(sql)
             column_names = [desc.name for desc in cur.description]
             return [dict(zip(column_names, row, strict=True)) for row in cur.fetchall()]
 
