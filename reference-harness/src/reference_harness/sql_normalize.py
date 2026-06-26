@@ -49,6 +49,11 @@ _VALUE_TOKENS = frozenset(
 # ``orders t0`` and ``t0.id`` projections, never ``orders AS t0``.
 _DROP_TOKENS = frozenset({TokenType.ALIAS})
 
+# A private spacing sentinel used by the renderer to mark a VAR token that is a
+# function name (``lower(…)``). It is never a real sqlglot token type; it only
+# drives the "no space before the following ``(``" spacing rule.
+_FUNCTION_NAME = "function-name"
+
 
 def _lowercase_unquoted_identifiers(tree: exp.Expression) -> None:
     for node in tree.walk():
@@ -58,20 +63,30 @@ def _lowercase_unquoted_identifiers(tree: exp.Expression) -> None:
 
 def _render_tokens(tokens: list[Token]) -> str:
     """Reassemble a token stream into canonical single-space-separated SQL."""
-    parts: list[str] = []
-    for token in tokens:
+    parts: list[tuple[TokenType, str]] = []
+    for index, token in enumerate(tokens):
         if token.token_type in _DROP_TOKENS:
             continue
         text = token.text
-        if token.token_type not in _VALUE_TOKENS:
+        # A VAR immediately followed by ``(`` is a function name (``lower(…)``),
+        # not a table/column identifier. sqlglot renders function names in
+        # uppercase (``LOWER``); M3 rule 2 lowercases unquoted identifiers, so we
+        # lowercase the function name and render it tight against its paren.
+        is_function_name = (
+            token.token_type is TokenType.VAR
+            and index + 1 < len(tokens)
+            and tokens[index + 1].token_type is TokenType.L_PAREN
+        )
+        if token.token_type not in _VALUE_TOKENS or is_function_name:
             text = text.lower()
-        parts.append((token.token_type, text))
+        token_type = _FUNCTION_NAME if is_function_name else token.token_type
+        parts.append((token_type, text))
 
     # Join with spaces, but keep punctuation tight (no space before ``,`` ``.``
-    # ``)`` and no space after ``(`` ``.``).
+    # ``)`` and no space after ``(`` ``.`` and a function name).
     out: list[str] = []
     no_space_before = {TokenType.COMMA, TokenType.DOT, TokenType.R_PAREN}
-    no_space_after = {TokenType.L_PAREN, TokenType.DOT}
+    no_space_after = {TokenType.L_PAREN, TokenType.DOT, _FUNCTION_NAME}
     prev_type: TokenType | None = None
     for token_type, text in parts:
         if out and token_type not in no_space_before and prev_type not in no_space_after:

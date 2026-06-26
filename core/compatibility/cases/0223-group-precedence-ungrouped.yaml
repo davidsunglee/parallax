@@ -1,0 +1,25 @@
+# group (precedence) — UNGROUPED form: `qty >= 25 OR qty <= 5 AND active = true`.
+#
+# The sibling of 0222 with NO group node: `and` binds tighter than `or`, so this
+# parses as `qty >= 25 OR (qty <= 5 AND active = true)` and the golden SQL needs
+# no parentheses. The result {1, 5, 42} differs from the grouped {1, 42} — the
+# pair together proves the canonical `group` node faithfully carries precedence.
+model: models/orders.yaml
+tags: [m2, group, boolean, precedence]
+operation:
+  or:
+    operands:
+      - greaterThanEquals: { attr: Order.qty, value: 25 }
+      - and:
+          operands:
+            - lessThanEquals: { attr: Order.qty, value: 5 }
+            - eq: { attr: Order.active, value: true }
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.qty >= ? or t0.qty <= ? and t0.active = ?
+binds: [25, 5, true]
+referenceSql: select id, name from orders where qty >= 25 or (qty <= 5 and active = true)
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 5, name: Alan }
+  - { id: 42, name: Grace }
+roundTrips: 1

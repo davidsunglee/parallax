@@ -1,0 +1,21 @@
+# contains (case-insensitive) — the affix form composes with case folding too:
+# `contains 'A'` ignoring case lowers both sides and wraps the lowered literal in
+# `%...%`. Every name containing an `a`/`A` matches except `Linus`.
+model: models/orders.yaml
+tags: [m2, contains, string, caseInsensitive]
+operation:
+  contains:
+    attr: Order.name
+    value: A
+    caseInsensitive: true
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)
+binds: ["%a%"]
+referenceSql: select id, name from orders where lower(name) like '%a%'
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 3, name: ada }
+  - { id: 4, name: Margaret }
+  - { id: 5, name: Alan }
+  - { id: 42, name: Grace }
+roundTrips: 1

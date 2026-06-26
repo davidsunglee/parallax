@@ -62,15 +62,68 @@ per case (M12, layer 3).
   (different type casts, limit syntax, lock suffixes); both are normative for
   their dialect and both must return the same logical rows.
 
-## This phase's surface
+## Per-operator SQL emission
 
-The walking skeleton lowers exactly two operations:
+The table below fixes the **canonical Postgres golden SQL** each M2 node lowers
+to. The golden form is what the M3 normalizer (and the harness, layer 3) treats
+as the fixed point; an implementation's emitted SQL must equal it after
+normalization. The `?` placeholders consume the case's `binds` left-to-right.
 
-- `all` — no `WHERE` clause:
-  `select t0.id, t0.name from orders t0`
-- `eq` on a primary key — a single equality predicate with one bind:
-  `select t0.id, t0.name from orders t0 where t0.id = ?`
+| Operation | Canonical predicate fragment |
+|---|---|
+| `all` | *(no `where` clause)* |
+| `none` | `where 1 = 0` |
+| `eq` | `t0.col = ?` |
+| `notEq` | `t0.col <> ?` |
+| `greaterThan` | `t0.col > ?` |
+| `greaterThanEquals` | `t0.col >= ?` |
+| `lessThan` | `t0.col < ?` |
+| `lessThanEquals` | `t0.col <= ?` |
+| `between` | `t0.col between ? and ?` |
+| `isNull` | `t0.col is null` |
+| `isNotNull` | `not t0.col is null` |
+| `like` | `t0.col like ?` |
+| `notLike` | `t0.col not like ?` |
+| `startsWith`/`endsWith`/`contains` | `t0.col like ?` (affix pattern in the bind) |
+| `like … escape` (literal wildcard) | `t0.col like ? escape ?` |
+| case-insensitive string | `lower(t0.col) like lower(?)` |
+| `in` | `t0.col in (?, ?, …)` |
+| `notIn` | `not t0.col in (?, ?, …)` |
+| `and` | operands joined by ` and ` |
+| `or` | operands joined by ` or ` |
+| `not` | `not <operand>` |
+| `group` | `( <operand> )` |
+| `orderBy` | `order by t0.col [asc\|desc][, …]` |
+| `limit` | `limit ?` |
+| `distinct` | `select distinct …` |
 
-Subsequent phases extend the emission + normalization rules for the full
-predicate set, joins-by-navigation, deep fetch, aggregation, and temporal
-predicates.
+### Normalization notes (the surprising fixed points)
+
+The M3 normalizer is the arbiter of canonical form, and three of its outputs are
+worth calling out because the golden SQL must match them exactly:
+
+1. **`is not null` → `not t0.col is null`.** The negation normalizes to a leading
+   `not`; golden SQL for `isNotNull` is stored in that form.
+2. **`not in (…)` → `not t0.col in (…)`.** Likewise for negated membership.
+3. **Function names are lowercased and tight.** `LOWER(...)` normalizes to
+   `lower(...)` (rule 2 — lowercase unquoted identifiers; the renderer keeps the
+   function name tight against its `(`). The case-insensitive golden SQL is stored
+   as `lower(t0.col) like lower(?)`.
+
+### Wildcard / escape rendering
+
+For the affix string forms the wildcard chars are placed by the implementation and
+the literal value is escaped: `contains '50%'` lowers to
+`t0.sku like ? escape ?` with binds `['%50\%%', '\\']`, so the embedded `%` is
+matched literally. `like`/`notLike` pass the bind through verbatim (the value is
+already a pattern, no escape clause).
+
+### Clause order
+
+Directives lower into the fixed clause order (rule 5):
+`select [distinct] … from … [where …] [order by …] [limit …]`. `orderBy` and
+`limit` therefore always follow any predicate, and `distinct` attaches to the
+`select`.
+
+Subsequent phases extend the emission + normalization rules for
+joins-by-navigation, deep fetch, aggregation, and temporal predicates.

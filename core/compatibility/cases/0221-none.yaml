@@ -1,0 +1,14 @@
+# none — the absorbing element of the algebra: matches nothing. It lowers to a
+# query whose WHERE is unsatisfiable (`1 = 0`), returning zero rows. Defined as
+# the dual of `all`; here it gets its dedicated fixture alongside the boolean
+# combinators.
+model: models/orders.yaml
+tags: [m2, none, boolean]
+operation:
+  none: {}
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where 1 = 0
+binds: []
+referenceSql: select id, name from orders where false
+expectedRows: []
+roundTrips: 1

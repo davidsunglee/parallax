@@ -65,6 +65,19 @@ def _read(text: str, fmt: str) -> Any:
 # --- public API ------------------------------------------------------------
 
 
+def canonical(value: Any) -> Any:
+    """Return the deterministic, JSON-compatible canonical form of *value*.
+
+    This is the public canonicalization used to decide node *identity*: two
+    authored encodings that canonicalize to the same value (object keys sorted;
+    list order preserved, since order is significant in the algebra) denote the
+    same operation. The group-precedence fixtures rely on this: a prefix surface
+    and a fluent surface are illustrative DX only, and both MUST canonicalize to
+    the single mandated ``group`` node.
+    """
+    return _canonicalize(value)
+
+
 def serialize(value: Any, fmt: str = JSON) -> str:
     """Serialize a canonical node to the given format."""
     return _write(value, fmt)

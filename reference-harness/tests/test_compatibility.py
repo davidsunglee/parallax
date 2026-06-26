@@ -30,7 +30,11 @@ DIALECTS = available_dialects()
 
 
 def _case_id(case) -> str:
-    return case.path.stem
+    # Include the case's tags in the test id so module/feature selectors work,
+    # e.g. ``pytest -k m2`` runs every algebra case and ``pytest -k group`` runs
+    # the group-precedence pair. Tags are sanitized to id-safe tokens.
+    tags = "-".join(tag.replace(" ", "_") for tag in case.tags)
+    return f"{case.path.stem}-{tags}" if tags else case.path.stem
 
 
 @pytest.fixture(scope="session", params=DIALECTS)

@@ -1,0 +1,21 @@
+# contains + wildcard escape — the literal search term itself contains a SQL
+# wildcard (`%`), which MUST be escaped so it matches literally. `contains '50%'`
+# becomes `like '%50\%%' escape '\'`: the inner `\%` is a literal percent, wrapped
+# in `%...%` for the contains semantics. Only `C_50%` contains the literal `50%`.
+#
+# This is the escape fixture the outline calls for: a fat-fingered escape would
+# silently turn `%` back into a wildcard and over-match, which the independent
+# referenceSql (using Postgres `position`) would catch.
+model: models/orders.yaml
+tags: [m2, contains, string, escape]
+operation:
+  contains:
+    attr: Order.sku
+    value: 50%
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.sku like ? escape ?
+binds: ["%50\\%%", "\\"]
+referenceSql: select id, name from orders where position('50%' in sku) > 0
+expectedRows:
+  - { id: 5, name: Alan }
+roundTrips: 1
