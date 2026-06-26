@@ -1,0 +1,53 @@
+# Deep fetch, to-many: every Order with its line items eager-fetched via the
+# one-to-many `Order.items` relationship.
+#
+# Two statements, roundTrips = 2 (NOT 1 + N):
+#   level 0 (root)  : all orders
+#   level 1 (items) : order_item rows whose order_id is in the DISTINCT order ids
+#                     {1, 2, 3, 4, 5, 42}.
+# Orders with no items (3, 4, 5) still appear in the graph with an empty `items`
+# list — proving the fan-out attaches by key, not by inner join (which would drop
+# childless parents). The harness asserts the gathered parent keys equal the
+# authored level-1 binds and that statement count == roundTrips.
+model: models/orders.yaml
+tags: [m4, m5, deepFetch, to-many, relationship]
+operation:
+  deepFetch:
+    operand:
+      all: {}
+    paths:
+      - [Order.items]
+goldenSql:
+  postgres:
+    - select t0.id, t0.name from orders t0
+    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?)
+binds:
+  - []
+  - [1, 2, 3, 4, 5, 42]
+referenceSql: select id, name from orders
+roundTrips: 2
+expectedGraph:
+  Order:
+    - id: 1
+      name: Ada
+      items:
+        - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+        - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+    - id: 2
+      name: Linus
+      items:
+        - { id: 21, order_id: 2, sku: A-300, quantity: 4 }
+    - id: 3
+      name: ada
+      items: []
+    - id: 4
+      name: Margaret
+      items: []
+    - id: 5
+      name: Alan
+      items: []
+    - id: 42
+      name: Grace
+      items:
+        - { id: 421, order_id: 42, sku: A-999, quantity: 3 }
+        - { id: 422, order_id: 42, sku: B-200, quantity: 5 }

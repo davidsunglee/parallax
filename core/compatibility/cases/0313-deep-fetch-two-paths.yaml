@@ -1,0 +1,70 @@
+# Deep fetch, two independent paths off one root: the classic Reladomo worked
+# example (research §5) — orders.deepFetch(items); orders.deepFetch(statuses).
+#
+# Two SEPARATE to-many relationships are fetched from the same root, so the round
+# trips are 1 (root) + 1 (items) + 1 (statuses) = 3, never 1 + N + N. Both child
+# levels are keyed by the same distinct order ids {1, 2, 3, 4, 5, 42} but issue
+# INDEPENDENT statements — one per relationship level.
+#
+# `Order.statuses` joins on order_id, so it gathers BOTH order-level statuses
+# (order_item_id NULL) and item-level statuses for an order; that is the correct
+# semantics for the order's status events. Orders 3, 4, 5 have neither items nor
+# statuses ⇒ both lists empty.
+model: models/orders.yaml
+tags: [m4, m5, deepFetch, to-many, relationship]
+operation:
+  deepFetch:
+    operand:
+      all: {}
+    paths:
+      - [Order.items]
+      - [Order.statuses]
+goldenSql:
+  postgres:
+    - select t0.id, t0.name from orders t0
+    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?)
+    - select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_id in (?, ?, ?, ?, ?, ?)
+binds:
+  - []
+  - [1, 2, 3, 4, 5, 42]
+  - [1, 2, 3, 4, 5, 42]
+referenceSql: select id, name from orders
+roundTrips: 3
+expectedGraph:
+  Order:
+    - id: 1
+      name: Ada
+      items:
+        - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+        - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+      statuses:
+        - { id: 101, order_id: 1, order_item_id: null, code: NEW }
+        - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
+        - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
+        - { id: 203, order_id: 1, order_item_id: 12, code: PICKED }
+    - id: 2
+      name: Linus
+      items:
+        - { id: 21, order_id: 2, sku: A-300, quantity: 4 }
+      statuses:
+        - { id: 102, order_id: 2, order_item_id: null, code: SHIPPED }
+    - id: 3
+      name: ada
+      items: []
+      statuses: []
+    - id: 4
+      name: Margaret
+      items: []
+      statuses: []
+    - id: 5
+      name: Alan
+      items: []
+      statuses: []
+    - id: 42
+      name: Grace
+      items:
+        - { id: 421, order_id: 42, sku: A-999, quantity: 3 }
+        - { id: 422, order_id: 42, sku: B-200, quantity: 5 }
+      statuses:
+        - { id: 142, order_id: 42, order_item_id: null, code: NEW }
+        - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }

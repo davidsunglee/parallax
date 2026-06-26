@@ -2,10 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (M12)",
-  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign.",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement cases, Phases 1-2) OR an ordered list of statements, one per relationship/deep-fetch level (multi-statement cases, Phase 3+).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["model", "tags", "operation", "goldenSql", "expectedRows"],
+  "required": ["model", "tags", "operation", "goldenSql"],
+  "anyOf": [
+    { "required": ["expectedRows"] },
+    { "required": ["expectedGraph"] }
+  ],
   "properties": {
     "model": {
       "description": "Path to the model descriptor, relative to core/compatibility/.",
@@ -23,16 +27,16 @@
       "type": "object"
     },
     "goldenSql": {
-      "description": "Optimized SQL an implementation is expected to emit, keyed by dialect.",
+      "description": "Optimized SQL an implementation is expected to emit, keyed by dialect. Each dialect's value is a single statement string OR an ordered list of statement strings (one per relationship/deep-fetch level).",
       "type": "object",
       "minProperties": 1,
       "propertyNames": {
         "enum": ["postgres", "mariadb"]
       },
-      "additionalProperties": { "type": "string", "minLength": 1 }
+      "additionalProperties": { "$ref": "#/$defs/dialectSql" }
     },
     "binds": {
-      "description": "Ordered bind values for the ? placeholders in goldenSql.",
+      "description": "Bind values for the ? placeholders in goldenSql. For a single-statement case this is one flat ordered list. For a multi-statement case it is a list-of-lists, one bind list per statement; the per-level binds for a deep-fetch child level are the distinct parent keys gathered from the previous level, which the harness asserts equal the authored list.",
       "type": "array",
       "default": [],
       "items": {}
@@ -43,15 +47,41 @@
       "minLength": 1
     },
     "expectedRows": {
-      "description": "The rows the query must return against the fixture data.",
+      "description": "The rows the query must return against the fixture data (single-statement / flat-result cases).",
       "type": "array",
       "items": { "type": "object" }
     },
+    "expectedGraph": {
+      "description": "The assembled object graph a deep fetch must produce: the root rows, each carrying its eager-fetched related rows under the relationship name. Keyed by the root class name, whose value is a list of root objects; a related set appears under its relationship name (a list for to-many, a single object or null for to-one).",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "object" }
+      }
+    },
     "roundTrips": {
-      "description": "Declared number of SQL statements for the operation. Enforced from a later phase.",
+      "description": "Declared number of SQL statements for the operation. For a multi-statement (deep-fetch) case this MUST equal the number of goldenSql statements for each dialect, and the harness asserts it (proving N+1 elimination).",
       "type": "integer",
       "minimum": 1,
       "default": 1
+    }
+  },
+  "$defs": {
+    "dialectSql": {
+      "oneOf": [
+        {
+          "description": "A single statement.",
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "description": "An ordered list of statements, one per relationship/deep-fetch level.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      ]
     }
   }
 }

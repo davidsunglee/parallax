@@ -1,0 +1,23 @@
+# navigate(Order.items -> OrderItem.sku = 'A-100'): filter orders by traversing
+# the to-many `items` relationship and constraining the related entity. A
+# navigation filter lowers to a correlated EXISTS semi-join, so a to-many
+# traversal never multiplies the order rows. Only order 1 has an item with sku
+# A-100 (item 11), so the result is the single order {1}.
+#
+# Non-trivial (join) case ⇒ referenceSql is REQUIRED: the naive
+# `id in (select order_id from order_item where sku = ...)` subquery is the
+# independent oracle.
+model: models/orders.yaml
+tags: [m4, navigate, relationship]
+operation:
+  navigate:
+    rel: Order.items
+    op:
+      eq: { attr: OrderItem.sku, value: A-100 }
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)
+binds: [A-100]
+referenceSql: select id, name from orders where id in (select order_id from order_item where sku = 'A-100')
+expectedRows:
+  - { id: 1, name: Ada }
+roundTrips: 1

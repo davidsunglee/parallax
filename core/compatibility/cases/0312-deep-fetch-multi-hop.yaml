@@ -1,0 +1,71 @@
+# Deep fetch, MULTI-HOP 1 -> N -> N: the headline N+1-elimination proof.
+#
+# Root: orders {1, 42}. Path: Order.items -> OrderItem.statuses (item-level
+# status events). This resolves in EXACTLY THREE statements:
+#   level 0 (root)     : the two orders
+#   level 1 (items)    : their line items, keyed by order id in {1, 42}  (N items)
+#   level 2 (statuses) : the item-level statuses, keyed by order_item_id in the
+#                        DISTINCT item ids {11, 12, 421, 422}            (N statuses)
+#
+# Naively this is 1 + N + N = 1 + 2 + 4 = 7 statements (one items query per order,
+# one statuses query per item). Deep fetch collapses each level into a single
+# IN-keyed query, so roundTrips = 3. The harness asserts statement count == 3 and
+# that the assembled graph matches expectedGraph, so N+1 elimination is proven
+# AUTOMATICALLY — not by reading the SQL.
+#
+# Note the order-level status rows (order_item_id NULL: 101, 102, 142) are
+# correctly absent here: the OrderItem.statuses hop keys on order_item_id, so only
+# item-level statuses are reached. Item 422 has no statuses ⇒ an empty list.
+model: models/orders.yaml
+tags: [m4, m5, deepFetch, multi-hop, relationship]
+operation:
+  deepFetch:
+    operand:
+      in:
+        attr: Order.id
+        values: [1, 42]
+    paths:
+      - [Order.items, OrderItem.statuses]
+goldenSql:
+  postgres:
+    - select t0.id, t0.name from orders t0 where t0.id in (?, ?)
+    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?)
+    - select t0.id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?)
+binds:
+  - [1, 42]
+  - [1, 42]
+  - [11, 12, 421, 422]
+referenceSql: select id, name from orders where id in (1, 42)
+roundTrips: 3
+expectedGraph:
+  Order:
+    - id: 1
+      name: Ada
+      items:
+        - id: 11
+          order_id: 1
+          sku: A-100
+          quantity: 2
+          statuses:
+            - { id: 201, order_item_id: 11, code: PICKED }
+            - { id: 202, order_item_id: 11, code: PACKED }
+        - id: 12
+          order_id: 1
+          sku: B-200
+          quantity: 1
+          statuses:
+            - { id: 203, order_item_id: 12, code: PICKED }
+    - id: 42
+      name: Grace
+      items:
+        - id: 421
+          order_id: 42
+          sku: A-999
+          quantity: 3
+          statuses:
+            - { id: 204, order_item_id: 421, code: PICKED }
+        - id: 422
+          order_id: 42
+          sku: B-200
+          quantity: 5
+          statuses: []

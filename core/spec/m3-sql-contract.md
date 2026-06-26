@@ -96,6 +96,8 @@ normalization. The `?` placeholders consume the case's `binds` left-to-right.
 | `orderBy` | `order by t0.col [asc\|desc][, …]` |
 | `limit` | `limit ?` |
 | `distinct` | `select distinct …` |
+| `navigate`/`exists` | `exists (select 1 from child t1 where t1.fk = t0.key [and <op>])` |
+| `notExists` | `not exists (select 1 from child t1 where t1.fk = t0.key [and <op>])` |
 
 ### Normalization notes (the surprising fixed points)
 
@@ -125,5 +127,55 @@ Directives lower into the fixed clause order (rule 5):
 `limit` therefore always follow any predicate, and `distinct` attaches to the
 `select`.
 
-Subsequent phases extend the emission + normalization rules for
-joins-by-navigation, deep fetch, aggregation, and temporal predicates.
+## Joins by navigation
+
+A `navigate` / `exists` / `notExists` node lowers to a **correlated `EXISTS`
+sub-select** — a semi-join — so a to-many traversal never multiplies the queried
+entity's rows. The correlated alias is `t1` (the next alias after the root
+`t0`); the correlation predicate joins the related entity's foreign-key column to
+the queried entity's key column, derived from the relationship's `join`. Any
+inner operation is appended with `and`, its attributes resolved against the
+related entity (alias `t1`):
+
+```text
+navigate(Order.items, eq(OrderItem.sku, 'A-100'))
+  → select t0.id, t0.name from orders t0
+    where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)
+
+notExists(Order.items)
+  → select t0.id, t0.name from orders t0
+    where not exists (select 1 from order_item t1 where t1.order_id = t0.id)
+```
+
+The independent `referenceSql` oracle for a navigation filter is the naive
+`id in (select fk from child where <op>)` subquery form — a different
+formulation that must return the same rows (M12).
+
+## Deep fetch — one statement per relationship level
+
+`deepFetch` does **not** emit a single joined statement. It emits the **root
+query** followed by **one `IN`-keyed statement per distinct relationship hop**
+across the declared paths. Each child level selects the related rows whose
+foreign key is `in` the **distinct parent keys gathered from the previous
+level** — so the round-trip count is `1 + (number of relationship levels)`,
+never one query per parent (N+1 elimination):
+
+```text
+deepFetch(all(Order), paths = [ [Order.items], [Order.items, OrderItem.statuses] ])
+  level 0 (root)  : select t0.id, t0.name from orders t0
+  level 1 (items) : select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0
+                    where t0.order_id in (?, ?)          -- distinct Order.id values
+  level 2 (statuses):
+                    select t0.id, t0.order_item_id, t0.code from order_status t0
+                    where t0.order_item_id in (?, ?, ?)  -- distinct OrderItem.id values
+```
+
+This is the **1 → N → N** shape that resolves in exactly **3 statements**, not
+`1 + N + N`. Each child level's projection **MUST** include the join key columns
+the harness needs to fan results back to their parents (the FK that correlates to
+the parent, and the child's own key if it is itself a parent of a deeper level).
+The temp-table variant for very large parent key sets is a **fast-follow**
+(M4); round 1 uses the simplified `IN` form only.
+
+Subsequent phases extend the emission + normalization rules for aggregation and
+temporal predicates.
