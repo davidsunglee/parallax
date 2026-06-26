@@ -1,0 +1,38 @@
+# avg + groupBy + a HAVING composed with `and` over two aggregate comparisons.
+#
+# Group order_item rows by order and average the quantities, keeping groups where
+# the average quantity is at least 2 AND the group has at least 2 rows. Per order:
+#   order 1  -> avg 1.5, count 2   (dropped: avg < 2)
+#   order 2  -> avg 4.0, count 1   (dropped: count < 2)
+#   order 42 -> avg 4.0, count 2   (kept)
+# So only order 42 survives. This exercises avg, a having `gte`/`lte` pair, and an
+# `and`-composed having (the having leaves use the same and/or junctions as the
+# predicate algebra). The two having binds follow HAVING-clause left-to-right
+# order: [2 (avg gte), 2 (count gte)]. avg 4.0 coerces to the integer 4.
+model: models/orders.yaml
+tags: [m2, m3, aggregate, avg, groupBy, having, and]
+operation:
+  groupBy:
+    operand:
+      all: {}
+    keys: [OrderItem.orderId]
+    aggregates:
+      - avg: { attr: OrderItem.quantity, as: avg_quantity }
+    having:
+      and:
+        operands:
+          - gte:
+              agg:
+                avg: { attr: OrderItem.quantity, as: avg_quantity }
+              value: 2
+          - gte:
+              agg:
+                count: { as: row_count }
+              value: 2
+goldenSql:
+  postgres: select t0.order_id, avg(t0.quantity) avg_quantity from order_item t0 group by t0.order_id having avg(t0.quantity) >= ? and count(*) >= ?
+binds: [2, 2]
+referenceSql: select order_id, avg(quantity) as avg_quantity from order_item group by order_id having avg(quantity) >= 2 and count(*) >= 2
+expectedRows:
+  - { order_id: 42, avg_quantity: 4 }
+roundTrips: 1

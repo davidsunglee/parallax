@@ -193,11 +193,101 @@ out. Paths sharing a prefix fetch the shared hop **once**. This is specified in
 full in [M4](m4-relationships-deepfetch.md) and proven by the round-trip-count
 layer of the compatibility harness (M12).
 
+## Aggregation algebra (M2 sub-area)
+
+Aggregation is **part of the same operation algebra**, not a separate module
+(DQ13): a `groupBy` node groups an inner operation, names one or more **aggregate
+functions** over attributes, and optionally filters the *groups* with a `having`
+expression. It lowers to SQL via M3 exactly as the predicate algebra does — a
+`GROUP BY` / `HAVING` query rather than a per-attribute calculation. An
+aggregate query returns **aggregate rows** (group-key columns plus aggregate
+values), not entity rows.
+
+### Aggregate functions
+
+An aggregate function names a metamodel attribute (or, for `count`, optionally
+the group itself) and produces one output column per group. Each function node
+is `{ "<fn>": { "attr": "Class.attribute", "as": "<outputName>" } }`. The `as`
+field is the **result column name** — it is significant: it is the key under
+which the aggregate value appears in `expectedRows`, and it is fixed across
+languages so the suite is portable.
+
+| Function | Meaning | Domain |
+|---|---|---|
+| `sum` | sum of values | numeric |
+| `avg` | arithmetic mean | numeric |
+| `count` | row count | any (or the whole group — see below) |
+| `min` | minimum | numeric, string, date, time, timestamp |
+| `max` | maximum | numeric, string, date, time, timestamp |
+| `stdDevSample` | sample standard deviation (n − 1) | numeric |
+| `stdDevPop` | population standard deviation (n) | numeric |
+| `varianceSample` | sample variance (n − 1) | numeric |
+| `variancePop` | population variance (n) | numeric |
+
+`count` additionally accepts **no `attr`** — `{ "count": { "as": "n" } }` — to
+count whole rows in the group (`count(*)`); with an `attr` it counts non-NULL
+values of that attribute (`count(attr)`). `min`/`max` are defined over ordered
+types — **numeric, string, date/time/timestamp** — so the suite exercises
+min/max over each. The four `stdDev*`/`variance*` functions are numeric-only.
+
+> **Two-column read for `stdDev*` / `variance*`.** Reladomo's standard-deviation
+> and variance calculators read **two result columns** — the statistic itself and
+> the sample **count** — so a caller can distinguish "no rows" / "one row" (where
+> the sample statistic is undefined / NULL) from a real zero, and combine partial
+> aggregates. The core preserves this: a `stdDev*`/`variance*` aggregate emits its
+> statistic column **and** a companion `count` column in the golden SQL. M3 fixes
+> the exact emission (see m3-sql-contract.md).
+
+### `groupBy`
+
+`groupBy` is the aggregation node. It wraps an inner `operand` (the rows to
+aggregate — typically `all` or a predicate), a non-empty list of **aggregate
+functions**, an optional list of **group-by keys** (attribute references), and an
+optional **`having`** expression.
+
+| Operation | Encoding |
+|---|---|
+| `groupBy` | `{ "groupBy": { "operand", "keys"?, "aggregates": [ fn, … ], "having"? } }` |
+
+- `operand` — the inner operation whose result rows are aggregated.
+- `keys` — ordered attribute references to group by. **Omitting `keys`** (or an
+  empty list) is a single-group (whole-table) aggregate — `count`, global
+  `min`/`max`, a global `stdDev*` — with no `GROUP BY` clause.
+- `aggregates` — one or more aggregate-function nodes; their `as` names become the
+  aggregate result columns (the group-key columns project under their own column
+  names).
+- `having` — an optional boolean expression over **aggregate comparisons** that
+  filters the groups (below).
+
+### Having comparators
+
+`having` is a boolean expression whose leaves are **aggregate comparisons** — an
+aggregate function compared against a literal — composable with the same `and` /
+`or` combinators as the predicate algebra. A having comparison is
+`{ "<cmp>": { "agg": <aggregateFn>, "value": <literal> } }`, where `agg` is an
+aggregate-function node (it need not appear in the projected `aggregates`).
+
+| Comparator | SQL operator |
+|---|---|
+| `eq` | `=` |
+| `notEq` | `<>` |
+| `gt` | `>` |
+| `gte` | `>=` |
+| `lt` | `<` |
+| `lte` | `<=` |
+
+The comparators are **named for the having context** (`gt`/`gte`/`lt`/`lte`)
+rather than reusing the predicate algebra's `greaterThan…` tags, because they
+compare an *aggregate function applied to a group* — not a bare attribute. A
+`having` leaf and the predicate `and`/`or` junctions compose freely:
+`{ "and": { "operands": [ {"gt": {"agg": …, "value": …}}, {"lte": {"agg": …, "value": …}} ] } }`.
+
+The aggregate value in a having comparison becomes a **bind** in the golden SQL,
+appended after any `WHERE` binds, in left-to-right `HAVING`-clause order.
+
 ## Forward map of the rest of the algebra
 
 For orientation, later phases fill in:
 
 - Membership: the `in(subquery)` form (a navigation-backed sub-operation).
 - Temporal (M7): `asOf`, `asOfRange`, `history`.
-- Aggregate (M2 sub-area): `sum`/`avg`/`count`/`min`/`max`/`stdDev*`/`variance*`,
-  `groupBy`, and having comparators.

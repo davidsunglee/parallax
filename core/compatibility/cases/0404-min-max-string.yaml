@@ -1,0 +1,22 @@
+# min / max over a STRING attribute (Order.name).
+#
+# min/max apply to ordered types including text. The names are Ada, Linus, ada,
+# Margaret, Alan, Grace; under the Postgres image's default collation the minimum
+# is `ada` and the maximum is `Margaret`. The independent referenceSql oracle
+# runs the same min/max so the ordering is proven against real data, not assumed.
+model: models/orders.yaml
+tags: [m2, m3, aggregate, min, max, string]
+operation:
+  groupBy:
+    operand:
+      all: {}
+    aggregates:
+      - min: { attr: Order.name, as: min_name }
+      - max: { attr: Order.name, as: max_name }
+goldenSql:
+  postgres: select min(t0.name) min_name, max(t0.name) max_name from orders t0
+binds: []
+referenceSql: select min(name) as min_name, max(name) as max_name from orders
+expectedRows:
+  - { min_name: ada, max_name: Margaret }
+roundTrips: 1
