@@ -1,0 +1,18 @@
+# navigate(Order.statuses -> OrderStatus.code = 'SHIPPED'): filter orders by a
+# related status event. `Order.statuses` joins on Order.id = OrderStatus.orderId,
+# matching every status row for the order (order-level and item-level). Only
+# order 2 has a SHIPPED status (row 102), so the result is {2}.
+model: models/orders.yaml
+tags: [m4, navigate, relationship]
+operation:
+  navigate:
+    rel: Order.statuses
+    op:
+      eq: { attr: OrderStatus.code, value: SHIPPED }
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_status t1 where t1.order_id = t0.id and t1.code = ?)
+binds: [SHIPPED]
+referenceSql: select id, name from orders where id in (select order_id from order_status where code = 'SHIPPED')
+expectedRows:
+  - { id: 2, name: Linus }
+roundTrips: 1

@@ -48,25 +48,32 @@ def lint_tree(compatibility_root: Path) -> list[str]:
 
         golden = case.get("goldenSql", {})
         if isinstance(golden, dict):
-            for dialect, sql in golden.items():
-                try:
-                    sqlglot.parse_one(sql, read=dialect)
-                except Exception as exc:  # noqa: BLE001 - report parse errors as lint
-                    errors.append(f"case {name}: goldenSql.{dialect} does not parse: {exc}")
-                    continue
-                try:
-                    canonical = normalize(sql, dialect)
-                except Exception as exc:  # noqa: BLE001
-                    errors.append(
-                        f"case {name}: goldenSql.{dialect} could not be normalized: {exc}"
-                    )
-                    continue
-                if canonical != sql:
-                    errors.append(
-                        f"case {name}: goldenSql.{dialect} is not canonical.\n"
-                        f"      stored:     {sql!r}\n"
-                        f"      normalized: {canonical!r}"
-                    )
+            for dialect, value in golden.items():
+                # A dialect's golden SQL is a single statement or an ordered list
+                # of statements (one per deep-fetch level); lint each statement.
+                statements = [value] if isinstance(value, str) else list(value)
+                for index, sql in enumerate(statements):
+                    label = f"goldenSql.{dialect}"
+                    if len(statements) > 1:
+                        label += f"[{index}]"
+                    try:
+                        sqlglot.parse_one(sql, read=dialect)
+                    except Exception as exc:  # noqa: BLE001 - report parse errors as lint
+                        errors.append(f"case {name}: {label} does not parse: {exc}")
+                        continue
+                    try:
+                        canonical = normalize(sql, dialect)
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(
+                            f"case {name}: {label} could not be normalized: {exc}"
+                        )
+                        continue
+                    if canonical != sql:
+                        errors.append(
+                            f"case {name}: {label} is not canonical.\n"
+                            f"      stored:     {sql!r}\n"
+                            f"      normalized: {canonical!r}"
+                        )
 
         reference = case.get("referenceSql")
         if isinstance(reference, str):

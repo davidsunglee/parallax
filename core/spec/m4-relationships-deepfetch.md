@@ -1,0 +1,100 @@
+# M4 — Relationships & Deep Fetch
+
+`M4` specifies how **relationship navigation** turns into joins, and how **deep
+fetch** eagerly populates an object graph while **eliminating N+1** round trips.
+Per the dependency graph, `M4` depends on `M5` (deep fetch *populates* lists) and
+`M8` (the query cache that makes round-trip counts observable). The navigation
+**algebra** (the `navigate` / `exists` / `notExists` / `deepFetch` nodes) is M2;
+the **SQL emission** is M3. This module ties them to observable behavior.
+
+## Navigation → join semantics
+
+A relationship (M1) is a named association whose `join` predicate has the
+canonical form `this.<attr> = <Entity>.<attr>`. From that single declaration two
+things are derived, and an implementation **MUST** derive them mechanically (the
+user never writes a join):
+
+- the **correlation columns** — the owning-entity key column and the related
+  entity's foreign-key column;
+- the **cardinality** — `one-to-one` / `many-to-one` (to-one) versus
+  `one-to-many` / `many-to-many` (to-many).
+
+A **navigation filter** (`navigate` / `exists` / `notExists`) lowers to a
+**correlated `EXISTS` semi-join** (M3). The semi-join form is deliberate: it
+filters the queried entity by the *existence* of a related row without joining
+the related columns into the projection, so a to-many traversal **MUST NOT**
+multiply the queried entity's rows. `notExists` is the negated semi-join.
+
+The independent `referenceSql` oracle for every navigation filter is the naive
+`key in (select fk from child where <inner op>)` subquery — an obviously-correct
+different formulation that the harness asserts returns the same rows (M12).
+
+## Deep fetch: one query per relationship level
+
+`deepFetch(operand, paths)` resolves `operand` (the root query), then eagerly
+fetches each navigation `path`. The normative guarantee:
+
+> The number of SQL statements is **`1 + L`**, where `L` is the number of
+> **distinct relationship hops** across all declared paths — **never** one query
+> per parent row.
+
+Concretely, for each relationship level:
+
+1. Gather the **distinct key values** of the already-fetched parent rows for that
+   relationship's correlation column.
+2. Issue **one** query against the child entity constrained by `fk in (…)` over
+   those distinct keys.
+3. Fan the returned child rows back to their parents **in memory**, attaching
+   each child set under the relationship name (a list for a to-many relationship,
+   a single object or null for a to-one).
+
+Paths that share a prefix (e.g. `[Order.items]` and
+`[Order.items, OrderItem.statuses]`) fetch the shared hop **once** — the hop is
+de-duplicated, so it counts as a single level.
+
+### The 1 → N → N proof
+
+The canonical witness is a two-hop fan-out: a root with `N` children, each child
+with `N` grandchildren. Naively this is `1 + N + N` statements; with deep fetch
+it is exactly **3** — root, one `IN` query for all children, one `IN` query for
+all grandchildren. The compatibility harness asserts the statement count equals
+the declared `roundTrips` and that the assembled graph equals the expected
+graph, so the N+1-elimination claim is verified **automatically**, not by
+inspection.
+
+## Simplified `IN` vs. temp-table threshold
+
+The per-level child query uses a **simplified `IN (…)` list** of the gathered
+parent keys. This is correct and optimal for the parent-set sizes the round-1
+suite exercises. Reladomo switches to a **temp-table join** once the parent set
+exceeds a threshold (`MAX_SIMPLIFIED_IN`), because a multi-thousand-element `IN`
+list (and per-dialect `IN`-clause limits) degrades.
+
+> **Temp-table deep fetch is declared here but deferred to a fast-follow.** The
+> contract is: when the gathered parent-key count exceeds the dialect's
+> threshold, the implementation **MAY** materialize the keys into a session
+> temp table and **join** against it instead of inlining an `IN` list — while
+> preserving the **same one-statement-per-level round-trip count** and the same
+> assembled graph. The threshold value and the temp-table DDL are M11
+> dialect-seam concerns. Round 1 specifies and tests only the simplified `IN`
+> form; the temp-table path is a stub to be filled in with `M5` bulk support.
+
+## Dependent and reverse relationships
+
+- A **reverse** relationship (`reverseName`) is the same association navigated
+  from the related entity back to the owner. It resolves to the mirror
+  correlation columns; navigation and deep fetch work identically in either
+  direction.
+- A **dependent** relationship (`dependent: true`) marks the target as **owned**
+  by the source. Ownership matters for **cascade** write operations (insert /
+  delete / terminate following dependents), which are part of `M5` bulk/cascade
+  — **deferred to a fast-follow** and not specified here. Dependency does not
+  change read-side navigation or deep fetch.
+
+## What the harness verifies
+
+For each M4 case the compatibility harness (M12) asserts, in addition to the
+standard layers: the golden SQL statement count equals the declared `roundTrips`;
+each level executes (child levels keyed by the parents gathered from the previous
+level, with the authored `IN` binds matching the gathered keys); and the
+in-memory-assembled object graph equals the case's `expectedGraph`.

@@ -23,11 +23,12 @@ Its fields:
 | `model` | yes | path (relative to `core/compatibility/`) to the model descriptor |
 | `tags` | yes | module/feature tags (e.g. `["m2", "eq"]`); drive coverage + test selection |
 | `operation` | yes | a canonical M2 algebra node, validated against the operation schema |
-| `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit |
-| `binds` | no | ordered bind values for the `?` placeholders (default `[]`) |
-| `referenceSql` | conditional | an independent naive oracle (see below) |
-| `expectedRows` | yes | the rows the query must return, against the fixture data |
-| `roundTrips` | no | declared statement count (default `1`); enforced from a later phase |
+| `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit — a single statement, or an **ordered list** of statements (one per deep-fetch level) |
+| `binds` | no | bind values for the `?` placeholders (default `[]`): a flat list for a single statement, or a list-of-lists for a multi-statement case |
+| `referenceSql` | conditional | an independent naive oracle (see below); for a deep fetch it is the naive single-statement oracle for the **root** row set |
+| `expectedRows` | conditional | the rows the query must return (single-statement / flat-result cases) |
+| `expectedGraph` | conditional | the assembled object graph a deep fetch must produce (one of `expectedRows` / `expectedGraph` is REQUIRED) |
+| `roundTrips` | no | declared statement count (default `1`); for a multi-statement case it MUST equal the goldenSql statement count and is asserted |
 
 ### goldenSql, referenceSql, expectedRows (the oracle question)
 
@@ -73,9 +74,15 @@ the harness asserts:
    `operation` encoding *and* the model descriptor (the descriptor **is** the
    serialized metamodel), in **both** JSON and YAML.
 
-A later phase adds a fifth layer — **round-trip-count consistency** — for
-relationship / deep-fetch / scenario cases (statement count equals the declared
-`roundTrips`, and the assembled object graph equals the expected graph).
+A fifth layer — **round-trip-count consistency** — applies to relationship /
+deep-fetch cases: the number of golden SQL statements equals the declared
+`roundTrips`, each level executes (a deep-fetch child level keyed by the distinct
+parent keys gathered from the previous level), and the in-memory-assembled object
+graph equals the case's `expectedGraph`. This is what proves N+1 elimination
+automatically (a 1 → N → N deep fetch must run in exactly 3 statements, not
+1 + N + N). For these cases a dialect's `goldenSql` is an **ordered list** of
+statements (one per level) rather than a single string, and `expectedGraph`
+replaces (or accompanies) `expectedRows`.
 
 ## Provisioning ↔ runner seam (DQ15)
 
