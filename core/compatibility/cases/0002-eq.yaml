@@ -1,0 +1,19 @@
+# Walking-skeleton case: eq on the primary key — one equality predicate, one bind.
+#
+# The literal 42 in the operation becomes a `?` placeholder in the golden SQL,
+# with its value carried in `binds`. Trivial single-table predicate case, so
+# referenceSql is optional; we include a naive oracle anyway to exercise the
+# triple-equivalence path in the walking skeleton.
+model: models/orders.yaml
+tags: [m2, eq]
+operation:
+  eq:
+    attr: Order.id
+    value: 42
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+binds: [42]
+referenceSql: select id, name from orders where id = 42
+expectedRows:
+  - { id: 42, name: Grace }
+roundTrips: 1

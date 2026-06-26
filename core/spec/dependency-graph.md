@@ -1,0 +1,102 @@
+# Normative Module-Dependency Graph
+
+The **direction of dependency between modules is itself a normative part of the
+core spec.** The graph below is the **only** legal dependency direction. An
+implementation **MUST** respect it.
+
+## "Depends-on" semantics
+
+Each edge `A --> B` reads **"A depends on B"** — that is, module `A` MAY
+reference, build upon, or require module `B`, but `B` **MUST NOT** depend on `A`.
+
+- The graph **MUST** be a **directed acyclic graph (DAG)**. **Cycles are
+  prohibited.**
+- An "upward" or wrong-direction dependency (e.g. `M1` depending on `M12`, or
+  `B` depending on `A` when only `A --> B` is declared) is a **spec violation**.
+- Transitive dependencies are implied: if `A --> B` and `B --> C`, then `A` may
+  depend transitively on `C`. Only the **direct** edges are listed below;
+  transitive edges are omitted for readability and are **not** re-declared.
+
+The fenced `dependency-graph` block below is the machine-readable source of
+truth. The reference harness parses it
+(`reference-harness/src/reference_harness/dep_graph_check.py`) and asserts the
+graph is acyclic and that every declared edge points in a legal direction. The
+prose and the block **MUST** agree.
+
+```dependency-graph
+M1 --> M0
+M11 --> M0
+M2 --> M1
+M3 --> M2
+M3 --> M11
+M8 --> M2
+M8 --> M11
+M5 --> M2
+M5 --> M8
+M4 --> M5
+M4 --> M8
+M7 --> M8
+M9 --> M8
+M10 --> M8
+M12 --> M2
+M12 --> M3
+M12 --> M4
+M12 --> M7
+M12 --> M9
+M12 --> M10
+M13 --> M12
+```
+
+## The modules
+
+| Module | Title |
+|---|---|
+| M0 | Core Conventions (types · infinity · timezone) |
+| M1 | Domain Model & Metamodel (+ metamodel serde) |
+| M2 | Query, Operation & Aggregation Algebra (+ operation serde) |
+| M3 | SQL Generation Contract |
+| M4 | Relationships & Deep Fetch |
+| M5 | Lists & Bulk/Set Operations |
+| M7 | Bitemporal / Milestoning |
+| M8 | Transactions, Unit of Work & Identity + Query Cache |
+| M9 | Object Lifecycle & Detach |
+| M10 | Optimistic Locking |
+| M11 | Database Seam & Portability |
+| M12 | Compatibility Harness & Test-Double Integration |
+| M13 | Performance & Benchmark Harness |
+
+> `M6` does not exist: aggregation is folded into `M2`. The numbering of
+> `M7`–`M13` is preserved to keep cross-references stable.
+
+## Notable directions (and why they may surprise)
+
+- **Aggregation is part of M2, not its own module.** Group-by / having /
+  aggregate functions are the same declarative operation algebra and translate
+  to SQL via `M3` exactly like predicates do — so there is no aggregation module
+  depending on `M3`.
+- **M8 depends on M2, not M3.** The transaction / unit-of-work / cache layer is
+  expressed in terms of *operations and object state* (`M2`); the
+  dialect-specific SQL it executes is produced by `M3` and run through the `M11`
+  execution seam at the composition root, so `M8` takes no direct edge to SQL
+  generation.
+- **Lists are foundational; relationships sit above them.** A list is an
+  operation-backed collection, so **`M5` depends on `M2` and `M8`**.
+  Relationship navigation *yields* lists and deep fetch *populates* them, so
+  **`M4` depends on `M5`** — the reverse of the obvious guess.
+
+## Enforcement expectations
+
+- **In core: MUST.** This graph is normative; every implementation MUST respect
+  it, and the reference harness enforces the DAG + direction property
+  mechanically.
+- **Per language: SHOULD.** Each per-language spec **SHOULD** prescribe a
+  **build-time enforcement mechanism** that fails the build when a
+  module/package introduces a dependency not permitted by this graph (the common
+  failure mode being a wrong-direction edge added by a contributor who does not
+  understand the layering). Example tooling per ecosystem: `import-linter` /
+  `tach` (Python), ArchUnit or Gradle module boundaries (Java),
+  `dependency-cruiser` / `eslint-plugin-boundaries` (TypeScript), crate
+  boundaries + visibility (Rust).
+
+The full per-ecosystem enforcement guidance and the **coverage gate** (asserting
+every in-scope module has fixture coverage) are finalized in a later phase.

@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Static checks: lint + schema/meta-schema validation + sqlglot-parse +
+  # dependency-graph DAG check. No Docker required.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync harness deps
+        working-directory: reference-harness
+        run: uv sync --frozen
+      - name: just lint
+        run: just lint
+      - name: just dep-graph
+        run: just dep-graph
+
+  # Conventional-commit validation across the PR commit range.
+  commitlint:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Validate PR commits
+        run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
+
+  # The compatibility suite across the database matrix. Docker is available on
+  # GitHub-hosted ubuntu runners, so Testcontainers works out of the box.
+  suite:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [postgres]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync harness deps
+        working-directory: reference-harness
+        run: uv sync --frozen
+      - name: Run suite (${{ matrix.database }})
+        env:
+          PARALLAX_DATABASES: ${{ matrix.database }}
+        run: just test

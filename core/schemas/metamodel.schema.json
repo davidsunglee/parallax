@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/schemas/metamodel.schema.json",
+  "title": "Parallax Model Descriptor (M1 metamodel)",
+  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entity"],
+  "properties": {
+    "entity": { "$ref": "#/$defs/entity" }
+  },
+  "$defs": {
+    "neutralType": {
+      "description": "M0 neutral data type. The decimal type carries precision/scale, e.g. decimal(18,2).",
+      "type": "string",
+      "pattern": "^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|decimal\\([0-9]+,[0-9]+\\))$"
+    },
+    "identifier": {
+      "description": "camelCase element/property name.",
+      "type": "string",
+      "pattern": "^[a-z][a-zA-Z0-9]*$"
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "table", "attributes"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "namespace": { "type": "string" },
+        "table": { "type": "string", "minLength": 1 },
+        "mutability": {
+          "enum": ["read-only", "transactional"],
+          "default": "read-only"
+        },
+        "temporal": {
+          "enum": [
+            "non-temporal",
+            "unitemporal-processing",
+            "unitemporal-business",
+            "bitemporal"
+          ],
+          "default": "non-temporal"
+        },
+        "attributes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/attribute" }
+        }
+      }
+    },
+    "attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "column"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "type": { "$ref": "#/$defs/neutralType" },
+        "column": { "type": "string", "minLength": 1 },
+        "primaryKey": { "type": "boolean", "default": false },
+        "nullable": { "type": "boolean", "default": false },
+        "maxLength": { "type": "integer", "minimum": 1 },
+        "readOnly": { "type": "boolean", "default": false },
+        "optimisticLocking": { "type": "boolean", "default": false },
+        "pkGenerator": { "$ref": "#/$defs/pkGenerator" },
+        "default": {}
+      }
+    },
+    "pkGenerator": {
+      "description": "Primary-key generation strategy. Only the strategy keyword is required; sequence carries extra fields.",
+      "oneOf": [
+        { "enum": ["none", "max", "sequence"] },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy"],
+          "properties": {
+            "strategy": { "enum": ["none", "max", "sequence"] },
+            "sequenceName": { "type": "string" },
+            "batchSize": { "type": "integer", "minimum": 1 },
+            "initialValue": { "type": "integer" },
+            "incrementSize": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

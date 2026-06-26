@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
+  "title": "Parallax Compatibility Case (M12)",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["model", "tags", "operation", "goldenSql", "expectedRows"],
+  "properties": {
+    "model": {
+      "description": "Path to the model descriptor, relative to core/compatibility/.",
+      "type": "string",
+      "pattern": "^models/.+\\.ya?ml$"
+    },
+    "tags": {
+      "description": "Module/feature tags driving coverage and test selection.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "operation": {
+      "description": "A canonical M2 algebra node (validated separately against operation.schema.json).",
+      "type": "object"
+    },
+    "goldenSql": {
+      "description": "Optimized SQL an implementation is expected to emit, keyed by dialect.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "enum": ["postgres", "mariadb"]
+      },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "binds": {
+      "description": "Ordered bind values for the ? placeholders in goldenSql.",
+      "type": "array",
+      "default": [],
+      "items": {}
+    },
+    "referenceSql": {
+      "description": "Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases.",
+      "type": "string",
+      "minLength": 1
+    },
+    "expectedRows": {
+      "description": "The rows the query must return against the fixture data.",
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "roundTrips": {
+      "description": "Declared number of SQL statements for the operation. Enforced from a later phase.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    }
+  }
+}
