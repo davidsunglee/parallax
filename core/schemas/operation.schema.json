@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/operation.schema.json",
   "title": "Parallax Operation Algebra (M2)",
-  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct) PLUS the relationship algebra: navigate(rel) -> predicate, exists / notExists, and the deepFetch directive.",
+  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or).",
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
@@ -14,6 +14,11 @@
       "description": "A metamodel relationship reference of the form Class.relationship.",
       "type": "string",
       "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+    },
+    "aggregateAlias": {
+      "description": "An aggregate result-column name (the `as` of an aggregate function). Lowercase, snake_case allowed (e.g. total_quantity, sample_count), matching the canonical SQL alias.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
     },
     "navigationPath": {
       "description": "An ordered list of relationship references naming one path to eager-fetch, e.g. ['Order.items'] (one hop) or ['Order.items', 'OrderItem.product'] (multi-hop).",
@@ -58,7 +63,8 @@
         { "$ref": "#/$defs/navigate" },
         { "$ref": "#/$defs/exists" },
         { "$ref": "#/$defs/notExists" },
-        { "$ref": "#/$defs/deepFetch" }
+        { "$ref": "#/$defs/deepFetch" },
+        { "$ref": "#/$defs/groupBy" }
       ]
     },
 
@@ -376,6 +382,212 @@
               "minItems": 1,
               "items": { "$ref": "#/$defs/navigationPath" }
             }
+          }
+        }
+      }
+    },
+
+    "aggregateFunction": {
+      "description": "An aggregate function applied to an attribute (M2 sub-area). `as` is the result column name. `count` MAY omit `attr` to count whole rows in the group (count(*)); every other function requires `attr`.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "oneOf": [
+        { "$ref": "#/$defs/sum" },
+        { "$ref": "#/$defs/avg" },
+        { "$ref": "#/$defs/count" },
+        { "$ref": "#/$defs/min" },
+        { "$ref": "#/$defs/max" },
+        { "$ref": "#/$defs/stdDevSample" },
+        { "$ref": "#/$defs/stdDevPop" },
+        { "$ref": "#/$defs/varianceSample" },
+        { "$ref": "#/$defs/variancePop" }
+      ]
+    },
+    "aggregateBody": {
+      "description": "An aggregate over a named attribute, aliased by `as`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attr", "as"],
+      "properties": {
+        "attr": { "$ref": "#/$defs/attributeRef" },
+        "as": { "$ref": "#/$defs/aggregateAlias" }
+      }
+    },
+    "countBody": {
+      "description": "count(attr) (non-NULL values) or count(*) when `attr` is omitted.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["as"],
+      "properties": {
+        "attr": { "$ref": "#/$defs/attributeRef" },
+        "as": { "$ref": "#/$defs/aggregateAlias" }
+      }
+    },
+    "sum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sum"],
+      "properties": { "sum": { "$ref": "#/$defs/aggregateBody" } }
+    },
+    "avg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["avg"],
+      "properties": { "avg": { "$ref": "#/$defs/aggregateBody" } }
+    },
+    "count": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count"],
+      "properties": { "count": { "$ref": "#/$defs/countBody" } }
+    },
+    "min": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min"],
+      "properties": { "min": { "$ref": "#/$defs/aggregateBody" } }
+    },
+    "max": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max"],
+      "properties": { "max": { "$ref": "#/$defs/aggregateBody" } }
+    },
+    "stdDevSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stdDevSample"],
+      "properties": { "stdDevSample": { "$ref": "#/$defs/aggregateBody" } }
+    },
+    "stdDevPop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stdDevPop"],
+      "properties": { "stdDevPop": { "$ref": "#/$defs/aggregateBody" } }
+    },
+    "varianceSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["varianceSample"],
+      "properties": { "varianceSample": { "$ref": "#/$defs/aggregateBody" } }
+    },
+    "variancePop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variancePop"],
+      "properties": { "variancePop": { "$ref": "#/$defs/aggregateBody" } }
+    },
+
+    "havingComparison": {
+      "description": "An aggregate comparison: an aggregate function compared against a literal. The leaf of a having expression.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agg", "value"],
+      "properties": {
+        "agg": { "$ref": "#/$defs/aggregateFunction" },
+        "value": { "$ref": "#/$defs/literal" }
+      }
+    },
+    "havingExpression": {
+      "description": "A boolean expression over aggregate comparisons (having leaves) composed with and/or. A having leaf is one of eq/notEq/gt/gte/lt/lte over an aggregate function.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "oneOf": [
+        { "$ref": "#/$defs/havingEq" },
+        { "$ref": "#/$defs/havingNotEq" },
+        { "$ref": "#/$defs/havingGt" },
+        { "$ref": "#/$defs/havingGte" },
+        { "$ref": "#/$defs/havingLt" },
+        { "$ref": "#/$defs/havingLte" },
+        { "$ref": "#/$defs/havingAnd" },
+        { "$ref": "#/$defs/havingOr" }
+      ]
+    },
+    "havingEq": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eq"],
+      "properties": { "eq": { "$ref": "#/$defs/havingComparison" } }
+    },
+    "havingNotEq": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["notEq"],
+      "properties": { "notEq": { "$ref": "#/$defs/havingComparison" } }
+    },
+    "havingGt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gt"],
+      "properties": { "gt": { "$ref": "#/$defs/havingComparison" } }
+    },
+    "havingGte": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gte"],
+      "properties": { "gte": { "$ref": "#/$defs/havingComparison" } }
+    },
+    "havingLt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lt"],
+      "properties": { "lt": { "$ref": "#/$defs/havingComparison" } }
+    },
+    "havingLte": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lte"],
+      "properties": { "lte": { "$ref": "#/$defs/havingComparison" } }
+    },
+    "havingJunction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operands"],
+      "properties": {
+        "operands": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/havingExpression" }
+        }
+      }
+    },
+    "havingAnd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["and"],
+      "properties": { "and": { "$ref": "#/$defs/havingJunction" } }
+    },
+    "havingOr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["or"],
+      "properties": { "or": { "$ref": "#/$defs/havingJunction" } }
+    },
+
+    "groupBy": {
+      "description": "The aggregation node (M2 sub-area). Groups `operand`'s rows by `keys` (omit for a whole-table aggregate), projects one or more aggregate functions, and optionally filters groups with `having`. Lowers to a GROUP BY / HAVING SELECT via M3.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["groupBy"],
+      "properties": {
+        "groupBy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operand", "aggregates"],
+          "properties": {
+            "operand": { "$ref": "#/$defs/operation" },
+            "keys": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/attributeRef" }
+            },
+            "aggregates": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/aggregateFunction" }
+            },
+            "having": { "$ref": "#/$defs/havingExpression" }
           }
         }
       }

@@ -1,0 +1,21 @@
+# min / max over a DATE attribute (Order.orderedOn).
+#
+# The Phase 4 `orderedOn` column gives min/max a date-typed attribute. The six
+# order dates span 2024-01-05 .. 2024-06-30, so min/max return those endpoints.
+# This is the third min/max domain (numeric / string / date) the suite exercises.
+model: models/orders.yaml
+tags: [m2, m3, aggregate, min, max, date]
+operation:
+  groupBy:
+    operand:
+      all: {}
+    aggregates:
+      - min: { attr: Order.orderedOn, as: min_ordered_on }
+      - max: { attr: Order.orderedOn, as: max_ordered_on }
+goldenSql:
+  postgres: select min(t0.ordered_on) min_ordered_on, max(t0.ordered_on) max_ordered_on from orders t0
+binds: []
+referenceSql: select min(ordered_on) as min_ordered_on, max(ordered_on) as max_ordered_on from orders
+expectedRows:
+  - { min_ordered_on: 2024-01-05, max_ordered_on: 2024-06-30 }
+roundTrips: 1

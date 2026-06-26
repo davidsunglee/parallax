@@ -1,0 +1,21 @@
+# count(*) — a whole-table aggregate (no groupBy keys, no having).
+#
+# Omitting `keys` makes this a single-group aggregate over all Order rows, so
+# count(*) returns one row: 6 orders. count with no `attr` is count(*) (rows),
+# distinct from count(attr) which counts non-NULL values. The single aggregate
+# column is aliased `order_count`.
+model: models/orders.yaml
+tags: [m2, m3, aggregate, count]
+operation:
+  groupBy:
+    operand:
+      all: {}
+    aggregates:
+      - count: { as: order_count }
+goldenSql:
+  postgres: select count(*) order_count from orders t0
+binds: []
+referenceSql: select count(*) as order_count from orders
+expectedRows:
+  - { order_count: 6 }
+roundTrips: 1

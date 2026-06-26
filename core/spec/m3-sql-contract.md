@@ -177,5 +177,91 @@ the parent, and the child's own key if it is itself a parent of a deeper level).
 The temp-table variant for very large parent key sets is a **fast-follow**
 (M4); round 1 uses the simplified `IN` form only.
 
-Subsequent phases extend the emission + normalization rules for aggregation and
-temporal predicates.
+## Aggregation — `GROUP BY` / `HAVING`
+
+A `groupBy` node (M2 sub-area) lowers to a single aggregate `SELECT`. The
+projection is the **group-by key columns** followed by the **aggregate
+expressions**; the optional `having` filters groups. The canonical clause order
+(rule 5) places `group by` after `where` and `having` after `group by`:
+
+```text
+select <keys…>, <aggregates…> from <table> t0
+  [where <predicate>]
+  [group by <keys…>]
+  [having <aggregate predicate>]
+```
+
+### Aggregate expression emission
+
+Each aggregate function lowers to the obvious SQL function applied to the
+alias-qualified column, **aliased by its `as` name** (the result column name).
+The canonical form drops the `as` keyword (rule 2 — the normalizer renders
+`sum(t0.quantity) total_quantity`, never `sum(...) AS total_quantity`), exactly
+as table aliases are rendered `orders t0`:
+
+| Function | Canonical SQL |
+|---|---|
+| `sum` | `sum(t0.col) <as>` |
+| `avg` | `avg(t0.col) <as>` |
+| `count` (attr) | `count(t0.col) <as>` |
+| `count` (whole group) | `count(*) <as>` |
+| `min` | `min(t0.col) <as>` |
+| `max` | `max(t0.col) <as>` |
+| `stdDevSample` | `stddev_samp(t0.col) <as>` |
+| `stdDevPop` | `stddev_pop(t0.col) <as>` |
+| `varianceSample` | `var_samp(t0.col) <as>` |
+| `variancePop` | `var_pop(t0.col) <as>` |
+
+Group-by key columns project under their **own column name** (`t0.order_id`),
+not an alias, and the same columns appear in the `group by` clause:
+`group by t0.order_id[, …]`.
+
+### The two-column read for `stdDev*` / `variance*`
+
+A `stdDevSample`/`stdDevPop`/`varianceSample`/`variancePop` aggregate emits **two**
+projected columns: the statistic and a **companion sample-count** column. This
+mirrors Reladomo's standard-deviation/variance calculators, which read two result
+columns so the caller can tell an undefined sample statistic (zero or one row ⇒
+SQL `NULL`) apart from a genuine zero and combine partial aggregates. The
+companion column is a `count` over the same attribute, aliased
+`<as>` + a stable suffix the case authors (e.g. `sample_count`):
+
+```text
+select stddev_samp(t0.quantity) quantity_stddev, count(t0.quantity) sample_count
+from order_item t0
+```
+
+The harness asserts this golden SQL returns the same rows as an independent
+`referenceSql` formulation, so the two-column contract is proven against real
+data, not merely asserted in prose.
+
+### Having emission
+
+`having` lowers each aggregate comparison to `<aggregate-expression> <op> ?`,
+combined by `and` / `or` like the predicate algebra. The aggregate function in a
+having leaf is rendered the same way as a projected aggregate **but without an
+alias** (it is a predicate term, not a projection):
+
+```text
+groupBy(order_item, keys=[OrderItem.orderId],
+        aggregates=[sum(OrderItem.quantity) as total_quantity],
+        having gt(sum(OrderItem.quantity), 3))
+  → select t0.order_id, sum(t0.quantity) total_quantity from order_item t0
+    group by t0.order_id having sum(t0.quantity) > ?
+```
+
+The having binds follow any `where` binds, in left-to-right `having`-clause order.
+The independent `referenceSql` oracle for an aggregate case is the naive form of
+the same query (e.g. spelling the literals inline instead of as binds, or
+restating the `having` predicate) — a different formulation that must return the
+same aggregate rows (M12).
+
+### Aggregate result rows
+
+An aggregate query's `expectedRows` are **aggregate rows**: each row is the group
+key columns plus the aggregate columns under their `as` names. There is no
+entity-row projection. For a whole-table aggregate (no `keys`) the result is a
+single row of aggregate values.
+
+Subsequent phases extend the emission + normalization rules for temporal
+predicates.

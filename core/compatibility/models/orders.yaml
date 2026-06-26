@@ -53,6 +53,14 @@ entities:
       - name: active
         type: boolean
         column: active
+      # Phase 4 adds a date column so aggregate min/max has a `date`-typed
+      # attribute to range over (alongside numeric `price` and string `name`).
+      # It is appended after the existing columns and every fixture row supplies
+      # a value, so the Phase 1-3 cases (which project only id/name) are
+      # unaffected.
+      - name: orderedOn
+        type: date
+        column: ordered_on
     relationships:
       - name: items
         relatedEntity: OrderItem

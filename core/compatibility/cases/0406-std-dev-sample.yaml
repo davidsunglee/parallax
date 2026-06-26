@@ -1,0 +1,28 @@
+# stdDevSample — sample standard deviation, with the TWO-COLUMN read.
+#
+# A stdDev*/variance* aggregate emits BOTH the statistic and a companion sample
+# count, mirroring Reladomo's stddev/variance calculators (which read two result
+# columns to tell an undefined statistic — zero or one row ⇒ NULL — apart from a
+# genuine zero, and to combine partial aggregates). Here:
+#   stddev_samp(quantity) over the 5 order_item rows {2,1,4,3,5}
+#                                = 1.5811388300841897
+#   count(quantity)             = 5
+# The golden SQL therefore projects both columns. The independent referenceSql
+# computes the same two columns naively, so the two-column contract is proven
+# against real data.
+model: models/orders.yaml
+tags: [m2, m3, aggregate, stdDev, stdDevSample, twoColumn]
+operation:
+  groupBy:
+    operand:
+      all: {}
+    aggregates:
+      - stdDevSample: { attr: OrderItem.quantity, as: quantity_stddev }
+      - count: { attr: OrderItem.quantity, as: sample_count }
+goldenSql:
+  postgres: select stddev_samp(t0.quantity) quantity_stddev, count(t0.quantity) sample_count from order_item t0
+binds: []
+referenceSql: select stddev_samp(quantity) as quantity_stddev, count(quantity) as sample_count from order_item
+expectedRows:
+  - { quantity_stddev: 1.5811388300841897, sample_count: 5 }
+roundTrips: 1
