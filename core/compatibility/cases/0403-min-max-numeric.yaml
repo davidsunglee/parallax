@@ -1,0 +1,21 @@
+# min / max over a NUMERIC attribute (Order.price, decimal(18,2)).
+#
+# A whole-table aggregate projecting two functions in one query: the minimum and
+# maximum price across all six orders (10.50 .. 99.99). min/max are defined over
+# ordered types; this case pins the numeric ordering.
+model: models/orders.yaml
+tags: [m2, m3, aggregate, min, max, numeric]
+operation:
+  groupBy:
+    operand:
+      all: {}
+    aggregates:
+      - min: { attr: Order.price, as: min_price }
+      - max: { attr: Order.price, as: max_price }
+goldenSql:
+  postgres: select min(t0.price) min_price, max(t0.price) max_price from orders t0
+binds: []
+referenceSql: select min(price) as min_price, max(price) as max_price from orders
+expectedRows:
+  - { min_price: 10.50, max_price: 99.99 }
+roundTrips: 1
