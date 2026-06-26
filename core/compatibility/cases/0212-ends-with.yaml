@@ -1,0 +1,18 @@
+# endsWith — affix match. `value` is a LITERAL suffix; the implementation
+# prepends a leading `%` wildcard. `00` has no wildcard chars, so the pattern is
+# `%00`.
+model: models/orders.yaml
+tags: [m2, endsWith, string]
+operation:
+  endsWith:
+    attr: Order.sku
+    value: "00"
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.sku like ?
+binds: ["%00"]
+referenceSql: select id, name from orders where sku like '%00'
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 2, name: Linus }
+  - { id: 3, name: ada }
+roundTrips: 1

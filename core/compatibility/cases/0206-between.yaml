@@ -1,0 +1,20 @@
+# between — inclusive bounded range over a decimal(18,2) column. Two ordered
+# binds (lower, upper). `between` is a convenience over `>= lower and <= upper`,
+# which is exactly what the naive referenceSql spells out.
+model: models/orders.yaml
+tags: [m2, between]
+operation:
+  between:
+    attr: Order.price
+    lower: 20.00
+    upper: 50.75
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.price between ? and ?
+binds: [20.00, 50.75]
+referenceSql: select id, name from orders where price >= 20.00 and price <= 50.75
+expectedRows:
+  - { id: 2, name: Linus }
+  - { id: 3, name: ada }
+  - { id: 4, name: Margaret }
+  - { id: 5, name: Alan }
+roundTrips: 1

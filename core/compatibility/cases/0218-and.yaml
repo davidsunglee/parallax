@@ -1,0 +1,17 @@
+# and — conjunction of two atomic predicates. Operands serialize in order; binds
+# follow left-to-right appearance.
+model: models/orders.yaml
+tags: [m2, and, boolean]
+operation:
+  and:
+    operands:
+      - eq: { attr: Order.active, value: true }
+      - greaterThan: { attr: Order.qty, value: 10 }
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.active = ? and t0.qty > ?
+binds: [true, 10]
+referenceSql: select id, name from orders where active = true and qty > 10
+expectedRows:
+  - { id: 4, name: Margaret }
+  - { id: 42, name: Grace }
+roundTrips: 1

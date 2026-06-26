@@ -1,0 +1,28 @@
+# group (precedence) — GROUPED form: `(qty >= 25 OR qty <= 5) AND active = true`.
+#
+# The explicit `group` node wraps the `or`, forcing the disjunction to bind
+# before the `and`. This is the half of the group-precedence pair that pins
+# parenthesization: the golden SQL parenthesizes the OR, and the result {1, 42}
+# differs from the UNGROUPED sibling case (0223), where `and` binds tighter and
+# the result is {1, 5, 42}. The `group` node is what makes that difference
+# unambiguous through the canonical serde.
+model: models/orders.yaml
+tags: [m2, group, boolean, precedence]
+operation:
+  and:
+    operands:
+      - group:
+          operand:
+            or:
+              operands:
+                - greaterThanEquals: { attr: Order.qty, value: 25 }
+                - lessThanEquals: { attr: Order.qty, value: 5 }
+      - eq: { attr: Order.active, value: true }
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where (t0.qty >= ? or t0.qty <= ?) and t0.active = ?
+binds: [25, 5, true]
+referenceSql: select id, name from orders where (qty >= 25 or qty <= 5) and active = true
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 42, name: Grace }
+roundTrips: 1

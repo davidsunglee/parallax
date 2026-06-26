@@ -1,0 +1,18 @@
+# startsWith — affix match. `value` is a LITERAL prefix; the implementation
+# appends a trailing `%` wildcard and escapes any wildcard chars in the literal.
+# `A-` has no wildcard chars, so the pattern is simply `A-%`.
+model: models/orders.yaml
+tags: [m2, startsWith, string]
+operation:
+  startsWith:
+    attr: Order.sku
+    value: A-
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.sku like ?
+binds: ["A-%"]
+referenceSql: select id, name from orders where sku like 'A-%'
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 3, name: ada }
+  - { id: 42, name: Grace }
+roundTrips: 1

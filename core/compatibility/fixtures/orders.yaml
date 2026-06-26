@@ -3,10 +3,45 @@
 # Keyed by class name. Each row is a map of attribute-name -> value. The harness
 # data loader resolves attribute names to columns via the descriptor, so fixture
 # rows speak the metamodel's vocabulary (attribute names), not raw column names.
+#
+# The dataset is deliberately small but varied — distinct qty/price bands, a NULL
+# sku, mixed case names, and `%`/`_` literals in a sku — so each Phase 2 operator
+# (range, null, string incl. wildcard-escape and case-insensitive, membership,
+# boolean/group, directives) has unambiguous expected rows.
 Order:
   - id: 1
     name: Ada
+    sku: A-100
+    qty: 5
+    price: 10.50
+    active: true
   - id: 2
     name: Linus
+    sku: B-200
+    qty: 10
+    price: 20.00
+    active: true
+  - id: 3
+    name: ada
+    sku: A-300
+    qty: 15
+    price: 30.25
+    active: false
+  - id: 4
+    name: Margaret
+    sku: null
+    qty: 20
+    price: 40.00
+    active: true
+  - id: 5
+    name: Alan
+    sku: "C_50%"
+    qty: 25
+    price: 50.75
+    active: false
   - id: 42
     name: Grace
+    sku: A-999
+    qty: 30
+    price: 99.99
+    active: true
