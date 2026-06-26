@@ -1,0 +1,12 @@
+# Fixture rows for the Order model (models/orders.yaml).
+#
+# Keyed by class name. Each row is a map of attribute-name -> value. The harness
+# data loader resolves attribute names to columns via the descriptor, so fixture
+# rows speak the metamodel's vocabulary (attribute names), not raw column names.
+Order:
+  - id: 1
+    name: Ada
+  - id: 2
+    name: Linus
+  - id: 42
+    name: Grace

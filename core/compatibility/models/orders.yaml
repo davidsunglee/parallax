@@ -1,0 +1,23 @@
+# Walking-skeleton model: one non-temporal entity.
+#
+# This file is a model descriptor — an instance of
+# core/schemas/metamodel.schema.json. It is intentionally pure metadata: no
+# fixture rows live here (the descriptor IS the serialized M1 metamodel, and the
+# metamodel schema forbids extra top-level keys). Row data for a model lives in
+# the sibling core/compatibility/fixtures/<model-stem>.yaml file.
+entity:
+  name: Order
+  namespace: parallax.compatibility
+  table: orders
+  mutability: transactional
+  temporal: non-temporal
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGenerator: none
+    - name: name
+      type: string
+      column: name
+      maxLength: 255

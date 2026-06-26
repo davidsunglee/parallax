@@ -1,0 +1,21 @@
+{
+  "name": "parallax",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-tooling only (husky, commitlint, markdownlint, lint-staged) for the parallax polyglot monorepo. No runtime code lives here.",
+  "scripts": {
+    "prepare": "husky",
+    "markdownlint": "markdownlint-cli2 \"core/spec/**/*.md\" \"*.md\"",
+    "commitlint": "commitlint"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.3.0",
+    "markdownlint-cli2": "^0.16.0"
+  },
+  "lint-staged": {
+    "*.md": "markdownlint-cli2"
+  }
+}

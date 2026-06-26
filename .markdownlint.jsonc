@@ -1,0 +1,13 @@
+{
+  // Markdown linting for core/spec and root docs.
+  // Rationale for relaxations:
+  // - MD013 (line length): spec prose and tables are frequently long; not worth wrapping.
+  // - MD024 (duplicate headings): every module file reuses the same sub-heading skeleton.
+  // - MD033 (inline HTML): mermaid/anchor usage in spec docs.
+  // - MD041 (first line heading): files start with optional front matter context.
+  "default": true,
+  "MD013": false,
+  "MD024": false,
+  "MD033": false,
+  "MD041": false
+}
