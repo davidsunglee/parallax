@@ -137,6 +137,18 @@ class Case:
         return self.raw["operation"]
 
     @property
+    def equivalent_encodings(self) -> list[dict[str, Any]]:
+        """Alternate surface encodings that MUST canonicalize to ``operation``.
+
+        Optional. Each entry is a full operation node authored in a different
+        surface shape (e.g. a prefix vs a fluent spelling, or differently-ordered
+        object keys); the runner asserts every one collapses to the canonical
+        ``operation`` via the serde seam, proving precedence/serialization
+        fidelity without a database.
+        """
+        return self.raw.get("equivalentEncodings", [])
+
+    @property
     def golden_sql(self) -> dict[str, str | list[str]]:
         return self.raw["goldenSql"]
 

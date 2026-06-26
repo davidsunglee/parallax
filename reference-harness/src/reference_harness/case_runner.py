@@ -95,6 +95,26 @@ def _assert_serde(case: Case) -> None:
     serde.assert_roundtrip(case.model.descriptor)
 
 
+def _assert_equivalent_encodings(case: Case) -> None:
+    """Layer 4c: every declared alternate encoding collapses to ``operation``.
+
+    Dialect-agnostic and database-free: each ``equivalentEncodings`` entry MUST
+    canonicalize (via the serde seam) to the same node as the case's canonical
+    ``operation``. This pins the precedence/serialization-fidelity contract — a
+    prefix and a fluent surface of the same grouped intent denote one node — in
+    the fixture itself rather than in bespoke test code.
+    """
+    canonical_operation = serde.canonical(case.operation)
+    for index, encoding in enumerate(case.equivalent_encodings):
+        if serde.canonical(encoding) != canonical_operation:
+            raise CaseFailure(
+                f"{case.path.name}: equivalentEncodings[{index}] does not "
+                f"canonicalize to the case operation.\n"
+                f"  encoding (canonical):  {serde.canonical(encoding)!r}\n"
+                f"  operation (canonical): {canonical_operation!r}"
+            )
+
+
 def _assert_round_trip_count(case: Case, dialect: str) -> None:
     statements = case.golden_statements(dialect)
     if len(statements) != case.round_trips:
@@ -449,11 +469,13 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         # serde + (dialect-agnostic) checks still run so coverage is not skipped.
         _assert_schema(case)
         _assert_serde(case)
+        _assert_equivalent_encodings(case)  # layer 4c (dialect-agnostic)
         return
 
     _assert_schema(case)
     _assert_normalization(case, dialect)  # layer 3
     _assert_serde(case)  # layer 4
+    _assert_equivalent_encodings(case)  # layer 4c
     _assert_round_trip_count(case, dialect)  # layer 5 (count)
 
     _provision(case, db)
