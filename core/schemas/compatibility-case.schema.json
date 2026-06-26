@@ -26,6 +26,12 @@
       "description": "A canonical M2 algebra node (validated separately against operation.schema.json).",
       "type": "object"
     },
+    "equivalentEncodings": {
+      "description": "Optional alternate surface encodings of the same operation (e.g. a prefix vs a fluent spelling, or differently-ordered keys). Each MUST canonicalize to `operation` via the serde seam; the harness asserts this dialect-agnostically (layer 4c), proving precedence/serialization fidelity in the fixture itself.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "object" }
+    },
     "goldenSql": {
       "description": "Optimized SQL an implementation is expected to emit, keyed by dialect. Each dialect's value is a single statement string OR an ordered list of statement strings (one per relationship/deep-fetch level).",
       "type": "object",

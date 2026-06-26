@@ -18,6 +18,34 @@ operation:
                 - greaterThanEquals: { attr: Order.qty, value: 25 }
                 - lessThanEquals: { attr: Order.qty, value: 5 }
       - eq: { attr: Order.active, value: true }
+# Two surface re-expressions of the SAME grouped intent that an implementation's
+# serde might emit — a "prefix" and a "fluent" spelling. They differ only in
+# object-key authoring order (operand order is identity-significant and kept the
+# same); canonicalization sorts keys, so both MUST collapse to `operation` above.
+# The harness asserts this dialect-agnostically (layer 4c), so the prefix-vs-
+# fluent precedence-fidelity contract lives in this fixture instead of bespoke
+# test code.
+equivalentEncodings:
+  # "prefix" surface: group(...) wrapping the disjunction, eq written value-first.
+  - and:
+      operands:
+        - group:
+            operand:
+              or:
+                operands:
+                  - greaterThanEquals: { attr: Order.qty, value: 25 }
+                  - lessThanEquals: { attr: Order.qty, value: 5 }
+        - eq: { value: true, attr: Order.active }
+  # "fluent" surface: identical tree, comparators written value-before-attr.
+  - and:
+      operands:
+        - group:
+            operand:
+              or:
+                operands:
+                  - greaterThanEquals: { value: 25, attr: Order.qty }
+                  - lessThanEquals: { value: 5, attr: Order.qty }
+        - eq: { attr: Order.active, value: true }
 goldenSql:
   postgres: select t0.id, t0.name from orders t0 where (t0.qty >= ? or t0.qty <= ?) and t0.active = ?
 binds: [25, 5, true]
