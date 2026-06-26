@@ -1,4 +1,4 @@
-# Order model: one non-temporal entity.
+# Orders model: three related non-temporal entities.
 #
 # This file is a model descriptor — an instance of
 # core/schemas/metamodel.schema.json. It is intentionally pure metadata: no
@@ -6,36 +6,158 @@
 # metamodel schema forbids extra top-level keys). Row data for a model lives in
 # the sibling core/compatibility/fixtures/<model-stem>.yaml file.
 #
-# Phase 2 extends the entity with string / decimal / nullable / boolean columns
-# so the operation algebra's range, null, string, and membership predicates have
-# attributes to exercise.
-entity:
-  name: Order
-  namespace: parallax.compatibility
-  table: orders
-  mutability: transactional
-  temporal: non-temporal
-  attributes:
-    - name: id
-      type: int64
-      column: id
-      primaryKey: true
-      pkGenerator: none
-    - name: name
-      type: string
-      column: name
-      maxLength: 255
-    - name: sku
-      type: string
-      column: sku
-      maxLength: 32
-      nullable: true
-    - name: qty
-      type: int32
-      column: qty
-    - name: price
-      type: decimal(18,2)
-      column: price
-    - name: active
-      type: boolean
-      column: active
+# Phase 2 grew the Order entity with string / decimal / nullable / boolean
+# columns so the operation algebra's range, null, string, and membership
+# predicates have attributes to exercise.
+#
+# Phase 3 expands the descriptor to MULTIPLE entities so relationships, navigate
+# / exists predicates, and deep fetch have something to traverse:
+#   - Order        — the root entity (unchanged columns, so every Phase 1/2 case
+#                    keeps passing).
+#   - OrderItem    — line items; many belong to one Order (one-to-many `items`).
+#   - OrderStatus  — status events; each belongs to an Order, and OPTIONALLY to a
+#                    specific OrderItem. This lets one entity serve both the
+#                    to-one `Order.status`-style lookup and the multi-hop
+#                    `Order.items -> OrderItem.statuses` deep-fetch path.
+#
+# The multi-hop `[Order.items, OrderItem.statuses]` path is the 1 -> N -> N case
+# that MUST resolve in exactly three statements (root + items + statuses), never
+# 1 + N + N, which is how the suite proves N+1 elimination automatically.
+entities:
+  - name: Order
+    namespace: parallax.compatibility
+    table: orders
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: name
+        type: string
+        column: name
+        maxLength: 255
+      - name: sku
+        type: string
+        column: sku
+        maxLength: 32
+        nullable: true
+      - name: qty
+        type: int32
+        column: qty
+      - name: price
+        type: decimal(18,2)
+        column: price
+      - name: active
+        type: boolean
+        column: active
+    relationships:
+      - name: items
+        relatedEntity: OrderItem
+        cardinality: one-to-many
+        join: this.id = OrderItem.orderId
+        reverseName: order
+        dependent: true
+        foreignKey: order_id
+        orderBy:
+          - { attr: id, direction: asc }
+      - name: statuses
+        relatedEntity: OrderStatus
+        cardinality: one-to-many
+        join: this.id = OrderStatus.orderId
+        reverseName: order
+        dependent: true
+        foreignKey: order_id
+    indices:
+      - name: orders_pk
+        attributes: [id]
+        unique: true
+      - name: orders_sku
+        attributes: [sku]
+        unique: false
+  - name: OrderItem
+    namespace: parallax.compatibility
+    table: order_item
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: orderId
+        type: int64
+        column: order_id
+      - name: sku
+        type: string
+        column: sku
+        maxLength: 32
+      - name: quantity
+        type: int32
+        column: quantity
+    relationships:
+      - name: order
+        relatedEntity: Order
+        cardinality: many-to-one
+        join: this.orderId = Order.id
+        reverseName: items
+        foreignKey: order_id
+      - name: statuses
+        relatedEntity: OrderStatus
+        cardinality: one-to-many
+        join: this.id = OrderStatus.orderItemId
+        reverseName: orderItem
+        dependent: true
+        foreignKey: order_item_id
+    indices:
+      - name: order_item_pk
+        attributes: [id]
+        unique: true
+      - name: order_item_order_id
+        attributes: [orderId]
+        unique: false
+  - name: OrderStatus
+    namespace: parallax.compatibility
+    table: order_status
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: orderId
+        type: int64
+        column: order_id
+      - name: orderItemId
+        type: int64
+        column: order_item_id
+        nullable: true
+      - name: code
+        type: string
+        column: code
+        maxLength: 16
+    relationships:
+      - name: order
+        relatedEntity: Order
+        cardinality: many-to-one
+        join: this.orderId = Order.id
+        reverseName: statuses
+        foreignKey: order_id
+      - name: orderItem
+        relatedEntity: OrderItem
+        cardinality: many-to-one
+        join: this.orderItemId = OrderItem.id
+        reverseName: statuses
+        foreignKey: order_item_id
+    indices:
+      - name: order_status_pk
+        attributes: [id]
+        unique: true
+      - name: order_status_order_id
+        attributes: [orderId]
+        unique: false

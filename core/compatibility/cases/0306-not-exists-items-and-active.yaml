@@ -1,0 +1,20 @@
+# notExists(Order.items) AND active = true: a navigation filter composed with a
+# scalar predicate via `and`. Orders with no items are 3, 4, 5; of those only
+# order 4 is active, so the result is {4}. This pins that a navigation node
+# composes inside the boolean algebra exactly like an atomic predicate, and that
+# the EXISTS semi-join's correlation binds come before the trailing scalar bind.
+model: models/orders.yaml
+tags: [m4, notExists, boolean, relationship]
+operation:
+  and:
+    operands:
+      - notExists:
+          rel: Order.items
+      - eq: { attr: Order.active, value: true }
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where not exists (select 1 from order_item t1 where t1.order_id = t0.id) and t0.active = ?
+binds: [true]
+referenceSql: select id, name from orders where id not in (select order_id from order_item) and active = true
+expectedRows:
+  - { id: 4, name: Margaret }
+roundTrips: 1

@@ -1,0 +1,19 @@
+# exists(Order.items -> OrderItem.quantity >= 4): orders with a high-quantity
+# line item. The inner range predicate resolves against the RELATED entity
+# (alias t1). Item 21 (qty 4, order 2) and item 422 (qty 5, order 42) qualify, so
+# the result is orders {2, 42}.
+model: models/orders.yaml
+tags: [m4, exists, relationship]
+operation:
+  exists:
+    rel: Order.items
+    op:
+      greaterThanEquals: { attr: OrderItem.quantity, value: 4 }
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.quantity >= ?)
+binds: [4]
+referenceSql: select id, name from orders where id in (select order_id from order_item where quantity >= 4)
+expectedRows:
+  - { id: 2, name: Linus }
+  - { id: 42, name: Grace }
+roundTrips: 1

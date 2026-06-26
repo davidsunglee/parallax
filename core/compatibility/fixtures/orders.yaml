@@ -1,13 +1,19 @@
-# Fixture rows for the Order model (models/orders.yaml).
+# Fixture rows for the Orders model (models/orders.yaml).
 #
 # Keyed by class name. Each row is a map of attribute-name -> value. The harness
 # data loader resolves attribute names to columns via the descriptor, so fixture
 # rows speak the metamodel's vocabulary (attribute names), not raw column names.
 #
-# The dataset is deliberately small but varied — distinct qty/price bands, a NULL
-# sku, mixed case names, and `%`/`_` literals in a sku — so each Phase 2 operator
-# (range, null, string incl. wildcard-escape and case-insensitive, membership,
-# boolean/group, directives) has unambiguous expected rows.
+# The Order dataset is deliberately small but varied — distinct qty/price bands, a
+# NULL sku, mixed case names, and `%`/`_` literals in a sku — so each Phase 2
+# operator (range, null, string incl. wildcard-escape and case-insensitive,
+# membership, boolean/group, directives) has unambiguous expected rows. These
+# Order rows are UNCHANGED from Phase 2 so every Phase 1/2 case keeps passing.
+#
+# Phase 3 adds OrderItem and OrderStatus rows so relationship navigation and deep
+# fetch have a graph to traverse. The shape is chosen so the relationships fan
+# out unevenly (some orders have items, some don't; some items have statuses,
+# some don't), which makes navigate / exists / deep-fetch results discriminating.
 Order:
   - id: 1
     name: Ada
@@ -45,3 +51,63 @@ Order:
     qty: 30
     price: 99.99
     active: true
+
+# Line items. Orders 1, 2, and 42 have items; orders 3, 4, 5 have none.
+OrderItem:
+  - id: 11
+    orderId: 1
+    sku: A-100
+    quantity: 2
+  - id: 12
+    orderId: 1
+    sku: B-200
+    quantity: 1
+  - id: 21
+    orderId: 2
+    sku: A-300
+    quantity: 4
+  - id: 421
+    orderId: 42
+    sku: A-999
+    quantity: 3
+  - id: 422
+    orderId: 42
+    sku: B-200
+    quantity: 5
+
+# Status events. Rows with a NULL orderItemId are ORDER-level statuses (reached
+# via Order.statuses); rows with an orderItemId set are ITEM-level statuses
+# (reached via the multi-hop Order.items -> OrderItem.statuses). This dual role
+# lets one entity exercise both a to-many off the root and the second hop of the
+# 1 -> N -> N deep fetch.
+OrderStatus:
+  # order-level
+  - id: 101
+    orderId: 1
+    orderItemId: null
+    code: NEW
+  - id: 102
+    orderId: 2
+    orderItemId: null
+    code: SHIPPED
+  - id: 142
+    orderId: 42
+    orderItemId: null
+    code: NEW
+  # item-level (multi-hop grandchildren)
+  - id: 201
+    orderId: 1
+    orderItemId: 11
+    code: PICKED
+  - id: 202
+    orderId: 1
+    orderItemId: 11
+    code: PACKED
+  - id: 203
+    orderId: 1
+    orderItemId: 12
+    code: PICKED
+  - id: 204
+    orderId: 42
+    orderItemId: 421
+    code: PICKED

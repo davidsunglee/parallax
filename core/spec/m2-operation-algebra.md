@@ -151,15 +151,53 @@ Directives wrap an inner operation rather than filtering:
 | `limit` | `{ "limit": { "operand", "count" } }` | cap the row count |
 | `distinct` | `{ "distinct": { "operand" } }` | deduplicate rows |
 
-`deepFetch` (eager relationship fetch) is introduced with relationships in a
-later phase.
+## Relationship algebra
+
+Relationships (M1) are traversed **by name** — never as a user-written join. A
+navigation node references a relationship as `Class.relationship` and (for the
+filter forms) carries an optional inner operation constraining the related
+entity. These nodes lower to **correlated semi-joins** so a to-many traversal
+never multiplies the queried entity's rows (M3, M4).
+
+### Navigation filters
+
+| Operation | Encoding | Meaning |
+|---|---|---|
+| `navigate` | `{ "navigate": { "rel", "op"? } }` | filter the queried entity by traversing `rel`; `op` (optional) constrains the related entity |
+| `exists` | `{ "exists": { "rel", "op"? } }` | the queried entity has ≥1 related row (optionally matching `op`) |
+| `notExists` | `{ "notExists": { "rel", "op"? } }` | the queried entity has no related row (optionally matching `op`) |
+
+`rel` is a relationship reference of the form `Class.relationship`. `navigate`
+and `exists` are the same correlated-`EXISTS` lowering (a navigation filter *is*
+a positive existence check); `notExists` is the negated form. With no `op`,
+`exists`/`notExists` are pure existence/absence checks. The inner `op` is a
+normal operation tree resolved **against the related entity's attributes**
+(`OrderItem.sku`, …), so any predicate from the single-entity algebra composes
+inside a navigation.
+
+### `deepFetch` directive
+
+`deepFetch` is an eager-fetch **directive**, not a predicate: it shapes the
+result into an **object graph** rather than a flat row set.
+
+| Operation | Encoding | Effect |
+|---|---|---|
+| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ [rel, …], … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
+
+Each `path` is an ordered list of relationship references naming a chain to
+fetch — one hop (`["Order.items"]`) or multi-hop
+(`["Order.items", "OrderItem.statuses"]`). The normative guarantee is **one SQL
+statement per relationship level** (N+1 elimination): the root query plus one
+statement per distinct relationship hop, regardless of how many parent rows fan
+out. Paths sharing a prefix fetch the shared hop **once**. This is specified in
+full in [M4](m4-relationships-deepfetch.md) and proven by the round-trip-count
+layer of the compatibility harness (M12).
 
 ## Forward map of the rest of the algebra
 
 For orientation, later phases fill in:
 
-- Relationship: `navigate(rel) → predicate`, `exists`, `notExists`, the
-  `in(subquery)` membership form, and the `deepFetch` directive.
+- Membership: the `in(subquery)` form (a navigation-backed sub-operation).
 - Temporal (M7): `asOf`, `asOfRange`, `history`.
 - Aggregate (M2 sub-area): `sum`/`avg`/`count`/`min`/`max`/`stdDev*`/`variance*`,
   `groupBy`, and having comparators.

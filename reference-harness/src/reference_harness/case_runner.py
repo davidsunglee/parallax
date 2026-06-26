@@ -7,9 +7,13 @@ Per case, against a freshly-provisioned database selected via the provider seam:
 2. **Triple equivalence** — ``exec(goldenSql[dialect]) == exec(referenceSql) ==
    expectedRows`` (the ``referenceSql`` term only when present).
 3. **Normalization determinism** — ``normalize(goldenSql[dialect]) ==
-   goldenSql[dialect]``.
+   goldenSql[dialect]`` (per statement, for multi-statement cases).
 4. **Serde round-trip** — ``serialize(deserialize(x)) == x`` for BOTH the
    operation encoding AND the model descriptor, in BOTH JSON and YAML.
+5. **Round-trip-count consistency** (Phase 3) — for relationship / deep-fetch
+   cases the number of golden SQL statements equals the declared ``roundTrips``,
+   each level executes (child levels keyed by the parents gathered from the
+   previous level), and the assembled object graph equals ``expectedGraph``.
 
 It deliberately **never compiles the operation to SQL** — that is the job of a
 real implementation, graded against the golden SQL.
@@ -17,11 +21,12 @@ real implementation, graded against the golden SQL.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any
 
 from . import serde
-from .case import Case
+from .case import Case, Entity, Model
 from .data_loader import load_model
 from .ddl_builder import ddl_for
 from .providers import DatabaseProvider
@@ -51,14 +56,13 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     return {key: _coerce_scalar(value) for key, value in row.items()}
 
 
+def _row_key(row: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+    return tuple(sorted(_normalize_row(row).items()))
+
+
 def _rows_equal(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> bool:
     """Order-insensitive multiset comparison of result rows."""
-    def key(rows: list[dict[str, Any]]) -> list[tuple[tuple[str, Any], ...]]:
-        return sorted(
-            tuple(sorted(_normalize_row(r).items())) for r in rows
-        )
-
-    return key(left) == key(right)
+    return sorted(_row_key(r) for r in left) == sorted(_row_key(r) for r in right)
 
 
 def _assert_schema(case: Case) -> None:
@@ -72,14 +76,17 @@ def _assert_schema(case: Case) -> None:
 
 
 def _assert_normalization(case: Case, dialect: str) -> None:
-    golden = case.golden_sql[dialect]
-    canonical = normalize(golden, dialect)
-    if canonical != golden:
-        raise CaseFailure(
-            f"{case.path.name}: goldenSql.{dialect} is not canonical.\n"
-            f"  stored:     {golden!r}\n"
-            f"  normalized: {canonical!r}"
-        )
+    for index, statement in enumerate(case.golden_statements(dialect)):
+        canonical = normalize(statement, dialect)
+        if canonical != statement:
+            where = f"goldenSql.{dialect}"
+            if len(case.golden_statements(dialect)) > 1:
+                where += f"[{index}]"
+            raise CaseFailure(
+                f"{case.path.name}: {where} is not canonical.\n"
+                f"  stored:     {statement!r}\n"
+                f"  normalized: {canonical!r}"
+            )
 
 
 def _assert_serde(case: Case) -> None:
@@ -88,15 +95,142 @@ def _assert_serde(case: Case) -> None:
     serde.assert_roundtrip(case.model.descriptor)
 
 
-def _assert_triple_equivalence(case: Case, db: DatabaseProvider) -> None:
-    dialect = db.dialect
-    golden = case.golden_sql[dialect]
+def _assert_round_trip_count(case: Case, dialect: str) -> None:
+    statements = case.golden_statements(dialect)
+    if len(statements) != case.round_trips:
+        raise CaseFailure(
+            f"{case.path.name}: goldenSql.{dialect} has {len(statements)} "
+            f"statement(s) but roundTrips is {case.round_trips}. The statement "
+            f"count MUST equal the declared round-trip count."
+        )
 
+
+# --- relationship / deep-fetch resolution -----------------------------------
+
+_JOIN_RE = re.compile(
+    r"^\s*this\.(?P<this>[A-Za-z][A-Za-z0-9]*)\s*=\s*"
+    r"(?P<entity>[A-Za-z][A-Za-z0-9]*)\.(?P<other>[A-Za-z][A-Za-z0-9]*)\s*$"
+)
+
+
+def _join_endpoints(relationship: dict[str, Any]) -> tuple[str, str]:
+    """Return ``(this_attr, related_attr)`` from a ``this.X = Entity.Y`` join."""
+    match = _JOIN_RE.match(relationship["join"])
+    if not match:
+        raise CaseFailure(f"unparseable relationship join: {relationship['join']!r}")
+    return match.group("this"), match.group("other")
+
+
+def _column_of(entity: Entity, attr_name: str) -> str:
+    return entity.attribute_by_name(attr_name)["column"]
+
+
+def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]]:
+    """Resolve ``Class.relationship`` to its owning entity + relationship def."""
+    class_name, rel_name = rel_ref.split(".", 1)
+    entity = model.entity(class_name)
+    return entity, entity.relationship_by_name(rel_name)
+
+
+def _deepfetch_paths(case: Case) -> list[list[str]]:
+    return case.operation["deepFetch"]["paths"]
+
+
+def _deepfetch_root_operand(case: Case) -> dict[str, Any]:
+    return case.operation["deepFetch"]["operand"]
+
+
+def _is_deep_fetch(case: Case) -> bool:
+    return "deepFetch" in case.operation
+
+
+def _deepfetch_root_entity(case: Case) -> Entity:
+    """The entity the deep-fetch root query targets.
+
+    It is the owning class of the first relationship in the first declared path
+    (every path starts at the queried entity), so a deep fetch may be rooted at
+    any entity in a multi-entity model, not just the descriptor's first one.
+    """
+    first_rel = _deepfetch_paths(case)[0][0]
+    root_class = first_rel.split(".", 1)[0]
+    return case.model.entity(root_class)
+
+
+class _FetchStep:
+    """One relationship hop = one golden statement (after the root)."""
+
+    def __init__(
+        self,
+        rel_ref: str,
+        parent_entity: Entity,
+        child_entity: Entity,
+        parent_attr: str,
+        child_attr: str,
+        cardinality: str,
+    ) -> None:
+        self.rel_ref = rel_ref
+        self.rel_name = rel_ref.split(".", 1)[1]
+        self.parent_entity = parent_entity
+        self.child_entity = child_entity
+        self.parent_attr = parent_attr
+        self.child_attr = child_attr
+        self.cardinality = cardinality
+
+    @property
+    def to_many(self) -> bool:
+        return self.cardinality in ("one-to-many", "many-to-many")
+
+
+def _fetch_steps(case: Case) -> list[_FetchStep]:
+    """Ordered, de-duplicated relationship hops for a deep fetch.
+
+    Each distinct relationship across all paths is exactly one statement (one
+    query per relationship level — the N+1-eliminating contract). Paths that
+    share a prefix (e.g. ``[Order.items]`` and ``[Order.items, OrderItem.statuses]``)
+    therefore fetch ``Order.items`` once, not twice.
+    """
+    model = case.model
+    steps: list[_FetchStep] = []
+    seen: set[str] = set()
+    for path in _deepfetch_paths(case):
+        for rel_ref in path:
+            if rel_ref in seen:
+                continue
+            seen.add(rel_ref)
+            parent_entity, relationship = _resolve_rel_ref(model, rel_ref)
+            child_entity = model.entity(relationship["relatedEntity"])
+            this_attr, other_attr = _join_endpoints(relationship)
+            steps.append(
+                _FetchStep(
+                    rel_ref=rel_ref,
+                    parent_entity=parent_entity,
+                    child_entity=child_entity,
+                    parent_attr=this_attr,
+                    child_attr=other_attr,
+                    cardinality=relationship["cardinality"],
+                )
+            )
+    return steps
+
+
+# --- assertions -------------------------------------------------------------
+
+
+def _query_rows(db: DatabaseProvider, sql: str, binds: list[Any]) -> list[dict[str, Any]]:
+    return db.query(sql, binds) if binds else db.query(sql)
+
+
+def _provision(case: Case, db: DatabaseProvider) -> None:
     db.reset()
-    db.apply_ddl(ddl_for(case.model, dialect))
+    db.apply_ddl(ddl_for(case.model, db.dialect))
     load_model(case.model, db)
 
-    golden_rows = db.query(golden, case.binds)
+
+def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
+    dialect = db.dialect
+    (golden,) = case.golden_statements(dialect)
+
+    golden_rows = _query_rows(db, golden, case.binds)
     expected = case.expected_rows
 
     if not _rows_equal(golden_rows, expected):
@@ -116,6 +250,197 @@ def _assert_triple_equivalence(case: Case, db: DatabaseProvider) -> None:
             )
 
 
+def _binds_for_statement(case: Case, index: int) -> list[Any]:
+    """The authored binds for statement *index* of a multi-statement case.
+
+    ``binds`` for a multi-statement case is a list-of-lists (one per statement).
+    For a single flat list (single-statement case) this is never called.
+    """
+    raw = case.binds
+    if raw and isinstance(raw[0], list):
+        return raw[index] if index < len(raw) else []
+    return raw if index == 0 else []
+
+
+def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
+    """Execute each level, assemble the object graph, compare to expectedGraph.
+
+    The contract proven here is N+1 elimination: the root plus one statement per
+    relationship level (never one-per-parent). Each child level is executed once,
+    keyed by the DISTINCT parent keys gathered from the previous level, and the
+    children are fanned back out in memory.
+    """
+    dialect = db.dialect
+    statements = case.golden_statements(dialect)
+    steps = _fetch_steps(case)
+
+    if len(statements) != 1 + len(steps):
+        raise CaseFailure(
+            f"{case.path.name}: goldenSql.{dialect} has {len(statements)} "
+            f"statement(s) but the deep fetch needs {1 + len(steps)} "
+            f"(1 root + {len(steps)} relationship level(s))."
+        )
+
+    root_entity = _deepfetch_root_entity(case)
+
+    # Level 0: the root query.
+    root_binds = _binds_for_statement(case, 0)
+    root_rows = _query_rows(db, statements[0], root_binds)
+
+    # rows_by_entity[entity_name] -> list of result-rows fetched for that entity.
+    rows_by_entity: dict[str, list[dict[str, Any]]] = {root_entity.name: root_rows}
+
+    # Execute each relationship level once, keyed by gathered parent keys.
+    children_by_step: dict[str, dict[Any, list[dict[str, Any]]]] = {}
+    for index, step in enumerate(steps, start=1):
+        parents = rows_by_entity.get(step.parent_entity.name, [])
+        parent_col = _column_of(step.parent_entity, step.parent_attr)
+        parent_keys = sorted(
+            {_coerce_scalar(p[parent_col]) for p in parents if p.get(parent_col) is not None}
+        )
+
+        authored = [_coerce_scalar(b) for b in _binds_for_statement(case, index)]
+        if sorted(authored) != parent_keys:
+            raise CaseFailure(
+                f"{case.path.name}: goldenSql.{dialect} level {index} "
+                f"({step.rel_ref}) authored binds {authored!r} != gathered parent "
+                f"keys {parent_keys!r}. The child level MUST be keyed by exactly "
+                f"the parents from the previous level (the N+1-eliminating IN list)."
+            )
+
+        child_rows = _query_rows(db, statements[index], parent_keys) if parent_keys else []
+        rows_by_entity[step.child_entity.name] = child_rows
+
+        child_col = _column_of(step.child_entity, step.child_attr)
+        bucket: dict[Any, list[dict[str, Any]]] = {}
+        for row in child_rows:
+            bucket.setdefault(_coerce_scalar(row[child_col]), []).append(row)
+        children_by_step[step.rel_ref] = bucket
+
+    # Assemble the graph: attach each child set under its relationship name on
+    # the parent rows, following the declared paths.
+    assembled = _assemble_graph(case, steps, rows_by_entity, children_by_step)
+
+    expected = case.expected_graph or {}
+    if not _graphs_equal(assembled, expected):
+        raise CaseFailure(
+            f"{case.path.name}: assembled graph != expectedGraph.\n"
+            f"  assembled: {assembled!r}\n"
+            f"  expected:  {expected!r}"
+        )
+
+    # referenceSql (a single naive statement) is the independent oracle for the
+    # ROOT row set of the deep fetch.
+    if case.reference_sql is not None:
+        reference_rows = db.query(case.reference_sql)
+        root_projection = [_project_like(r, root_rows) for r in reference_rows]
+        if not _rows_equal(root_projection, root_rows):
+            raise CaseFailure(
+                f"{case.path.name}: referenceSql root rows != goldenSql root rows.\n"
+                f"  reference: {reference_rows!r}\n"
+                f"  golden:    {root_rows!r}"
+            )
+
+
+def _project_like(row: dict[str, Any], template_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep only the columns the golden root projection carries (oracle compare)."""
+    if not template_rows:
+        return row
+    keep = set(template_rows[0])
+    return {k: v for k, v in row.items() if k in keep}
+
+
+def _assemble_graph(
+    case: Case,
+    steps: list[_FetchStep],
+    rows_by_entity: dict[str, list[dict[str, Any]]],
+    children_by_step: dict[str, dict[Any, list[dict[str, Any]]]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build the root-keyed object graph following the deep-fetch paths.
+
+    Each path is walked hop by hop; at each hop the child rows for a given parent
+    are attached under the relationship name (a list for to-many, a single object
+    or ``None`` for to-one).
+    """
+    root_entity = _deepfetch_root_entity(case)
+    step_by_ref = {step.rel_ref: step for step in steps}
+
+    # Build per-entity row registries keyed by primary key so a shared hop
+    # (e.g. Order.items consumed by two paths) reuses the same child objects;
+    # nodes are keyed by (entity, pk) identity.
+    def pk_attr(entity: Entity) -> str:
+        for attribute in entity.attributes:
+            if attribute.get("primaryKey"):
+                return attribute["name"]
+        return entity.attributes[0]["name"]
+
+    # node registry: (entity_name, pk_value) -> assembled node (dict)
+    registry: dict[tuple[str, Any], dict[str, Any]] = {}
+
+    def node_for(entity: Entity, raw_row: dict[str, Any]) -> dict[str, Any]:
+        pk_col = _column_of(entity, pk_attr(entity))
+        key = (entity.name, _coerce_scalar(raw_row[pk_col]))
+        if key not in registry:
+            registry[key] = _normalize_row(raw_row)
+        return registry[key]
+
+    root_nodes = [node_for(root_entity, r) for r in rows_by_entity[root_entity.name]]
+
+    for path in _deepfetch_paths(case):
+        parent_entities = [root_entity]
+        parent_nodes_levels: list[list[dict[str, Any]]] = [root_nodes]
+        for rel_ref in path:
+            step = step_by_ref[rel_ref]
+            parent_entity = parent_entities[-1]
+            parent_nodes = parent_nodes_levels[-1]
+            parent_col = _column_of(parent_entity, step.parent_attr)
+            bucket = children_by_step[rel_ref]
+
+            next_nodes: list[dict[str, Any]] = []
+            for parent_node in parent_nodes:
+                # parent_node holds normalized columns; the join key is parent_col.
+                parent_key = parent_node.get(parent_col)
+                matched = bucket.get(parent_key, [])
+                child_nodes = [node_for(step.child_entity, c) for c in matched]
+                if step.to_many:
+                    parent_node[step.rel_name] = child_nodes
+                else:
+                    parent_node[step.rel_name] = child_nodes[0] if child_nodes else None
+                next_nodes.extend(child_nodes)
+            parent_entities.append(step.child_entity)
+            parent_nodes_levels.append(next_nodes)
+
+    return {root_entity.name: root_nodes}
+
+
+def _graphs_equal(
+    left: dict[str, list[dict[str, Any]]],
+    right: dict[str, list[dict[str, Any]]],
+) -> bool:
+    return serde.canonical(_sort_graph(left)) == serde.canonical(_sort_graph(right))
+
+
+def _sort_graph(graph: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """Recursively normalize a graph for order-insensitive comparison.
+
+    Lists of objects are sorted by a stable serialization of their contents, so
+    a to-many relationship's child order does not affect equality.
+    """
+
+    def norm(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: norm(value[k]) for k in value}
+        if isinstance(value, list):
+            normed = [norm(v) for v in value]
+            return sorted(normed, key=lambda v: serde.serialize(serde.canonical(v)))
+        return _coerce_scalar(value)
+
+    return {key: norm(value) for key, value in graph.items()}
+
+
+# --- entry point ------------------------------------------------------------
+
+
 def run_case(case: Case, db: DatabaseProvider) -> None:
     """Run all available assertion layers for *case* against *db*."""
     dialect = db.dialect
@@ -129,4 +454,10 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     _assert_schema(case)
     _assert_normalization(case, dialect)  # layer 3
     _assert_serde(case)  # layer 4
-    _assert_triple_equivalence(case, db)  # layer 2
+    _assert_round_trip_count(case, dialect)  # layer 5 (count)
+
+    _provision(case, db)
+    if _is_deep_fetch(case):
+        _assert_deep_fetch(case, db)  # layer 2 + 5 (graph)
+    else:
+        _assert_flat_equivalence(case, db)  # layer 2

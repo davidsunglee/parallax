@@ -2,12 +2,21 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/metamodel.schema.json",
   "title": "Parallax Model Descriptor (M1 metamodel)",
-  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator.",
+  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index, and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["entity"],
+  "oneOf": [
+    { "required": ["entity"] },
+    { "required": ["entities"] }
+  ],
   "properties": {
-    "entity": { "$ref": "#/$defs/entity" }
+    "entity": { "$ref": "#/$defs/entity" },
+    "entities": {
+      "description": "Two or more entities mapped in one descriptor (so relationships can name sibling entities). Mutually exclusive with the single `entity` form.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/entity" }
+    }
   },
   "$defs": {
     "neutralType": {
@@ -45,6 +54,14 @@
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/attribute" }
+        },
+        "relationships": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relationship" }
+        },
+        "indices": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/index" }
         }
       }
     },
@@ -63,6 +80,73 @@
         "optimisticLocking": { "type": "boolean", "default": false },
         "pkGenerator": { "$ref": "#/$defs/pkGenerator" },
         "default": {}
+      }
+    },
+    "relationship": {
+      "description": "A navigable association. Joins are auto-derived from the navigation predicate, so a query never writes ON-conditions by hand.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "relatedEntity", "cardinality", "join"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "relatedEntity": {
+          "description": "Target entity name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "cardinality": {
+          "enum": ["one-to-one", "many-to-one", "one-to-many", "many-to-many"]
+        },
+        "join": {
+          "description": "Navigation predicate, e.g. 'this.id = OrderItem.orderId'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "reverseName": {
+          "description": "Optional reverse-relationship name on the related entity.",
+          "$ref": "#/$defs/identifier"
+        },
+        "dependent": {
+          "description": "True when the target is owned by this entity (participates in cascade, M5).",
+          "type": "boolean",
+          "default": false
+        },
+        "foreignKey": {
+          "description": "Optional foreign-key hint (column on the many side).",
+          "type": "string"
+        },
+        "orderBy": {
+          "description": "Optional ordering for a to-many relationship.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["attr"],
+            "properties": {
+              "attr": { "$ref": "#/$defs/identifier" },
+              "direction": { "enum": ["asc", "desc"], "default": "asc" }
+            }
+          }
+        }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "attributes"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "attributes": {
+          "description": "Ordered list of attribute names participating in the index.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "unique": {
+          "description": "True for a unique index (enables the cache fast-path).",
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "pkGenerator": {

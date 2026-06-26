@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from .case import Model
+from .case import Entity, Model
 
 # M0 neutral type -> Postgres column type.
 _POSTGRES_BASE_TYPES = {
@@ -49,11 +49,10 @@ def _column_type(neutral_type: str, max_length: int | None, dialect: str) -> str
     raise ValueError(f"no DDL type mapping for dialect {dialect!r}")
 
 
-def ddl_for(model: Model, dialect: str) -> list[str]:
-    """Return the ordered list of DDL statements that create *model*'s table."""
+def _create_table(entity: Entity, dialect: str) -> str:
     columns: list[str] = []
     pk_columns: list[str] = []
-    for attribute in model.attributes:
+    for attribute in entity.attributes:
         column_type = _column_type(
             attribute["type"], attribute.get("maxLength"), dialect
         )
@@ -68,10 +67,20 @@ def ddl_for(model: Model, dialect: str) -> list[str]:
         columns.append(f"primary key ({', '.join(pk_columns)})")
 
     column_clause = ",\n  ".join(columns)
-    create = f"create table {model.table} (\n  {column_clause}\n)"
-    return [create]
+    return f"create table {entity.table} (\n  {column_clause}\n)"
 
 
-def column_order(model: Model) -> Sequence[str]:
-    """The descriptor's column order (matches DDL + load column order)."""
-    return [attribute["column"] for attribute in model.attributes]
+def ddl_for(model: Model, dialect: str) -> list[str]:
+    """Return the ordered DDL statements that create every entity's table.
+
+    One ``CREATE TABLE`` per declared entity (a multi-entity descriptor yields
+    several). Foreign keys are intentionally omitted: relationships are a query
+    concern (navigation/join derivation), and leaving FK constraints out keeps
+    fixture-load order unconstrained.
+    """
+    return [_create_table(entity, dialect) for entity in model.entities]
+
+
+def column_order(entity: Entity) -> Sequence[str]:
+    """The descriptor's column order for *entity* (matches DDL + load order)."""
+    return [attribute["column"] for attribute in entity.attributes]

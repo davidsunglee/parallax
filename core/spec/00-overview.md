@@ -26,12 +26,14 @@ module-dependency graph** ([`dependency-graph.md`](dependency-graph.md)).
 | M1 | [`m1-metamodel.md`](m1-metamodel.md) | Domain model & metamodel |
 | M2 | [`m2-operation-algebra.md`](m2-operation-algebra.md) | Query, operation & aggregation algebra |
 | M3 | [`m3-sql-contract.md`](m3-sql-contract.md) | SQL generation & equivalence contract |
+| M4 | [`m4-relationships-deepfetch.md`](m4-relationships-deepfetch.md) | Relationships & deep fetch |
+| M5 | [`m5-lists-bulk.md`](m5-lists-bulk.md) | Lists & bulk/set operations |
 | M11 | [`m11-dialect-seam.md`](m11-dialect-seam.md) | Database seam & portability |
 | M12 | [`m12-compatibility-harness.md`](m12-compatibility-harness.md) | Compatibility harness & test-double integration |
 
-Modules `M4`, `M5`, `M7`, `M8`, `M9`, `M10`, `M13`, and cross-process coherence
-are introduced in later authoring phases; the dependency graph already names
-them so the layering is fixed from the start.
+Modules `M7`, `M8`, `M9`, `M10`, `M13`, and cross-process coherence are
+introduced in later authoring phases; the dependency graph already names them so
+the layering is fixed from the start.
 
 ## Normative vs. non-normative boundary (DQ3)
 
