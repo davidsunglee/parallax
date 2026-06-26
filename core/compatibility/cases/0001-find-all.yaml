@@ -1,0 +1,17 @@
+# Walking-skeleton case: all() — no WHERE clause.
+#
+# `all` is the identity of the operation algebra; it lowers to a SELECT over the
+# single aliased table with no predicate. Trivial single-table case, so
+# referenceSql is omitted (expectedRows is verifiable by eye).
+model: models/orders.yaml
+tags: [m2, all]
+operation:
+  all: {}
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0
+binds: []
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 2, name: Linus }
+  - { id: 42, name: Grace }
+roundTrips: 1

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/schemas/operation.schema.json",
+  "title": "Parallax Operation Algebra (M2)",
+  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers all / none / eq.",
+  "$ref": "#/$defs/operation",
+  "$defs": {
+    "attributeRef": {
+      "description": "A metamodel attribute reference of the form Class.attribute.",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+    },
+    "literal": {
+      "description": "A scalar literal value usable as a bind.",
+      "type": ["string", "number", "boolean", "null"]
+    },
+    "operation": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "oneOf": [
+        { "$ref": "#/$defs/all" },
+        { "$ref": "#/$defs/none" },
+        { "$ref": "#/$defs/eq" }
+      ]
+    },
+    "all": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["all"],
+      "properties": {
+        "all": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      }
+    },
+    "none": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["none"],
+      "properties": {
+        "none": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      }
+    },
+    "eq": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eq"],
+      "properties": {
+        "eq": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["attr", "value"],
+          "properties": {
+            "attr": { "$ref": "#/$defs/attributeRef" },
+            "value": { "$ref": "#/$defs/literal" }
+          }
+        }
+      }
+    }
+  }
+}
