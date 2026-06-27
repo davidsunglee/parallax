@@ -305,6 +305,22 @@ milestone — so its golden SQL is just the operand's predicate; its projection
 **SHOULD** include the interval columns so the caller sees each milestone's
 bounds (the current row's `out_z` reads back as `infinity`).
 
+`asOfRange(operand, asOfAttr, from, to)` reads the dimension as **edge points**
+rather than a single pin: it returns every milestone whose `[in_z, out_z)`
+interval **overlaps** the half-open window `[from, to)`. The canonical overlap
+predicate compares the milestone's start to the window **end** and the
+milestone's end to the window **start**, so the two binds are the window bounds
+in `[to, from]` order:
+
+| Read | Canonical predicate fragment | Binds |
+|---|---|---|
+| `asOfRange(…, from, to)` | `t0.in_z < ? and t0.out_z > ?` | `[to, from]` |
+
+Unlike a single `asOf` pin (one milestone per key) or `history` (no predicate at
+all), the range can return **several** milestones per key — every one the window
+straddles — while still excluding milestones that closed before, or opened
+after, it.
+
 The independent `referenceSql` oracle for a temporal read spells the infinity /
 instant literals inline (`out_z = 'infinity'::timestamptz`) — a different
 formulation the harness asserts returns the same rows (M12).
