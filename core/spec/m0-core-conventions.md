@@ -53,6 +53,14 @@ represented by the **database's native infinity**, not a `9999-12-01` sentinel
 and not `NULL`. The metamodel declares that a temporal dimension *has* an
 infinity sentinel; the **M11 dialect seam owns the concrete representation**
 (Postgres → native `'infinity'::timestamptz`; a future dialect lacking native
-infinity maps to a documented max-sentinel). The concrete representation and the
-full temporal model are specified in a later phase (M7); they are named here only
-to fix the convention.
+infinity maps to a documented max-sentinel — earmarked for the MariaDB phase).
+The full temporal interval model and milestone-chaining writes are M7.
+
+Benefits of native infinity over a `9999` sentinel or `NULL`: correct
+ordering/comparison, no Y9999 cliff, no `NULL`-in-predicate/index complications,
+and a clear current-row predicate (`to = infinity`).
+
+**As-of business date is a UTC `timestamp`.** Both temporal axes — processing and
+business — use the `timestamp` (instant) type, UTC-normalized like every other
+instant, so interval math is uniform across axes. A date-granular business date
+is a `timestamp` at UTC midnight by convention.

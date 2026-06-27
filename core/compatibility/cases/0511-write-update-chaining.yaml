@@ -1,0 +1,49 @@
+# Write sequence: UPDATE via milestone chaining (the signature audit-only write).
+#
+# An audit-only update NEVER mutates a value in place. It (1) closes the current
+# row by setting its out_z to the transaction instant, then (2) chains a NEW
+# current row [txInstant, infinity) carrying the new value. The prior value is
+# preserved as a superseded milestone — that is the audit trail.
+#
+# The sequence (starting from an empty table, so the case is self-contained):
+#   step 1 insert : open [2024-01-01, infinity) value 100.00  (1 statement)
+#   step 2 update : close the current row (out_z = 2024-06-01) and chain a new
+#                   current row [2024-06-01, infinity) value 150.00 (2 statements)
+#
+# Resulting state: the superseded 100.00 row (out_z finite) AND the current
+# 150.00 row (out_z = infinity). This mirrors research §6's audit-only chaining
+# (close old OUT_Z=txTime; insert new head). The close UPDATE is keyed by the
+# current-row predicate (bal_id AND out_z = infinity), never a blind in-place set.
+model: models/balance.yaml
+tags: [m7, m3, temporal mvp, write-sequence, update, audit-only]
+writeSequence:
+  - mutation: insert
+    entity: Balance
+    statements: 1
+    note: open the original current milestone [2024-01-01, infinity)
+  - mutation: update
+    entity: Balance
+    statements: 2
+    note: close the current row, then chain a new current milestone with the new value
+goldenSql:
+  postgres:
+    - insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+    - update balance set out_z = ? where bal_id = ? and out_z = ?
+    - insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+binds:
+  - [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]
+  - ["2024-06-01T00:00:00+00:00", 1, infinity]
+  - [1, A, 150.00, "2024-06-01T00:00:00+00:00", infinity]
+roundTrips: 3
+expectedTableState:
+  balance:
+    - bal_id: 1
+      acct_num: A
+      val: 100.00
+      in_z: "2024-01-01T00:00:00+00:00"
+      out_z: "2024-06-01T00:00:00+00:00"
+    - bal_id: 1
+      acct_num: A
+      val: 150.00
+      in_z: "2024-06-01T00:00:00+00:00"
+      out_z: infinity

@@ -1,0 +1,21 @@
+# As-of-now read COMPOSED with a non-temporal predicate. The user predicate
+# (acctNum = 'A') and the auto-injected current-row predicate (out_z = infinity)
+# combine with `and`; the injected temporal term is appended after the user term.
+# As-of now, account A's current balance is the 150.00 milestone (id 1).
+model: models/balance.yaml
+tags: [m7, m3, temporal mvp, as-of, audit-only, composed]
+operation:
+  asOf:
+    operand:
+      eq:
+        attr: Balance.acctNum
+        value: A
+    asOfAttr: Balance.processingDate
+    date: now
+goldenSql:
+  postgres: select t0.bal_id, t0.val from balance t0 where t0.acct_num = ? and t0.out_z = ?
+binds: [A, infinity]
+referenceSql: select bal_id, val from balance where acct_num = 'A' and out_z = 'infinity'::timestamptz
+expectedRows:
+  - { bal_id: 1, val: 150.00 }
+roundTrips: 1
