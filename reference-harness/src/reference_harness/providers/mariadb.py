@@ -167,7 +167,8 @@ class MariaDbProvider:
         with self._conn.cursor() as cur:
             if binds:
                 cur.execute(
-                    _to_pymysql(sql), tuple(_to_db_bind(value) for value in binds)
+                    _to_pymysql(sql, escape_percent=True),
+                    tuple(_to_db_bind(value) for value in binds),
                 )
             else:
                 cur.execute(_to_pymysql(sql))
@@ -181,7 +182,8 @@ class MariaDbProvider:
         with self._conn.cursor() as cur:
             if binds:
                 affected = cur.execute(
-                    _to_pymysql(sql), tuple(_to_db_bind(value) for value in binds)
+                    _to_pymysql(sql, escape_percent=True),
+                    tuple(_to_db_bind(value) for value in binds),
                 )
             else:
                 affected = cur.execute(_to_pymysql(sql))
@@ -221,15 +223,15 @@ class MariaDbProvider:
             self._conn.close()
 
 
-def _to_pymysql(sql: str) -> str:
+def _to_pymysql(sql: str, *, escape_percent: bool = False) -> str:
     """Translate `?` positional placeholders to pymysql's `%s`.
 
     pymysql treats a literal `%` (e.g. a `like '%a%'` pattern in a naive
-    referenceSql) as a format token, so we also escape bare `%` that are not the
-    `%s` we just produced. The golden SQL uses `?` placeholders exclusively, so we
-    escape first, then expand the placeholders.
+    referenceSql) as a format token only when an args tuple is supplied. Escape
+    literal percent signs on that path, then expand the placeholders. Bindless
+    SQL must keep `%` unchanged because pymysql will not format it back.
     """
-    escaped = sql.replace("%", "%%")
+    escaped = sql.replace("%", "%%") if escape_percent else sql
     return escaped.replace("?", "%s")
 
 

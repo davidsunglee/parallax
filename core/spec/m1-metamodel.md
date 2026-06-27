@@ -176,11 +176,12 @@ descriptor declaring `strategy: table-per-class` **MUST** fail schema validation
 | `strategy` | `table-per-hierarchy` \| `table-per-leaf` (REQUIRED) |
 | `role` | `root` (owns / names the hierarchy) \| `subtype` (a leaf) (REQUIRED) |
 | `parent` | for a `subtype`: the entity it extends (REQUIRED for a subtype, FORBIDDEN for a root) |
-| `discriminator` | table-per-hierarchy only: `{ column }`, the column distinguishing leaves in the shared table |
-| `discriminatorValue` | table-per-hierarchy only: the discriminator value THIS entity's rows carry |
+| `discriminator` | table-per-hierarchy only, REQUIRED there and FORBIDDEN for table-per-leaf: `{ column }`, the column distinguishing leaves in the shared table |
+| `discriminatorValue` | table-per-hierarchy only, REQUIRED there and FORBIDDEN for table-per-leaf: the discriminator value THIS entity's rows carry |
 
 **Table-per-hierarchy.** The `root` and every `subtype` map to the **same
-table** and set their own `discriminatorValue`; a query for a subtype injects a
+table** and declare the shared `discriminator` column plus their own
+`discriminatorValue`; a query for a subtype injects a
 **discriminator-equality predicate** (`t0.<discriminator> = ?`), and a query
 across a family of subtypes injects a discriminator `in (?, …)`. The root query
 (no discriminator predicate) sees every row. M3 fixes the discriminator-filter

@@ -9,6 +9,7 @@ an implementation's would be.
 
 from __future__ import annotations
 
+import copy
 import re
 from collections.abc import Sequence
 
@@ -137,24 +138,81 @@ def _create_table(entity: Entity, dialect: str) -> str:
     return f"create table {entity.table} (\n  {column_clause}\n)"
 
 
+def _merge_by_column(items: Sequence[dict], key: str = "column") -> list[dict]:
+    """Return physical column definitions once, preserving first-seen order."""
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        column = item[key]
+        if column in seen:
+            continue
+        seen.add(column)
+        merged.append(copy.deepcopy(item))
+    return merged
+
+
+def _merge_by_name(items: Sequence[dict]) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        name = item["name"]
+        if name in seen:
+            continue
+        seen.add(name)
+        merged.append(copy.deepcopy(item))
+    return merged
+
+
+def _physical_table_entity(entities: Sequence[Entity]) -> Entity:
+    """Synthesize the physical table shape for entities sharing one table.
+
+    Table-per-hierarchy descriptors may put subtype-specific columns only on the
+    subtype entity. DDL is physical, so the shared table must contain the union of
+    all columns that any entity mapped to that table can load or query.
+    """
+    if len(entities) == 1:
+        return entities[0]
+
+    definition = copy.deepcopy(entities[0].definition)
+    definition["attributes"] = _merge_by_column(
+        [attribute for entity in entities for attribute in entity.attributes]
+    )
+    value_objects = _merge_by_column(
+        [value_object for entity in entities for value_object in entity.value_objects]
+    )
+    if value_objects:
+        definition["valueObjects"] = value_objects
+    else:
+        definition.pop("valueObjects", None)
+
+    as_of_attributes = _merge_by_name(
+        [as_of for entity in entities for as_of in entity.as_of_attributes]
+    )
+    if as_of_attributes:
+        definition["asOfAttributes"] = as_of_attributes
+    else:
+        definition.pop("asOfAttributes", None)
+
+    return Entity(definition=definition)
+
+
 def ddl_for(model: Model, dialect: str) -> list[str]:
     """Return the ordered DDL statements that create every entity's table.
 
     One ``CREATE TABLE`` per **distinct table** (a multi-entity descriptor yields
     several). A `table-per-hierarchy` inheritance model maps several entities to
-    ONE shared table (each declaring the same columns), so tables are emitted
-    once, keyed by name — the first entity declaring a table owns its DDL.
+    ONE shared table, so the emitted DDL is the union of every entity mapped to
+    that table rather than whichever entity appears first.
     Foreign keys are intentionally omitted: relationships are a query concern
     (navigation/join derivation), and leaving FK constraints out keeps
     fixture-load order unconstrained.
     """
     statements: list[str] = []
-    seen: set[str] = set()
+    by_table: dict[str, list[Entity]] = {}
     for entity in model.entities:
-        if entity.table in seen:
-            continue
-        seen.add(entity.table)
-        statements.append(_create_table(entity, dialect))
+        by_table.setdefault(entity.table, []).append(entity)
+    for entities in by_table.values():
+        statements.append(_create_table(_physical_table_entity(entities), dialect))
     return statements
 
 

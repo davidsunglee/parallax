@@ -931,9 +931,11 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
         for index, step in enumerate(case.coherence):
             node = nodes[step["node"]]
             statements = _coherence_step_statements(step, dialect)
-            binds = step.get("binds", [])
             if step["kind"] == "write":
-                for statement in statements:
+                for statement_index, statement in enumerate(statements):
+                    binds = _binds_for_list(
+                        step.get("binds", []), statement_index, len(statements)
+                    )
                     node.execute(statement, binds)
                 continue
 
@@ -944,7 +946,12 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
                     f"{case.path.name}: coherence[{index}] is a read step but "
                     f"lists no golden SQL for {dialect}."
                 )
-            rows = _query_rows(node, statements[0], binds)
+            rows: list[dict[str, Any]] = []
+            for statement_index, statement in enumerate(statements):
+                binds = _binds_for_list(
+                    step.get("binds", []), statement_index, len(statements)
+                )
+                rows = _query_rows(node, statement, binds)
             observe = step.get("observeRows")
             if observe is not None and not _rows_equal(rows, observe, tolerance):
                 raise CaseFailure(

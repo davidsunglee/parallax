@@ -127,11 +127,14 @@ def test_non_temporal_scalars_pass_through() -> None:
 
 
 def test_placeholder_translation_escapes_percent() -> None:
-    # `?` -> `%s`, and a literal `%` (a `like` pattern) is escaped so pymysql does
-    # not treat it as a format token.
+    # `?` -> `%s`. A literal `%` is escaped only when pymysql will receive an args
+    # tuple; bindless SQL must preserve the literal because no formatting runs.
     assert _to_pymysql("select t0.id from t0 where t0.id = ?") == (
         "select t0.id from t0 where t0.id = %s"
     )
     assert _to_pymysql("select id from t where sku like '%50%'") == (
+        "select id from t where sku like '%50%'"
+    )
+    assert _to_pymysql("select id from t where sku like '%50%'", escape_percent=True) == (
         "select id from t where sku like '%%50%%'"
     )
