@@ -1,0 +1,48 @@
+# Detached-update merge-back (M9): merging back a mutated detached copy UPDATES
+# the original in place.
+#
+# A persisted Account (id 1, Ada, balance 100.00) is detached — a deep copy
+# decoupled from the identity cache. The copy's balance is edited to 175.00 with
+# NO transaction open and NO SQL issued (`isModifiedSinceDetachment` is now true).
+# At merge-back the original is looked up by primary key, FOUND, and the changed
+# attributes are copied onto the live object, driving the ordinary buffered-write
+# machinery (M8): a single UPDATE of the original row.
+#
+# `loadFixtures: true` loads the model's fixtures FIRST (the original persisted
+# rows exist), then the merge-back UPDATE is applied on top — the half of the
+# write-sequence machinery the M9 update case needs (the M7 / M8 write-sequence
+# cases instead build their own state from an empty schema). The resulting table
+# state proves the contract: only Ada's row changed (balance 175.00, version
+# advanced to 2); Linus and Grace are untouched.
+#
+# The version is advanced in the same UPDATE (the M10 baseline: every successful
+# write moves the version forward) even though M9 alone does not require it — the
+# Account model carries the optimisticLocking version column from Phase 6.
+model: models/account.yaml
+tags: [m9, m3, detached, detached-update, write-sequence, lifecycle detach]
+loadFixtures: true
+writeSequence:
+  - mutation: update
+    entity: Account
+    statements: 1
+    note: merge-back of a mutated detached copy updates the original in place
+goldenSql:
+  postgres:
+    - update account set balance = ?, version = ? where id = ?
+binds:
+  - [175.00, 2, 1]
+roundTrips: 1
+expectedTableState:
+  account:
+    - id: 1
+      owner: Ada
+      balance: 175.00
+      version: 2
+    - id: 2
+      owner: Linus
+      balance: 250.00
+      version: 1
+    - id: 3
+      owner: Grace
+      balance: 10.00
+      version: 1
