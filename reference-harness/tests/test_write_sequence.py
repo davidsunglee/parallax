@@ -64,6 +64,18 @@ def test_temporal_ddl_primary_key_spans_the_as_of_from_column() -> None:
     assert "out_z timestamptz not null" in create
 
 
+def test_temporal_unique_index_matches_physical_primary_key() -> None:
+    entity = _balance_model().root_entity
+    unique_index = next(
+        index for index in entity.definition["indices"] if index["name"] == "balance_pk"
+    )
+    assert unique_index == {
+        "name": "balance_pk",
+        "attributes": ["id", "processingFrom"],
+        "unique": True,
+    }
+
+
 def test_balance_entity_is_unitemporal_processing() -> None:
     model = _balance_model()
     entity = model.root_entity

@@ -58,7 +58,7 @@ entity:
       default: now
   indices:
     - name: reservation_pk
-      attributes: [id]
+      attributes: [id, businessFrom]
       unique: true
     - name: reservation_room
       attributes: [room]

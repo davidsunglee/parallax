@@ -54,7 +54,7 @@ entity:
       default: now
   indices:
     - name: balance_pk
-      attributes: [id]
+      attributes: [id, processingFrom]
       unique: true
     - name: balance_acct
       attributes: [acctNum]
