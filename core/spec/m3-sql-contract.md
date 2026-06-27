@@ -53,6 +53,18 @@ per case (M12, layer 3).
 > A contributor who hand-writes non-canonical golden SQL fails this check
 > immediately, before any database is touched.
 
+The textual rules (2 lowercase, 3 whitespace, 5 clause order) are produced by
+re-rendering, so a violation simply changes the string. The structural rules are
+enforced by **rejection**, since re-rendering alone would pass a lowercase-but-
+non-canonical statement through unchanged: a **read** (`select`) whose table
+aliases are not `t0, t1, …` in first-appearance order, or whose columns are not
+alias-qualified (rule 1), and **any** statement carrying an inline literal where
+a `?` bind belongs (rule 4), is not canonical. Two literals are *not* parameters
+and remain canonical: the `1 = 0` `none`-identity and the `select 1` `EXISTS`
+probe. DML keeps its own canonical shape — an **unaliased** target table with
+**bare** columns (`update balance set out_z = ? where bal_id = ?`) — so rule 1
+applies to reads only.
+
 ## What is normative vs. dialect-local
 
 - **Normative:** the result (`expectedRows`) and the per-dialect golden SQL
