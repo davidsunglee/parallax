@@ -1,0 +1,367 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/schemas/conformance-adapter.schema.json",
+  "title": "Parallax Conformance Adapter Output",
+  "description": "JSON output emitted by a language implementation conformance adapter. The adapter is the M12-adjacent seam used by external runners to ask a concrete language implementation what it supports, what SQL it emits for a compatibility case, and what observations it produces when it runs a case.",
+  "oneOf": [
+    { "$ref": "#/$defs/describeOk" },
+    { "$ref": "#/$defs/compileOk" },
+    { "$ref": "#/$defs/runOk" },
+    { "$ref": "#/$defs/benchmarkOk" },
+    { "$ref": "#/$defs/nonOk" }
+  ],
+  "$defs": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1"
+    },
+    "command": {
+      "type": "string",
+      "enum": ["describe", "compile", "run", "benchmark"]
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "name", "version"],
+      "properties": {
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "dialect": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "casePath": {
+      "type": "string",
+      "pattern": "^(core/compatibility/cases/|cases/).+\\.ya?ml$"
+    },
+    "benchmarkPath": {
+      "type": "string",
+      "pattern": "^(core/compatibility/benchmarks/|benchmarks/).+\\.ya?ml$"
+    },
+    "caseShape": {
+      "type": "string",
+      "enum": ["read", "writeSequence", "scenario", "conflict", "coherence"]
+    },
+    "moduleTag": {
+      "type": "string",
+      "pattern": "^m[0-9]+$|^coherence$"
+    },
+    "caseShapeList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/caseShape" },
+      "uniqueItems": true
+    },
+    "commandList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/command" },
+      "uniqueItems": true
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "casePointer": {
+          "$ref": "#/$defs/jsonPointer"
+        },
+        "details": {}
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/diagnostic" }
+    },
+    "jsonPointer": {
+      "type": "string",
+      "pattern": "^($|/.*)$"
+    },
+    "bindValue": {
+      "description": "A JSON-serializable bind value. Objects and arrays are allowed for JSON/JSONB-like values.",
+      "type": ["string", "number", "boolean", "null", "object", "array"]
+    },
+    "binds": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/bindValue" }
+    },
+    "emission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["casePointer", "sql", "binds"],
+      "properties": {
+        "casePointer": {
+          "$ref": "#/$defs/jsonPointer"
+        },
+        "sql": {
+          "type": "string",
+          "minLength": 1
+        },
+        "binds": {
+          "$ref": "#/$defs/binds"
+        }
+      }
+    },
+    "emissions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/emission" }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "rows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/row" }
+    },
+    "identityCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "right", "same"],
+      "properties": {
+        "left": {
+          "$ref": "#/$defs/jsonPointer"
+        },
+        "right": {
+          "$ref": "#/$defs/jsonPointer"
+        },
+        "same": {
+          "type": "boolean"
+        },
+        "identity": {}
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roundTrips"],
+      "properties": {
+        "rows": {
+          "$ref": "#/$defs/rows"
+        },
+        "graph": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        },
+        "tableState": {
+          "type": ["object", "null"],
+          "additionalProperties": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/row" }
+          }
+        },
+        "affectedRows": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "roundTrips": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "identityChecks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identityCheck" }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["iterations", "p50Ms", "p95Ms", "roundTrips"],
+      "properties": {
+        "iterations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "p50Ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "p95Ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "roundTrips": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peakMemoryBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steadyMemoryBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rowCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "commonOk": {
+      "type": "object",
+      "required": ["schemaVersion", "command", "status", "adapter"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "command": { "$ref": "#/$defs/command" },
+        "status": { "const": "ok" },
+        "adapter": { "$ref": "#/$defs/adapter" }
+      }
+    },
+    "describeOk": {
+      "allOf": [
+        { "$ref": "#/$defs/commonOk" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "command", "status", "adapter", "capabilities"],
+          "properties": {
+            "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+            "command": { "const": "describe" },
+            "status": { "const": "ok" },
+            "adapter": { "$ref": "#/$defs/adapter" },
+            "capabilities": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["modules", "dialects", "caseShapes", "commands", "provisioning"],
+              "properties": {
+                "modules": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/moduleTag" },
+                  "uniqueItems": true
+                },
+                "dialects": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/dialect" },
+                  "uniqueItems": true
+                },
+                "caseShapes": {
+                  "$ref": "#/$defs/caseShapeList"
+                },
+                "commands": {
+                  "$ref": "#/$defs/commandList"
+                },
+                "provisioning": {
+                  "type": "string",
+                  "enum": ["external-url", "self-managed"]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "compileOk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "command",
+        "status",
+        "adapter",
+        "case",
+        "dialect",
+        "caseShape",
+        "emissions",
+        "roundTrips"
+      ],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "command": { "const": "compile" },
+        "status": { "const": "ok" },
+        "adapter": { "$ref": "#/$defs/adapter" },
+        "case": { "$ref": "#/$defs/casePath" },
+        "dialect": { "$ref": "#/$defs/dialect" },
+        "caseShape": { "$ref": "#/$defs/caseShape" },
+        "emissions": { "$ref": "#/$defs/emissions" },
+        "roundTrips": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "runOk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "command",
+        "status",
+        "adapter",
+        "case",
+        "dialect",
+        "caseShape",
+        "emissions",
+        "observations"
+      ],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "command": { "const": "run" },
+        "status": { "const": "ok" },
+        "adapter": { "$ref": "#/$defs/adapter" },
+        "case": { "$ref": "#/$defs/casePath" },
+        "dialect": { "$ref": "#/$defs/dialect" },
+        "caseShape": { "$ref": "#/$defs/caseShape" },
+        "emissions": { "$ref": "#/$defs/emissions" },
+        "observations": { "$ref": "#/$defs/observations" }
+      }
+    },
+    "benchmarkOk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "command",
+        "status",
+        "adapter",
+        "benchmark",
+        "dialect",
+        "metrics"
+      ],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "command": { "const": "benchmark" },
+        "status": { "const": "ok" },
+        "adapter": { "$ref": "#/$defs/adapter" },
+        "benchmark": { "$ref": "#/$defs/benchmarkPath" },
+        "dialect": { "$ref": "#/$defs/dialect" },
+        "metrics": { "$ref": "#/$defs/metrics" }
+      }
+    },
+    "nonOk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "command", "status", "adapter", "diagnostics"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "command": { "$ref": "#/$defs/command" },
+        "status": {
+          "type": "string",
+          "enum": ["unsupported", "error"]
+        },
+        "adapter": { "$ref": "#/$defs/adapter" },
+        "diagnostics": { "$ref": "#/$defs/diagnostics" }
+      }
+    }
+  }
+}
