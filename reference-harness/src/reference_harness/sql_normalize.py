@@ -124,9 +124,10 @@ class NonCanonicalError(ValueError):
 def _inline_parameter_literal(tree: exp.Expression) -> exp.Expression | None:
     """The first literal used as a *parameter* (which must therefore be a ``?``
     bind), or ``None``. A literal compared against a column, listed in an
-    ``in`` / ``between`` against a column, or used as a row ``limit`` is a
-    parameter. Structural constants — the ``1 = 0`` none-identity and the
-    ``select 1`` EXISTS probe — are not parameters and are left alone."""
+    ``in`` / ``between`` against a column, used as a row ``limit``, or placed in
+    an ``INSERT ... VALUES`` tuple is a parameter. Structural constants — the
+    ``1 = 0`` none-identity and the ``select 1`` EXISTS probe — are not
+    parameters and are left alone."""
 
     def col_vs_lit(a: exp.Expression, b: exp.Expression) -> bool:
         return isinstance(a, exp.Column) and isinstance(b, exp.Literal)
@@ -147,6 +148,10 @@ def _inline_parameter_literal(tree: exp.Expression) -> exp.Expression | None:
     for node in tree.find_all(exp.Limit):
         if isinstance(node.expression, exp.Literal):
             return node
+    if isinstance(tree, exp.Insert):
+        values = tree.args.get("expression")
+        if isinstance(values, exp.Values):
+            return next(values.find_all(exp.Literal), None)
     return None
 
 
