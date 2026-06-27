@@ -78,6 +78,16 @@ Every entity **MUST** declare at least one `attribute` with `primaryKey: true`.
 > `timezoneConversion` is intentionally absent (timestamps are UTC-normalized
 > globally, per M0).
 
+The `readOnly` and `optimisticLocking` flags are the metamodel surface two
+fast-follow modules build on. `readOnly` marks an attribute that is immutable
+after insert (an implementation **MUST NOT** emit it in an `UPDATE` `set`).
+`optimisticLocking: true` marks the entity's **version attribute** (`M10`): at
+most one per entity, an integer that is checked in — and advanced by — every
+`UPDATE`, turning a stale-version write into a detectable conflict. The
+`optimisticLocking` flag is purely metamodel here; its conflict-detection
+semantics are `M10`, and the object-lifecycle states that decide *when* an
+attribute is written (in-memory vs. persisted vs. detached) are `M9`.
+
 ## `relationship` — a navigable association
 
 A `relationship` is a **named, navigable association** from its owning entity to

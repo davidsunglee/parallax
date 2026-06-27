@@ -59,16 +59,34 @@ def lint_tree(compatibility_root: Path) -> list[str]:
                         errors,
                     )
 
+        golden = case.get("goldenSql", {})
+        dialect = next(iter(golden), "postgres") if isinstance(golden, dict) else "postgres"
+
         reference = case.get("referenceSql")
         if isinstance(reference, str):
             # referenceSql is dialect-neutral naive SQL; parse with the first
             # declared golden dialect (or postgres) just to confirm it is valid.
-            golden = case.get("goldenSql", {})
-            dialect = next(iter(golden), "postgres") if isinstance(golden, dict) else "postgres"
             try:
                 sqlglot.parse_one(reference, read=dialect)
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"case {name}: referenceSql does not parse: {exc}")
+
+        # A conflict case's precondition is dialect-agnostic naive out-of-band SQL
+        # (a single statement or an ordered list). Like referenceSql it is NOT
+        # required to be canonical, but it must parse so a typo fails statically.
+        precondition = case.get("precondition")
+        if isinstance(precondition, str):
+            precondition = [precondition]
+        if isinstance(precondition, list):
+            for index, sql in enumerate(precondition):
+                if not isinstance(sql, str):
+                    continue
+                try:
+                    sqlglot.parse_one(sql, read=dialect)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(
+                        f"case {name}: precondition[{index}] does not parse: {exc}"
+                    )
 
     return errors
 

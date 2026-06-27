@@ -1,0 +1,34 @@
+# Detached-insert merge-back (M9): merging back a never-persisted detached object
+# INSERTS it.
+#
+# A new Account is constructed in memory and detached (a deep copy decoupled from
+# the identity cache, M9). Editing it issues NO SQL — the database is untouched
+# until merge-back. At merge-back the original is looked up by primary key, NOT
+# found (the object was never persisted), so the copy is inserted as a new row:
+#   `copyDetachedValuesToOriginalOrInsertIfNew` => insert-if-new.
+#
+# This reuses the write-sequence machinery (apply the ordered golden DML to an
+# EMPTY table, then assert the resulting table state) for the non-temporal M9
+# case. The observable contract of merge-back is the row it leaves behind — here a
+# single inserted Account — so it is verified against real data, not merely
+# asserted in prose. The version column is initialized to 1 on insert (the M10
+# optimistic-lock baseline).
+model: models/account.yaml
+tags: [m9, m3, detached, detached-insert, write-sequence, lifecycle detach]
+writeSequence:
+  - mutation: insert
+    entity: Account
+    statements: 1
+    note: merge-back of an unpersisted detached copy inserts a new row
+goldenSql:
+  postgres:
+    - insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+binds:
+  - [20, Dijkstra, 75.00, 1]
+roundTrips: 1
+expectedTableState:
+  account:
+    - id: 20
+      owner: Dijkstra
+      balance: 75.00
+      version: 1
