@@ -35,10 +35,36 @@ def _load_yaml(path: Path) -> Any:
         return yaml.safe_load(handle)
 
 
+def _lint_benchmarks(compatibility_root: Path, errors: list[str]) -> None:
+    """Lint every benchmark workload's golden SQL (M13, Phase 11).
+
+    Benchmark fixtures live under ``benchmarks/`` (not ``cases/``) and carry their
+    golden SQL per workload. Each statement must parse and be a fixed point of M3
+    normalization, exactly like a case's golden SQL — so a non-canonical benchmark
+    query fails statically rather than only at run time.
+    """
+    benchmarks_dir = compatibility_root / "benchmarks"
+    if not benchmarks_dir.is_dir():
+        return
+    for fixture_path in sorted(benchmarks_dir.glob("*.y*ml")):
+        fixture = _load_yaml(fixture_path)
+        if not isinstance(fixture, dict):
+            continue
+        for index, workload in enumerate(fixture.get("workloads", [])):
+            if isinstance(workload, dict):
+                _lint_golden(
+                    workload.get("goldenSql", {}),
+                    f"workloads[{index}].goldenSql",
+                    fixture_path.name,
+                    errors,
+                )
+
+
 def lint_tree(compatibility_root: Path) -> list[str]:
     compatibility_root = compatibility_root.resolve()
     errors: list[str] = []
     cases_dir = compatibility_root / "cases"
+    _lint_benchmarks(compatibility_root, errors)
 
     for case_path in sorted(cases_dir.glob("**/*.y*ml")):
         case = _load_yaml(case_path)
@@ -55,6 +81,17 @@ def lint_tree(compatibility_root: Path) -> list[str]:
                     _lint_golden(
                         step.get("goldenSql", {}),
                         f"scenario[{index}].goldenSql",
+                        name,
+                        errors,
+                    )
+        # A coherence case (Phase 11) likewise carries golden SQL per step.
+        coherence = case.get("coherence")
+        if isinstance(coherence, list):
+            for index, step in enumerate(coherence):
+                if isinstance(step, dict):
+                    _lint_golden(
+                        step.get("goldenSql", {}),
+                        f"coherence[{index}].goldenSql",
                         name,
                         errors,
                     )

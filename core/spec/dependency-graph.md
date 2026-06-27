@@ -64,9 +64,19 @@ M13 --> M12
 | M11 | Database Seam & Portability |
 | M12 | Compatibility Harness & Test-Double Integration |
 | M13 | Performance & Benchmark Harness |
+| — | Cross-Process Cache Coherence (fast-follow; depends on `M8`) |
 
 > `M6` does not exist: aggregation is folded into `M2`. The numbering of
 > `M7`–`M13` is preserved to keep cross-references stable.
+>
+> **Cross-process cache coherence** is an un-numbered fast-follow capability
+> ([`cross-process-coherence.md`](cross-process-coherence.md)) that **depends on
+> `M8`** — it keeps the caches `M8` defines coherent across multiple application
+> servers. Because it carries no `M`-number, it is documented here in prose rather
+> than as an edge in the machine-readable block below (which ranges over the
+> numbered modules); its single legal dependency direction is *coherence → M8*,
+> and, like every edge, the reverse is a spec violation (`M8` MUST NOT depend on
+> it).
 
 ## Notable directions (and why they may surprise)
 

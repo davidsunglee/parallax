@@ -18,10 +18,11 @@ A case is a YAML document under `core/compatibility/cases/`, validated against
 [`core/schemas/compatibility-case.schema.json`](../schemas/compatibility-case.schema.json).
 Its fields:
 
-A case is one of four shapes: a **read case** (carries an `operation`), a
+A case is one of five shapes: a **read case** (carries an `operation`), a
 **writeSequence case** (carries a `writeSequence`, Phase 5 / M7), a **scenario
-case** (carries a `scenario`, Phase 6 / M8), or a **conflict case** (carries
-`expectedAffectedRows`, Phase 7 / M10). The fields:
+case** (carries a `scenario`, Phase 6 / M8), a **conflict case** (carries
+`expectedAffectedRows`, Phase 7 / M10), or a **coherence case** (carries a
+`coherence` two-node sequence, Phase 11 / cross-process coherence). The fields:
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -138,6 +139,24 @@ write did not apply. As with writeSequence cases, only the descriptor serde
 round-trip and the golden-SQL normalization layers apply (there is no
 `operation`).
 
+### Coherence cases (cross-process coherence)
+
+A **coherence** case proves the cross-process cache-coherence contract (one node
+observes another's committed write) by running a two-node operation sequence over
+**two connections to one database**. The harness provisions one database (node A
+= the provider's own connection, with the model's fixtures loaded so the seed read
+sees a row), opens a second independent connection via the provider's **two-node
+seam** (`open_peer`, below), and runs each `coherence` step on its declared node:
+a `write` step **commits** DML on its node; a `read` step queries. The final
+node-B re-fetch carries **`observeRows`** — node A's committed **post-write**
+state, which node B **MUST** observe (never the stale pre-write rows). Each step's
+golden SQL is normalized (layer 3), and the read steps' operations and the
+descriptor survive serde (layer 4). The harness contains no cache and no
+notification bus; it proves the suite's post-write golden SQL is correct against
+real, committed, cross-connection data — the observable contract any conforming
+invalidation mechanism (full-cache re-fetch or partial-cache mark-dirty) must
+satisfy. See [`cross-process-coherence.md`](cross-process-coherence.md).
+
 ## Provisioning ↔ runner seam (DQ15)
 
 The harness splits into two clearly-separated sub-parts joined by an explicit
@@ -148,7 +167,10 @@ seam so provisioning can be swapped without touching the assertion layer:
   `apply_ddl`, `load`, `query`, `execute` (DML, for write sequences), and a
   `dialect` identifier. **Testcontainers** is the default mechanism, pinned at
   the latest stable Postgres major; a language **MAY** substitute an embedded
-  binary that satisfies the same reset/isolation contract.
+  binary that satisfies the same reset/isolation contract. An **optional**
+  `open_peer` capability (Phase 11) yields a second, independent connection to the
+  **same** database — modeling a peer application server (node B) for coherence
+  cases; a provider that omits it simply cannot run coherence cases.
 - **Runner + assertions.** The case runner applies the four (later five) layers
   above against whatever provider it is handed.
 

@@ -34,10 +34,8 @@ module-dependency graph** ([`dependency-graph.md`](dependency-graph.md)).
 | M10 | [`m10-optimistic-locking.md`](m10-optimistic-locking.md) | Optimistic locking |
 | M11 | [`m11-dialect-seam.md`](m11-dialect-seam.md) | Database seam & portability |
 | M12 | [`m12-compatibility-harness.md`](m12-compatibility-harness.md) | Compatibility harness & test-double integration |
-
-Modules `M13` and cross-process coherence are introduced in later authoring
-phases; the dependency graph already names them so the layering is fixed from
-the start.
+| M13 | [`m13-performance.md`](m13-performance.md) | Performance & benchmark harness |
+| — | [`cross-process-coherence.md`](cross-process-coherence.md) | Cross-process cache coherence (fast-follow) |
 
 ## Normative vs. non-normative boundary (DQ3)
 
