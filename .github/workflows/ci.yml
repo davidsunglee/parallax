@@ -12,7 +12,8 @@ concurrency:
 
 jobs:
   # Static checks: lint + schema/meta-schema validation + sqlglot-parse +
-  # dependency-graph DAG check. No Docker required.
+  # dependency-graph DAG check + the coverage gate (every in-scope module has a
+  # fixture). No Docker required.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -53,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        database: [postgres]
+        database: [postgres, mariadb]
     steps:
       - uses: actions/checkout@v4
       - uses: extractions/setup-just@v4

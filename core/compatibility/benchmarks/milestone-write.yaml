@@ -11,6 +11,7 @@
 # with the 1-based iteration index — so each repeat writes a DISTINCT milestone row
 # and the workload stays idempotent across the timing loop. The table starts empty
 # (DDL only, no fixtures) so the benchmark builds its own milestone history.
+tags: [m13, benchmark, milestone-write]
 model: models/balance.yaml
 dataset:
   empty: true

@@ -3,8 +3,12 @@
 # `all` is the identity of the operation algebra; it lowers to a SELECT over the
 # single aliased table with no predicate. Trivial single-table case, so
 # referenceSql is omitted (expectedRows is verifiable by eye).
+#
+# This is the walking-skeleton case: it exercises the full M12 case contract
+# (schema conformance + golden-SQL equivalence + normalization + operation/
+# metamodel serde round-trip) end-to-end, hence the `m12` tag.
 model: models/orders.yaml
-tags: [m2, all]
+tags: [m2, m12, all]
 operation:
   all: {}
 goldenSql:
