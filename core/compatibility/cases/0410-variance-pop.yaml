@@ -1,8 +1,8 @@
 # variancePop — POPULATION variance (n), with the TWO-COLUMN read.
 #
 # Over the 5 order_item quantities {2,1,4,3,5} (mean 3, Σ(x−μ)² = 10):
-#   var_pop(quantity) = 10/5 = 2   (exactly; the harness coerces the whole-valued
-#                                   numeric to an int, so expected is 2, not 2.0)
+#   var_pop(quantity) = 10/5 = 2   (exactly; the harness compares numerics in
+#                                   Decimal space, so 2 and 2.0 are equivalent)
 #   count(quantity)   = 5
 # var_pop is the square of stddev_pop (0408: sqrt(2)² = 2), so the pair
 # cross-checks. Like every stdDev*/variance* aggregate it emits BOTH the statistic
