@@ -9,13 +9,16 @@ survive the serde round-trip, and a missing assertion is rejected.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from reference_harness.case import Case, discover_cases, load_case
 from reference_harness.case_runner import (
     CaseFailure,
+    _assert_coherence,
     _assert_coherence_normalization,
     _assert_schema,
     _assert_serde,
@@ -29,6 +32,42 @@ COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 COHERENCE_CASES = [
     case for case in discover_cases(COMPATIBILITY_ROOT) if case.is_coherence
 ]
+
+
+class _RecordingNode:
+    dialect = "postgres"
+
+    def __init__(self, name: str, calls: list[tuple[str, str, str, list[Any]]]) -> None:
+        self.name = name
+        self.calls = calls
+
+    def query(self, sql: str, binds: list[Any] | None = None) -> list[dict[str, Any]]:
+        self.calls.append((self.name, "query", sql, list(binds or [])))
+        return [{"marker": sql}]
+
+    def execute(self, sql: str, binds: list[Any] | None = None) -> int:
+        self.calls.append((self.name, "execute", sql, list(binds or [])))
+        return 1
+
+
+class _RecordingProvider(_RecordingNode):
+    def __init__(self) -> None:
+        super().__init__("A", [])
+        self.peer = _RecordingNode("B", self.calls)
+
+    def reset(self) -> None:
+        self.calls.append((self.name, "reset", "", []))
+
+    def apply_ddl(self, statements: list[str]) -> None:
+        for statement in statements:
+            self.calls.append((self.name, "apply_ddl", statement, []))
+
+    def load(self, table: str, columns: list[str], rows: list[list[Any]]) -> None:
+        self.calls.append((self.name, "load", table, [columns, rows]))
+
+    @contextmanager
+    def open_peer(self):
+        yield self.peer
 
 
 def test_coherence_cases_exist() -> None:
@@ -74,6 +113,43 @@ def test_step_statements_handles_single_and_missing() -> None:
     # A write step with no golden SQL for a dialect yields nothing.
     assert _coherence_step_statements({"goldenSql": {}}, "postgres") == []
     assert _coherence_step_statements({}, "postgres") == []
+
+
+def test_coherence_executes_every_statement_with_its_own_binds() -> None:
+    case = load_case(
+        COMPATIBILITY_ROOT, COMPATIBILITY_ROOT / "cases" / "1101-coherence-refetch.yaml"
+    )
+    raw = dict(case.raw)
+    raw["coherence"] = [
+        {
+            "node": "A",
+            "kind": "write",
+            "goldenSql": {
+                "postgres": [
+                    "update account set balance = ?",
+                    "insert into account(id) values (?)",
+                ]
+            },
+            "binds": [[999], [9]],
+        },
+        {
+            "node": "B",
+            "kind": "read",
+            "goldenSql": {"postgres": ["select 1", "select 2"]},
+            "binds": [[], [2]],
+            "observeRows": [{"marker": "select 2"}],
+        },
+    ]
+    provider = _RecordingProvider()
+
+    _assert_coherence(Case(path=Path("multi-coherence.yaml"), raw=raw, model=case.model), provider)
+
+    assert provider.calls[-4:] == [
+        ("A", "execute", "update account set balance = ?", [999]),
+        ("A", "execute", "insert into account(id) values (?)", [9]),
+        ("B", "query", "select 1", []),
+        ("B", "query", "select 2", [2]),
+    ]
 
 
 def test_coherence_without_assertion_is_rejected() -> None:

@@ -167,7 +167,7 @@
             "additionalProperties": { "$ref": "#/$defs/dialectSql" }
           },
           "binds": {
-            "description": "Bind values for this step's golden SQL `?` placeholders (a flat list for a single statement).",
+            "description": "Bind values for this step's golden SQL `?` placeholders. For a single-statement step this is one flat ordered list. For a multi-statement step it is a list-of-lists, one bind list per statement.",
             "type": "array",
             "items": {}
           },

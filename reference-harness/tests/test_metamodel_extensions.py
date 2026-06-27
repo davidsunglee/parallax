@@ -21,7 +21,7 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from reference_harness.case import discover_cases, load_model
+from reference_harness.case import Model, discover_cases, load_model
 from reference_harness.ddl_builder import column_order, ddl_for
 from reference_harness.paths import schemas_dir
 
@@ -98,6 +98,53 @@ def test_schema_rejects_subtype_without_parent() -> None:
     assert subtype["inheritance"]["role"] == "subtype"
     del subtype["inheritance"]["parent"]
     assert not _is_valid(descriptor)
+
+
+def test_schema_requires_table_per_hierarchy_discriminator_metadata() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+    descriptor = copy.deepcopy(model.descriptor)
+
+    root = descriptor["entities"][0]
+    del root["inheritance"]["discriminator"]
+    assert not _is_valid(descriptor)
+
+    descriptor = copy.deepcopy(model.descriptor)
+    subtype = descriptor["entities"][1]
+    del subtype["inheritance"]["discriminatorValue"]
+    assert not _is_valid(descriptor)
+
+
+def test_schema_rejects_table_per_leaf_discriminator_metadata() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
+    descriptor = copy.deepcopy(model.descriptor)
+    subtype = descriptor["entities"][1]
+    assert subtype["inheritance"]["strategy"] == "table-per-leaf"
+
+    subtype["inheritance"]["discriminator"] = {"column": "kind"}
+    assert not _is_valid(descriptor)
+
+    descriptor = copy.deepcopy(model.descriptor)
+    subtype = descriptor["entities"][1]
+    subtype["inheritance"]["discriminatorValue"] = "invoice"
+    assert not _is_valid(descriptor)
+
+
+def test_shared_hierarchy_table_ddl_includes_later_subtype_columns() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+    descriptor = copy.deepcopy(model.descriptor)
+    root = descriptor["entities"][0]
+    root["attributes"] = [
+        attribute
+        for attribute in root["attributes"]
+        if attribute["column"] not in {"card_network", "tendered"}
+    ]
+    sparse_root_model = Model(path=model.path, descriptor=descriptor)
+
+    (create,) = ddl_for(sparse_root_model, "postgres")
+
+    assert "card_network varchar(16)" in create
+    assert "tendered numeric(18,2)" in create
+    assert len(ddl_for(sparse_root_model, "postgres")) == 1
 
 
 # --- the authored 09xx cases self-describe -----------------------------------
