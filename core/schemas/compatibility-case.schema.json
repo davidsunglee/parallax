@@ -71,6 +71,11 @@
       "type": "integer",
       "minimum": 1,
       "default": 1
+    },
+    "tolerance": {
+      "description": "Absolute tolerance for numeric row comparison. Omit for exact comparison (the default; money/counts/exact aggregates compare exactly in Decimal space). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) that cannot be authored exactly and differ in scale across dialects; comparison then becomes abs(actual - expected) <= tolerance.",
+      "type": "number",
+      "exclusiveMinimum": 0
     }
   },
   "$defs": {
