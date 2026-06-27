@@ -1,0 +1,31 @@
+# Bitemporal as-of: business date in the PAST, processing date NOW.
+#
+# Pin businessDate = 2024-03-01 (a past instant, so the [from, to) containment
+# predicate `from_z <= ? and thru_z > ?` is injected) and processingDate = now
+# (the current-row equality `out_z = ?`). This asks: of what the system knows NOW,
+# what was true in the world on 2024-03-01?
+#
+# Over the id-1 history that is R2 (value 100): R2's business interval
+# [2024-01-01, 2024-06-01) contains 2024-03-01 AND it is current on processing
+# (out_z = infinity). R3's business starts 2024-06-01 (> 2024-03-01), excluded.
+# R1 is superseded on processing (out_z finite), excluded. The business and
+# processing binds read business-axis-first (the outer pin), then processing.
+model: models/position.yaml
+tags: [m7, m3, bitemporal, temporal, as-of, both-axes, past]
+operation:
+  asOf:
+    operand:
+      asOf:
+        operand:
+          all: {}
+        asOfAttr: Position.processingDate
+        date: now
+    asOfAttr: Position.businessDate
+    date: "2024-03-01T00:00:00+00:00"
+goldenSql:
+  postgres: select t0.pos_id, t0.val from position t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+referenceSql: select pos_id, val from position where from_z <= '2024-03-01T00:00:00+00:00'::timestamptz and thru_z > '2024-03-01T00:00:00+00:00'::timestamptz and out_z = 'infinity'::timestamptz
+expectedRows:
+  - { pos_id: 1, val: 100.00 }
+roundTrips: 1

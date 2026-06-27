@@ -321,8 +321,44 @@ out_z = ?` / `infinity`), so only the open milestone is closed. The harness
 `expectedTableState` — including the `out_z = infinity` current row — so the
 chaining contract is proven against real data, not merely asserted.
 
-Subsequent phases extend these rules to full bitemporal chaining (the rectangle
-split) over two axes.
+### Bitemporal as-of reads (both axes)
+
+A **bitemporal** entity is pinned on both axes by nesting two `asOf` nodes; each
+axis lowers to its own injected fragment (current-row equality or `[from, to)`
+containment), composed with `and`. The fragments read **business-axis-first** (the
+outer pin) then **processing**, so binds follow the same order:
+
+| Both-axis read | Golden predicate | Binds |
+|---|---|---|
+| business now, processing now | `t0.thru_z = ? and t0.out_z = ?` | `[infinity, infinity]` |
+| business past `b`, processing now | `t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?` | `[b, b, infinity]` |
+| business past `b`, processing past `p` | `t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?` | `[b, b, p, p]` |
+
+A **business-temporal-only** read injects the single-axis fragment over
+`from_z`/`thru_z` (the audit-only forms with `out_z` swapped for `thru_z`); its
+default is still `now` ⇒ `t0.thru_z = ?` with `binds: [infinity]`.
+
+### Bitemporal write sequences — the rectangle split
+
+A full-bitemporal write that bounds a change to a business window is an ordered
+DML sequence over **both** axes. Let `txInstant` be the processing instant and
+`[bf, bt)` the business window. The canonical Postgres DML:
+
+| Mutation | Golden DML |
+|---|---|
+| **insertUntil** | one `insert into position(cols…) values (?, …, ?)` with business `[bf, bt)`, processing `[txInstant, infinity)` |
+| **updateUntil** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` — binds `[txInstant, pk, infinity]` (closes the processing axis of the current rectangle) |
+| **updateUntil** (head / middle / tail) | three `insert`s at processing `[txInstant, infinity)` — `head` business `[from_z, bf)` old value, `middle` business `[bf, bt)` new value, `tail` business `[bt, infinity)` old value |
+| **terminateUntil** | the inactivate `update` + `head` + `tail` inserts only (**no** `middle`) |
+
+The inactivate `update` is keyed by the **current-on-processing** predicate
+(`pk and out_z = ?` / `infinity`), so only the open rectangle is closed; the new
+rows are inserted **after** it. The harness **applies** this DML in order to an
+empty table and asserts the resulting `expectedTableState` — the inactivated
+original (`out_z` finite) plus the `head` / `middle` / `tail` rectangles current
+on processing (`out_z = infinity`) — so the rectangle split is proven against real
+data, not merely asserted. The same multi-row physical primary key (business key
+plus each axis's `fromColumn`, `M1`) makes the chained rectangles admissible.
 
 ## Transactional SQL fragments (M8)
 

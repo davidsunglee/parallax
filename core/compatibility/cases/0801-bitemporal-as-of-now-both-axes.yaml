@@ -1,0 +1,30 @@
+# Bitemporal as-of NOW on BOTH axes: the fully-current milestone.
+#
+# Pinning businessDate = now AND processingDate = now restricts Position to the
+# row that is true in the world NOW and known to the system NOW — the rectangle
+# current on both axes (thru_z = infinity AND out_z = infinity). Each axis injects
+# its current-row equality (M7), so the golden SQL carries TWO infinity binds.
+#
+# Over the id-1 history that is R3 (value 200): R1 is superseded on the processing
+# axis (out_z finite); R2 is the head, current on processing but its business
+# thru_z is finite (2024-06-01), so business=now excludes it. Only R3 is current
+# on both axes.
+model: models/position.yaml
+tags: [m7, m3, bitemporal, temporal, as-of, both-axes, defaulted]
+operation:
+  asOf:
+    operand:
+      asOf:
+        operand:
+          all: {}
+        asOfAttr: Position.processingDate
+        date: now
+    asOfAttr: Position.businessDate
+    date: now
+goldenSql:
+  postgres: select t0.pos_id, t0.val from position t0 where t0.thru_z = ? and t0.out_z = ?
+binds: [infinity, infinity]
+referenceSql: select pos_id, val from position where thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+expectedRows:
+  - { pos_id: 1, val: 200.00 }
+roundTrips: 1

@@ -1,0 +1,28 @@
+# Fixture rows for the Reservation model (models/reservation.yaml) — the
+# business-temporal-only milestone history the business-axis as-of READ cases
+# query.
+#
+# Keyed by class name; each row is a map of attribute-name -> value. Instant
+# columns are authored as ISO-8601 UTC strings; the open upper bound is the
+# literal `infinity`. The loader resolves businessFrom/businessTo -> from_z/thru_z.
+#
+# Room 101's reservation changed guest at a BUSINESS date (a rebooking effective
+# 2024-03-01):
+#   guest Ada  business [2024-01-01, 2024-03-01)  — SUPERSEDED (thru_z finite).
+#   guest Bob  business [2024-03-01, infinity)    — CURRENT (thru_z = infinity).
+#
+# Reads:
+#   business = now (default)  -> the current guest: Bob.
+#   business = 2024-02-01     -> the guest true in the world then: Ada.
+#   history(businessDate)     -> both milestones.
+Reservation:
+  - id: 1
+    room: "101"
+    guest: Ada
+    businessFrom: "2024-01-01T00:00:00+00:00"
+    businessTo: "2024-03-01T00:00:00+00:00"
+  - id: 1
+    room: "101"
+    guest: Bob
+    businessFrom: "2024-03-01T00:00:00+00:00"
+    businessTo: infinity

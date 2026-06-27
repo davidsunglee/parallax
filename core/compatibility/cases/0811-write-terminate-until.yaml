@@ -1,0 +1,72 @@
+# Write sequence: terminateUntil — terminate a bitemporal value for a BOUNDED
+# business window, leaving the value intact before and after it (rectangle split
+# with NO middle).
+#
+# A terminateUntil over [businessFrom, businessTo) inactivates the original on the
+# processing axis (out_z = txInstant) and chains only TWO new rows at fresh
+# processing time [txInstant, infinity):
+#   head : business [from_z, businessFrom)  — the value before the window
+#   tail : business [businessTo, infinity)  — the value after the window
+# and NO middle row — so the value is ABSENT (terminated) inside the window. No
+# row covers the window on the business axis while current on processing, which is
+# the observable signature of a windowed termination.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert         : open the current rectangle, value 100,
+#                           business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
+#   step 2 terminateUntil : terminate the value for business window
+#                           [2024-03-01, 2024-09-01) at txInstant 2024-02-15 —
+#                           inactivate the original and chain head + tail        (3 statements)
+#
+# Resulting state (3 rows): the inactivated original (out_z finite) + head (100,
+# business [2024-01-01, 2024-03-01)) + tail (100, business [2024-09-01, infinity)),
+# the window left uncovered by any current-on-processing row.
+model: models/position.yaml
+tags: [m7, m3, bitemporal, temporal, write-sequence, terminate-until, rectangle-split]
+writeSequence:
+  - mutation: insert
+    entity: Position
+    statements: 1
+    note: open the original current rectangle [business inf, processing inf)
+  - mutation: terminateUntil
+    entity: Position
+    statements: 3
+    note: inactivate the original on the processing axis, then chain head + tail (no middle)
+goldenSql:
+  postgres:
+    - insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+    - update position set out_z = ? where pos_id = ? and out_z = ?
+    - insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+    - insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+binds:
+  - [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
+  - ["2024-02-15T00:00:00+00:00", 1, infinity]
+  - [1, A, 100.00, "2024-01-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-15T00:00:00+00:00", infinity]
+  - [1, A, 100.00, "2024-09-01T00:00:00+00:00", infinity, "2024-02-15T00:00:00+00:00", infinity]
+roundTrips: 4
+expectedTableState:
+  position:
+    # the inactivated original — closed on the processing axis
+    - pos_id: 1
+      acct_num: A
+      val: 100.00
+      from_z: "2024-01-01T00:00:00+00:00"
+      thru_z: infinity
+      in_z: "2024-01-01T00:00:00+00:00"
+      out_z: "2024-02-15T00:00:00+00:00"
+    # head: value before the terminated window, current on processing
+    - pos_id: 1
+      acct_num: A
+      val: 100.00
+      from_z: "2024-01-01T00:00:00+00:00"
+      thru_z: "2024-03-01T00:00:00+00:00"
+      in_z: "2024-02-15T00:00:00+00:00"
+      out_z: infinity
+    # tail: value after the terminated window, current on processing (NO middle)
+    - pos_id: 1
+      acct_num: A
+      val: 100.00
+      from_z: "2024-09-01T00:00:00+00:00"
+      thru_z: infinity
+      in_z: "2024-02-15T00:00:00+00:00"
+      out_z: infinity

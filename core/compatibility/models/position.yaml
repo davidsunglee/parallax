@@ -1,0 +1,83 @@
+# Position: a FULL bitemporal model — the Phase 8 signature shape.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It models
+# the full bitemporal profile (DQ7 fast-follow / definitely-do): TWO as-of
+# dimensions, one per axis.
+#
+#   business   (from_z / thru_z) — WHEN A FACT IS TRUE IN THE WORLD.
+#   processing (in_z   / out_z ) — WHEN THE SYSTEM KNEW that fact (audit-only axis).
+#
+# A row is the milestone at the intersection of a business interval and a
+# processing interval — a "rectangle" in (business x processing) space. Each
+# interval is half-open `[from, to)`; the open upper bound is the database-native
+# infinity (M0/M11). A row is CURRENT on an axis when its `to` on that axis equals
+# infinity; the fully-current row is current on BOTH (thru_z = out_z = infinity).
+#
+# Milestone-chaining writes never mutate a value in place. The signature
+# bitemporal write is the RECTANGLE SPLIT (research §6): an `updateUntil` over a
+# bounded business window inactivates the original (closes its processing axis at
+# the transaction instant) and chains up to THREE new rows at fresh processing
+# time — head [from_z, businessFrom), middle [businessFrom, businessTo) carrying
+# the new value, tail [businessTo, infinity) — so the value changes ONLY inside
+# the window while the audit trail is preserved on the processing axis.
+#
+# The non-temporal attributes (id, acctNum, value) are the business payload. The
+# four interval columns (from_z/thru_z, in_z/out_z) are typed `timestamp` (M0:
+# instants are UTC `timestamptz`).
+#
+# Row data lives in the sibling fixtures/position.yaml (the as-of READ cases).
+# The write-sequence cases construct their own bitemporal history from their
+# ordered DML, so they start from an empty table and ignore the fixtures.
+entity:
+  name: Position
+  namespace: parallax.compatibility
+  table: position
+  mutability: transactional
+  temporal: bitemporal
+  attributes:
+    - name: id
+      type: int64
+      column: pos_id
+      primaryKey: true
+      pkGenerator: none
+    - name: acctNum
+      type: string
+      column: acct_num
+      maxLength: 32
+    - name: value
+      type: decimal(18,2)
+      column: val
+    - name: businessFrom
+      type: timestamp
+      column: from_z
+    - name: businessTo
+      type: timestamp
+      column: thru_z
+    - name: processingFrom
+      type: timestamp
+      column: in_z
+    - name: processingTo
+      type: timestamp
+      column: out_z
+  asOfAttributes:
+    - name: businessDate
+      fromColumn: from_z
+      toColumn: thru_z
+      axis: business
+      toIsInclusive: false
+      infinity: infinity
+      default: now
+    - name: processingDate
+      fromColumn: in_z
+      toColumn: out_z
+      axis: processing
+      toIsInclusive: false
+      infinity: infinity
+      default: now
+  indices:
+    - name: position_pk
+      attributes: [id]
+      unique: true
+    - name: position_acct
+      attributes: [acctNum]
+      unique: false
