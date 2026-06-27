@@ -1,0 +1,40 @@
+# Identity scenario (M8): two finds for the same primary key denote the SAME
+# logical object.
+#
+# The identity cache interns objects one-per-primary-key. Here two DIFFERENT
+# operations resolve the same row — a find by primary key (id = 2) and a find by
+# the unique owner (owner = 'Linus') — and both MUST yield the same logical
+# Account, not two equal copies. The observable half of that contract is that both
+# results carry the SAME primary-key identity, which `sameObjectAs` asserts.
+#
+# Both finds are cache MISSES on DIFFERENT operations, so each costs one round trip
+# (total 2). The point of this scenario is not round-trip elimination (that is the
+# cache-hit scenario) but identity: same PK => same object.
+model: models/account.yaml
+tags: [m8, transactions cache, identity cache, identity, scenario]
+roundTrips: 2
+scenario:
+  - find:
+      eq:
+        attr: Account.id
+        value: 2
+    roundTrips: 1
+    note: find by primary key
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+    binds: [2]
+    expectRows:
+      - { id: 2, owner: Linus, balance: 250.00 }
+  - find:
+      eq:
+        attr: Account.owner
+        value: Linus
+    roundTrips: 1
+    sameObjectAs: 0
+    identityAttr: id
+    note: find by unique owner — resolves the SAME logical object as step 0 (PK 2)
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
+    binds: [Linus]
+    expectRows:
+      - { id: 2, owner: Linus, balance: 250.00 }

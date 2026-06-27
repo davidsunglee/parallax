@@ -1,0 +1,73 @@
+"""Unit tests for the Phase 6 (M8) scenario machinery (no database).
+
+These pin the DB-free invariants of a cache / identity scenario case: the
+per-step round-trip / golden-SQL count consistency (each step's declared
+roundTrips equals the golden SQL statements it lists; the steps total the
+case-level roundTrips), and that a cache-hit step lists no golden SQL. The full
+execute-and-assert behavior (cache-hit reuse, identity, read-lock, batched write)
+is exercised end-to-end against real Postgres by the compatibility suite.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from reference_harness.case import discover_cases
+from reference_harness.case_runner import (
+    CaseFailure,
+    _assert_scenario_count_consistency,
+)
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
+
+
+def _scenario_cases():
+    return [c for c in discover_cases(COMPATIBILITY_ROOT) if c.is_scenario]
+
+
+def test_scenario_cases_are_discovered_and_self_describe() -> None:
+    cases = _scenario_cases()
+    assert cases, "no scenario cases discovered"
+    for case in cases:
+        # Each carries a scenario (ordered steps) and no top-level operation.
+        assert case.scenario
+        assert "operation" not in case.raw
+        for step in case.scenario:
+            assert "find" in step
+            assert "roundTrips" in step
+
+
+def test_cache_hit_scenario_has_a_zero_round_trip_step() -> None:
+    case = next(c for c in _scenario_cases() if "cache-hit" in c.tags)
+    # A cache-hit scenario must contain a step that costs zero round trips and
+    # lists no golden SQL (it is served from the query cache).
+    hits = [s for s in case.scenario if s["roundTrips"] == 0]
+    assert hits, "cache-hit scenario has no zero-round-trip (hit) step"
+    for hit in hits:
+        assert not hit.get("goldenSql"), "a cache-hit step must list no golden SQL"
+
+
+def test_scenario_count_consistency_holds_for_authored_cases() -> None:
+    for case in _scenario_cases():
+        # Must not raise: per-step counts match the golden SQL and total roundTrips.
+        _assert_scenario_count_consistency(case, "postgres")
+
+
+def test_scenario_step_count_mismatch_is_rejected() -> None:
+    case = next(iter(_scenario_cases()))
+    # Corrupt a step's declared roundTrips so it no longer matches the golden SQL
+    # statement count it lists; the consistency check MUST fail.
+    case.raw["scenario"][0]["roundTrips"] += 1
+    with pytest.raises(CaseFailure):
+        _assert_scenario_count_consistency(case, "postgres")
+
+
+def test_scenario_total_mismatch_is_rejected() -> None:
+    case = next(iter(_scenario_cases()))
+    # Corrupt the case-level roundTrips so it no longer equals the per-step sum.
+    case.raw["roundTrips"] += 1
+    with pytest.raises(CaseFailure):
+        _assert_scenario_count_consistency(case, "postgres")

@@ -1,0 +1,24 @@
+# Fixture rows for the Account model (models/account.yaml) — the data the M8
+# read / scenario cases query, and the starting state the batched-update case
+# mutates on top of.
+#
+# Keyed by class name; each row is a map of attribute-name -> value. The data
+# loader resolves attribute names to columns via the descriptor.
+#
+# A small, distinct set so finds discriminate cleanly:
+#   id 1 (Ada)   balance 100.00
+#   id 2 (Linus) balance 250.00
+#   id 3 (Grace) balance  10.00
+Account:
+  - id: 1
+    owner: Ada
+    balance: 100.00
+    version: 1
+  - id: 2
+    owner: Linus
+    balance: 250.00
+    version: 1
+  - id: 3
+    owner: Grace
+    balance: 10.00
+    version: 1
