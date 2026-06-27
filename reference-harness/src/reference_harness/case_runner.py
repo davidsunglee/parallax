@@ -37,25 +37,24 @@ class CaseFailure(AssertionError):
     """A compatibility-case assertion failed."""
 
 
-def _coerce_scalar(value: Any) -> Any:
-    """Coerce a DB / expected scalar to a JSON-serializable identity form.
+def _coerce_identity_key(value: Any) -> Any:
+    """Coerce a DB / expected scalar to an exact hashable identity-key form.
 
-    Used by the deep-fetch KEY-gathering and graph-identity paths, where values
-    must stay hashable and JSON-serializable (those columns are integer-domain
-    join keys and primary keys). Row *value* comparison does NOT use this — it
-    normalizes to an exact :class:`Decimal` via :func:`_to_decimal` so money and
-    aggregate values compare exactly, never through ``float``. See
-    :func:`_scalars_equal`.
+    Used only by deep-fetch key gathering, bucket lookup, and node identity.
+    Projected graph values must keep their original types so graph equality can
+    compare numerics exactly via :func:`_scalars_equal`.
     """
     if isinstance(value, bool):
         return value
     if isinstance(value, Decimal):
-        return float(value) if value % 1 else int(value)
+        return int(value) if value % 1 == 0 else value
+    if isinstance(value, float):
+        return Decimal(str(value))
     return value
 
 
 def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {key: _coerce_scalar(value) for key, value in row.items()}
+    return dict(row)
 
 
 def _to_decimal(value: Any) -> Any:
@@ -420,10 +419,14 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         parents = rows_by_entity.get(step.parent_entity.name, [])
         parent_col = _column_of(step.parent_entity, step.parent_attr)
         parent_keys = sorted(
-            {_coerce_scalar(p[parent_col]) for p in parents if p.get(parent_col) is not None}
+            {
+                _coerce_identity_key(p[parent_col])
+                for p in parents
+                if p.get(parent_col) is not None
+            }
         )
 
-        authored = [_coerce_scalar(b) for b in _binds_for_statement(case, index)]
+        authored = [_coerce_identity_key(b) for b in _binds_for_statement(case, index)]
         if sorted(authored) != parent_keys:
             raise CaseFailure(
                 f"{case.path.name}: goldenSql.{dialect} level {index} "
@@ -438,7 +441,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         child_col = _column_of(step.child_entity, step.child_attr)
         bucket: dict[Any, list[dict[str, Any]]] = {}
         for row in child_rows:
-            bucket.setdefault(_coerce_scalar(row[child_col]), []).append(row)
+            bucket.setdefault(_coerce_identity_key(row[child_col]), []).append(row)
         children_by_step[step.rel_ref] = bucket
 
     # Assemble the graph: attach each child set under its relationship name on
@@ -503,7 +506,7 @@ def _assemble_graph(
 
     def node_for(entity: Entity, raw_row: dict[str, Any]) -> dict[str, Any]:
         pk_col = _column_of(entity, pk_attr(entity))
-        key = (entity.name, _coerce_scalar(raw_row[pk_col]))
+        key = (entity.name, _coerce_identity_key(raw_row[pk_col]))
         if key not in registry:
             registry[key] = _normalize_row(raw_row)
         return registry[key]
@@ -522,8 +525,7 @@ def _assemble_graph(
 
             next_nodes: list[dict[str, Any]] = []
             for parent_node in parent_nodes:
-                # parent_node holds normalized columns; the join key is parent_col.
-                parent_key = parent_node.get(parent_col)
+                parent_key = _coerce_identity_key(parent_node.get(parent_col))
                 matched = bucket.get(parent_key, [])
                 child_nodes = [node_for(step.child_entity, c) for c in matched]
                 if step.to_many:
@@ -541,25 +543,34 @@ def _graphs_equal(
     left: dict[str, list[dict[str, Any]]],
     right: dict[str, list[dict[str, Any]]],
 ) -> bool:
-    return serde.canonical(_sort_graph(left)) == serde.canonical(_sort_graph(right))
+    """Order-insensitive structural equality for assembled deep-fetch graphs."""
 
+    def equal_value(a: Any, b: Any) -> bool:
+        if isinstance(a, dict) or isinstance(b, dict):
+            if not isinstance(a, dict) or not isinstance(b, dict):
+                return False
+            if a.keys() != b.keys():
+                return False
+            return all(equal_value(a[key], b[key]) for key in a)
 
-def _sort_graph(graph: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
-    """Recursively normalize a graph for order-insensitive comparison.
+        if isinstance(a, list) or isinstance(b, list):
+            if not isinstance(a, list) or not isinstance(b, list):
+                return False
+            if len(a) != len(b):
+                return False
+            remaining = list(b)
+            for item in a:
+                for index, candidate in enumerate(remaining):
+                    if equal_value(item, candidate):
+                        del remaining[index]
+                        break
+                else:
+                    return False
+            return not remaining
 
-    Lists of objects are sorted by a stable serialization of their contents, so
-    a to-many relationship's child order does not affect equality.
-    """
+        return _scalars_equal(a, b, None)
 
-    def norm(value: Any) -> Any:
-        if isinstance(value, dict):
-            return {k: norm(value[k]) for k in value}
-        if isinstance(value, list):
-            normed = [norm(v) for v in value]
-            return sorted(normed, key=lambda v: serde.serialize(serde.canonical(v)))
-        return _coerce_scalar(value)
-
-    return {key: norm(value) for key, value in graph.items()}
+    return equal_value(left, right)
 
 
 # --- write sequences (Phase 5, M7) ------------------------------------------
@@ -774,7 +785,7 @@ def _identity_keys(
             f"identity column {identity_col!r}; a scenario's finds MUST project "
             f"the primary key so identity can be checked."
         )
-    return sorted(_coerce_scalar(row[identity_col]) for row in rows)
+    return sorted(_coerce_identity_key(row[identity_col]) for row in rows)
 
 
 # --- conflict cases (Phase 7, M10 optimistic locking) -----------------------
