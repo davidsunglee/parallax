@@ -1,0 +1,54 @@
+# Cross-process cache coherence — partial-cache mark-dirty (Phase 11).
+#
+# The complementary invalidation strategy to 1101's full-cache re-fetch. A node
+# holding a bounded, evictable cache does not re-fetch on a peer write; it EVICTS
+# / marks the affected entries dirty, and the next find misses and re-resolves.
+# The OBSERVABLE outcome is identical — a post-invalidation find on node B returns
+# node A's committed state — so the suite asserts the outcome, not the strategy.
+#
+# Here node A INSERTS a brand-new account (a row node B had never seen). Node B's
+# query for that owner first returns nothing (the row does not exist yet); after
+# node A commits the insert and node B's cache is marked dirty, the same find
+# re-resolves and observes the new row. This also proves coherence covers
+# insertions, not only updates to already-cached rows.
+#
+# Steps:
+#   0  read  on B : query owner='Mallory' — empty (no such account yet).
+#   1  write on A : A commits an INSERT of account 9 (Mallory, 42.00) on its connection.
+#   2  read  on B : the same find now observes the newly-inserted row (mark-dirty +
+#                   re-resolve), proving node B converged on A's committed insert.
+model: models/account.yaml
+tags: [coherence, cross-process, m8, partial-cache-mark-dirty]
+coherence:
+  - node: B
+    kind: read
+    find:
+      eq:
+        attr: Account.owner
+        value: Mallory
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
+      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
+    binds: [Mallory]
+    note: seed read on node B — Mallory does not exist yet, so the result is empty
+    observeRows: []
+  - node: A
+    kind: write
+    goldenSql:
+      postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+      mariadb: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+    binds: [9, Mallory, 42.00, 1]
+    note: node A commits an INSERT of the new account on a separate connection
+  - node: B
+    kind: read
+    find:
+      eq:
+        attr: Account.owner
+        value: Mallory
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
+      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
+    binds: [Mallory]
+    note: node B re-resolves after mark-dirty and MUST observe A's committed insert
+    observeRows:
+      - { id: 9, owner: Mallory, balance: 42.00 }

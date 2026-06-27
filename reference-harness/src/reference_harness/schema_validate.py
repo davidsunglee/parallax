@@ -111,6 +111,17 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         f"case {case_path.name} scenario[{index}].find",
                         errors,
                     )
+        # A coherence case (Phase 11) likewise carries read-step operations under
+        # `find`; each must validate against the operation algebra schema.
+        if isinstance(case, dict) and isinstance(case.get("coherence"), list):
+            for index, step in enumerate(case["coherence"]):
+                if isinstance(step, dict) and "find" in step:
+                    _validate(
+                        step["find"],
+                        operation_schema,
+                        f"case {case_path.name} coherence[{index}].find",
+                        errors,
+                    )
         # The referenced model must exist.
         if isinstance(case, dict) and isinstance(case.get("model"), str):
             referenced = compatibility_root / case["model"]

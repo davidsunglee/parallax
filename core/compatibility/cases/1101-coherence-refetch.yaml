@@ -1,0 +1,57 @@
+# Cross-process cache coherence — full-cache re-fetch (Phase 11).
+#
+# Two application servers (node A, node B) share ONE database. Node B reads a row
+# (and would, in-process, cache it). Node A — a DIFFERENT process, a different
+# connection — commits a change to that row. Node B's declared invalidation
+# behavior (full-cache re-fetch: re-fetch the changed primary keys and update the
+# interned object in place) then re-resolves the row against the database and MUST
+# observe node A's committed state — never the stale pre-write value it cached.
+#
+# The harness proves the OBSERVABLE half against real, committed, cross-connection
+# data: it provisions one database, opens two connections (node A = the provider,
+# node B = a peer via the open_peer seam), runs each step on its node, and asserts
+# node B's final re-fetch returns the NEW row. It contains no cache and no
+# notification bus — an implementation's actual invalidation machinery is graded
+# by the same observable rows it must produce.
+#
+# Steps:
+#   0  read  on B : seed read — B observes Linus' balance 250.00 (the pre-write state).
+#   1  write on A : A commits `balance = 999.00` for id 2 (a different connection).
+#   2  read  on B : B's re-fetch observes the POST-WRITE balance 999.00, proving the
+#                   cache converged on A's committed write rather than serving 250.00.
+model: models/account.yaml
+tags: [coherence, cross-process, m8, full-cache-refetch]
+coherence:
+  - node: B
+    kind: read
+    find:
+      eq:
+        attr: Account.id
+        value: 2
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+    binds: [2]
+    note: seed read on node B — would cache Linus at balance 250.00
+    observeRows:
+      - { id: 2, owner: Linus, balance: 250.00 }
+  - node: A
+    kind: write
+    goldenSql:
+      postgres: update account set balance = ? where id = ?
+      mariadb: update account set balance = ? where id = ?
+    binds: [999.00, 2]
+    note: node A commits a new balance on a separate connection
+  - node: B
+    kind: read
+    find:
+      eq:
+        attr: Account.id
+        value: 2
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+    binds: [2]
+    note: node B re-fetches and MUST observe A's committed 999.00 (not stale 250.00)
+    observeRows:
+      - { id: 2, owner: Linus, balance: 999.00 }

@@ -1,0 +1,54 @@
+# Benchmark fixture (M13): the deep-fetch shapes workload.
+#
+# Exercises M4's N+1 elimination at scale. The headline property is that a deep
+# fetch costs `1 + levels` round trips regardless of fan-out: a 1 -> N -> N fetch
+# over P parents is THREE statements (root + items + statuses), never 1 + N + N.
+# The benchmark measures the wall-time of each level AND records the round-trip
+# count, with `expectRoundTrips` so a silent regression to N+1 fails the check
+# even if the wall-time looked fine.
+#
+# A multi-statement workload lists its golden SQL as an ORDERED list per dialect
+# (one per relationship level) with one bind list per statement — the child levels
+# keyed by the parent IN-list. The generated dataset builds P orders, each with K
+# items, each item with K statuses, so the fan-out is real.
+model: models/orders.yaml
+dataset:
+  generate:
+    entity: Order
+    rows: 200
+    # Builds 200 orders; for each order K=5 items; for each item K=5 statuses
+    # (so order_item has 1,000 rows and order_status 5,000). Deterministic.
+    recipe: orders-tree
+    fanout: 5
+workloads:
+  - name: deep-fetch-1-N
+    note: root + to-many items — TWO statements over 200 parents, never 1 + 200
+    iterations: 50
+    expectRoundTrips: 2
+    goldenSql:
+      postgres:
+        - select t0.id, t0.name from orders t0 where t0.id <= ?
+        - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?)
+      mariadb:
+        - select t0.id, t0.name from orders t0 where t0.id <= ?
+        - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?)
+    binds:
+      - [5]
+      - [1, 2, 3, 4, 5]
+  - name: deep-fetch-1-N-N
+    note: root + items + statuses — THREE statements, the N+1-eliminating shape
+    iterations: 50
+    expectRoundTrips: 3
+    goldenSql:
+      postgres:
+        - select t0.id, t0.name from orders t0 where t0.id <= ?
+        - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?)
+        - select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?, ?)
+      mariadb:
+        - select t0.id, t0.name from orders t0 where t0.id <= ?
+        - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?)
+        - select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?, ?)
+    binds:
+      - [5]
+      - [1, 2, 3, 4, 5]
+      - [1, 2, 3, 4, 5]

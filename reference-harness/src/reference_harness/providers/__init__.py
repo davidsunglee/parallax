@@ -15,6 +15,14 @@ Each provider exposes:
 * ``load(table, columns, rows)`` — bulk-insert fixture rows.
 * ``query(sql, binds)`` — execute a read and return rows as ordered dicts.
 * ``execute(sql, binds)`` — execute a write (DML) and return the affected count.
+
+Phase 11 adds the **two-node** seam for cross-process cache coherence:
+``open_peer()`` yields a second, INDEPENDENT connection to the SAME database,
+modeling a peer application server (node B) alongside the provider's own
+connection (node A). A write committed on one connection is visible to a read on
+the other — exactly what a coherence case asserts. ``open_peer`` is OPTIONAL on
+the seam; a provider that does not implement it cannot run coherence cases (the
+runner skips them for that provider).
 """
 
 from __future__ import annotations
@@ -23,6 +31,27 @@ import os
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class Node(Protocol):
+    """A single application-server node: one independent connection to the DB.
+
+    A coherence case (Phase 11) runs over two nodes — the provider itself (node A,
+    the writer) and a peer (node B) opened via :meth:`DatabaseProvider.open_peer`.
+    Both expose the read/write surface against the same database; a write
+    committed on one is observable by a read on the other.
+    """
+
+    dialect: str
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        """Run a read query on this node; return rows as dicts."""
+        ...
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        """Run + COMMIT a write statement on this node; return the affected count."""
+        ...
 
 
 @runtime_checkable
@@ -49,6 +78,15 @@ class DatabaseProvider(Protocol):
 
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
         """Run a write statement (DML); return the affected-row count."""
+        ...
+
+    def open_peer(self) -> Iterator[Node]:  # pragma: no cover - protocol stub
+        """Context-manage a second, independent connection to the SAME database.
+
+        OPTIONAL (Phase 11, cross-process coherence). The yielded :class:`Node` is
+        a peer application server (node B) to the provider's own connection
+        (node A); a write committed on either is visible to a read on the other.
+        """
         ...
 
 

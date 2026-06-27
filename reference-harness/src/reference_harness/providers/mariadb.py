@@ -28,12 +28,15 @@ import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from types import TracebackType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pymysql
 from testcontainers.mysql import MySqlContainer
 
 from . import register
+
+if TYPE_CHECKING:
+    from . import Node
 
 # Pinned at a current stable MariaDB major (M12/DQ15). Refresh on new majors.
 MARIADB_IMAGE = "mariadb:11.4"
@@ -111,9 +114,18 @@ class MariaDbProvider:
 
     dialect = "mariadb"
 
-    def __init__(self, connection: pymysql.connections.Connection, dbname: str) -> None:
+    def __init__(
+        self,
+        connection: pymysql.connections.Connection,
+        dbname: str,
+        connect_params: dict[str, Any] | None = None,
+    ) -> None:
         self._conn = connection
         self._dbname = dbname
+        # Connection parameters for opening a second, independent connection to the
+        # SAME database (the Phase 11 two-node coherence seam). A peer is created
+        # by reconnecting with these and selecting the working database.
+        self._connect_params = connect_params or {}
 
     # --- DatabaseProvider seam ---------------------------------------------
 
@@ -176,6 +188,34 @@ class MariaDbProvider:
             self._conn.commit()
             return affected
 
+    @contextmanager
+    def open_peer(self) -> Iterator[Node]:
+        """Yield a second, independent connection to the SAME MariaDB database.
+
+        Cross-process coherence (Phase 11): node B reconnects with the provider's
+        own connection parameters and ``USE``\\ s the working database, so it shares
+        node A's data while holding its own session. MariaDB ``execute`` COMMITs,
+        so a write on node A is visible to a read on node B — the observable half
+        of cross-process coherence. Provisioning stays on node A; only the peer's
+        read/write surface is used.
+
+        The peer connects with ``autocommit=True`` so each read is its OWN
+        transaction with a FRESH snapshot. Under MariaDB/InnoDB's default
+        ``REPEATABLE READ`` a long-lived transaction would pin the snapshot taken
+        at node B's first read and never see node A's later commit — which is the
+        very thing a coherence re-fetch must observe. Autocommit reads model the
+        app server's behavior exactly: a re-fetch after invalidation is a new
+        query, not a read inside the stale snapshot. (Postgres' provider is already
+        autocommit, so this aligns the two dialects.)
+        """
+        peer_params = {**self._connect_params, "autocommit": True}
+        connection = pymysql.connect(database=self._dbname, **peer_params)
+        peer = MariaDbProvider(connection, self._dbname, self._connect_params)
+        try:
+            yield peer
+        finally:
+            peer.close()
+
     def close(self) -> None:
         if self._conn is not None and self._conn.open:
             self._conn.close()
@@ -206,8 +246,9 @@ def mariadb_provider() -> Iterator[MariaDbProvider]:
     provider: MariaDbProvider | None = None
     connection: pymysql.connections.Connection | None = None
     try:
-        connection = _connect_with_retry(container)
-        provider = MariaDbProvider(connection, container.dbname)
+        connect_params = _connect_params(container)
+        connection = _connect_with_retry(connect_params, container.dbname)
+        provider = MariaDbProvider(connection, container.dbname, connect_params)
         yield provider
     finally:
         if provider is not None:
@@ -217,8 +258,26 @@ def mariadb_provider() -> Iterator[MariaDbProvider]:
         container.stop()
 
 
+def _connect_params(container: MySqlContainer) -> dict[str, Any]:
+    """The pymysql connection parameters for the booted container (sans database).
+
+    Shared by the provider's own connection and the Phase 11 peer connection, so a
+    coherence case's node B reaches the same server with the same credentials.
+    """
+    return {
+        "host": container.get_container_host_ip(),
+        "port": int(container.get_exposed_port(container.port)),
+        "user": container.username,
+        "password": container.password,
+        "autocommit": False,
+    }
+
+
 def _connect_with_retry(
-    container: MySqlContainer, attempts: int = 30, delay: float = 1.0
+    connect_params: dict[str, Any],
+    dbname: str,
+    attempts: int = 30,
+    delay: float = 1.0,
 ) -> pymysql.connections.Connection:
     """Open a pymysql connection, retrying transient startup races.
 
@@ -227,19 +286,10 @@ def _connect_with_retry(
     handshake can be dropped (``Lost connection during query``). Retry until the
     server is genuinely accepting connections.
     """
-    host = container.get_container_host_ip()
-    port = int(container.get_exposed_port(container.port))
     last_error: Exception | None = None
     for _ in range(attempts):
         try:
-            return pymysql.connect(
-                host=host,
-                port=port,
-                user=container.username,
-                password=container.password,
-                database=container.dbname,
-                autocommit=False,
-            )
+            return pymysql.connect(database=dbname, **connect_params)
         except pymysql.err.OperationalError as exc:  # noqa: PERF203
             last_error = exc
             time.sleep(delay)

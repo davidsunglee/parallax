@@ -144,6 +144,17 @@ def _assert_schema(case: Case) -> None:
     elif case.is_conflict:
         if case.expected_affected_rows is None:
             raise CaseFailure(f"{case.path.name}: conflict case missing expectedAffectedRows")
+    elif case.is_coherence:
+        if len(case.coherence) < 2:
+            raise CaseFailure(
+                f"{case.path.name}: coherence case needs at least a write and a "
+                f"re-fetch step"
+            )
+        if not any(step.get("observeRows") is not None for step in case.coherence):
+            raise CaseFailure(
+                f"{case.path.name}: coherence case asserts nothing — at least the "
+                f"final re-fetch MUST declare observeRows"
+            )
     elif "operation" not in case.raw:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:
@@ -172,6 +183,12 @@ def _assert_serde(case: Case) -> None:
     if case.is_scenario:
         for step in case.scenario:
             serde.assert_roundtrip(step["find"])
+    elif case.is_coherence:
+        # A coherence case's read steps carry an operation under `find`; write
+        # steps carry none. Round-trip each present operation through the serde.
+        for step in case.coherence:
+            if "find" in step:
+                serde.assert_roundtrip(step["find"])
     elif not case.is_write_sequence and not case.is_conflict:
         serde.assert_roundtrip(case.operation)
     serde.assert_roundtrip(case.model.descriptor)
@@ -186,9 +203,9 @@ def _assert_equivalent_encodings(case: Case) -> None:
     prefix and a fluent surface of the same grouped intent denote one node — in
     the fixture itself rather than in bespoke test code.
     """
-    if case.is_write_sequence or case.is_scenario or case.is_conflict:
-        # A write-sequence and a conflict case have no operation; a scenario
-        # carries its operations per step. Equivalent-encodings is a
+    if case.is_write_sequence or case.is_scenario or case.is_conflict or case.is_coherence:
+        # A write-sequence and a conflict case have no operation; a scenario and a
+        # coherence case carry their operations per step. Equivalent-encodings is a
         # single-operation check.
         return
     canonical_operation = serde.canonical(case.operation)
@@ -859,6 +876,87 @@ def _binds_for_list(binds: list[Any], index: int, count: int) -> list[Any]:
     return binds if index == 0 else []
 
 
+# --- coherence cases (Phase 11, cross-process cache coherence) ---------------
+
+
+def _coherence_step_statements(step: dict[str, Any], dialect: str) -> list[str]:
+    """The ordered golden SQL statements a coherence step lists for *dialect*."""
+    golden = step.get("goldenSql") or {}
+    value = golden.get(dialect)
+    if value is None:
+        return []
+    return [value] if isinstance(value, str) else list(value)
+
+
+def _coherence_has_golden(case: Case, dialect: str) -> bool:
+    """True if any coherence step lists golden SQL for *dialect*."""
+    return any(_coherence_step_statements(step, dialect) for step in case.coherence)
+
+
+def _assert_coherence_normalization(case: Case, dialect: str) -> None:
+    for index, step in enumerate(case.coherence):
+        for sql in _coherence_step_statements(step, dialect):
+            canonical = normalize(sql, dialect)
+            if canonical != sql:
+                raise CaseFailure(
+                    f"{case.path.name}: coherence[{index}].goldenSql.{dialect} is "
+                    f"not canonical.\n"
+                    f"  stored:     {sql!r}\n"
+                    f"  normalized: {canonical!r}"
+                )
+
+
+def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
+    """Run the two-node coherence sequence and assert node B observes A's write.
+
+    The harness provisions ONE database (node A = the provider's own connection,
+    with the model's fixtures loaded so the seed read has a row) and opens a
+    second, independent connection (node B) via the provider's ``open_peer`` seam.
+    Each step runs on its declared node, executing that step's golden SQL: a
+    ``write`` step COMMITs DML on its node; a ``read`` step queries. A step that
+    declares ``observeRows`` asserts the rows its node observes — most importantly
+    the FINAL node-B re-fetch, which MUST return node A's committed post-write
+    state, never the stale pre-write rows.
+
+    The harness contains no cache and no notification bus; it proves the suite's
+    post-write golden SQL is correct against real, committed, cross-connection
+    data — the observable contract any conforming invalidation mechanism satisfies.
+    """
+    dialect = db.dialect
+    tolerance = case.tolerance
+
+    _provision(case, db)  # fixtures loaded so the seed read sees a row
+    with db.open_peer() as peer:
+        nodes: dict[str, Any] = {"A": db, "B": peer}
+        for index, step in enumerate(case.coherence):
+            node = nodes[step["node"]]
+            statements = _coherence_step_statements(step, dialect)
+            binds = step.get("binds", [])
+            if step["kind"] == "write":
+                for statement in statements:
+                    node.execute(statement, binds)
+                continue
+
+            # A read step: execute its SELECT on its node and (when declared)
+            # assert the rows it observes.
+            if not statements:
+                raise CaseFailure(
+                    f"{case.path.name}: coherence[{index}] is a read step but "
+                    f"lists no golden SQL for {dialect}."
+                )
+            rows = _query_rows(node, statements[0], binds)
+            observe = step.get("observeRows")
+            if observe is not None and not _rows_equal(rows, observe, tolerance):
+                raise CaseFailure(
+                    f"{case.path.name}: coherence[{index}] on node "
+                    f"{step['node']} observed rows != observeRows.\n"
+                    f"  observed: {rows!r}\n"
+                    f"  expected: {observe!r}\n"
+                    f"  (node B's re-fetch after node A's committed write MUST "
+                    f"return the new state, never the stale cached rows.)"
+                )
+
+
 # --- entry point ------------------------------------------------------------
 
 
@@ -881,6 +979,21 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_scenario_count_consistency(case, dialect)  # layer 5 (count)
         _provision(case, db)
         _assert_scenario(case, db)  # layer 2 + identity
+        return
+
+    if case.is_coherence:
+        if not _coherence_has_golden(case, dialect) or not hasattr(db, "open_peer"):
+            # No golden SQL for this dialect, or this provider has no two-node
+            # seam: run the dialect-agnostic checks so coverage is not skipped.
+            _assert_schema(case)
+            _assert_serde(case)
+            _assert_equivalent_encodings(case)
+            return
+        _assert_schema(case)
+        _assert_coherence_normalization(case, dialect)  # layer 3
+        _assert_serde(case)  # layer 4
+        _assert_equivalent_encodings(case)  # layer 4c
+        _assert_coherence(case, db)  # layer 2 (two-node observation)
         return
 
     if dialect not in case.golden_sql:
