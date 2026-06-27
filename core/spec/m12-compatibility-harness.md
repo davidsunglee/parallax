@@ -30,6 +30,7 @@ Its fields:
 | `expectedRows` | conditional | the rows the query must return (single-statement / flat-result cases) |
 | `expectedGraph` | conditional | the assembled object graph a deep fetch must produce (one of `expectedRows` / `expectedGraph` is REQUIRED) |
 | `roundTrips` | no | declared statement count (default `1`); for a multi-statement case it MUST equal the goldenSql statement count and is asserted |
+| `tolerance` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 ### goldenSql, referenceSql, expectedRows (the oracle question)
 
@@ -67,7 +68,14 @@ the harness asserts:
    compatibility-case schema.
 2. **Triple equivalence** — load the database from the descriptor + fixture data,
    then assert `exec(goldenSql[dialect]) == exec(referenceSql) == expectedRows`
-   (the `referenceSql` term is included only when present).
+   (the `referenceSql` term is included only when present). Row comparison is
+   order-insensitive, and **numerics compare exactly in decimal space** (never
+   through binary `float`), so a `decimal(p,s)` money column matches to the cent
+   and a value's type never depends on whether it is whole. A case whose result
+   is inherently inexact (stddev/variance, a repeating-decimal avg) — and so
+   cannot be authored exactly and differs in scale across dialects — MAY declare
+   a `tolerance`, making the numeric comparison `abs(actual - expected) <=
+   tolerance`. Booleans compare only to booleans (`true` is never `1`).
 3. **Normalization determinism** — `normalize(goldenSql[dialect]) ==
    goldenSql[dialect]` via sqlglot, per the M3 rules (alias scheme `t0,t1,…`,
    sorted binds, whitespace-collapsed, deterministic clause order).

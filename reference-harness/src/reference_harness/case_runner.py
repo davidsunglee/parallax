@@ -38,16 +38,18 @@ class CaseFailure(AssertionError):
 
 
 def _coerce_scalar(value: Any) -> Any:
-    """Coerce a DB / expected scalar to a comparable canonical form.
+    """Coerce a DB / expected scalar to a JSON-serializable identity form.
 
-    Postgres returns ``Decimal`` for numeric and exact ints for integers; YAML
-    authors write plain ints/floats/strings. We compare numerically where both
-    sides are numbers so authoring an ``int`` against a ``bigint`` column matches.
+    Used by the deep-fetch KEY-gathering and graph-identity paths, where values
+    must stay hashable and JSON-serializable (those columns are integer-domain
+    join keys and primary keys). Row *value* comparison does NOT use this — it
+    normalizes to an exact :class:`Decimal` via :func:`_to_decimal` so money and
+    aggregate values compare exactly, never through ``float``. See
+    :func:`_scalars_equal`.
     """
     if isinstance(value, bool):
         return value
     if isinstance(value, Decimal):
-        # Preserve exactness but allow comparison with int/float expected values.
         return float(value) if value % 1 else int(value)
     return value
 
@@ -56,13 +58,78 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     return {key: _coerce_scalar(value) for key, value in row.items()}
 
 
-def _row_key(row: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
-    return tuple(sorted(_normalize_row(row).items()))
+def _to_decimal(value: Any) -> Any:
+    """Normalize a numeric to an EXACT ``Decimal``; pass non-numerics through.
+
+    Integers and ``Decimal``\\ s convert losslessly. A ``float`` is converted via
+    its shortest round-tripping repr (``Decimal(str(x))``) so a YAML-authored
+    ``0.1`` becomes ``Decimal('0.1')`` — matching the DB's exact ``numeric`` —
+    rather than ``Decimal(0.1)``, which would inject the binary-float expansion.
+    ``bool`` is deliberately NOT treated as numeric, so ``True`` never equals 1.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return Decimal(value)
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, Decimal):
+        return value
+    return value
 
 
-def _rows_equal(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> bool:
-    """Order-insensitive multiset comparison of result rows."""
-    return sorted(_row_key(r) for r in left) == sorted(_row_key(r) for r in right)
+def _scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
+    """Compare two scalars exactly in Decimal space, or within ``tolerance``.
+
+    Numerics compare as exact Decimals (no ``float`` anywhere) so a ``decimal``
+    money column matches to the cent and a value's type never depends on whether
+    it is whole. When the case declares a ``tolerance`` — for inherently inexact
+    results (stddev / variance / repeating-decimal avg) that cannot be authored
+    exactly and differ in scale across dialects — numeric comparison becomes
+    ``abs(left - right) <= tolerance``. Non-numerics (str / bool / None) use ``==``.
+    """
+    if isinstance(left, bool) or isinstance(right, bool):
+        # bool is not numeric: a boolean equals only a boolean of the same value
+        # (so True != 1 and False != 0), never a number that happens to be 0/1.
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    da, db = _to_decimal(left), _to_decimal(right)
+    if isinstance(da, Decimal) and isinstance(db, Decimal):
+        if tolerance is not None:
+            return abs(da - db) <= tolerance
+        return da == db
+    return left == right
+
+
+def _row_matches(
+    left: dict[str, Any], right: dict[str, Any], tolerance: Decimal | None
+) -> bool:
+    if left.keys() != right.keys():
+        return False
+    return all(_scalars_equal(left[key], right[key], tolerance) for key in left)
+
+
+def _rows_equal(
+    left: list[dict[str, Any]],
+    right: list[dict[str, Any]],
+    tolerance: Decimal | None = None,
+) -> bool:
+    """Order-insensitive multiset comparison of result rows.
+
+    Tolerance-aware scalar comparison is not hashable, so this is a greedy match:
+    each left row must claim a distinct right row. Result sets are tiny, so the
+    O(n^2) match is free.
+    """
+    if len(left) != len(right):
+        return False
+    remaining = list(right)
+    for row in left:
+        for index, candidate in enumerate(remaining):
+            if _row_matches(row, candidate, tolerance):
+                del remaining[index]
+                break
+        else:
+            return False
+    return not remaining
 
 
 def _assert_schema(case: Case) -> None:
@@ -252,8 +319,9 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
 
     golden_rows = _query_rows(db, golden, case.binds)
     expected = case.expected_rows
+    tolerance = case.tolerance
 
-    if not _rows_equal(golden_rows, expected):
+    if not _rows_equal(golden_rows, expected, tolerance):
         raise CaseFailure(
             f"{case.path.name}: goldenSql.{dialect} rows != expectedRows.\n"
             f"  golden:   {golden_rows!r}\n"
@@ -262,7 +330,7 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
 
     if case.reference_sql is not None:
         reference_rows = db.query(case.reference_sql)
-        if not _rows_equal(reference_rows, expected):
+        if not _rows_equal(reference_rows, expected, tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != expectedRows.\n"
                 f"  reference: {reference_rows!r}\n"
@@ -354,7 +422,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     if case.reference_sql is not None:
         reference_rows = db.query(case.reference_sql)
         root_projection = [_project_like(r, root_rows) for r in reference_rows]
-        if not _rows_equal(root_projection, root_rows):
+        if not _rows_equal(root_projection, root_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql root rows != goldenSql root rows.\n"
                 f"  reference: {reference_rows!r}\n"
