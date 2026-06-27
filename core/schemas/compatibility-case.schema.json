@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (M12)",
-  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of four shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); or a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind).",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of five shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind); or a coherence case (Phase 11, cross-process cache coherence — carries a `coherence` two-node operation sequence run over two connections to one database, asserting node B observes node A's committed write rather than a stale cached copy).",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags"],
@@ -26,6 +26,10 @@
     {
       "description": "A conflict case (M10): a golden UPDATE asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `precondition` (e.g. a stale-version mutation by a concurrent transaction), then runs the golden UPDATE and asserts `expectedAffectedRows` (a stale version => 0 rows, a fresh version => 1).",
       "required": ["expectedAffectedRows", "goldenSql"]
+    },
+    {
+      "description": "A coherence case (Phase 11, cross-process cache coherence): a two-node operation sequence run against ONE database over TWO connections (node A, node B). Each step declares its node and golden SQL; the case asserts what node B observes after node A's committed write (the new state, never a stale cached copy). The harness provisions one database, opens two connections, runs each step on its node, and asserts the final re-fetch returns the post-write rows.",
+      "required": ["coherence"]
     }
   ],
   "properties": {
@@ -129,6 +133,51 @@
           },
           "note": {
             "description": "Optional human-readable description of the step's role in the scenario.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "coherence": {
+      "description": "A coherence (Phase 11, cross-process cache coherence) case: an ordered list of steps run against ONE database over TWO connections modeling two application servers (node A, node B). Each step names the node it runs on, the operation it issues, the golden SQL it emits per dialect, and its binds; a write step (kind `write`) is DML that COMMITS on its node, a read step (kind `read`) is a query. The final step is node B's re-fetch after node A's committed write — it carries `observeRows`, the post-write rows node B MUST observe (never the stale pre-write state). The harness runs each step on its declared connection and asserts the final re-fetch returns `observeRows`, proving the suite's post-write golden SQL is correct against real, committed cross-connection data. The harness never compiles operations to SQL and contains no cache or notification bus.",
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["node", "kind", "goldenSql"],
+        "properties": {
+          "node": {
+            "description": "Which application-server node (which connection) this step runs on. `A` is the writer; `B` is the peer whose cache must converge on A's committed state.",
+            "enum": ["A", "B"]
+          },
+          "kind": {
+            "description": "`read` issues a query (a seed read or a re-fetch); `write` issues DML that COMMITS on its node (the change a peer must observe).",
+            "enum": ["read", "write"]
+          },
+          "find": {
+            "description": "The operation a `read` step issues (a canonical M2 algebra node, validated against operation.schema.json). Present on read steps; absent on write steps (which mutate rather than query).",
+            "type": "object"
+          },
+          "goldenSql": {
+            "description": "The golden SQL this step emits, keyed by dialect (single statement or ordered list). A read step's is a SELECT; a write step's is the committing DML.",
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": { "enum": ["postgres", "mariadb"] },
+            "additionalProperties": { "$ref": "#/$defs/dialectSql" }
+          },
+          "binds": {
+            "description": "Bind values for this step's golden SQL `?` placeholders (a flat list for a single statement).",
+            "type": "array",
+            "items": {}
+          },
+          "observeRows": {
+            "description": "The rows this step MUST observe. On the final node-B re-fetch this is the POST-WRITE state (proving the cache converged on node A's committed write, never the stale pre-write rows). On a seed read it is the pre-write state.",
+            "type": "array",
+            "items": { "type": "object" }
+          },
+          "note": {
+            "description": "Optional human-readable description of the step's role in the coherence scenario.",
             "type": "string"
           }
         }

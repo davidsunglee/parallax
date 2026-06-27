@@ -11,7 +11,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from types import TracebackType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import psycopg
 from psycopg.adapt import Loader
@@ -19,6 +19,9 @@ from psycopg.types.json import Jsonb
 from testcontainers.postgres import PostgresContainer
 
 from . import register
+
+if TYPE_CHECKING:
+    from . import Node
 
 # Pinned at the latest stable Postgres major (M12/DQ15). Refresh on new majors.
 POSTGRES_IMAGE = "postgres:17"
@@ -67,6 +70,7 @@ class PostgresProvider:
     dialect = "postgres"
 
     def __init__(self, connection_url: str) -> None:
+        self._url = connection_url
         self._conn = psycopg.connect(connection_url, autocommit=True)
         # Read instant columns as stable ISO-8601 / "infinity" text (see the
         # loader docstring): infinity-safe and deterministic for row comparison.
@@ -124,6 +128,23 @@ class PostgresProvider:
             else:
                 cur.execute(sql)
             return cur.rowcount
+
+    @contextmanager
+    def open_peer(self) -> Iterator[Node]:
+        """Yield a second, independent connection to the SAME Postgres database.
+
+        Cross-process coherence (Phase 11): node B is a fresh ``PostgresProvider``
+        bound to the same connection URL — its own socket, its own session — so a
+        write COMMITTED on node A (this provider, autocommit) is visible to a read
+        on node B, exactly as two app servers sharing one database would observe.
+        Only the read/write surface (``query`` / ``execute`` / ``dialect``) is used
+        on the peer; provisioning stays on node A.
+        """
+        peer = PostgresProvider(self._url)
+        try:
+            yield peer
+        finally:
+            peer.close()
 
     def close(self) -> None:
         if self._conn is not None and not self._conn.closed:

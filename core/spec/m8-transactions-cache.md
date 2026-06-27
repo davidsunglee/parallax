@@ -93,8 +93,10 @@ A write that changes an entity invalidates the dependent cached queries. The
 cached queries expire without being enumerated) is non-normative; the
 **observable** rule is: after a committed write to an entity, a subsequent find
 **MUST NOT** return stale rows for that entity. Cross-**process** invalidation
-(one app server seeing another's writes) is a separate, fast-follow concern
-(cross-process coherence), not part of this MVP module.
+(one app server seeing another's writes) is a separate, fast-follow concern —
+[cross-process cache coherence](cross-process-coherence.md), which extends exactly
+this rule to multiple application servers sharing one database — not part of this
+MVP module.
 
 ## Buffered, batched, ordered writes
 

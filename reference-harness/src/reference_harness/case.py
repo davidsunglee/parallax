@@ -220,6 +220,21 @@ class Case:
         return self.raw.get("scenario", [])
 
     @property
+    def is_coherence(self) -> bool:
+        """True for a cross-process cache-coherence case (Phase 11).
+
+        A coherence case carries a ``coherence`` two-node operation sequence (run
+        over two connections to one database) instead of a single
+        ``operation`` + ``goldenSql``; golden SQL lives per step, and the final
+        node-B re-fetch asserts ``observeRows`` (node A's committed write).
+        """
+        return "coherence" in self.raw
+
+    @property
+    def coherence(self) -> list[dict[str, Any]]:
+        return self.raw.get("coherence", [])
+
+    @property
     def equivalent_encodings(self) -> list[dict[str, Any]]:
         """Alternate surface encodings that MUST canonicalize to ``operation``.
 

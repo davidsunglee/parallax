@@ -1,0 +1,26 @@
+# Benchmark fixture (M13): the milestone-chaining write workload.
+#
+# Exercises M7's milestone-chaining write cost (audit-only). A milestone insert
+# writes a current row [in_z = txInstant, out_z = infinity); a milestone update
+# closes the current row (out_z = txInstant) and chains a new current row. The
+# benchmark measures the wall-time of each write and its round-trip count.
+#
+# A `kind: write` workload is re-run `iterations` times. Because identical DML with
+# a fixed primary key is not re-runnable (duplicate key on the 2nd iteration), a
+# write workload's binds MAY use the `$i` sentinel, which the harness substitutes
+# with the 1-based iteration index — so each repeat writes a DISTINCT milestone row
+# and the workload stays idempotent across the timing loop. The table starts empty
+# (DDL only, no fixtures) so the benchmark builds its own milestone history.
+model: models/balance.yaml
+dataset:
+  empty: true
+workloads:
+  - name: milestone-insert
+    kind: write
+    note: insert a current milestone row [in_z, infinity) — one statement, one round trip
+    iterations: 200
+    expectRoundTrips: 1
+    goldenSql:
+      postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+    binds: ["$i", "ACCT-1", 100.00, "2024-01-01T00:00:00+00:00", "infinity"]

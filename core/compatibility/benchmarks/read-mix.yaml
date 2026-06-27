@@ -1,0 +1,47 @@
+# Benchmark fixture (M13): the read operation-mix workload.
+#
+# Exercises the M2/M3 predicate path and the query-cache hit/miss distinction at a
+# meaningful scale. Unlike a correctness case (a handful of rows so expectedRows is
+# eyeball-verifiable), a benchmark loads a GENERATED dataset — here 1,000 accounts
+# produced by the harness's deterministic generator — so a measured number means
+# something. The shape and scale are normative; the generator implementation is not.
+#
+# Each workload declares the SQL it runs (per dialect, like a case), its binds, an
+# `iterations` count (how many repeats to gather a stable timing sample), and an
+# OPTIONAL `expectRoundTrips` so the benchmark doubles as a round-trip regression
+# check. The harness measures wall-time p50/p95, the database round trips actually
+# issued, and peak/steady memory; it emits report.json. The numbers it records are
+# REFERENCE figures — per-language targets live in each language spec (DQ10).
+model: models/account.yaml
+dataset:
+  generate:
+    entity: Account
+    rows: 1000
+    # The deterministic generator recipe: id = 1..rows; owner = "owner-<id>";
+    # balance = (id * 100) cents as decimal(18,2); version = 1.
+    recipe: accounts-sequential
+workloads:
+  - name: point-read
+    note: a single primary-key lookup — the query-cache miss/first-fetch cost
+    iterations: 200
+    expectRoundTrips: 1
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+    binds: [500]
+  - name: range-read
+    note: a bounded range scan over the balance column (M2 range predicates)
+    iterations: 100
+    expectRoundTrips: 1
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.balance between ? and ?
+      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.balance between ? and ?
+    binds: [10000.00, 20000.00]
+  - name: aggregate-group-by
+    note: a group-by / aggregate workload (the M2 aggregate path) over the dataset
+    iterations: 100
+    expectRoundTrips: 1
+    goldenSql:
+      postgres: select count(*) n, sum(t0.balance) total from account t0
+      mariadb: select count(*) n, sum(t0.balance) total from account t0
+    binds: []
