@@ -1,0 +1,18 @@
+# Table-per-hierarchy subtype query with a user predicate (M1 inheritance, M3).
+#
+# Find CardPayments with amount > 60. The injected discriminator predicate
+# (`t0.kind = ?`) composes with the user predicate via `and` and is appended
+# AFTER it, so binds read user-first then discriminator: [60.00, 'card']. Only
+# the Visa card row (id 1, amount 100.00) qualifies; the Amex card row (50.00) is
+# filtered out by the amount predicate.
+model: models/payment.yaml
+tags: [m1, m3, inheritance, table-per-hierarchy, discriminator]
+operation:
+  greaterThan: { attr: CardPayment.amount, value: 60.00 }
+goldenSql:
+  postgres: select t0.id, t0.kind, t0.amount from payment t0 where t0.amount > ? and t0.kind = ?
+binds: [60.00, card]
+referenceSql: select id, kind, amount from payment where amount > 60.00 and kind = 'card'
+expectedRows:
+  - { id: 1, kind: card, amount: 100.00 }
+roundTrips: 1

@@ -469,3 +469,66 @@ success (1 row) — by **applying** the golden `UPDATE` to a loaded table (after
 optional out-of-band version mutation) and asserting the **affected-row count**
 (`M12` conflict case), so optimistic-lock conflict detection is verified against
 real data, not merely asserted.
+
+## Metamodel-extension lowering — inheritance + valueObject (M1)
+
+### Inheritance discriminator filter (table-per-hierarchy)
+
+A `table-per-hierarchy` entity stores the whole hierarchy in one table, with a
+**discriminator column** carrying each leaf's `discriminatorValue` (M1). A query
+for a single subtype injects a **discriminator-equality** predicate; a query
+across a family of subtypes injects a discriminator `in (…)`. The injected term
+is an ordinary predicate over the root alias `t0`, composed with any user
+predicate via `and`, with the discriminator value(s) carried as `?` binds:
+
+| Query | Canonical predicate fragment | Binds |
+|---|---|---|
+| one subtype | `t0.kind = ?` | `[<discriminatorValue>]` |
+| a family of subtypes | `t0.kind in (?, ?)` | `[<value1>, <value2>]` |
+| the root (all rows) | *(no discriminator predicate)* | — |
+
+```text
+find Card-payments  (Payment table-per-hierarchy, discriminator `kind`, value 'card')
+  → select t0.id, t0.amount, t0.kind from payment t0 where t0.kind = ?
+    binds: ['card']
+```
+
+A `table-per-leaf` subtype query injects **no** discriminator at all — the leaf
+is selected by querying its **own** table — so its golden SQL is an ordinary
+single-table read of that leaf's table. The independent `referenceSql` oracle for
+a discriminator query spells the value inline (`where kind = 'card'`).
+
+### valueObject — JSONB read and filter
+
+A `valueObject` is stored in **one JSONB column** (M0/M1), not column-flattened.
+Reading the whole value object projects the JSONB column directly (`t0.address`);
+reading or filtering an **inner field** uses the M2 nested-attribute access form,
+which lowers to a **`jsonb_extract_path_text`** extraction whose **path segments
+are carried as `?` binds** (M3 rule 4 — the JSON keys are parameters, never
+inlined, which also keeps the golden SQL a normalizer fixed point):
+
+| Operation | Canonical fragment |
+|---|---|
+| project the whole object | `t0.address` (in the `select` list) |
+| project an inner field | `jsonb_extract_path_text(t0.address, ?) <as>` |
+| `nestedEq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` |
+| `nestedNotEq(Class.vo.field, v)` | `not jsonb_extract_path_text(t0.address, ?) = ?` |
+| nested deeper (`vo.a.b`) | `jsonb_extract_path_text(t0.address, ?, ?) = ?` |
+
+The path binds precede the comparison bind, in `path`-segment order then value:
+
+```text
+nestedEq(Customer.address.city, 'Oslo')
+  → select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
+    binds: ['city', 'Oslo']
+
+nestedEq(Customer.address.geo.country, 'NO')
+  → select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
+    binds: ['geo', 'country', 'NO']
+```
+
+`jsonb_extract_path_text` yields **text**, so the compared value is authored as a
+string and matched textually — the simplest portable JSONB filter. The
+independent `referenceSql` oracle spells the same extraction with the native
+`->>` operator and inline keys (`t0.address ->> 'city' = 'Oslo'`), a different
+formulation the harness asserts returns the same rows (M12).
