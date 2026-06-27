@@ -1,173 +1,237 @@
-# parallax
+# Parallax
 
-A **language-neutral core specification** plus a **machine-readable compatibility
-suite** for a bitemporal object-relational mapping framework, extracted from the
-Goldman Sachs [Reladomo](https://github.com/goldmansachs/reladomo) Java ORM.
+Parallax is a language-neutral specification and compatibility suite for
+object-relational mapper implementations.
 
-The goal: hand an agent the **core spec + a language spec + this compatibility
-suite**, and have it build an idiomatic implementation in any language that
-proves parity by running the suite against real databases.
+It defines observable behavior in documents, schemas, fixtures, and
+executable compatibility cases. A reference harness is provided to
+demonstrate those artifacts are internally consistent against real databases.
 
-## What this repository is
+The feature set is derived from the bitemporal object-relational mapper
+[Reladomo](https://github.com/goldmansachs/reladomo).
 
-This is a **polyglot monorepo**. The only things shared across language modules
-are *data* (the compatibility fixtures) and *docs* (the spec) — there is no
-compiled cross-language dependency, so there is deliberately **no unified build
-system** (no Bazel). Each language module uses its own idiomatic toolchain; a
-thin root layer (`just` + a CI matrix + commit hooks) ties them together.
+This repository is data- and contract-first. The root package provides project
+tooling. Future language implementations are forthcoming. They will live beside
+`core/` and prove conformance by running the same suite.
+
+## Repository Map
 
 ```text
-/                          # monorepo root
-├── package.json           # dev-tooling only: husky, commitlint, markdownlint, lint-staged
-├── commitlint.config.js   # conventional-commit rules
-├── .husky/                # commit-msg → commitlint; pre-commit → lint-staged
-├── justfile               # root orchestration: just lint / test / verify / matrix
-├── .github/workflows/     # CI: lint + dep-graph + suite across the DB matrix
-├── core/                  # language-neutral data + docs (NO runtime code)
-│   ├── spec/              # M0–M13 capability modules + dependency graph
-│   ├── schemas/           # metamodel · operation · compatibility-case JSON Schemas
-│   └── compatibility/     # the suite: models/ · cases/ · benchmarks/
-├── reference-harness/     # the M12 runner (Python + uv + sqlglot) — tooling, NOT an ORM
-└── (future) python/ java/ typescript/ …   # per-language { spec, impl }
+core/
+  spec/                 Normative modules, scope tiers, dependency graph
+  schemas/              JSON Schemas for descriptors, operations, and cases
+  compatibility/
+    models/             Canonical entity descriptors
+    fixtures/           Input rows used by compatibility cases
+    cases/              Read, write, scenario, conflict, and coherence cases
+    benchmarks/         M13 benchmark workloads and generated datasets
+reference-harness/      Python runner that validates and executes the suite
+justfile                Common verification commands
+package.json            Markdown, commit, and repo-level developer tooling
 ```
 
-## What the reference harness is — and is not
+## Functional Walkthrough
 
-`reference-harness/` is the canonical **M12 compatibility runner**. It is
-**tooling, not an ORM**. It **never compiles operations to SQL** — that is
-precisely what a real implementation must do and prove against the golden SQL.
+### 1. Start with the specification
 
-What it *does*, per compatibility case, against a freshly-provisioned real
-database (selected through the **database-provider seam**):
+`core/spec/` is the behavioral contract. It is split into modules so an
+implementation can adopt functionality in a defensible order:
 
-1. **Schema conformance** — the model descriptor, the operation encoding, and
-   the case envelope all validate against their JSON Schemas.
-2. **Triple equivalence** — `exec(goldenSql[dialect]) == exec(referenceSql) ==
-   expectedRows`. The independent, naively-written `referenceSql` is an oracle
-   that catches a case that is self-consistent but wrong.
-3. **Normalization determinism** — `normalize(goldenSql) == goldenSql` via
-   sqlglot, per the M3 canonical rules.
-4. **Serde round-trip** — `serialize(deserialize(x)) == x` for **both** the
-   operation encoding and the model descriptor, in **both** JSON and YAML.
+| Area | What it defines |
+| --- | --- |
+| M0 Core conventions | Neutral scalar types, UTC timestamps, JSON value objects, and temporal infinity handling |
+| M1 Metamodel | Entity descriptors, attributes, relationships, indices, inheritance, temporal dimensions, and primary-key generation |
+| M2 Operation algebra | A serialized query and mutation algebra above SQL |
+| M3 SQL contract | Canonical SQL shape, binds, aliases, per-dialect differences, and equivalence rules |
+| M4 Relationships/deep fetch | Relationship navigation, correlated `exists`, and bounded deep-fetch query plans |
+| M5 Lists/bulk behavior | Operation-backed lazy lists, deferred bulk work, and cascade behavior |
+| M7 Temporal behavior | Milestoned reads, audit-only writes, two-axis temporal writes, and business-temporal-only cases |
+| M8 Transactions/cache | Unit of work, identity cache, query cache, invalidation, batching, and shared read locks |
+| M9 Lifecycle/detach | Object states, detached copies, merge-back, detached inserts, and detached deletes |
+| M10 Optimistic locking | Version columns, conflict detection, affected-row checks, and retry contracts |
+| M11 Dialect seam | The boundary for Postgres, MariaDB, and future database providers |
+| M12 Compatibility harness | The executable case format and assertion model |
+| M13 Performance | Repeatable benchmark datasets, workloads, and report shape |
+| Coherence | Multi-process cache invalidation expectations over a shared database |
 
-The harness is Python + uv + sqlglot. Its *contract* is language-neutral, so
-other ecosystems can re-implement the runner.
+`core/spec/scope-and-tiers.md` marks each capability as MVP, fast-follow,
+definitely-do, might-do, or won't-do. `core/spec/dependency-graph.md` gives the
+normative module DAG and is checked by the harness tooling, so coverage cannot
+drift away from the published scope.
 
-## How to run the suite
+### 2. Describe the domain with models
 
-Prerequisites: [`uv`](https://docs.astral.sh/uv/), [`just`](https://github.com/casey/just),
-Node.js (for commit/lint hooks), and a running **Docker** daemon (Testcontainers
-boots real databases).
+`core/compatibility/models/*.yaml` contains canonical descriptors that exercise
+the spec:
 
-```sh
-# one-time: install dev-tooling hooks
-npm install
+- `account.yaml` covers a simple versioned entity used by cache, transaction,
+  batching, and optimistic-locking cases.
+- `orders.yaml` defines `Order`, `OrderItem`, and `OrderStatus`, including
+  one-to-many relationships for navigation and deep fetch.
+- `balance.yaml` models audit-style temporal rows with processing milestones.
+- `position.yaml` models two temporal axes for rectangle-split write behavior.
+- `payment.yaml` covers table-per-hierarchy inheritance with a discriminator.
+- `customer.yaml` covers JSON-backed value objects and nested attribute access.
+- `document.yaml` and `reservation.yaml` cover additional descriptor shapes used
+  by later compatibility cases.
 
-# static checks (no Docker): ruff, markdownlint, schema + meta-schema, sqlglot-parse
+The metamodel is validated by `core/schemas/metamodel.schema.json`. It gives
+each implementation a stable input format before any language-specific API or
+code generation exists.
+
+### 3. Express behavior as operations
+
+`core/schemas/operation.schema.json` defines a single-key tagged operation
+algebra. Cases use that algebra for predicates, ordering, limits, relationship
+navigation, deep fetch, aggregation, temporal reads, and history/range queries.
+
+The operation layer is intentionally above SQL. Implementations should map their
+native API to this algebra, then prove that the resulting behavior matches the
+same case data.
+
+### 4. Lock behavior down with compatibility cases
+
+`core/compatibility/cases/` is the executable behavior suite. Each case combines
+a descriptor, an operation or write sequence, canonical SQL, expected rows or
+table state, and optional reference SQL.
+
+The case families are numbered by topic:
+
+- `00xx` and `02xx`: basic reads and predicate algebra.
+- `03xx`: relationship navigation and deep fetch.
+- `04xx`: aggregation and grouped results.
+- `05xx`: audit temporal reads and writes.
+- `06xx`: transactions, identity cache, query cache, read locks, and batched
+  writes.
+- `07xx`: detach/merge and optimistic-locking conflicts.
+- `08xx`: two-axis and business-temporal behavior.
+- `09xx`: inheritance and JSON value objects.
+- `10xx`: MariaDB dialect coverage.
+- `11xx`: cross-process coherence.
+
+The compatibility case schema supports five top-level shapes:
+
+- `read`: execute canonical SQL, compare rows, and optionally compare
+  `referenceSql`.
+- `writeSequence`: run ordered write statements and compare final table state.
+- `scenario`: model transactions, cache hits, identity checks, and round trips.
+- `conflict`: apply a precondition, execute a write, and assert affected rows.
+- `coherence`: use two database connections to observe cross-process behavior.
+
+Every read case follows the same triple oracle:
+
+```text
+rows(goldenSql + binds) == expectedRows
+rows(referenceSql + binds) == expectedRows
+normalize(goldenSql) is canonical for the dialect
+```
+
+Deep-fetch cases extend this by asserting a bounded number of SQL statements and
+an `expectedGraph`, not just flat rows.
+
+### 5. Run cases through the reference harness
+
+`reference-harness/` is a Python implementation of the M12 harness. It is not an
+ORM and it does not compile operations into SQL. Its job is to verify that the
+spec artifacts are coherent.
+
+For each case the harness:
+
+1. Validates the descriptor, operation, and case JSON/YAML against schemas.
+2. Derives test DDL from the descriptor.
+3. Loads the requested fixture rows.
+4. Executes the authored canonical SQL against a real database provider.
+5. Executes `referenceSql` when present.
+6. Compares rows, graphs, table state, affected rows, round trips, and cache or
+   identity expectations.
+7. Checks SQL normalization and deterministic descriptor/operation serde.
+
+Database-specific behavior is isolated behind the provider seam in
+`reference-harness/parallax_harness/providers/`. The built-in providers cover
+Postgres and MariaDB through Testcontainers, including type mapping, temporal
+infinity handling, bind translation, JSON values, read-lock syntax, and peer
+connections for coherence cases.
+
+### 6. Use benchmarks as executable performance contracts
+
+`core/compatibility/benchmarks/` contains M13 benchmark definitions. They reuse
+the same models, SQL conventions, and provider seam as cases, but report timing
+and resource measurements instead of pass/fail row equivalence alone.
+
+Current benchmark files cover generated account reads, range reads,
+aggregations, deep-fetch workloads, and milestone writes. The benchmark runner
+emits a JSON report with workload name, dialect, dataset, iterations, p50/p95
+latency, round trips, memory, and row counts.
+
+## Common Commands
+
+Run from the repository root:
+
+```bash
 just lint
+```
 
-# the module-dependency graph is a legal DAG AND the coverage gate is green
-# (every in-scope module has at least one fixture tagged to it)
+Validate schemas, SQL shape, and the module dependency graph:
+
+```bash
 just dep-graph
+```
 
-# the full suite — boots Postgres AND MariaDB via Testcontainers
+Run the compatibility suite against available database providers:
+
+```bash
 just test
+```
 
-# everything required before merge
+Run all verification gates:
+
+```bash
 just verify
+```
 
-# the compatibility-matrix report (implementations × databases:
-# reference × {postgres, mariadb})
+Generate the provider/case matrix:
+
+```bash
 just matrix
 ```
 
-Run against a single database with `PARALLAX_DATABASES=postgres` (or `mariadb`).
+Provider selection is controlled by `PARALLAX_DATABASES`. For example:
 
-## The compatibility case at a glance
+```bash
+PARALLAX_DATABASES=postgres just test
+PARALLAX_DATABASES=postgres,mariadb just matrix
+```
 
-Each case is YAML carrying three independent things the harness cross-checks:
+The harness currently expects Docker-compatible Testcontainers access for the
+database-backed commands.
 
-- **`goldenSql`** — the optimized SQL an implementation is *expected to emit*
-  (keyed by dialect from day one, e.g. `postgres:` / `mariadb:`).
-- **`expectedRows`** — the result the query must return against the fixture data.
-- **`referenceSql`** — a deliberately naive, obviously-correct second
-  formulation; an independent oracle (required for non-trivial cases, optional
-  for trivial single-table predicates).
+## Adding Or Changing Behavior
 
-See [`core/spec/00-overview.md`](core/spec/00-overview.md) for the spec map and
-[`core/spec/m12-compatibility-harness.md`](core/spec/m12-compatibility-harness.md)
-for the full case contract.
+Use this path when extending the repository:
 
-## Contributor guide
+1. Update or add the normative module text in `core/spec/`.
+2. Update JSON Schemas when the serialized contract changes.
+3. Add or adjust descriptors in `core/compatibility/models/`.
+4. Add fixtures only when the case cannot reuse existing rows.
+5. Add compatibility cases with canonical `goldenSql`, binds, and expected
+   observations.
+6. Add benchmark coverage when the behavior changes query shape, write shape,
+   round trips, or memory use.
+7. Run `just verify` before relying on the change.
 
-### How to add a case
+When adding a dialect, implement a new provider behind the M11 seam and add a
+new `goldenSql.<dialect>` entry to cases and benchmarks that need dialect-
+specific SQL.
 
-1. Author (or reuse) a model descriptor under `core/compatibility/models/` (an
-   instance of `metamodel.schema.json`) and its fixture rows under
-   `core/compatibility/fixtures/<model-stem>.yaml`.
-2. Add a YAML file under `core/compatibility/cases/` carrying the case envelope —
-   `model`, `tags`, `operation` (or `writeSequence` / `scenario` / `coherence` /
-   the conflict shape), `goldenSql` (keyed by dialect), `binds`, `referenceSql`
-   (required for non-trivial cases), and `expectedRows` / `expectedGraph` /
-   `expectedTableState`. See
-   [`m12-compatibility-harness.md`](core/spec/m12-compatibility-harness.md) for
-   the full field list.
-3. **Tag it for coverage.** The first tag is the owning module (`m2`, `m7`, …);
-   add feature tags as needed. The coverage gate (below) keys off these tags.
-4. Run `just lint` (schema + sqlglot-parse), then `just test` (real databases).
+## Current Status
 
-### How to add a module
+The core spec, schemas, compatibility suite, benchmark definitions, and
+reference harness exist now. The suite already models descriptor validation,
+operation serde, SQL canonicalization, real database execution, deep-fetch graph
+assembly, temporal write expectations, cache and identity scenarios,
+optimistic-lock conflicts, dialect differences, and cross-process coherence.
 
-1. Add the spec file under `core/spec/` (e.g. `m14-….md`) and register it in
-   [`00-overview.md`](core/spec/00-overview.md).
-2. Add the module to the **normative module-dependency graph** —
-   [`dependency-graph.md`](core/spec/dependency-graph.md): a row in the module
-   table **and** edges in the fenced ```` ```dependency-graph ```` block (each
-   edge `A --> B` means "A depends on B"; the graph MUST stay an acyclic DAG with
-   legal directions).
-3. Place it in a tier in
-   [`scope-and-tiers.md`](core/spec/scope-and-tiers.md). If it is MVP /
-   fast-follow / definitely-do, the **coverage gate** now requires at least one
-   fixture tagged to it.
-4. Ship fixtures tagged to the new module.
-
-### How the gates work
-
-Every normative claim is a mechanical check (nothing is "trust me"):
-
-- **Schema gate** — `just lint` validates every fixture against its JSON Schema
-  and parses all golden/reference SQL with sqlglot.
-- **Dependency-graph gate** — `just dep-graph` asserts the module graph is an
-  acyclic DAG with legal edge directions.
-- **Coverage gate** — `just dep-graph` *also* runs
-  `dep_graph_check --coverage`: it reads the in-scope tiers (MVP / fast-follow /
-  definitely-do) from `scope-and-tiers.md` and asserts **every in-scope module
-  has at least one fixture tagged to it** (the un-numbered cross-process-coherence
-  capability is covered by the `coherence` tag). Might-do and won't-do tiers —
-  including the RFC-2119 MAY temporal mutations — are excluded by construction. A
-  missing fixture for an in-scope module fails the build and names the gap.
-- **Suite gate** — `just test` boots Postgres + MariaDB and runs every case
-  through triple-equivalence + normalization + serde round-trip.
-
-`just verify` runs all of them; the same set runs in CI.
-
-### How to read the matrix
-
-`just matrix` emits the **compatibility-matrix report** — implementations ×
-databases. Round 1 has one implementation (the reference harness) across two
-databases, so the matrix proves `reference × {postgres, mariadb}` green. Each
-future language implementation adds a row; each new dialect behind the M11 seam
-adds a column.
-
-## Status
-
-Built incrementally in vertical slices (one phase = one thin slice through every
-layer). The core spec (`M0`–`M13` + cross-process coherence), the schemas, the
-compatibility suite, and the reference harness are in place; the suite runs
-against Postgres **and** MariaDB, and the dependency-graph + coverage gates are
-green. The language-spec template
-([`core/spec/language-spec-template.md`](core/spec/language-spec-template.md)) and
-the scope-and-tiers boundary
-([`core/spec/scope-and-tiers.md`](core/spec/scope-and-tiers.md)) close the frame:
-handed the core spec + a language spec + this suite, an agent can build an
-idiomatic implementation and prove parity by running the suite.
+Future language implementations should treat `core/` as the shared contract and
+use `reference-harness/` as the executable oracle. They prove implementation
+conformance through the adapter contract in
+`core/spec/conformance-adapter-contract.md` while building their own public APIs.

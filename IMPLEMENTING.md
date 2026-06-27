@@ -1,0 +1,211 @@
+# Implementing A Language Target
+
+This guide is for an agent or maintainer building a concrete language
+implementation of Parallax. It sits between the language-neutral core spec and
+a language-specific implementation plan.
+
+The core repository already defines the behavior and the compatibility corpus.
+The language target's job is to provide an idiomatic developer surface that
+conforms to that shared contract.
+
+## Definition Of Success
+
+A language target is credible when it can show all of the following:
+
+- A completed language spec with no unresolved template markers.
+- Canonical metamodel and operation serde in JSON and YAML.
+- Runtime metamodel introspection over the same descriptor shape used by the
+  corpus.
+- SQL generation that emits the expected per-dialect `goldenSql` and binds.
+- Real database execution that matches rows, graphs, table state, affected row
+  counts, identity/cache expectations, and round-trip counts.
+- Dependency-boundary enforcement that respects the core module DAG.
+- A conformance report for every implemented case and dialect.
+- Benchmark reports when claiming M13 performance support.
+
+Passing language-specific unit tests is not enough. The compatibility corpus is
+the primary behavioral surface.
+
+## Start Here
+
+Before writing runtime code, read these files in this order:
+
+1. [README.md](README.md)
+2. [core/spec/00-overview.md](core/spec/00-overview.md)
+3. [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md)
+4. [core/spec/dependency-graph.md](core/spec/dependency-graph.md)
+5. [core/spec/language-spec-template.md](core/spec/language-spec-template.md)
+6. [core/spec/m12-compatibility-harness.md](core/spec/m12-compatibility-harness.md)
+7. [core/spec/conformance-adapter-contract.md](core/spec/conformance-adapter-contract.md)
+8. [core/schemas/](core/schemas/)
+9. [core/compatibility/models/](core/compatibility/models/)
+10. [core/compatibility/cases/](core/compatibility/cases/)
+11. [core/compatibility/benchmarks/](core/compatibility/benchmarks/)
+
+Then copy the language spec template into the language module, for example:
+
+```text
+typescript/spec/typescript.md
+python/spec/python.md
+java/spec/java.md
+```
+
+Replace every `*(decide and record)*` marker with a concrete decision and a
+short rationale. Do not start implementation while the language spec still has
+open decisions that affect public API shape, model input, transaction
+demarcation, test integration, code generation, collection behavior, dependency
+enforcement, or performance targets.
+
+## Non-Negotiables
+
+- Treat `core/spec`, `core/schemas`, and `core/compatibility` as the source of
+  truth. Do not change them just to make a language implementation pass.
+- If the core contract appears wrong or incomplete, update the spec, schema,
+  fixtures, and cases together, then run the root verification gates.
+- Implement in the legal dependency direction from
+  [core/spec/dependency-graph.md](core/spec/dependency-graph.md).
+- Keep language-facing APIs idiomatic, but serialize to the canonical metamodel
+  and operation forms.
+- Prefer real compatibility cases over duplicated language-only behavioral
+  tests. Use unit tests for internal seams, edge cases, and diagnostics.
+- Postgres is the first required dialect. Additional dialects are added behind
+  the M11 seam.
+
+## Planning Deliverables
+
+Before implementation, produce a short plan in the language module that records:
+
+- The completed language spec path.
+- The module/package map for M0, M1, M2, M3, M4, M5, M7, M8, M9, M10, M11, M12,
+  M13, and cross-process coherence.
+- The dependency-boundary enforcement tool and configuration.
+- The conformance adapter entry point.
+- The first case slice that will be made green.
+- The final case/dialect matrix the implementation intends to claim.
+- Any deferred modules, with tier justification from
+  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md).
+
+## Implementation Sequence
+
+The dependency graph is not just documentation. Use it to decide the build order.
+Each phase should leave behind runnable verification before the next phase
+starts.
+
+| Phase | Capability | First verification target |
+| --- | --- | --- |
+| 0 | Scaffold, package layout, dependency-boundary check, conformance CLI placeholder | Language tests run; illegal module imports fail the build |
+| 1 | M0 core conventions and M1 metamodel/descriptor serde | All descriptors in `core/compatibility/models/` parse and round-trip |
+| 2 | M2 operation model and operation serde | Operations in `0001`, `0002`, and `02xx` cases parse and round-trip |
+| 3 | M11 Postgres dialect seam and M3 basic SQL generation | `0001-find-all.yaml`, `0002-eq.yaml`, then all `02xx` predicate cases emit matching SQL and binds |
+| 4 | M4 relationships and M5 operation-backed list results | `0301` through `0313`, including deep-fetch round-trip counts and graphs |
+| 5 | M2 aggregation sub-area | `0401` through `0410` |
+| 6 | M8 transactions, unit of work, identity cache, query cache, read locks, batching | `0601` through `0604` |
+| 7 | M7 audit temporal reads and writes | `0501` through `0512` |
+| 8 | M9 lifecycle/detach and M10 optimistic locking | `0701` through `0704` |
+| 9 | M7 full two-axis and business-temporal behavior | `0801` through `0822` |
+| 10 | M1 inheritance and value objects | `0901` through `0923` |
+| 11 | M11 second dialect support | `1001` and `1002`, then every case with that dialect's `goldenSql` |
+| 12 | Cross-process coherence | `1101` and `1102` |
+| 13 | M13 benchmark methodology and reports | Every file in `core/compatibility/benchmarks/` |
+
+The first green slice should be intentionally small. A useful first slice is:
+
+- parse `account.yaml`
+- parse `0002-eq.yaml`
+- build the operation tree
+- emit Postgres SQL and binds
+- execute against Postgres and compare rows.
+
+## Conformance Adapter
+
+Each language implementation should expose the conformance interface specified
+in
+[core/spec/conformance-adapter-contract.md](core/spec/conformance-adapter-contract.md).
+A CLI is the easiest cross-language seam because it can be driven by any
+runner.
+
+Recommended commands:
+
+```text
+parallax-conformance describe
+parallax-conformance compile --case <case.yaml> --dialect postgres
+parallax-conformance run --case <case.yaml> --dialect postgres
+parallax-conformance benchmark --benchmark <benchmark.yaml> --dialect postgres
+```
+
+Every command writes a single JSON document that validates against
+[core/schemas/conformance-adapter.schema.json](core/schemas/conformance-adapter.schema.json).
+The adapter should stay narrow: load a core case, compile or run it, and report
+emissions or observations. Do not expose internal classes or language-specific
+query builders through this conformance seam.
+
+## Verification Ladder
+
+Use the smallest verification that can catch the bug you are working on, then
+walk upward before claiming a milestone.
+
+1. Language unit tests for parser/compiler/cache internals.
+2. Language dependency-boundary enforcement.
+3. Language conformance tests for the active case slice.
+4. Root static checks:
+
+   ```bash
+   just lint
+   just dep-graph
+   ```
+
+5. Root compatibility corpus sanity check:
+
+   ```bash
+   PARALLAX_DATABASES=postgres just test
+   ```
+
+6. Claimed language implementation matrix for every supported dialect.
+7. Benchmark report when claiming M13.
+
+The root Python harness validates the core corpus. It does not prove a language
+implementation conforms unless that implementation is wired through its own
+conformance adapter or test runner.
+
+## When A Case Fails
+
+Classify the failure before editing code:
+
+- **Serde failure:** the descriptor or operation cannot round-trip. Fix M1 or M2
+  before touching SQL generation.
+- **Compile failure:** emitted SQL or binds do not match `goldenSql`. Fix M3 or
+  the M11 dialect seam.
+- **Result failure:** SQL matches but rows differ. Check fixture loading, type
+  conversion, value normalization, and object materialization.
+- **Graph failure:** flat rows are correct but deep fetch assembly differs. Check
+  M4 relationship joins, parent-key gathering, and list identity behavior.
+- **Round-trip failure:** results are correct but statement counts differ. Check
+  M4/M5/M8 query planning and cache behavior.
+- **Temporal failure:** check interval closure, infinity representation,
+  defaulted as-of dimensions, and milestone write chaining.
+- **Scenario failure:** check transaction boundaries, identity cache, query
+  cache invalidation, read locks, and batched writes.
+
+If a case looks wrong, first prove the issue against the core Python harness or
+by adding a new failing core case. Do not silently fork behavior in the language
+target.
+
+## Language Spec Completion Checklist
+
+A language spec is ready for implementation when it answers these questions:
+
+- How does a developer author a model?
+- How is the canonical metamodel produced, introspected, and serialized?
+- How does a developer spell common operations, relationship navigation,
+  grouping, aggregation, deep fetch, and temporal as-of reads?
+- How are transactions demarcated?
+- How are lazy lists, single-result lookups, and bulk operations surfaced?
+- Is code generation used? If yes, where do generated files live and how are
+  they refreshed?
+- Which test runner provisions Postgres and runs compatibility cases?
+- Which dependency-boundary tool enforces the module DAG?
+- Which dialects and tiers are claimed?
+- What benchmark targets are claimed?
+
+When in doubt, keep the public surface idiomatic and keep the conformance seam
+boring.

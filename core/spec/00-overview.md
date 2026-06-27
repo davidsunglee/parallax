@@ -99,6 +99,12 @@ operation and the model descriptor survive a serde round-trip. See
 [`m12-compatibility-harness.md`](m12-compatibility-harness.md) for the full
 contract and the case-envelope schema.
 
+Concrete language implementations prove themselves through the
+[`conformance-adapter-contract.md`](conformance-adapter-contract.md) seam: a
+small `describe` / `compile` / `run` / `benchmark` interface that accepts corpus
+files and emits JSON validated by
+[`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json).
+
 > **Self-consistency proves correctness, not quality.** The harness can prove a
 > case is internally consistent and that its golden SQL returns the right rows.
 > Whether the golden SQL *reads* as idiomatic, well-optimized SQL is a

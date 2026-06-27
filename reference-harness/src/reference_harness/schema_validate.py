@@ -6,9 +6,8 @@ Run as a module against the compatibility tree::
 
 It performs M12 layer 1 statically (no database needed):
 
-* **Meta-schema validation** — each of ``metamodel.schema.json``,
-  ``operation.schema.json``, and ``compatibility-case.schema.json`` is itself a
-  valid JSON Schema (Draft 2020-12).
+* **Meta-schema validation** — each core schema is itself a valid JSON Schema
+  (Draft 2020-12).
 * **Descriptor validation** — every model under ``models/`` validates against the
   metamodel schema.
 * **Operation validation** — every case's ``operation`` validates against the
@@ -34,6 +33,7 @@ _SCHEMA_FILES = (
     "metamodel.schema.json",
     "operation.schema.json",
     "compatibility-case.schema.json",
+    "conformance-adapter.schema.json",
 )
 
 
