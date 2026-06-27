@@ -64,6 +64,20 @@ class _IsoTimestamptzLoader(Loader):
         return datetime.fromisoformat(text).isoformat()
 
 
+class _StableTextLoader(Loader):
+    """Read scalar values as stable text when driver-native types vary.
+
+    The scalar compatibility fixture projects ``time`` and ``uuid`` columns
+    directly. Reading them as text keeps expected rows plain YAML strings rather
+    than psycopg-specific Python objects.
+    """
+
+    def load(self, data: Any) -> str:
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            return bytes(data).decode()
+        return str(data)
+
+
 class PostgresProvider:
     """A clean, migrated, isolated Postgres database for one suite run."""
 
@@ -76,6 +90,8 @@ class PostgresProvider:
         # loader docstring): infinity-safe and deterministic for row comparison.
         self._conn.adapters.register_loader("timestamptz", _IsoTimestamptzLoader)
         self._conn.adapters.register_loader("timestamp", _IsoTimestamptzLoader)
+        self._conn.adapters.register_loader("time", _StableTextLoader)
+        self._conn.adapters.register_loader("uuid", _StableTextLoader)
 
     # --- DatabaseProvider seam ---------------------------------------------
 

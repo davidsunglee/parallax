@@ -1,0 +1,33 @@
+# ScalarThing exercises the M0 neutral scalar mappings that are not covered by
+# the relationship, aggregate, temporal, or lifecycle fixtures.
+entity:
+  name: ScalarThing
+  namespace: parallax.compatibility
+  table: scalar_thing
+  mutability: read-only
+  temporal: non-temporal
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGenerator: none
+    - name: f32
+      type: float32
+      column: f32
+    - name: f64
+      type: float64
+      column: f64
+    - name: payload
+      type: bytes
+      column: payload
+    - name: localTime
+      type: time
+      column: local_time
+    - name: externalId
+      type: uuid
+      column: external_id
+  indices:
+    - name: scalar_thing_pk
+      attributes: [id]
+      unique: true

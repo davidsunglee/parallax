@@ -49,7 +49,7 @@
       "type": "object"
     },
     "writeSequence": {
-      "description": "A writeSequence case: an ordered list of write steps the goldenSql DML realizes. Each step names a mutation kind on an entity; the goldenSql for the dialect is the matching ordered list of DML statements (one or more per step), applied in order, after which the harness asserts `expectedTableState`. The list documents the intent the DML must realize and lets the harness assert step count consistency. Used by milestone-chaining temporal writes (Phase 5, M7 — insert/update/terminate) and by batched non-temporal writes (Phase 6, M8 — a multi-row insert / a batched update).",
+      "description": "A writeSequence case: an ordered list of write steps the goldenSql DML realizes. Each step names a mutation kind on an entity; the goldenSql for the dialect is the matching ordered list of DML statements (one or more per step), applied in order, after which the harness asserts `expectedTableState`. The list documents the intent the DML must realize and lets the harness assert step count consistency. Used by milestone-chaining temporal writes (Phase 5, M7 — insert/update/terminate), batched non-temporal writes (Phase 6, M8 — a multi-row insert / a batched update), detached merge-back delete (M9), and the minimal dependent cascade-delete witness (M5/M8).",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -58,11 +58,13 @@
         "required": ["mutation", "entity"],
         "properties": {
           "mutation": {
-            "description": "The mutation kind. insert / update / terminate are the M7 audit-only mutation surface and also cover the M8 batched non-temporal writes; insertUntil / updateUntil / terminateUntil are the full-bitemporal `*Until` trio (DQ11, Phase 8) that bound a mutation to a business window — updateUntil/terminateUntil drive the rectangle split (inactivate the original on the processing axis, chain head/middle/tail business rows at fresh processing time).",
+            "description": "The mutation kind. insert / update / terminate are the M7 audit-only mutation surface and also cover the M8 batched non-temporal writes; delete covers ordinary non-temporal delete / detached-delete merge-back; cascadeDelete is the minimal dependent-delete witness over M1 dependent relationships; insertUntil / updateUntil / terminateUntil are the full-bitemporal `*Until` trio (DQ11, Phase 8) that bound a mutation to a business window — updateUntil/terminateUntil drive the rectangle split (inactivate the original on the processing axis, chain head/middle/tail business rows at fresh processing time).",
             "enum": [
               "insert",
               "update",
               "terminate",
+              "delete",
+              "cascadeDelete",
               "insertUntil",
               "updateUntil",
               "terminateUntil"
@@ -253,7 +255,7 @@
       "minimum": 0
     },
     "roundTrips": {
-      "description": "Declared number of SQL statements for the operation. For a multi-statement (deep-fetch) read case this MUST equal the number of goldenSql statements for each dialect (proving N+1 elimination); for a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips (the total database cost of the scenario).",
+      "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed goldenSql statements for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips (the total database cost of the scenario).",
       "type": "integer",
       "minimum": 1,
       "default": 1

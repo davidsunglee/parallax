@@ -1,0 +1,19 @@
+# Deep fetch with an empty root result. Because the root query returns no parent
+# keys, the child levels are elided: no Order.items or OrderItem.statuses SQL is
+# authored or executed, and roundTrips is 1.
+model: models/orders.yaml
+tags: [m4, m5, deepFetch, empty-root, relationship]
+operation:
+  deepFetch:
+    operand:
+      eq: { attr: Order.id, value: 999 }
+    paths:
+      - [Order.items, OrderItem.statuses]
+goldenSql:
+  postgres:
+    - select t0.id, t0.name from orders t0 where t0.id = ?
+binds: [999]
+referenceSql: select id, name from orders where id = 999
+roundTrips: 1
+expectedGraph:
+  Order: []

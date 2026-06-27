@@ -1,0 +1,38 @@
+# Cross-process cache coherence for delete. Node B first reads Grace, node A
+# commits a delete on a separate connection, and node B's re-fetch must observe
+# the row as gone rather than serving the stale cached object.
+model: models/account.yaml
+tags: [coherence, cross-process, m8, delete]
+coherence:
+  - node: B
+    kind: read
+    find:
+      eq:
+        attr: Account.id
+        value: 3
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+    binds: [3]
+    note: seed read on node B - would cache Grace before the delete
+    observeRows:
+      - { id: 3, owner: Grace, balance: 10.00 }
+  - node: A
+    kind: write
+    goldenSql:
+      postgres: delete from account where id = ?
+      mariadb: delete from account where id = ?
+    binds: [3]
+    note: node A commits the delete on a separate connection
+  - node: B
+    kind: read
+    find:
+      eq:
+        attr: Account.id
+        value: 3
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+    binds: [3]
+    note: node B re-fetches and MUST observe that Grace is gone
+    observeRows: []

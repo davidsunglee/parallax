@@ -1,0 +1,30 @@
+# Detached-delete merge-back (M9): deleting a detached copy and merging it back
+# deletes the original persisted row.
+#
+# Fixtures are loaded first so Account 1 exists. The merge-back of the
+# detached-deleted copy flushes one DELETE; the resulting table state keeps only
+# the untouched rows.
+model: models/account.yaml
+tags: [m9, m3, detached, detached-delete, write-sequence, lifecycle detach]
+loadFixtures: true
+writeSequence:
+  - mutation: delete
+    entity: Account
+    statements: 1
+    note: merge-back of a deleted detached copy deletes the original row
+goldenSql:
+  postgres:
+    - delete from account where id = ?
+binds:
+  - [1]
+roundTrips: 1
+expectedTableState:
+  account:
+    - id: 2
+      owner: Linus
+      balance: 250.00
+      version: 1
+    - id: 3
+      owner: Grace
+      balance: 10.00
+      version: 1

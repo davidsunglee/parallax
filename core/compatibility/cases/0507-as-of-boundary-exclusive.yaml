@@ -1,0 +1,20 @@
+# Processing as-of exactly on a milestone boundary proves half-open interval
+# semantics: in_z <= asOf < out_z. The row ending at 2024-06-01 is excluded and
+# the row beginning at 2024-06-01 is included.
+model: models/balance.yaml
+tags: [m7, m3, temporal mvp, as-of, audit-only, boundary]
+operation:
+  asOf:
+    operand:
+      all: {}
+    asOfAttr: Balance.processingDate
+    date: "2024-06-01T00:00:00+00:00"
+goldenSql:
+  postgres: select t0.bal_id, t0.val from balance t0 where t0.in_z <= ? and t0.out_z > ?
+binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"]
+referenceSql: select bal_id, val from balance where in_z <= '2024-06-01T00:00:00+00:00'::timestamptz and out_z > '2024-06-01T00:00:00+00:00'::timestamptz
+expectedRows:
+  - { bal_id: 1, val: 150.00 }
+  - { bal_id: 2, val: 200.00 }
+  - { bal_id: 3, val: 50.00 }
+roundTrips: 1

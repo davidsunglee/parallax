@@ -1,0 +1,12 @@
+# Fixture rows for the ScalarThing model (models/scalars.yaml).
+#
+# The byte payload uses YAML's standard binary tag, which safe_load materializes
+# as bytes before the provider binds it to the dialect's binary column type.
+ScalarThing:
+  - id: 1
+    f32: 1.5
+    f64: 2.25
+    payload: !!binary |
+      AQIDBA==
+    localTime: "12:34:56"
+    externalId: "123e4567-e89b-12d3-a456-426614174000"

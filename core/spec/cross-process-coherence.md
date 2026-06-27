@@ -87,6 +87,10 @@ post-write golden SQL on node B is correct against real, committed data written 
 node A on a separate connection. An implementation's actual invalidation
 machinery is graded by the same observable rows it must produce.
 
+The compatibility corpus covers the three basic write shapes that can invalidate
+a peer cache entry: update, insert, and delete. For delete, node B's post-write
+re-fetch must return an empty result for the deleted primary key.
+
 > **What two connections do and do not prove.** Two connections prove the
 > *result-correctness* half: node B's re-fetch golden SQL, run after node A's
 > committed write, returns the new state. They do not exercise an actual

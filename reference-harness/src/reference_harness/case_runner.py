@@ -405,21 +405,16 @@ def _binds_for_statement(case: Case, index: int) -> list[Any]:
 def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     """Execute each level, assemble the object graph, compare to expectedGraph.
 
-    The contract proven here is N+1 elimination: the root plus one statement per
-    relationship level (never one-per-parent). Each child level is executed once,
-    keyed by the DISTINCT parent keys gathered from the previous level, and the
-    children are fanned back out in memory.
+    The contract proven here is N+1 elimination: the root plus at most one
+    statement per relationship level (never one-per-parent). A child level is
+    executed only when the previous level produces parent keys; an empty parent
+    key set elides that child SQL entirely. Executed child levels are keyed by
+    the DISTINCT parent keys gathered from the previous level, and the children
+    are fanned back out in memory.
     """
     dialect = db.dialect
     statements = case.golden_statements(dialect)
     steps = _fetch_steps(case)
-
-    if len(statements) != 1 + len(steps):
-        raise CaseFailure(
-            f"{case.path.name}: goldenSql.{dialect} has {len(statements)} "
-            f"statement(s) but the deep fetch needs {1 + len(steps)} "
-            f"(1 root + {len(steps)} relationship level(s))."
-        )
 
     root_entity = _deepfetch_root_entity(case)
 
@@ -432,7 +427,8 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
 
     # Execute each relationship level once, keyed by gathered parent keys.
     children_by_step: dict[str, dict[Any, list[dict[str, Any]]]] = {}
-    for index, step in enumerate(steps, start=1):
+    statement_index = 1
+    for step in steps:
         parents = rows_by_entity.get(step.parent_entity.name, [])
         parent_col = _column_of(step.parent_entity, step.parent_attr)
         parent_keys = sorted(
@@ -443,16 +439,31 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
             }
         )
 
-        authored = [_coerce_identity_key(b) for b in _binds_for_statement(case, index)]
+        if not parent_keys:
+            rows_by_entity[step.child_entity.name] = []
+            children_by_step[step.rel_ref] = {}
+            continue
+
+        if statement_index >= len(statements):
+            raise CaseFailure(
+                f"{case.path.name}: goldenSql.{dialect} has no child statement "
+                f"for {step.rel_ref}, but the previous level gathered parent "
+                f"keys {parent_keys!r}."
+            )
+
+        authored = [
+            _coerce_identity_key(b)
+            for b in _binds_for_statement(case, statement_index)
+        ]
         if sorted(authored) != parent_keys:
             raise CaseFailure(
-                f"{case.path.name}: goldenSql.{dialect} level {index} "
+                f"{case.path.name}: goldenSql.{dialect} level {statement_index} "
                 f"({step.rel_ref}) authored binds {authored!r} != gathered parent "
                 f"keys {parent_keys!r}. The child level MUST be keyed by exactly "
                 f"the parents from the previous level (the N+1-eliminating IN list)."
             )
 
-        child_rows = _query_rows(db, statements[index], parent_keys) if parent_keys else []
+        child_rows = _query_rows(db, statements[statement_index], parent_keys)
         rows_by_entity[step.child_entity.name] = child_rows
 
         child_col = _column_of(step.child_entity, step.child_attr)
@@ -460,6 +471,15 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         for row in child_rows:
             bucket.setdefault(_coerce_identity_key(row[child_col]), []).append(row)
         children_by_step[step.rel_ref] = bucket
+        statement_index += 1
+
+    if statement_index != len(statements):
+        raise CaseFailure(
+            f"{case.path.name}: goldenSql.{dialect} lists "
+            f"{len(statements) - statement_index} unused deep-fetch child "
+            f"statement(s). Child SQL MUST be omitted after a level gathers no "
+            f"parent keys."
+        )
 
     # Assemble the graph: attach each child set under its relationship name on
     # the parent rows, following the declared paths.

@@ -29,22 +29,26 @@ The independent `referenceSql` oracle for every navigation filter is the naive
 `key in (select fk from child where <inner op>)` subquery — an obviously-correct
 different formulation that the harness asserts returns the same rows (M12).
 
-## Deep fetch: one query per relationship level
+## Deep fetch: one query per non-empty relationship level
 
 `deepFetch(operand, paths)` resolves `operand` (the root query), then eagerly
 fetches each navigation `path`. The normative guarantee:
 
-> The number of SQL statements is **`1 + L`**, where `L` is the number of
-> **distinct relationship hops** across all declared paths — **never** one query
-> per parent row.
+> The number of SQL statements is **at most `1 + L`**, where `L` is the number
+> of **distinct relationship hops** across all declared paths. A level whose
+> parent-key set is empty issues **no** child SQL. A non-empty level issues
+> **one** child statement — **never** one query per parent row.
 
 Concretely, for each relationship level:
 
 1. Gather the **distinct key values** of the already-fetched parent rows for that
    relationship's correlation column.
-2. Issue **one** query against the child entity constrained by `fk in (…)` over
-   those distinct keys.
-3. Fan the returned child rows back to their parents **in memory**, attaching
+2. If the gathered set is empty, issue **no** child query for that level; attach
+   the empty/null relationship result and let downstream levels see an empty
+   parent set.
+3. Otherwise, issue **one** query against the child entity constrained by
+   `fk in (…)` over those distinct keys.
+4. Fan the returned child rows back to their parents **in memory**, attaching
    each child set under the relationship name (a list for a to-many relationship,
    a single object or null for a to-one).
 
@@ -95,6 +99,7 @@ list (and per-dialect `IN`-clause limits) degrades.
 
 For each M4 case the compatibility harness (M12) asserts, in addition to the
 standard layers: the golden SQL statement count equals the declared `roundTrips`;
-each level executes (child levels keyed by the parents gathered from the previous
-level, with the authored `IN` binds matching the gathered keys); and the
-in-memory-assembled object graph equals the case's `expectedGraph`.
+each non-empty child level executes keyed by the parents gathered from the
+previous level (with the authored `IN` binds matching the gathered keys); empty
+parent-key levels execute no child SQL; and the in-memory-assembled object graph
+equals the case's `expectedGraph`.
