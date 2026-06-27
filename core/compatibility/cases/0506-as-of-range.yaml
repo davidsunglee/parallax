@@ -1,0 +1,36 @@
+# asOfRange(processingDate, 2024-06-15, 2024-07-01): scan every milestone whose
+# [in_z, out_z) interval OVERLAPS the half-open window [from, to) — the edge-point
+# read, distinct from both a single-instant `asOf` pin (one milestone per key) and
+# `history` (no predicate at all). The overlap predicate for half-open intervals is
+# `in_z < to AND out_z > from`: the milestone's START is compared to the window END
+# and the milestone's END to the window START. The two binds are the window bounds
+# in [to, from] order (in_z < ?  then  out_z > ?).
+#
+# Window [2024-06-15, 2024-07-01) overlaps:
+#   id 1: 150.00 [2024-06-01, infinity)   — the CURRENT row. The superseded 100.00
+#         milestone [2024-01-01, 2024-06-01) is EXCLUDED: it closed (out_z 2024-06-01)
+#         before the window opened (2024-06-15), so the range filters it out.
+#   id 2: 200.00 [2024-02-01, infinity)   — current.
+#   id 3:  50.00 [2024-03-01, 2024-08-01) — a TERMINATED milestone that still
+#         overlaps the window; as-of-now would NOT return it (id 3 has no current row).
+# So the range returns a mix no single instant pin can produce: id 1's current value,
+# id 2, and id 3's closed-but-overlapping milestone — while excluding id 1's
+# superseded row (proving the overlap predicate filters, unlike `history`).
+model: models/balance.yaml
+tags: [m7, m3, temporal mvp, as-of-range, audit-only]
+operation:
+  asOfRange:
+    operand:
+      all: {}
+    asOfAttr: Balance.processingDate
+    from: "2024-06-15T00:00:00+00:00"
+    to: "2024-07-01T00:00:00+00:00"
+goldenSql:
+  postgres: select t0.bal_id, t0.val from balance t0 where t0.in_z < ? and t0.out_z > ?
+binds: ["2024-07-01T00:00:00+00:00", "2024-06-15T00:00:00+00:00"]
+referenceSql: select bal_id, val from balance where in_z < '2024-07-01T00:00:00+00:00'::timestamptz and out_z > '2024-06-15T00:00:00+00:00'::timestamptz
+expectedRows:
+  - { bal_id: 1, val: 150.00 }
+  - { bal_id: 2, val: 200.00 }
+  - { bal_id: 3, val: 50.00 }
+roundTrips: 1
