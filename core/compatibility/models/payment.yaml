@@ -3,7 +3,7 @@
 # This descriptor is an instance of core/schemas/metamodel.schema.json. The whole
 # Payment hierarchy maps to ONE table (`payment`); rows are discriminated by the
 # `kind` column (the discriminator). Each entity declares its own
-# `discriminatorValue`:
+# discriminator metadata:
 #
 #   Payment      (root)    — the hierarchy root; its own rows carry kind 'payment'
 #   CardPayment  (subtype) — kind 'card'; adds the card-network column
@@ -69,6 +69,8 @@ entities:
       strategy: table-per-hierarchy
       role: subtype
       parent: Payment
+      discriminator:
+        column: kind
       discriminatorValue: card
     attributes:
       - name: id
@@ -101,6 +103,8 @@ entities:
       strategy: table-per-hierarchy
       role: subtype
       parent: Payment
+      discriminator:
+        column: kind
       discriminatorValue: cash
     attributes:
       - name: id
