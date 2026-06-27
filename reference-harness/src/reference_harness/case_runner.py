@@ -28,7 +28,7 @@ from typing import Any
 from . import serde
 from .case import Case, Entity, Model
 from .data_loader import load_model
-from .ddl_builder import ddl_for
+from .ddl_builder import column_order, ddl_for
 from .providers import DatabaseProvider
 from .sql_normalize import normalize
 
@@ -136,7 +136,10 @@ def _assert_schema(case: Case) -> None:
     # Layer 1 is enforced statically across the whole tree by schema_validate.
     # Here we assert the minimal structural invariants the runner relies on so a
     # malformed case fails loudly rather than deep in execution.
-    if "operation" not in case.raw:
+    if case.is_write_sequence:
+        if not case.expected_table_state:
+            raise CaseFailure(f"{case.path.name}: write sequence missing expectedTableState")
+    elif "operation" not in case.raw:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:
         raise CaseFailure(f"{case.path.name}: model has no class name")
@@ -157,8 +160,10 @@ def _assert_normalization(case: Case, dialect: str) -> None:
 
 
 def _assert_serde(case: Case) -> None:
-    # Layer 4a: operation serde. Layer 4b: metamodel (descriptor) serde.
-    serde.assert_roundtrip(case.operation)
+    # Layer 4a: operation serde (read cases only; a write-sequence case has no
+    # operation). Layer 4b: metamodel (descriptor) serde — always.
+    if not case.is_write_sequence:
+        serde.assert_roundtrip(case.operation)
     serde.assert_roundtrip(case.model.descriptor)
 
 
@@ -171,6 +176,8 @@ def _assert_equivalent_encodings(case: Case) -> None:
     prefix and a fluent surface of the same grouped intent denote one node — in
     the fixture itself rather than in bespoke test code.
     """
+    if case.is_write_sequence:
+        return
     canonical_operation = serde.canonical(case.operation)
     for index, encoding in enumerate(case.equivalent_encodings):
         if serde.canonical(encoding) != canonical_operation:
@@ -311,6 +318,17 @@ def _provision(case: Case, db: DatabaseProvider) -> None:
     db.reset()
     db.apply_ddl(ddl_for(case.model, db.dialect))
     load_model(case.model, db)
+
+
+def _provision_empty(case: Case, db: DatabaseProvider) -> None:
+    """Provision DDL only (no fixture load) for a write-sequence case.
+
+    A write-sequence case constructs its entire milestone history from its own
+    ordered DML (the `insert` step is part of the sequence), so it starts from an
+    empty schema and is fully self-contained.
+    """
+    db.reset()
+    db.apply_ddl(ddl_for(case.model, db.dialect))
 
 
 def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
@@ -526,6 +544,71 @@ def _sort_graph(graph: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     return {key: norm(value) for key, value in graph.items()}
 
 
+# --- write sequences (Phase 5, M7) ------------------------------------------
+
+
+def _assert_write_step_count(case: Case, dialect: str) -> None:
+    """The DML statement count MUST equal the sum of the steps' declared counts.
+
+    Each ``writeSequence`` step declares how many golden DML statements it emits
+    (default 1); the total over the sequence is the round-trip count, which MUST
+    equal the number of goldenSql statements for the dialect (and ``roundTrips``).
+    """
+    statements = case.golden_statements(dialect)
+    step_total = sum(step.get("statements", 1) for step in case.write_sequence)
+    if len(statements) != step_total:
+        raise CaseFailure(
+            f"{case.path.name}: goldenSql.{dialect} has {len(statements)} DML "
+            f"statement(s) but the writeSequence declares {step_total} "
+            f"(sum of per-step statement counts). They MUST be equal."
+        )
+    if len(statements) != case.round_trips:
+        raise CaseFailure(
+            f"{case.path.name}: goldenSql.{dialect} has {len(statements)} DML "
+            f"statement(s) but roundTrips is {case.round_trips}."
+        )
+
+
+def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
+    """Read the full state of *entity*'s table, projecting every column by name."""
+    columns = list(column_order(entity))
+    projection = ", ".join(f"t0.{column}" for column in columns)
+    return db.query(f"select {projection} from {entity.table} t0")
+
+
+def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
+    """Apply the ordered DML golden SQL, then assert the resulting table state.
+
+    This is the observable form of the milestone-chaining write contract (M7):
+    rather than introspecting the implementation, we APPLY the documented golden
+    DML in order and assert the rows it leaves behind — including the current-row
+    state where the open bound ``to`` equals native ``infinity``.
+    """
+    dialect = db.dialect
+    statements = case.golden_statements(dialect)
+
+    for index, statement in enumerate(statements):
+        binds = _binds_for_statement(case, index)
+        db.execute(statement, binds)
+
+    expected = case.expected_table_state
+    entity_by_table = {entity.table: entity for entity in case.model.entities}
+    for table, expected_rows in expected.items():
+        if table not in entity_by_table:
+            raise CaseFailure(
+                f"{case.path.name}: expectedTableState names table {table!r} "
+                f"which the model does not declare."
+            )
+        actual = _read_table(db, entity_by_table[table])
+        if not _rows_equal(actual, expected_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: table {table!r} state after the write "
+                f"sequence != expectedTableState.\n"
+                f"  actual:   {actual!r}\n"
+                f"  expected: {expected_rows!r}"
+            )
+
+
 # --- entry point ------------------------------------------------------------
 
 
@@ -544,8 +627,14 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     _assert_normalization(case, dialect)  # layer 3
     _assert_serde(case)  # layer 4
     _assert_equivalent_encodings(case)  # layer 4c
-    _assert_round_trip_count(case, dialect)  # layer 5 (count)
 
+    if case.is_write_sequence:
+        _assert_write_step_count(case, dialect)  # layer 5 (count)
+        _provision_empty(case, db)
+        _assert_write_sequence(case, db)  # apply DML, assert table state
+        return
+
+    _assert_round_trip_count(case, dialect)  # layer 5 (count)
     _provision(case, db)
     if _is_deep_fetch(case):
         _assert_deep_fetch(case, db)  # layer 2 + 5 (graph)

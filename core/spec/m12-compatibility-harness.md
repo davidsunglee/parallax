@@ -18,18 +18,23 @@ A case is a YAML document under `core/compatibility/cases/`, validated against
 [`core/schemas/compatibility-case.schema.json`](../schemas/compatibility-case.schema.json).
 Its fields:
 
+A case is **either** a **read case** (carries an `operation`) **or** a
+**writeSequence case** (carries a `writeSequence`, Phase 5 / M7). The fields:
+
 | Field | Required | Meaning |
 |---|---|---|
 | `model` | yes | path (relative to `core/compatibility/`) to the model descriptor |
 | `tags` | yes | module/feature tags (e.g. `["m2", "eq"]`); drive coverage + test selection |
-| `operation` | yes | a canonical M2 algebra node, validated against the operation schema |
+| `operation` | read | a canonical M2 algebra node, validated against the operation schema (read cases) |
+| `writeSequence` | write | an ordered list of `insert` / `update` / `terminate` mutations a write case realizes (writeSequence cases, M7) |
 | `equivalentEncodings` | no | alternate surface encodings of `operation` (e.g. a prefix vs a fluent spelling); each MUST canonicalize to `operation` |
-| `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit — a single statement, or an **ordered list** of statements (one per deep-fetch level) |
+| `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit — a single statement, or an **ordered list** of statements (one per deep-fetch level, or one per write-sequence DML step) |
 | `binds` | no | bind values for the `?` placeholders (default `[]`): a flat list for a single statement, or a list-of-lists for a multi-statement case |
 | `referenceSql` | conditional | an independent naive oracle (see below); for a deep fetch it is the naive single-statement oracle for the **root** row set |
-| `expectedRows` | conditional | the rows the query must return (single-statement / flat-result cases) |
-| `expectedGraph` | conditional | the assembled object graph a deep fetch must produce (one of `expectedRows` / `expectedGraph` is REQUIRED) |
-| `roundTrips` | no | declared statement count (default `1`); for a multi-statement case it MUST equal the goldenSql statement count and is asserted |
+| `expectedRows` | read | the rows the query must return (single-statement / flat-result cases) |
+| `expectedGraph` | read | the assembled object graph a deep fetch must produce (one of `expectedRows` / `expectedGraph` is REQUIRED for a read case) |
+| `expectedTableState` | write | the resulting table state a writeSequence case asserts, keyed by table name (REQUIRED for a write case) |
+| `roundTrips` | no | declared statement count (default `1`); for a multi-statement case (deep fetch or write sequence) it MUST equal the goldenSql statement count and is asserted |
 | `tolerance` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 ### goldenSql, referenceSql, expectedRows (the oracle question)
@@ -97,6 +102,19 @@ automatically (a 1 → N → N deep fetch must run in exactly 3 statements, not
 statements (one per level) rather than a single string, and `expectedGraph`
 replaces (or accompanies) `expectedRows`.
 
+### Write-sequence cases (M7)
+
+A **writeSequence** case proves a milestone-chaining write contract by
+*application*, not introspection. The harness provisions an **empty** table
+(DDL only, no fixture load — the sequence builds its own milestone history),
+**applies the ordered DML golden SQL in order** (with each statement's binds),
+then asserts the resulting rows equal `expectedTableState` — including the
+`out_z = infinity` current-row state. The DML statement count MUST equal the sum
+of the `writeSequence` steps' declared statement counts and the case's
+`roundTrips`. The model descriptor's serde round-trip (layer 4b) still runs;
+there is no `operation` to serde (layer 4a) and no normalization difference — the
+DML golden SQL is normalized to a fixed point exactly like read SQL (layer 3).
+
 ## Provisioning ↔ runner seam (DQ15)
 
 The harness splits into two clearly-separated sub-parts joined by an explicit
@@ -104,10 +122,10 @@ seam so provisioning can be swapped without touching the assertion layer:
 
 - **Provisioning — the `DatabaseProvider` seam.** Each provider yields a clean,
   migrated, isolated database for a single dialect, exposing `reset`,
-  `apply_ddl`, `load`, `exec`, and a `dialect` identifier. **Testcontainers** is
-  the default mechanism, pinned at the latest stable Postgres major; a language
-  **MAY** substitute an embedded binary that satisfies the same reset/isolation
-  contract.
+  `apply_ddl`, `load`, `query`, `execute` (DML, for write sequences), and a
+  `dialect` identifier. **Testcontainers** is the default mechanism, pinned at
+  the latest stable Postgres major; a language **MAY** substitute an embedded
+  binary that satisfies the same reset/isolation contract.
 - **Runner + assertions.** The case runner applies the four (later five) layers
   above against whatever provider it is handed.
 

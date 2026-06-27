@@ -63,6 +63,16 @@ def _create_table(entity: Entity, dialect: str) -> str:
         if attribute.get("primaryKey", False):
             pk_columns.append(attribute["column"])
 
+    # A temporal entity stores many milestone rows per business key, so the
+    # declared primaryKey attribute(s) are NOT unique on their own — the unique
+    # physical key is the business key PLUS each as-of dimension's `fromColumn`
+    # (the milestone start). Extend the physical primary key accordingly so the
+    # DDL admits the milestone chain (M7).
+    for as_of in entity.as_of_attributes:
+        from_column = as_of["fromColumn"]
+        if from_column not in pk_columns:
+            pk_columns.append(from_column)
+
     if pk_columns:
         columns.append(f"primary key ({', '.join(pk_columns)})")
 

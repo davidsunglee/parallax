@@ -1,0 +1,20 @@
+# Explicit as-of-now read: the same current-row result as the defaulted case,
+# but the caller WRITES the asOf pin with date `now`. Proves the explicit asOf
+# node lowers to the identical injected current-row predicate (`out_z = infinity`)
+# the default-injection rule produces — pinning the equivalence in a fixture.
+model: models/balance.yaml
+tags: [m7, m3, temporal mvp, as-of, audit-only, explicit]
+operation:
+  asOf:
+    operand:
+      all: {}
+    asOfAttr: Balance.processingDate
+    date: now
+goldenSql:
+  postgres: select t0.bal_id, t0.val from balance t0 where t0.out_z = ?
+binds: [infinity]
+referenceSql: select bal_id, val from balance where out_z = 'infinity'::timestamptz
+expectedRows:
+  - { bal_id: 1, val: 150.00 }
+  - { bal_id: 2, val: 200.00 }
+roundTrips: 1

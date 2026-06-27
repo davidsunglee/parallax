@@ -1,0 +1,25 @@
+# history(processingDate): the FULL milestone set, no as-of predicate injected.
+#
+# Scoped to account id 1 with an inner `eq`, history returns BOTH milestones —
+# the superseded [2024-01-01, 2024-06-01) 100.00 row AND the current
+# [2024-06-01, infinity) 150.00 row — because the as-of axis is read as edge
+# points, not pinned to a single instant. The projection includes the interval
+# columns so the result carries the current row's open bound (`out_z = infinity`)
+# alongside a finite, superseded `out_z` — exercising the native-infinity read.
+model: models/balance.yaml
+tags: [m7, m3, temporal mvp, history, audit-only]
+operation:
+  history:
+    operand:
+      eq:
+        attr: Balance.id
+        value: 1
+    asOfAttr: Balance.processingDate
+goldenSql:
+  postgres: select t0.bal_id, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ?
+binds: [1]
+referenceSql: select bal_id, val, in_z, out_z from balance where bal_id = 1
+expectedRows:
+  - { bal_id: 1, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+  - { bal_id: 1, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+roundTrips: 1

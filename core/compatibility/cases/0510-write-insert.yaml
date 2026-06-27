@@ -1,0 +1,27 @@
+# Write sequence: INSERT a new audit-only balance (milestone-chaining, M7).
+#
+# An insert in audit-only mode is a single milestone row opened at the
+# transaction instant with the open upper bound infinity: in_z = txInstant,
+# out_z = infinity. There is no prior row to close. This is the simplest write
+# contract — the harness APPLIES the golden DML and asserts the resulting current
+# row, including the native-infinity open bound.
+model: models/balance.yaml
+tags: [m7, m3, temporal mvp, write-sequence, insert, audit-only]
+writeSequence:
+  - mutation: insert
+    entity: Balance
+    statements: 1
+    note: open a current milestone [txInstant, infinity)
+goldenSql:
+  postgres:
+    - insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+binds:
+  - [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]
+roundTrips: 1
+expectedTableState:
+  balance:
+    - bal_id: 1
+      acct_num: A
+      val: 100.00
+      in_z: "2024-01-01T00:00:00+00:00"
+      out_z: infinity

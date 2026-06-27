@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/operation.schema.json",
   "title": "Parallax Operation Algebra (M2)",
-  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or).",
+  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the M7 as-of model, never written by the user).",
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
@@ -64,7 +64,10 @@
         { "$ref": "#/$defs/exists" },
         { "$ref": "#/$defs/notExists" },
         { "$ref": "#/$defs/deepFetch" },
-        { "$ref": "#/$defs/groupBy" }
+        { "$ref": "#/$defs/groupBy" },
+        { "$ref": "#/$defs/asOf" },
+        { "$ref": "#/$defs/asOfRange" },
+        { "$ref": "#/$defs/history" }
       ]
     },
 
@@ -588,6 +591,71 @@
               "items": { "$ref": "#/$defs/aggregateFunction" }
             },
             "having": { "$ref": "#/$defs/havingExpression" }
+          }
+        }
+      }
+    },
+
+    "asOfAttributeRef": {
+      "description": "A metamodel as-of-attribute reference of the form Class.asOfAttribute.",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+    },
+    "temporalDate": {
+      "description": "A temporal pin value: an ISO-8601 UTC instant string, or the keyword `now` (as-of the current instant ⇒ the current milestone).",
+      "type": "string",
+      "minLength": 1
+    },
+    "asOf": {
+      "description": "asOf(asOfAttr, date): pin a temporal dimension to a single instant. The queried entity's rows are restricted to the milestone whose [from, to) interval contains `date` (date = `now` ⇒ the current row, to = infinity). The temporal predicate is AUTO-INJECTED from the as-of model; the user never writes the from/to comparisons by hand. An omitted dimension defaults to `now` (M7 default-injection rule).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asOf"],
+      "properties": {
+        "asOf": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operand", "asOfAttr", "date"],
+          "properties": {
+            "operand": { "$ref": "#/$defs/operation" },
+            "asOfAttr": { "$ref": "#/$defs/asOfAttributeRef" },
+            "date": { "$ref": "#/$defs/temporalDate" }
+          }
+        }
+      }
+    },
+    "asOfRange": {
+      "description": "asOfRange(asOfAttr, from, to): scan a temporal dimension across a half-open instant range, returning every milestone that overlaps [from, to). Reads the interval columns as edge points (the milestone's own from/to satisfy the overlap), not a single containment pin.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asOfRange"],
+      "properties": {
+        "asOfRange": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operand", "asOfAttr", "from", "to"],
+          "properties": {
+            "operand": { "$ref": "#/$defs/operation" },
+            "asOfAttr": { "$ref": "#/$defs/asOfAttributeRef" },
+            "from": { "$ref": "#/$defs/temporalDate" },
+            "to": { "$ref": "#/$defs/temporalDate" }
+          }
+        }
+      }
+    },
+    "history": {
+      "description": "history(asOfAttr): return the FULL set of milestone rows for a temporal dimension (Reladomo's equalsEdgePoint, renamed). No as-of predicate is injected on that axis, so every interval (current and superseded) is returned.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["history"],
+      "properties": {
+        "history": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operand", "asOfAttr"],
+          "properties": {
+            "operand": { "$ref": "#/$defs/operation" },
+            "asOfAttr": { "$ref": "#/$defs/asOfAttributeRef" }
           }
         }
       }

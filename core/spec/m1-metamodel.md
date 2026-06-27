@@ -19,9 +19,10 @@ descriptor (e.g. `core/compatibility/models/orders.yaml`) is an instance of it.
 - Booleans are `true` / `false`.
 
 The base elements for a single non-temporal entity are `entity`, `attribute`,
-and `pkGenerator`. This revision adds `relationship` and `index`, and admits
-**multiple entities per descriptor** so relationships can name sibling entities.
-Later phases add `asOfAttribute`, `valueObject`, and `inheritance`.
+and `pkGenerator`. Earlier revisions added `relationship` and `index`, and
+admit **multiple entities per descriptor** so relationships can name sibling
+entities. This revision adds **`asOfAttribute`** (the M7 temporal dimension).
+Later phases add `valueObject` and `inheritance`.
 
 ## One or many entities per descriptor
 
@@ -40,11 +41,20 @@ implementation **MUST** accept both.
 | `table` | default table name (REQUIRED) |
 | `mutability` | `read-only` (default) \| `transactional` |
 | `temporal` | derived classification: `non-temporal` (default) \| `unitemporal-processing` \| `unitemporal-business` \| `bitemporal` |
-| children | `attributes` (REQUIRED, non-empty) |
+| children | `attributes` (REQUIRED, non-empty); `relationships`, `indices`, `asOfAttributes` (optional) |
 
 The `temporal` classification is **derived** from the `asOfAttribute` children an
-entity declares (none ⇒ `non-temporal`). It is recorded explicitly for clarity
-and validated for consistency. In this phase every entity is `non-temporal`.
+entity declares and **MUST** be consistent with them:
+
+| `asOfAttributes` | `temporal` |
+|---|---|
+| none | `non-temporal` |
+| one, `axis: processing` | `unitemporal-processing` |
+| one, `axis: business` | `unitemporal-business` |
+| two (one per axis) | `bitemporal` |
+
+It is recorded explicitly for clarity and validated for consistency. The temporal
+MVP exercises `non-temporal` and `unitemporal-processing` (audit-only).
 
 Every entity **MUST** declare at least one `attribute` with `primaryKey: true`.
 
@@ -105,6 +115,30 @@ to M5). The full M4 deep-fetch and navigation semantics build on these fields.
 Indices are metadata: they declare the storage indices an implementation
 **SHOULD** create and the **unique** keys the identity cache can exploit. A
 unique index over the primary-key attributes is the canonical fast-path key.
+
+## `asOfAttribute` — a temporal dimension
+
+An `asOfAttribute` declares a temporal axis: a query-time virtual attribute
+backed by a **pair of timestamp columns** forming a `[from, to)` interval. Its
+full semantics (as-of read predicates, milestone-chaining writes) are M7; this is
+its metamodel surface.
+
+| Property | Values / meaning |
+|---|---|
+| `name` | dimension name (REQUIRED), e.g. `processingDate`, `businessDate` |
+| `fromColumn` | the interval's inclusive lower-bound column (REQUIRED) |
+| `toColumn` | the interval's upper-bound column (REQUIRED); `= infinity` ⇒ current row |
+| `axis` | `processing` \| `business` (REQUIRED) |
+| `toIsInclusive` | bool, default `false` ⇒ `[from, to)`; `true` ⇒ `[from, to]` |
+| `infinity` | the open-bound sentinel; always `infinity` (the M11 dialect owns the concrete representation, M0) |
+| `default` | default-if-unspecified for a query; `now` (the current milestone). Only `now` is defined for the temporal MVP |
+
+An entity declares **one** `asOfAttribute` (unitemporal) or **two**, one per
+axis (bitemporal). The `entity.temporal` classification is derived from them (see
+above). A temporal entity's **physical primary key** is the business key plus
+each dimension's `fromColumn` (many milestone rows share one business key); the
+DDL an implementation derives **MUST** reflect this so the milestone chain is
+admissible.
 
 ## `pkGenerator` — primary-key generation strategy
 

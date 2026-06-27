@@ -263,5 +263,63 @@ key columns plus the aggregate columns under their `as` names. There is no
 entity-row projection. For a whole-table aggregate (no `keys`) the result is a
 single row of aggregate values.
 
-Subsequent phases extend the emission + normalization rules for temporal
-predicates.
+## Temporal predicates and write sequences (M7)
+
+### As-of read predicates
+
+An `asOf` / defaulted as-of pin lowers to an **auto-injected** interval predicate
+(the user never writes it). For a single dimension pinned to instant `d`, with
+the exclusive `[from, to)` closure:
+
+| Pin | Canonical predicate fragment | Binds |
+|---|---|---|
+| `now` (current row) | `t0.out_z = ?` | `[infinity]` |
+| a past instant `d` | `t0.in_z <= ? and t0.out_z > ?` | `[d, d]` |
+
+The open bound is the dialect's native infinity (M11) — for Postgres the literal
+`infinity`, carried as a `?` bind exactly like every other literal (M3 rule 4),
+so the current-row golden SQL is `… where t0.out_z = ?` with `binds: [infinity]`.
+The injected term composes with a user predicate via `and` and is appended
+**after** it (binds read user-first, then the as-of bind):
+
+```text
+asOf(eq(Balance.acctNum,'A'), Balance.processingDate, now)
+  → select t0.bal_id, t0.val from balance t0 where t0.acct_num = ? and t0.out_z = ?
+    binds: ['A', infinity]
+```
+
+`history(operand, asOfAttr)` injects **no** as-of predicate — it returns every
+milestone — so its golden SQL is just the operand's predicate; its projection
+**SHOULD** include the interval columns so the caller sees each milestone's
+bounds (the current row's `out_z` reads back as `infinity`).
+
+The independent `referenceSql` oracle for a temporal read spells the infinity /
+instant literals inline (`out_z = 'infinity'::timestamptz`) — a different
+formulation the harness asserts returns the same rows (M12).
+
+### Milestone-chaining write sequences
+
+A temporal write (audit-only) is an **ordered DML sequence**, not a single
+statement. Let `txInstant` be the processing instant. The canonical Postgres DML:
+
+| Mutation | Golden DML |
+|---|---|
+| **insert** | `insert into balance(cols…) values (?, …, ?)` with `in_z = txInstant`, `out_z = infinity` |
+| **update** (close) | `update balance set out_z = ? where bal_id = ? and out_z = ?` — binds `[txInstant, pk, infinity]` |
+| **update** (chain) | `insert into balance(cols…) values (?, …, ?)` — new current row, `in_z = txInstant`, `out_z = infinity` |
+| **terminate** | the close `update` only (no insert) |
+
+> **The canonical `insert` form has no space before the column list** —
+> `insert into balance(bal_id, …)`, not `insert into balance (bal_id, …)`. That
+> is the fixed point of the M3 normalizer (it renders an identifier immediately
+> followed by `(` tight, as it does function names), so golden DML is stored that
+> way and passes the layer-3 idempotence check.
+
+The close `update` is keyed by the **current-row predicate** (`pk and
+out_z = ?` / `infinity`), so only the open milestone is closed. The harness
+**applies** this DML in order to an empty table and asserts the resulting
+`expectedTableState` — including the `out_z = infinity` current row — so the
+chaining contract is proven against real data, not merely asserted.
+
+Subsequent phases extend these rules to full bitemporal chaining (the rectangle
+split) over two axes.

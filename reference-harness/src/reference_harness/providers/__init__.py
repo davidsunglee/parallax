@@ -13,6 +13,7 @@ Each provider exposes:
 * ``apply_ddl(statements)`` — run derived ``CREATE TABLE`` DDL.
 * ``load(table, columns, rows)`` — bulk-insert fixture rows.
 * ``query(sql, binds)`` — execute a read and return rows as ordered dicts.
+* ``execute(sql, binds)`` — execute a write (DML) and return the affected count.
 """
 
 from __future__ import annotations
@@ -43,6 +44,10 @@ class DatabaseProvider(Protocol):
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
         """Run a read query; return rows as dicts keyed by result-column name."""
+        ...
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        """Run a write statement (DML); return the affected-row count."""
         ...
 
 

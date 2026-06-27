@@ -2,13 +2,23 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (M12)",
-  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement cases, Phases 1-2) OR an ordered list of statements, one per relationship/deep-fetch level (multi-statement cases, Phase 3+).",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+) or one per milestone-chaining DML step (writeSequence cases, Phase 5). A case is EITHER a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`) OR a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState`).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["model", "tags", "operation", "goldenSql"],
-  "anyOf": [
-    { "required": ["expectedRows"] },
-    { "required": ["expectedGraph"] }
+  "required": ["model", "tags", "goldenSql"],
+  "oneOf": [
+    {
+      "description": "A read case: a queryable operation with expected rows or an expected object graph.",
+      "required": ["operation"],
+      "anyOf": [
+        { "required": ["expectedRows"] },
+        { "required": ["expectedGraph"] }
+      ]
+    },
+    {
+      "description": "A writeSequence case: ordered milestone-chaining DML asserted by the resulting table state.",
+      "required": ["writeSequence", "expectedTableState"]
+    }
   ],
   "properties": {
     "model": {
@@ -23,8 +33,39 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "operation": {
-      "description": "A canonical M2 algebra node (validated separately against operation.schema.json).",
+      "description": "A canonical M2 algebra node (validated separately against operation.schema.json). Present on read cases; absent on writeSequence cases.",
       "type": "object"
+    },
+    "writeSequence": {
+      "description": "A writeSequence (Phase 5, M7) case: an ordered list of milestone mutations the goldenSql DML realizes. Each step names a mutation kind (insert / update / terminate) on a temporal entity; the goldenSql for the dialect is the matching ordered list of DML statements (one or more per step), applied in order, after which the harness asserts `expectedTableState`. The list documents the intent the DML must realize and lets the harness assert step count consistency.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mutation", "entity"],
+        "properties": {
+          "mutation": {
+            "description": "The temporal mutation kind (M7 MVP mutation surface, DQ11).",
+            "enum": ["insert", "update", "terminate"]
+          },
+          "entity": {
+            "description": "The temporal entity the mutation targets.",
+            "type": "string",
+            "minLength": 1
+          },
+          "statements": {
+            "description": "How many goldenSql DML statements this step emits (for documentation / count consistency). The sum over all steps MUST equal the number of goldenSql statements per dialect.",
+            "type": "integer",
+            "minimum": 1,
+            "default": 1
+          },
+          "note": {
+            "description": "Optional human-readable description of the milestone-chaining effect.",
+            "type": "string"
+          }
+        }
+      }
     },
     "equivalentEncodings": {
       "description": "Optional alternate surface encodings of the same operation (e.g. a prefix vs a fluent spelling, or differently-ordered keys). Each MUST canonicalize to `operation` via the serde seam; the harness asserts this dialect-agnostically (layer 4c), proving precedence/serialization fidelity in the fixture itself.",
@@ -66,8 +107,17 @@
         "items": { "type": "object" }
       }
     },
+    "expectedTableState": {
+      "description": "The resulting table state a writeSequence case asserts after applying its ordered DML golden SQL. Keyed by table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings (and the open-bound `infinity` as the literal string `infinity`).",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "object" }
+      }
+    },
     "roundTrips": {
-      "description": "Declared number of SQL statements for the operation. For a multi-statement (deep-fetch) case this MUST equal the number of goldenSql statements for each dialect, and the harness asserts it (proving N+1 elimination).",
+      "description": "Declared number of SQL statements for the operation. For a multi-statement (deep-fetch) read case this MUST equal the number of goldenSql statements for each dialect (proving N+1 elimination); for a writeSequence case it MUST equal the number of ordered DML statements.",
       "type": "integer",
       "minimum": 1,
       "default": 1
