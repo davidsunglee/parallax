@@ -47,6 +47,14 @@ class Entity:
     def relationships(self) -> list[dict[str, Any]]:
         return self.definition.get("relationships", [])
 
+    @property
+    def as_of_attributes(self) -> list[dict[str, Any]]:
+        return self.definition.get("asOfAttributes", [])
+
+    @property
+    def is_temporal(self) -> bool:
+        return bool(self.as_of_attributes)
+
     def attribute_by_name(self, name: str) -> dict[str, Any]:
         for attribute in self.attributes:
             if attribute["name"] == name:
@@ -136,6 +144,23 @@ class Case:
     @property
     def operation(self) -> dict[str, Any]:
         return self.raw["operation"]
+
+    @property
+    def is_write_sequence(self) -> bool:
+        """True for a milestone-chaining write case (Phase 5, M7).
+
+        A write-sequence case carries a ``writeSequence`` (ordered mutations) and
+        an ``expectedTableState`` instead of an ``operation`` + ``expectedRows``.
+        """
+        return "writeSequence" in self.raw
+
+    @property
+    def write_sequence(self) -> list[dict[str, Any]]:
+        return self.raw.get("writeSequence", [])
+
+    @property
+    def expected_table_state(self) -> dict[str, list[dict[str, Any]]]:
+        return self.raw.get("expectedTableState", {})
 
     @property
     def equivalent_encodings(self) -> list[dict[str, Any]]:

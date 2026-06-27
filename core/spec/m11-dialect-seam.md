@@ -24,7 +24,7 @@ add capabilities; the points relevant now are marked):
 | row-limit clause | later | `LIMIT n` |
 | read-lock suffix | later | `FOR SHARE OF t0` |
 | temp-table DDL | later | `CREATE TEMPORARY TABLE … ON COMMIT DROP` |
-| infinity representation | later (M7) | native `'infinity'::timestamptz` |
+| infinity representation | now (M7) | native `'infinity'::timestamptz` |
 | error-code classification | later | SQLSTATE `40P01`/`40001` deadlock, `23505` unique |
 
 Only the rows marked **now** are required for the walking skeleton. The rest are
@@ -41,6 +41,13 @@ named so the interface shape is fixed and additive.
 - **Identifier quoting.** Postgres identifiers are unquoted lowercase. The
   dialect decides when quoting is required; round-1 fixtures use plain
   lowercase identifiers that need no quoting.
+- **Infinity representation (M7).** The open upper bound of a temporal interval
+  (M0) is owned here. **Postgres** uses native `'infinity'::timestamptz`, so the
+  current-row predicate is `to = infinity` and a milestone insert writes
+  `out_z = infinity` directly. A future dialect without native timestamp infinity
+  (MariaDB's `DATETIME` has no `'infinity'`) maps the sentinel to a documented
+  **max-sentinel** behind this same seam — the only place the difference is
+  allowed to surface; that fallback is finalized in the MariaDB phase.
 
 ## Postgres is round-1, and the seam stays open
 

@@ -9,16 +9,43 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from datetime import datetime
 from types import TracebackType
 from typing import Any
 
 import psycopg
+from psycopg.adapt import Loader
 from testcontainers.postgres import PostgresContainer
 
 from . import register
 
 # Pinned at the latest stable Postgres major (M12/DQ15). Refresh on new majors.
 POSTGRES_IMAGE = "postgres:17"
+
+
+class _IsoTimestamptzLoader(Loader):
+    """Read ``timestamptz`` columns as stable ISO-8601 UTC text.
+
+    Two reasons the default datetime loader is unusable for the temporal suite:
+
+    1. **Native infinity.** Postgres' ``'infinity'::timestamptz`` (the M0 open
+       upper bound) has no Python ``datetime`` representation — the default
+       loader raises ``DataError`` on read. We pass it through as the literal
+       string ``"infinity"`` (and ``"-infinity"``).
+    2. **Stable comparison.** Finite instants are re-rendered to canonical
+       ISO-8601 with an explicit ``+00:00`` offset, so a milestone column
+       compares to an ISO-string ``expectedTableState`` value deterministically
+       regardless of Postgres' own text rendering, and never routes through a
+       ``datetime`` object whose equality semantics differ from the fixture.
+    """
+
+    def load(self, data: Any) -> str:
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            data = bytes(data).decode()
+        text = str(data)
+        if text in ("infinity", "-infinity"):
+            return text
+        return datetime.fromisoformat(text).isoformat()
 
 
 class PostgresProvider:
@@ -28,6 +55,10 @@ class PostgresProvider:
 
     def __init__(self, connection_url: str) -> None:
         self._conn = psycopg.connect(connection_url, autocommit=True)
+        # Read instant columns as stable ISO-8601 / "infinity" text (see the
+        # loader docstring): infinity-safe and deterministic for row comparison.
+        self._conn.adapters.register_loader("timestamptz", _IsoTimestamptzLoader)
+        self._conn.adapters.register_loader("timestamp", _IsoTimestamptzLoader)
 
     # --- DatabaseProvider seam ---------------------------------------------
 
@@ -70,6 +101,16 @@ class PostgresProvider:
                 cur.execute(sql)
             column_names = [desc.name for desc in cur.description]
             return [dict(zip(column_names, row, strict=True)) for row in cur.fetchall()]
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        # Golden DML stores `?` placeholders (M3); psycopg uses `%s`. Translate
+        # positional placeholders for execution, mirroring `query`.
+        with self._conn.cursor() as cur:
+            if binds:
+                cur.execute(sql.replace("?", "%s"), tuple(binds))
+            else:
+                cur.execute(sql)
+            return cur.rowcount
 
     def close(self) -> None:
         if self._conn is not None and not self._conn.closed:

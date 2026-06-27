@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/metamodel.schema.json",
   "title": "Parallax Model Descriptor (M1 metamodel)",
-  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index, and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
+  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index + asOfAttribute (the M7 temporal dimension), and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
   "type": "object",
   "additionalProperties": false,
   "oneOf": [
@@ -54,6 +54,12 @@
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/attribute" }
+        },
+        "asOfAttributes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/asOfAttribute" }
         },
         "relationships": {
           "type": "array",
@@ -146,6 +152,44 @@
           "description": "True for a unique index (enables the cache fast-path).",
           "type": "boolean",
           "default": false
+        }
+      }
+    },
+    "asOfAttribute": {
+      "description": "A temporal dimension (M7): a query-time virtual attribute backed by a [from, to) interval over a pair of timestamp columns. An entity with one asOfAttribute is unitemporal (processing or business); with two it is bitemporal. The open upper bound (`to`) is the database-native infinity (M0/M11). Phase 5 (temporal MVP) exercises the single-axis `processing` (audit-only) profile.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "fromColumn", "toColumn", "axis"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "fromColumn": {
+          "description": "The interval's inclusive lower-bound column (the `from`/`in` column).",
+          "type": "string",
+          "minLength": 1
+        },
+        "toColumn": {
+          "description": "The interval's upper-bound column (the `to`/`out`/`thru` column); equals infinity for a current row.",
+          "type": "string",
+          "minLength": 1
+        },
+        "axis": {
+          "description": "Which temporal axis this dimension models. `processing` is when the system knew a fact (audit / as-of-now); `business` is when the fact is true in the world.",
+          "enum": ["processing", "business"]
+        },
+        "toIsInclusive": {
+          "description": "Interval closure. false (default) ⇒ [from, to); true ⇒ [from, to].",
+          "type": "boolean",
+          "default": false
+        },
+        "infinity": {
+          "description": "The open-bound sentinel = the database-native infinity (the M11 dialect owns the concrete representation). Always `infinity` in the canonical descriptor; a dialect lacking native infinity maps it to a documented max-sentinel.",
+          "const": "infinity",
+          "default": "infinity"
+        },
+        "default": {
+          "description": "Default-if-unspecified for this dimension when a query omits it. `now` ⇒ as-of-the-current-instant (the current milestone, i.e. to = infinity). Only `now` is defined for the temporal MVP.",
+          "enum": ["now"],
+          "default": "now"
         }
       }
     },
