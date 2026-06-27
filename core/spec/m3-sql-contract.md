@@ -19,8 +19,10 @@ The contract is layered. For a given dialect, an implementation is correct iff:
 2. **Golden-SQL equivalence.** The SQL the implementation emits, **after
    normalization**, equals `goldenSql[dialect]`.
 
-Round 1 ships golden SQL for **Postgres only**; the contract is per-dialect, so
+Round 1 shipped golden SQL for **Postgres only**; the contract is per-dialect, so
 additional dialects add `goldenSql.<dialect>` without changing the rules.
+**MariaDB** is the second concrete dialect (a representative subset of cases now
+carries `goldenSql.mariadb`), proving the per-dialect contract beyond Postgres.
 
 ## Canonical normalization rules
 
@@ -67,12 +69,38 @@ applies to reads only.
 
 ## What is normative vs. dialect-local
 
-- **Normative:** the result (`expectedRows`) and the per-dialect golden SQL
-  (after normalization).
+- **Normative:** the **result** (`expectedRows`) — every dialect MUST return the
+  same logical rows for an operation — and, **per dialect**, the golden SQL after
+  normalization. The result is the cross-dialect invariant; the golden SQL is the
+  per-dialect contract.
 - **Dialect-local:** the concrete SQL text itself — chosen by the M11 dialect.
   Two dialects legitimately emit *different* golden SQL for the same operation
   (different type casts, limit syntax, lock suffixes); both are normative for
   their dialect and both must return the same logical rows.
+
+### The cross-dialect cases (Postgres + MariaDB)
+
+The MariaDB dialect (M11) exercises two genuine divergences; a representative
+subset of cases carries `goldenSql.mariadb` and the harness runs them against
+**both** databases, proving the result invariant while each dialect emits its own
+optimized SQL:
+
+- **Identical SQL, different physical binds — the infinity fallback.** For most
+  operations (`eq`, `in`, the `exists` semi-join, the as-of-now read, the
+  milestone insert) Postgres and MariaDB emit the **same** golden SQL text. The
+  temporal cases additionally exercise the **max-sentinel infinity convention**
+  (M0/M11): the open upper bound `out_z = ?` is carried as the `infinity` literal
+  bind, which Postgres binds as native `'infinity'::timestamptz` and MariaDB —
+  having no native timestamp infinity — binds as the documented max-sentinel
+  `9999-12-31 23:59:59.999999`, reading it back as `infinity`. The fixture history,
+  golden SQL, and asserted table state are authored once and hold on both. The
+  independent oracle for an infinity-fallback read is **dialect-neutral** by
+  design (`out_z > '9000-01-01'` rather than the Postgres-only
+  `'infinity'::timestamptz` cast), so it runs verbatim on both dialects.
+- **Different SQL — the read-lock divergence.** The shared-row-lock suffix is the
+  one case where the two dialects emit *different* canonical golden SQL for the
+  same operation: Postgres `… for share of t0`, MariaDB `… lock in share mode`.
+  Both are normalizer fixed points for their dialect; both return the same rows.
 
 ## Per-operator SQL emission
 
@@ -412,9 +440,20 @@ binds: [<pk>]
 > so the canonical golden SQL is `… for share of t0`. Golden SQL is stored in that
 > fully-lowercase form and passes the layer-3 idempotence check.
 
+For **MariaDB** the same in-transaction read appends `lock in share mode` instead
+(MariaDB has no `for share`; M11). It is the canonical fixed point for the MariaDB
+dialect — the normalizer renders it through the seam, not through sqlglot's MySQL
+generator (which would rewrite it to `for share`):
+
+```text
+select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? lock in share mode
+binds: [<pk>]
+```
+
 The lock is a concurrency property; a single-connection harness proves the
 locking read is **well-formed and result-correct** (it executes against real
-Postgres and returns the expected rows) — the observable half of the contract.
+Postgres **and** real MariaDB and returns the expected rows) — the observable
+half of the contract.
 
 ### Batched insert / update
 

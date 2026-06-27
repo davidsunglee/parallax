@@ -64,16 +64,26 @@ embedded object.
 ## Temporal infinity
 
 The open upper bound of a temporal interval (the `to`/`thru`/`out` column) is
-represented by the **database's native infinity**, not a `9999-12-01` sentinel
-and not `NULL`. The metamodel declares that a temporal dimension *has* an
-infinity sentinel; the **M11 dialect seam owns the concrete representation**
-(Postgres → native `'infinity'::timestamptz`; a future dialect lacking native
-infinity maps to a documented max-sentinel — earmarked for the MariaDB phase).
+represented by the **database's native infinity** where one exists, not a
+`9999-12-01` sentinel and not `NULL`. The metamodel declares that a temporal
+dimension *has* an infinity sentinel; the **M11 dialect seam owns the concrete
+representation**:
+
+- **Postgres** → native `'infinity'::timestamptz`.
+- **MariaDB** (and any dialect without native timestamp infinity) → a documented
+  **max-sentinel**: `9999-12-31 23:59:59.999999`, the largest `DATETIME(6)`. The
+  seam translates the suite's `infinity` literal to the sentinel on writes/binds
+  and back on reads, so the metamodel, golden SQL, fixtures, and asserted table
+  state stay dialect-neutral — the difference is confined to the seam.
+
 The full temporal interval model and milestone-chaining writes are M7.
 
 Benefits of native infinity over a `9999` sentinel or `NULL`: correct
 ordering/comparison, no Y9999 cliff, no `NULL`-in-predicate/index complications,
-and a clear current-row predicate (`to = infinity`).
+and a clear current-row predicate (`to = infinity`). Where native infinity is
+unavailable, the max-sentinel preserves the ordering and current-row predicate
+(it sorts above every finite milestone) at the cost of reintroducing the Y9999
+cliff — an acceptable trade for a dialect that offers no alternative.
 
 **As-of business date is a UTC `timestamp`.** Both temporal axes — processing and
 business — use the `timestamp` (instant) type, UTC-normalized like every other

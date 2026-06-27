@@ -69,22 +69,25 @@ just lint
 # the normative module-dependency graph is a DAG with legal edge directions
 just dep-graph
 
-# the full suite — boots Postgres via Testcontainers
+# the full suite — boots Postgres AND MariaDB via Testcontainers
 just test
 
 # everything required before merge
 just verify
 
-# the compatibility-matrix report (implementations × databases)
+# the compatibility-matrix report (implementations × databases:
+# reference × {postgres, mariadb})
 just matrix
 ```
+
+Run against a single database with `PARALLAX_DATABASES=postgres` (or `mariadb`).
 
 ## The compatibility case at a glance
 
 Each case is YAML carrying three independent things the harness cross-checks:
 
 - **`goldenSql`** — the optimized SQL an implementation is *expected to emit*
-  (keyed by dialect from day one, e.g. `postgres:`).
+  (keyed by dialect from day one, e.g. `postgres:` / `mariadb:`).
 - **`expectedRows`** — the result the query must return against the fixture data.
 - **`referenceSql`** — a deliberately naive, obviously-correct second
   formulation; an independent oracle (required for non-trivial cases, optional
