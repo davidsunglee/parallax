@@ -64,6 +64,18 @@ def test_rejects_inline_limit_literal() -> None:
     assert not is_canonical("select t0.id from orders t0 limit 10")
 
 
+def test_rejects_insert_values_literal() -> None:
+    assert not is_canonical("insert into account(id) values (1)")
+
+
+def test_rejects_insert_values_literal_in_multi_row_insert() -> None:
+    assert not is_canonical("insert into account(id) values (?), (2)")
+
+
+def test_accepts_insert_values_placeholders_in_multi_row_insert() -> None:
+    assert is_canonical("insert into account(id, owner) values (?, ?), (?, ?)")
+
+
 # Structural literals are NOT parameters — they are part of the canonical form
 # and must stay accepted.
 

@@ -76,7 +76,7 @@ entity:
       default: now
   indices:
     - name: position_pk
-      attributes: [id]
+      attributes: [id, businessFrom, processingFrom]
       unique: true
     - name: position_acct
       attributes: [acctNum]

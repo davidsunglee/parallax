@@ -49,7 +49,7 @@ instant `d`:
 |---|---|---|
 | `d = infinity` (the current row) | `to = ?` | `[infinity]` |
 | `d < infinity`, exclusive (`[from, to)`) | `from <= ? and to > ?` | `[d, d]` |
-| `d < infinity`, inclusive (`[from, to]`) | `from < ? and to >= ?` | `[d, d]` |
+| `d < infinity`, inclusive (`[from, to]`) | `from <= ? and to >= ?` | `[d, d]` |
 
 This mirrors Reladomo's `AsOfEqOperation` (research §6). The "current row" case
 is a **single** equality against infinity (one bind), not a two-sided range — so

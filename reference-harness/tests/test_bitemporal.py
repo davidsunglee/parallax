@@ -61,9 +61,45 @@ def test_bitemporal_ddl_primary_key_spans_both_as_of_from_columns() -> None:
         assert f"{column} timestamptz not null" in create
 
 
+def test_bitemporal_unique_index_matches_physical_primary_key() -> None:
+    entity = _position_model().root_entity
+    unique_index = next(
+        index for index in entity.definition["indices"] if index["name"] == "position_pk"
+    )
+    assert unique_index == {
+        "name": "position_pk",
+        "attributes": ["id", "businessFrom", "processingFrom"],
+        "unique": True,
+    }
+
+
 def test_business_only_ddl_primary_key_spans_the_business_from_column() -> None:
     (create,) = ddl_for(_reservation_model(), "postgres")
     assert "primary key (res_id, from_z)" in create
+
+
+def test_business_only_unique_index_matches_physical_primary_key() -> None:
+    entity = _reservation_model().root_entity
+    unique_index = next(
+        index
+        for index in entity.definition["indices"]
+        if index["name"] == "reservation_pk"
+    )
+    assert unique_index == {
+        "name": "reservation_pk",
+        "attributes": ["id", "businessFrom"],
+        "unique": True,
+    }
+
+
+def test_bitemporal_history_case_suppresses_both_axes() -> None:
+    history_case = next(
+        c for c in _phase8_cases() if c.path.stem == "0804-bitemporal-history"
+    )
+    business_history = history_case.operation["history"]
+    processing_history = business_history["operand"]["history"]
+    assert business_history["asOfAttr"] == "Position.businessDate"
+    assert processing_history["asOfAttr"] == "Position.processingDate"
 
 
 def test_until_trio_write_step_counts_are_consistent() -> None:
