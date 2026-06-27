@@ -110,9 +110,88 @@ def _render_tokens(tokens: list[Token]) -> str:
     return "".join(out).strip()
 
 
+class NonCanonicalError(ValueError):
+    """*sql* violates an M3 canonical rule the normalizer enforces structurally
+    rather than by re-rendering: the read alias scheme + column qualification
+    (rule 1) and ``?`` bind placeholders for parameters (rule 4).
+
+    Lowercasing and re-spacing alone do not catch these, so without this check
+    ``normalize`` would return a lowercase-but-non-canonical statement unchanged
+    and ``is_canonical`` / ``sql_lint`` would wrongly accept it as a fixture.
+    """
+
+
+def _inline_parameter_literal(tree: exp.Expression) -> exp.Expression | None:
+    """The first literal used as a *parameter* (which must therefore be a ``?``
+    bind), or ``None``. A literal compared against a column, listed in an
+    ``in`` / ``between`` against a column, or used as a row ``limit`` is a
+    parameter. Structural constants — the ``1 = 0`` none-identity and the
+    ``select 1`` EXISTS probe — are not parameters and are left alone."""
+
+    def col_vs_lit(a: exp.Expression, b: exp.Expression) -> bool:
+        return isinstance(a, exp.Column) and isinstance(b, exp.Literal)
+
+    for node in tree.find_all(exp.Binary):
+        if col_vs_lit(node.left, node.right) or col_vs_lit(node.right, node.left):
+            return node
+    for node in tree.find_all(exp.In):
+        if isinstance(node.this, exp.Column) and any(
+            isinstance(value, exp.Literal) for value in node.expressions
+        ):
+            return node
+    for node in tree.find_all(exp.Between):
+        if isinstance(node.this, exp.Column) and any(
+            isinstance(node.args.get(bound), exp.Literal) for bound in ("low", "high")
+        ):
+            return node
+    for node in tree.find_all(exp.Limit):
+        if isinstance(node.expression, exp.Literal):
+            return node
+    return None
+
+
+def _assert_canonical(tree: exp.Expression) -> None:
+    """Enforce the M3 canonical rules that re-rendering cannot. Parameters must
+    be ``?`` binds (rule 4) in every statement; and for *read* (``SELECT``)
+    statements the alias scheme is ``t0, t1, …`` in first-appearance order with
+    every column alias-qualified (rule 1). DML keeps its own canonical shape (an
+    unaliased target table and bare columns), so rule 1 is not applied to it."""
+    literal = _inline_parameter_literal(tree)
+    if literal is not None:
+        raise NonCanonicalError(
+            f"inline literal where a ? bind is required (M3 rule 4): {literal.sql()!r}"
+        )
+    if isinstance(tree, exp.Select):
+        # A row-lock suffix (`for share of t0`) references an existing alias and
+        # sqlglot models that reference as its own Table node; it is not a FROM
+        # source, so exclude it from the alias sequence.
+        aliases = [
+            table.alias
+            for table in tree.find_all(exp.Table)
+            if table.find_ancestor(exp.Lock) is None
+        ]
+        expected = [f"t{index}" for index in range(len(aliases))]
+        if aliases != expected:
+            raise NonCanonicalError(
+                f"read table aliases must be {expected} in first-appearance order "
+                f"(M3 rule 1), got {aliases}"
+            )
+        for column in tree.find_all(exp.Column):
+            if not column.table:
+                raise NonCanonicalError(
+                    f"column {column.name!r} is not alias-qualified (M3 rule 1)"
+                )
+
+
 def normalize(sql: str, dialect: str = "postgres") -> str:
-    """Normalize *sql* into the M3 canonical form for *dialect*."""
+    """Normalize *sql* into the M3 canonical form for *dialect*.
+
+    Raises :class:`NonCanonicalError` for the structural rules re-rendering
+    cannot express (rule 1 read aliases / column qualification; rule 4 bind
+    placeholders); the textual rules (2, 3, 5) are produced by re-rendering.
+    """
     tree = sqlglot.parse_one(sql, read=dialect)
+    _assert_canonical(tree)
     _lowercase_unquoted_identifiers(tree)
     rendered = tree.sql(dialect=dialect, normalize=True, pretty=False)
     tokens = Tokenizer(dialect=dialect).tokenize(rendered)
@@ -121,4 +200,7 @@ def normalize(sql: str, dialect: str = "postgres") -> str:
 
 def is_canonical(sql: str, dialect: str = "postgres") -> bool:
     """True iff *sql* is already a fixed point of normalization for *dialect*."""
-    return normalize(sql, dialect) == sql
+    try:
+        return normalize(sql, dialect) == sql
+    except NonCanonicalError:
+        return False
