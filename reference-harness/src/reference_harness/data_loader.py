@@ -18,7 +18,16 @@ if TYPE_CHECKING:
 
 
 def _attribute_to_column(entity: Entity) -> dict[str, str]:
-    return {attribute["name"]: attribute["column"] for attribute in entity.attributes}
+    """Map every loadable element name to its column.
+
+    Scalar attributes plus each valueObject (whose fixture value is a nested
+    dict/list loaded into its single JSONB column, Phase 9).
+    """
+    mapping = {attribute["name"]: attribute["column"] for attribute in entity.attributes}
+    mapping.update(
+        {value_object["name"]: value_object["column"] for value_object in entity.value_objects}
+    )
+    return mapping
 
 
 def _load_entity(entity: Entity, db: DatabaseProvider) -> None:

@@ -15,12 +15,25 @@ from typing import Any
 
 import psycopg
 from psycopg.adapt import Loader
+from psycopg.types.json import Jsonb
 from testcontainers.postgres import PostgresContainer
 
 from . import register
 
 # Pinned at the latest stable Postgres major (M12/DQ15). Refresh on new majors.
 POSTGRES_IMAGE = "postgres:17"
+
+
+def _adapt(value: Any) -> Any:
+    """Adapt a fixture value for binding.
+
+    A ``dict`` / ``list`` fixture value is a valueObject destined for a JSONB
+    column (Phase 9); psycopg does not auto-adapt a plain mapping, so wrap it in
+    ``Jsonb``. Every scalar passes through unchanged.
+    """
+    if isinstance(value, (dict, list)):
+        return Jsonb(value)
+    return value
 
 
 class _IsoTimestamptzLoader(Loader):
@@ -85,7 +98,7 @@ class PostgresProvider:
         placeholders = ", ".join(["%s"] * len(columns))
         sql = f"insert into {table} ({col_list}) values ({placeholders})"
         with self._conn.cursor() as cur:
-            cur.executemany(sql, [tuple(row) for row in rows])
+            cur.executemany(sql, [tuple(_adapt(value) for value in row) for row in rows])
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
         # The harness stores golden SQL with `?` placeholders (M3); psycopg uses

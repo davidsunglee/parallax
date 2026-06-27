@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/metamodel.schema.json",
   "title": "Parallax Model Descriptor (M1 metamodel)",
-  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index + asOfAttribute (the M7 temporal dimension), and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
+  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index + asOfAttribute (the M7 temporal dimension) + inheritance (table-per-hierarchy with a discriminator, or table-per-leaf; table-per-class is REJECTED, DQ9) + valueObject (an embedded composite element mapped to a single JSONB column, a deliberate deviation from Reladomo's column-flattening), and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
   "type": "object",
   "additionalProperties": false,
   "oneOf": [
@@ -20,9 +20,9 @@
   },
   "$defs": {
     "neutralType": {
-      "description": "M0 neutral data type. The decimal type carries precision/scale, e.g. decimal(18,2).",
+      "description": "M0 neutral data type. The decimal type carries precision/scale, e.g. decimal(18,2). The `json` type (-> JSONB) is the embedded-value type a valueObject element maps to.",
       "type": "string",
-      "pattern": "^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|decimal\\([0-9]+,[0-9]+\\))$"
+      "pattern": "^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|json|decimal\\([0-9]+,[0-9]+\\))$"
     },
     "identifier": {
       "description": "camelCase element/property name.",
@@ -68,7 +68,13 @@
         "indices": {
           "type": "array",
           "items": { "$ref": "#/$defs/index" }
-        }
+        },
+        "valueObjects": {
+          "description": "Embedded composite elements mapped to JSONB columns (M1/M0; a deliberate deviation from Reladomo's column-flattening).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/valueObject" }
+        },
+        "inheritance": { "$ref": "#/$defs/inheritance" }
       }
     },
     "attribute": {
@@ -192,6 +198,78 @@
           "default": "now"
         }
       }
+    },
+    "valueObject": {
+      "description": "An embedded composite element stored as a single JSONB column (DQ9 definitely-do). Unlike Reladomo's column-flattening, the whole value object is one `json`-typed column; its inner fields are read/filtered with the M2 nested-attribute access form (`Class.valueObject.path`). The mapping is JSONB-only in core.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "column"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "type": {
+          "description": "The value-object's logical (struct) type name; documentary, not a neutral scalar type.",
+          "type": "string",
+          "minLength": 1
+        },
+        "column": {
+          "description": "The single JSONB column the whole value object is stored in.",
+          "type": "string",
+          "minLength": 1
+        },
+        "mapping": {
+          "description": "Storage mapping. JSONB is the only mapping defined in core.",
+          "const": "jsonb",
+          "default": "jsonb"
+        },
+        "nullable": { "type": "boolean", "default": false }
+      }
+    },
+    "inheritance": {
+      "description": "Inheritance mapping for an entity that is part of a class hierarchy (DQ9 definitely-do). Two strategies are admitted: `table-per-hierarchy` (the whole hierarchy in one table, rows discriminated by a `discriminator` column carrying the leaf class's `value`) and `table-per-leaf` (one table per concrete leaf, no discriminator). `table-per-class` (one table per class joined at query time) is NOT a legal strategy and is REJECTED by this schema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "role"],
+      "properties": {
+        "strategy": {
+          "description": "The mapping strategy. table-per-class is intentionally absent: the enum rejects it.",
+          "enum": ["table-per-hierarchy", "table-per-leaf"]
+        },
+        "role": {
+          "description": "This entity's position in the hierarchy: the abstract/concrete `root` that owns the shared table (table-per-hierarchy) or names the hierarchy, or a `subtype` leaf.",
+          "enum": ["root", "subtype"]
+        },
+        "parent": {
+          "description": "For a `subtype`, the name of the entity it extends (its immediate parent / hierarchy root).",
+          "type": "string",
+          "minLength": 1
+        },
+        "discriminator": {
+          "description": "table-per-hierarchy only: the column distinguishing leaf classes within the shared table. Absent for table-per-leaf (no shared table).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["column"],
+          "properties": {
+            "column": {
+              "description": "The discriminator column name in the shared table.",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "discriminatorValue": {
+          "description": "table-per-hierarchy only: the value the discriminator column carries for THIS entity's rows. Set on each entity (root and subtype) whose rows live in the shared table.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "description": "A subtype MUST name its parent; a root MUST NOT.",
+          "if": { "properties": { "role": { "const": "subtype" } } },
+          "then": { "required": ["parent"] },
+          "else": { "not": { "required": ["parent"] } }
+        }
+      ]
     },
     "pkGenerator": {
       "description": "Primary-key generation strategy. Only the strategy keyword is required; sequence carries extra fields.",

@@ -1,0 +1,19 @@
+# valueObject JSONB filter: a DEEP nested field (M1 valueObject, M3).
+#
+# The `address` valueObject nests a `geo` object. nestedEq(Customer.address.geo.country,
+# 'US') lowers to a multi-segment extraction `jsonb_extract_path_text(t0.address, ?, ?)`
+# — one bind per path segment ('geo', 'country') then the compared value ('US').
+# Only Grace (Boston, US) qualifies; the two Oslo (NO) customers are excluded.
+#
+# referenceSql spells the same path with native operators (`-> 'geo' ->> 'country'`).
+model: models/customer.yaml
+tags: [m1, m3, nested, value-object, jsonb]
+operation:
+  nestedEq: { path: Customer.address.geo.country, value: US }
+goldenSql:
+  postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
+binds: [geo, country, US]
+referenceSql: select id, name from customer where address -> 'geo' ->> 'country' = 'US'
+expectedRows:
+  - { id: 3, name: Grace }
+roundTrips: 1

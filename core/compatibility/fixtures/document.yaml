@@ -1,0 +1,16 @@
+# Fixture rows for the Document table-per-leaf model (models/document.yaml).
+#
+# Each concrete leaf has its OWN table, so rows are keyed per leaf class. The
+# abstract `Document` root owns no instance rows (its table stays empty). A leaf
+# query reads only its own table — no discriminator.
+Invoice:
+  - id: 1
+    title: Invoice-A
+    amountDue: 120.00
+  - id: 2
+    title: Invoice-B
+    amountDue: 80.00
+Receipt:
+  - id: 1
+    title: Receipt-A
+    paidAmount: 120.00

@@ -1,0 +1,29 @@
+# Fixture rows for the Payment table-per-hierarchy model (models/payment.yaml).
+#
+# The whole hierarchy lives in one `payment` table, so all rows are keyed by the
+# ROOT class `Payment`; each row's `kind` discriminator selects its leaf. The
+# subtype entities (CardPayment / CashPayment) declare no fixtures — a subtype
+# query reads the shared table and filters by the discriminator.
+#
+# Two card rows (Visa / Amex), one cash row, and one plain root-kind row, so the
+# discriminator filters discriminate cleanly:
+#   id 1 card  amount 100.00  network Visa
+#   id 2 card  amount  50.00  network Amex
+#   id 3 cash  amount  20.00  tendered 25.00
+#   id 4 payment amount 10.00  (root-kind row, neither subtype)
+Payment:
+  - id: 1
+    kind: card
+    amount: 100.00
+    cardNetwork: Visa
+  - id: 2
+    kind: card
+    amount: 50.00
+    cardNetwork: Amex
+  - id: 3
+    kind: cash
+    amount: 20.00
+    tendered: 25.00
+  - id: 4
+    kind: payment
+    amount: 10.00

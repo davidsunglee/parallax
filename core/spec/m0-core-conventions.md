@@ -26,14 +26,29 @@ dialect seam.
 | `time` | time of day, no date | `time` | timezone-naive (wall-clock) |
 | `timestamp` | absolute instant | `timestamptz` | UTC-normalized (see below) |
 | `uuid` | 128-bit UUID | `uuid` | in core (Postgres-native) |
+| `json` | embedded composite value | `jsonb` | the `valueObject` mapping (M1); see below |
 
 > The walking-skeleton phase exercises `int64`/`int32`, `string`, and (in the
-> schema) the full set. `boolean`, `decimal(p,s)`, and the temporal/`json` types
-> gain dedicated fixtures in later phases.
+> schema) the full set. `boolean`, `decimal(p,s)`, the temporal types, and the
+> `json` type gain dedicated fixtures in later phases.
 
 **Deferred (optional / extension, not in the core type set yet):** `int16`,
-`int8`, `char`, and an embedded-value `json` type (maps to `jsonb`; introduced
-with the metamodel's `valueObject` element in a later phase).
+`int8`, `char`.
+
+## The `json` embedded-value type
+
+The optional `json` neutral type maps to Postgres **`jsonb`** and is the storage
+type a `valueObject` element (M1) is mapped to: an embedded composite value
+(e.g. an address, a money pair) is stored as a **single JSONB column** rather
+than column-flattened into the owning table. This is a **deliberate deviation
+from Reladomo**, which flattens an embedded value object into individual columns;
+JSONB keeps the composite atomic, schema-flexible, and directly queryable.
+
+An implementation **MUST** read and filter a value object's inner fields through
+the nested-attribute access form (M2 `nestedEq` / `nestedNotEq`, lowered to a
+JSONB extraction by M3). A `json`-typed column **MAY** be `null` when the value
+object is declared `nullable`; otherwise it is `not null` and carries the
+embedded object.
 
 ## Timezone handling
 

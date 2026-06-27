@@ -1,0 +1,17 @@
+# valueObject JSONB filter: nested field inequality (M1 valueObject, M3).
+#
+# nestedNotEq(Customer.address.city, 'Oslo') lowers to a negated extraction
+# `not jsonb_extract_path_text(t0.address, ?) = ?` (the normalizer renders the
+# negation as a leading `not`, mirroring `isNotNull`/`notIn`). Only Grace
+# (Boston) does NOT live in Oslo.
+model: models/customer.yaml
+tags: [m1, m3, nested, value-object, jsonb]
+operation:
+  nestedNotEq: { path: Customer.address.city, value: Oslo }
+goldenSql:
+  postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
+binds: [city, Oslo]
+referenceSql: select id, name from customer where address ->> 'city' <> 'Oslo'
+expectedRows:
+  - { id: 3, name: Grace }
+roundTrips: 1

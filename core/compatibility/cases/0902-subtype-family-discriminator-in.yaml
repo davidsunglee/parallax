@@ -1,0 +1,21 @@
+# Table-per-hierarchy family query: find every Payment that is card OR cash (M1, M3).
+#
+# A query across a FAMILY of subtypes injects a discriminator `in (…)` predicate
+# (`t0.kind in (?, ?)`, binds ['card','cash']). It matches the two card rows and
+# the cash row (1, 2, 3) but NOT the plain root-kind row (4). This is the
+# multi-leaf form of the discriminator lowering.
+#
+# Non-trivial case => referenceSql is the independent oracle.
+model: models/payment.yaml
+tags: [m1, m3, inheritance, table-per-hierarchy, discriminator]
+operation:
+  all: {}
+goldenSql:
+  postgres: select t0.id, t0.kind, t0.amount from payment t0 where t0.kind in (?, ?)
+binds: [card, cash]
+referenceSql: select id, kind, amount from payment where kind in ('card', 'cash')
+expectedRows:
+  - { id: 1, kind: card, amount: 100.00 }
+  - { id: 2, kind: card, amount: 50.00 }
+  - { id: 3, kind: cash, amount: 20.00 }
+roundTrips: 1
