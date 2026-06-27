@@ -17,6 +17,7 @@ the single-entity cases always query).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -176,6 +177,18 @@ class Case:
     @property
     def round_trips(self) -> int:
         return self.raw.get("roundTrips", 1)
+
+    @property
+    def tolerance(self) -> Decimal | None:
+        """Absolute numeric comparison tolerance, or ``None`` for exact.
+
+        Declared only by cases whose results are inherently inexact (stddev /
+        variance / repeating-decimal avg) and so cannot be authored exactly.
+        Authored as a plain number; parsed through ``str`` so a YAML ``1.0e-9``
+        becomes ``Decimal('1.0E-9')`` without float noise.
+        """
+        raw = self.raw.get("tolerance")
+        return None if raw is None else Decimal(str(raw))
 
 
 def _load_yaml(path: Path) -> Any:

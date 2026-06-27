@@ -5,11 +5,16 @@
 # columns to tell an undefined statistic — zero or one row ⇒ NULL — apart from a
 # genuine zero, and to combine partial aggregates). Here:
 #   stddev_samp(quantity) over the 5 order_item rows {2,1,4,3,5}
-#                                = 1.5811388300841897
+#                                = sqrt(2.5) = 1.5811388300841897... (irrational)
 #   count(quantity)             = 5
 # The golden SQL therefore projects both columns. The independent referenceSql
 # computes the same two columns naively, so the two-column contract is proven
 # against real data.
+#
+# The statistic is irrational and its scale differs across databases, so it
+# cannot be authored exactly: `tolerance` makes the comparison abs(actual -
+# expected) <= 1e-9 (count stays effectively exact — an off-by-one is ~1e9x the
+# tolerance). Every other aggregate value in the suite compares exactly.
 model: models/orders.yaml
 tags: [m2, m3, aggregate, stdDev, stdDevSample, twoColumn]
 operation:
@@ -24,5 +29,6 @@ goldenSql:
 binds: []
 referenceSql: select stddev_samp(quantity) as quantity_stddev, count(quantity) as sample_count from order_item
 expectedRows:
-  - { quantity_stddev: 1.5811388300841897, sample_count: 5 }
+  - { quantity_stddev: 1.5811388301, sample_count: 5 }
+tolerance: 1.0e-9
 roundTrips: 1
