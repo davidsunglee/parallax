@@ -54,8 +54,15 @@
         "required": ["mutation", "entity"],
         "properties": {
           "mutation": {
-            "description": "The mutation kind. insert / update / terminate are the M7 temporal mutation surface (DQ11); insert / update also cover the M8 batched non-temporal writes.",
-            "enum": ["insert", "update", "terminate"]
+            "description": "The mutation kind. insert / update / terminate are the M7 audit-only mutation surface and also cover the M8 batched non-temporal writes; insertUntil / updateUntil / terminateUntil are the full-bitemporal `*Until` trio (DQ11, Phase 8) that bound a mutation to a business window — updateUntil/terminateUntil drive the rectangle split (inactivate the original on the processing axis, chain head/middle/tail business rows at fresh processing time).",
+            "enum": [
+              "insert",
+              "update",
+              "terminate",
+              "insertUntil",
+              "updateUntil",
+              "terminateUntil"
+            ]
           },
           "entity": {
             "description": "The temporal entity the mutation targets.",
