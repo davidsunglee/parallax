@@ -103,10 +103,48 @@ M13 --> M12
   **build-time enforcement mechanism** that fails the build when a
   module/package introduces a dependency not permitted by this graph (the common
   failure mode being a wrong-direction edge added by a contributor who does not
-  understand the layering). Example tooling per ecosystem: `import-linter` /
-  `tach` (Python), ArchUnit or Gradle module boundaries (Java),
-  `dependency-cruiser` / `eslint-plugin-boundaries` (TypeScript), crate
-  boundaries + visibility (Rust).
+  understand the layering).
 
-The full per-ecosystem enforcement guidance and the **coverage gate** (asserting
-every in-scope module has fixture coverage) are finalized in a later phase.
+### Per-ecosystem enforcement tooling
+
+The mechanism differs per ecosystem, but the contract is the same: encode the
+legal edges of the DAG above and fail the build on any other module-to-module
+dependency.
+
+| Ecosystem | Tool(s) | How the contract is encoded |
+|---|---|---|
+| **Python** | [`import-linter`](https://import-linter.readthedocs.io/) or [`tach`](https://github.com/gauge-sh/tach) | a *layers* / *forbidden* contract listing the modules top-to-bottom; the linter fails on any import that crosses a forbidden boundary |
+| **Java / JVM** | **ArchUnit** rules, or Gradle/Maven module boundaries | `layeredArchitecture()` / `noClasses().that()...should().dependOnClassesThat()` rules in a unit test; or split modules so the build graph itself forbids the wrong-direction dependency |
+| **TypeScript / Node** | [`dependency-cruiser`](https://github.com/sverweij/dependency-cruiser) or `eslint-plugin-boundaries` | a `forbidden` rule set mapping each module to the modules it MAY depend on |
+| **Rust** | **crate boundaries + visibility** | split modules into crates so Cargo's dependency graph (plus `pub` visibility) makes a wrong-direction dependency a compile error |
+
+Each per-language spec records its chosen tool and the module → package/crate
+mapping (see the
+[language-spec template](language-spec-template.md), §7).
+
+### The coverage gate
+
+The reference harness adds a **coverage gate** on top of the DAG check: it asserts
+that **every in-scope module has at least one compatibility fixture tagged to
+it.** "In-scope" means the **MVP**, **fast-follow**, and **definitely-do** tiers
+(see [`scope-and-tiers.md`](scope-and-tiers.md)); the **might-do** and
+**won't-do** tiers — including the RFC-2119 **MAY** temporal mutations — are
+**excluded** from the gate.
+
+The gate turns *"the spec is complete for parity"* into a passing check rather than
+a judgment call: if a module in the top three tiers exists in the dependency graph
+but no fixture is tagged to it, the gate fails and names the uncovered module.
+Coverage is measured against the `tags` field of every fixture under
+`core/compatibility/` (cases **and** benchmarks): a module `M`*n* is covered when
+at least one fixture's `tags` contains `m`*n* (case-insensitive); the un-numbered
+cross-process-coherence capability is covered by the `coherence` tag.
+
+Run it with the `--coverage` flag, passing the spec and compatibility roots:
+
+```sh
+uv run python -m reference_harness.dep_graph_check --coverage core/spec core/compatibility
+```
+
+This runs the DAG + direction check **and** the coverage gate together; it exits
+non-zero (naming the gap) if any in-scope module is uncovered or the graph is not
+a legal DAG.

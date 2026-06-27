@@ -34,9 +34,11 @@ lint-schemas:
     cd {{harness}} && uv run python -m reference_harness.sql_lint ../core/compatibility
 
 # Mechanically check the normative module-dependency graph is a DAG with legal
-# edge directions.
+# edge directions, AND run the Phase 12 coverage gate: every in-scope module
+# (MVP / fast-follow / definitely-do, read from scope-and-tiers.md) has at least
+# one compatibility fixture tagged to it.
 dep-graph:
-    cd {{harness}} && uv run python -m reference_harness.dep_graph_check ../core/spec/dependency-graph.md
+    cd {{harness}} && uv run python -m reference_harness.dep_graph_check --coverage ../core/spec ../core/compatibility
 
 # ---------------------------------------------------------------------------
 # test: the full compatibility suite. Boots real databases via Testcontainers,

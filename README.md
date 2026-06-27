@@ -66,7 +66,8 @@ npm install
 # static checks (no Docker): ruff, markdownlint, schema + meta-schema, sqlglot-parse
 just lint
 
-# the normative module-dependency graph is a DAG with legal edge directions
+# the module-dependency graph is a legal DAG AND the coverage gate is green
+# (every in-scope module has at least one fixture tagged to it)
 just dep-graph
 
 # the full suite — boots Postgres AND MariaDB via Testcontainers
@@ -97,8 +98,76 @@ See [`core/spec/00-overview.md`](core/spec/00-overview.md) for the spec map and
 [`core/spec/m12-compatibility-harness.md`](core/spec/m12-compatibility-harness.md)
 for the full case contract.
 
+## Contributor guide
+
+### How to add a case
+
+1. Author (or reuse) a model descriptor under `core/compatibility/models/` (an
+   instance of `metamodel.schema.json`) and its fixture rows under
+   `core/compatibility/fixtures/<model-stem>.yaml`.
+2. Add a YAML file under `core/compatibility/cases/` carrying the case envelope —
+   `model`, `tags`, `operation` (or `writeSequence` / `scenario` / `coherence` /
+   the conflict shape), `goldenSql` (keyed by dialect), `binds`, `referenceSql`
+   (required for non-trivial cases), and `expectedRows` / `expectedGraph` /
+   `expectedTableState`. See
+   [`m12-compatibility-harness.md`](core/spec/m12-compatibility-harness.md) for
+   the full field list.
+3. **Tag it for coverage.** The first tag is the owning module (`m2`, `m7`, …);
+   add feature tags as needed. The coverage gate (below) keys off these tags.
+4. Run `just lint` (schema + sqlglot-parse), then `just test` (real databases).
+
+### How to add a module
+
+1. Add the spec file under `core/spec/` (e.g. `m14-….md`) and register it in
+   [`00-overview.md`](core/spec/00-overview.md).
+2. Add the module to the **normative module-dependency graph** —
+   [`dependency-graph.md`](core/spec/dependency-graph.md): a row in the module
+   table **and** edges in the fenced ```` ```dependency-graph ```` block (each
+   edge `A --> B` means "A depends on B"; the graph MUST stay an acyclic DAG with
+   legal directions).
+3. Place it in a tier in
+   [`scope-and-tiers.md`](core/spec/scope-and-tiers.md). If it is MVP /
+   fast-follow / definitely-do, the **coverage gate** now requires at least one
+   fixture tagged to it.
+4. Ship fixtures tagged to the new module.
+
+### How the gates work
+
+Every normative claim is a mechanical check (nothing is "trust me"):
+
+- **Schema gate** — `just lint` validates every fixture against its JSON Schema
+  and parses all golden/reference SQL with sqlglot.
+- **Dependency-graph gate** — `just dep-graph` asserts the module graph is an
+  acyclic DAG with legal edge directions.
+- **Coverage gate** — `just dep-graph` *also* runs
+  `dep_graph_check --coverage`: it reads the in-scope tiers (MVP / fast-follow /
+  definitely-do) from `scope-and-tiers.md` and asserts **every in-scope module
+  has at least one fixture tagged to it** (the un-numbered cross-process-coherence
+  capability is covered by the `coherence` tag). Might-do and won't-do tiers —
+  including the RFC-2119 MAY temporal mutations — are excluded by construction. A
+  missing fixture for an in-scope module fails the build and names the gap.
+- **Suite gate** — `just test` boots Postgres + MariaDB and runs every case
+  through triple-equivalence + normalization + serde round-trip.
+
+`just verify` runs all of them; the same set runs in CI.
+
+### How to read the matrix
+
+`just matrix` emits the **compatibility-matrix report** — implementations ×
+databases. Round 1 has one implementation (the reference harness) across two
+databases, so the matrix proves `reference × {postgres, mariadb}` green. Each
+future language implementation adds a row; each new dialect behind the M11 seam
+adds a column.
+
 ## Status
 
 Built incrementally in vertical slices (one phase = one thin slice through every
-layer). Phase 1 establishes the walking skeleton: a single non-temporal object
-queried by `all()` and one `eq`, proven end-to-end against real Postgres.
+layer). The core spec (`M0`–`M13` + cross-process coherence), the schemas, the
+compatibility suite, and the reference harness are in place; the suite runs
+against Postgres **and** MariaDB, and the dependency-graph + coverage gates are
+green. The language-spec template
+([`core/spec/language-spec-template.md`](core/spec/language-spec-template.md)) and
+the scope-and-tiers boundary
+([`core/spec/scope-and-tiers.md`](core/spec/scope-and-tiers.md)) close the frame:
+handed the core spec + a language spec + this suite, an agent can build an
+idiomatic implementation and prove parity by running the suite.
