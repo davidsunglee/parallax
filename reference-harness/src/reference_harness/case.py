@@ -163,6 +163,44 @@ class Case:
         return self.raw.get("expectedTableState", {})
 
     @property
+    def load_fixtures(self) -> bool:
+        """Whether a writeSequence case loads the model's fixtures first (Phase 7).
+
+        Defaults to ``False`` (the M7 milestone-chaining and M8 batched-insert
+        cases build their own state from an empty schema). The M9 detached-update
+        merge-back case sets it ``True`` so the original persisted row exists
+        before the merge-back DML mutates it.
+        """
+        return bool(self.raw.get("loadFixtures", False))
+
+    @property
+    def is_conflict(self) -> bool:
+        """True for an M10 optimistic-lock conflict / success case (Phase 7).
+
+        A conflict case carries ``expectedAffectedRows`` (the affected-row count a
+        golden ``UPDATE`` leaves behind) and an OPTIONAL out-of-band
+        ``precondition`` (a concurrent mutation, e.g. a version bump) instead of an
+        ``operation`` + ``expectedRows``.
+        """
+        return "expectedAffectedRows" in self.raw
+
+    @property
+    def precondition(self) -> list[str]:
+        """The out-of-band SQL a conflict case applies before the golden UPDATE."""
+        raw = self.raw.get("precondition")
+        if raw is None:
+            return []
+        return [raw] if isinstance(raw, str) else list(raw)
+
+    @property
+    def precondition_binds(self) -> list[Any]:
+        return self.raw.get("preconditionBinds", [])
+
+    @property
+    def expected_affected_rows(self) -> int | None:
+        return self.raw.get("expectedAffectedRows")
+
+    @property
     def is_scenario(self) -> bool:
         """True for an M8 cache/identity scenario case (Phase 6).
 

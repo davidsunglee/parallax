@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (M12)",
-  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of three shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState`); or a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL).",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of four shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); or a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind).",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags"],
@@ -16,12 +16,16 @@
       ]
     },
     {
-      "description": "A writeSequence case: ordered DML asserted by the resulting table state (milestone-chaining temporal writes, Phase 5; batched non-temporal writes, Phase 6).",
+      "description": "A writeSequence case: ordered DML asserted by the resulting table state (milestone-chaining temporal writes, Phase 5; batched non-temporal writes, Phase 6; M9 detached insert/update merge-back, Phase 7).",
       "required": ["writeSequence", "expectedTableState", "goldenSql"]
     },
     {
       "description": "A scenario case (M8): ordered operation steps with per-step round-trip counts proving the cache/identity contract. Golden SQL lives per step, so the top-level goldenSql is absent.",
       "required": ["scenario"]
+    },
+    {
+      "description": "A conflict case (M10): a golden UPDATE asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `precondition` (e.g. a stale-version mutation by a concurrent transaction), then runs the golden UPDATE and asserts `expectedAffectedRows` (a stale version => 0 rows, a fresh version => 1).",
+      "required": ["expectedAffectedRows", "goldenSql"]
     }
   ],
   "properties": {
@@ -164,13 +168,33 @@
       }
     },
     "expectedTableState": {
-      "description": "The resulting table state a writeSequence case asserts after applying its ordered DML golden SQL. Keyed by table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings (and the open-bound `infinity` as the literal string `infinity`).",
+      "description": "The resulting table state a writeSequence or conflict case asserts after applying its ordered DML golden SQL. Keyed by table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings (and the open-bound `infinity` as the literal string `infinity`).",
       "type": "object",
       "minProperties": 1,
       "additionalProperties": {
         "type": "array",
         "items": { "type": "object" }
       }
+    },
+    "loadFixtures": {
+      "description": "writeSequence cases only. When true, the model's fixtures are loaded BEFORE the ordered DML is applied — so a sequence can mutate pre-existing persisted rows (the M9 detached-update merge-back case, where the original row already exists). Defaults to false: a writeSequence case starts from an empty schema and builds its own state (the M7 milestone-chaining and M8 batched-insert cases).",
+      "type": "boolean",
+      "default": false
+    },
+    "precondition": {
+      "description": "conflict cases (M10) only. An out-of-band SQL statement (or ordered list) applied AFTER the fixtures load and BEFORE the golden UPDATE, simulating a concurrent transaction that mutated the row (e.g. bumping the optimistic-lock version) so the golden UPDATE's stale-version predicate now matches zero rows. Absent for the success case (the version is fresh, so the UPDATE affects one row).",
+      "$ref": "#/$defs/dialectAgnosticSql"
+    },
+    "preconditionBinds": {
+      "description": "conflict cases only. Bind values for the `?` placeholders in `precondition` (a flat list for a single statement, or a list-of-lists for multiple statements). Defaults to empty.",
+      "type": "array",
+      "default": [],
+      "items": {}
+    },
+    "expectedAffectedRows": {
+      "description": "conflict cases (M10) only. The number of rows the golden UPDATE must affect after any `precondition` is applied. A stale optimistic-lock version => 0 (conflict detected); a fresh version => 1 (success). This is the observable form of optimistic-lock conflict detection: `updatedRows != 1` is the conflict signal.",
+      "type": "integer",
+      "minimum": 0
     },
     "roundTrips": {
       "description": "Declared number of SQL statements for the operation. For a multi-statement (deep-fetch) read case this MUST equal the number of goldenSql statements for each dialect (proving N+1 elimination); for a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips (the total database cost of the scenario).",
@@ -194,6 +218,20 @@
         },
         {
           "description": "An ordered list of statements, one per relationship/deep-fetch level.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      ]
+    },
+    "dialectAgnosticSql": {
+      "description": "Out-of-band SQL not keyed by dialect: a naive statement (or ordered list) speaking plain column names, run by the harness verbatim. Used by a conflict case's `precondition` (the same statement applies to every dialect).",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
           "type": "array",
           "minItems": 1,
           "items": { "type": "string", "minLength": 1 }

@@ -5,8 +5,8 @@ harness that proves it. It is **tooling, not an ORM**: it **never compiles
 operations to SQL** — that is exactly what a real implementation must do and
 prove against the golden SQL. The harness only proves the *suite itself* is
 internally consistent and that the golden SQL is correct for the data, across
-every database behind the provider seam. `M12` depends on `M2`, `M3`, and (in
-later phases) `M4`, `M7`, `M9`, `M10`.
+every database behind the provider seam. `M12` depends on `M2`, `M3`, `M4`,
+`M7`, `M9`, and `M10`.
 
 The canonical reference implementation is `reference-harness/` (Python + uv +
 sqlglot). Its *contract* is language-neutral; another ecosystem can re-implement
@@ -18,8 +18,10 @@ A case is a YAML document under `core/compatibility/cases/`, validated against
 [`core/schemas/compatibility-case.schema.json`](../schemas/compatibility-case.schema.json).
 Its fields:
 
-A case is **either** a **read case** (carries an `operation`) **or** a
-**writeSequence case** (carries a `writeSequence`, Phase 5 / M7). The fields:
+A case is one of four shapes: a **read case** (carries an `operation`), a
+**writeSequence case** (carries a `writeSequence`, Phase 5 / M7), a **scenario
+case** (carries a `scenario`, Phase 6 / M8), or a **conflict case** (carries
+`expectedAffectedRows`, Phase 7 / M10). The fields:
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -114,6 +116,27 @@ of the `writeSequence` steps' declared statement counts and the case's
 `roundTrips`. The model descriptor's serde round-trip (layer 4b) still runs;
 there is no `operation` to serde (layer 4a) and no normalization difference — the
 DML golden SQL is normalized to a fixed point exactly like read SQL (layer 3).
+
+A writeSequence case MAY set **`loadFixtures: true`** to load the model's
+fixtures **before** the ordered DML (instead of starting empty) — so a sequence
+can mutate a *pre-existing* persisted row. This is the M9 detached-update
+merge-back case: the original row exists, the merge-back `UPDATE` changes it in
+place, and the asserted table state shows only that row changed.
+
+### Conflict cases (M10)
+
+A **conflict** case proves optimistic-lock conflict detection by the **affected-
+row count** a golden `UPDATE` leaves behind. The harness loads the model's
+fixtures (the versioned row exists), applies an OPTIONAL out-of-band
+**`precondition`** (a naive SQL statement simulating a concurrent transaction
+that bumped the version), runs the golden `UPDATE` (which gates on the version
+the caller read earlier), and asserts the affected-row count equals
+**`expectedAffectedRows`** — `0` for a stale version (conflict; the
+`updatedRows != 1` signal) and `1` for a fresh version (success). When
+`expectedTableState` is authored it is asserted too, confirming a conflicting
+write did not apply. As with writeSequence cases, only the descriptor serde
+round-trip and the golden-SQL normalization layers apply (there is no
+`operation`).
 
 ## Provisioning ↔ runner seam (DQ15)
 

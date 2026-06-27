@@ -142,6 +142,9 @@ def _assert_schema(case: Case) -> None:
     elif case.is_scenario:
         if not case.scenario:
             raise CaseFailure(f"{case.path.name}: scenario case has no steps")
+    elif case.is_conflict:
+        if case.expected_affected_rows is None:
+            raise CaseFailure(f"{case.path.name}: conflict case missing expectedAffectedRows")
     elif "operation" not in case.raw:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:
@@ -165,11 +168,12 @@ def _assert_normalization(case: Case, dialect: str) -> None:
 def _assert_serde(case: Case) -> None:
     # Layer 4a: operation serde. A read case has one top-level operation; a
     # scenario case has one operation per step (under `find`); a write-sequence
-    # case has none. Layer 4b: metamodel (descriptor) serde — always.
+    # case and a conflict case (M10) have none. Layer 4b: metamodel (descriptor)
+    # serde — always.
     if case.is_scenario:
         for step in case.scenario:
             serde.assert_roundtrip(step["find"])
-    elif not case.is_write_sequence:
+    elif not case.is_write_sequence and not case.is_conflict:
         serde.assert_roundtrip(case.operation)
     serde.assert_roundtrip(case.model.descriptor)
 
@@ -183,9 +187,10 @@ def _assert_equivalent_encodings(case: Case) -> None:
     prefix and a fluent surface of the same grouped intent denote one node — in
     the fixture itself rather than in bespoke test code.
     """
-    if case.is_write_sequence or case.is_scenario:
-        # A write-sequence case has no operation; a scenario carries its
-        # operations per step. Equivalent-encodings is a single-operation check.
+    if case.is_write_sequence or case.is_scenario or case.is_conflict:
+        # A write-sequence and a conflict case have no operation; a scenario
+        # carries its operations per step. Equivalent-encodings is a
+        # single-operation check.
         return
     canonical_operation = serde.canonical(case.operation)
     for index, encoding in enumerate(case.equivalent_encodings):
@@ -334,10 +339,14 @@ def _provision_empty(case: Case, db: DatabaseProvider) -> None:
 
     A write-sequence case constructs its entire milestone history from its own
     ordered DML (the `insert` step is part of the sequence), so it starts from an
-    empty schema and is fully self-contained.
+    empty schema and is fully self-contained — UNLESS it sets ``loadFixtures``
+    (the M9 detached-update merge-back case), in which case the model's fixtures
+    are loaded first so the merge-back can mutate a pre-existing persisted row.
     """
     db.reset()
     db.apply_ddl(ddl_for(case.model, db.dialect))
+    if case.load_fixtures:
+        load_model(case.model, db)
 
 
 def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
@@ -768,6 +777,77 @@ def _identity_keys(
     return sorted(_coerce_scalar(row[identity_col]) for row in rows)
 
 
+# --- conflict cases (Phase 7, M10 optimistic locking) -----------------------
+
+
+def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
+    """Run the precondition + golden UPDATE, assert the affected-row count.
+
+    This is the observable form of optimistic-lock conflict detection (M10).
+    The model's fixtures are loaded (the row exists with its current version),
+    then an OPTIONAL out-of-band ``precondition`` simulates a concurrent
+    transaction mutating the row (e.g. bumping the version). The golden
+    ``UPDATE … where pk = ? and version = ?`` is then applied with the version
+    the caller read EARLIER; if a concurrent write changed the version, the
+    stale-version predicate matches **zero** rows — the conflict signal
+    (``updatedRows != 1``). A fresh version matches exactly **one** row.
+
+    The harness asserts the affected-row count equals ``expectedAffectedRows``,
+    and (when authored) the resulting table state — so the contract is proven
+    against real data, not merely asserted in prose.
+    """
+    dialect = db.dialect
+    statements = case.golden_statements(dialect)
+    if len(statements) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: a conflict case has exactly one golden UPDATE "
+            f"statement, but goldenSql.{dialect} lists {len(statements)}."
+        )
+
+    # Apply any out-of-band precondition (a concurrent mutation) before the UPDATE.
+    for index, statement in enumerate(case.precondition):
+        binds = _binds_for_list(case.precondition_binds, index, len(case.precondition))
+        db.execute(statement, binds)
+
+    affected = db.execute(statements[0], case.binds)
+    expected = case.expected_affected_rows
+    if affected != expected:
+        raise CaseFailure(
+            f"{case.path.name}: golden UPDATE affected {affected} row(s) but "
+            f"expectedAffectedRows is {expected}. A stale optimistic-lock version "
+            f"MUST affect 0 rows (conflict); a fresh version MUST affect 1."
+        )
+
+    if case.expected_table_state:
+        entity_by_table = {entity.table: entity for entity in case.model.entities}
+        for table, expected_rows in case.expected_table_state.items():
+            if table not in entity_by_table:
+                raise CaseFailure(
+                    f"{case.path.name}: expectedTableState names table {table!r} "
+                    f"which the model does not declare."
+                )
+            actual = _read_table(db, entity_by_table[table])
+            if not _rows_equal(actual, expected_rows, case.tolerance):
+                raise CaseFailure(
+                    f"{case.path.name}: table {table!r} state after the conflict "
+                    f"case != expectedTableState.\n"
+                    f"  actual:   {actual!r}\n"
+                    f"  expected: {expected_rows!r}"
+                )
+
+
+def _binds_for_list(binds: list[Any], index: int, count: int) -> list[Any]:
+    """The binds for statement *index* of a (possibly multi-statement) list.
+
+    A list-of-lists carries one bind list per statement; a flat list is the binds
+    for a single statement. Mirrors :func:`_binds_for_statement` for the
+    precondition list, which is independent of the case's golden-SQL ``binds``.
+    """
+    if binds and isinstance(binds[0], list):
+        return binds[index] if index < len(binds) else []
+    return binds if index == 0 else []
+
+
 # --- entry point ------------------------------------------------------------
 
 
@@ -809,6 +889,11 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_write_step_count(case, dialect)  # layer 5 (count)
         _provision_empty(case, db)
         _assert_write_sequence(case, db)  # apply DML, assert table state
+        return
+
+    if case.is_conflict:
+        _provision(case, db)  # fixtures loaded: the row to lock exists
+        _assert_conflict(case, db)  # precondition + golden UPDATE, affected rows
         return
 
     _assert_round_trip_count(case, dialect)  # layer 5 (count)

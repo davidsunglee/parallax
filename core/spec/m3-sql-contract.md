@@ -377,3 +377,31 @@ DML in order to a loaded table and asserting the resulting table state (the
 write-sequence machinery, `M12`, reused for the non-temporal batched case) — so
 "buffered writes flush as set-based SQL" is verified by the rows it leaves
 behind, not merely asserted.
+
+## Optimistic-lock UPDATE (M10)
+
+When an entity declares an `optimisticLocking` version attribute (`M1`), an
+`UPDATE` against it carries the **version it read earlier** in its `where`
+clause, so a concurrent write that changed the version makes the predicate match
+**zero** rows. The canonical Postgres golden form appends the version check to
+the primary-key predicate and **bumps the version in the `set`**:
+
+```text
+update account set balance = ?, version = ? where id = ? and version = ?
+binds: [<new-balance>, <new-version>, <pk>, <expected-version>]
+```
+
+The `where id = ? and version = ?` predicate is the conflict gate: the
+**expected version** is the value the caller read before mutating. If a
+concurrent transaction committed first (incrementing the row's version), the
+gate matches no row and the `UPDATE` affects **zero** rows — the conflict signal
+`updatedRows != 1` (`M10`). On success exactly **one** row is affected and its
+version advances, so the next reader sees the new value.
+
+The `set` updates the version alongside the data so every successful write
+advances the gate; the new version is carried as a `?` bind like every other
+literal (`M3` rule 4). The harness proves both halves — conflict (0 rows) and
+success (1 row) — by **applying** the golden `UPDATE` to a loaded table (after an
+optional out-of-band version mutation) and asserting the **affected-row count**
+(`M12` conflict case), so optimistic-lock conflict detection is verified against
+real data, not merely asserted.
