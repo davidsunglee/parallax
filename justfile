@@ -49,6 +49,6 @@ test:
 verify: lint dep-graph test
 
 # matrix: emit the compatibility-matrix report (implementations x databases).
-# Phase 1 wires Postgres only; the report shape is built in from day one.
+# Wires Postgres + MariaDB (Phase 10 added MariaDB as the second dialect).
 matrix:
     cd {{harness}} && uv run python -m reference_harness.matrix ../core/compatibility

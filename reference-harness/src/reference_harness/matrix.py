@@ -1,9 +1,10 @@
 """Emit the compatibility-matrix report (implementations x databases).
 
-For round 1 the only "implementation" is the reference suite itself (the golden
-SQL), and the only database is Postgres — but the report shape is built in from
-day one so the matrix grows without a redesign. Adding a dialect adds a column;
-adding a language implementation adds a row.
+The only "implementation" is the reference suite itself (the golden SQL); the
+databases are Postgres and MariaDB (Phase 10 added MariaDB as the second dialect
+behind the M11 provider seam). The report shape was built in from day one so the
+matrix grows without a redesign: adding a dialect adds a column; adding a language
+implementation adds a row.
 
 Run::
 

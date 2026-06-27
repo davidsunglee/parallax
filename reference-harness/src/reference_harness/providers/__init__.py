@@ -1,9 +1,10 @@
 """The database-provider seam (M12 provisioning sub-part).
 
 A ``DatabaseProvider`` yields a clean, migrated, isolated database for a single
-dialect. The runner is written against this protocol only, so adding a dialect
-(a later phase adds MariaDB) is a new provider behind the same seam — never a
-runner redesign. This is also the seam the compatibility matrix grows along.
+dialect. The runner is written against this protocol only, so adding a dialect is
+a new provider behind the same seam — never a runner redesign. Phase 10 adds the
+second concrete dialect (MariaDB) alongside Postgres, proving the seam. This is
+also the seam the compatibility matrix grows along.
 
 Each provider exposes:
 
@@ -82,9 +83,9 @@ def provider_for(dialect: str) -> Iterator[DatabaseProvider]:
 
 
 def _register_builtin_providers() -> None:
-    # Imported here (not at top) to avoid importing Testcontainers/psycopg unless
+    # Imported here (not at top) to avoid importing Testcontainers/drivers unless
     # a provider is actually used. Import side effects call register().
-    from . import postgres  # noqa: F401
+    from . import mariadb, postgres  # noqa: F401
 
 
 _register_builtin_providers()

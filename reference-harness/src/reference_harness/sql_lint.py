@@ -23,7 +23,7 @@ from typing import Any
 import sqlglot
 import yaml
 
-from .sql_normalize import normalize
+from .sql_normalize import normalize, sqlglot_dialect
 
 
 class SqlLintFailure(Exception):
@@ -67,7 +67,7 @@ def lint_tree(compatibility_root: Path) -> list[str]:
             # referenceSql is dialect-neutral naive SQL; parse with the first
             # declared golden dialect (or postgres) just to confirm it is valid.
             try:
-                sqlglot.parse_one(reference, read=dialect)
+                sqlglot.parse_one(reference, read=sqlglot_dialect(dialect))
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"case {name}: referenceSql does not parse: {exc}")
 
@@ -82,7 +82,7 @@ def lint_tree(compatibility_root: Path) -> list[str]:
                 if not isinstance(sql, str):
                     continue
                 try:
-                    sqlglot.parse_one(sql, read=dialect)
+                    sqlglot.parse_one(sql, read=sqlglot_dialect(dialect))
                 except Exception as exc:  # noqa: BLE001
                     errors.append(
                         f"case {name}: precondition[{index}] does not parse: {exc}"
@@ -111,7 +111,7 @@ def _lint_golden(golden: Any, where: str, name: str, errors: list[str]) -> None:
             if len(statements) > 1:
                 label += f"[{index}]"
             try:
-                sqlglot.parse_one(sql, read=dialect)
+                sqlglot.parse_one(sql, read=sqlglot_dialect(dialect))
             except Exception as exc:  # noqa: BLE001 - report parse errors as lint
                 errors.append(f"case {name}: {label} does not parse: {exc}")
                 continue

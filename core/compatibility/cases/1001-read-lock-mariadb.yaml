@@ -1,0 +1,34 @@
+# Read-lock divergence (Phase 10): the marquee cross-dialect case.
+#
+# An in-transaction read that intends to write appends the dialect's shared-row-
+# lock suffix (M8 / M11). This is the ONE place the two dialects diverge on
+# read-locking syntax, and it is fully localized to the M11 seam:
+#
+#   * Postgres : `for share of t0`     — `for share` qualified by the root alias.
+#   * MariaDB  : `lock in share mode`  — MariaDB has no `for share` (MDEV-17514);
+#                its shared lock is the unaliased `lock in share mode`.
+#
+# Both forms are the canonical fixed point of the M3 normalizer for their dialect
+# (sqlglot parses both into the same Lock node; the seam renders each spelling),
+# so the goldenSql passes the layer-3 idempotence check per dialect.
+#
+# The lock is a concurrency property; a single-connection harness proves the
+# observable half — each locking read is WELL-FORMED and RESULT-CORRECT against
+# its real database, cross-checked by an independent dialect-neutral oracle (the
+# same select WITHOUT a lock, which must return the same rows because the lock
+# does not change the result). This is the first real compatibility-matrix row
+# where the two dialects emit DIFFERENT optimized SQL for the same operation.
+model: models/account.yaml
+tags: [m8, m11, m3, read-lock, transactions cache, dialect]
+operation:
+  eq:
+    attr: Account.id
+    value: 2
+goldenSql:
+  postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? for share of t0
+  mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? lock in share mode
+binds: [2]
+referenceSql: select id, owner, balance from account where id = 2
+expectedRows:
+  - { id: 2, owner: Linus, balance: 250.00 }
+roundTrips: 1

@@ -29,6 +29,25 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.tokens import Token, Tokenizer, TokenType
 
+# Map a parallax dialect identifier to the sqlglot dialect that parses/renders
+# it. ``mariadb`` (Phase 10, the second dialect behind the M11 seam) has no
+# dedicated sqlglot dialect; MariaDB is MySQL-protocol-compatible and sqlglot's
+# ``mysql`` dialect parses + renders the SQL we need, so the MariaDB normalization
+# pass runs through ``mysql``. Any dialect not listed here is passed to sqlglot
+# verbatim (``postgres`` is its own sqlglot dialect).
+_SQLGLOT_DIALECT = {"mariadb": "mysql"}
+
+
+def sqlglot_dialect(dialect: str) -> str:
+    """The sqlglot dialect that parses/renders the parallax *dialect*.
+
+    ``mariadb`` maps to sqlglot's ``mysql`` (MariaDB is MySQL-protocol-compatible
+    and sqlglot has no dedicated MariaDB dialect); every other dialect is its own
+    sqlglot dialect and passes through. Used by both the normalizer and the static
+    SQL lint so a ``goldenSql.mariadb`` statement is parsed under the right dialect.
+    """
+    return _SQLGLOT_DIALECT.get(dialect, dialect)
+
 # Token types that carry a value / identifier and MUST keep their original case
 # (identifiers are lowercased separately on the AST when unquoted).
 _VALUE_TOKENS = frozenset(
@@ -188,19 +207,57 @@ def _assert_canonical(tree: exp.Expression) -> None:
                 )
 
 
+# MariaDB's shared-row-lock suffix (M11). sqlglot's ``mysql`` dialect parses both
+# ``lock in share mode`` and ``for share`` into the same ``exp.Lock(update=False)``
+# node and *renders* it as ``for share`` — losing MariaDB's spelling (MariaDB has
+# no ``for share``; MDEV-17514). So for MariaDB we strip sqlglot's lock from the
+# AST and append the canonical MariaDB suffix ourselves. The form is unaliased
+# (``lock in share mode``, never ``of t0``), unlike Postgres' ``for share of t0``
+# — exactly the read-lock divergence Phase 10 exercises through the seam.
+_MARIADB_READ_LOCK = "lock in share mode"
+
+
+def _detach_read_lock(tree: exp.Expression, dialect: str) -> str:
+    """Pop a non-update ``exp.Lock`` for MariaDB, returning the canonical suffix.
+
+    Returns ``""`` (and leaves the tree untouched) for any other dialect or when
+    there is no shared lock. For MariaDB a shared lock is removed from the AST so
+    sqlglot does not re-render it as ``for share``; the caller appends the
+    returned ``lock in share mode`` suffix after normalizing the rest.
+    """
+    if dialect != "mariadb":
+        return ""
+    locks = tree.args.get("locks")
+    if not locks:
+        return ""
+    if any(lock.args.get("update") for lock in locks):
+        # An exclusive lock (``for update``) is a different decision point not
+        # exercised here; leave it for sqlglot to render rather than guess.
+        return ""
+    tree.set("locks", None)
+    return f" {_MARIADB_READ_LOCK}"
+
+
 def normalize(sql: str, dialect: str = "postgres") -> str:
     """Normalize *sql* into the M3 canonical form for *dialect*.
 
     Raises :class:`NonCanonicalError` for the structural rules re-rendering
     cannot express (rule 1 read aliases / column qualification; rule 4 bind
     placeholders); the textual rules (2, 3, 5) are produced by re-rendering.
+
+    A *dialect* the M11 seam knows but sqlglot does not (``mariadb`` → sqlglot
+    ``mysql``) is mapped through :func:`sqlglot_dialect`; the MariaDB shared-row
+    lock suffix is rendered by the seam rather than sqlglot (see
+    :func:`_detach_read_lock`).
     """
-    tree = sqlglot.parse_one(sql, read=dialect)
+    engine = sqlglot_dialect(dialect)
+    tree = sqlglot.parse_one(sql, read=engine)
     _assert_canonical(tree)
+    lock_suffix = _detach_read_lock(tree, dialect)
     _lowercase_unquoted_identifiers(tree)
-    rendered = tree.sql(dialect=dialect, normalize=True, pretty=False)
-    tokens = Tokenizer(dialect=dialect).tokenize(rendered)
-    return _render_tokens(tokens)
+    rendered = tree.sql(dialect=engine, normalize=True, pretty=False)
+    tokens = Tokenizer(dialect=engine).tokenize(rendered)
+    return _render_tokens(tokens) + lock_suffix
 
 
 def is_canonical(sql: str, dialect: str = "postgres") -> bool:

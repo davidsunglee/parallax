@@ -1,0 +1,35 @@
+# Infinity-fallback temporal read (Phase 10): the second cross-dialect seam point.
+#
+# The as-of-now current-row predicate is `t0.out_z = ?` with `binds: [infinity]`
+# — IDENTICAL golden SQL on both dialects. The divergence is the PHYSICAL infinity
+# the `?` bind carries, owned entirely by the M11 seam:
+#
+#   * Postgres : native `'infinity'::timestamptz`.
+#   * MariaDB  : no native timestamp infinity, so the seam maps the suite's
+#                `infinity` literal to the documented MAX-SENTINEL
+#                `9999-12-31 23:59:59.999999` (the largest DATETIME(6)) on the way
+#                in, and reads it back as `infinity` on the way out.
+#
+# Both dialects therefore return the SAME logical current rows — (1, 150.00) and
+# (2, 200.00) — proving the max-sentinel fallback is localized to the seam: the
+# fixture history and the golden SQL are authored once, against native-infinity
+# Postgres, and run unchanged on MariaDB.
+#
+# The independent oracle is dialect-NEUTRAL by design: instead of equality against
+# an infinity literal (which would need the Postgres-only `'infinity'::timestamptz`
+# cast), it ranges `out_z > '9000-01-01'` — a different formulation that selects
+# the same current rows on both dialects (native infinity and the max-sentinel are
+# both far above the year-9000 floor, while every finite milestone is below it).
+model: models/balance.yaml
+tags: [m7, m11, m3, temporal mvp, as-of, audit-only, infinity-fallback, dialect]
+operation:
+  all: {}
+goldenSql:
+  postgres: select t0.bal_id, t0.val from balance t0 where t0.out_z = ?
+  mariadb: select t0.bal_id, t0.val from balance t0 where t0.out_z = ?
+binds: [infinity]
+referenceSql: select bal_id, val from balance where out_z > '9000-01-01'
+expectedRows:
+  - { bal_id: 1, val: 150.00 }
+  - { bal_id: 2, val: 200.00 }
+roundTrips: 1
