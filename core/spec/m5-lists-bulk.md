@@ -42,7 +42,20 @@ The compatibility suite expresses the list-core contract through the deep-fetch
 cases: the assembled object graph **is** the populated list result, and the
 round-trip-count assertion proves the lazy/cached resolution did not fan out.
 
-## Deferred: bulk/set mutation and cascade
+## Minimal dependent cascade-delete witness
+
+Broader bulk/set mutation and cascade APIs remain deferred, but the compatibility
+corpus includes one **minimal `cascadeDelete` witness** over an M1
+`dependent: true` relationship graph. The case is intentionally narrow: deleting
+an owning root deletes dependent child rows before the root row, then asserts the
+remaining table state. It pins the observable dependent-delete ordering without
+claiming support for Reladomo's full cascade or bulk mutation surface.
+
+The witness reuses the M12 `writeSequence` shape. Its `cascadeDelete` mutation
+name documents intent; the harness applies the authored ordered DML and compares
+the resulting rows.
+
+## Deferred: broad bulk/set mutation and cascade
 
 The following are **out of scope for this revision** and specified in a later
 tier (fast-follow):
@@ -50,10 +63,12 @@ tier (fast-follow):
 - **Bulk mutation** — `setAttribute` over a list, `deleteAll` /
   `deleteAllInBatches`, `insertAll` / `bulkInsertAll`, dated `terminateAll` /
   `purgeAll`.
-- **Cascade** — `cascadeInsertAll` / `cascadeDeleteAll` / `cascadeTerminateAll`,
-  which walk **dependent** relationships (M1 `dependent: true`). Cascade is a
+- **Broad cascade** — `cascadeInsertAll` / `cascadeDeleteAll` /
+  `cascadeTerminateAll`, which walk **dependent** relationships (M1
+  `dependent: true`) across the full Reladomo API surface. Cascade is a
   capability layered *above* M4 (it traverses dependents), kept separate from the
   list-core so the dependency graph stays acyclic.
 
 They are named here so the module boundary is clear; their golden-SQL forms and
-fixtures land with the bulk/cascade fast-follow.
+fixtures land with the bulk/cascade fast-follow, apart from the minimal
+dependent cascade-delete witness above.

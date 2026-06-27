@@ -1,0 +1,20 @@
+# exists(Order.items -> exists(OrderItem.statuses -> code = 'PACKED')): a nested
+# existence predicate over two relationship hops. Only order 1 has an item-level
+# PACKED status (row 202 on item 11).
+model: models/orders.yaml
+tags: [m4, exists, relationship, multi-hop]
+operation:
+  exists:
+    rel: Order.items
+    op:
+      exists:
+        rel: OrderItem.statuses
+        op:
+          eq: { attr: OrderStatus.code, value: PACKED }
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and exists (select 1 from order_status t2 where t2.order_item_id = t1.id and t2.code = ?))
+binds: [PACKED]
+referenceSql: select id, name from orders where id in (select order_id from order_item where id in (select order_item_id from order_status where code = 'PACKED'))
+expectedRows:
+  - { id: 1, name: Ada }
+roundTrips: 1

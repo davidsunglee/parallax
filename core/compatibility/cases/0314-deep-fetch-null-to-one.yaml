@@ -1,0 +1,59 @@
+# Deep fetch, nullable to-one: every OrderStatus with its optional OrderItem.
+#
+# Order-level statuses have order_item_id NULL and must attach orderItem: null.
+# Item-level statuses gather the distinct non-null item ids {11, 12, 421} and
+# fetch those parents in one child statement.
+model: models/orders.yaml
+tags: [m4, m5, deepFetch, to-one, nullable, relationship]
+operation:
+  deepFetch:
+    operand:
+      all: {}
+    paths:
+      - [OrderStatus.orderItem]
+goldenSql:
+  postgres:
+    - select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0
+    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.id in (?, ?, ?)
+binds:
+  - []
+  - [11, 12, 421]
+referenceSql: select id, order_id, order_item_id, code from order_status
+roundTrips: 2
+expectedGraph:
+  OrderStatus:
+    - id: 101
+      order_id: 1
+      order_item_id: null
+      code: NEW
+      orderItem: null
+    - id: 102
+      order_id: 2
+      order_item_id: null
+      code: SHIPPED
+      orderItem: null
+    - id: 142
+      order_id: 42
+      order_item_id: null
+      code: NEW
+      orderItem: null
+    - id: 201
+      order_id: 1
+      order_item_id: 11
+      code: PICKED
+      orderItem: { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+    - id: 202
+      order_id: 1
+      order_item_id: 11
+      code: PACKED
+      orderItem: { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+    - id: 203
+      order_id: 1
+      order_item_id: 12
+      code: PICKED
+      orderItem: { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+    - id: 204
+      order_id: 42
+      order_item_id: 421
+      code: PICKED
+      orderItem: { id: 421, order_id: 42, sku: A-999, quantity: 3 }

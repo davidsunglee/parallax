@@ -1,0 +1,22 @@
+# Scalar type round trip for the less-common M0 scalar mappings: float32,
+# float64, bytes, time, and uuid.
+#
+# This first scalar witness is Postgres-only because byte, time, and uuid driver
+# return types differ by dialect. The golden SQL renders the byte payload as hex
+# so the expected row is stable text; the Postgres provider reads time/uuid as
+# stable text for the same reason.
+model: models/scalars.yaml
+tags: [m0, m1, m3, scalar, postgres]
+operation:
+  all: {}
+goldenSql:
+  postgres: select t0.id, t0.f32, t0.f64, encode(t0.payload, ?) payload_hex, t0.local_time, t0.external_id from scalar_thing t0
+binds: [hex]
+expectedRows:
+  - id: 1
+    f32: 1.5
+    f64: 2.25
+    payload_hex: "01020304"
+    local_time: "12:34:56"
+    external_id: "123e4567-e89b-12d3-a456-426614174000"
+roundTrips: 1

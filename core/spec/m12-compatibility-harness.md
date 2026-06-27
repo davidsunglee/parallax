@@ -29,7 +29,7 @@ case** (carries a `scenario`, Phase 6 / M8), a **conflict case** (carries
 | `model` | yes | path (relative to `core/compatibility/`) to the model descriptor |
 | `tags` | yes | module/feature tags (e.g. `["m2", "eq"]`); drive coverage + test selection |
 | `operation` | read | a canonical M2 algebra node, validated against the operation schema (read cases) |
-| `writeSequence` | write | an ordered list of mutations a write case realizes (writeSequence cases, M7): `insert` / `update` / `terminate` (audit-only + business-only), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the full-bitemporal rectangle split |
+| `writeSequence` | write | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only + business-only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the full-bitemporal rectangle split |
 | `equivalentEncodings` | no | alternate surface encodings of `operation` (e.g. a prefix vs a fluent spelling); each MUST canonicalize to `operation` |
 | `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit — a single statement, or an **ordered list** of statements (one per deep-fetch level, or one per write-sequence DML step) |
 | `binds` | no | bind values for the `?` placeholders (default `[]`): a flat list for a single statement, or a list-of-lists for a multi-statement case |
@@ -37,7 +37,7 @@ case** (carries a `scenario`, Phase 6 / M8), a **conflict case** (carries
 | `expectedRows` | read | the rows the query must return (single-statement / flat-result cases) |
 | `expectedGraph` | read | the assembled object graph a deep fetch must produce (one of `expectedRows` / `expectedGraph` is REQUIRED for a read case) |
 | `expectedTableState` | write | the resulting table state a writeSequence case asserts, keyed by table name (REQUIRED for a write case) |
-| `roundTrips` | no | declared statement count (default `1`); for a multi-statement case (deep fetch or write sequence) it MUST equal the goldenSql statement count and is asserted |
+| `roundTrips` | no | declared statement count (default `1`); for a deep-fetch case it MUST equal the authored/executed goldenSql statement count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count |
 | `tolerance` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 ### goldenSql, referenceSql, expectedRows (the oracle question)
@@ -96,33 +96,37 @@ the harness asserts:
    grouped predicate denote one canonical node) in the fixture itself.
 
 A fifth layer — **round-trip-count consistency** — applies to relationship /
-deep-fetch cases: the number of golden SQL statements equals the declared
-`roundTrips`, each level executes (a deep-fetch child level keyed by the distinct
-parent keys gathered from the previous level), and the in-memory-assembled object
-graph equals the case's `expectedGraph`. This is what proves N+1 elimination
-automatically (a 1 → N → N deep fetch must run in exactly 3 statements, not
-1 + N + N). For these cases a dialect's `goldenSql` is an **ordered list** of
-statements (one per level) rather than a single string, and `expectedGraph`
+deep-fetch cases: the number of authored/executed golden SQL statements equals
+the declared `roundTrips`, each non-empty child level executes keyed by the
+distinct parent keys gathered from the previous level, empty parent-key levels
+execute no child SQL, and the in-memory-assembled object graph equals the case's
+`expectedGraph`. This is what proves N+1 elimination automatically (a 1 → N → N
+deep fetch with non-empty levels must run in exactly 3 statements, not 1 + N +
+N; a deep fetch whose root is empty runs only the root statement). For these
+cases a dialect's `goldenSql` is an **ordered list** of statements (root plus
+the child levels that execute) rather than a single string, and `expectedGraph`
 replaces (or accompanies) `expectedRows`.
 
-### Write-sequence cases (M7)
+### Write-sequence cases (M7 / M8 / M9 / M5)
 
-A **writeSequence** case proves a milestone-chaining write contract by
-*application*, not introspection. The harness provisions an **empty** table
-(DDL only, no fixture load — the sequence builds its own milestone history),
-**applies the ordered DML golden SQL in order** (with each statement's binds),
-then asserts the resulting rows equal `expectedTableState` — including the
-`out_z = infinity` current-row state. The DML statement count MUST equal the sum
-of the `writeSequence` steps' declared statement counts and the case's
-`roundTrips`. The model descriptor's serde round-trip (layer 4b) still runs;
-there is no `operation` to serde (layer 4a) and no normalization difference — the
-DML golden SQL is normalized to a fixed point exactly like read SQL (layer 3).
+A **writeSequence** case proves a write contract by *application*, not
+introspection. The harness provisions a table, **applies the ordered DML golden
+SQL in order** (with each statement's binds), then asserts the resulting rows
+equal `expectedTableState`. This covers milestone-chaining temporal writes
+(`insert` / `update` / `terminate` and the bitemporal `*Until` trio), batched
+non-temporal writes, ordinary `delete`, and the minimal `cascadeDelete` witness
+over dependent relationships. The DML statement count MUST equal the sum of the
+`writeSequence` steps' declared statement counts and the case's `roundTrips`.
+The model descriptor's serde round-trip (layer 4b) still runs; there is no
+`operation` to serde (layer 4a) and no normalization difference — the DML golden
+SQL is normalized to a fixed point exactly like read SQL (layer 3).
 
 A writeSequence case MAY set **`loadFixtures: true`** to load the model's
 fixtures **before** the ordered DML (instead of starting empty) — so a sequence
 can mutate a *pre-existing* persisted row. This is the M9 detached-update
-merge-back case: the original row exists, the merge-back `UPDATE` changes it in
-place, and the asserted table state shows only that row changed.
+or detached-delete merge-back case, and the minimal dependent cascade-delete
+witness: the original rows exist, the ordered DML mutates them, and the asserted
+table state shows which rows changed or were removed.
 
 ### Conflict cases (M10)
 
@@ -185,3 +189,16 @@ Per DQ8, most tests **SHOULD** live at this compatibility-suite level — the su
 is the primary behavioral surface across all languages — rather than buried in
 per-language unit tests. Each per-language spec specifies how its test runner
 (pytest / JUnit / `cargo test`) wires to the database provider.
+
+## Language implementation conformance adapter
+
+The reference harness proves the corpus itself is coherent. A concrete language
+implementation proves conformance through the M12-adjacent adapter contract in
+[`conformance-adapter-contract.md`](conformance-adapter-contract.md).
+
+That adapter is the external seam between a corpus runner and a language
+implementation. It exposes a small command surface (`describe`, `compile`,
+`run`, and `benchmark`) and emits JSON documents validated by
+[`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json).
+It MUST accept compatibility corpus files as input and MUST report SQL
+emissions or runtime observations without exposing implementation internals.

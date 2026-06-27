@@ -200,10 +200,13 @@ Two case shapes, both proven against real Postgres:
   **injected** `out_z = ?` golden SQL + the expected current rows, so the
   default-injection rule is proven automatically. Native infinity actually
   executes (the current-row predicate binds `infinity` and the `history`
-  projection reads back the open bound). A **bitemporal** read nests two `asOf`
-  nodes and asserts the both-axis golden SQL + rows (each axis's predicate
-  injected independently); a **business-only** read exercises the same rule over
-  `from_z`/`thru_z`.
+  projection reads back the open bound). A boundary as-of case pins a timestamp
+  exactly equal to one row's upper bound and the next row's lower bound, proving
+  the default half-open `[from, to)` rule (`from <= d and to > d`). A
+  **bitemporal** read nests two `asOf` nodes and asserts the both-axis golden SQL
+  and rows (each axis's predicate injected independently); a business-pinned-only
+  bitemporal read proves the omitted processing axis defaults to now. A
+  **business-only** read exercises the same rule over `from_z`/`thru_z`.
 - **Write-sequence cases** carry a `writeSequence` (ordered mutations — `insert` /
   `update` / `terminate` for audit-only and business-only; the `insertUntil` /
   `updateUntil` / `terminateUntil` trio for full bitemporal) and

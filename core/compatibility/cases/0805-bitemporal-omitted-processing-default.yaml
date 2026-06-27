@@ -1,0 +1,18 @@
+# Bitemporal read with only the business axis pinned. The omitted processing
+# axis defaults to "now", so the golden SQL includes the current-processing
+# predicate out_z = infinity.
+model: models/position.yaml
+tags: [m7, m3, bitemporal, temporal, as-of, default-processing]
+operation:
+  asOf:
+    operand:
+      all: {}
+    asOfAttr: Position.businessDate
+    date: "2024-03-01T00:00:00+00:00"
+goldenSql:
+  postgres: select t0.pos_id, t0.val from position t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+referenceSql: select pos_id, val from position where from_z <= '2024-03-01T00:00:00+00:00'::timestamptz and thru_z > '2024-03-01T00:00:00+00:00'::timestamptz and out_z = 'infinity'::timestamptz
+expectedRows:
+  - { pos_id: 1, val: 100.00 }
+roundTrips: 1

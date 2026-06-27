@@ -138,14 +138,16 @@ resulting table state:
 |---|---|
 | detached insert | merging back a never-persisted detached object **inserts** it (the resulting row matches) |
 | detached update | merging back a mutated detached copy of a persisted object **updates** the original in place (only the original row changes; the change is the edited attribute) |
+| detached delete | merging back a deleted detached copy of a persisted object **deletes** the original row |
 
 The detached-insert case starts from an **empty** table (the object was never
-persisted) and asserts the inserted row. The detached-update case **loads the
-model's fixtures first** (the original persisted row exists), then applies the
-merge-back `UPDATE` and asserts the table state — the edited row changed, the
-others untouched. Both reuse the `M12` write-sequence machinery: *apply the
-documented golden DML, assert the rows it leaves behind*, so the merge-back
-contract is verified against real data rather than merely asserted in prose.
+persisted) and asserts the inserted row. The detached-update and detached-delete
+cases **load the model's fixtures first** (the original persisted row exists),
+then apply the merge-back `UPDATE` or `DELETE` and assert the table state — the
+edited row changed or the deleted row is gone, while the others are untouched.
+All three reuse the `M12` write-sequence machinery: *apply the documented golden
+DML, assert the rows it leaves behind*, so the merge-back contract is verified
+against real data rather than merely asserted in prose.
 
 Optimistic-lock conflict on merge-back — when a concurrent transaction changed
 the original between detachment and merge-back — is the subject of `M10`.
