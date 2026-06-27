@@ -139,6 +139,9 @@ def _assert_schema(case: Case) -> None:
     if case.is_write_sequence:
         if not case.expected_table_state:
             raise CaseFailure(f"{case.path.name}: write sequence missing expectedTableState")
+    elif case.is_scenario:
+        if not case.scenario:
+            raise CaseFailure(f"{case.path.name}: scenario case has no steps")
     elif "operation" not in case.raw:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:
@@ -160,9 +163,13 @@ def _assert_normalization(case: Case, dialect: str) -> None:
 
 
 def _assert_serde(case: Case) -> None:
-    # Layer 4a: operation serde (read cases only; a write-sequence case has no
-    # operation). Layer 4b: metamodel (descriptor) serde — always.
-    if not case.is_write_sequence:
+    # Layer 4a: operation serde. A read case has one top-level operation; a
+    # scenario case has one operation per step (under `find`); a write-sequence
+    # case has none. Layer 4b: metamodel (descriptor) serde — always.
+    if case.is_scenario:
+        for step in case.scenario:
+            serde.assert_roundtrip(step["find"])
+    elif not case.is_write_sequence:
         serde.assert_roundtrip(case.operation)
     serde.assert_roundtrip(case.model.descriptor)
 
@@ -176,7 +183,9 @@ def _assert_equivalent_encodings(case: Case) -> None:
     prefix and a fluent surface of the same grouped intent denote one node — in
     the fixture itself rather than in bespoke test code.
     """
-    if case.is_write_sequence:
+    if case.is_write_sequence or case.is_scenario:
+        # A write-sequence case has no operation; a scenario carries its
+        # operations per step. Equivalent-encodings is a single-operation check.
         return
     canonical_operation = serde.canonical(case.operation)
     for index, encoding in enumerate(case.equivalent_encodings):
@@ -609,12 +618,180 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
             )
 
 
+# --- scenarios (Phase 6, M8) ------------------------------------------------
+
+
+def _step_statements(step: dict[str, Any], dialect: str) -> list[str]:
+    """The ordered golden SQL statements a scenario step lists for *dialect*."""
+    golden = step.get("goldenSql") or {}
+    value = golden.get(dialect)
+    if value is None:
+        return []
+    return [value] if isinstance(value, str) else list(value)
+
+
+def _scenario_has_golden(case: Case, dialect: str) -> bool:
+    """True if any scenario step lists golden SQL for *dialect*."""
+    return any(_step_statements(step, dialect) for step in case.scenario)
+
+
+def _assert_scenario_normalization(case: Case, dialect: str) -> None:
+    for index, step in enumerate(case.scenario):
+        for sql in _step_statements(step, dialect):
+            canonical = normalize(sql, dialect)
+            if canonical != sql:
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}].goldenSql.{dialect} is "
+                    f"not canonical.\n"
+                    f"  stored:     {sql!r}\n"
+                    f"  normalized: {canonical!r}"
+                )
+
+
+def _assert_scenario_count_consistency(case: Case, dialect: str) -> None:
+    """Each step's declared roundTrips MUST equal its golden SQL statement count.
+
+    A cache HIT lists no golden SQL and declares ``roundTrips: 0``; a cache MISS
+    that executes one statement declares ``roundTrips: 1``. The steps' total MUST
+    equal the case-level ``roundTrips``. This is the round-trip contract proven
+    from the fixture's own declared counts — the harness never compiles an
+    operation to SQL.
+    """
+    total = 0
+    for index, step in enumerate(case.scenario):
+        declared = step["roundTrips"]
+        statements = _step_statements(step, dialect)
+        if len(statements) != declared:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] declares roundTrips "
+                f"{declared} but lists {len(statements)} golden SQL statement(s) "
+                f"for {dialect}. A step's declared round trips MUST equal the "
+                f"number of golden SQL statements it emits (a cache hit = 0)."
+            )
+        total += declared
+    if total != case.round_trips:
+        raise CaseFailure(
+            f"{case.path.name}: scenario steps total {total} round trip(s) but "
+            f"roundTrips is {case.round_trips}. The case-level roundTrips MUST "
+            f"equal the sum of the per-step round trips."
+        )
+
+
+def _pk_column(entity: Entity) -> str:
+    for attribute in entity.attributes:
+        if attribute.get("primaryKey"):
+            return attribute["column"]
+    return entity.attributes[0]["column"]
+
+
+def _scenario_root_entity(case: Case) -> Entity:
+    """The entity the scenario's finds target (the model's root entity).
+
+    M8 scenarios query a single entity (cache / identity over one type), so the
+    identity column defaults to that entity's primary-key column.
+    """
+    return case.model.root_entity
+
+
+def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
+    """Execute the scenario against the provisioned DB and assert its contract.
+
+    For each step: execute its listed golden SQL (a cache-hit step executes
+    nothing and reuses the prior step's rows), assert ``expectRows`` when
+    declared, and check any ``sameObjectAs`` identity assertion (both steps'
+    results carry the same primary-key identity — the one-object-per-PK rule).
+    """
+    dialect = db.dialect
+    default_identity = _pk_column(_scenario_root_entity(case))
+    tolerance = case.tolerance
+
+    results: list[list[dict[str, Any]]] = []
+    for index, step in enumerate(case.scenario):
+        statements = _step_statements(step, dialect)
+        binds = step.get("binds", [])
+        if statements:
+            # A DB-touching step: M8 finds are single-statement, so the round-trip
+            # count is one; execute it and capture the rows.
+            rows = _query_rows(db, statements[0], binds)
+        else:
+            # A cache hit: no statement executes. The contract is that it returns
+            # the SAME interned objects as the find it hits — modeled here as
+            # reusing the rows from the step named by `sameObjectAs` (or, absent
+            # that, the immediately preceding step).
+            source = step.get("sameObjectAs", index - 1)
+            if source < 0 or source >= len(results):
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}] is a cache hit "
+                    f"(roundTrips 0) but names no resolvable prior step to reuse."
+                )
+            rows = results[source]
+        results.append(rows)
+
+        expect = step.get("expectRows")
+        if expect is not None and not _rows_equal(rows, expect, tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] rows != expectRows.\n"
+                f"  rows:     {rows!r}\n"
+                f"  expected: {expect!r}"
+            )
+
+        if "sameObjectAs" in step:
+            source = step["sameObjectAs"]
+            if source < 0 or source >= index:
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}].sameObjectAs={source} "
+                    f"must reference an EARLIER step."
+                )
+            identity_col = step.get("identityAttr", default_identity)
+            this_ids = _identity_keys(case, index, rows, identity_col)
+            that_ids = _identity_keys(case, source, results[source], identity_col)
+            if this_ids != that_ids:
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}] is declared to denote "
+                    f"the same object(s) as step {source}, but their primary-key "
+                    f"identities differ (one-object-per-PK violated).\n"
+                    f"  step {index}: {this_ids!r}\n"
+                    f"  step {source}: {that_ids!r}"
+                )
+
+
+def _identity_keys(
+    case: Case, index: int, rows: list[dict[str, Any]], identity_col: str
+) -> list[Any]:
+    """The ordered set of primary-key identities carried by *rows*."""
+    if any(identity_col not in row for row in rows):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] result rows do not carry the "
+            f"identity column {identity_col!r}; a scenario's finds MUST project "
+            f"the primary key so identity can be checked."
+        )
+    return sorted(_coerce_scalar(row[identity_col]) for row in rows)
+
+
 # --- entry point ------------------------------------------------------------
 
 
 def run_case(case: Case, db: DatabaseProvider) -> None:
     """Run all available assertion layers for *case* against *db*."""
     dialect = db.dialect
+
+    if case.is_scenario:
+        if not _scenario_has_golden(case, dialect):
+            # No golden SQL for this dialect anywhere in the scenario: still run
+            # the dialect-agnostic checks so coverage is not skipped.
+            _assert_schema(case)
+            _assert_serde(case)
+            _assert_equivalent_encodings(case)
+            return
+        _assert_schema(case)
+        _assert_scenario_normalization(case, dialect)  # layer 3
+        _assert_serde(case)  # layer 4
+        _assert_equivalent_encodings(case)  # layer 4c
+        _assert_scenario_count_consistency(case, dialect)  # layer 5 (count)
+        _provision(case, db)
+        _assert_scenario(case, db)  # layer 2 + identity
+        return
+
     if dialect not in case.golden_sql:
         # No golden SQL for this dialect: nothing to execute against it. The
         # serde + (dialect-agnostic) checks still run so coverage is not skipped.

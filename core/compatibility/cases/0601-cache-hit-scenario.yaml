@@ -1,0 +1,38 @@
+# Cache-hit scenario (M8): two identical finds cost ONE round trip.
+#
+# The query cache maps an operation to its result. The first find (an `eq` on the
+# primary key) is a cache MISS and executes one statement against the database;
+# the SECOND find issues the SAME operation, so it is a cache HIT and costs ZERO
+# additional round trips — its result is served from the query cache (the same
+# interned objects).
+#
+# The harness proves this from the fixture's own declared counts: step 0 declares
+# roundTrips 1 and lists one golden SQL statement; step 1 declares roundTrips 0 and
+# lists none. The case-level roundTrips (1) MUST equal the sum of the per-step
+# counts. The harness never compiles the operation to SQL — the round-trip
+# contract is asserted from the declared counts plus the listed golden SQL, then
+# the listed statement is executed to confirm it returns the expected row.
+model: models/account.yaml
+tags: [m8, transactions cache, query cache, cache-hit, scenario]
+roundTrips: 1
+scenario:
+  - find:
+      eq:
+        attr: Account.id
+        value: 1
+    roundTrips: 1
+    note: cache MISS — execute the find once against the database
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+    binds: [1]
+    expectRows:
+      - { id: 1, owner: Ada, balance: 100.00 }
+  - find:
+      eq:
+        attr: Account.id
+        value: 1
+    roundTrips: 0
+    sameObjectAs: 0
+    note: cache HIT — same operation, served from the query cache, zero round trips
+    expectRows:
+      - { id: 1, owner: Ada, balance: 100.00 }

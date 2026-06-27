@@ -22,7 +22,7 @@ add capabilities; the points relevant now are marked):
 | `SELECT` shape (column list, alias scheme) | now | `select t0.col, … from tbl t0 where …` |
 | identifier quoting | now | unquoted lowercase identifiers; quote only on demand |
 | row-limit clause | later | `LIMIT n` |
-| read-lock suffix | later | `FOR SHARE OF t0` |
+| read-lock suffix | now (M8) | `for share of t0` |
 | temp-table DDL | later | `CREATE TEMPORARY TABLE … ON COMMIT DROP` |
 | infinity representation | now (M7) | native `'infinity'::timestamptz` |
 | error-code classification | later | SQLSTATE `40P01`/`40001` deadlock, `23505` unique |
@@ -48,6 +48,12 @@ named so the interface shape is fixed and additive.
   (MariaDB's `DATETIME` has no `'infinity'`) maps the sentinel to a documented
   **max-sentinel** behind this same seam — the only place the difference is
   allowed to surface; that fallback is finalized in the MariaDB phase.
+- **Read-lock suffix (M8).** The shared-row-lock clause an in-transaction read
+  appends for automatic read correctness (M8) is a dialect decision. **Postgres**
+  appends `for share of t0` (the alias-qualified `for share`). A dialect that
+  spells the shared lock differently surfaces the difference here and **only**
+  here (MariaDB's `lock in share mode`, added with the MariaDB dialect). The
+  canonical form is fully lowercase per the M3 normalizer (rule 2).
 
 ## Postgres is round-1, and the seam stays open
 

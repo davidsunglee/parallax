@@ -54,6 +54,15 @@ _DROP_TOKENS = frozenset({TokenType.ALIAS})
 # drives the "no space before the following ``(``" spacing rule.
 _FUNCTION_NAME = "function-name"
 
+# SQL keywords that sqlglot tokenizes as ``VAR`` rather than a dedicated keyword
+# token. The row-locking suffix ``for SHARE OF t0`` is the case in point: sqlglot
+# tokenizes ``SHARE`` and ``OF`` as ``VAR`` and its generator emits them
+# uppercase, so they would otherwise slip past the keyword-lowercasing pass. M3
+# rule 2 lowercases keywords, so these are lowercased even though they arrive as
+# value tokens. (Unquoted identifiers are already lowercased on the AST and
+# quoted ones tokenize as ``IDENTIFIER``, so lowercasing these VARs is safe.)
+_KEYWORD_VARS = frozenset({"SHARE", "OF"})
+
 
 def _lowercase_unquoted_identifiers(tree: exp.Expression) -> None:
     for node in tree.walk():
@@ -77,7 +86,12 @@ def _render_tokens(tokens: list[Token]) -> str:
             and index + 1 < len(tokens)
             and tokens[index + 1].token_type is TokenType.L_PAREN
         )
-        if token.token_type not in _VALUE_TOKENS or is_function_name:
+        # A lock-clause keyword sqlglot tokenized as VAR (``SHARE``/``OF``) must
+        # be lowercased like any other keyword (M3 rule 2), not preserved.
+        is_keyword_var = (
+            token.token_type is TokenType.VAR and text.upper() in _KEYWORD_VARS
+        )
+        if token.token_type not in _VALUE_TOKENS or is_function_name or is_keyword_var:
             text = text.lower()
         token_type = _FUNCTION_NAME if is_function_name else token.token_type
         parts.append((token_type, text))
