@@ -323,3 +323,57 @@ chaining contract is proven against real data, not merely asserted.
 
 Subsequent phases extend these rules to full bitemporal chaining (the rectangle
 split) over two axes.
+
+## Transactional SQL fragments (M8)
+
+The unit-of-work layer (`M8`) is expressed in operations and object state, not
+SQL — but it executes two dialect-specific SQL fragments through the `M11` seam,
+and their canonical Postgres golden form is fixed here.
+
+### Read-lock suffix
+
+An in-transaction read that intends to write appends the dialect's shared-row-
+lock suffix (`M8`, `M11`). For Postgres the suffix is `for share of t0` — `for
+share` qualified by the root alias — appended **after** every other clause (it is
+the last thing in the statement, after any `where`):
+
+```text
+select t0.id, t0.balance from account t0 where t0.id = ? for share of t0
+binds: [<pk>]
+```
+
+> **The lock-clause keywords are lowercased like any other keyword.** sqlglot
+> tokenizes `SHARE` and `OF` as value tokens (not keyword tokens) and its
+> generator emits them uppercase, but the M3 normalizer lowercases them (rule 2),
+> so the canonical golden SQL is `… for share of t0`. Golden SQL is stored in that
+> fully-lowercase form and passes the layer-3 idempotence check.
+
+The lock is a concurrency property; a single-connection harness proves the
+locking read is **well-formed and result-correct** (it executes against real
+Postgres and returns the expected rows) — the observable half of the contract.
+
+### Batched insert / update
+
+The unit of work flushes buffered writes as set-based SQL. A batched **insert**
+of N rows of one entity is a **single multi-row `INSERT`** — one statement, N
+value tuples — not N statements:
+
+```text
+insert into account(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
+binds: [<row1…>, <row2…>, <row3…>]
+```
+
+A batched **update** of the same column over several keys is one keyed `UPDATE`
+per distinct key (or a single statement with an `IN` predicate when the new value
+is uniform across the keys):
+
+```text
+update account set balance = ? where id in (?, ?)
+binds: [<new-balance>, <key1>, <key2>]
+```
+
+The harness proves the batched forms against real data by **applying** the golden
+DML in order to a loaded table and asserting the resulting table state (the
+write-sequence machinery, `M12`, reused for the non-temporal batched case) — so
+"buffered writes flush as set-based SQL" is verified by the rows it leaves
+behind, not merely asserted.

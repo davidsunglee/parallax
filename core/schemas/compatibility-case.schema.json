@@ -2,22 +2,26 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (M12)",
-  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+) or one per milestone-chaining DML step (writeSequence cases, Phase 5). A case is EITHER a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`) OR a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState`).",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of three shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState`); or a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["model", "tags", "goldenSql"],
+  "required": ["model", "tags"],
   "oneOf": [
     {
       "description": "A read case: a queryable operation with expected rows or an expected object graph.",
-      "required": ["operation"],
+      "required": ["operation", "goldenSql"],
       "anyOf": [
         { "required": ["expectedRows"] },
         { "required": ["expectedGraph"] }
       ]
     },
     {
-      "description": "A writeSequence case: ordered milestone-chaining DML asserted by the resulting table state.",
-      "required": ["writeSequence", "expectedTableState"]
+      "description": "A writeSequence case: ordered DML asserted by the resulting table state (milestone-chaining temporal writes, Phase 5; batched non-temporal writes, Phase 6).",
+      "required": ["writeSequence", "expectedTableState", "goldenSql"]
+    },
+    {
+      "description": "A scenario case (M8): ordered operation steps with per-step round-trip counts proving the cache/identity contract. Golden SQL lives per step, so the top-level goldenSql is absent.",
+      "required": ["scenario"]
     }
   ],
   "properties": {
@@ -37,7 +41,7 @@
       "type": "object"
     },
     "writeSequence": {
-      "description": "A writeSequence (Phase 5, M7) case: an ordered list of milestone mutations the goldenSql DML realizes. Each step names a mutation kind (insert / update / terminate) on a temporal entity; the goldenSql for the dialect is the matching ordered list of DML statements (one or more per step), applied in order, after which the harness asserts `expectedTableState`. The list documents the intent the DML must realize and lets the harness assert step count consistency.",
+      "description": "A writeSequence case: an ordered list of write steps the goldenSql DML realizes. Each step names a mutation kind on an entity; the goldenSql for the dialect is the matching ordered list of DML statements (one or more per step), applied in order, after which the harness asserts `expectedTableState`. The list documents the intent the DML must realize and lets the harness assert step count consistency. Used by milestone-chaining temporal writes (Phase 5, M7 — insert/update/terminate) and by batched non-temporal writes (Phase 6, M8 — a multi-row insert / a batched update).",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -46,7 +50,7 @@
         "required": ["mutation", "entity"],
         "properties": {
           "mutation": {
-            "description": "The temporal mutation kind (M7 MVP mutation surface, DQ11).",
+            "description": "The mutation kind. insert / update / terminate are the M7 temporal mutation surface (DQ11); insert / update also cover the M8 batched non-temporal writes.",
             "enum": ["insert", "update", "terminate"]
           },
           "entity": {
@@ -62,6 +66,58 @@
           },
           "note": {
             "description": "Optional human-readable description of the milestone-chaining effect.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "scenario": {
+      "description": "A scenario (Phase 6, M8) case: an ordered list of operation steps proving the unit-of-work / identity / query-cache contract. Golden SQL lives PER STEP (not at the top level), because each step issues a find that costs a declared number of database round trips. The harness asserts the round-trip counts are internally consistent with the golden SQL each step lists (a cache-hit step lists none and declares roundTrips 0), executes the listed golden SQL against the provisioned database to confirm result-correctness, and checks identity assertions (a step may declare it returns the SAME logical object — same primary key — as an earlier step). The harness NEVER compiles an operation to SQL: the round-trip contract is proven from the fixture's own declared counts plus golden SQL.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["find", "roundTrips"],
+        "properties": {
+          "find": {
+            "description": "The operation this step issues (a canonical M2 algebra node). Validated against operation.schema.json by the harness.",
+            "type": "object"
+          },
+          "roundTrips": {
+            "description": "How many database round trips this step costs. A cache HIT (an operation equal to an earlier step's) costs 0; a cache MISS that executes one statement costs 1. MUST equal the number of golden SQL statements this step lists for each dialect.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "goldenSql": {
+            "description": "The golden SQL this step emits, keyed by dialect (single statement or ordered list). Present only for steps that hit the database (roundTrips >= 1); absent / empty for a cache hit (roundTrips 0).",
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": { "enum": ["postgres", "mariadb"] },
+            "additionalProperties": { "$ref": "#/$defs/dialectSql" }
+          },
+          "binds": {
+            "description": "Bind values for this step's golden SQL ? placeholders (one flat list for a single statement).",
+            "type": "array",
+            "items": {}
+          },
+          "expectRows": {
+            "description": "The rows this step's find must return against the fixture data. A cache-hit step that reuses an earlier step's result MAY restate the same expected rows.",
+            "type": "array",
+            "items": { "type": "object" }
+          },
+          "sameObjectAs": {
+            "description": "Zero-based index of an earlier scenario step whose result denotes the SAME logical object(s) as this step (the identity-cache contract: same primary key => same object). The harness asserts both steps' results carry the same primary-key identity.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "identityAttr": {
+            "description": "The result-column name carrying the primary-key identity, used to check `sameObjectAs`. Defaults to the queried entity's primary-key column.",
+            "type": "string",
+            "minLength": 1
+          },
+          "note": {
+            "description": "Optional human-readable description of the step's role in the scenario.",
             "type": "string"
           }
         }
@@ -117,7 +173,7 @@
       }
     },
     "roundTrips": {
-      "description": "Declared number of SQL statements for the operation. For a multi-statement (deep-fetch) read case this MUST equal the number of goldenSql statements for each dialect (proving N+1 elimination); for a writeSequence case it MUST equal the number of ordered DML statements.",
+      "description": "Declared number of SQL statements for the operation. For a multi-statement (deep-fetch) read case this MUST equal the number of goldenSql statements for each dialect (proving N+1 elimination); for a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips (the total database cost of the scenario).",
       "type": "integer",
       "minimum": 1,
       "default": 1

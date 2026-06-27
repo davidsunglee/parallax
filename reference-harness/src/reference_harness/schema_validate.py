@@ -100,6 +100,17 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                 f"case {case_path.name} operation",
                 errors,
             )
+        # A scenario case carries its operations per step (under `find`); each one
+        # must also validate against the operation algebra schema.
+        if isinstance(case, dict) and isinstance(case.get("scenario"), list):
+            for index, step in enumerate(case["scenario"]):
+                if isinstance(step, dict) and "find" in step:
+                    _validate(
+                        step["find"],
+                        operation_schema,
+                        f"case {case_path.name} scenario[{index}].find",
+                        errors,
+                    )
         # The referenced model must exist.
         if isinstance(case, dict) and isinstance(case.get("model"), str):
             referenced = compatibility_root / case["model"]

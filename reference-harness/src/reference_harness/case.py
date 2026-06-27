@@ -163,6 +163,20 @@ class Case:
         return self.raw.get("expectedTableState", {})
 
     @property
+    def is_scenario(self) -> bool:
+        """True for an M8 cache/identity scenario case (Phase 6).
+
+        A scenario case carries a ``scenario`` (an ordered list of operation
+        steps with per-step round-trip counts) instead of a single
+        ``operation`` + ``goldenSql``; golden SQL lives per step.
+        """
+        return "scenario" in self.raw
+
+    @property
+    def scenario(self) -> list[dict[str, Any]]:
+        return self.raw.get("scenario", [])
+
+    @property
     def equivalent_encodings(self) -> list[dict[str, Any]]:
         """Alternate surface encodings that MUST canonicalize to ``operation``.
 

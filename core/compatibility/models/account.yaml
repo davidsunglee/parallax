@@ -1,0 +1,49 @@
+# Account: a plain non-temporal transactional entity for the M8 (transaction /
+# unit-of-work / identity + query cache) cases.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. M8 is
+# expressed in operations and object state, not temporal milestoning, so Account
+# is deliberately simple: a primary key plus an owner and a numeric balance. It is
+# the subject of:
+#   - the cache-hit scenario   (two identical finds => one round trip),
+#   - the identity scenario     (same PK => the same logical object),
+#   - the read-lock case        (an in-transaction read with `for share of t0`),
+#   - the batched-write case     (a multi-row INSERT and a batched UPDATE).
+#
+# `version` is an optimistic-locking version column (used as a normal column here;
+# the optimistic-lock conflict contract is M10 / Phase 7). It is present so the M8
+# model already carries the column M10 will check, without changing M8 behavior.
+#
+# Row data lives in the sibling fixtures/account.yaml (used by the read cases and
+# the read-in-cache scenarios). The batched-write case loads those fixtures and
+# then applies its own DML on top.
+entity:
+  name: Account
+  namespace: parallax.compatibility
+  table: account
+  mutability: transactional
+  temporal: non-temporal
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGenerator: none
+    - name: owner
+      type: string
+      column: owner
+      maxLength: 64
+    - name: balance
+      type: decimal(18,2)
+      column: balance
+    - name: version
+      type: int32
+      column: version
+      optimisticLocking: true
+  indices:
+    - name: account_pk
+      attributes: [id]
+      unique: true
+    - name: account_owner
+      attributes: [owner]
+      unique: false
