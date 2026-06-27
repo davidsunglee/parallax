@@ -21,8 +21,11 @@ descriptor (e.g. `core/compatibility/models/orders.yaml`) is an instance of it.
 The base elements for a single non-temporal entity are `entity`, `attribute`,
 and `pkGenerator`. Earlier revisions added `relationship` and `index`, and
 admit **multiple entities per descriptor** so relationships can name sibling
-entities. This revision adds **`asOfAttribute`** (the M7 temporal dimension).
-Later phases add `valueObject` and `inheritance`.
+entities, plus **`asOfAttribute`** (the M7 temporal dimension). This revision
+adds two metamodel extensions (DQ9 definitely-do): **`inheritance`**
+(table-per-hierarchy with a discriminator, or table-per-leaf — **never**
+table-per-class) and **`valueObject`** (an embedded composite element mapped to a
+single JSONB column).
 
 ## One or many entities per descriptor
 
@@ -41,7 +44,7 @@ implementation **MUST** accept both.
 | `table` | default table name (REQUIRED) |
 | `mutability` | `read-only` (default) \| `transactional` |
 | `temporal` | derived classification: `non-temporal` (default) \| `unitemporal-processing` \| `unitemporal-business` \| `bitemporal` |
-| children | `attributes` (REQUIRED, non-empty); `relationships`, `indices`, `asOfAttributes` (optional) |
+| children | `attributes` (REQUIRED, non-empty); `relationships`, `indices`, `asOfAttributes`, `valueObjects`, `inheritance` (optional) |
 
 The `temporal` classification is **derived** from the `asOfAttribute` children an
 entity declares and **MUST** be consistent with them:
@@ -125,6 +128,68 @@ to M5). The full M4 deep-fetch and navigation semantics build on these fields.
 Indices are metadata: they declare the storage indices an implementation
 **SHOULD** create and the **unique** keys the identity cache can exploit. A
 unique index over the primary-key attributes is the canonical fast-path key.
+
+## `valueObject` — an embedded composite mapped to JSONB
+
+A `valueObject` is an **embedded composite element** — a structured sub-value of
+an entity (an address, a money amount, a geo point) that has no identity of its
+own. Unlike Reladomo, which **column-flattens** an embedded value object into
+individual columns of the owning table, core maps the **whole value object to a
+single `json` column** (Postgres JSONB, M0). This deviation keeps the composite
+atomic and schema-flexible and lets the inner fields be filtered directly.
+
+| Property | Values / meaning |
+|---|---|
+| `name` | value-object element name (REQUIRED) |
+| `type` | the value-object's logical (struct) type name (REQUIRED, documentary) |
+| `column` | the single JSONB column the whole object is stored in (REQUIRED) |
+| `mapping` | storage mapping; `jsonb` (the only mapping in core) |
+| `nullable` | bool, default `false` |
+
+An entity MAY declare zero or more `valueObjects`. Each value object's backing
+column is `jsonb`; the harness derives the column from the descriptor exactly as
+it does for a scalar attribute. The inner fields are **read and filtered** with
+the M2 nested-attribute access form (`nestedEq` / `nestedNotEq` over a dotted
+path `Class.valueObject.field`), which M3 lowers to a JSONB extraction
+(`jsonb_extract_path_text`).
+
+## `inheritance` — class-hierarchy mapping
+
+An entity that participates in a class hierarchy declares an `inheritance`
+element naming its **strategy** and its **role**. Core admits exactly two
+strategies and **rejects the third**:
+
+| Strategy | Meaning | In core? |
+|---|---|---|
+| `table-per-hierarchy` | the whole hierarchy in **one** table; rows discriminated by a `discriminator` column | **yes** |
+| `table-per-leaf` | one table **per concrete leaf**; no discriminator | **yes** |
+| `table-per-class` | one table per class, joined at query time | **REJECTED** — the metamodel schema does not admit it |
+
+`table-per-class` is intentionally excluded (DQ9): per-query joins to assemble a
+single object are exactly the kind of hidden N+1 / fan-out cost the suite exists
+to prevent, and the two admitted strategies cover the field's real use. A
+descriptor declaring `strategy: table-per-class` **MUST** fail schema validation
+(a negative compatibility test asserts this).
+
+| Property | Values / meaning |
+|---|---|
+| `strategy` | `table-per-hierarchy` \| `table-per-leaf` (REQUIRED) |
+| `role` | `root` (owns / names the hierarchy) \| `subtype` (a leaf) (REQUIRED) |
+| `parent` | for a `subtype`: the entity it extends (REQUIRED for a subtype, FORBIDDEN for a root) |
+| `discriminator` | table-per-hierarchy only: `{ column }`, the column distinguishing leaves in the shared table |
+| `discriminatorValue` | table-per-hierarchy only: the discriminator value THIS entity's rows carry |
+
+**Table-per-hierarchy.** The `root` and every `subtype` map to the **same
+table** and set their own `discriminatorValue`; a query for a subtype injects a
+**discriminator-equality predicate** (`t0.<discriminator> = ?`), and a query
+across a family of subtypes injects a discriminator `in (?, …)`. The root query
+(no discriminator predicate) sees every row. M3 fixes the discriminator-filter
+golden SQL.
+
+**Table-per-leaf.** Each concrete leaf maps to its **own table** (its own
+`table`), so a leaf query is an ordinary single-table read of that table with
+**no** discriminator — the subtype is selected by *which table* is queried. No
+shared table and no discriminator column exist.
 
 ## `asOfAttribute` — a temporal dimension
 

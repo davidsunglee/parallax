@@ -48,6 +48,11 @@ class Entity:
         return self.definition.get("relationships", [])
 
     @property
+    def value_objects(self) -> list[dict[str, Any]]:
+        """Embedded composite elements mapped to JSONB columns (M1, Phase 9)."""
+        return self.definition.get("valueObjects", [])
+
+    @property
     def as_of_attributes(self) -> list[dict[str, Any]]:
         return self.definition.get("asOfAttributes", [])
 

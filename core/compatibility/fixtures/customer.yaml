@@ -1,0 +1,34 @@
+# Fixture rows for the Customer valueObject model (models/customer.yaml).
+#
+# Each `address` value is a nested mapping loaded into the single JSONB column.
+# The nested-field filter cases extract `address.city` and `address.geo.country`
+# and match them as text (jsonb_extract_path_text yields text).
+#
+#   id 1 Ada    city Oslo   geo.country NO
+#   id 2 Linus  city Oslo   geo.country NO
+#   id 3 Grace  city Boston geo.country US
+Customer:
+  - id: 1
+    name: Ada
+    address:
+      street: 1 Park Ave
+      city: Oslo
+      geo:
+        country: NO
+        zip: "0150"
+  - id: 2
+    name: Linus
+    address:
+      street: 2 Main St
+      city: Oslo
+      geo:
+        country: NO
+        zip: "0151"
+  - id: 3
+    name: Grace
+    address:
+      street: 9 Beacon St
+      city: Boston
+      geo:
+        country: US
+        zip: "02108"

@@ -25,6 +25,9 @@ _POSTGRES_BASE_TYPES = {
     "time": "time",
     "timestamp": "timestamptz",
     "uuid": "uuid",
+    # The embedded-value `json` type maps to JSONB (M0/M1, Phase 9): a whole
+    # valueObject is stored in one JSONB column rather than column-flattened.
+    "json": "jsonb",
 }
 
 _DECIMAL_RE = re.compile(r"^decimal\((\d+),(\d+)\)$")
@@ -63,6 +66,16 @@ def _create_table(entity: Entity, dialect: str) -> str:
         if attribute.get("primaryKey", False):
             pk_columns.append(attribute["column"])
 
+    # A valueObject is stored in ONE JSONB column (M1/M0, Phase 9): the whole
+    # embedded composite, not column-flattened. Append its backing column after
+    # the scalar attributes (so the Phase 1-8 cases are unaffected).
+    for value_object in entity.value_objects:
+        column_type = _column_type("json", None, dialect)
+        parts = [value_object["column"], column_type]
+        if not value_object.get("nullable", False):
+            parts.append("not null")
+        columns.append(" ".join(parts))
+
     # A temporal entity stores many milestone rows per business key, so the
     # declared primaryKey attribute(s) are NOT unique on their own — the unique
     # physical key is the business key PLUS each as-of dimension's `fromColumn`
@@ -83,14 +96,31 @@ def _create_table(entity: Entity, dialect: str) -> str:
 def ddl_for(model: Model, dialect: str) -> list[str]:
     """Return the ordered DDL statements that create every entity's table.
 
-    One ``CREATE TABLE`` per declared entity (a multi-entity descriptor yields
-    several). Foreign keys are intentionally omitted: relationships are a query
-    concern (navigation/join derivation), and leaving FK constraints out keeps
+    One ``CREATE TABLE`` per **distinct table** (a multi-entity descriptor yields
+    several). A `table-per-hierarchy` inheritance model maps several entities to
+    ONE shared table (each declaring the same columns), so tables are emitted
+    once, keyed by name — the first entity declaring a table owns its DDL.
+    Foreign keys are intentionally omitted: relationships are a query concern
+    (navigation/join derivation), and leaving FK constraints out keeps
     fixture-load order unconstrained.
     """
-    return [_create_table(entity, dialect) for entity in model.entities]
+    statements: list[str] = []
+    seen: set[str] = set()
+    for entity in model.entities:
+        if entity.table in seen:
+            continue
+        seen.add(entity.table)
+        statements.append(_create_table(entity, dialect))
+    return statements
 
 
 def column_order(entity: Entity) -> Sequence[str]:
-    """The descriptor's column order for *entity* (matches DDL + load order)."""
-    return [attribute["column"] for attribute in entity.attributes]
+    """The descriptor's column order for *entity* (matches DDL + load order).
+
+    Scalar attributes first, then each valueObject's single JSONB column — the
+    same order :func:`_create_table` emits, so fixture loading and table-state
+    reads stay column-aligned.
+    """
+    columns = [attribute["column"] for attribute in entity.attributes]
+    columns.extend(value_object["column"] for value_object in entity.value_objects)
+    return columns

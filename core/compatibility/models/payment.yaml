@@ -1,0 +1,126 @@
+# Payment: a TABLE-PER-HIERARCHY inheritance model (M1, Phase 9).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The whole
+# Payment hierarchy maps to ONE table (`payment`); rows are discriminated by the
+# `kind` column (the discriminator). Each entity declares its own
+# `discriminatorValue`:
+#
+#   Payment      (root)    — the hierarchy root; its own rows carry kind 'payment'
+#   CardPayment  (subtype) — kind 'card'; adds the card-network column
+#   CashPayment  (subtype) — kind 'cash'; adds the tendered-amount column
+#
+# Because every leaf shares the table, the subtype-specific columns are nullable
+# (a card row leaves `tendered` null and vice-versa). A subtype query injects a
+# discriminator-equality predicate (`t0.kind = ?`); a query across a family of
+# subtypes injects `t0.kind in (?, ?)`; the root query (no discriminator
+# predicate) sees every row. M3 fixes the discriminator-filter golden SQL.
+#
+# table-per-class is NOT a legal strategy (DQ9): the negative case
+# 0930-reject-table-per-class.yaml asserts the schema rejects it.
+#
+# Row data lives in the sibling fixtures/payment.yaml.
+entities:
+  - name: Payment
+    namespace: parallax.compatibility
+    table: payment
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      strategy: table-per-hierarchy
+      role: root
+      discriminator:
+        column: kind
+      discriminatorValue: payment
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: kind
+        type: string
+        column: kind
+        maxLength: 16
+      - name: amount
+        type: decimal(18,2)
+        column: amount
+      - name: cardNetwork
+        type: string
+        column: card_network
+        maxLength: 16
+        nullable: true
+      - name: tendered
+        type: decimal(18,2)
+        column: tendered
+        nullable: true
+    indices:
+      - name: payment_pk
+        attributes: [id]
+        unique: true
+      - name: payment_kind
+        attributes: [kind]
+        unique: false
+  - name: CardPayment
+    namespace: parallax.compatibility
+    table: payment
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      strategy: table-per-hierarchy
+      role: subtype
+      parent: Payment
+      discriminatorValue: card
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: kind
+        type: string
+        column: kind
+        maxLength: 16
+      - name: amount
+        type: decimal(18,2)
+        column: amount
+      - name: cardNetwork
+        type: string
+        column: card_network
+        maxLength: 16
+        nullable: true
+      - name: tendered
+        type: decimal(18,2)
+        column: tendered
+        nullable: true
+  - name: CashPayment
+    namespace: parallax.compatibility
+    table: payment
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      strategy: table-per-hierarchy
+      role: subtype
+      parent: Payment
+      discriminatorValue: cash
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: kind
+        type: string
+        column: kind
+        maxLength: 16
+      - name: amount
+        type: decimal(18,2)
+        column: amount
+      - name: cardNetwork
+        type: string
+        column: card_network
+        maxLength: 16
+        nullable: true
+      - name: tendered
+        type: decimal(18,2)
+        column: tendered
+        nullable: true

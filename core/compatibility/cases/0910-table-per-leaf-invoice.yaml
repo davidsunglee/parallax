@@ -1,0 +1,20 @@
+# Table-per-leaf leaf query: find all Invoices (M1 inheritance, M3).
+#
+# Each concrete leaf maps to its OWN table, so an Invoice query is an ordinary
+# single-table read of the `invoice` table with NO discriminator predicate — the
+# subtype is selected by WHICH table is queried (contrast table-per-hierarchy,
+# which shares one table and injects a discriminator). Both authored invoice rows
+# match.
+#
+# Trivial single-table read => referenceSql optional, but supplied as the oracle.
+model: models/document.yaml
+tags: [m1, m3, inheritance, table-per-leaf]
+operation:
+  all: {}
+goldenSql:
+  postgres: select t0.id, t0.title, t0.amount_due from invoice t0
+referenceSql: select id, title, amount_due from invoice
+expectedRows:
+  - { id: 1, title: Invoice-A, amount_due: 120.00 }
+  - { id: 2, title: Invoice-B, amount_due: 80.00 }
+roundTrips: 1

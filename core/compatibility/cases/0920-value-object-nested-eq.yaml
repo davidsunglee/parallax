@@ -1,0 +1,22 @@
+# valueObject JSONB filter: nested field equality (M1 valueObject, M0 json, M3).
+#
+# Filter Customers by an inner field of the `address` valueObject (stored as one
+# JSONB column). nestedEq(Customer.address.city, 'Oslo') lowers to a
+# `jsonb_extract_path_text(t0.address, ?) = ?` extraction; the JSON key is the
+# first bind, the compared value the second ['city', 'Oslo']. Customers 1 and 2
+# live in Oslo; Grace (Boston) is excluded.
+#
+# Non-trivial (JSONB extraction) case => referenceSql is the independent oracle,
+# spelling the same extraction with the native `->>` operator and inline key.
+model: models/customer.yaml
+tags: [m1, m3, nested, value-object, jsonb]
+operation:
+  nestedEq: { path: Customer.address.city, value: Oslo }
+goldenSql:
+  postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
+binds: [city, Oslo]
+referenceSql: select id, name from customer where address ->> 'city' = 'Oslo'
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 2, name: Linus }
+roundTrips: 1
