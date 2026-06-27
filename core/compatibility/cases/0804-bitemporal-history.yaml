@@ -1,0 +1,27 @@
+# Bitemporal history: the FULL milestone set across both axes, no as-of predicate
+# injected on either dimension.
+#
+# Scoped to position id 1 with an inner `eq`, history returns ALL THREE rectangles
+# — the superseded original belief R1 (processing out_z finite), the head R2, and
+# the corrected R3 — because neither the business nor the processing axis is pinned
+# to an instant. The projection includes all four interval columns so the result
+# carries each rectangle's bounds, exercising native-infinity reads on BOTH axes
+# (the current rows read back thru_z = infinity and/or out_z = infinity).
+model: models/position.yaml
+tags: [m7, m3, bitemporal, temporal, history]
+operation:
+  history:
+    operand:
+      eq:
+        attr: Position.id
+        value: 1
+    asOfAttr: Position.businessDate
+goldenSql:
+  postgres: select t0.pos_id, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ?
+binds: [1]
+referenceSql: select pos_id, val, from_z, thru_z, in_z, out_z from position where pos_id = 1
+expectedRows:
+  - { pos_id: 1, val: 90.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
+  - { pos_id: 1, val: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-06-01T00:00:00+00:00", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+  - { pos_id: 1, val: 200.00, from_z: "2024-06-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+roundTrips: 1

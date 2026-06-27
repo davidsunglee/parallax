@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/operation.schema.json",
   "title": "Parallax Operation Algebra (M2)",
-  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the M7 as-of model, never written by the user).",
+  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the M7 as-of model, never written by the user). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8).",
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
@@ -607,7 +607,7 @@
       "minLength": 1
     },
     "asOf": {
-      "description": "asOf(asOfAttr, date): pin a temporal dimension to a single instant. The queried entity's rows are restricted to the milestone whose [from, to) interval contains `date` (date = `now` ⇒ the current row, to = infinity). The temporal predicate is AUTO-INJECTED from the as-of model; the user never writes the from/to comparisons by hand. An omitted dimension defaults to `now` (M7 default-injection rule).",
+      "description": "asOf(asOfAttr, date): pin a temporal dimension to a single instant. The queried entity's rows are restricted to the milestone whose [from, to) interval contains `date` (date = `now` ⇒ the current row, to = infinity). The temporal predicate is AUTO-INJECTED from the as-of model; the user never writes the from/to comparisons by hand. An omitted dimension defaults to `now` (M7 default-injection rule). A BITEMPORAL entity pins BOTH axes by nesting one asOf per axis (the inner asOf's `operand` is the next axis's pin); each axis injects its own interval predicate (Phase 8).",
       "type": "object",
       "additionalProperties": false,
       "required": ["asOf"],

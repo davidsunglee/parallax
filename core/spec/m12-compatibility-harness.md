@@ -28,7 +28,7 @@ case** (carries a `scenario`, Phase 6 / M8), or a **conflict case** (carries
 | `model` | yes | path (relative to `core/compatibility/`) to the model descriptor |
 | `tags` | yes | module/feature tags (e.g. `["m2", "eq"]`); drive coverage + test selection |
 | `operation` | read | a canonical M2 algebra node, validated against the operation schema (read cases) |
-| `writeSequence` | write | an ordered list of `insert` / `update` / `terminate` mutations a write case realizes (writeSequence cases, M7) |
+| `writeSequence` | write | an ordered list of mutations a write case realizes (writeSequence cases, M7): `insert` / `update` / `terminate` (audit-only + business-only), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the full-bitemporal rectangle split |
 | `equivalentEncodings` | no | alternate surface encodings of `operation` (e.g. a prefix vs a fluent spelling); each MUST canonicalize to `operation` |
 | `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit — a single statement, or an **ordered list** of statements (one per deep-fetch level, or one per write-sequence DML step) |
 | `binds` | no | bind values for the `?` placeholders (default `[]`): a flat list for a single statement, or a list-of-lists for a multi-statement case |

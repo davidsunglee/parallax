@@ -8,10 +8,14 @@ The temporal **algebra** (`asOf` / `asOfRange` / `history`) is M2; the **SQL
 emission** is M3; the **infinity representation** is M0/M11. This module ties
 them to observable behavior.
 
-This phase specifies the **MVP scope** (DQ7): **non-temporal** (already covered
-by M1–M5) and **audit-only (processing-temporal)**, read **and** write. Full
-bitemporal (the rectangle-split `*Until` trio) and business-temporal-only mode
-are later phases; they reuse the read + write-sequence machinery defined here.
+This module is authored in two slices. The **MVP scope** (DQ7) — **non-temporal**
+(already covered by M1–M5) and **audit-only (processing-temporal)**, read **and**
+write — is specified first, in the sections through "Milestone-chaining writes
+(audit-only)". The **full bitemporal** model (the rectangle-split `*Until` trio
+over two axes) and the **business-temporal-only** profile follow, in the
+"Full bitemporal" and "Business-temporal-only" sections below; they **reuse** the
+as-of read + write-sequence machinery defined for the MVP rather than introduce a
+new mechanism.
 
 ## The as-of interval model
 
@@ -104,6 +108,89 @@ Key invariants the suite pins down:
 This matches `AuditOnlyTemporalDirector` / `GenericBiTemporalDirector`'s
 close-old-insert-new discipline (research §6), restricted to the processing axis.
 
+## Full bitemporal
+
+A **bitemporal** entity declares **two** `asOfAttribute` dimensions — one
+`business` axis (`from_z`/`thru_z`, when a fact is *true in the world*) and one
+`processing` axis (`in_z`/`out_z`, when the *system knew* it). A milestone is the
+intersection of a business interval and a processing interval — a **rectangle** in
+`(business × processing)` space. A row is **current** on an axis when its `to` on
+that axis equals **infinity**; the **fully-current** row is current on *both*
+(`thru_z = out_z = infinity`).
+
+### Bitemporal as-of reads (both axes)
+
+Each axis injects its own as-of predicate independently, exactly as the
+single-axis rule above (`= infinity` for the current row; the `[from, to)`
+containment for a past instant). A read pins **both** axes by composing the two
+`asOf` nodes — one per dimension — so the injected terms `and` together:
+
+| Read | Injected predicate |
+|---|---|
+| business now, processing now | `thru_z = ? and out_z = ?` (binds `[infinity, infinity]`) |
+| business past `b`, processing now | `from_z <= ? and thru_z > ? and out_z = ?` (binds `[b, b, infinity]`) |
+| business past `b`, processing past `p` | `from_z <= ? and thru_z > ? and in_z <= ? and out_z > ?` (binds `[b, b, p, p]`) |
+
+The last form is the signature bitemporal read: *as the system believed at
+processing instant `p`, what was true in the world at business instant `b`?* — it
+reconstructs a historical belief, returning a milestone that may since have been
+superseded on the processing axis. An omitted dimension still defaults to **now**
+on that axis (the default-injection rule applies per-axis), so a query that pins
+only the business date is implicitly "as the system knows it now."
+
+### Bitemporal writes — the rectangle split
+
+The signature bitemporal write is the **rectangle split** (research §6). A value
+is changed for a **bounded business window** `[businessFrom, businessTo)` while
+the audit trail is preserved on the processing axis. This is the `updateUntil` /
+`terminateUntil` contract; with `insertUntil` they form the **`*Until` trio**
+(DQ11):
+
+| Mutation | Observable SQL sequence |
+|---|---|
+| **insertUntil** | open one row whose **business** interval is the bounded window `[businessFrom, businessTo)` at processing `[txInstant, infinity)`; a single `insert` (no prior row to close) |
+| **updateUntil** | **inactivate** the original current row by closing its **processing** axis (`out_z = txInstant`), then chain **three** new rows at fresh processing time `[txInstant, infinity)` — `head` business `[from_z, businessFrom)` (old value), `middle` business `[businessFrom, businessTo)` (new value), `tail` business `[businessTo, infinity)` (old value) |
+| **terminateUntil** | inactivate the original (as above), then chain only **head** and **tail** — **no** `middle` — so the value is **absent** inside the window |
+
+The split keeps the value unchanged before and after the window and changes it
+**only inside** it (or, for `terminateUntil`, removes it only inside it). The
+original survives as a row closed on the processing axis — the bitemporal audit
+trail. Key invariants the suite pins down:
+
+- The inactivation `UPDATE` is keyed by the **current-on-processing** predicate
+  (`pk and out_z = infinity`), so only the open rectangle is inactivated; the
+  three new rows are inserted **after** it.
+- After an `updateUntil`, the observable current-on-processing state is exactly
+  the `head` / `middle` / `tail` rectangles; the `middle` carries the new value.
+- After a `terminateUntil`, the window `[businessFrom, businessTo)` is covered by
+  **no** current-on-processing row.
+
+This mirrors `GenericBiTemporalDirector.updateUntil` / `splitTailEnd`
+(research §6, the bitemporal rectangle split).
+
+### MAY-tier mutations
+
+The remaining dated mutations Reladomo defines —
+`insertWithIncrement` / `incrementUntil` (additive increment chaining),
+`purge` (physically delete a milestone chain), and `inactivateForArchiving` —
+are RFC-2119 **MAY**: an implementation **MAY** provide them, and the suite
+**MAY** carry optional fixtures for them, but they are **not** part of the
+required parity surface. They are deliberately excluded from the coverage gate
+(the gate counts only MVP / fast-follow / definitely-do modules; the MAY-tier
+exclusion lands with the gate itself).
+
+## Business-temporal-only
+
+A **business-temporal-only** (`unitemporal-business`) entity declares a single
+`business` as-of dimension and **no** processing axis. Reads inject the same
+single-axis predicate as the audit-only profile, but over `from_z`/`thru_z` (the
+default is still **now** ⇒ `thru_z = infinity`). Writes are the **same
+close-and-chain** shape as audit-only — close the open business row and chain a
+new `[businessInstant, infinity)` row — but driven by the **business instant** the
+change takes effect rather than the transaction instant, and with **no
+processing-axis residual** (so no rectangle split). A business correction
+therefore supersedes the prior value at the business date it becomes effective.
+
 ## How the harness verifies M7 (M12)
 
 Two case shapes, both proven against real Postgres:
@@ -113,13 +200,19 @@ Two case shapes, both proven against real Postgres:
   **injected** `out_z = ?` golden SQL + the expected current rows, so the
   default-injection rule is proven automatically. Native infinity actually
   executes (the current-row predicate binds `infinity` and the `history`
-  projection reads back the open bound).
-- **Write-sequence cases** carry a `writeSequence` (ordered `insert` / `update` /
-  `terminate` mutations) and `expectedTableState`. The harness **applies** the
-  ordered DML golden SQL to a freshly-provisioned (empty) table, then asserts the
-  resulting milestone rows equal `expectedTableState` — including the
-  `out_z = infinity` current-row state. The DML statement count must equal the
-  sum of the steps' declared statement counts and the case's `roundTrips`.
+  projection reads back the open bound). A **bitemporal** read nests two `asOf`
+  nodes and asserts the both-axis golden SQL + rows (each axis's predicate
+  injected independently); a **business-only** read exercises the same rule over
+  `from_z`/`thru_z`.
+- **Write-sequence cases** carry a `writeSequence` (ordered mutations — `insert` /
+  `update` / `terminate` for audit-only and business-only; the `insertUntil` /
+  `updateUntil` / `terminateUntil` trio for full bitemporal) and
+  `expectedTableState`. The harness **applies** the ordered DML golden SQL to a
+  freshly-provisioned (empty) table, then asserts the resulting milestone rows
+  equal `expectedTableState` — including the `out_z = infinity` current-row state
+  and, for the rectangle split, the inactivated original + `head` / `middle` /
+  `tail` rectangles. The DML statement count must equal the sum of the steps'
+  declared statement counts and the case's `roundTrips`.
 
 Rather than introspecting an implementation, the suite proves the *documented
 golden SQL itself* produces the correct milestones — exactly the observable
