@@ -4,14 +4,19 @@
 # with its value carried in `binds`. Trivial single-table predicate case, so
 # referenceSql is optional; we include a naive oracle anyway to exercise the
 # triple-equivalence path in the walking skeleton.
+#
+# Cross-dialect (Phase 10): a plain single-table `eq` lowers to identical SQL on
+# Postgres and MariaDB (no dialect divergence), so this case carries goldenSql for
+# BOTH dialects and the harness runs it against both — the simplest matrix row.
 model: models/orders.yaml
-tags: [m2, eq]
+tags: [m2, eq, dialect]
 operation:
   eq:
     attr: Order.id
     value: 42
 goldenSql:
   postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+  mariadb: select t0.id, t0.name from orders t0 where t0.id = ?
 binds: [42]
 referenceSql: select id, name from orders where id = 42
 expectedRows:

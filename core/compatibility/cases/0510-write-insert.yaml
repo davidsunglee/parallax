@@ -5,8 +5,16 @@
 # out_z = infinity. There is no prior row to close. This is the simplest write
 # contract — the harness APPLIES the golden DML and asserts the resulting current
 # row, including the native-infinity open bound.
+#
+# Cross-dialect infinity fallback on a WRITE (Phase 10): the insert DML is
+# identical SQL on both dialects, and the open upper bound `out_z = infinity` is
+# carried as a `?` bind. Postgres writes native `'infinity'::timestamptz`; the
+# MariaDB seam writes the max-sentinel `9999-12-31 23:59:59.999999` and reads it
+# back as `infinity` for the table-state comparison — so the asserted
+# `expectedTableState` (authored once, with `out_z: infinity`) holds on both. A
+# writeSequence case has no referenceSql, so it runs cleanly against both dialects.
 model: models/balance.yaml
-tags: [m7, m3, temporal mvp, write-sequence, insert, audit-only]
+tags: [m7, m3, temporal mvp, write-sequence, insert, audit-only, dialect]
 writeSequence:
   - mutation: insert
     entity: Balance
@@ -14,6 +22,8 @@ writeSequence:
     note: open a current milestone [txInstant, infinity)
 goldenSql:
   postgres:
+    - insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+  mariadb:
     - insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
 binds:
   - [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]

@@ -11,6 +11,11 @@
 # As-of now over the fixture history returns only the CURRENT milestone of each
 # live account: (1, 150.00) and (2, 200.00). The superseded id-1 row and the
 # terminated id-3 account are excluded because their out_z is finite.
+# The cross-dialect infinity-fallback proof lives in the dedicated
+# cases/1002-infinity-fallback-mariadb.yaml (a goldenSql.mariadb twin of this
+# read whose referenceSql is dialect-neutral); this case stays Postgres-only
+# because its referenceSql uses the Postgres-specific `'infinity'::timestamptz`
+# cast, which the harness runs verbatim and MariaDB would reject.
 model: models/balance.yaml
 tags: [m7, m3, temporal mvp, as-of, audit-only, defaulted]
 operation:

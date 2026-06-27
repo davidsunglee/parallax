@@ -1,13 +1,18 @@
 # in(values) — set membership against a literal list. Each value becomes a bind,
 # in list order.
+#
+# Cross-dialect (Phase 10): `in (?, ?, ?)` is identical SQL on Postgres and
+# MariaDB, so this case carries goldenSql for both dialects (a membership matrix
+# row alongside the `eq` one).
 model: models/orders.yaml
-tags: [m2, in, membership]
+tags: [m2, in, membership, dialect]
 operation:
   in:
     attr: Order.id
     values: [1, 2, 42]
 goldenSql:
   postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)
+  mariadb: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)
 binds: [1, 2, 42]
 referenceSql: select id, name from orders where id in (1, 2, 42)
 expectedRows:
