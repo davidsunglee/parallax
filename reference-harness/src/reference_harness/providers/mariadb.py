@@ -106,6 +106,12 @@ def _from_db_value(value: Any) -> Any:
         return value.replace(tzinfo=_dt.UTC).isoformat()
     if isinstance(value, _dt.date):
         return value.isoformat()
+    if isinstance(value, _dt.timedelta):
+        # pymysql reads a `TIME` column as a `timedelta`; render it as a stable
+        # `HH:MM:SS` string so a `time` column compares to a plain YAML string
+        # (the Postgres provider already reads `time` as text). Sub-day values —
+        # the only ones the suite carries — format cleanly via str().
+        return str(value)
     return value
 
 

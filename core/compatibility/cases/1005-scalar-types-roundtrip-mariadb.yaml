@@ -1,0 +1,25 @@
+# Scalar type round trip on MariaDB — the dialect-divergent type mappings (M11).
+#
+# 0003 proves the less-common M0 scalars on Postgres only, because byte / time /
+# uuid driver return types differ by dialect. This is the MariaDB witness for the
+# same five scalars, exercising the divergent MariaDB column types from the M11
+# seam: float32 -> float, float64 -> double, bytes -> longblob, time -> time,
+# uuid -> char(36). The byte payload is rendered to hex text in SQL (like
+# Postgres' `encode`, but MariaDB's `hex(...)` takes no argument); the provider
+# reads MariaDB's TIME (a driver timedelta) and CHAR(36) uuid back as stable
+# text, so the expected row matches the Postgres witness value-for-value.
+model: models/scalars.yaml
+tags: [m0, m1, m3, m11, scalar, mariadb, dialect]
+operation:
+  all: {}
+goldenSql:
+  mariadb: select t0.id, t0.f32, t0.f64, hex(t0.payload) payload_hex, t0.local_time, t0.external_id from scalar_thing t0
+binds: []
+expectedRows:
+  - id: 1
+    f32: 1.5
+    f64: 2.25
+    payload_hex: "01020304"
+    local_time: "12:34:56"
+    external_id: "123e4567-e89b-12d3-a456-426614174000"
+roundTrips: 1

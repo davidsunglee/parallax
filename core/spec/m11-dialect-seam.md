@@ -31,8 +31,10 @@ choices at each point; both are normative for their dialect (M3). The catalog
 
 The two decision points MariaDB **diverges** on — the read-lock suffix and the
 infinity representation — are exactly the ones the second dialect was chosen to
-exercise (the others are either identical or not yet exercised by a fixture).
-They are detailed below.
+exercise; they are detailed below. The divergent **type mappings** are
+round-tripped against real MariaDB by the scalar witness (compatibility case
+`1005`), and the UTC-instant normalization + microsecond precision of
+`datetime(6)` by the timestamp write cases (`0004`/`0005`).
 
 ### MariaDB type mapping (the M0 table, MariaDB column)
 
