@@ -1,11 +1,12 @@
-# valueObject JSONB filter: nested field inequality (M1 valueObject, M3).
+# valueObject structured-column filter: nested field inequality (M1 valueObject,
+# M3).
 #
-# nestedNotEq(Customer.address.city, 'Oslo') lowers to a negated extraction
-# `not jsonb_extract_path_text(t0.address, ?) = ?` (the normalizer renders the
-# negation as a leading `not`, mirroring `isNotNull`/`notIn`). Only Grace
-# (Boston) does NOT live in Oslo.
+# In Postgres golden SQL, nestedNotEq(Customer.address.city, 'Oslo') lowers to a
+# negated extraction `not jsonb_extract_path_text(t0.address, ?) = ?` (the
+# normalizer renders the negation as a leading `not`, mirroring
+# `isNotNull`/`notIn`). Only Grace (Boston) does NOT live in Oslo.
 model: models/customer.yaml
-tags: [m1, m3, nested, value-object, jsonb]
+tags: [m1, m3, nested, value-object, json]
 operation:
   nestedNotEq: { path: Customer.address.city, value: Oslo }
 goldenSql:

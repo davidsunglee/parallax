@@ -52,12 +52,16 @@ against the model. Examples:
 { "eq": { "attr": "Order.id", "value": 42 } }
 ```
 
-## Operation set (this phase)
+## Operation set
 
-This phase completes the **full non-temporal predicate algebra for single-entity
-queries**, plus the result-shaping directives. Each node below carries a single
-canonical serialization; an implementation **MUST** support every node and
-**MUST** round-trip it through serde unchanged.
+M2 is the canonical operation algebra. Its schema covers the single-entity
+predicate algebra, result-shaping directives, relationship navigation,
+aggregation, temporal read wrappers, and nested value-object predicates. Each
+node below carries a single canonical serialization; a conforming operation
+serde implementation **MUST** validate and round-trip every node in
+`operation.schema.json` unchanged. Executing a node may depend on other core
+modules: M1 supplies attributes, relationships, as-of attributes, and value
+objects; M3 owns SQL lowering; M7 owns temporal interval behavior.
 
 ### Identities
 
@@ -121,7 +125,36 @@ SQL fixes the portable `lower(...)` form.)
 
 `in` / `notIn` take `{ "attr", "values": [ … ] }` (non-empty). Each value is a
 bind, in list order; the SQL is `attr in (?, ?, …)`. The `in(subquery)` form is
-introduced with relationships in a later phase.
+not part of this schema revision.
+
+### Nested value-object predicates
+
+Nested predicates read an inner field of an M1 `valueObject`, which core stores
+as a single dialect-mapped `json` column. They use a dotted path of the form
+`Class.valueObject.segment[.segment...]`:
+
+- `Class` is the queried entity.
+- `valueObject` **MUST** name a `valueObject` declared on that entity.
+- The remaining one or more segments are JSON object keys inside the embedded
+  value. They are opaque to the metamodel; core does not require a descriptor for
+  the value object's internal field schema.
+
+| Operation | Encoding | Meaning |
+|---|---|---|
+| `nestedEq` | `{ "nestedEq": { "path", "value" } }` | the text extracted at `path` equals `value` |
+| `nestedNotEq` | `{ "nestedNotEq": { "path", "value" } }` | the text extracted at `path` does not equal `value` |
+
+The `value` is authored as a **string** because M3 lowers nested reads to a
+dialect-specific text extraction from the structured-document column. Postgres
+uses `jsonb_extract_path_text`; a Snowflake dialect could use `VARIANT` path
+extraction; other dialects use their M11 mapping. Path segments after the
+value-object name become binds before the comparison value, in path order:
+`Customer.address.geo.country = "NO"` binds `["geo", "country", "NO"]`.
+
+If the value-object column is SQL `NULL`, the path is absent, or the selected JSON
+value is `null`, the extraction yields SQL `NULL`. In that case neither
+`nestedEq` nor `nestedNotEq` is true, so the row is excluded; this matches the
+scalar `notEq` null behavior described above.
 
 ### Boolean combinators
 
@@ -150,6 +183,30 @@ Directives wrap an inner operation rather than filtering:
 | `orderBy` | `{ "orderBy": { "operand", "keys": [ { "attr", "direction"? } ] } }` | order rows; `direction` ∈ `asc` (default) / `desc` |
 | `limit` | `{ "limit": { "operand", "count" } }` | cap the row count |
 | `distinct` | `{ "distinct": { "operand" } }` | deduplicate rows |
+
+### Temporal read wrappers
+
+Temporal read wrappers are M2 operation nodes. M7 defines the interval model,
+default-injection rule, and milestone behavior; M3 fixes the SQL fragments and
+bind order. These nodes are still part of M2 because operation serde must
+round-trip the temporal query tree exactly.
+
+| Operation | Encoding | Meaning |
+|---|---|---|
+| `asOf` | `{ "asOf": { "operand", "asOfAttr", "date" } }` | pin one temporal dimension to a single instant |
+| `asOfRange` | `{ "asOfRange": { "operand", "asOfAttr", "from", "to" } }` | return milestones whose interval overlaps the half-open range `[from, to)` |
+| `history` | `{ "history": { "operand", "asOfAttr" } }` | return the full milestone set on that dimension; no as-of predicate is injected for that axis |
+
+`asOfAttr` is a metamodel as-of-attribute reference of the form
+`Class.asOfAttribute`. `date`, `from`, and `to` are temporal pin strings: either
+`now` or an ISO-8601 UTC instant. `now` means the current milestone on that axis,
+whose upper bound is the M0/M11 `infinity` sentinel.
+
+Each temporal node wraps an `operand`. A single-axis temporal entity uses one
+wrapper. A bitemporal entity pins or unpins both axes by nesting one temporal
+wrapper per `asOfAttribute`; omitted axes follow the M7 default-injection rule
+and are read as `now`. The injected temporal term composes with the operand via
+`and`, after user predicates, so user binds precede temporal binds.
 
 ## Relationship algebra
 
@@ -287,7 +344,8 @@ appended after any `WHERE` binds, in left-to-right `HAVING`-clause order.
 
 ## Forward map of the rest of the algebra
 
-For orientation, later phases fill in:
-
-- Membership: the `in(subquery)` form (a navigation-backed sub-operation).
-- Temporal (M7): `asOf`, `asOfRange`, `history`.
+For orientation, this schema revision still leaves membership `in(subquery)` out
+of the required operation set. The temporal (`asOf`, `asOfRange`, `history`) and
+nested value-object (`nestedEq`, `nestedNotEq`) nodes are not deferred; their
+canonical encodings are part of M2, with observable temporal behavior specified
+by M7 and SQL lowering specified by M3.

@@ -1,15 +1,16 @@
-# valueObject JSONB read: project an inner field (M1 valueObject, M3).
+# valueObject structured-column read: project an inner field (M1 valueObject,
+# M3).
 #
 # Read a nested field of the `address` valueObject into the result set. The
-# extraction `jsonb_extract_path_text(t0.address, ?)` is aliased `city` in the
-# projection; the JSON key is the only bind ['city']. Every customer is returned
-# with its extracted city. This proves the JSONB READ form (projection), the
-# complement of the JSONB FILTER cases.
+# Postgres extraction `jsonb_extract_path_text(t0.address, ?)` is aliased `city`
+# in the projection; the JSON key is the only bind ['city']. Every customer is
+# returned with its extracted city. This proves the structured-column READ form
+# (projection), the complement of the structured-column FILTER cases.
 #
 # A whole-row read of an extracted field is obvious by eye, but referenceSql is
 # supplied as the independent oracle (native `->>` projection).
 model: models/customer.yaml
-tags: [m1, m3, nested, value-object, jsonb, projection]
+tags: [m1, m3, nested, value-object, json, projection]
 operation:
   all: {}
 goldenSql:

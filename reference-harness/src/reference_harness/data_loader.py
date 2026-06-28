@@ -21,7 +21,7 @@ def _attribute_to_column(entity: Entity) -> dict[str, str]:
     """Map every loadable element name to its column.
 
     Scalar attributes plus each valueObject (whose fixture value is a nested
-    dict/list loaded into its single JSONB column, Phase 9).
+    dict/list loaded into its single dialect-mapped document column, Phase 9).
     """
     mapping = {attribute["name"]: attribute["column"] for attribute in entity.attributes}
     mapping.update(

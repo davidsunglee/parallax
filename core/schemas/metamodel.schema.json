@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/metamodel.schema.json",
   "title": "Parallax Model Descriptor (M1 metamodel)",
-  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index + asOfAttribute (the M7 temporal dimension) + inheritance (table-per-hierarchy with a discriminator, or table-per-leaf; table-per-class is REJECTED, DQ9) + valueObject (an embedded composite element mapped to a single JSONB column, a deliberate deviation from Reladomo's column-flattening), and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
+  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index + asOfAttribute (the M7 temporal dimension) + inheritance (table-per-hierarchy with a discriminator, or table-per-leaf; table-per-class is REJECTED, DQ9) + valueObject (an embedded composite element mapped to a single dialect-native structured-document column via the M0 `json` neutral type, a deliberate deviation from Reladomo's column-flattening), and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
   "type": "object",
   "additionalProperties": false,
   "oneOf": [
@@ -20,7 +20,7 @@
   },
   "$defs": {
     "neutralType": {
-      "description": "M0 neutral data type. The decimal type carries precision/scale, e.g. decimal(18,2). The `json` type (-> JSONB) is the embedded-value type a valueObject element maps to.",
+      "description": "M0 neutral data type. The decimal type carries precision/scale, e.g. decimal(18,2). The `json` type is the embedded-value type a valueObject element maps to; M11 maps it to each dialect's structured-document column type.",
       "type": "string",
       "pattern": "^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|json|decimal\\([0-9]+,[0-9]+\\))$"
     },
@@ -70,7 +70,7 @@
           "items": { "$ref": "#/$defs/index" }
         },
         "valueObjects": {
-          "description": "Embedded composite elements mapped to JSONB columns (M1/M0; a deliberate deviation from Reladomo's column-flattening).",
+          "description": "Embedded composite elements mapped to dialect-native structured-document columns via the M0 `json` neutral type (M1/M0; a deliberate deviation from Reladomo's column-flattening).",
           "type": "array",
           "items": { "$ref": "#/$defs/valueObject" }
         },
@@ -200,7 +200,7 @@
       }
     },
     "valueObject": {
-      "description": "An embedded composite element stored as a single JSONB column (DQ9 definitely-do). Unlike Reladomo's column-flattening, the whole value object is one `json`-typed column; its inner fields are read/filtered with the M2 nested-attribute access form (`Class.valueObject.path`). The mapping is JSONB-only in core.",
+      "description": "An embedded composite element stored as a single dialect-native structured-document column (DQ9 definitely-do). Unlike Reladomo's column-flattening, the whole value object is one M0 `json`-typed column; its inner fields are read/filtered with the M2 nested-attribute access form (`Class.valueObject.path`). The concrete storage type is owned by M11.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "type", "column"],
@@ -212,14 +212,14 @@
           "minLength": 1
         },
         "column": {
-          "description": "The single JSONB column the whole value object is stored in.",
+          "description": "The single structured-document column the whole value object is stored in.",
           "type": "string",
           "minLength": 1
         },
         "mapping": {
-          "description": "Storage mapping. JSONB is the only mapping defined in core.",
-          "const": "jsonb",
-          "default": "jsonb"
+          "description": "Neutral storage mapping. `json` is the only value-object mapping defined in core; M11 maps it to each dialect's concrete storage type, such as Postgres jsonb or Snowflake VARIANT.",
+          "const": "json",
+          "default": "json"
         },
         "nullable": { "type": "boolean", "default": false }
       }

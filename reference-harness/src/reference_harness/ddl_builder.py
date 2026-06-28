@@ -27,8 +27,9 @@ _POSTGRES_BASE_TYPES = {
     "time": "time",
     "timestamp": "timestamptz",
     "uuid": "uuid",
-    # The embedded-value `json` type maps to JSONB (M0/M1, Phase 9): a whole
-    # valueObject is stored in one JSONB column rather than column-flattened.
+    # The embedded-value `json` type maps to Postgres JSONB (M0/M1, Phase 9): a
+    # whole valueObject is stored in one structured column rather than
+    # column-flattened.
     "json": "jsonb",
 }
 
@@ -111,9 +112,9 @@ def _create_table(entity: Entity, dialect: str) -> str:
         if attribute.get("primaryKey", False):
             pk_columns.append(attribute["column"])
 
-    # A valueObject is stored in ONE JSONB column (M1/M0, Phase 9): the whole
-    # embedded composite, not column-flattened. Append its backing column after
-    # the scalar attributes (so the Phase 1-8 cases are unaffected).
+    # A valueObject is stored in ONE dialect-mapped `json` column (M1/M0, Phase
+    # 9): the whole embedded composite, not column-flattened. Append its backing
+    # column after the scalar attributes (so the Phase 1-8 cases are unaffected).
     for value_object in entity.value_objects:
         column_type = _column_type("json", None, dialect)
         parts = [value_object["column"], column_type]
@@ -219,9 +220,9 @@ def ddl_for(model: Model, dialect: str) -> list[str]:
 def column_order(entity: Entity) -> Sequence[str]:
     """The descriptor's column order for *entity* (matches DDL + load order).
 
-    Scalar attributes first, then each valueObject's single JSONB column — the
-    same order :func:`_create_table` emits, so fixture loading and table-state
-    reads stay column-aligned.
+    Scalar attributes first, then each valueObject's single structured-document
+    column — the same order :func:`_create_table` emits, so fixture loading and
+    table-state reads stay column-aligned.
     """
     columns = [attribute["column"] for attribute in entity.attributes]
     columns.extend(value_object["column"] for value_object in entity.value_objects)

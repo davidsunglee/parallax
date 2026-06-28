@@ -49,7 +49,7 @@ class Entity:
 
     @property
     def value_objects(self) -> list[dict[str, Any]]:
-        """Embedded composite elements mapped to JSONB columns (M1, Phase 9)."""
+        """Embedded composites mapped to dialect-native document columns."""
         return self.definition.get("valueObjects", [])
 
     @property

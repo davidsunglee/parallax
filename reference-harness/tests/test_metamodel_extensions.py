@@ -4,13 +4,13 @@ These pin the DB-free invariants of the two definitely-do metamodel features:
 
 * the metamodel schema **accepts** the two legal inheritance strategies
   (table-per-hierarchy with a discriminator, table-per-leaf) and a valueObject
-  mapped to JSONB, and
+  mapped to the neutral ``json`` storage mapping, and
 * it **rejects** a ``table-per-class`` descriptor (the negative test) and a
   subtype that omits its ``parent``.
 
-The full discriminator-filter and JSONB read/filter golden SQL is exercised
-end-to-end against real Postgres by the compatibility suite (cases 09xx); these
-tests cover only the schema contract, which needs no database.
+The full discriminator-filter and Postgres JSONB read/filter golden SQL is
+exercised end-to-end against real Postgres by the compatibility suite (cases
+09xx); these tests cover only the schema contract, which needs no database.
 """
 
 from __future__ import annotations
@@ -60,12 +60,13 @@ def test_table_per_leaf_model_validates() -> None:
     assert {"invoice", "receipt"}.issubset(tables)
 
 
-def test_value_object_model_validates_and_maps_to_jsonb() -> None:
+def test_value_object_model_validates_and_maps_to_dialect_json() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
     assert _is_valid(model.descriptor)
     (value_object,) = model.root_entity.value_objects
-    assert value_object["mapping"] == "jsonb"
-    # The valueObject's JSONB column is part of the entity's column order + DDL.
+    assert value_object["mapping"] == "json"
+    # The valueObject's neutral json column is part of the entity's column order
+    # + Postgres DDL, where M11 maps it to jsonb.
     assert value_object["column"] in column_order(model.root_entity)
     (create,) = ddl_for(model, "postgres")
     assert f"{value_object['column']} jsonb" in create

@@ -537,16 +537,18 @@ is selected by querying its **own** table — so its golden SQL is an ordinary
 single-table read of that leaf's table. The independent `referenceSql` oracle for
 a discriminator query spells the value inline (`where kind = 'card'`).
 
-### valueObject — JSONB read and filter
+### valueObject — structured-column read and filter
 
-A `valueObject` is stored in **one JSONB column** (M0/M1), not column-flattened.
-Reading the whole value object projects the JSONB column directly (`t0.address`);
-reading or filtering an **inner field** uses the M2 nested-attribute access form,
-which lowers to a **`jsonb_extract_path_text`** extraction whose **path segments
-are carried as `?` binds** (M3 rule 4 — the JSON keys are parameters, never
-inlined, which also keeps the golden SQL a normalizer fixed point):
+A `valueObject` is stored in **one structured-document column** (M0/M1), not
+column-flattened. Reading the whole value object projects that backing column
+directly (`t0.address`). Reading or filtering an **inner field** uses the M2
+nested-attribute access form and lowers through the M11 dialect seam to a text
+extraction. For Postgres golden SQL this is **`jsonb_extract_path_text`**, whose
+**path segments are carried as `?` binds** (M3 rule 4 — the JSON keys are
+parameters, never inlined, which also keeps the golden SQL a normalizer fixed
+point):
 
-| Operation | Canonical fragment |
+| Operation | Postgres canonical fragment |
 |---|---|
 | project the whole object | `t0.address` (in the `select` list) |
 | project an inner field | `jsonb_extract_path_text(t0.address, ?) <as>` |
@@ -566,8 +568,10 @@ nestedEq(Customer.address.geo.country, 'NO')
     binds: ['geo', 'country', 'NO']
 ```
 
-`jsonb_extract_path_text` yields **text**, so the compared value is authored as a
-string and matched textually — the simplest portable JSONB filter. The
-independent `referenceSql` oracle spells the same extraction with the native
-`->>` operator and inline keys (`t0.address ->> 'city' = 'Oslo'`), a different
-formulation the harness asserts returns the same rows (M12).
+The extraction yields **text**, so the compared value is authored as a string and
+matched textually. Other dialects use their equivalent structured-column
+extraction, such as a `VARIANT` path expression, while preserving the same M2
+path order and result semantics. The independent `referenceSql` oracle spells
+the Postgres extraction with the native `->>` operator and inline keys
+(`t0.address ->> 'city' = 'Oslo'`), a different formulation the harness asserts
+returns the same rows (M12).

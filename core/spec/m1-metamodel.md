@@ -25,7 +25,7 @@ entities, plus **`asOfAttribute`** (the M7 temporal dimension). This revision
 adds two metamodel extensions (DQ9 definitely-do): **`inheritance`**
 (table-per-hierarchy with a discriminator, or table-per-leaf — **never**
 table-per-class) and **`valueObject`** (an embedded composite element mapped to a
-single JSONB column).
+single dialect-native structured-document column).
 
 ## One or many entities per descriptor
 
@@ -129,29 +129,31 @@ Indices are metadata: they declare the storage indices an implementation
 **SHOULD** create and the **unique** keys the identity cache can exploit. A
 unique index over the primary-key attributes is the canonical fast-path key.
 
-## `valueObject` — an embedded composite mapped to JSONB
+## `valueObject` — an embedded composite mapped to a structured column
 
 A `valueObject` is an **embedded composite element** — a structured sub-value of
 an entity (an address, a money amount, a geo point) that has no identity of its
 own. Unlike Reladomo, which **column-flattens** an embedded value object into
 individual columns of the owning table, core maps the **whole value object to a
-single `json` column** (Postgres JSONB, M0). This deviation keeps the composite
+single neutral `json` column** (M0). The M11 dialect seam maps that neutral type
+to the database's structured-document storage, such as Postgres `jsonb`,
+Snowflake `VARIANT`, or MariaDB `json`. This deviation keeps the composite
 atomic and schema-flexible and lets the inner fields be filtered directly.
 
 | Property | Values / meaning |
 |---|---|
 | `name` | value-object element name (REQUIRED) |
 | `type` | the value-object's logical (struct) type name (REQUIRED, documentary) |
-| `column` | the single JSONB column the whole object is stored in (REQUIRED) |
-| `mapping` | storage mapping; `jsonb` (the only mapping in core) |
+| `column` | the single structured-document column the whole object is stored in (REQUIRED) |
+| `mapping` | neutral storage mapping; `json` (the only mapping in core) |
 | `nullable` | bool, default `false` |
 
 An entity MAY declare zero or more `valueObjects`. Each value object's backing
-column is `jsonb`; the harness derives the column from the descriptor exactly as
-it does for a scalar attribute. The inner fields are **read and filtered** with
-the M2 nested-attribute access form (`nestedEq` / `nestedNotEq` over a dotted
-path `Class.valueObject.field`), which M3 lowers to a JSONB extraction
-(`jsonb_extract_path_text`).
+column is the M0 `json` neutral type; the harness derives the concrete column
+type through M11 exactly as it does for scalar attributes. The inner fields are
+**read and filtered** with the M2 nested-attribute access form (`nestedEq` /
+`nestedNotEq` over a dotted path `Class.valueObject.field`), which M3 lowers to
+a dialect-specific document extraction.
 
 ## `inheritance` — class-hierarchy mapping
 
