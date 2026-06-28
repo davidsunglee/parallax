@@ -1,25 +1,26 @@
 # TypeScript Implementation Spec
 
-This document is the **template-format companion** to
-[`00-overview.md`](00-overview.md). It follows the prescribed §1–§9 skeleton of
+This document is a **standalone, template-format specification** for the
+TypeScript implementation of Parallax. It follows the prescribed §1–§9 skeleton
+of
 [`../../../core/spec/language-spec-template.md`](../../../core/spec/language-spec-template.md)
-and exists to satisfy that template's *decide-and-record* checklist so a fresh
-reader can author a TypeScript implementation and run the compatibility suite to
-green **without re-reading the core spec**.
+and satisfies that template's *decide-and-record* checklist, so a fresh reader
+can author a TypeScript implementation and run the compatibility suite to green
+**without re-reading the core spec or any other Parallax document**.
 
-The narrative API-surface description lives in `00-overview.md` and is preserved
-unchanged. This document does not restate it in full. Instead:
+Every template section §1–§9 is specified in full here:
 
-- For the sections the overview already answers — §1 API surface, §3
-  transaction-block demarcation, §5 codegen, §6 collection idioms — this
-  document gives a concise restatement and cross-references the matching
-  `00-overview.md` section for detail. Re-reading another *TypeScript* document
-  (`00-overview.md`) is permitted; the template's completion check only forbids
-  re-reading the **core** spec.
-- For the sections the overview only gestures at or leaves open — §2 metamodel
-  introspection + serde, §4 test-double integration, §7 build-time dependency
-  enforcement, §8 optional optimized data structures, §9 per-language
-  performance targets — this document is the full specification.
+- §1 API surface, §3 transaction-block demarcation, §5 codegen, and §6
+  collection idioms record the V1 API surface inline.
+- §2 metamodel introspection + serde, §4 test-double integration, §7 build-time
+  dependency enforcement, §8 optional optimized data structures, and §9
+  per-language performance targets close the remaining decide-and-record items.
+
+The document is self-contained: no section defers its answer to another document.
+Links to `core/` files point at the authoritative source of truth, but the
+substance each one fixes (the metamodel schema's element types, the legal-edge
+DAG, the benchmark report schema) is transcribed inline, so the spec is readable
+end-to-end on its own.
 
 The [Template Coverage Appendix](#template-coverage-appendix) at the end maps
 every template section to its answer location and an explicit status, so any
@@ -27,40 +28,127 @@ future gap surfaces as an explicit marker rather than silent prose.
 
 ## 1. API surface (non-normative — DQ3)
 
-**ANSWERED — see [`00-overview.md` §5 Query API](00-overview.md#5-query-api)
-(and §1, §6, §9) for the full surface.** Summary of the recorded choices:
+**ANSWERED — specified in full below.** TypeScript exposes one generated, typed
+API surface, imported through the package-local `#parallax` alias.
 
-- **Finder / query entry point.** TypeScript uses one generated fluent
-  expression DSL on the entity symbol; reads go through the `Parallax` handle's
-  per-entity accessor. The running example
-  `Order where orderId == 42 and items.sku in ['A','B']` is spelled:
+### 1.1 Generated import surface
 
-  ```ts
-  px.orders.find(
-    Order.id.eq(42).and(Order.lineItems.exists(item => item.sku.in(["A", "B"]))),
-  );
-  ```
+Applications import the generated API through the alias `#parallax`; the physical
+output path is hidden behind it. The generated barrel exports the `parallax`
+factory, the `Parallax` and `ParallaxTransaction` types, each generated entity
+symbol (e.g. `Order`) and its managed-object type (`type Order`), entity input
+validators/types (`OrderInput`, `type OrderInput`), snapshot types
+(`type OrderSnapshot`), generated enum and value-object types, public runtime
+types such as `ParallaxList`, and the public error classes rooted at
+`ParallaxError`.
 
-- **Result types.** `find` always returns a `ParallaxList` (an async,
-  operation-backed list per `M5`), which may resolve to zero, one, or many
-  objects. Single-object access is spelled through `ParallaxList` helpers —
-  `first` / `firstOrNull` / `single` / `singleOrNull` — where `first`/`single`
-  throw `ParallaxNotFoundError` when empty and `single` throws
-  `ParallaxTooManyResultsError` for more than one result.
-- **`group` operator surface (`M2`).** Precedence uses **postfix** `.group()`
-  (`a.or(b).group().and(c)`); boolean chaining is left-associative. This
-  serializes to the canonical `group` node.
-- **Deep-fetch spelling (`M4`).** The eager-fetch navigation set is declared
-  with the `includes` option, whose values are generated relationship paths
-  (`includes: [Order.customer, Order.lineItems.product]`); longer paths imply
-  their prefixes.
-- **Aggregation spelling (`M2` sub-area).** Reserved for `project(...)`
-  (`groupBy` / aggregate functions / `having`), which returns plain data rather
-  than managed objects. Projection and aggregation are **deferred from V1**
-  (recorded here so the surface choice is not re-opened).
+```ts
+import {
+  Order,
+  OrderInput,
+  OrderStatus,
+  ParallaxOptimisticLockError,
+  parallax,
+  type Order as OrderObject,
+  type OrderSnapshot,
+  type Parallax,
+  type ParallaxTransaction,
+} from "#parallax";
+```
 
-This document adds no claim that contradicts the overview; it only restates the
-recorded choices.
+The value/type namespace overlap is deliberate: `Order` is both the entity symbol
+value used in expressions and the managed object `type Order` (aliasable as
+`OrderObject` when clarity matters).
+
+### 1.2 Parallax handle
+
+The generated `parallax(...)` factory creates the configured `Parallax` handle
+(conventionally named `px`), binding the generated metamodel, database adapter,
+clock strategy, read API, transaction API, and runtime behavior behind one entry
+point. It is not a raw connection, client, or session.
+
+```ts
+const px: Parallax = parallax({ database, clock });
+```
+
+### 1.3 Finder / query entry point
+
+TypeScript uses one generated fluent expression DSL for predicates,
+relationships, assignments, and sort keys — there is no second object-filter
+language. `find` is the only V1 read operation that returns managed domain
+objects; it always returns a `ParallaxList` (§6), which may resolve to zero, one,
+or many objects. `find()` without a predicate is shorthand for
+`find(Entity.all())`; entity symbols also expose `none()` for dynamic predicate
+construction.
+
+```ts
+const orders = px.orders.find(
+  Order.status.eq(OrderStatus.Processing).and(
+    Order.lineItems.exists(item => item.quantity.gt(2)),
+  ),
+  {
+    includes: [Order.customer, Order.lineItems.product],
+    orderBy: [Order.createdAt.desc(), Order.id.asc()],
+    limit: 50,
+  },
+);
+```
+
+### 1.4 Result types
+
+`find` returns a `ParallaxList` — an async, operation-backed list (`M5`, §6).
+Single-object access is spelled through `ParallaxList` helpers
+(`first` / `firstOrNull` / `single` / `singleOrNull`): `first`/`single` throw
+`ParallaxNotFoundError` when empty and `single` throws
+`ParallaxTooManyResultsError` for more than one result. Full collection idioms
+are in §6.
+
+### 1.5 Predicates and the `group` operator (`M2`)
+
+Predicate methods use compact names: `eq`, `notEq`, `gt`, `gte`, `lt`, `lte`,
+`isNull`, `isNotNull`, `in`, `notIn`. `eq(null)` / `notEq(null)` are rejected in
+favor of `isNull()` / `isNotNull()`. Empty membership predicates normalize before
+serialization: `attr.in([])` → `none`, `attr.notIn([])` → `all`. String
+predicates take a `{ caseInsensitive: true }` option rather than separate method
+names (e.g. `Order.name.startsWith("acme", { caseInsensitive: true })`).
+Predicates expose postfix `.not()`; to-many relationships expose explicit
+`notExists`.
+
+Boolean chaining with `.and(...)` / `.or(...)` is **left-associative**; explicit
+precedence is expressed with **postfix `.group()`**, which serializes to the
+canonical `group` node:
+
+```ts
+Order.status.eq(OrderStatus.Processing)
+  .and(Order.priority.eq(Priority.High).or(Order.customer.region.eq("NA")).group());
+```
+
+### 1.6 Relationship navigation and deep-fetch (`M4`)
+
+To-one relationships support direct path navigation
+(`Order.customer.region.eq("NA")`); to-many relationships require an explicit
+quantifier (`Order.lineItems.exists(...)` / `.notExists(...)`). The eager-fetch
+navigation set is declared with the `includes` option, whose values are generated
+relationship paths (`includes: [Order.customer, Order.lineItems.product]`);
+longer paths imply their prefixes (`Order.lineItems.product` implies
+`Order.lineItems`). Includes issue batched secondary fetches per relationship hop
+(the `1 + levels` deep-fetch contract of §9.3), not a left join per to-one.
+Navigating a relationship that was not included may lazily resolve it.
+
+### 1.7 Ordering
+
+Ordering uses generated sort keys (`orderBy: [Order.createdAt.desc(),
+Order.id.asc()]`). Sort keys are query expressions in V1, not JavaScript
+comparators.
+
+### 1.8 Aggregation spelling (`M2` sub-area) — deferred
+
+`find` never returns partial managed objects. Selective retrieval and grouped
+aggregate reads are reserved for `project(...)` (`where` / `groupBy` / `select` /
+`having` / `orderBy`), which returns plain data rather than managed objects.
+**Projection and aggregation are deferred from V1** (recorded so the surface
+choice is not re-opened). In-memory reuse of predicates as `Array.filter`
+callbacks and of sort keys as `Array.sort` comparators is likewise deferred.
 
 ## 2. Metadata / model input format (DQ5, DQ6)
 
@@ -74,10 +162,10 @@ implementer can build the metamodel layer without inferring its shape from
 
 ### 2.1 Primary authoring format
 
-The authoring format is **descriptor-first**, exactly as
-[`00-overview.md` §2 Metadata And Generation](00-overview.md#2-metadata-and-generation):
-the source of truth is the canonical Parallax YAML/JSON descriptor set — the same
-serialized metamodel the compatibility corpus uses — and a descriptor validates
+The authoring format is **descriptor-first** (the codegen pipeline is specified
+in §5): the source of truth is the canonical Parallax YAML/JSON descriptor set —
+the same serialized metamodel the compatibility corpus uses — and a descriptor
+validates
 against [`metamodel.schema.json`](../../../core/schemas/metamodel.schema.json). A
 descriptor is either a single `entity` or an `entities` array (≥1 entity, so
 relationships can name siblings). The typed entity symbols and the generic reader
@@ -181,23 +269,40 @@ not any named library — is the normative requirement (TS-0057).
 
 ## 3. Transaction-block demarcation (M8)
 
-**ANSWERED — see
-[`00-overview.md` §8 Transactions And Writes](00-overview.md#8-transactions-and-writes)
-for the full surface.** Summary of the recorded choices:
+**ANSWERED — specified in full below.** All writes require an explicit
+transaction; reads may use `px`, writes are available only through `tx`.
 
 - **Demarcation construct.** A **closure**: `await px.transaction(async tx =>
-  { … })`. Writes are available only through `tx`; reads may use `px`.
-  Commit-on-success: `transaction` returns the callback's resolved value after
-  the unit of work flushes and commits. Rollback-on-exception: if the callback
-  throws, rejects, or commit fails, the transaction rolls back and the returned
-  promise rejects. A `ParallaxTransaction` is invalid after its callback
-  completes.
+  { … })`. `transaction` returns the callback's resolved value after the unit of
+  work flushes and commits. If the callback throws, rejects, or commit fails, the
+  transaction rolls back and the returned promise rejects. A `ParallaxTransaction`
+  is invalid after its callback completes.
+
+  ```ts
+  await px.transaction(async tx => {
+    const order = await tx.orders.create(input);
+    await tx.orders.update(Order.id.eq(order.id), {
+      set: [Order.status.set(OrderStatus.Processing)],
+    });
+    await tx.orders.delete(Order.id.eq(order.id));
+  });
+  ```
+
 - **Nested / re-entrant transactions.** Nested transactions **join** the active
   transaction. There are no savepoints in V1; an inner failure rolls back the
   enclosing transaction.
 - **Unit-of-work surfacing.** There is **no public `flush` API** in V1. The
   runtime flushes at commit and uses unit-of-work state for read-your-writes
   behavior.
+- **In-transaction reads.** Reads performed through `ParallaxTransaction` use the
+  core in-transaction read-lock behavior by default; V1 does not expose
+  `lock: false`.
+- **Set-based writes.** `update` / `delete` accept either a predicate or an
+  unresolved `ParallaxList` target, use explicit assignment arrays (not partial
+  objects), and return result objects carrying at least `affectedRows`. A
+  managed-object write that expects exactly one versioned row and affects zero
+  rows throws `ParallaxOptimisticLockError`; optimistic-lock conflicts are
+  caller-driven and not auto-retried.
 
 ## 4. Test-double integration (M12, DQ15)
 
@@ -283,45 +388,70 @@ V1 in keeping with the thin-slice posture (cf. TS-0054).
 
 ## 5. Codegen-or-not (DQ5)
 
-**ANSWERED — see
-[`00-overview.md` §2 Metadata And Generation](00-overview.md#2-metadata-and-generation)
-and [§3 CLI](00-overview.md#3-cli) for the full surface.** Summary of the
-recorded choices:
+**ANSWERED — specified in full below.**
 
-- **Technique.** TypeScript V1 uses **codegen**. It is descriptor-first: the
+- **Technique.** TypeScript V1 uses **codegen** and is **descriptor-first**: the
   source of truth is the canonical Parallax YAML/JSON descriptor set (the same
-  serialized metamodel the compatibility corpus uses), and the typed entity
-  symbols, domain types, entity input types, snapshot types, and operation
-  accessors are generated from it. Codegen is chosen over runtime
+  serialized metamodel the compatibility corpus uses, validated against
+  `metamodel.schema.json` per §2.1). The typed entity symbols, managed-object
+  types, entity input types, snapshot types, generated enums/value-objects, and
+  operation accessors are all generated from it. Codegen is chosen over runtime
   reflection/proxies so the typed finder/object surface is statically checkable
-  and matches the generated import barrel.
-- **Generator entry point and inputs.** The `parallax generate` CLI command
-  materializes generated output from the descriptors named in the generator
-  config's `descriptors` key. `parallax generate --check` validates descriptors,
-  generator configuration, and code generation.
+  and matches the generated import barrel (§1.1). Decorators and TypeScript schema
+  builders may be added later as descriptor-authoring conveniences, but the
+  serialized descriptor stays the backbone.
+- **Generator config and inputs.** Generator config uses the `descriptors` key
+  (not `specs` / `models`):
+
+  ```ts
+  import { defineParallaxConfig } from "@parallax/typescript/config";
+
+  export default defineParallaxConfig({
+    descriptors: ["./parallax/**/*.yaml"],
+    output: "./.parallax/generated",
+    importAlias: "#parallax",
+  });
+  ```
+
+- **CLI.** The package provides `parallax init` (a conservative setup assistant
+  supporting `--dry-run` / `--force`; it adds explicit `parallax:generate` /
+  `parallax:check` scripts by default and wires `prebuild` / `pretest` lifecycle
+  hooks only under an opt-in flag such as `--wire-lifecycle`), `parallax generate`
+  (materializes the generated output), and `parallax generate --check` (validates
+  descriptors, generator configuration, and code generation, failing if generation
+  would fail; since generated files are uncommitted, this is not a git drift
+  check). Conformance is exposed through the **separate** `parallax-conformance`
+  CLI (`describe` / `compile` / `run` / `benchmark`), not the generated
+  `#parallax` API — see §4.
 - **Where generated artifacts live / regeneration.** Generated output is derived
-  code, gitignored by default, written to `./.parallax/generated` (outside
-  `src/`), and regenerated during install, build, and CI. Applications import it
-  through the package-local `#parallax` alias.
+  code: gitignored by default, written to `./.parallax/generated` (outside
+  `src/`, so it does not look like user-owned source), and regenerated during
+  install, build, and CI. Generated files are inspectable but not editable —
+  customization belongs in descriptors, generator configuration, runtime adapters,
+  and application-owned domain functions. Applications import the output through
+  the package-local `#parallax` alias.
 
 ## 6. Collection idioms (M5)
 
-**ANSWERED — see
-[`00-overview.md` §6 ParallaxList](00-overview.md#6-parallaxlist) for the full
-surface.** Summary of the recorded choices:
+**ANSWERED — specified in full below.**
 
 - **Concrete collection type.** A list result is a `ParallaxList<T>`: an async,
   operation-backed result collection. It implements async iteration and resolves
   its backing operation (`M5`) on first object-returning access — laziness and
   query-backing are surfaced by deferring the fetch until results are read.
-  `count` / `isEmpty` / `notEmpty` may answer with optimized SQL while
-  unresolved without marking the list resolved.
-- **Iteration / indexing / bulk-operation ergonomics.** `ParallaxList` exposes
-  read helpers (`toArray`, `toSnapshots`, `first`, `firstOrNull`, `single`,
-  `singleOrNull`, `count`, `isEmpty`, `notEmpty`) and is async-iterable. It does
-  **not** emulate arrays: no trapping of `length`, numeric indexing, or
-  synchronous iteration. Set-based `update` / `delete` accept an unresolved
-  `ParallaxList` as a bulk target.
+- **Read helpers.** `toArray`, `toSnapshots`, `first`, `firstOrNull`, `single`,
+  `singleOrNull`, `count`, `isEmpty`, `notEmpty`. `count` / `isEmpty` /
+  `notEmpty` may answer with optimized SQL while unresolved without marking the
+  list resolved; once resolved, they answer from the materialized in-memory
+  result. Object-returning helpers resolve the list: `first` throws
+  `ParallaxNotFoundError` when empty; `single` throws `ParallaxNotFoundError` when
+  empty and `ParallaxTooManyResultsError` when more than one object exists; the
+  `OrNull` variants return `null` for empty lists and still throw
+  `ParallaxTooManyResultsError` for multiple results.
+- **No array emulation.** `ParallaxList` does **not** trap `length`, numeric
+  indexing, or synchronous iteration — normal JavaScript behavior is acceptable
+  for those. Set-based `update` / `delete` accept an unresolved `ParallaxList` as
+  a bulk target (§3).
 
 ## 7. Build-time dependency enforcement (DQ3, dependency-graph)
 
@@ -562,19 +692,18 @@ This invariant is binding even though the wall-time and memory numbers are not.
 ## Template Coverage Appendix
 
 This table maps every `language-spec-template.md` section §1–§9 to its answer
-location and an explicit status. `ANSWERED` rows that cross-reference
-`00-overview.md` are restated above; gap-section rows are filled in this
-document. Every section is now resolved — `ANSWERED` or
-`DEFERRED-with-rationale` — with no decide-and-record debt remaining.
+location in this document and an explicit status. Every section is specified
+inline here and is now resolved — `ANSWERED` or `DEFERRED-with-rationale` — with
+no decide-and-record debt remaining.
 
 | Template section | Status | Answer location | ADRs |
 |---|---|---|---|
-| §1 API surface | ANSWERED | [`00-overview.md` §5](00-overview.md#5-query-api) (with §1, §6, §9); restated in [§1](#1-api-surface-non-normative--dq3) | — |
+| §1 API surface | ANSWERED | [§1](#1-api-surface-non-normative--dq3) | — |
 | §2 Metadata / introspection + serde | ANSWERED | [§2](#2-metadata--model-input-format-dq5-dq6) | [TS-0055](../docs/adr/0055-metamodel-introspection-api-has-generic-and-typed-layers.md), [TS-0056](../docs/adr/0056-one-canonical-serde-shared-by-metamodel-and-operations.md), [TS-0057](../docs/adr/0057-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md) |
-| §3 Transaction-block demarcation | ANSWERED | [`00-overview.md` §8](00-overview.md#8-transactions-and-writes); restated in [§3](#3-transaction-block-demarcation-m8) | — |
+| §3 Transaction-block demarcation | ANSWERED | [§3](#3-transaction-block-demarcation-m8) | — |
 | §4 Test-double integration | ANSWERED | [§4](#4-test-double-integration-m12-dq15) | [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md), [TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md), [TS-0060](../docs/adr/0060-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md) |
-| §5 Codegen-or-not | ANSWERED | [`00-overview.md` §2](00-overview.md#2-metadata-and-generation), [§3](00-overview.md#3-cli); restated in [§5](#5-codegen-or-not-dq5) | — |
-| §6 Collection idioms | ANSWERED | [`00-overview.md` §6](00-overview.md#6-parallaxlist); restated in [§6](#6-collection-idioms-m5) | — |
+| §5 Codegen-or-not | ANSWERED | [§5](#5-codegen-or-not-dq5) | — |
+| §6 Collection idioms | ANSWERED | [§6](#6-collection-idioms-m5) | — |
 | §7 Build-time dependency enforcement | ANSWERED | [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) | [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m13-package-map.md) |
 | §8 Optional optimized data structures | DEFERRED-with-rationale | [§8](#8-optional-optimized-data-structures-m13-dq10) | [TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md) |
 | §9 Per-language performance targets | DEFERRED-with-rationale | [§9](#9-per-language-performance-targets-m13-dq10) | [TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md) |
@@ -594,7 +723,7 @@ This document satisfies the `language-spec-template.md` completion check:
   [`metamodel.schema.json`](../../../core/schemas/metamodel.schema.json)'s eight
   element types; §4 pins the same `postgres:17` image the reference harness pins;
   and §9 binds the same `M13` methodology, fixtures, and `report.json` schema.
-- **Self-sufficient for a fresh implementer.** Together with `00-overview.md`
-  (cross-referenced for §1/§3/§5/§6) and the cited ADRs, this document is
-  sufficient to author a TypeScript implementation and run the compatibility suite
-  to green **without re-reading the core spec**.
+- **Self-sufficient for a fresh implementer.** This document specifies every
+  template section §1–§9 inline; together with the cited ADRs it is sufficient to
+  author a TypeScript implementation and run the compatibility suite to green
+  **without re-reading the core spec or any other Parallax document**.
