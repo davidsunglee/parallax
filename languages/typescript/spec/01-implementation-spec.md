@@ -201,12 +201,85 @@ for the full surface.** Summary of the recorded choices:
 
 ## 4. Test-double integration (M12, DQ15)
 
-- **(decide and record)** Test runner and how a suite run discovers and executes
-  `core/compatibility/cases/**`.
-- **(decide and record)** Provisioning mechanism (Testcontainers vs. embedded
-  binary) behind the database provider seam.
-- **(decide and record)** Which dialects this language runs in CI and how the
-  per-dialect golden SQL is selected.
+**ANSWERED — see [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md),
+[TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md),
+[TS-0060](../docs/adr/0060-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md).**
+The TypeScript conformance suite proves the implementation against the same
+language-neutral corpus the Python reference harness proves green. This section
+specifies the runner, how cases are discovered and executed, how the database is
+provisioned, and which dialects run in CI — enough to stand up the suite without
+inferring it from the harness internals.
+
+### 4.1 Test runner
+
+The runner is **vitest** (TS-0058). The suite is a parametrized matrix of
+discovered compatibility cases × dialects — the same shape as the Python harness's
+parametrized `test_compatibility.py` — and vitest's `test.each` / programmatic test
+generation maps directly onto it, so every `(case, dialect)` pair is its own named,
+independently reportable test. vitest is dev-only test tooling, not shipped runtime
+code. `node:test` is the documented fallback if a strict no-dev-dependency stance is
+later preferred; it would run the same matrix but push case-matrix generation into a
+hand-rolled harness module.
+
+### 4.2 Case discovery and execution boundary
+
+Cases are **discovered by glob**, mirroring the Python harness's `discover_cases`
+(`reference-harness/src/reference_harness/case.py`):
+
+- Glob `core/compatibility/cases/**/*.{yaml,yml}`, **dedupe and sort**, then load
+  each case and the model descriptor it references (resolving `models/<name>.yaml`
+  and the stem-matched `fixtures/<model-stem>.yaml` sidecar).
+- Generate one parametrized test per `(case × dialect)`.
+
+Globbing the same files the oracle proves keeps the case set authoritative — there
+is no hand-maintained list to drift — and the sorted, deduped order makes the
+matrix deterministic.
+
+Cases are **executed through the `parallax-conformance` adapter contract** (TS-0059,
+[`conformance-adapter-contract.md`](../../../core/spec/conformance-adapter-contract.md)),
+**not** by reaching into runtime internals:
+
+- `parallax-conformance compile --case <c.yaml> --dialect <d>` emits SQL + binds and
+  MUST NOT execute; the test compares the emitted statements and round-trip count.
+- `parallax-conformance run --case <c.yaml> --dialect <d>` provisions, executes, and
+  returns observations; the test compares the JSON envelope using the **same
+  comparison rules `M12` uses**.
+
+The adapter is the single behavioral boundary: the suite imports no finder builders,
+cache objects, or other internals. This decouples the suite from implementation
+detail and reuses the shared corpus as the primary behavioral surface.
+
+### 4.3 Provisioning seam
+
+Provisioning is **Testcontainers for Node** — `@testcontainers/postgresql` — behind
+the same database-provider seam the `parallax-conformance run` adapter consumes
+(TS-0060). The image is pinned to **`postgres:17`**, the exact image the reference
+harness pins (`reference-harness/src/reference_harness/providers/postgres.py`,
+`POSTGRES_IMAGE = "postgres:17"`); the two are already aligned, so no harness change
+or downgrade is required, and the TypeScript pin bumps only when the harness bumps
+its major. The container is booted once per dialect (session-scoped, as the Python
+harness does), and per-test resets use the container's `snapshot` / `restoreSnapshot`
+so each case starts from a clean, migrated database without re-creating the
+container.
+
+### 4.4 CI dialect set and per-dialect golden-SQL selection
+
+For V1, TypeScript runs **Postgres only** in CI (TS-0060) — the round-1 normative
+target (`m11-dialect-seam.md`). Per-dialect golden SQL is selected by the provider's
+own `dialect` identifier, which is the `goldenSql` key on the case:
+
+- When the active dialect **has** a `goldenSql` entry, the full set of layers runs,
+  including database execution against the container.
+- When the active dialect has **no** `goldenSql` entry, **database execution is
+  skipped** and the dialect-agnostic checks still run (schema conformance,
+  normalization determinism, serde round-trip, equivalent encodings, round-trip
+  count) — the same skip behavior the Python harness applies.
+
+**MariaDB is deferred-but-additive**, not removed: adding it later is a new provider
+behind the same seam plus a `goldenSql.mariadb` key on the affected cases — never a
+runner redesign. The dialect seam is already proven beyond Postgres by the Python
+oracle, so a second CI database buys no additional V1 conformance and is omitted from
+V1 in keeping with the thin-slice posture (cf. TS-0054).
 
 ## 5. Codegen-or-not (DQ5)
 
@@ -288,7 +361,7 @@ authoring and carry no `(decide and record)` debt at completion.
 | §1 API surface | ANSWERED | [`00-overview.md` §5](00-overview.md#5-query-api) (with §1, §6, §9); restated in [§1](#1-api-surface-non-normative--dq3) | — |
 | §2 Metadata / introspection + serde | ANSWERED | [§2](#2-metadata--model-input-format-dq5-dq6) | [TS-0055](../docs/adr/0055-metamodel-introspection-api-has-generic-and-typed-layers.md), [TS-0056](../docs/adr/0056-one-canonical-serde-shared-by-metamodel-and-operations.md), [TS-0057](../docs/adr/0057-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md) |
 | §3 Transaction-block demarcation | ANSWERED | [`00-overview.md` §8](00-overview.md#8-transactions-and-writes); restated in [§3](#3-transaction-block-demarcation-m8) | — |
-| §4 Test-double integration | PENDING | [§4](#4-test-double-integration-m12-dq15) | — |
+| §4 Test-double integration | ANSWERED | [§4](#4-test-double-integration-m12-dq15) | [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md), [TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md), [TS-0060](../docs/adr/0060-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md) |
 | §5 Codegen-or-not | ANSWERED | [`00-overview.md` §2](00-overview.md#2-metadata-and-generation), [§3](00-overview.md#3-cli); restated in [§5](#5-codegen-or-not-dq5) | — |
 | §6 Collection idioms | ANSWERED | [`00-overview.md` §6](00-overview.md#6-parallaxlist); restated in [§6](#6-collection-idioms-m5) | — |
 | §7 Build-time dependency enforcement | PENDING | [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) | — |
