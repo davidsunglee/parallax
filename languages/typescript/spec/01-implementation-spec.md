@@ -368,6 +368,13 @@ The adapter is the single behavioral boundary: the suite imports no finder build
 cache objects, or other internals. This decouples the suite from implementation
 detail and reuses the shared corpus as the primary behavioral surface.
 
+The suite MUST begin with `parallax-conformance describe` and use the returned
+capability claims to decide whether a case is expected to run or expected to
+return `status: "unsupported"`. TypeScript uses the core
+`caseTags.include` / `caseTags.exclude` claim model; it MUST NOT treat broad
+`modules` + `caseShapes` claims as sufficient when a V1 slice deliberately
+defers part of a module.
+
 ### 4.3 Provisioning seam
 
 Provisioning is **Testcontainers for Node** — `@testcontainers/postgresql` — behind
@@ -376,10 +383,41 @@ the same database-provider seam the `parallax-conformance run` adapter consumes
 harness pins (`reference-harness/src/reference_harness/providers/postgres.py`,
 `POSTGRES_IMAGE = "postgres:17"`); the two are already aligned, so no harness change
 or downgrade is required, and the TypeScript pin bumps only when the harness bumps
-its major. The container is booted once per dialect (session-scoped, as the Python
-harness does), and per-test resets use the container's `snapshot` / `restoreSnapshot`
-so each case starts from a clean, migrated database without re-creating the
-container.
+its major.
+
+The container is booted once per dialect (session-scoped, as the Python harness
+does), but database state is reset **through the provider seam**, not through a
+test-runner call to a container-specific API. The TypeScript provider MUST expose
+a reset lifecycle equivalent to the reference `DatabaseProvider` seam:
+
+```ts
+interface CompatibilityDatabaseProvider {
+  readonly dialect: "postgres";
+  reset(): Promise<void>;                 // clean, empty database/schema
+  applyDdl(statements: readonly string[]): Promise<void>;
+  load(
+    table: string,
+    columns: readonly string[],
+    rows: readonly (readonly unknown[])[],
+  ): Promise<void>;
+}
+```
+
+For every database-backed `run` case, the conformance adapter calls
+`provider.reset()`, derives and applies DDL for the case's model, and then loads
+fixture rows according to the core case lifecycle (`writeSequence` cases start
+empty unless the case sets `loadFixtures`; read/scenario/conflict cases load the
+model fixtures). This yields the same clean / migrated / isolated state as the
+Python harness without coupling the suite to Testcontainers internals.
+
+The normative Postgres reset is drop-and-recreate of the active schema, matching
+the reference provider's `drop schema if exists public cascade; create schema
+public` behavior. An implementation MAY optimize this behind
+`CompatibilityDatabaseProvider.reset()` with a documented snapshot mechanism
+provided by a concrete dependency and version (for example a Postgres-module
+snapshot API), but that optimization must be invisible to the test runner and
+MUST have a drop/recreate fallback. The spec does not require a portable
+Testcontainers snapshot API.
 
 ### 4.4 CI dialect set and per-dialect golden-SQL selection
 
@@ -399,6 +437,88 @@ behind the same seam plus a `goldenSql.mariadb` key on the affected cases — ne
 runner redesign. The dialect seam is already proven beyond Postgres by the Python
 oracle, so a second CI database buys no additional V1 conformance and is omitted from
 V1 in keeping with the thin-slice posture (cf. TS-0054).
+
+### 4.5 V1 conformance capability claims
+
+The TypeScript V1 conformance adapter MUST report a case-slice-aware
+`describe` result. A V1 adapter that implements the specified transaction,
+relationship, list, temporal, locking, and M13 benchmark surfaces but still
+defers aggregation, identity-cache scenarios, query-cache scenarios, M9 detached
+merge-back, numeric benchmark targets, and non-Postgres dialects claims
+capabilities in this shape:
+
+```json
+{
+  "schemaVersion": "1",
+  "command": "describe",
+  "status": "ok",
+  "adapter": {
+    "language": "typescript",
+    "name": "@parallax/typescript",
+    "version": "0.1.0"
+  },
+  "capabilities": {
+    "modules": [
+      "m0",
+      "m1",
+      "m2",
+      "m3",
+      "m4",
+      "m5",
+      "m7",
+      "m8",
+      "m10",
+      "m11",
+      "m12",
+      "m13"
+    ],
+    "dialects": ["postgres"],
+    "caseShapes": ["read", "writeSequence", "conflict"],
+    "caseTags": {
+      "exclude": [
+        "aggregate",
+        "projection",
+        "groupBy",
+        "having",
+        "scenario",
+        "cache-hit",
+        "identity",
+        "identity cache",
+        "query cache",
+        "detached",
+        "lifecycle detach"
+      ]
+    },
+    "commands": ["describe", "compile", "run", "benchmark"],
+    "provisioning": "self-managed"
+  }
+}
+```
+
+The exact module list MUST match the implementation's completed packages. The
+important V1 rule is the slice boundary:
+
+- Aggregation and projection are deferred by §1.8, so 04xx `aggregate` /
+  `groupBy` / `having` cases and cases tagged `projection` are outside the claim
+  even though basic M2 predicate reads are inside it.
+- The transaction/read-lock/batched-write slice of M8 is inside §3, but the M8
+  identity-cache and query-cache scenario slice is deferred by TS-0054. Therefore
+  `scenario`, `cache-hit`, `identity`, `identity cache`, and `query cache` cases
+  are outside the V1 claim.
+- M9 detached merge-back is deferred by the lifecycle section, so cases tagged
+  `detached` or `lifecycle detach` are outside the V1 claim unless a later
+  implementation explicitly adds that slice.
+- M13 benchmark execution is inside the V1 claim. The `benchmark` command MUST
+  run the shared benchmark fixtures for the claimed Postgres dialect and emit the
+  report shape specified by §9; only the absolute numeric wall-time and memory
+  targets are deferred pending the first TypeScript baseline.
+- MariaDB cases are outside the V1 claim because `dialects` contains only
+  `postgres`.
+
+For a case outside the claim, the adapter SHOULD return `status: "unsupported"`
+with a diagnostic such as `unsupported-case-tag` or `unsupported-dialect`.
+For a case inside the claim, returning `unsupported` is a conformance failure;
+the adapter must return `ok` or `error`.
 
 ## 5. Codegen-or-not (DQ5)
 
@@ -672,7 +792,12 @@ it in full:
   `parallax-conformance benchmark --benchmark <b.yaml> --dialect <d>` command of
   the [conformance adapter
   contract](../../../core/spec/conformance-adapter-contract.md), against the
-  Postgres provider seam of [§4](#4-test-double-integration-m12-dq15).
+  Postgres provider seam of [§4](#4-test-double-integration-m12-dq15). The
+  command writes the standard adapter envelope to stdout with the M13 report under
+  `report`; for a single benchmark fixture invocation, `report.benchmarks`
+  contains one entry for the requested fixture. Writing the same object to
+  `report.json` is allowed as a CI artifact, but stdout is the conformance
+  contract.
 
 ### 9.2 Deferred (numeric targets)
 
