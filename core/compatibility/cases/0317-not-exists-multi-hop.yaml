@@ -1,0 +1,26 @@
+# notExists across TWO hops (M4 negated semi-join, multi-hop).
+#
+# 0306 is a single-hop notExists; 0308 is a multi-hop EXISTS. This pins the
+# negated multi-hop: orders that have NO item carrying any status. The inner
+# `exists(OrderItem.statuses)` is nested under a `notExists(Order.items -> ...)`,
+# so it keeps orders whose every item is status-less (or which have no items at
+# all). Order 1 (items 11/12 have statuses) and order 42 (item 421 has a status)
+# are dropped; order 2 (item 21 has none) and the item-less orders 3/4/5 survive.
+model: models/orders.yaml
+tags: [m4, notExists, relationship, multi-hop]
+operation:
+  notExists:
+    rel: Order.items
+    op:
+      exists:
+        rel: OrderItem.statuses
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where not exists (select 1 from order_item t1 where t1.order_id = t0.id and exists (select 1 from order_status t2 where t2.order_item_id = t1.id))
+binds: []
+referenceSql: select id, name from orders where id not in (select order_id from order_item where id in (select order_item_id from order_status))
+expectedRows:
+  - { id: 2, name: Linus }
+  - { id: 3, name: ada }
+  - { id: 4, name: Margaret }
+  - { id: 5, name: Alan }
+roundTrips: 1

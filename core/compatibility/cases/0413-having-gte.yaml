@@ -1,0 +1,27 @@
+# having with the `>=` comparator (M2 having comparators).
+#
+# 0401 exercises only `>`; this pins the `gte` token in the HAVING clause. Group
+# OrderItem by order and keep groups whose summed quantity is at least 4:
+#   order 1 -> 3 (dropped), order 2 -> 4 (kept), order 42 -> 8 (kept).
+model: models/orders.yaml
+tags: [m2, m3, aggregate, sum, groupBy, having, gte]
+operation:
+  groupBy:
+    operand:
+      all: {}
+    keys: [OrderItem.orderId]
+    aggregates:
+      - sum: { attr: OrderItem.quantity, as: total_quantity }
+    having:
+      gte:
+        agg:
+          sum: { attr: OrderItem.quantity, as: total_quantity }
+        value: 4
+goldenSql:
+  postgres: select t0.order_id, sum(t0.quantity) total_quantity from order_item t0 group by t0.order_id having sum(t0.quantity) >= ?
+binds: [4]
+referenceSql: select order_id, sum(quantity) as total_quantity from order_item group by order_id having sum(quantity) >= 4
+expectedRows:
+  - { order_id: 2, total_quantity: 4 }
+  - { order_id: 42, total_quantity: 8 }
+roundTrips: 1

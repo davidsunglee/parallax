@@ -1,0 +1,26 @@
+# Processing as-of exactly on a milestone boundary, INCLUSIVE upper bound.
+#
+# Ledger declares `toIsInclusive: true`, so the as-of interval is the CLOSED form
+# [from, to] and the injected predicate is `in_z <= ? and out_z >= ?` (note the
+# `>=`, not 0507's `>`). A pin exactly on 2024-06-01 therefore includes BOTH the
+# row ENDING at the boundary (id 1, 100.00, out_z = 2024-06-01) and the row
+# BEGINNING there (id 1, 150.00) — id 1 appears twice. This is the opposite
+# normative branch of 0507 (exclusive boundary), which drops the ending row.
+model: models/ledger.yaml
+tags: [m7, m3, m1, temporal mvp, as-of, audit-only, boundary, inclusive]
+operation:
+  asOf:
+    operand:
+      all: {}
+    asOfAttr: Ledger.processingDate
+    date: "2024-06-01T00:00:00+00:00"
+goldenSql:
+  postgres: select t0.led_id, t0.val from ledger t0 where t0.in_z <= ? and t0.out_z >= ?
+binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"]
+referenceSql: select led_id, val from ledger where in_z <= '2024-06-01T00:00:00+00:00'::timestamptz and out_z >= '2024-06-01T00:00:00+00:00'::timestamptz
+expectedRows:
+  - { led_id: 1, val: 100.00 }
+  - { led_id: 1, val: 150.00 }
+  - { led_id: 2, val: 200.00 }
+  - { led_id: 3, val: 50.00 }
+roundTrips: 1

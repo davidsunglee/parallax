@@ -1,0 +1,32 @@
+# Optimistic-lock VERSION-ONLY bump (M10): a versioned UPDATE that changes no
+# domain attribute still writes `version` and advances it.
+#
+# M10 mandates the version column is written on EVERY update even when no domain
+# field changed — otherwise a no-domain-change write would leave the gate where
+# the next writer last saw it, and a genuine concurrent edit could slip through.
+# 0704 advances the version ALONGSIDE a balance change; this isolates the pure
+# advance: the golden `set` clause writes only `version`, no domain column.
+#
+# Account id 2 (Linus) is at version 1 with no concurrent writer, so the gate
+# `... and version = ?` (bind 1) matches and the UPDATE affects EXACTLY ONE row,
+# advancing version 1 -> 2 while balance stays 250.00.
+model: models/account.yaml
+tags: [m10, m3, optimistic-locking, success, version-only-bump]
+expectedAffectedRows: 1
+goldenSql:
+  postgres: update account set version = ? where id = ? and version = ?
+binds: [2, 2, 1]
+expectedTableState:
+  account:
+    - id: 1
+      owner: Ada
+      balance: 100.00
+      version: 1
+    - id: 2
+      owner: Linus
+      balance: 250.00
+      version: 2
+    - id: 3
+      owner: Grace
+      balance: 10.00
+      version: 1

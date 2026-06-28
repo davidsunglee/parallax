@@ -21,4 +21,7 @@ expectedRows:
   - { id: 1, city: Oslo }
   - { id: 2, city: Oslo }
   - { id: 3, city: Boston }
+  # id 4 has a null address valueObject, so the extracted city projects as null —
+  # the structured-column read of an absent value object.
+  - { id: 4, city: null }
 roundTrips: 1

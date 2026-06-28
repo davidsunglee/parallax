@@ -3,8 +3,12 @@
 # top-2 by qty are ids 42 and 5), so the order-insensitive result comparison
 # still proves the directive. The directives lower after the predicate, in the
 # canonical clause order `... order by ... limit ...`.
+#
+# Cross-dialect (Phase 10): `order by ... limit ?` is identical SQL on Postgres
+# and MariaDB, so this case carries goldenSql for both dialects — the pagination
+# parity witness in the matrix (the row-limit decision point of the M11 seam).
 model: models/orders.yaml
-tags: [m2, orderBy, limit, directive]
+tags: [m2, orderBy, limit, directive, dialect]
 operation:
   limit:
     count: 2
@@ -16,6 +20,7 @@ operation:
           all: {}
 goldenSql:
   postgres: select t0.id, t0.name from orders t0 order by t0.qty desc limit ?
+  mariadb: select t0.id, t0.name from orders t0 order by t0.qty desc limit ?
 binds: [2]
 referenceSql: select id, name from orders order by qty desc limit 2
 expectedRows:

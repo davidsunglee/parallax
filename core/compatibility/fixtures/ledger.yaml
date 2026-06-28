@@ -1,0 +1,33 @@
+# Fixture rows for the Ledger model (models/ledger.yaml) — the same audit-only
+# milestone history as Balance, so the INCLUSIVE-boundary as-of read (0508)
+# discriminates against the exclusive boundary (0507).
+#
+#   id 1 (acct A): value 100.00 known [2024-01-01, 2024-06-01) — SUPERSEDED,
+#                  then value 150.00 known [2024-06-01, infinity) — CURRENT.
+#   id 2 (acct B): value 200.00 known [2024-02-01, infinity)    — CURRENT.
+#   id 3 (acct C): value 50.00  known [2024-03-01, 2024-08-01)  — closed.
+#
+# A pin exactly on 2024-06-01 with the INCLUSIVE upper bound returns BOTH id-1
+# milestones (the row ending at the boundary is now included), unlike the
+# exclusive read which drops it.
+Ledger:
+  - id: 1
+    acctNum: A
+    value: 100.00
+    processingFrom: "2024-01-01T00:00:00+00:00"
+    processingTo: "2024-06-01T00:00:00+00:00"
+  - id: 1
+    acctNum: A
+    value: 150.00
+    processingFrom: "2024-06-01T00:00:00+00:00"
+    processingTo: infinity
+  - id: 2
+    acctNum: B
+    value: 200.00
+    processingFrom: "2024-02-01T00:00:00+00:00"
+    processingTo: infinity
+  - id: 3
+    acctNum: C
+    value: 50.00
+    processingFrom: "2024-03-01T00:00:00+00:00"
+    processingTo: "2024-08-01T00:00:00+00:00"

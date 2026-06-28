@@ -1,0 +1,22 @@
+# notIn over a column containing NULLs — three-valued-logic exclusion (M2 §Null).
+#
+# `notIn` against a NULL column yields NULL, so the NULL row is EXCLUDED. Order 4
+# has a NULL sku, so `not sku in ('A-100', 'B-200')` drops orders 1 and 2 (the
+# matches) AND order 4 (the NULL) — leaving only the non-matching, non-null skus.
+# This is the `NOT IN` NULL footgun the spec explicitly pins; the negative 3VL
+# companion to 0217 (notIn over non-null data).
+model: models/orders.yaml
+tags: [m2, notIn, membership, "null", three-valued-logic]
+operation:
+  notIn:
+    attr: Order.sku
+    values: [A-100, B-200]
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where not t0.sku in (?, ?)
+binds: [A-100, B-200]
+referenceSql: select id, name from orders where sku not in ('A-100', 'B-200')
+expectedRows:
+  - { id: 3, name: ada }
+  - { id: 5, name: Alan }
+  - { id: 42, name: Grace }
+roundTrips: 1
