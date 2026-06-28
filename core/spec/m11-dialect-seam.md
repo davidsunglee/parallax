@@ -22,7 +22,7 @@ choices at each point; both are normative for their dialect (M3). The catalog
 | `dialect` identifier | `postgres` | `mariadb` |
 | type mapping (neutral type → column type) | per the M0 Postgres column | per the M0 MariaDB column (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
-| identifier quoting | unquoted lowercase; quote on demand | identical (backtick on demand) |
+| identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
 | **read-lock suffix** (M8) | `for share of t0` | **`lock in share mode`** (no `for share`; MDEV-17514) |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
@@ -70,9 +70,13 @@ name the concrete storage type.
 - **SELECT shape.** The canonical SELECT projects explicit, table-aliased columns
   (`t0.id, t0.name`) from a single aliased table (`from orders t0`). The alias
   scheme is `t0, t1, …` (see M3 normalization). No `SELECT *`.
-- **Identifier quoting.** Postgres identifiers are unquoted lowercase. The
-  dialect decides when quoting is required; round-1 fixtures use plain
-  lowercase identifiers that need no quoting.
+- **Identifier quoting.** Simple lowercase identifiers are unquoted on both
+  dialects. A reserved word or otherwise non-simple name MUST be quoted, and the
+  quote **character diverges** — Postgres double-quotes (`"order"`), MariaDB
+  backticks (`` `order` ``). The compatibility case `0006` witnesses this on both
+  dialects (a column literally named `order`); the M3 normalizer preserves quoted
+  identifiers, and the harness quotes reserved identifiers in the DDL/DML it
+  generates while leaving simple names unquoted.
 - **Infinity representation (M7).** The open upper bound of a temporal interval
   (M0) is owned here. **Postgres** uses native `'infinity'::timestamptz`, so the
   current-row predicate is `to = infinity` and a milestone insert writes

@@ -18,6 +18,7 @@ from psycopg.adapt import Loader
 from psycopg.types.json import Jsonb
 from testcontainers.postgres import PostgresContainer
 
+from ..ddl_builder import quote_identifier
 from . import register
 
 if TYPE_CHECKING:
@@ -114,9 +115,10 @@ class PostgresProvider:
     ) -> None:
         if not rows:
             return
-        col_list = ", ".join(columns)
+        col_list = ", ".join(quote_identifier(column, self.dialect) for column in columns)
         placeholders = ", ".join(["%s"] * len(columns))
-        sql = f"insert into {table} ({col_list}) values ({placeholders})"
+        target = quote_identifier(table, self.dialect)
+        sql = f"insert into {target} ({col_list}) values ({placeholders})"
         with self._conn.cursor() as cur:
             cur.executemany(sql, [tuple(_adapt(value) for value in row) for row in rows])
 

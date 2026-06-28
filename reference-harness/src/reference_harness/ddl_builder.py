@@ -61,6 +61,44 @@ _MARIADB_BASE_TYPES = {
 
 _DECIMAL_RE = re.compile(r"^decimal\((\d+),(\d+)\)$")
 
+# A "simple" identifier needs no quoting; anything else (a reserved word, or a
+# name with uppercase / special characters / a leading digit) MUST be quoted.
+_SIMPLE_IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+# Reserved words that, although lexically simple, MUST be quoted when used as a
+# column/table identifier. A curated set common to Postgres and MariaDB — enough
+# to cover identifiers a model might realistically use (e.g. `order`); a non-
+# simple name (uppercase / special) is caught by the regex regardless.
+_RESERVED_WORDS = frozenset(
+    {
+        "all", "and", "as", "asc", "between", "by", "case", "check", "column",
+        "constraint", "create", "default", "delete", "desc", "distinct", "drop",
+        "else", "end", "exists", "foreign", "from", "group", "having", "in",
+        "index", "insert", "into", "is", "join", "key", "like", "limit", "not",
+        "null", "on", "or", "order", "primary", "references", "select", "set",
+        "table", "then", "to", "union", "unique", "update", "user", "using",
+        "values", "when", "where",
+    }
+)
+
+_QUOTE_CHAR = {"postgres": '"', "mariadb": "`"}
+
+
+def quote_identifier(name: str, dialect: str) -> str:
+    """Quote *name* for *dialect* when it is a reserved word or otherwise non-simple.
+
+    A simple lowercase identifier that is not reserved is returned unquoted, so
+    the generated DDL/DML for every existing model is byte-identical. A reserved
+    word (e.g. ``order``) or a name with uppercase / special characters is wrapped
+    in the dialect's quote character — ``"..."`` on Postgres, backticks on MariaDB
+    — with any embedded quote doubled. The hand-authored golden SQL quotes the
+    same identifiers; the M3 normalizer preserves that quoting.
+    """
+    if _SIMPLE_IDENTIFIER.match(name) and name not in _RESERVED_WORDS:
+        return name
+    char = _QUOTE_CHAR.get(dialect, '"')
+    return f"{char}{name.replace(char, char * 2)}{char}"
+
 
 def _postgres_column_type(neutral_type: str, max_length: int | None) -> str:
     decimal = _DECIMAL_RE.match(neutral_type)
@@ -105,7 +143,7 @@ def _create_table(entity: Entity, dialect: str) -> str:
         column_type = _column_type(
             attribute["type"], attribute.get("maxLength"), dialect
         )
-        parts = [attribute["column"], column_type]
+        parts = [quote_identifier(attribute["column"], dialect), column_type]
         if not attribute.get("nullable", False):
             parts.append("not null")
         columns.append(" ".join(parts))
@@ -117,7 +155,7 @@ def _create_table(entity: Entity, dialect: str) -> str:
     # column after the scalar attributes (so the Phase 1-8 cases are unaffected).
     for value_object in entity.value_objects:
         column_type = _column_type("json", None, dialect)
-        parts = [value_object["column"], column_type]
+        parts = [quote_identifier(value_object["column"], dialect), column_type]
         if not value_object.get("nullable", False):
             parts.append("not null")
         columns.append(" ".join(parts))
@@ -133,10 +171,11 @@ def _create_table(entity: Entity, dialect: str) -> str:
             pk_columns.append(from_column)
 
     if pk_columns:
-        columns.append(f"primary key ({', '.join(pk_columns)})")
+        quoted_pk = ", ".join(quote_identifier(column, dialect) for column in pk_columns)
+        columns.append(f"primary key ({quoted_pk})")
 
     column_clause = ",\n  ".join(columns)
-    return f"create table {entity.table} (\n  {column_clause}\n)"
+    return f"create table {quote_identifier(entity.table, dialect)} (\n  {column_clause}\n)"
 
 
 def _merge_by_column(items: Sequence[dict], key: str = "column") -> list[dict]:

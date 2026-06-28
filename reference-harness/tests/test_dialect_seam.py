@@ -14,7 +14,7 @@ import datetime as dt
 from pathlib import Path
 
 from reference_harness.case import load_model
-from reference_harness.ddl_builder import _column_type, ddl_for
+from reference_harness.ddl_builder import _column_type, ddl_for, quote_identifier
 from reference_harness.providers.mariadb import (
     _INFINITY_SENTINEL,
     _from_db_value,
@@ -96,6 +96,39 @@ def test_mariadb_ddl_derives_from_descriptor() -> None:
     assert "in_z datetime(6)" in create
     assert "out_z datetime(6)" in create
     assert "val decimal(18,2)" in create
+
+
+# --- identifier quoting (the divergent quote character) ----------------------
+
+
+def test_quote_identifier_leaves_simple_names_unquoted() -> None:
+    # Simple lowercase, non-reserved names are returned unchanged on both
+    # dialects, so the generated DDL/DML for every existing model is untouched.
+    for name in ("id", "in_z", "card_network", "order_id"):
+        assert quote_identifier(name, "postgres") == name
+        assert quote_identifier(name, "mariadb") == name
+
+
+def test_quote_identifier_quotes_reserved_words_per_dialect() -> None:
+    # A reserved word MUST be quoted, with the dialect's divergent quote char.
+    assert quote_identifier("order", "postgres") == '"order"'
+    assert quote_identifier("order", "mariadb") == "`order`"
+    assert quote_identifier("select", "postgres") == '"select"'
+    assert quote_identifier("select", "mariadb") == "`select`"
+
+
+def test_quote_identifier_quotes_non_simple_names() -> None:
+    # Uppercase / special-character names are not simple, so they are quoted too.
+    assert quote_identifier("fullName", "postgres") == '"fullName"'
+    assert quote_identifier("fullName", "mariadb") == "`fullName`"
+
+
+def test_reserved_word_column_ddl_is_quoted() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/grade.yaml")
+    assert '"order" integer not null' in ddl_for(model, "postgres")[0]
+    assert "`order` int not null" in ddl_for(model, "mariadb")[0]
+    # the simple columns stay unquoted
+    assert "id bigint not null" in ddl_for(model, "postgres")[0]
 
 
 # --- the infinity / instant adapters (the max-sentinel fallback) -------------
