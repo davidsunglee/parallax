@@ -26,6 +26,29 @@ def test_read_lock_update_suffix_normalizes_to_lowercase() -> None:
     assert is_canonical(canonical)
 
 
+# --- quoted identifiers (reserved words) are preserved, not stripped ---------
+# A reserved-word column must be quoted; the normalizer keeps the quotes (with
+# the dialect's quote character) rather than stripping them (Postgres) or
+# mangling the backticks (MariaDB), which is what broke before the fix.
+
+
+def test_quoted_reserved_identifier_is_canonical_postgres() -> None:
+    canonical = 'select t0.id, t0."order", t0.label from grade t0 where t0."order" > ?'
+    assert is_canonical(canonical, "postgres")
+    assert normalize(canonical, "postgres") == canonical
+
+
+def test_quoted_reserved_identifier_is_canonical_mariadb() -> None:
+    canonical = "select t0.id, t0.`order`, t0.label from grade t0 where t0.`order` > ?"
+    assert is_canonical(canonical, "mariadb")
+    assert normalize(canonical, "mariadb") == canonical
+
+
+def test_quoted_identifier_in_insert_is_canonical() -> None:
+    assert is_canonical('insert into grade(id, "order", label) values (?, ?, ?)', "postgres")
+    assert is_canonical("insert into grade(id, `order`, label) values (?, ?, ?)", "mariadb")
+
+
 # --- canonical-rule enforcement (M3 rule 1: t0,t1 aliases + qualified columns;
 #     rule 4: parameters as ? binds) ----------------------------------------
 # Lowercasing + re-spacing alone is not enough: a lowercase-but-non-canonical

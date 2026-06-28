@@ -1,0 +1,25 @@
+# Reserved-word identifier quoting (M1 column mapping, M3 SQL, M11 dialect seam).
+#
+# The `ordinal` attribute maps to a column named `order` — a reserved word — so it
+# MUST be quoted everywhere it appears: in the projection AND the predicate. This
+# is the one genuine cross-dialect divergence in the quote CHARACTER: Postgres
+# double-quotes (`"order"`), MariaDB backticks (`` `order` ``). The same rows must
+# come back on both dialects (ordinal > 1 ⇒ grades 2 and 3). Simple columns (id,
+# label) are not reserved and stay unquoted, proving quoting is applied per
+# identifier, not blanket. The byte-for-byte different quote characters make this
+# a dialect-matrix witness; the trivial single-table predicate needs no
+# referenceSql (expectedRows are eyeball-verifiable).
+model: models/grade.yaml
+tags: [m1, m3, m11, identifier, quoting, reserved-word, dialect]
+operation:
+  greaterThan:
+    attr: Grade.ordinal
+    value: 1
+goldenSql:
+  postgres: select t0.id, t0."order", t0.label from grade t0 where t0."order" > ?
+  mariadb: select t0.id, t0.`order`, t0.label from grade t0 where t0.`order` > ?
+binds: [1]
+expectedRows:
+  - { id: 2, order: 2, label: mid }
+  - { id: 3, order: 3, label: high }
+roundTrips: 1

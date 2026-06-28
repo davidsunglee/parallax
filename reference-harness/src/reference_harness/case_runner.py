@@ -28,7 +28,7 @@ from typing import Any
 from . import serde
 from .case import Case, Entity, Model
 from .data_loader import load_model
-from .ddl_builder import column_order, ddl_for
+from .ddl_builder import column_order, ddl_for, quote_identifier
 from .providers import DatabaseProvider
 from .sql_normalize import normalize
 
@@ -642,8 +642,8 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
 def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
     """Read the full state of *entity*'s table, projecting every column by name."""
     columns = list(column_order(entity))
-    projection = ", ".join(f"t0.{column}" for column in columns)
-    return db.query(f"select {projection} from {entity.table} t0")
+    projection = ", ".join(f"t0.{quote_identifier(column, db.dialect)}" for column in columns)
+    return db.query(f"select {projection} from {quote_identifier(entity.table, db.dialect)} t0")
 
 
 def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:

@@ -1,0 +1,9 @@
+# Fixture rows for the Grade model (models/grade.yaml).
+#
+# Rows speak attribute names, so `ordinal` loads into the reserved-word column
+# `order`. Three grades with distinct ordinals so the quoted-column predicate
+# (ordinal > 1) discriminates.
+Grade:
+  - { id: 1, ordinal: 1, label: low }
+  - { id: 2, ordinal: 2, label: mid }
+  - { id: 3, ordinal: 3, label: high }

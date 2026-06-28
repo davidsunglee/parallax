@@ -27,7 +27,8 @@ from __future__ import annotations
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.tokens import Token, Tokenizer, TokenType
+from sqlglot.dialects.dialect import Dialect
+from sqlglot.tokens import Token, TokenType
 
 # Map a parallax dialect identifier to the sqlglot dialect that parses/renders
 # it. ``mariadb`` (Phase 10, the second dialect behind the M11 seam) has no
@@ -82,6 +83,14 @@ _FUNCTION_NAME = "function-name"
 # quoted ones tokenize as ``IDENTIFIER``, so lowercasing these VARs is safe.)
 _KEYWORD_VARS = frozenset({"SHARE", "OF"})
 
+# The identifier-quoting character per dialect (M3 rule 2 leaves quoted
+# identifiers intact). A quoted identifier — a reserved word or otherwise
+# non-simple column/table name — tokenizes as a single ``IDENTIFIER`` token whose
+# text has the quotes stripped; the renderer re-wraps it in the dialect's quote
+# character so the canonical form keeps the quotes (``t0."order"`` on Postgres,
+# ``t0.`order``` on MariaDB).
+_QUOTE_CHAR = {"postgres": '"', "mariadb": "`"}
+
 
 def _lowercase_unquoted_identifiers(tree: exp.Expression) -> None:
     for node in tree.walk():
@@ -89,13 +98,20 @@ def _lowercase_unquoted_identifiers(tree: exp.Expression) -> None:
             node.set("this", node.this.lower())
 
 
-def _render_tokens(tokens: list[Token]) -> str:
+def _render_tokens(tokens: list[Token], dialect: str) -> str:
     """Reassemble a token stream into canonical single-space-separated SQL."""
+    quote_char = _QUOTE_CHAR.get(dialect, '"')
     parts: list[tuple[TokenType, str]] = []
     for index, token in enumerate(tokens):
         if token.token_type in _DROP_TOKENS:
             continue
         text = token.text
+        # A quoted identifier (reserved word / non-simple name) tokenizes to an
+        # IDENTIFIER whose text has the quotes stripped; re-wrap it in the
+        # dialect's quote character so the canonical form preserves the quoting.
+        # IDENTIFIER is a value token, so its case is left intact below.
+        if token.token_type is TokenType.IDENTIFIER:
+            text = f"{quote_char}{text}{quote_char}"
         # A VAR immediately followed by ``(`` is a function name (``lower(…)``),
         # not a table/column identifier. sqlglot renders function names in
         # uppercase (``LOWER``); M3 rule 2 lowercases unquoted identifiers, so we
@@ -256,8 +272,12 @@ def normalize(sql: str, dialect: str = "postgres") -> str:
     lock_suffix = _detach_read_lock(tree, dialect)
     _lowercase_unquoted_identifiers(tree)
     rendered = tree.sql(dialect=engine, normalize=True, pretty=False)
-    tokens = Tokenizer(dialect=engine).tokenize(rendered)
-    return _render_tokens(tokens) + lock_suffix
+    # Tokenize through the dialect (not the base Tokenizer) so a quoted identifier
+    # — double-quoted on Postgres, backtick-quoted on MariaDB/MySQL — tokenizes as
+    # a single IDENTIFIER token the renderer can re-quote, rather than being
+    # stripped (Postgres) or split around the backticks (MySQL).
+    tokens = Dialect.get_or_raise(engine).tokenize(rendered)
+    return _render_tokens(tokens, dialect) + lock_suffix
 
 
 def is_canonical(sql: str, dialect: str = "postgres") -> bool:
