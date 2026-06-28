@@ -1,13 +1,14 @@
-# valueObject JSONB filter: a DEEP nested field (M1 valueObject, M3).
+# valueObject structured-column filter: a DEEP nested field (M1 valueObject, M3).
 #
-# The `address` valueObject nests a `geo` object. nestedEq(Customer.address.geo.country,
-# 'US') lowers to a multi-segment extraction `jsonb_extract_path_text(t0.address, ?, ?)`
-# — one bind per path segment ('geo', 'country') then the compared value ('US').
-# Only Grace (Boston, US) qualifies; the two Oslo (NO) customers are excluded.
+# The `address` valueObject nests a `geo` object. In Postgres golden SQL,
+# nestedEq(Customer.address.geo.country, 'US') lowers to a multi-segment
+# extraction `jsonb_extract_path_text(t0.address, ?, ?)` — one bind per path
+# segment ('geo', 'country') then the compared value ('US'). Only Grace
+# (Boston, US) qualifies; the two Oslo (NO) customers are excluded.
 #
 # referenceSql spells the same path with native operators (`-> 'geo' ->> 'country'`).
 model: models/customer.yaml
-tags: [m1, m3, nested, value-object, jsonb]
+tags: [m1, m3, nested, value-object, json]
 operation:
   nestedEq: { path: Customer.address.geo.country, value: US }
 goldenSql:

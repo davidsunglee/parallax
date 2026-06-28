@@ -8,9 +8,9 @@ transitively, on it.
 ## Neutral data types
 
 An implementation **MUST** support the neutral type set below and **MUST** map
-each to the Postgres type shown. The neutral name is what appears in a model
-descriptor's `attribute.type`; the concrete column type is owned by the M11
-dialect seam.
+each neutral type to an equivalent concrete column type through the M11 dialect
+seam. The neutral name is what appears in a model descriptor's `attribute.type`;
+the Postgres type shown is the round-1 concrete dialect mapping.
 
 | Neutral type | Description | Postgres type | Notes |
 |---|---|---|---|
@@ -26,7 +26,7 @@ dialect seam.
 | `time` | time of day, no date | `time` | timezone-naive (wall-clock) |
 | `timestamp` | absolute instant | `timestamptz` | UTC-normalized, microsecond precision (see below) |
 | `uuid` | 128-bit UUID | `uuid` | in core (Postgres-native) |
-| `json` | embedded composite value | `jsonb` | the `valueObject` mapping (M1); see below |
+| `json` | embedded composite value | `jsonb` | the `valueObject` mapping (M1); dialects map this to their native structured-document type |
 
 > The walking-skeleton phase exercises `int64`/`int32`, `string`, and (in the
 > schema) the full set. `boolean`, `decimal(p,s)`, the temporal types, and the
@@ -37,18 +37,21 @@ dialect seam.
 
 ## The `json` embedded-value type
 
-The optional `json` neutral type maps to Postgres **`jsonb`** and is the storage
-type a `valueObject` element (M1) is mapped to: an embedded composite value
-(e.g. an address, a money pair) is stored as a **single JSONB column** rather
-than column-flattened into the owning table. This is a **deliberate deviation
-from Reladomo**, which flattens an embedded value object into individual columns;
-JSONB keeps the composite atomic, schema-flexible, and directly queryable.
+The optional `json` neutral type is the storage type a `valueObject` element
+(M1) maps to: an embedded composite value (e.g. an address, a money pair) is
+stored as a **single structured-document column** rather than column-flattened
+into the owning table. This is a **deliberate deviation from Reladomo**, which
+flattens an embedded value object into individual columns; a single document
+column keeps the composite atomic, schema-flexible, and directly queryable.
+
+The M11 dialect seam owns the concrete storage type and extraction functions.
+Examples include Postgres `jsonb`, MariaDB `json`, and Snowflake `VARIANT`.
 
 An implementation **MUST** read and filter a value object's inner fields through
 the nested-attribute access form (M2 `nestedEq` / `nestedNotEq`, lowered to a
-JSONB extraction by M3). A `json`-typed column **MAY** be `null` when the value
-object is declared `nullable`; otherwise it is `not null` and carries the
-embedded object.
+dialect-specific document extraction by M3/M11). A `json`-typed column **MAY**
+be `null` when the value object is declared `nullable`; otherwise it is
+`not null` and carries the embedded object.
 
 ## Timezone handling
 

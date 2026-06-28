@@ -1,15 +1,17 @@
-# Customer: a valueObject model — an embedded composite mapped to JSONB (Phase 9).
+# Customer: a valueObject model — an embedded composite mapped to a single
+# structured-document column (Phase 9).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. The
 # `address` element is a `valueObject`: an embedded composite (street / city /
-# geo) stored in ONE JSONB column (`address`), NOT column-flattened (a deliberate
-# deviation from Reladomo). Its inner fields are read / filtered with the M2
-# nested-attribute access form (nestedEq / nestedNotEq over a dotted path
-# `Customer.address.field`), which M3 lowers to a `jsonb_extract_path_text`
-# extraction whose path segments are carried as `?` binds.
+# geo) stored in ONE M0 `json` column (`address`), NOT column-flattened (a
+# deliberate deviation from Reladomo). Its inner fields are read / filtered with
+# the M2 nested-attribute access form (nestedEq / nestedNotEq over a dotted path
+# `Customer.address.field`). Postgres golden SQL lowers that to a
+# `jsonb_extract_path_text` extraction whose path segments are carried as `?`
+# binds.
 #
 # Row data lives in the sibling fixtures/customer.yaml; each `address` fixture
-# value is a nested mapping loaded into the JSONB column.
+# value is a nested mapping loaded into the structured-document column.
 entity:
   name: Customer
   namespace: parallax.compatibility
@@ -30,7 +32,7 @@ entity:
     - name: address
       type: Address
       column: address
-      mapping: jsonb
+      mapping: json
   indices:
     - name: customer_pk
       attributes: [id]

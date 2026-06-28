@@ -1,8 +1,9 @@
 # Fixture rows for the Customer valueObject model (models/customer.yaml).
 #
-# Each `address` value is a nested mapping loaded into the single JSONB column.
-# The nested-field filter cases extract `address.city` and `address.geo.country`
-# and match them as text (jsonb_extract_path_text yields text).
+# Each `address` value is a nested mapping loaded into the single M0 `json`
+# column. The nested-field filter cases extract `address.city` and
+# `address.geo.country` and match them as text. Postgres golden SQL uses
+# jsonb_extract_path_text, which yields text.
 #
 #   id 1 Ada    city Oslo   geo.country NO
 #   id 2 Linus  city Oslo   geo.country NO

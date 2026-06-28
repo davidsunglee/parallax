@@ -46,10 +46,14 @@ mappings that **differ** from Postgres:
 | `float64` | `double precision` | `double` | spelling |
 | `bytes` | `bytea` | `longblob` | |
 | `uuid` | `uuid` | `char(36)` | no native UUID type |
-| `json` | `jsonb` | `json` | MariaDB `JSON` is a `longtext` alias |
+| `json` | `jsonb` | `json` | structured-document storage; MariaDB `JSON` is a `longtext` alias |
 
 `int32`/`int64`/`date`/`time`/`decimal(p,s)`/`string` map the same in spirit
 (`int`/`bigint`/`date`/`time`/`decimal(p,s)`/`varchar(n)|text`).
+
+Future dialects with a different document type, such as Snowflake `VARIANT`,
+map the same M0 `json` neutral type behind this seam; the metamodel does not
+name the concrete storage type.
 
 ## Decision points needed now
 

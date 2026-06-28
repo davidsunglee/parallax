@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/operation.schema.json",
   "title": "Parallax Operation Algebra (M2)",
-  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the M7 as-of model, never written by the user), AND nested-attribute access into a valueObject (the `nestedEq` / `nestedNotEq` predicates compare an inner JSONB field referenced by a dotted path `Class.valueObject.field` against a literal, lowering to a JSONB extraction). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8).",
+  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the M7 as-of model, never written by the user), AND nested-attribute access into a valueObject (the `nestedEq` / `nestedNotEq` predicates compare an inner structured-document field referenced by a dotted path `Class.valueObject.field` against a string literal, lowering to a dialect-specific text extraction). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8).",
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
@@ -664,29 +664,29 @@
     },
 
     "nestedRef": {
-      "description": "A reference into a valueObject's inner field: `Class.valueObject` followed by one or more dotted path segments into the embedded JSON (e.g. Customer.address.city, Customer.address.geo.lat). Lowers to a JSONB extraction on the value object's backing column (M3).",
+      "description": "A reference into a valueObject's inner field: `Class.valueObject` followed by one or more dotted path segments into the embedded document (e.g. Customer.address.city, Customer.address.geo.lat). Lowers to a dialect-specific text extraction on the value object's backing column (M3/M11).",
       "type": "string",
       "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$"
     },
     "nestedComparison": {
-      "description": "A nested-field comparison: a valueObject inner field (referenced by a dotted path) compared against a literal. The value is compared as text (the JSONB extraction yields text), so authored values are strings.",
+      "description": "A nested-field comparison: a valueObject inner field (referenced by a dotted path) compared against a literal. The value is compared as text (the dialect-specific document extraction yields text), so authored values are strings.",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "value"],
       "properties": {
         "path": { "$ref": "#/$defs/nestedRef" },
-        "value": { "$ref": "#/$defs/literal" }
+        "value": { "type": "string" }
       }
     },
     "nestedEq": {
-      "description": "nestedEq(path, value): filter by an embedded valueObject field's value (JSONB extraction equality).",
+      "description": "nestedEq(path, value): filter by an embedded valueObject field's extracted text value.",
       "type": "object",
       "additionalProperties": false,
       "required": ["nestedEq"],
       "properties": { "nestedEq": { "$ref": "#/$defs/nestedComparison" } }
     },
     "nestedNotEq": {
-      "description": "nestedNotEq(path, value): filter where an embedded valueObject field's value differs (JSONB extraction inequality).",
+      "description": "nestedNotEq(path, value): filter where an embedded valueObject field's extracted text value differs.",
       "type": "object",
       "additionalProperties": false,
       "required": ["nestedNotEq"],
