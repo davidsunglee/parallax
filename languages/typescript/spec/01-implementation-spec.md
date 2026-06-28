@@ -3,7 +3,7 @@
 This document is the **template-format companion** to
 [`00-overview.md`](00-overview.md). It follows the prescribed §1–§9 skeleton of
 [`../../../core/spec/language-spec-template.md`](../../../core/spec/language-spec-template.md)
-and exists to satisfy that template's *(decide and record)* checklist so a fresh
+and exists to satisfy that template's *decide-and-record* checklist so a fresh
 reader can author a TypeScript implementation and run the compatibility suite to
 green **without re-reading the core spec**.
 
@@ -468,29 +468,104 @@ this block because it carries no `M`-number; its single legal direction is
 
 ## 8. Optional optimized data structures (M13, DQ10)
 
-- **(decide and record, optional)** Whether to use open-addressing map/set
-  analogues (`UnifiedMap` / `UnifiedSet`) for the identity / query caches.
-- **(decide and record, optional)** Whether to use a key-derived hashing
-  analogue (`HashingStrategy`) to index domain objects by a derived key without
-  allocating wrapper key objects.
-- **(decide and record, optional)** Any language-specific result-interchange
-  technique.
+**DEFERRED-with-rationale — non-normative, no V1 decision; see
+[TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md).**
+This section is **non-normative**: the optional optimized data structures exist
+only to back the `M8` identity / query caches, and `M8` is deferred from
+TypeScript V1 (TS-0054, [§3](#3-transaction-block-demarcation-m8)). There is
+nothing to optimize for V1, so no V1 decision is recorded. The core itself marks
+these techniques optional and non-normative — a language may hit its targets any
+way it likes.
+
+The two optional techniques the template lists are recorded here so the deferral
+is deliberate rather than an omission:
+
+- **Open-addressing map/set analogues** (`UnifiedMap` / `UnifiedSet`) for the
+  identity / query caches — lower per-entry overhead than chained hash tables.
+- **Key-derived hashing analogue** (`HashingStrategy`) — index domain objects by
+  a derived (e.g. composite-PK) key without allocating wrapper key objects.
+
+**Post-V1 note (non-binding):** when `M8` lands, a built-in `Map` keyed by a
+canonical primary-key string is the idiomatic JavaScript baseline for both
+caches. The Java open-addressing / no-wrapper-key-allocation techniques have **no
+compelling direct JavaScript analogue** — short string keys are effectively
+interned by the engine and V8 `Map`s are already compact, so a composite-PK
+string key captures the same benefit without a custom hashing strategy or an
+open-addressing table. This decision is deferred with `M8` and made when `M8` is
+implemented.
 
 ## 9. Per-language performance targets (M13, DQ10)
 
-- **(decide and record)** Wall-time targets (`p50` / `p95`) per benchmark
-  workload family.
-- **(decide and record)** Memory targets (peak / steady resident set).
-- **(decide and record)** Confirm the implementation honors the fixtures'
-  `expectRoundTrips` invariant (a deep fetch is `1 + levels`, never N+1).
+**DEFERRED-with-rationale (numeric targets) + the `expectRoundTrips` invariant is
+binding — see
+[TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md).**
+TypeScript **binds to the shared `M13` methodology now** and **defers the numeric
+targets** until a real implementation can produce a baseline. Numbers invented
+against a non-existent implementation would be fabricated rather than measured.
+
+### 9.1 Bound for V1 (methodology)
+
+The methodology is the durable, comparable part of `M13`, and TypeScript adopts
+it in full:
+
+- **Shared fixtures.** The same benchmark fixtures under
+  [`core/compatibility/benchmarks/`](../../../core/compatibility/benchmarks)
+  (`read-mix.yaml`, `deep-fetch.yaml`, `milestone-write.yaml`), run against the
+  same deterministically generated datasets at the same scale, so a TypeScript
+  number is directly comparable to the reference figures and to past runs.
+- **Nearest-rank percentile.** `wallTimeMs.p50` / `wallTimeMs.p95` are computed
+  with the nearest-rank percentile, matching the Python harness.
+- **`report.json` schema.** The emitted report uses the schema fixed in
+  [`m13-performance.md`](../../../core/spec/m13-performance.md): `generatedAt`,
+  `dialect`, `benchmarks[].{ fixture, model, datasetRows, workloads[] }` (each
+  workload carrying `name`, `iterations`, `wallTimeMs.{ p50, p95 }`, `roundTrips`,
+  and the optional `expectRoundTrips` / `roundTripsOk`), and
+  `memory.{ peakBytes, steadyBytes }`.
+- **Execution hook.** Benchmarks run through the
+  `parallax-conformance benchmark --benchmark <b.yaml> --dialect <d>` command of
+  the [conformance adapter
+  contract](../../../core/spec/conformance-adapter-contract.md), against the
+  Postgres provider seam of [§4](#4-test-double-integration-m12-dq15).
+
+### 9.2 Deferred (numeric targets)
+
+The **absolute numeric ceilings are deferred placeholders** pending a first
+baseline run, with this tracking note:
+
+- **Wall-time targets** (`p50` / `p95`) per benchmark workload family — **deferred
+  (TODO: set from baseline).**
+- **Memory targets** (peak / steady resident set) — **deferred (TODO: set from
+  baseline).**
+
+**Tracking note.** Once the first TypeScript implementation runs the benchmark
+suite and records a baseline, this section is updated with grading targets derived
+from that baseline. Until then there are no numeric ceilings to grade against; the
+benchmark suite must still run end-to-end and emit a well-formed `report.json`.
+
+### 9.3 Binding invariant — `expectRoundTrips` (non-placeholder)
+
+The `expectRoundTrips` invariant is **carved out of the deferral and is a hard,
+non-placeholder requirement** for V1: **a deep fetch costs `1 + levels` round
+trips regardless of fan-out, never N+1.** The TypeScript implementation **MUST**
+honor it. It is enforced in both directions the core already enforces it:
+
+- **`M13` benchmark runner** — a workload's actual round trips MUST equal its
+  declared `expectRoundTrips`; a deep fetch that silently regressed to N+1 would
+  blow its declared round-trip count and fail the run.
+- **`M12` round-trip-count layer** — for every compatibility case,
+  `len(goldenSql[dialect])` MUST equal the case's `roundTrips`
+  ([§4.2](#42-case-discovery-and-execution-boundary) compares this via the
+  `parallax-conformance` envelope's `roundTrips`).
+
+This invariant is binding even though the wall-time and memory numbers are not.
 
 ## Template Coverage Appendix
 
 This table maps every `language-spec-template.md` section §1–§9 to its answer
 location and an explicit status. `ANSWERED` rows that cross-reference
 `00-overview.md` are restated above; gap-section rows are filled in this
-document. Rows marked `PENDING` are completed by later phases of this spec's
-authoring and carry no `(decide and record)` debt at completion.
+document. Every section is now resolved — `ANSWERED` or
+`DEFERRED-with-rationale` — with no decide-and-record debt remaining.
 
 | Template section | Status | Answer location | ADRs |
 |---|---|---|---|
@@ -501,5 +576,25 @@ authoring and carry no `(decide and record)` debt at completion.
 | §5 Codegen-or-not | ANSWERED | [`00-overview.md` §2](00-overview.md#2-metadata-and-generation), [§3](00-overview.md#3-cli); restated in [§5](#5-codegen-or-not-dq5) | — |
 | §6 Collection idioms | ANSWERED | [`00-overview.md` §6](00-overview.md#6-parallaxlist); restated in [§6](#6-collection-idioms-m5) | — |
 | §7 Build-time dependency enforcement | ANSWERED | [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) | [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m13-package-map.md) |
-| §8 Optional optimized data structures | PENDING | [§8](#8-optional-optimized-data-structures-m13-dq10) | — |
-| §9 Per-language performance targets | PENDING | [§9](#9-per-language-performance-targets-m13-dq10) | — |
+| §8 Optional optimized data structures | DEFERRED-with-rationale | [§8](#8-optional-optimized-data-structures-m13-dq10) | [TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md) |
+| §9 Per-language performance targets | DEFERRED-with-rationale | [§9](#9-per-language-performance-targets-m13-dq10) | [TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md) |
+
+### Completion check
+
+This document satisfies the `language-spec-template.md` completion check:
+
+- **No remaining markers.** Every template section §1–§9 is resolved; no
+  *decide-and-record* placeholder remains. Seven sections are `ANSWERED`; §8 and
+  §9 are `DEFERRED-with-rationale` (deliberate, ADR-backed decisions, not
+  omissions), and the §9 `expectRoundTrips` invariant stays binding.
+- **No contradiction with core.** The §7 legal-edge block is transcribed
+  one-to-one from [`dependency-graph.md`](../../../core/spec/dependency-graph.md)
+  and keyed by the same `M`-numbers, so it is mechanically diff-able against the
+  core graph; the §2 metadata shapes are drawn one-to-one from
+  [`metamodel.schema.json`](../../../core/schemas/metamodel.schema.json)'s eight
+  element types; §4 pins the same `postgres:17` image the reference harness pins;
+  and §9 binds the same `M13` methodology, fixtures, and `report.json` schema.
+- **Self-sufficient for a fresh implementer.** Together with `00-overview.md`
+  (cross-referenced for §1/§3/§5/§6) and the cited ADRs, this document is
+  sufficient to author a TypeScript implementation and run the compatibility suite
+  to green **without re-reading the core spec**.
