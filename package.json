@@ -2,6 +2,10 @@
   "name": "parallax",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22.13"
+  },
   "description": "Dev-tooling only (husky, commitlint, markdownlint, lint-staged) for the parallax polyglot monorepo. No runtime code lives here.",
   "scripts": {
     "prepare": "husky",

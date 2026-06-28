@@ -25,7 +25,7 @@ lint-py:
     cd {{harness}} && uv run ruff check .
 
 lint-md:
-    npx --no-install markdownlint-cli2
+    pnpm exec markdownlint-cli2
 
 # Validate the schemas against the JSON Schema meta-schema, validate every
 # fixture against its schema, and parse all golden/reference SQL with sqlglot.
