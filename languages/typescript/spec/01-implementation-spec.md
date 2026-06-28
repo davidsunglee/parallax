@@ -10,11 +10,21 @@ can author a TypeScript implementation and run the compatibility suite to green
 
 Every template section §1–§9 is specified in full here:
 
-- §1 API surface, §3 transaction-block demarcation, §5 codegen, and §6
+- [§1](#1-api-surface-non-normative--dq3) API surface,
+  [§3](#3-transaction-block-demarcation-m8) transaction-block demarcation,
+  [§5](#5-codegen-or-not-dq5) codegen, and [§6](#6-collection-idioms-m5)
   collection idioms record the V1 API surface inline.
-- §2 metamodel introspection + serde, §4 test-double integration, §7 build-time
-  dependency enforcement, §8 optional optimized data structures, and §9
-  per-language performance targets close the remaining decide-and-record items.
+- [§2](#2-metadata--model-input-format-dq5-dq6) metamodel introspection + serde,
+  [§4](#4-test-double-integration-m12-dq15) test-double integration,
+  [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) build-time
+  dependency enforcement, [§8](#8-optional-optimized-data-structures-m13-dq10)
+  optional optimized data structures, and
+  [§9](#9-per-language-performance-targets-m13-dq10) per-language performance
+  targets close the remaining decide-and-record items.
+
+Beyond the template skeleton, the spec also includes a supplementary
+[Object lifecycle: detach, snapshots, and entity inputs](#object-lifecycle-detach-snapshots-and-entity-inputs-m9)
+section (`M9`).
 
 The document is self-contained: no section defers its answer to another document.
 Links to `core/` files point at the authoritative source of truth, but the
@@ -76,7 +86,8 @@ const px: Parallax = parallax({ database, clock });
 TypeScript uses one generated fluent expression DSL for predicates,
 relationships, assignments, and sort keys — there is no second object-filter
 language. `find` is the only V1 read operation that returns managed domain
-objects; it always returns a `ParallaxList` (§6), which may resolve to zero, one,
+objects; it always returns a `ParallaxList`
+([§6](#6-collection-idioms-m5)), which may resolve to zero, one,
 or many objects. `find()` without a predicate is shorthand for
 `find(Entity.all())`; entity symbols also expose `none()` for dynamic predicate
 construction.
@@ -96,12 +107,12 @@ const orders = px.orders.find(
 
 ### 1.4 Result types
 
-`find` returns a `ParallaxList` — an async, operation-backed list (`M5`, §6).
-Single-object access is spelled through `ParallaxList` helpers
-(`first` / `firstOrNull` / `single` / `singleOrNull`): `first`/`single` throw
-`ParallaxNotFoundError` when empty and `single` throws
+`find` returns a `ParallaxList` — an async, operation-backed list
+(`M5`, [§6](#6-collection-idioms-m5)). Single-object access is spelled through
+`ParallaxList` helpers (`first` / `firstOrNull` / `single` / `singleOrNull`):
+`first`/`single` throw `ParallaxNotFoundError` when empty and `single` throws
 `ParallaxTooManyResultsError` for more than one result. Full collection idioms
-are in §6.
+are in [§6](#6-collection-idioms-m5).
 
 ### 1.5 Predicates and the `group` operator (`M2`)
 
@@ -132,7 +143,9 @@ navigation set is declared with the `includes` option, whose values are generate
 relationship paths (`includes: [Order.customer, Order.lineItems.product]`);
 longer paths imply their prefixes (`Order.lineItems.product` implies
 `Order.lineItems`). Includes issue batched secondary fetches per relationship hop
-(the `1 + levels` deep-fetch contract of §9.3), not a left join per to-one.
+(the `1 + levels` deep-fetch contract of
+[§9.3](#93-binding-invariant--expectroundtrips-non-placeholder)), not a left join
+per to-one.
 Navigating a relationship that was not included may lazily resolve it.
 
 ### 1.7 Ordering
@@ -163,7 +176,8 @@ implementer can build the metamodel layer without inferring its shape from
 ### 2.1 Primary authoring format
 
 The authoring format is **descriptor-first** (the codegen pipeline is specified
-in §5): the source of truth is the canonical Parallax YAML/JSON descriptor set —
+in [§5](#5-codegen-or-not-dq5)): the source of truth is the canonical Parallax
+YAML/JSON descriptor set —
 the same serialized metamodel the compatibility corpus uses — and a descriptor
 validates
 against [`metamodel.schema.json`](../../../core/schemas/metamodel.schema.json). A
@@ -393,11 +407,13 @@ V1 in keeping with the thin-slice posture (cf. TS-0054).
 - **Technique.** TypeScript V1 uses **codegen** and is **descriptor-first**: the
   source of truth is the canonical Parallax YAML/JSON descriptor set (the same
   serialized metamodel the compatibility corpus uses, validated against
-  `metamodel.schema.json` per §2.1). The typed entity symbols, managed-object
+  `metamodel.schema.json` per [§2.1](#21-primary-authoring-format)). The typed
+  entity symbols, managed-object
   types, entity input types, snapshot types, generated enums/value-objects, and
   operation accessors are all generated from it. Codegen is chosen over runtime
   reflection/proxies so the typed finder/object surface is statically checkable
-  and matches the generated import barrel (§1.1). Decorators and TypeScript schema
+  and matches the generated import barrel
+  ([§1.1](#11-generated-import-surface)). Decorators and TypeScript schema
   builders may be added later as descriptor-authoring conveniences, but the
   serialized descriptor stays the backbone.
 - **Generator config and inputs.** Generator config uses the `descriptors` key
@@ -422,7 +438,7 @@ V1 in keeping with the thin-slice posture (cf. TS-0054).
   would fail; since generated files are uncommitted, this is not a git drift
   check). Conformance is exposed through the **separate** `parallax-conformance`
   CLI (`describe` / `compile` / `run` / `benchmark`), not the generated
-  `#parallax` API — see §4.
+  `#parallax` API — see [§4](#4-test-double-integration-m12-dq15).
 - **Where generated artifacts live / regeneration.** Generated output is derived
   code: gitignored by default, written to `./.parallax/generated` (outside
   `src/`, so it does not look like user-owned source), and regenerated during
@@ -451,7 +467,7 @@ V1 in keeping with the thin-slice posture (cf. TS-0054).
 - **No array emulation.** `ParallaxList` does **not** trap `length`, numeric
   indexing, or synchronous iteration — normal JavaScript behavior is acceptable
   for those. Set-based `update` / `delete` accept an unresolved `ParallaxList` as
-  a bulk target (§3).
+  a bulk target ([§3](#3-transaction-block-demarcation-m8)).
 
 ## 7. Build-time dependency enforcement (DQ3, dependency-graph)
 
@@ -551,8 +567,9 @@ mechanical gate over the `import` graph.
 
 **`M6` is deliberately absent** — aggregation is folded into `M2`, and the gap is
 preserved to keep cross-references to the core numbering stable. The shared
-`@parallax/serde` package (the canonical serde seam of §2.3) belongs to the
-`M1`/`M2` slice and is not a numbered module, so it adds no edge to the graph.
+`@parallax/serde` package (the canonical serde seam of
+[§2.3](#23-serde-module)) belongs to the `M1`/`M2` slice and is not a numbered
+module, so it adds no edge to the graph.
 
 ### 7.3 Legal-edge contract
 
@@ -689,12 +706,91 @@ honor it. It is enforced in both directions the core already enforces it:
 
 This invariant is binding even though the wall-time and memory numbers are not.
 
+## Object lifecycle: detach, snapshots, and entity inputs (M9)
+
+This section is supplementary to the template's §1–§9 (the template has no
+object-lifecycle slot). It records the TypeScript surface for getting data **out
+of** and **back into** managed objects — the TypeScript analogue of Reladomo's
+detach / merge-back lifecycle (`M9`, the `@parallax/lifecycle` package of
+[§7.2](#72-module--package-mapping)). The decisions are recorded in
+[TS-0036](../docs/adr/0036-snapshots-are-the-typescript-detached-data-surface.md)
+and
+[TS-0037](../docs/adr/0037-generated-entity-inputs-provide-validation-helpers.md).
+
+**Snapshots are the detached-data surface.** TypeScript does not expose
+Reladomo-style detached *managed objects* in V1; the plain, JSON-serializable
+**snapshot** is the idiomatic detached representation (for REST, UI editing,
+messaging, and later merge workflows). `OrderSnapshot` is what Parallax **emits**
+from a managed object:
+
+```ts
+const snapshot = await order.toSnapshot({
+  attributes: [Order.id, Order.customer.address.zipCode],
+  relationships: [Order.customer, Order.lineItems],
+});
+
+const snapshots = await orders.toSnapshots({
+  relationships: [Order.lineItems.product],
+});
+```
+
+Snapshot output includes all scalar and value-object attributes by default and no
+relationships by default; `attributes` and `excludeAttributes` are mutually
+exclusive, relationship paths are opt-in (there is no `excludeRelationships`,
+since omitted relationships are already excluded), and list-level snapshots
+batch-load requested relationships like includes
+([§1.6](#16-relationship-navigation-and-deep-fetch-m4)) to avoid N+1.
+(`JSON.stringify` over a managed object is scalar-only and synchronous and does
+not lazy-load relationships, so use a snapshot when relationship data is needed.)
+
+**Entity inputs are the create / reattach surface.** `OrderInput` is the
+generated input-validation namespace and type for data accepted by `create`
+([§3](#3-transaction-block-demarcation-m8)) — the surface for turning
+external/detached data back into a managed object:
+
+```ts
+const input = OrderInput.parse(req.body);
+
+const result = OrderInput.safeParse(req.body);
+if (!result.ok) {
+  return response.status(400).json(result.error);
+}
+
+await px.transaction(async tx => {
+  await tx.orders.create(input);
+});
+```
+
+`parse` returns a typed entity input or throws `ParallaxValidationError`;
+`safeParse` returns `{ ok: true; value } | { ok: false; error }`. Entity inputs
+are **distinct from snapshots**: `OrderInput` is what Parallax *accepts* to
+construct a new managed object, `OrderSnapshot` is what it *emits*. `OrderInput`
+includes only create-accepted data (writable scalar attributes, writable value
+objects, app-assigned primary keys when configured, foreign-key attributes
+exposed as writable, and nested dependent relationships only when explicitly
+allowed) and excludes database-generated IDs, read-only attributes,
+optimistic-lock/version fields, processing timestamps, and server-owned fields.
+Create consumes nested relationship data only when listed in `relationships`;
+data listed in `ignoreRelationships` is accepted but ignored; any remaining
+nested relationship data is rejected. These helpers validate plain payloads —
+they do **not** create managed objects, parse detached entities, parse snapshots,
+or replace `tx.entity.create(...)` (TS-0037).
+
+**Deferred from V1.** The full Reladomo-style detached-object lifecycle — the
+`M9` state machine (`persisted` → `detached` → `detached-deleted`) and merge-back
+(`getDetachedCopy` / `copyDetachedValuesToOriginalOrInsertIfNew`) — is **deferred
+from TypeScript V1**. When `M9` merge-back lands it should be expressed through
+explicit snapshot apply / merge APIs that preserve the core observable semantics
+(TS-0036), not by introducing detached managed objects.
+
 ## Template Coverage Appendix
 
 This table maps every `language-spec-template.md` section §1–§9 to its answer
 location in this document and an explicit status. Every section is specified
 inline here and is now resolved — `ANSWERED` or `DEFERRED-with-rationale` — with
-no decide-and-record debt remaining.
+no decide-and-record debt remaining. The spec also carries a supplementary
+[Object lifecycle](#object-lifecycle-detach-snapshots-and-entity-inputs-m9)
+section (`M9`) beyond the template skeleton; it is not a template row.
 
 | Template section | Status | Answer location | ADRs |
 |---|---|---|---|
@@ -713,16 +809,23 @@ no decide-and-record debt remaining.
 This document satisfies the `language-spec-template.md` completion check:
 
 - **No remaining markers.** Every template section §1–§9 is resolved; no
-  *decide-and-record* placeholder remains. Seven sections are `ANSWERED`; §8 and
-  §9 are `DEFERRED-with-rationale` (deliberate, ADR-backed decisions, not
-  omissions), and the §9 `expectRoundTrips` invariant stays binding.
-- **No contradiction with core.** The §7 legal-edge block is transcribed
-  one-to-one from [`dependency-graph.md`](../../../core/spec/dependency-graph.md)
-  and keyed by the same `M`-numbers, so it is mechanically diff-able against the
-  core graph; the §2 metadata shapes are drawn one-to-one from
+  *decide-and-record* placeholder remains. Seven sections are `ANSWERED`;
+  [§8](#8-optional-optimized-data-structures-m13-dq10) and
+  [§9](#9-per-language-performance-targets-m13-dq10) are `DEFERRED-with-rationale`
+  (deliberate, ADR-backed decisions, not omissions), and the §9 `expectRoundTrips`
+  invariant stays binding.
+- **No contradiction with core.** The
+  [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) legal-edge block
+  is transcribed one-to-one from
+  [`dependency-graph.md`](../../../core/spec/dependency-graph.md) and keyed by the
+  same `M`-numbers, so it is mechanically diff-able against the core graph; the
+  [§2](#2-metadata--model-input-format-dq5-dq6) metadata shapes are drawn
+  one-to-one from
   [`metamodel.schema.json`](../../../core/schemas/metamodel.schema.json)'s eight
-  element types; §4 pins the same `postgres:17` image the reference harness pins;
-  and §9 binds the same `M13` methodology, fixtures, and `report.json` schema.
+  element types; [§4](#4-test-double-integration-m12-dq15) pins the same
+  `postgres:17` image the reference harness pins; and
+  [§9](#9-per-language-performance-targets-m13-dq10) binds the same `M13`
+  methodology, fixtures, and `report.json` schema.
 - **Self-sufficient for a fresh implementer.** This document specifies every
   template section §1–§9 inline; together with the cited ADRs it is sufficient to
   author a TypeScript implementation and run the compatibility suite to green
