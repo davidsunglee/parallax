@@ -9,7 +9,7 @@
 # A whole-row read of an extracted field is obvious by eye, but referenceSql is
 # supplied as the independent oracle (native `->>` projection).
 model: models/customer.yaml
-tags: [m1, m3, nested, value-object, jsonb]
+tags: [m1, m3, nested, value-object, jsonb, projection]
 operation:
   all: {}
 goldenSql:
