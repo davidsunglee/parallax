@@ -325,10 +325,146 @@ surface.** Summary of the recorded choices:
 
 ## 7. Build-time dependency enforcement (DQ3, dependency-graph)
 
-- **(decide and record)** The enforcement tool and its config.
-- **(decide and record)** The mapping from the core modules (`M0`–`M13`) onto
-  this language's packages/modules, and the contract that encodes the legal edges
-  (the same DAG as `dependency-graph.md`).
+**ANSWERED — see [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m13-package-map.md).**
+The normative module-dependency graph
+([`dependency-graph.md`](../../../core/spec/dependency-graph.md)) is the **only**
+legal dependency direction, and each per-language spec **SHOULD** prescribe a
+build-time mechanism that fails the build on any module-to-module dependency the
+graph does not declare. This section names the tool, maps every core module
+`M0`–`M13` onto a TypeScript package, and transcribes the legal edges one-to-one
+from the core graph so the TypeScript edge set is mechanically diff-able against
+it.
+
+### 7.1 Enforcement tool
+
+The tool is **dependency-cruiser** (TS-0061), run as a standalone
+`depcruise --validate` build step decoupled from ESLint. Its `forbidden` /
+`allowed` from/to contract encodes the DAG edges directly: the legal edges become
+an `allowed` allowlist of `{ from, to }` package selectors, and any
+module-to-module dependency not on the allowlist is reported as `not-in-allowed`
+and fails the build — the TypeScript analogue of the reference harness's
+`dep_graph_check.py` three-colour DFS, where a wrong-direction edge surfaces as a
+violation. `eslint-plugin-boundaries` was the considered alternative but ties the
+check to the ESLint run and its element taxonomy; dependency-cruiser keeps the DAG
+check a first-class, independent step.
+
+Config sketch (`.dependency-cruiser.js`):
+
+```js
+module.exports = {
+  forbidden: [
+    {
+      name: "no-undeclared-module-dependency",
+      comment: "Only edges in core/spec/dependency-graph.md are legal.",
+      severity: "error",
+      from: { path: "^packages/([^/]+)/" },
+      to: {
+        path: "^packages/([^/]+)/",
+        // a cross-package import is forbidden unless it matches an allowed edge
+        pathNot: "^packages/$1/",
+        moreThanOneDependencyType: false,
+      },
+    },
+  ],
+  // The legal edges are the allowlist; see the mapping table and edge block below.
+  allowed: [
+    { from: { path: "^packages/metamodel/" },     to: { path: "^packages/core/" } },
+    { from: { path: "^packages/dialect/" },        to: { path: "^packages/core/" } },
+    { from: { path: "^packages/operation/" },      to: { path: "^packages/metamodel/" } },
+    { from: { path: "^packages/sql/" },            to: { path: "^packages/operation/" } },
+    { from: { path: "^packages/sql/" },            to: { path: "^packages/dialect/" } },
+    { from: { path: "^packages/transactions/" },   to: { path: "^packages/operation/" } },
+    { from: { path: "^packages/transactions/" },   to: { path: "^packages/dialect/" } },
+    { from: { path: "^packages/lists/" },          to: { path: "^packages/operation/" } },
+    { from: { path: "^packages/lists/" },          to: { path: "^packages/transactions/" } },
+    { from: { path: "^packages/relationships/" },  to: { path: "^packages/lists/" } },
+    { from: { path: "^packages/relationships/" },  to: { path: "^packages/transactions/" } },
+    { from: { path: "^packages/bitemporal/" },     to: { path: "^packages/transactions/" } },
+    { from: { path: "^packages/lifecycle/" },      to: { path: "^packages/transactions/" } },
+    { from: { path: "^packages/locking/" },        to: { path: "^packages/transactions/" } },
+    { from: { path: "^packages/conformance/" },    to: { path: "^packages/operation/" } },
+    { from: { path: "^packages/conformance/" },    to: { path: "^packages/sql/" } },
+    { from: { path: "^packages/conformance/" },    to: { path: "^packages/relationships/" } },
+    { from: { path: "^packages/conformance/" },    to: { path: "^packages/bitemporal/" } },
+    { from: { path: "^packages/conformance/" },    to: { path: "^packages/lifecycle/" } },
+    { from: { path: "^packages/conformance/" },    to: { path: "^packages/locking/" } },
+    { from: { path: "^packages/benchmark/" },      to: { path: "^packages/conformance/" } },
+  ],
+  allowedSeverity: "error",
+};
+```
+
+### 7.2 Module → package mapping
+
+Each core module maps to one **pnpm-workspace package** under `packages/`, named
+for its responsibility and tagged with its core `M`-number (TS-0061). Real
+workspace packages — rather than path-ruled directories — make the workspace
+graph itself participate in the layering: a package's `package.json` lists only
+the sibling packages it is permitted to depend on, and dependency-cruiser is the
+mechanical gate over the `import` graph.
+
+| Core module | Responsibility | TS package | Tag |
+|---|---|---|---|
+| M0 | Core conventions (types · infinity · tz) | `@parallax/core` | M0 |
+| M1 | Domain model & metamodel (+ serde) | `@parallax/metamodel` | M1 |
+| M2 | Query/operation/aggregation algebra (+ serde) | `@parallax/operation` | M2 |
+| M3 | SQL generation contract | `@parallax/sql` | M3 |
+| M4 | Relationships & deep fetch | `@parallax/relationships` | M4 |
+| M5 | Lists & bulk/set operations | `@parallax/lists` | M5 |
+| M7 | Bitemporal / milestoning | `@parallax/bitemporal` | M7 |
+| M8 | Transactions, UoW & identity/query cache | `@parallax/transactions` | M8 |
+| M9 | Object lifecycle & detach | `@parallax/lifecycle` | M9 |
+| M10 | Optimistic locking | `@parallax/locking` | M10 |
+| M11 | Database seam & portability | `@parallax/dialect` | M11 |
+| M12 | Compatibility harness | `@parallax/conformance` | M12 |
+| M13 | Performance & benchmark harness | `@parallax/benchmark` | M13 |
+
+**`M6` is deliberately absent** — aggregation is folded into `M2`, and the gap is
+preserved to keep cross-references to the core numbering stable. The shared
+`@parallax/serde` package (the canonical serde seam of §2.3) belongs to the
+`M1`/`M2` slice and is not a numbered module, so it adds no edge to the graph.
+
+### 7.3 Legal-edge contract
+
+The legal edges are transcribed **one-to-one** from
+[`dependency-graph.md`](../../../core/spec/dependency-graph.md), keyed by the same
+`M`-numbers so the edge set is mechanically diff-able against core. Each edge
+`A --> B` reads "A depends on B"; the reverse is a spec violation. Combined with
+the mapping table above, this block is the source the `.dependency-cruiser.js`
+allowlist encodes.
+
+```dependency-graph
+M1 --> M0
+M11 --> M0
+M2 --> M1
+M3 --> M2
+M3 --> M11
+M8 --> M2
+M8 --> M11
+M5 --> M2
+M5 --> M8
+M4 --> M5
+M4 --> M8
+M7 --> M8
+M9 --> M8
+M10 --> M8
+M12 --> M2
+M12 --> M3
+M12 --> M4
+M12 --> M7
+M12 --> M9
+M12 --> M10
+M13 --> M12
+```
+
+The non-obvious directions carry over verbatim from the core graph: `M8` depends
+on `M2` not `M3` (the transaction / unit-of-work layer is expressed over
+operations, not SQL); `M4` depends on `M5` (relationship navigation yields lists,
+the reverse of the obvious guess); and `M3` depends on `M11` (SQL generation
+routes through the portability seam). The un-numbered cross-process-coherence
+capability is not in
+this block because it carries no `M`-number; its single legal direction is
+*coherence → M8*, added when that fast-follow package lands.
 
 ## 8. Optional optimized data structures (M13, DQ10)
 
@@ -364,6 +500,6 @@ authoring and carry no `(decide and record)` debt at completion.
 | §4 Test-double integration | ANSWERED | [§4](#4-test-double-integration-m12-dq15) | [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md), [TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md), [TS-0060](../docs/adr/0060-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md) |
 | §5 Codegen-or-not | ANSWERED | [`00-overview.md` §2](00-overview.md#2-metadata-and-generation), [§3](00-overview.md#3-cli); restated in [§5](#5-codegen-or-not-dq5) | — |
 | §6 Collection idioms | ANSWERED | [`00-overview.md` §6](00-overview.md#6-parallaxlist); restated in [§6](#6-collection-idioms-m5) | — |
-| §7 Build-time dependency enforcement | PENDING | [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) | — |
+| §7 Build-time dependency enforcement | ANSWERED | [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) | [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m13-package-map.md) |
 | §8 Optional optimized data structures | PENDING | [§8](#8-optional-optimized-data-structures-m13-dq10) | — |
 | §9 Per-language performance targets | PENDING | [§9](#9-per-language-performance-targets-m13-dq10) | — |
