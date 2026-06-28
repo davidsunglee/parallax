@@ -53,8 +53,8 @@ java/spec/java.md
 Replace every `*(decide and record)*` marker with a concrete decision and a
 short rationale. Do not start implementation while the language spec still has
 open decisions that affect public API shape, model input, transaction
-demarcation, test integration, code generation, collection behavior, dependency
-enforcement, or performance targets.
+demarcation, temporal read/write spelling, test integration, code generation,
+collection behavior, dependency enforcement, or performance targets.
 
 ## Non-Negotiables
 
@@ -77,9 +77,12 @@ Before implementation, produce a short plan in the language module that records:
 
 - The completed language spec path.
 - The module/package map for M0, M1, M2, M3, M4, M5, M7, M8, M9, M10, M11, M12,
-  M13, and cross-process coherence.
+  M13, cross-process coherence, and any non-numbered support packages.
 - The dependency-boundary enforcement tool and configuration.
 - The conformance adapter entry point.
+- The concrete provider reset lifecycle for database-backed cases, including the
+  empty-schema reset primitive, DDL application point, fixture-load point, and
+  fallback if a snapshot optimization is used.
 - The first case slice that will be made green.
 - The final case/dialect matrix the implementation intends to claim.
 - Any deferred modules, with tier justification from
@@ -196,16 +199,28 @@ A language spec is ready for implementation when it answers these questions:
 
 - How does a developer author a model?
 - How is the canonical metamodel produced, introspected, and serialized?
+- How does each M0 neutral scalar map to generated property/read types,
+  create/update input types, adapter bind types, and materialized result types?
 - How does a developer spell common operations, relationship navigation,
-  grouping, aggregation, deep fetch, and temporal as-of reads?
+  grouping, aggregation, deep fetch, and temporal reads (`asOf`, range, history)?
+- How does a developer spell temporal writes, including audit-only
+  insert/update/terminate and the full-bitemporal `insertUntil` / `updateUntil` /
+  `terminateUntil` trio or language-specific aliases?
+- Which runtime timestamp type represents temporal instants, what precision
+  boundary is enforced, and where processing instants come from?
 - How are transactions demarcated?
 - How are lazy lists, single-result lookups, and bulk operations surfaced?
 - Is code generation used? If yes, where do generated files live and how are
   they refreshed?
+- Are all generated types and helpers derivable from the canonical descriptor,
+  with enum/value-object typed surfaces omitted or explicitly backed by core
+  schema?
 - Which test runner provisions Postgres and runs compatibility cases?
 - Which dependency-boundary tool enforces the module DAG?
 - Which dialects and tiers are claimed?
 - What benchmark targets are claimed?
+- How does `parallax-conformance benchmark` emit the M13 report shape in the
+  adapter envelope, and is any `report.json` file only an artifact copy?
 
 When in doubt, keep the public surface idiomatic and keep the conformance seam
 boring.

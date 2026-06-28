@@ -37,6 +37,12 @@ developer *spells* an operation in this language is a DX choice.
   the eager-fetch navigation set on a query.
 - **(decide and record)** Aggregation spelling (`M2` sub-area): `groupBy` /
   aggregate-function / `having` surface.
+- **(decide and record)** Temporal read spelling (`M7`): how a developer
+  requests a point-in-time read (`asOf`), a range/edge-point read (`asOfRange` in
+  core), and full history (`history`). Record the public axis names for
+  processing and business time, the runtime timestamp type and precision boundary
+  from `M0`, how `now` / omitted axes are represented, and how invalid
+  combinations are rejected (for example, point and history on the same axis).
 
 ## 2. Metadata / model input format (DQ5, DQ6)
 
@@ -52,6 +58,12 @@ developer authors a domain model** is the per-language choice.
   runtime (attribute list, primary-key attributes, as-of attributes, relationship
   finders, attribute-by-name) — the `RelatedFinder` / `ReladomoClassMetaData`
   analogue.
+- **(decide and record)** M0 scalar runtime mapping: for every neutral scalar
+  type, specify the language's generated property/read type, create/update input
+  type, adapter bind type, and result materialization rule. The mapping MUST
+  cover precision-sensitive values (`int64`, `decimal(p,s)`, `bytes`,
+  `timestamp`) and distinguish wall-clock `date` / `time` from instant
+  `timestamp` semantics.
 - **(decide and record)** Serde module: the dedicated package whose sole job is
   metamodel serialize/deserialize, with **round-trip
   (serialize → deserialize → serialize) tests** in both JSON and YAML.
@@ -68,6 +80,12 @@ in raw SQL** in the core spec. Pin down the idiom.
 - **(decide and record)** How nested / re-entrant transactions behave.
 - **(decide and record)** How the unit of work surfaces buffered/batched writes
   to the developer (implicit flush at commit vs. explicit flush).
+- **(decide and record)** Temporal write spelling (`M7`): the developer-facing
+  names for audit-only `insert` / `update` / `terminate`, the full-bitemporal
+  `insertUntil` / `updateUntil` / `terminateUntil` trio, and any language-specific
+  aliases (for example, `createUntil` if ordinary insert is spelled `create`).
+  Record where processing instants come from, how business start/window options
+  are passed, and which timestamp precision validation applies.
 
 ## 4. Test-double integration (M12, DQ15)
 
@@ -83,6 +101,12 @@ test runner wires to the **database provider**.
   substrate everywhere*) pinned to the latest-stable-major Postgres image, or an
   **embedded binary** that satisfies the same clean / migrated / isolated
   reset contract. Either way it sits behind the same provider seam.
+- **(decide and record)** The provider reset lifecycle: the exact mechanism that
+  returns the database to an empty, isolated state before a database-backed case,
+  when DDL is applied, and when fixtures are loaded. If the implementation uses a
+  snapshot/restore optimization, name the concrete package API, version
+  assumptions, and fallback reset path; do not assume a portable Testcontainers
+  snapshot API exists across languages or database modules.
 - **(decide and record)** Which dialects this language runs in CI (Postgres is
   the round-1 normative target; MariaDB is the proven second dialect) and how the
   per-dialect golden SQL is selected.
@@ -98,6 +122,11 @@ is mandated; *how* the in-memory model and the typed surface are produced is ope
 - **(decide and record)** If codegen: the generator entry point, its inputs (the
   canonical descriptor), and where generated artifacts live / how they are
   regenerated.
+- **(decide and record)** Which generated artifacts are derivable from the
+  canonical descriptor and which are intentionally absent. Do not promise
+  generated enum types, structured value-object types, field-level value-object
+  paths, or other typed surfaces unless the core descriptor schema contains the
+  data needed to generate them.
 
 ## 6. Collection idioms (M5)
 
@@ -118,9 +147,11 @@ the build.
   boundaries (Java), `dependency-cruiser` / `eslint-plugin-boundaries`
   (TypeScript), **crate boundaries + visibility** (Rust).
 - **(decide and record)** The mapping from the core modules (`M0`–`M13`) onto
-  this language's packages/modules/crates, and the contract that encodes the legal
-  edges (the same DAG as
-  [`dependency-graph.md`](dependency-graph.md)).
+  this language's packages/modules/crates, any non-numbered support packages
+  required by the language topology, and the contract that encodes the legal
+  edges (the same numbered-module DAG as
+  [`dependency-graph.md`](dependency-graph.md), plus any explicitly documented
+  support-package edges).
 
 ## 8. Optional optimized data structures (M13, DQ10)
 
@@ -150,6 +181,11 @@ not a Python target.
 - **(decide and record)** Round-trip expectations are **already fixed** by the
   fixtures' `expectRoundTrips` (a deep fetch is `1 + levels`, never N+1) — confirm
   the implementation honors them; they are not a per-language placeholder.
+- **(decide and record)** How `parallax-conformance benchmark` emits the M13
+  report shape fixed by `m13-performance.md` and
+  `conformance-adapter-contract.md`: the adapter stdout envelope carries
+  `report.generatedAt`, `report.benchmarks[]`, and `report.memory`, while any
+  local `report.json` file is only an artifact copy.
 
 ## Completion check
 

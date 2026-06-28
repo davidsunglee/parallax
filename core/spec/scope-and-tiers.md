@@ -68,9 +68,9 @@ Committed, after the parity baseline:
 - **M7** temporal — **business-temporal-only** mode (DQ7)
 - **inheritance** — table-per-hierarchy + table-per-leaf (**not** table-per-class)
   (DQ9)
-- **embedded value objects** — mapped to **JSONB** (Postgres) / VARIANT
-  (Snowflake) / equivalent, a deliberate deviation from Reladomo's column
-  flattening (DQ9)
+- **embedded value objects** — mapped to a structured-document column (Postgres
+  **JSONB** / Snowflake **VARIANT** / equivalent), a deliberate deviation from
+  Reladomo's column flattening (DQ9)
 - a **2nd concrete dialect** behind the M11 seam (proves the seam beyond
   Postgres — realized as **MariaDB**)
 - cursor / streaming large-result handling
@@ -133,7 +133,8 @@ Two scope calls were *changed* from the ticket's framing, both promotions:
   start, resolving the "hard to retrofit later" concern (DQ9).
 - **Embedded value objects** — promoted from *might-do* to **definitely-do**,
   with a deliberate deviation from Reladomo: map (possibly nested) value objects
-  to a **JSONB** column rather than flattening into sibling columns (DQ9).
+  to a single structured-document column, such as Postgres **JSONB** or
+  Snowflake **VARIANT**, rather than flattening into sibling columns (DQ9).
 
 One regrouping: the former aggregation module (**M6**) is **folded into M2** —
 group-by / having / aggregate functions are the same declarative operation algebra
