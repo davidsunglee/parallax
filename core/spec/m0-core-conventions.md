@@ -24,7 +24,7 @@ dialect seam.
 | `bytes` | binary blob | `bytea` | |
 | `date` | calendar date, no time | `date` | timezone-naive (wall-clock) |
 | `time` | time of day, no date | `time` | timezone-naive (wall-clock) |
-| `timestamp` | absolute instant | `timestamptz` | UTC-normalized (see below) |
+| `timestamp` | absolute instant | `timestamptz` | UTC-normalized, microsecond precision (see below) |
 | `uuid` | 128-bit UUID | `uuid` | in core (Postgres-native) |
 | `json` | embedded composite value | `jsonb` | the `valueObject` mapping (M1); see below |
 
@@ -56,6 +56,14 @@ embedded object.
   (`timestamptz`) and the framework **MUST** normalize values to **UTC** at the
   boundary. Geographically distributed applications store and compare in UTC and
   convert only at presentation.
+- Core `timestamp` values have **microsecond precision**: canonical timestamp
+  literals MAY carry 0 through 6 fractional second digits and implementations
+  MUST NOT silently truncate non-zero sub-microsecond precision. Inputs with
+  fewer than 6 fractional digits are interpreted exactly and MAY be normalized
+  with trailing zeros; inputs with more than 6 fractional digits MUST either
+  already represent an exact microsecond value (trailing zeros beyond the sixth
+  digit) or be rejected at the framework boundary. This keeps timestamp equality
+  and temporal interval predicates portable across the supported dialects.
 - `date` and `time` are **wall-clock and timezone-naive** by definition; no
   timezone normalization is applied to them.
 - There is **no per-attribute timezone-conversion knob** (Reladomo's
