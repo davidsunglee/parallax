@@ -1,0 +1,23 @@
+# Fixture rows for the Person/Passport one-to-one model (models/person.yaml).
+#
+# Three people; persons 1 and 2 hold a passport, person 3 holds none. The unique
+# person_id on Passport enforces the 1:1 cardinality. The missing passport for
+# person 3 makes the to-one deep fetch attach a null peer for that root.
+#
+#   person 1 Alan  -> passport 101 (P-AAA)
+#   person 2 Grace -> passport 102 (P-BBB)
+#   person 3 Ada   -> (no passport)
+Person:
+  - id: 1
+    name: Alan
+  - id: 2
+    name: Grace
+  - id: 3
+    name: Ada
+Passport:
+  - id: 101
+    personId: 1
+    number: P-AAA
+  - id: 102
+    personId: 2
+    number: P-BBB

@@ -36,8 +36,12 @@ def test_scenario_cases_are_discovered_and_self_describe() -> None:
         assert case.scenario
         assert "operation" not in case.raw
         for step in case.scenario:
-            assert "find" in step
             assert "roundTrips" in step
+            # A step is EITHER a read step (carries `find`) or a write step
+            # (carries `write` + golden DML), never both.
+            assert ("find" in step) ^ ("write" in step)
+            if "write" in step:
+                assert step.get("goldenSql"), "a write step must list golden DML"
 
 
 def test_cache_hit_scenario_has_a_zero_round_trip_step() -> None:

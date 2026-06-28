@@ -33,13 +33,30 @@ def test_conflict_cases_are_discovered_and_self_describe() -> None:
     assert cases, "no conflict (M10) cases discovered"
     for case in cases:
         # A conflict case carries expectedAffectedRows and no operation/scenario.
-        assert case.expected_affected_rows is not None
         assert "operation" not in case.raw
         assert not case.is_scenario
         assert not case.is_write_sequence
-        # Exactly one golden UPDATE per dialect.
-        for dialect in case.golden_sql:
-            assert len(case.golden_statements(dialect)) == 1
+        if case.attempts:
+            # Retry form: the golden UPDATE + affected count live per attempt.
+            for attempt in case.attempts:
+                assert attempt["expectedAffectedRows"] is not None
+                assert attempt["goldenSql"]
+        else:
+            # Single form: one golden UPDATE per dialect + a top-level count.
+            assert case.expected_affected_rows is not None
+            for dialect in case.golden_sql:
+                assert len(case.golden_statements(dialect)) == 1
+
+
+def test_retry_conflict_sequence_self_describes() -> None:
+    cases = [c for c in _conflict_cases() if c.attempts]
+    assert cases, "no M10 retry-conflict (attempts) case discovered"
+    for case in cases:
+        # The retry contract: a stale-version attempt affects 0, then a fresh-
+        # version retry affects 1. Both outcomes must appear, in that order.
+        outcomes = [a["expectedAffectedRows"] for a in case.attempts]
+        assert 0 in outcomes and 1 in outcomes
+        assert outcomes.index(0) < outcomes.index(1)
 
 
 def test_conflict_and_success_counts_present() -> None:

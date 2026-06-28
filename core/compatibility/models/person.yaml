@@ -1,0 +1,73 @@
+# Person/Passport: a ONE-TO-ONE relationship model (M1 cardinality, M4).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. No other
+# model declares the `one-to-one` cardinality (orders is one-to-many / many-to-
+# one only), so this fills the relationship-kind gap. A Person has at most one
+# Passport and a Passport belongs to exactly one Person; the foreign key lives on
+# Passport (`person_id`) and is UNIQUE, which is what makes the relationship 1:1
+# rather than one-to-many. Navigation and deep fetch resolve a to-one peer (a
+# single object, or null when absent), exactly like a many-to-one — the harness
+# treats one-to-one as to-one (not to-many).
+#
+# Row data lives in the sibling fixtures/person.yaml; person 3 has NO passport,
+# so the to-one deep fetch attaches a null peer for that root (the 1:1 analogue
+# of the nullable many-to-one case 0314).
+entities:
+  - name: Person
+    namespace: parallax.compatibility
+    table: person
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: name
+        type: string
+        column: name
+        maxLength: 64
+    relationships:
+      - name: passport
+        relatedEntity: Passport
+        cardinality: one-to-one
+        join: this.id = Passport.personId
+        reverseName: holder
+        foreignKey: person_id
+    indices:
+      - name: person_pk
+        attributes: [id]
+        unique: true
+  - name: Passport
+    namespace: parallax.compatibility
+    table: passport
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: personId
+        type: int64
+        column: person_id
+      - name: number
+        type: string
+        column: number
+        maxLength: 32
+    relationships:
+      - name: holder
+        relatedEntity: Person
+        cardinality: one-to-one
+        join: this.personId = Person.id
+        reverseName: passport
+        foreignKey: person_id
+    indices:
+      - name: passport_pk
+        attributes: [id]
+        unique: true
+      - name: passport_person
+        attributes: [personId]
+        unique: true

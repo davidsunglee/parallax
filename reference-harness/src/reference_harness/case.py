@@ -185,9 +185,20 @@ class Case:
         A conflict case carries ``expectedAffectedRows`` (the affected-row count a
         golden ``UPDATE`` leaves behind) and an OPTIONAL out-of-band
         ``precondition`` (a concurrent mutation, e.g. a version bump) instead of an
-        ``operation`` + ``expectedRows``.
+        ``operation`` + ``expectedRows`` — OR an ordered ``attempts`` retry
+        sequence (each attempt carrying its own golden UPDATE + affected-row
+        count) that proves the stale-then-retry contract.
         """
-        return "expectedAffectedRows" in self.raw
+        return "expectedAffectedRows" in self.raw or "attempts" in self.raw
+
+    @property
+    def attempts(self) -> list[dict[str, Any]]:
+        """The ordered optimistic-lock UPDATE attempts of a retry conflict case.
+
+        Empty for the single-attempt conflict form. Each attempt carries its own
+        dialect-keyed ``goldenSql``, ``binds``, and ``expectedAffectedRows``.
+        """
+        return self.raw.get("attempts", [])
 
     @property
     def precondition(self) -> list[str]:
