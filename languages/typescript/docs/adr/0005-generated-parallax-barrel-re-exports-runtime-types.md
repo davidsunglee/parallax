@@ -11,8 +11,7 @@ The barrel exports:
 - managed object types, such as `type Order`
 - entity input validators and types, such as `OrderInput` and `type OrderInput`
 - snapshot types, such as `type OrderSnapshot`
-- generated enum and value-object types
-- public runtime types, such as `ParallaxList`
+- public runtime types, such as `ParallaxList`, `ParallaxDecimal`, and `ParallaxJsonValue`
 - public error classes, such as `ParallaxError`, `ParallaxValidationError`, `ParallaxNotFoundError`, `ParallaxTooManyResultsError`, and `ParallaxOptimisticLockError`
 
 TypeScript's value/type namespace overlap is accepted for generated entity names. Documentation may alias managed object types when clarity matters:
@@ -20,3 +19,9 @@ TypeScript's value/type namespace overlap is accepted for generated entity names
 ```ts
 import { Order, type Order as OrderObject } from "#parallax";
 ```
+
+The barrel does not export generated enum types or structured value-object
+interfaces in V1. Those shapes are not present in the canonical core descriptor,
+so applications use scalar string values for string-coded states and
+`ParallaxJsonValue` for value objects until core adds schema for richer generated
+types.

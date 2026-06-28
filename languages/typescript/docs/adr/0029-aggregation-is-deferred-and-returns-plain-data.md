@@ -8,7 +8,7 @@ The future public verb is `project(...)`. Simple selective retrieval and grouped
 
 ```ts
 const summaries = await px.orders.project({
-  where: Order.status.eq(OrderStatus.Processing),
+  where: Order.status.eq("Processing"),
   groupBy: [Order.customerId],
   select: {
     customerId: Order.customerId,

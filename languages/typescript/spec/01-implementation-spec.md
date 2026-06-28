@@ -172,6 +172,84 @@ aggregate reads are reserved for `project(...)` (`where` / `groupBy` / `select` 
 choice is not re-opened). In-memory reuse of predicates as `Array.filter`
 callbacks and of sort keys as `Array.sort` comparators is likewise deferred.
 
+### 1.9 Temporal reads (`M7`)
+
+TypeScript timestamps use `Temporal.Instant` and are constrained to the core M0
+microsecond boundary: values with non-zero sub-microsecond precision are rejected
+at the Parallax API boundary rather than truncated. The explicit current-row
+token is the string literal `"now"`; in an `asOf` option it serializes to the
+core `now` temporal pin and is equivalent to omitting that axis.
+
+```ts
+type TemporalAxis = "processing" | "business";
+type TemporalPoint = Temporal.Instant | "now";
+type TemporalRange = {
+  start: Temporal.Instant;
+  end: Temporal.Instant;
+};
+type TemporalReadOptions = {
+  asOf?: {
+    processing?: TemporalPoint;
+    business?: TemporalPoint;
+  };
+  range?: {
+    processing?: TemporalRange;
+    business?: TemporalRange;
+  };
+  history?: readonly TemporalAxis[];
+};
+```
+
+`TemporalReadOptions` is part of the second `find` argument. `find` still returns
+`ParallaxList<T>`; the temporal options only affect the operation serialized to
+M2 and the rows that resolve when the list is read.
+
+```ts
+const currentBalances = px.balances.find(Balance.acctNum.eq("A"));
+
+const historicalBalances = px.balances.find(Balance.acctNum.eq("A"), {
+  asOf: {
+    processing: Temporal.Instant.from("2024-04-01T00:00:00Z"),
+  },
+});
+
+const rangedBalances = px.balances.find(Balance.all(), {
+  range: {
+    processing: {
+      start: Temporal.Instant.from("2024-06-15T00:00:00Z"),
+      end: Temporal.Instant.from("2024-07-01T00:00:00Z"),
+    },
+  },
+});
+
+const fullPositionHistory = px.positions.find(Position.id.eq(1), {
+  history: ["business", "processing"],
+});
+```
+
+Axis names are the core temporal axis names, not column names. For a given
+entity, `processing` maps to the entity's `asOfAttribute` with
+`axis: "processing"` and `business` maps to the one with `axis: "business"`.
+Supplying an axis the entity does not declare is a validation error.
+
+`asOf`, `range`, and `history` are mutually exclusive **per axis**. For example,
+`{ asOf: { business: t }, history: ["processing"] }` is valid for a bitemporal
+entity, but `{ asOf: { business: t }, history: ["business"] }` is rejected.
+Range `start` is inclusive and `end` is exclusive; `start` must be strictly
+before `end`.
+
+The TypeScript adapter serializes explicit temporal reads to the core M2 nodes:
+
+- `asOf.processing` / `asOf.business` → `asOf`
+- `range.processing` / `range.business` → `asOfRange`
+- `history: ["processing" | "business"]` → `history`
+
+When both axes are present, serialization is deterministic: the business-axis
+wrapper is outside the processing-axis wrapper, matching the core bind order
+(business binds before processing binds). Omitted temporal axes are not
+serialized; the M7 default-injection rule still applies and reads them as
+current (`now`).
+
 ## 2. Metadata / model input format (DQ5, DQ6)
 
 **ANSWERED — see [TS-0055](../docs/adr/0055-metamodel-introspection-api-has-generic-and-typed-layers.md),
@@ -371,6 +449,103 @@ transaction; reads may use `px`, writes are available only through `tx`.
   managed-object write that expects exactly one versioned row and affects zero
   rows throws `ParallaxOptimisticLockError`; optimistic-lock conflicts are
   caller-driven and not auto-retried.
+
+### 3.1 Temporal writes (`M7`)
+
+All temporal writes run through `ParallaxTransaction`; the root `px` handle has
+no write methods. Processing instants are never accepted as per-operation
+options. They come from the clock strategy supplied to `parallax({ clock })`, so
+production code cannot rewrite audit history while tests can inject a fixed
+clock.
+
+```ts
+type BusinessStart = {
+  business: {
+    start: Temporal.Instant;
+  };
+};
+
+type BusinessWindow = {
+  business: {
+    start: Temporal.Instant;
+    end: Temporal.Instant;
+  };
+};
+
+type WriteResult = {
+  affectedRows: number;
+};
+```
+
+The temporal write surface is:
+
+```ts
+await tx.balances.create(input);
+
+await tx.balances.update(Balance.id.eq(1), {
+  set: [Balance.value.set(150)],
+});
+
+await tx.balances.terminate(Balance.id.eq(1));
+
+await tx.reservations.create(input, {
+  business: {
+    start: Temporal.Instant.from("2024-01-01T00:00:00Z"),
+  },
+});
+
+await tx.positions.createUntil(input, {
+  business: {
+    start: Temporal.Instant.from("2024-03-01T00:00:00Z"),
+    end: Temporal.Instant.from("2024-09-01T00:00:00Z"),
+  },
+});
+
+await tx.positions.updateUntil(Position.id.eq(1), {
+  set: [Position.value.set(200)],
+}, {
+  business: {
+    start: Temporal.Instant.from("2024-03-01T00:00:00Z"),
+    end: Temporal.Instant.from("2024-09-01T00:00:00Z"),
+  },
+});
+
+await tx.positions.terminateUntil(Position.id.eq(1), {
+  business: {
+    start: Temporal.Instant.from("2024-03-01T00:00:00Z"),
+    end: Temporal.Instant.from("2024-09-01T00:00:00Z"),
+  },
+});
+```
+
+`create` and `createUntil` return `Promise<T>` for the generated managed-object
+type `T`. `update`, `terminate`, `updateUntil`, and `terminateUntil` return
+`Promise<WriteResult>`. Each method validates its temporal option before issuing
+SQL.
+
+`create` on an audit-only processing-temporal entity opens the current milestone
+at the transaction processing instant. `update` closes the current row and chains
+a new current row; `terminate` closes the current row and inserts no replacement.
+`terminate` is temporal removal; `delete` remains the physical-delete operation
+for non-temporal entities.
+
+For a business-temporal-only entity, `create(input, { business: { start } })`
+opens a row effective from `start` to infinity. `update` and `terminate` accept
+the same `BusinessStart` option and close/chain on the business axis from that
+instant.
+
+For a bitemporal entity, bounded business-window writes use explicit `*Until`
+verbs and a required `BusinessWindow`. The TypeScript public insert spelling is
+`createUntil` because the non-temporal insert API is `create`; the conformance
+adapter maps it to the core `insertUntil` write-sequence mutation. `updateUntil`
+maps to the core `updateUntil` rectangle split, and `terminateUntil` maps to the
+core `terminateUntil` rectangle split without a middle row.
+
+All `BusinessStart` and `BusinessWindow` instants are `Temporal.Instant` values
+subject to the same microsecond boundary as timestamp attributes. `BusinessWindow`
+uses half-open `[start, end)` semantics and requires `start < end`. Passing a
+processing axis, a processing instant, or a sub-microsecond instant is a
+validation error.
 
 ## 4. Test-double integration (M12, DQ15)
 
@@ -650,12 +825,14 @@ the adapter must return `ok` or `error`.
 **ANSWERED — see [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m13-package-map.md).**
 The normative module-dependency graph
 ([`dependency-graph.md`](../../../core/spec/dependency-graph.md)) is the **only**
-legal dependency direction, and each per-language spec **SHOULD** prescribe a
-build-time mechanism that fails the build on any module-to-module dependency the
-graph does not declare. This section names the tool, maps every core module
-`M0`–`M13` onto a TypeScript package, and transcribes the legal edges one-to-one
-from the core graph so the TypeScript edge set is mechanically diff-able against
-it.
+legal dependency direction between numbered core modules, and each per-language
+spec **SHOULD** prescribe a build-time mechanism that fails the build on any
+module-to-module dependency the graph does not declare. This section names the
+tool, maps every core module `M0`–`M13` onto a TypeScript package, records the
+non-numbered support package `@parallax/serde`, and transcribes the legal
+numbered-module edges one-to-one from the core graph so the TypeScript edge set
+is mechanically diff-able against it. The `@parallax/serde` edges are explicit
+package-topology edges, not additions to the core module DAG.
 
 ### 7.1 Enforcement tool
 
@@ -677,7 +854,7 @@ module.exports = {
   forbidden: [
     {
       name: "no-undeclared-module-dependency",
-      comment: "Only edges in core/spec/dependency-graph.md are legal.",
+      comment: "Only documented numbered-module and support-package edges are legal.",
       severity: "error",
       from: { path: "^packages/([^/]+)/" },
       to: {
@@ -690,6 +867,11 @@ module.exports = {
   ],
   // The legal edges are the allowlist; see the mapping table and edge block below.
   allowed: [
+    // Non-numbered support package edges.
+    { from: { path: "^packages/metamodel/" },     to: { path: "^packages/serde/" } },
+    { from: { path: "^packages/operation/" },     to: { path: "^packages/serde/" } },
+
+    // Numbered module edges from core/spec/dependency-graph.md.
     { from: { path: "^packages/metamodel/" },     to: { path: "^packages/core/" } },
     { from: { path: "^packages/dialect/" },        to: { path: "^packages/core/" } },
     { from: { path: "^packages/operation/" },      to: { path: "^packages/metamodel/" } },
@@ -728,8 +910,8 @@ mechanical gate over the `import` graph.
 | Core module | Responsibility | TS package | Tag |
 |---|---|---|---|
 | M0 | Core conventions (types · infinity · tz) | `@parallax/core` | M0 |
-| M1 | Domain model & metamodel (+ serde) | `@parallax/metamodel` | M1 |
-| M2 | Query/operation/aggregation algebra (+ serde) | `@parallax/operation` | M2 |
+| M1 | Domain model & metamodel | `@parallax/metamodel` | M1 |
+| M2 | Query/operation/aggregation algebra | `@parallax/operation` | M2 |
 | M3 | SQL generation contract | `@parallax/sql` | M3 |
 | M4 | Relationships & deep fetch | `@parallax/relationships` | M4 |
 | M5 | Lists & bulk/set operations | `@parallax/lists` | M5 |
@@ -740,21 +922,26 @@ mechanical gate over the `import` graph.
 | M11 | Database seam & portability | `@parallax/dialect` | M11 |
 | M12 | Compatibility harness | `@parallax/conformance` | M12 |
 | M13 | Performance & benchmark harness | `@parallax/benchmark` | M13 |
+| Support | Canonical metamodel/operation serde | `@parallax/serde` | unnumbered |
 
 **`M6` is deliberately absent** — aggregation is folded into `M2`, and the gap is
 preserved to keep cross-references to the core numbering stable. The shared
 `@parallax/serde` package (the canonical serde seam of
-[§2.3](#23-serde-module)) belongs to the `M1`/`M2` slice and is not a numbered
-module, so it adds no edge to the graph.
+[§2.3](#23-serde-module)) is a public pnpm-workspace support package, not a
+numbered core module and not part of the generated `#parallax` application
+barrel. It has no sibling-package dependencies. The only legal direct imports to
+it are `@parallax/metamodel -> @parallax/serde` and `@parallax/operation ->
+@parallax/serde`, which the dependency-cruiser allowlist above encodes
+explicitly.
 
 ### 7.3 Legal-edge contract
 
-The legal edges are transcribed **one-to-one** from
+The numbered-module legal edges are transcribed **one-to-one** from
 [`dependency-graph.md`](../../../core/spec/dependency-graph.md), keyed by the same
 `M`-numbers so the edge set is mechanically diff-able against core. Each edge
 `A --> B` reads "A depends on B"; the reverse is a spec violation. Combined with
-the mapping table above, this block is the source the `.dependency-cruiser.js`
-allowlist encodes.
+the mapping table and the two explicit `@parallax/serde` support-package edges
+above, this block is the source the `.dependency-cruiser.js` allowlist encodes.
 
 ```dependency-graph
 M1 --> M0
@@ -794,11 +981,13 @@ this block because it carries no `M`-number; its single legal direction is
 **DEFERRED-with-rationale — non-normative, no V1 decision; see
 [TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md).**
 This section is **non-normative**: the optional optimized data structures exist
-only to back the `M8` identity / query caches, and `M8` is deferred from
-TypeScript V1 (TS-0054, [§3](#3-transaction-block-demarcation-m8)). There is
-nothing to optimize for V1, so no V1 decision is recorded. The core itself marks
-these techniques optional and non-normative — a language may hit its targets any
-way it likes.
+only to back the `M8` identity / query caches, and that cache/identity slice of
+M8 is deferred from TypeScript V1 (TS-0054,
+[§3](#3-transaction-block-demarcation-m8)). The transaction/read-lock/write
+slice specified in §3 still belongs to V1. There is nothing cache-specific to
+optimize for V1, so no V1 decision is recorded. The core itself marks these
+techniques optional and non-normative — a language may hit its targets any way it
+likes.
 
 The two optional techniques the template lists are recorded here so the deferral
 is deliberate rather than an omission:
@@ -808,13 +997,14 @@ is deliberate rather than an omission:
 - **Key-derived hashing analogue** (`HashingStrategy`) — index domain objects by
   a derived (e.g. composite-PK) key without allocating wrapper key objects.
 
-**Post-V1 note (non-binding):** when `M8` lands, a built-in `Map` keyed by a
-canonical primary-key string is the idiomatic JavaScript baseline for both
-caches. The Java open-addressing / no-wrapper-key-allocation techniques have **no
-compelling direct JavaScript analogue** — short string keys are effectively
-interned by the engine and V8 `Map`s are already compact, so a composite-PK
-string key captures the same benefit without a custom hashing strategy or an
-open-addressing table. This decision is deferred with `M8` and made when `M8` is
+**Post-V1 note (non-binding):** when the M8 identity/query-cache slice lands, a
+built-in `Map` keyed by a canonical primary-key string is the idiomatic
+JavaScript baseline for both caches. The Java open-addressing /
+no-wrapper-key-allocation techniques have **no compelling direct JavaScript
+analogue** — short string keys are effectively interned by the engine and V8
+`Map`s are already compact, so a composite-PK string key captures the same
+benefit without a custom hashing strategy or an open-addressing table. This
+decision is deferred with the cache/identity slice and made when that slice is
 implemented.
 
 ## 9. Per-language performance targets (M13, DQ10)

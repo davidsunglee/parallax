@@ -19,7 +19,6 @@ Applications import the generated API through the package-local alias
 import {
   Order,
   OrderInput,
-  OrderStatus,
   ParallaxOptimisticLockError,
   parallax,
   type Order as OrderObject,
@@ -39,14 +38,21 @@ The generated barrel exports:
 - entity input validators and types, such as `OrderInput` and
   `type OrderInput`
 - snapshot types, such as `type OrderSnapshot`
-- generated enum and value-object types
-- public runtime types, such as `ParallaxList`
+- public runtime types, such as `ParallaxList`, `ParallaxDecimal`, and
+  `ParallaxJsonValue`
 - public error classes rooted at `ParallaxError`
 
 TypeScript's value/type namespace overlap is accepted for ergonomics. `Order` is
 both the entity symbol value used in expressions and `type Order` is the managed
 object type. Documentation may alias the type as `OrderObject` when clarity
 matters.
+
+TypeScript V1 generates only artifacts derivable from the canonical descriptor.
+The descriptor has no enum element and does not describe value-object fields, so
+V1 does not generate enum types or structured value-object interfaces. Value
+objects are exposed as `ParallaxJsonValue` / `null` according to their
+nullability, and nested value-object predicates use untyped string paths after
+the declared value-object name.
 
 ## 2. Metadata And Generation
 
@@ -155,7 +161,7 @@ always returns a `ParallaxList`, which may resolve to zero, one, or many objects
 
 ```ts
 const orders = px.orders.find(
-  Order.status.eq(OrderStatus.Processing).and(
+  Order.status.eq("Processing").and(
     Order.lineItems.exists(item => item.quantity.gt(2)),
   ),
   {
@@ -200,8 +206,8 @@ Boolean chaining with `.and(...)` and `.or(...)` is left-associative. Explicit
 precedence is expressed with postfix `.group()`:
 
 ```ts
-Order.status.eq(OrderStatus.Processing)
-  .and(Order.priority.eq(Priority.High).or(Order.customer.region.eq("NA")).group());
+Order.status.eq("Processing")
+  .and(Order.priority.eq("High").or(Order.customer.region.eq("NA")).group());
 ```
 
 Predicates expose postfix `.not()`. To-many relationships expose explicit
@@ -261,7 +267,7 @@ managed objects:
 
 ```ts
 const summaries = await px.orders.project({
-  where: Order.status.eq(OrderStatus.Processing),
+  where: Order.status.eq("Processing"),
   groupBy: [Order.customerId],
   select: {
     customerId: Order.customerId,
@@ -356,7 +362,7 @@ await px.transaction(async tx => {
   const order = await tx.orders.create(input);
 
   await tx.orders.update(Order.id.eq(order.id), {
-    set: [Order.status.set(OrderStatus.Processing)],
+    set: [Order.status.set("Processing")],
   });
 
   await tx.orders.delete(Order.id.eq(order.id));
@@ -384,7 +390,7 @@ Set-based `update` and `delete` accept either a predicate or an unresolved
 await tx.customers.update(Customer.customerId.eq(10), {
   set: [
     Customer.name.set("Acme Corp"),
-    Customer.status.set(CustomerStatus.Active),
+    Customer.status.set("Active"),
   ],
 });
 ```
@@ -510,7 +516,8 @@ Temporal writes use explicit verbs:
 - ordinary `update` performs entity-normal semantics: in-place for non-temporal,
   close-and-chain for temporal
 - `terminate` closes the current temporal row
-- `updateUntil` and `terminateUntil` are bounded business-window operations
+- `createUntil`, `updateUntil`, and `terminateUntil` are bounded business-window
+  operations; `createUntil` maps to the core `insertUntil` mutation
 - bounded temporal write options use `business: { start, end }`
 
 Users never supply processing timestamps for writes.
