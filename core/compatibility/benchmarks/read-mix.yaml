@@ -46,3 +46,12 @@ workloads:
       postgres: select count(*) n, sum(t0.balance) total from account t0
       mariadb: select count(*) n, sum(t0.balance) total from account t0
     binds: []
+  - name: point-read-cached
+    kind: cache-hit
+    note: the SAME point-read issued again — a query-cache HIT costs ZERO round
+      trips (served from the cache). Pairs with `point-read` (the miss) so the
+      hit/miss distinction is a measured round-trip regression guard. A cache-hit
+      workload lists no golden SQL; the reference harness has no cache, so it runs
+      nothing and records 0 trips, proving the methodology end-to-end.
+    iterations: 200
+    expectRoundTrips: 0

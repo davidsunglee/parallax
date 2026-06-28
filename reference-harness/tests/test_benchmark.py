@@ -108,6 +108,14 @@ def test_every_workload_declares_iterations_and_golden() -> None:
         assert "model" in fixture, fixture_path.name
         for workload in fixture["workloads"]:
             assert workload.get("iterations", 0) >= 1, (fixture_path.name, workload["name"])
+            if workload.get("kind") == "cache-hit":
+                # A cache-hit workload issues no SQL (0 round trips), so it lists
+                # no golden SQL — the methodology witness for `expectRoundTrips: 0`.
+                assert workload.get("expectRoundTrips") == 0, (
+                    fixture_path.name,
+                    workload["name"],
+                )
+                continue
             assert _statements(workload, "postgres"), (fixture_path.name, workload["name"])
 
 

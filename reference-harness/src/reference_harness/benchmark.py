@@ -196,12 +196,23 @@ def _run_workload(
     workload: dict[str, Any], db: DatabaseProvider
 ) -> dict[str, Any]:
     dialect = db.dialect
-    statements = _statements(workload, dialect)
-    if not statements:
-        raise BenchmarkError(f"workload {workload.get('name')!r} has no goldenSql for {dialect}")
-    binds = _binds_per_statement(workload, len(statements))
-    iterations = int(workload.get("iterations", 1))
+    is_cache_hit = workload.get("kind") == "cache-hit"
     is_write = workload.get("kind") == "write"
+    if is_cache_hit:
+        # A query-cache HIT issues NO database round trip: an implementation serves
+        # the repeated find from its query cache. The reference harness has no
+        # cache, so it executes nothing and records 0 round trips — the methodology
+        # witness for `expectRoundTrips: 0`, a cache-hit regression guard for the
+        # implementations that DO cache.
+        statements: list[str] = []
+    else:
+        statements = _statements(workload, dialect)
+        if not statements:
+            raise BenchmarkError(
+                f"workload {workload.get('name')!r} has no goldenSql for {dialect}"
+            )
+    binds = _binds_per_statement(workload, len(statements)) if statements else []
+    iterations = int(workload.get("iterations", 1))
 
     durations_ms: list[float] = []
     round_trips = 0

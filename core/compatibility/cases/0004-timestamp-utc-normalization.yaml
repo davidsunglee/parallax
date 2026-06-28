@@ -1,0 +1,28 @@
+# Timestamp UTC normalization at the boundary (M0 timezone rule).
+#
+# M0 mandates that a `timestamp` is stored as an instant normalized to UTC at the
+# boundary. This inserts an offset-bearing instant — 2024-03-01T05:30:00 at
+# +05:30 — and asserts it is stored and read back as the SAME instant in UTC:
+# 2024-03-01T00:00:00+00:00. Postgres normalizes natively (timestamptz); the
+# MariaDB seam converts the offset to a naive-UTC datetime(6) on the way in and
+# re-stamps +00:00 on the way out — so the one authored expected value holds on
+# both dialects. The bind carries the offset form; the stored form is UTC.
+model: models/event.yaml
+tags: [m0, m3, m11, timestamp, timezone, utc, write-sequence, dialect]
+writeSequence:
+  - mutation: insert
+    entity: Event
+    statements: 1
+    note: insert an instant authored at +05:30; it must store as UTC
+goldenSql:
+  postgres:
+    - insert into event(id, occurred_at) values (?, ?)
+  mariadb:
+    - insert into event(id, occurred_at) values (?, ?)
+binds:
+  - [1, "2024-03-01T05:30:00+05:30"]
+roundTrips: 1
+expectedTableState:
+  event:
+    - id: 1
+      occurred_at: "2024-03-01T00:00:00+00:00"

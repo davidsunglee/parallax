@@ -1,0 +1,31 @@
+# Event: a minimal non-temporal model with a plain `timestamp` attribute, for the
+# M0 timezone/precision write cases.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Unlike the
+# temporal models (Balance/Position), `occurredAt` is an ordinary instant column,
+# not an as-of milestone bound — so a write case can assert how a `timestamp`
+# value is stored and read back: normalized to UTC at the boundary (M0 timezone
+# rule) and preserved to microsecond precision. M11 maps `timestamp` to Postgres
+# `timestamptz` and MariaDB `datetime(6)`; both provider seams normalize an
+# offset-bearing instant to UTC, so one write case holds on both dialects.
+#
+# No fixtures: the write cases build their own state from ordered DML.
+entity:
+  name: Event
+  namespace: parallax.compatibility
+  table: event
+  mutability: transactional
+  temporal: non-temporal
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGenerator: none
+    - name: occurredAt
+      type: timestamp
+      column: occurred_at
+  indices:
+    - name: event_pk
+      attributes: [id]
+      unique: true

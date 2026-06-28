@@ -51,7 +51,11 @@ its bind values, and an **`iterations`** count (how many times the harness repea
 it to gather a stable timing sample). A workload **MAY** declare an
 **`expectRoundTrips`** count — the database round trips it should cost — so the
 benchmark doubles as a *round-trip regression check* (a deep-fetch workload that
-silently regressed to N+1 would blow its declared round-trip count).
+silently regressed to N+1 would blow its declared round-trip count). A workload
+**MAY** instead declare **`kind: cache-hit`** — a repeated find an implementation
+serves from its query cache at **zero** round trips (`expectRoundTrips: 0`),
+listing no SQL — so the operation-mix fixture measures the query-cache hit/miss
+distinction, not only the miss.
 
 ### Dataset scale
 

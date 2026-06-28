@@ -1,0 +1,26 @@
+# Timestamp microsecond precision (M0 timezone/precision rule).
+#
+# M0 requires sub-second values be preserved to microsecond precision and not
+# silently truncated. This inserts an instant carrying .123456 fractional seconds
+# and asserts all six digits survive the round trip. Postgres `timestamptz` and
+# MariaDB `datetime(6)` both carry microsecond precision (M11), so the one
+# authored expected value holds on both dialects.
+model: models/event.yaml
+tags: [m0, m3, m11, timestamp, precision, microsecond, write-sequence, dialect]
+writeSequence:
+  - mutation: insert
+    entity: Event
+    statements: 1
+    note: insert an instant with .123456 microseconds; all six digits must survive
+goldenSql:
+  postgres:
+    - insert into event(id, occurred_at) values (?, ?)
+  mariadb:
+    - insert into event(id, occurred_at) values (?, ?)
+binds:
+  - [1, "2024-03-01T12:00:00.123456+00:00"]
+roundTrips: 1
+expectedTableState:
+  event:
+    - id: 1
+      occurred_at: "2024-03-01T12:00:00.123456+00:00"
