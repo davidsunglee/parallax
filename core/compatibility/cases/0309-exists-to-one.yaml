@@ -1,0 +1,24 @@
+# exists over a TO-ONE relationship (M4 semi-join) — pure existence.
+#
+# Every existing exists/notExists case traverses the to-many `Order.items`; this
+# pins the to-one form over `OrderStatus.orderItem` (a NULLABLE many-to-one). A
+# pure `exists` (no inner op) lowers to a correlated EXISTS with only the
+# correlation predicate. Order-level statuses carry a NULL order_item_id, so they
+# have no related OrderItem and are EXCLUDED; only the item-level statuses
+# (orderItemId set) survive. This discriminates precisely because the FK is
+# nullable.
+model: models/orders.yaml
+tags: [m4, exists, relationship, to-one]
+operation:
+  exists:
+    rel: OrderStatus.orderItem
+goldenSql:
+  postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where exists (select 1 from order_item t1 where t1.id = t0.order_item_id)
+binds: []
+referenceSql: select id, order_id, order_item_id, code from order_status where order_item_id in (select id from order_item)
+expectedRows:
+  - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
+  - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
+  - { id: 203, order_id: 1, order_item_id: 12, code: PICKED }
+  - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }
+roundTrips: 1

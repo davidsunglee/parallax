@@ -33,6 +33,7 @@ entity:
       type: Address
       column: address
       mapping: json
+      nullable: true
   indices:
     - name: customer_pk
       attributes: [id]

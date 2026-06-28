@@ -15,8 +15,10 @@
 # subtypes injects `t0.kind in (?, ?)`; the root query (no discriminator
 # predicate) sees every row. M3 fixes the discriminator-filter golden SQL.
 #
-# table-per-class is NOT a legal strategy (DQ9): the negative case
-# 0930-reject-table-per-class.yaml asserts the schema rejects it.
+# table-per-class is NOT a legal strategy (DQ9): a YAML compatibility case cannot
+# carry an invalid model (the whole corpus must pass schema validation), so the
+# negative test lives in the harness — test_metamodel_extensions
+# .test_schema_rejects_table_per_class asserts the metamodel schema rejects it.
 #
 # Row data lives in the sibling fixtures/payment.yaml.
 entities:

@@ -33,3 +33,9 @@ Customer:
       geo:
         country: US
         zip: "02108"
+  # id 4 (Mary) has NO address: the nullable valueObject column is null. A nested
+  # extraction over it yields null, so it reads back as a null projected field
+  # (0922) and is EXCLUDED by every nested predicate via 3VL (0925).
+  - id: 4
+    name: Mary
+    address: null

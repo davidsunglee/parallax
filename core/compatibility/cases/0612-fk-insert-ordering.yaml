@@ -1,0 +1,43 @@
+# Foreign-key insert ordering (M8): a parent row is inserted BEFORE a child that
+# references it.
+#
+# 0610 proves the DELETE direction (dependent statuses/items before the root
+# order); this pins the complementary INSERT direction. At the unit-of-work
+# boundary the buffered writes are ordered so the referenced Order is inserted
+# before the OrderItem that points at it — otherwise the child's foreign key would
+# dangle. The harness applies the ordered DML to an empty schema and asserts both
+# rows landed; authoring the child insert first would violate the FK against real
+# data.
+model: models/orders.yaml
+tags: [m8, m3, write-sequence, insert, fk-ordering, transactions cache]
+writeSequence:
+  - mutation: insert
+    entity: Order
+    statements: 1
+    note: insert the parent Order first (the referenced row)
+  - mutation: insert
+    entity: OrderItem
+    statements: 1
+    note: then insert the child OrderItem whose order_id references it
+goldenSql:
+  postgres:
+    - insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
+    - insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+binds:
+  - [100, Hopper, X-1, 1, 9.99, true, 2024-07-01]
+  - [200, 100, X-1, 3]
+roundTrips: 2
+expectedTableState:
+  orders:
+    - id: 100
+      name: Hopper
+      sku: X-1
+      qty: 1
+      price: 9.99
+      active: true
+      ordered_on: 2024-07-01
+  order_item:
+    - id: 200
+      order_id: 100
+      sku: X-1
+      quantity: 3

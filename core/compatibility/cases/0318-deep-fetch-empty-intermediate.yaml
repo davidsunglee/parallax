@@ -1,0 +1,35 @@
+# Deep fetch, EMPTY INTERMEDIATE level — downstream child SQL is elided (M4).
+#
+# 0315 covers an empty ROOT (no statements past the root). This pins the distinct
+# rule that a NON-empty root whose first hop gathers NO children issues no SQL for
+# the level BELOW it. The root pins order 4, which has no items, so:
+#   level 0 (root)  : order 4                          (1 statement)
+#   level 1 (items) : keyed by {4} ⇒ executes, returns ZERO items (1 statement)
+#   level 2 (statuses): the items level gathered no parent keys ⇒ NO statement
+# So roundTrips = 2: the grandchild `OrderItem.statuses` query is omitted because
+# its parent-key set is empty. The harness asserts the statuses statement is not
+# authored after an empty level.
+model: models/orders.yaml
+tags: [m4, m5, deepFetch, empty-intermediate, relationship]
+operation:
+  deepFetch:
+    operand:
+      eq:
+        attr: Order.id
+        value: 4
+    paths:
+      - [Order.items, OrderItem.statuses]
+goldenSql:
+  postgres:
+    - select t0.id, t0.name from orders t0 where t0.id = ?
+    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?)
+binds:
+  - [4]
+  - [4]
+referenceSql: select id, name from orders where id = 4
+roundTrips: 2
+expectedGraph:
+  Order:
+    - id: 4
+      name: Margaret
+      items: []

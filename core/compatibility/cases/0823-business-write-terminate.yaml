@@ -1,0 +1,41 @@
+# Write sequence: business-temporal-only TERMINATE (milestone chaining, M7).
+#
+# Audit-only has insert/update/terminate (0510-0512) and business-only has insert
+# (0824) and update (0822) — but no terminate. M12 enumerates terminate for the
+# business-only profile, so this fills the asymmetry. A business terminate closes
+# the open business row (thru_z = the business instant the fact stops being true)
+# and chains NOTHING. The defining invariant is the ABSENCE of any current row
+# afterward: no row has thru_z = infinity.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert    : open [2024-01-01, infinity) guest Ada      (1 statement)
+#   step 2 terminate : close the current business row, insert none (1 statement)
+#
+# Resulting state: one CLOSED business milestone (thru_z finite) and crucially no
+# thru_z = infinity row — the observable signature of a business termination.
+model: models/reservation.yaml
+tags: [m7, m3, business_temporal, temporal, write-sequence, terminate, business-only]
+writeSequence:
+  - mutation: insert
+    entity: Reservation
+    statements: 1
+    note: open a current business milestone [2024-01-01, infinity)
+  - mutation: terminate
+    entity: Reservation
+    statements: 1
+    note: close the current business row; insert nothing (no current row remains)
+goldenSql:
+  postgres:
+    - insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
+    - update reservation set thru_z = ? where res_id = ? and thru_z = ?
+binds:
+  - [1, "101", Ada, "2024-01-01T00:00:00+00:00", infinity]
+  - ["2024-03-01T00:00:00+00:00", 1, infinity]
+roundTrips: 2
+expectedTableState:
+  reservation:
+    - res_id: 1
+      room: "101"
+      guest: Ada
+      from_z: "2024-01-01T00:00:00+00:00"
+      thru_z: "2024-03-01T00:00:00+00:00"

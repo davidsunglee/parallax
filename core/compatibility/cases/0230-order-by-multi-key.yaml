@@ -1,0 +1,28 @@
+# orderBy with MULTIPLE keys + mixed directions (M2 orderBy, M3 clause order).
+#
+# 0224/0225 order by a single key; this pins the composite, comma-separated
+# `order by t0.active desc, t0.qty asc` render and the tie-break it encodes:
+# active rows first (desc on a boolean ⇒ true before false), then ascending qty
+# within each group. Capping at 2 rows makes the multi-key ordering OBSERVABLE
+# through membership — the first two rows are the active orders with the lowest
+# qty (ids 1 and 2), not any active order.
+model: models/orders.yaml
+tags: [m2, orderBy, limit, directive, multi-key]
+operation:
+  limit:
+    count: 2
+    operand:
+      orderBy:
+        keys:
+          - { attr: Order.active, direction: desc }
+          - { attr: Order.qty, direction: asc }
+        operand:
+          all: {}
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 order by t0.active desc, t0.qty asc limit ?
+binds: [2]
+referenceSql: select id, name from orders order by active desc, qty asc limit 2
+expectedRows:
+  - { id: 1, name: Ada }
+  - { id: 2, name: Linus }
+roundTrips: 1
