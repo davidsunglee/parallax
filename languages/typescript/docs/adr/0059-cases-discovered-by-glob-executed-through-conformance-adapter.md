@@ -1,0 +1,9 @@
+# Compatibility cases are discovered by glob and executed through the conformance adapter
+
+The TypeScript suite discovers compatibility cases by glob and executes each one through the `parallax-conformance` adapter contract, not by reaching into TypeScript runtime internals.
+
+Discovery mirrors the Python harness's `discover_cases` (`reference-harness/src/reference_harness/case.py`): glob `core/compatibility/cases/**/*.{yaml,yml}`, dedupe, and sort, then load each case and the model descriptor it references. Mirroring the oracle's discovery keeps the case set authoritative — the same files the Python harness proves green are the files the TypeScript suite runs, with no hand-maintained list that could drift. The sorted, deduped order also makes the generated test matrix deterministic.
+
+Execution goes through the adapter's `compile` and `run` commands (`core/spec/conformance-adapter-contract.md`) and compares the returned JSON envelope using the same comparison rules `M12` uses — `compile` asserts the emitted SQL and binds without touching a database, and `run` provisions, executes, and compares the observations. The suite never imports finder builders, cache objects, or other runtime internals; it treats the adapter as the single behavioral boundary. This keeps the suite decoupled from implementation detail and reuses the shared corpus as the primary behavioral surface, exactly as a conformance runner does for any language.
+
+Pure in-process execution (a runner that imports runtime internals directly) was rejected because it couples the suite to implementation detail and bypasses the contract every language must satisfy. Adapter-only execution without explicit glob discovery was rejected because it loses the authoritative, oracle-matching case enumeration. Combining glob discovery with adapter-boundary execution keeps both properties.
