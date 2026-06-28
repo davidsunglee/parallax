@@ -42,7 +42,7 @@ mappings that **differ** from Postgres:
 | Neutral type | Postgres | MariaDB | Why it differs |
 |---|---|---|---|
 | `boolean` | `boolean` | `tinyint(1)` | MariaDB has no native boolean (`true`/`false` alias `1`/`0`) |
-| `timestamp` | `timestamptz` | `datetime(6)` | MariaDB `TIMESTAMP` is range-limited (2038) and auto-updates; `DATETIME(6)` is the UTC instant store, and has **no native infinity** |
+| `timestamp` | `timestamptz` at core microsecond precision | `datetime(6)` | MariaDB `TIMESTAMP` is range-limited (2038) and auto-updates; `DATETIME(6)` is the UTC instant store, preserves the core microsecond precision, and has **no native infinity** |
 | `float64` | `double precision` | `double` | spelling |
 | `bytes` | `bytea` | `longblob` | |
 | `uuid` | `uuid` | `char(36)` | no native UUID type |
@@ -56,6 +56,11 @@ mappings that **differ** from Postgres:
 - **Type mapping.** The dialect maps each M0 neutral type to a concrete column
   type (the Postgres column on the right of the M0 table). DDL derivation (M12
   harness) asks the dialect for these.
+- **Timestamp precision.** The dialect MUST preserve the M0 `timestamp`
+  contract at microsecond precision. Dialects with higher-resolution client
+  types MUST reject or explicitly normalize non-zero sub-microsecond values
+  before binding; dialects with lower-resolution storage cannot satisfy the core
+  `timestamp` type without an additional adapter or degraded optional profile.
 - **SELECT shape.** The canonical SELECT projects explicit, table-aliased columns
   (`t0.id, t0.name`) from a single aliased table (`from orders t0`). The alias
   scheme is `t0, t1, …` (see M3 normalization). No `SELECT *`.

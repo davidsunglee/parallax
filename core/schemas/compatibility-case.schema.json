@@ -226,7 +226,7 @@
       }
     },
     "expectedTableState": {
-      "description": "The resulting table state a writeSequence or conflict case asserts after applying its ordered DML golden SQL. Keyed by table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings (and the open-bound `infinity` as the literal string `infinity`).",
+      "description": "The resulting table state a writeSequence or conflict case asserts after applying its ordered DML golden SQL. Keyed by table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings at core microsecond precision, with 0 through 6 fractional second digits (and the open-bound `infinity` as the literal string `infinity`).",
       "type": "object",
       "minProperties": 1,
       "additionalProperties": {
