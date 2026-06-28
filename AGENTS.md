@@ -11,6 +11,9 @@
 
 ## Commit Messages
 
+- Every commit subject MUST use a Conventional Commits prefix such as `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, or `ci:`.
+- Before running `git commit`, inspect recent history with `git log --oneline -5` and match the repository's subject style.
+- Do not bypass Husky for normal commits. If hooks fail because local Node tools are missing, run `pnpm install --frozen-lockfile` and retry the commit.
 - Keep commit messages concise and review-oriented.
 - Use exactly one blank line between the subject and body.
 - Use exactly one blank line between the body paragraph and bullet list.
