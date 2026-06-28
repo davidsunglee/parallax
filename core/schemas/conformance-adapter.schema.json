@@ -63,6 +63,29 @@
       "items": { "$ref": "#/$defs/caseShape" },
       "uniqueItems": true
     },
+    "caseTag": {
+      "description": "A compatibility case tag from a case's `tags` array.",
+      "type": "string",
+      "minLength": 1
+    },
+    "caseTagList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/caseTag" },
+      "uniqueItems": true
+    },
+    "caseTagClaims": {
+      "description": "Optional tag filters that narrow broad module/case-shape claims. `include` means a case must have at least one listed tag; `exclude` means a case with any listed tag is outside the claim.",
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        { "required": ["include"] },
+        { "required": ["exclude"] }
+      ],
+      "properties": {
+        "include": { "$ref": "#/$defs/caseTagList" },
+        "exclude": { "$ref": "#/$defs/caseTagList" }
+      }
+    },
     "commandList": {
       "type": "array",
       "items": { "$ref": "#/$defs/command" },
@@ -97,7 +120,7 @@
       "pattern": "^($|/.*)$"
     },
     "bindValue": {
-      "description": "A JSON-serializable bind value. Objects and arrays are allowed for JSON/JSONB-like values.",
+      "description": "A JSON-serializable bind value. Objects and arrays are allowed for structured-document values such as JSON, JSONB, or VARIANT.",
       "type": ["string", "number", "boolean", "null", "object", "array"]
     },
     "binds": {
@@ -183,39 +206,104 @@
         }
       }
     },
-    "metrics": {
+    "wallTimeMs": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["iterations", "p50Ms", "p95Ms", "roundTrips"],
+      "required": ["p50", "p95"],
       "properties": {
+        "p50": {
+          "type": "number",
+          "minimum": 0
+        },
+        "p95": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "benchmarkWorkload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "iterations", "wallTimeMs", "roundTrips"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
         "iterations": {
           "type": "integer",
           "minimum": 1
         },
-        "p50Ms": {
-          "type": "number",
-          "minimum": 0
-        },
-        "p95Ms": {
-          "type": "number",
-          "minimum": 0
+        "wallTimeMs": {
+          "$ref": "#/$defs/wallTimeMs"
         },
         "roundTrips": {
           "type": "integer",
           "minimum": 0
         },
-        "peakMemoryBytes": {
+        "expectRoundTrips": {
           "type": "integer",
           "minimum": 0
         },
-        "steadyMemoryBytes": {
+        "roundTripsOk": {
+          "type": "boolean"
+        }
+      }
+    },
+    "benchmarkEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture", "model", "datasetRows", "workloads"],
+      "properties": {
+        "fixture": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "datasetRows": {
           "type": "integer",
           "minimum": 0
         },
-        "rowCount": {
+        "workloads": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/benchmarkWorkload" }
+        }
+      }
+    },
+    "benchmarkMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["peakBytes", "steadyBytes"],
+      "properties": {
+        "peakBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steadyBytes": {
           "type": "integer",
           "minimum": 0
         }
+      }
+    },
+    "benchmarkReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generatedAt", "dialect", "benchmarks", "memory"],
+      "properties": {
+        "generatedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dialect": { "$ref": "#/$defs/dialect" },
+        "benchmarks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/benchmarkEntry" }
+        },
+        "memory": { "$ref": "#/$defs/benchmarkMemory" }
       }
     },
     "commonOk": {
@@ -257,6 +345,9 @@
                 },
                 "caseShapes": {
                   "$ref": "#/$defs/caseShapeList"
+                },
+                "caseTags": {
+                  "$ref": "#/$defs/caseTagClaims"
                 },
                 "commands": {
                   "$ref": "#/$defs/commandList"
@@ -335,8 +426,7 @@
         "status",
         "adapter",
         "benchmark",
-        "dialect",
-        "metrics"
+        "report"
       ],
       "properties": {
         "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
@@ -344,8 +434,7 @@
         "status": { "const": "ok" },
         "adapter": { "$ref": "#/$defs/adapter" },
         "benchmark": { "$ref": "#/$defs/benchmarkPath" },
-        "dialect": { "$ref": "#/$defs/dialect" },
-        "metrics": { "$ref": "#/$defs/metrics" }
+        "report": { "$ref": "#/$defs/benchmarkReport" }
       }
     },
     "nonOk": {

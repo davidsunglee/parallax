@@ -50,7 +50,8 @@ Human-readable logs MAY be written to stderr.
 | `2` | CLI usage error, such as a missing flag or unreadable file |
 
 The `unsupported` result is only valid when the adapter has not claimed the
-requested module, case shape, or dialect in `describe`.
+requested command, dialect, case shape, module tags, or case-tag slice in
+`describe`.
 
 ## Common Output Envelope
 
@@ -117,18 +118,53 @@ Example:
     "modules": ["m0", "m1", "m2", "m3", "m11", "m12"],
     "dialects": ["postgres"],
     "caseShapes": ["read"],
+    "caseTags": {
+      "exclude": ["aggregate", "groupBy", "having"]
+    },
     "commands": ["describe", "compile", "run"],
     "provisioning": "external-url"
   }
 }
 ```
 
+Capability claims are deliberately **case-slice aware**. `modules`,
+`dialects`, and `caseShapes` are broad filters; `caseTags` is an optional
+fine-grained filter over the compatibility case's own `tags` array. This lets a
+partial implementation honestly claim, for example, M2 predicate reads while
+deferring M2 aggregation reads, or M8 transaction/write cases while deferring
+query-cache and identity-cache scenarios.
+
+A case command is claimed only when **all** of these are true:
+
+- the command is listed in `commands`
+- the requested dialect is listed in `dialects`
+- the case shape is listed in `caseShapes`
+- every module-like tag on the case (`m0`, `m1`, …, `m13`, or `coherence`) is
+  listed in `modules`
+- if `caseTags.include` is present, the case has at least one listed tag
+- if `caseTags.exclude` is present, the case has none of the listed tags
+
+`caseTags.include` and `caseTags.exclude` use exact tag strings from case files,
+including tags that contain spaces such as `identity cache`. The filters are
+evaluated after the broad module/dialect/shape filters. If `caseTags` is omitted,
+then the module, dialect, and shape claims are all-or-nothing for matching cases.
+
+For a claimed case command, returning `unsupported` is invalid: the adapter MUST
+return `ok` or `error`. For an unclaimed case command, returning `unsupported`
+is valid and SHOULD include a diagnostic naming the first failed filter, such as
+`unsupported-case-tag` or `unsupported-case-shape`.
+
 `provisioning` is one of:
 
 - `external-url`: `run` and `benchmark` expect the caller to provide a database
   URL or equivalent language-specific connection configuration.
 - `self-managed`: the adapter provisions its own clean database, for example
-  with Testcontainers.
+  with Testcontainers. The adapter owns the reset lifecycle needed to make each
+  database-backed case isolated: reset to an empty state, apply the case model's
+  derived DDL, and load fixtures according to the core case lifecycle. The
+  contract does not assume any generic container snapshot API; language specs
+  that use snapshot/restore optimizations MUST name the concrete provider API
+  and fallback reset path.
 
 The target language spec records which mode the implementation uses.
 
@@ -234,8 +270,12 @@ assert different things:
 
 ## `benchmark`
 
-`benchmark` runs one benchmark definition and reports measurements using the M13
-methodology.
+`benchmark` runs one benchmark fixture and reports measurements using the M13
+methodology. The command returns the same report shape M13 calls `report.json`,
+wrapped in the standard adapter envelope. For a single `--benchmark <b.yaml>`
+invocation, `report.benchmarks` contains one entry for that requested fixture.
+Adapters MAY also write the same `report` object to a local `report.json` artifact
+for CI collection, but stdout is the normative adapter output.
 
 Example:
 
@@ -250,19 +290,40 @@ Example:
     "version": "0.1.0"
   },
   "benchmark": "core/compatibility/benchmarks/read-mix.yaml",
-  "dialect": "postgres",
-  "metrics": {
-    "iterations": 100,
-    "p50Ms": 2.8,
-    "p95Ms": 4.7,
-    "roundTrips": 1,
-    "peakMemoryBytes": 12582912,
-    "rowCount": 1
+  "report": {
+    "generatedAt": "2026-06-27T00:00:00+00:00",
+    "dialect": "postgres",
+    "benchmarks": [
+      {
+        "fixture": "read-mix.yaml",
+        "model": "models/account.yaml",
+        "datasetRows": 1000,
+        "workloads": [
+          {
+            "name": "point-read",
+            "iterations": 200,
+            "wallTimeMs": {
+              "p50": 2.8,
+              "p95": 4.7
+            },
+            "roundTrips": 1,
+            "expectRoundTrips": 1,
+            "roundTripsOk": true
+          }
+        ]
+      }
+    ],
+    "memory": {
+      "peakBytes": 12582912,
+      "steadyBytes": 10485760
+    }
   }
 }
 ```
 
 Benchmarks are required only when a language implementation claims M13 support.
+The benchmark envelope MUST NOT use the legacy single-workload `metrics` object;
+the report object is the machine-readable performance artifact.
 
 ## Comparison Rules
 
