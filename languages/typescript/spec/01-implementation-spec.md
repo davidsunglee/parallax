@@ -48,15 +48,14 @@ output path is hidden behind it. The generated barrel exports the `parallax`
 factory, the `Parallax` and `ParallaxTransaction` types, each generated entity
 symbol (e.g. `Order`) and its managed-object type (`type Order`), entity input
 validators/types (`OrderInput`, `type OrderInput`), snapshot types
-(`type OrderSnapshot`), generated enum and value-object types, public runtime
-types such as `ParallaxList`, and the public error classes rooted at
-`ParallaxError`.
+(`type OrderSnapshot`), public runtime types such as `ParallaxList`,
+`ParallaxDecimal`, and `ParallaxJsonValue`, and the public error classes rooted
+at `ParallaxError`.
 
 ```ts
 import {
   Order,
   OrderInput,
-  OrderStatus,
   ParallaxOptimisticLockError,
   parallax,
   type Order as OrderObject,
@@ -69,6 +68,16 @@ import {
 The value/type namespace overlap is deliberate: `Order` is both the entity symbol
 value used in expressions and the managed object `type Order` (aliasable as
 `OrderObject` when clarity matters).
+
+No generated enum types or structured value-object interfaces are part of
+TypeScript V1. The canonical descriptor has no enum element, and a `valueObject`
+declares only its element name, logical type name, backing column, mapping, and
+nullability. Generated value-object properties therefore use the unstructured
+`ParallaxJsonValue` scalar mapping from [§2.2.1](#221-m0-scalar-runtime-mapping),
+and nested value-object predicates use untyped string paths after the declared
+value-object name. A future core descriptor extension that describes enum values
+or value-object fields may add generated types, but V1 codegen MUST NOT invent
+them from TypeScript-local assumptions.
 
 ### 1.2 Parallax handle
 
@@ -94,7 +103,7 @@ construction.
 
 ```ts
 const orders = px.orders.find(
-  Order.status.eq(OrderStatus.Processing).and(
+  Order.status.eq("Processing").and(
     Order.lineItems.exists(item => item.quantity.gt(2)),
   ),
   {
@@ -130,8 +139,8 @@ precedence is expressed with **postfix `.group()`**, which serializes to the
 canonical `group` node:
 
 ```ts
-Order.status.eq(OrderStatus.Processing)
-  .and(Order.priority.eq(Priority.High).or(Order.customer.region.eq("NA")).group());
+Order.status.eq("Processing")
+  .and(Order.priority.eq("High").or(Order.customer.region.eq("NA")).group());
 ```
 
 ### 1.6 Relationship navigation and deep-fetch (`M4`)
@@ -231,18 +240,63 @@ types**, so every property in a descriptor is reachable from §2 alone:
 | `relationship` | `RelationshipMeta` | `name`, `relatedEntity`, `cardinality` (`one-to-one`/`many-to-one`/`one-to-many`/`many-to-many`), `join`, `reverseName?`, `dependent`, `foreignKey?`, `orderBy?` (`{ attr, direction }[]`) |
 | `index` | `IndexMeta` | `name`, `attributes` (ordered attribute names), `unique` |
 | `asOfAttribute` | `AsOfAttributeMeta` | `name`, `fromColumn`, `toColumn`, `axis` (`processing`/`business`), `toIsInclusive`, `infinity` (`"infinity"`), `default` (`"now"`) |
-| `valueObject` | `ValueObjectMeta` | `name`, `type` (logical struct name), `column` (single JSONB column), `mapping` (`"jsonb"`), `nullable` |
+| `valueObject` | `ValueObjectMeta` | `name`, `type` (logical struct name), `column` (single structured-document column), `mapping` (`"json"`), `nullable` |
 | `inheritance` | `InheritanceMeta` | `strategy` (`table-per-hierarchy`/`table-per-leaf`), `role` (`root`/`subtype`), `parent?`, `discriminator?` (`{ column }`), `discriminatorValue?` |
 | `pkGenerator` | `PkGeneratorMeta` | `strategy` (`none`/`max`/`sequence`); for `sequence`: `sequenceName?`, `batchSize?`, `initialValue?`, `incrementSize?` (the bare-enum form normalizes to `{ strategy }`) |
 
 Defaulting follows the schema: readers surface the schema defaults
 (`mutability: "read-only"`, `temporal: "non-temporal"`, `primaryKey: false`,
 `nullable: false`, `readOnly: false`, `optimisticLocking: false`,
-`dependent: false`, `unique: false`, `toIsInclusive: false`,
-`mapping: "jsonb"`, `nullable: false`) when a field is omitted, so the typed and
-generic layers agree on every value. This mirrors the Python harness's `Entity` /
-`Model` accessors, which are the concrete generic reader over the raw parsed
-descriptor.
+`dependent: false`, `unique: false`, `toIsInclusive: false`, `mapping: "json"`,
+`nullable: false`) when a field is omitted, so the typed and generic layers agree
+on every value. This mirrors the Python harness's `Entity` / `Model` accessors,
+which are the concrete generic reader over the raw parsed descriptor.
+
+### 2.2.1 M0 scalar runtime mapping
+
+Generated TypeScript code maps every M0 neutral scalar to one public runtime
+representation. These choices are part of the compatibility boundary: generated
+managed objects, snapshots, input validators, assignment expressions, operation
+binds, and conformance adapter results all use the same mapping. Adapter-specific
+database client types such as Node `Buffer`, Postgres numeric strings, or driver
+date objects are normalized at the adapter boundary and are not exposed through
+generated application APIs.
+
+The generated barrel re-exports `ParallaxDecimal` and `ParallaxJsonValue` from
+`@parallax/core`, alongside the other public runtime types. `ParallaxDecimal` is
+a Parallax-owned immutable exact-decimal value constructed from a canonical
+decimal string and rendered back with `toString()`. It is not JavaScript
+`number`, and the spec does not require a particular third-party decimal
+library. `ParallaxJsonValue` is the structural JSON value type:
+`null | boolean | number | string | ParallaxJsonValue[] | { [key: string]:
+ParallaxJsonValue }`.
+
+| M0 scalar | Generated property / snapshot type | Create / update input type | Adapter bind type | Materialization rule |
+|---|---|---|---|---|
+| `boolean` | `boolean` | `boolean` | `boolean` | Preserve the boolean value exactly. |
+| `int32` | `number` | `number` | `number` | Validate a signed 32-bit integer; reject non-integers and out-of-range values. |
+| `int64` | `bigint` | `bigint \| string` | Canonical base-10 string | Parse input strings as signed 64-bit integers; reject `number` input to avoid precision loss; materialize database integers/text as `bigint`. |
+| `float32` | `number` | `number` | `number` | Validate a finite JavaScript number and bind through the dialect's 32-bit float path. |
+| `float64` | `number` | `number` | `number` | Validate a finite JavaScript number and bind through the dialect's 64-bit float path. |
+| `decimal(p,s)` | `ParallaxDecimal` | `ParallaxDecimal \| string` | Canonical decimal string | Validate precision `p` and scale `s`; reject `number` input; materialize exact database numeric text as `ParallaxDecimal`. |
+| `string` | `string` | `string` | `string` | Preserve UTF-8 text and enforce `maxLength` when present. |
+| `bytes` | `Uint8Array` | `Uint8Array \| ArrayBuffer` | `Uint8Array` | Copy input bytes before persistence; materialize a fresh `Uint8Array`; adapters may convert to client-specific binary values internally. |
+| `date` | `Temporal.PlainDate` | `Temporal.PlainDate \| string` | ISO `YYYY-MM-DD` string | Parse strings as timezone-naive calendar dates; reject offsets and time components. |
+| `time` | `Temporal.PlainTime` | `Temporal.PlainTime \| string` | ISO wall-clock time string | Parse strings as timezone-naive times of day; reject dates and timezone offsets. |
+| `timestamp` | `Temporal.Instant` | `Temporal.Instant \| string` | UTC ISO instant string with microsecond precision | Parse strings as absolute instants; reject non-zero sub-microsecond precision; materialize UTC instants as `Temporal.Instant`. |
+| `uuid` | `string` | `string` | Canonical lowercase UUID string | Validate RFC 4122 shape and normalize to lowercase canonical text. |
+| `json` | `ParallaxJsonValue` | `ParallaxJsonValue` | `ParallaxJsonValue` | Preserve JSON-compatible structure only; reject `undefined`, functions, symbols, bigint, dates, and cyclic objects; adapters lower to dialect-native structured-document columns. |
+
+Nullability is orthogonal to the scalar mapping. When an attribute or value
+object is `nullable: true`, generated property and input types union the mapped
+type with `null`; non-nullable fields reject `null` before binding. `undefined`
+means "field omitted" only in validation helpers for optional create/update
+payloads; it is never a persisted scalar value.
+
+`Temporal.PlainDate`, `Temporal.PlainTime`, and `Temporal.Instant` use the
+standard Temporal API. Runtimes without native Temporal support MUST provide the
+same API through a polyfill before generated code executes. JavaScript `Date` is
+not part of the public scalar surface.
 
 ### 2.3 Serde module
 
@@ -296,7 +350,7 @@ transaction; reads may use `px`, writes are available only through `tx`.
   await px.transaction(async tx => {
     const order = await tx.orders.create(input);
     await tx.orders.update(Order.id.eq(order.id), {
-      set: [Order.status.set(OrderStatus.Processing)],
+      set: [Order.status.set("Processing")],
     });
     await tx.orders.delete(Order.id.eq(order.id));
   });
@@ -528,11 +582,13 @@ the adapter must return `ok` or `error`.
   source of truth is the canonical Parallax YAML/JSON descriptor set (the same
   serialized metamodel the compatibility corpus uses, validated against
   `metamodel.schema.json` per [§2.1](#21-primary-authoring-format)). The typed
-  entity symbols, managed-object
-  types, entity input types, snapshot types, generated enums/value-objects, and
-  operation accessors are all generated from it. Codegen is chosen over runtime
-  reflection/proxies so the typed finder/object surface is statically checkable
-  and matches the generated import barrel
+  entity symbols, managed-object types, entity input types, snapshot types,
+  value-object properties as unstructured JSON values, and operation accessors
+  are all generated from it. Codegen MUST emit only artifacts derivable from
+  `metamodel.schema.json`; enum types and structured value-object field types are
+  not generated in V1 because the descriptor does not define them. Codegen is
+  chosen over runtime reflection/proxies so the typed finder/object surface is
+  statically checkable and matches the generated import barrel
   ([§1.1](#11-generated-import-surface)). Decorators and TypeScript schema
   builders may be added later as descriptor-authoring conveniences, but the
   serialized descriptor stays the backbone.
@@ -850,7 +906,7 @@ from a managed object:
 
 ```ts
 const snapshot = await order.toSnapshot({
-  attributes: [Order.id, Order.customer.address.zipCode],
+  attributes: [Order.id, Order.status],
   relationships: [Order.customer, Order.lineItems],
 });
 
@@ -862,8 +918,10 @@ const snapshots = await orders.toSnapshots({
 Snapshot output includes all scalar and value-object attributes by default and no
 relationships by default; `attributes` and `excludeAttributes` are mutually
 exclusive, relationship paths are opt-in (there is no `excludeRelationships`,
-since omitted relationships are already excluded), and list-level snapshots
-batch-load requested relationships like includes
+since omitted relationships are already excluded), and value-object attributes
+are selected as whole `ParallaxJsonValue` properties rather than typed nested
+field paths. List-level snapshots batch-load requested relationships like
+includes
 ([§1.6](#16-relationship-navigation-and-deep-fetch-m4)) to avoid N+1.
 (`JSON.stringify` over a managed object is scalar-only and synchronous and does
 not lazy-load relationships, so use a snapshot when relationship data is needed.)
