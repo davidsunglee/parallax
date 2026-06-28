@@ -2,7 +2,7 @@
   // markdownlint-cli2 runner config: which files to lint and which to ignore.
   // The rule set itself lives in .markdownlint.jsonc.
   "config": ".markdownlint.jsonc",
-  "globs": ["core/spec/**/*.md", "*.md"],
+  "globs": ["core/spec/**/*.md", "languages/**/spec/**/*.md", "*.md"],
   "ignores": [
     "node_modules/**",
     ".humanlayer/**",
