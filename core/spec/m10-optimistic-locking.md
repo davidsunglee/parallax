@@ -74,6 +74,11 @@ Reladomo does by default) or **caller-driven** is a per-language policy; core
 mandates only that a conflict is *retriable* and that a retry re-reads the fresh
 version. A retry that exhausts its bound surfaces the conflict to the caller.
 
+The suite proves the retriable half observably with a conflict case's
+**`attempts`** sequence (M12): a stale-version `UPDATE` affects `0` rows, then a
+retry that re-reads the fresh version and re-applies affects `1` — the `0`-then-
+`1` transition, asserted against real data.
+
 Optimistic locking composes with **detached merge-back** (`M9`): the version a
 detached copy carries is the one read at detachment, so a merge-back `UPDATE`
 gates on that version and detects a conflict if the original changed in the

@@ -142,8 +142,10 @@ def _assert_schema(case: Case) -> None:
         if not case.scenario:
             raise CaseFailure(f"{case.path.name}: scenario case has no steps")
     elif case.is_conflict:
-        if case.expected_affected_rows is None:
-            raise CaseFailure(f"{case.path.name}: conflict case missing expectedAffectedRows")
+        if case.expected_affected_rows is None and not case.attempts:
+            raise CaseFailure(
+                f"{case.path.name}: conflict case missing expectedAffectedRows / attempts"
+            )
     elif case.is_coherence:
         if len(case.coherence) < 2:
             raise CaseFailure(
@@ -182,7 +184,9 @@ def _assert_serde(case: Case) -> None:
     # serde — always.
     if case.is_scenario:
         for step in case.scenario:
-            serde.assert_roundtrip(step["find"])
+            # Read steps carry an operation under `find`; write steps carry none.
+            if "find" in step:
+                serde.assert_roundtrip(step["find"])
     elif case.is_coherence:
         # A coherence case's read steps carry an operation under `find`; write
         # steps carry none. Round-trip each present operation through the serde.
@@ -766,6 +770,17 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
     for index, step in enumerate(case.scenario):
         statements = _step_statements(step, dialect)
         binds = step.get("binds", [])
+        if "write" in step:
+            # A committed write between finds (M8 read-your-own-writes / cache
+            # invalidation): apply and COMMIT each DML statement on the unit of
+            # work's connection. It captures no rows; a later find observes the
+            # committed state. Its index still occupies a slot so `sameObjectAs`
+            # references stay aligned.
+            for statement_index, statement in enumerate(statements):
+                stmt_binds = _binds_for_list(binds, statement_index, len(statements))
+                db.execute(statement, stmt_binds)
+            results.append([])
+            continue
         if statements:
             # A DB-touching step: M8 finds are single-statement, so the round-trip
             # count is one; execute it and capture the rows.
@@ -896,6 +911,96 @@ def _binds_for_list(binds: list[Any], index: int, count: int) -> list[Any]:
     return binds if index == 0 else []
 
 
+# --- conflict RETRY cases (M10 retry contract) ------------------------------
+
+
+def _attempt_statements(attempt: dict[str, Any], dialect: str) -> list[str]:
+    """The golden UPDATE statement(s) a retry attempt lists for *dialect*."""
+    golden = attempt.get("goldenSql") or {}
+    value = golden.get(dialect)
+    if value is None:
+        return []
+    return [value] if isinstance(value, str) else list(value)
+
+
+def _conflict_retry_has_golden(case: Case, dialect: str) -> bool:
+    """True if any retry attempt lists golden SQL for *dialect*."""
+    return any(_attempt_statements(attempt, dialect) for attempt in case.attempts)
+
+
+def _assert_conflict_retry_normalization(case: Case, dialect: str) -> None:
+    for index, attempt in enumerate(case.attempts):
+        for sql in _attempt_statements(attempt, dialect):
+            canonical = normalize(sql, dialect)
+            if canonical != sql:
+                raise CaseFailure(
+                    f"{case.path.name}: attempts[{index}].goldenSql.{dialect} is "
+                    f"not canonical.\n"
+                    f"  stored:     {sql!r}\n"
+                    f"  normalized: {canonical!r}"
+                )
+
+
+def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
+    """Run the precondition + ordered retry attempts, asserting each affected count.
+
+    This is the observable form of the M10 RETRY contract (Phase 7). The model's
+    fixtures are loaded (the versioned row exists), an OPTIONAL out-of-band
+    ``precondition`` simulates a concurrent writer that advanced the version, then
+    each attempt's golden ``UPDATE`` is applied in order. The first attempt gates
+    on the STALE version the caller read before detaching/reading, so it affects
+    ZERO rows (the ``updatedRows != 1`` conflict signal); the retry re-reads the
+    now-fresh version and re-applies, affecting exactly ONE row. The harness
+    asserts every attempt's affected-row count and (when authored) the final table
+    state, proving the conflict was detected AND the retry closed the loop against
+    real data.
+    """
+    dialect = db.dialect
+
+    for index, statement in enumerate(case.precondition):
+        binds = _binds_for_list(case.precondition_binds, index, len(case.precondition))
+        db.execute(statement, binds)
+
+    for index, attempt in enumerate(case.attempts):
+        statements = _attempt_statements(attempt, dialect)
+        if len(statements) != 1:
+            raise CaseFailure(
+                f"{case.path.name}: attempts[{index}] must list exactly one golden "
+                f"UPDATE for {dialect}, found {len(statements)}."
+            )
+        affected = db.execute(statements[0], attempt.get("binds", []))
+        expected = attempt["expectedAffectedRows"]
+        if affected != expected:
+            raise CaseFailure(
+                f"{case.path.name}: attempts[{index}] UPDATE affected {affected} "
+                f"row(s) but expectedAffectedRows is {expected}. A stale version "
+                f"MUST affect 0 rows (conflict); the fresh-version retry MUST "
+                f"affect 1."
+            )
+
+    _assert_table_state(case, db)
+
+
+def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
+    """Assert each table named in ``expectedTableState`` matches (order-insensitive)."""
+    if not case.expected_table_state:
+        return
+    entity_by_table = {entity.table: entity for entity in case.model.entities}
+    for table, expected_rows in case.expected_table_state.items():
+        if table not in entity_by_table:
+            raise CaseFailure(
+                f"{case.path.name}: expectedTableState names table {table!r} "
+                f"which the model does not declare."
+            )
+        actual = _read_table(db, entity_by_table[table])
+        if not _rows_equal(actual, expected_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: table {table!r} state != expectedTableState.\n"
+                f"  actual:   {actual!r}\n"
+                f"  expected: {expected_rows!r}"
+            )
+
+
 # --- coherence cases (Phase 11, cross-process cache coherence) ---------------
 
 
@@ -1021,6 +1126,23 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_serde(case)  # layer 4
         _assert_equivalent_encodings(case)  # layer 4c
         _assert_coherence(case, db)  # layer 2 (two-node observation)
+        return
+
+    if case.is_conflict and case.attempts:
+        # Retry conflict (M10): golden SQL lives PER ATTEMPT, so there is no
+        # top-level goldenSql to key on. Handle it here, before the goldenSql
+        # access below, mirroring the scenario / coherence per-step shapes.
+        if not _conflict_retry_has_golden(case, dialect):
+            _assert_schema(case)
+            _assert_serde(case)
+            _assert_equivalent_encodings(case)
+            return
+        _assert_schema(case)
+        _assert_conflict_retry_normalization(case, dialect)  # layer 3
+        _assert_serde(case)  # layer 4
+        _assert_equivalent_encodings(case)  # layer 4c
+        _provision(case, db)  # fixtures loaded: the versioned row exists
+        _assert_conflict_retry(case, db)  # precondition + ordered attempts
         return
 
     if dialect not in case.golden_sql:

@@ -20,8 +20,10 @@ Its fields:
 
 A case is one of five shapes: a **read case** (carries an `operation`), a
 **writeSequence case** (carries a `writeSequence`, Phase 5 / M7), a **scenario
-case** (carries a `scenario`, Phase 6 / M8), a **conflict case** (carries
-`expectedAffectedRows`, Phase 7 / M10), or a **coherence case** (carries a
+case** (carries a `scenario` of ordered read *and* committed-write steps, Phase
+6 / M8), a **conflict case** (carries `expectedAffectedRows` for a single
+attempt, or an `attempts` retry sequence, Phase 7 / M10), or a **coherence
+case** (carries a
 `coherence` two-node sequence, Phase 11 / cross-process coherence). The fields:
 
 | Field | Required | Meaning |
@@ -142,6 +144,28 @@ the caller read earlier), and asserts the affected-row count equals
 write did not apply. As with writeSequence cases, only the descriptor serde
 round-trip and the golden-SQL normalization layers apply (there is no
 `operation`).
+
+A conflict case MAY instead carry an **`attempts`** retry sequence — an ordered
+list of golden `UPDATE`s, each with its own `expectedAffectedRows` — proving the
+**M10 retry contract** end-to-end. After the `precondition`, the harness applies
+each attempt in order and asserts its affected-row count: the first (stale-
+version) attempt affects `0` rows (the conflict signal), then a retry that re-
+reads the now-fresh version and re-applies affects `1`. The final
+`expectedTableState` confirms the retried write — not the concurrent writer's —
+landed. (Golden SQL lives per attempt, so there is no top-level `goldenSql`.)
+
+### Scenario cases (M8)
+
+A **scenario** case proves the unit-of-work / identity / query-cache contract as
+an ordered list of steps over one provisioned database. A **read step** issues a
+`find` with a declared round-trip count (a cache hit declares `0` and lists no
+golden SQL); a **write step** (`write`) **commits** golden DML between finds. The
+write step is what makes **read-your-own-writes** and **query-cache
+invalidation** expressible: a dependent find after a committed write must observe
+it (and cannot be modeled as a cache hit, since reusing the stale pre-write rows
+would fail the post-write `expectRows`). The harness asserts per-step round-trip
+/ golden-SQL count consistency, executes each step, and checks `sameObjectAs`
+identity assertions; it never compiles an operation to SQL.
 
 ### Coherence cases (cross-process coherence)
 

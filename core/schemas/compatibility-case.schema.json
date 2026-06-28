@@ -24,8 +24,11 @@
       "required": ["scenario"]
     },
     {
-      "description": "A conflict case (M10): a golden UPDATE asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `precondition` (e.g. a stale-version mutation by a concurrent transaction), then runs the golden UPDATE and asserts `expectedAffectedRows` (a stale version => 0 rows, a fresh version => 1).",
-      "required": ["expectedAffectedRows", "goldenSql"]
+      "description": "A conflict case (M10): an optimistic-lock UPDATE asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `precondition` (e.g. a stale-version mutation by a concurrent transaction), then runs the golden UPDATE(s) and asserts the affected-row count. Two forms: a SINGLE attempt (`expectedAffectedRows` + `goldenSql`); or an ordered `attempts` retry sequence (each attempt carries its own goldenSql + expectedAffectedRows), which proves the M10 retry contract — a stale UPDATE affects 0 rows, then a retry that re-reads the fresh version affects 1.",
+      "anyOf": [
+        { "required": ["expectedAffectedRows", "goldenSql"] },
+        { "required": ["attempts"] }
+      ]
     },
     {
       "description": "A coherence case (Phase 11, cross-process cache coherence): a two-node operation sequence run against ONE database over TWO connections (node A, node B). Each step declares its node and golden SQL; the case asserts what node B observes after node A's committed write (the new state, never a stale cached copy). The harness provisions one database, opens two connections, runs each step on its node, and asserts the final re-fetch returns the post-write rows.",
@@ -89,20 +92,34 @@
       }
     },
     "scenario": {
-      "description": "A scenario (Phase 6, M8) case: an ordered list of operation steps proving the unit-of-work / identity / query-cache contract. Golden SQL lives PER STEP (not at the top level), because each step issues a find that costs a declared number of database round trips. The harness asserts the round-trip counts are internally consistent with the golden SQL each step lists (a cache-hit step lists none and declares roundTrips 0), executes the listed golden SQL against the provisioned database to confirm result-correctness, and checks identity assertions (a step may declare it returns the SAME logical object — same primary key — as an earlier step). The harness NEVER compiles an operation to SQL: the round-trip contract is proven from the fixture's own declared counts plus golden SQL.",
+      "description": "A scenario (Phase 6, M8) case: an ordered list of steps proving the unit-of-work / identity / query-cache contract. A step is either a READ step (issues a `find`) or a WRITE step (commits DML via `write`). Golden SQL lives PER STEP (not at the top level): each find costs a declared number of database round trips, and an interleaved committed write lets a later step prove read-your-own-writes (a dependent find observes the buffered write after the unit of work flushes) or query-cache invalidation (a find re-issued after a committed write MUST re-resolve rather than serve a stale cached row). The harness asserts the round-trip counts are internally consistent with the golden SQL each step lists (a cache-hit step lists none and declares roundTrips 0), executes the listed golden SQL against the provisioned database to confirm result-correctness, and checks identity assertions (a step may declare it returns the SAME logical object — same primary key — as an earlier step). The harness NEVER compiles an operation to SQL: the round-trip contract is proven from the fixture's own declared counts plus golden SQL.",
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["find", "roundTrips"],
+        "oneOf": [
+          {
+            "description": "A read step: issues a find. A cache miss costs >= 1 round trip and lists golden SQL; a cache hit costs 0 and lists none.",
+            "required": ["find", "roundTrips"]
+          },
+          {
+            "description": "A write step: commits DML between finds so a later find observes it. Carries golden DML, not a find.",
+            "required": ["write", "roundTrips", "goldenSql"]
+          }
+        ],
         "properties": {
           "find": {
-            "description": "The operation this step issues (a canonical M2 algebra node). Validated against operation.schema.json by the harness.",
+            "description": "The operation a READ step issues (a canonical M2 algebra node). Validated against operation.schema.json by the harness. Present on read steps; absent on write steps.",
             "type": "object"
           },
+          "write": {
+            "description": "Marks a WRITE step and labels the mutation it commits (e.g. `insert` / `update`). The step's golden DML is applied and COMMITTED on the unit of work's connection; the step captures no rows and asserts no expectRows. Interleaving a committed write between finds proves read-your-own-writes (the unit of work flushes pending writes before a dependent find, so the find observes the write) and query-cache invalidation (a find re-issued after a committed write MUST re-resolve — modeling it as a cache hit would reuse the stale pre-write rows and fail the post-write expectRows).",
+            "type": "string",
+            "minLength": 1
+          },
           "roundTrips": {
-            "description": "How many database round trips this step costs. A cache HIT (an operation equal to an earlier step's) costs 0; a cache MISS that executes one statement costs 1. MUST equal the number of golden SQL statements this step lists for each dialect.",
+            "description": "How many database round trips this step costs. A READ cache HIT (an operation equal to an earlier step's) costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's round trips equal the committed DML statements it lists. MUST equal the number of golden SQL statements this step lists for each dialect.",
             "type": "integer",
             "minimum": 0
           },
@@ -250,9 +267,42 @@
       "items": {}
     },
     "expectedAffectedRows": {
-      "description": "conflict cases (M10) only. The number of rows the golden UPDATE must affect after any `precondition` is applied. A stale optimistic-lock version => 0 (conflict detected); a fresh version => 1 (success). This is the observable form of optimistic-lock conflict detection: `updatedRows != 1` is the conflict signal.",
+      "description": "conflict cases (M10), single-attempt form. The number of rows the golden UPDATE must affect after any `precondition` is applied. A stale optimistic-lock version => 0 (conflict detected); a fresh version => 1 (success). This is the observable form of optimistic-lock conflict detection: `updatedRows != 1` is the conflict signal.",
       "type": "integer",
       "minimum": 0
+    },
+    "attempts": {
+      "description": "conflict cases (M10), retry form. An ordered list of optimistic-lock UPDATE attempts applied (after any `precondition`) in sequence, each asserting its own affected-row count — proving the M10 retry contract end-to-end: the first (stale-version) attempt affects 0 rows (the conflict signal), then a retry that re-reads the now-fresh version and re-applies affects 1. When present, the top-level single-attempt `goldenSql` / `expectedAffectedRows` are absent and `expectedTableState` (when authored) asserts the retried write landed.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["goldenSql", "expectedAffectedRows"],
+        "properties": {
+          "goldenSql": {
+            "description": "This attempt's golden UPDATE, keyed by dialect.",
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": { "enum": ["postgres", "mariadb"] },
+            "additionalProperties": { "$ref": "#/$defs/dialectSql" }
+          },
+          "binds": {
+            "description": "Bind values for this attempt's golden UPDATE ? placeholders (a flat list).",
+            "type": "array",
+            "items": {}
+          },
+          "expectedAffectedRows": {
+            "description": "The rows this attempt's UPDATE must affect: 0 for the stale-version attempt (conflict), 1 for the fresh-version retry (success).",
+            "type": "integer",
+            "minimum": 0
+          },
+          "note": {
+            "description": "Optional human-readable description of this attempt's role in the retry sequence.",
+            "type": "string"
+          }
+        }
+      }
     },
     "roundTrips": {
       "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed goldenSql statements for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips (the total database cost of the scenario).",

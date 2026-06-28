@@ -1,0 +1,42 @@
+# Optimistic-lock RETRY after conflict (M10 retry contract).
+#
+# 0703 stops at the conflict signal (a stale UPDATE affects 0 rows). This proves
+# the retry closes the loop: after the conflict, a retry that re-reads the now-
+# fresh version and re-applies affects exactly 1 row. The `attempts` retry
+# sequence makes the two-step observable (0 then 1) expressible in one case.
+#
+# Account 2 (Linus) is read at version 1. A concurrent transaction commits first
+# (the `precondition`: balance 999.00, version 2). Then:
+#   attempt 0 (stale) : UPDATE gates on the version we read (1) ⇒ 0 rows — conflict.
+#   attempt 1 (retry) : re-read the fresh version (2), re-apply gating on 2 ⇒ 1 row,
+#                       advancing the version to 3.
+# The resulting state confirms the retried write landed: account 2 carries the
+# retried balance 250.00 at version 3, not the concurrent writer's 999.00.
+model: models/account.yaml
+tags: [m10, m3, optimistic-locking, conflict, retry, success]
+precondition: update account set balance = 999.00, version = 2 where id = 2
+attempts:
+  - note: stale-version UPDATE — gates on version 1, which no longer matches ⇒ 0 rows
+    goldenSql:
+      postgres: update account set balance = ?, version = ? where id = ? and version = ?
+    binds: [250.00, 2, 2, 1]
+    expectedAffectedRows: 0
+  - note: retry — re-read the fresh version (2) and re-apply ⇒ 1 row, version 2 -> 3
+    goldenSql:
+      postgres: update account set balance = ?, version = ? where id = ? and version = ?
+    binds: [250.00, 3, 2, 2]
+    expectedAffectedRows: 1
+expectedTableState:
+  account:
+    - id: 1
+      owner: Ada
+      balance: 100.00
+      version: 1
+    - id: 2
+      owner: Linus
+      balance: 250.00
+      version: 3
+    - id: 3
+      owner: Grace
+      balance: 10.00
+      version: 1
