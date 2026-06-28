@@ -64,14 +64,120 @@ recorded choices.
 
 ## 2. Metadata / model input format (DQ5, DQ6)
 
-- **(decide and record)** Primary authoring format.
-- **(decide and record)** Introspection API: how a program reads the metamodel
-  at runtime (attribute list, primary-key attributes, as-of attributes,
-  relationship finders, attribute-by-name) — the `RelatedFinder` /
-  `ReladomoClassMetaData` analogue.
-- **(decide and record)** Serde module: the dedicated package whose sole job is
-  metamodel serialize/deserialize, with round-trip
-  (serialize → deserialize → serialize) tests in both JSON and YAML.
+**ANSWERED — see [TS-0055](../docs/adr/0055-metamodel-introspection-api-has-generic-and-typed-layers.md),
+[TS-0056](../docs/adr/0056-one-canonical-serde-shared-by-metamodel-and-operations.md),
+[TS-0057](../docs/adr/0057-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md).**
+The metamodel (`M1`) is one artifact wearing two hats — an introspectable runtime
+protocol and a serializable document — and this section specifies both hats so an
+implementer can build the metamodel layer without inferring its shape from
+`m1-metamodel.md`.
+
+### 2.1 Primary authoring format
+
+The authoring format is **descriptor-first**, exactly as
+[`00-overview.md` §2 Metadata And Generation](00-overview.md#2-metadata-and-generation):
+the source of truth is the canonical Parallax YAML/JSON descriptor set — the same
+serialized metamodel the compatibility corpus uses — and a descriptor validates
+against [`metamodel.schema.json`](../../../core/schemas/metamodel.schema.json). A
+descriptor is either a single `entity` or an `entities` array (≥1 entity, so
+relationships can name siblings). The typed entity symbols and the generic reader
+below are both derived from that one descriptor; decorators/builders may be added
+later as authoring conveniences but the serialized descriptor stays the backbone.
+
+### 2.2 Introspection API (the `RelatedFinder` / `ReladomoClassMetaData` analogue)
+
+Introspection is exposed in **two layers over the same descriptor** (TS-0055): a
+**generic reader** over any parsed descriptor (no codegen required), and **typed
+accessors** generated onto each entity symbol that delegate to it. The generic
+layer is what the generator, the serde round-trip, and the `parallax-conformance`
+adapter use, since they handle arbitrary corpus descriptors with no generated
+symbols; the typed layer is the application-facing surface, hung off the existing
+query-DSL symbols.
+
+```ts
+// Typed layer — on the generated entity symbol (the RelatedFinder analogue)
+Order.table;                            // string — the mapped table name
+Order.namespace;                        // string | undefined
+Order.mutability;                       // "read-only" | "transactional"
+Order.temporal;                         // "non-temporal" | "unitemporal-processing"
+                                        //   | "unitemporal-business" | "bitemporal"
+Order.attributes;                       // readonly AttributeMeta[]
+Order.primaryKeyAttributes;             // readonly AttributeMeta[] (primaryKey === true)
+Order.asOfAttributes;                   // readonly AsOfAttributeMeta[] (0–2)
+Order.relationships;                    // readonly RelationshipMeta[]
+Order.indices;                          // readonly IndexMeta[]
+Order.valueObjects;                     // readonly ValueObjectMeta[]
+Order.inheritance;                      // InheritanceMeta | undefined
+Order.attributeByName("status");        // AttributeMeta | undefined
+Order.relationshipByName("lineItems");  // RelationshipMeta | undefined
+Order.status.column;                    // metadata reachable on the attribute symbol
+
+// Generic layer — over any parsed descriptor, no codegen required
+px.metamodel.entity("Order");           // EntityMetadata (same shape as the typed symbol)
+px.metamodel.entity("Order").attributes;
+px.metamodel.entities;                  // readonly EntityMetadata[] (normalizes single-vs-array)
+```
+
+Both layers expose the **same metadata shapes**, one per metamodel element type. The
+field set below is drawn one-to-one from `metamodel.schema.json`'s **eight element
+types**, so every property in a descriptor is reachable from §2 alone:
+
+| Element type | Reader shape | Fields (← schema) |
+|---|---|---|
+| `entity` | `EntityMetadata` | `name`, `table`, `namespace?`, `mutability`, `temporal`, `attributes`, `asOfAttributes`, `relationships`, `indices`, `valueObjects`, `inheritance?`; plus derived `primaryKeyAttributes`, `attributeByName(name)`, `relationshipByName(name)`, `isTemporal` |
+| `attribute` | `AttributeMeta` | `name`, `type` (M0 neutral type, incl. `decimal(p,s)`), `column`, `primaryKey`, `nullable`, `maxLength?`, `readOnly`, `optimisticLocking`, `pkGenerator?`, `default?` |
+| `relationship` | `RelationshipMeta` | `name`, `relatedEntity`, `cardinality` (`one-to-one`/`many-to-one`/`one-to-many`/`many-to-many`), `join`, `reverseName?`, `dependent`, `foreignKey?`, `orderBy?` (`{ attr, direction }[]`) |
+| `index` | `IndexMeta` | `name`, `attributes` (ordered attribute names), `unique` |
+| `asOfAttribute` | `AsOfAttributeMeta` | `name`, `fromColumn`, `toColumn`, `axis` (`processing`/`business`), `toIsInclusive`, `infinity` (`"infinity"`), `default` (`"now"`) |
+| `valueObject` | `ValueObjectMeta` | `name`, `type` (logical struct name), `column` (single JSONB column), `mapping` (`"jsonb"`), `nullable` |
+| `inheritance` | `InheritanceMeta` | `strategy` (`table-per-hierarchy`/`table-per-leaf`), `role` (`root`/`subtype`), `parent?`, `discriminator?` (`{ column }`), `discriminatorValue?` |
+| `pkGenerator` | `PkGeneratorMeta` | `strategy` (`none`/`max`/`sequence`); for `sequence`: `sequenceName?`, `batchSize?`, `initialValue?`, `incrementSize?` (the bare-enum form normalizes to `{ strategy }`) |
+
+Defaulting follows the schema: readers surface the schema defaults
+(`mutability: "read-only"`, `temporal: "non-temporal"`, `primaryKey: false`,
+`nullable: false`, `readOnly: false`, `optimisticLocking: false`,
+`dependent: false`, `unique: false`, `toIsInclusive: false`,
+`mapping: "jsonb"`, `nullable: false`) when a field is omitted, so the typed and
+generic layers agree on every value. This mirrors the Python harness's `Entity` /
+`Model` accessors, which are the concrete generic reader over the raw parsed
+descriptor.
+
+### 2.3 Serde module
+
+A dedicated **`@parallax/serde`** package is the single canonical, format-agnostic
+serde seam, shared by the metamodel (`M1`) and the operation algebra (`M2`) — the
+same shared seam the Python harness realizes in `serde.py` and proves as `M12`
+layer 4a/4b (TS-0056). Giving serde its own package satisfies the template's
+"dedicated module" requirement; sharing it across `M1`/`M2` guarantees the adapter
+canonicalizes identically to the oracle.
+
+```ts
+// @parallax/serde — canonical serialize / deserialize / round-trip
+canonical(value): unknown                  // sort object keys recursively, PRESERVE list order
+serialize(value, fmt: "json" | "yaml"): string
+deserialize(text: string, fmt: "json" | "yaml"): unknown
+assertRoundTrip(value): void               // JSON and YAML; idempotent + value-identity
+```
+
+The serde module MUST satisfy this **round-trip contract** (TS-0057), transcribed
+from the Python harness so it canonicalizes identically to the oracle:
+
+- **Safe load.** `deserialize` uses a safe loader that never constructs arbitrary
+  types from input (the YAML analogue of `yaml.safe_load`; `JSON.parse` is already
+  safe).
+- **Deterministic recursive key sort.** `canonical` sorts object keys recursively.
+- **List-order preservation.** Array order is preserved (never sorted), because
+  order is significant in the operation algebra and in attribute/row sequences.
+- **Lossless JSON+YAML round-trip.** For each of JSON and YAML,
+  `assertRoundTrip(value)` asserts serialization is idempotent
+  (`serialize(canonical(value))` is a fixed point) and that re-parsing
+  canonicalizes back to the same value (no data loss). This realizes the `M1`
+  normative requirement `serialize(deserialize(descriptor)) == descriptor` in both
+  formats, asserted for every model referenced by a compatibility case.
+
+The `yaml` package (or `js-yaml`) plus built-in `JSON` is a **non-binding** suggested
+default with the canonicalizer written in-house; the round-trip contract above —
+not any named library — is the normative requirement (TS-0057).
 
 ## 3. Transaction-block demarcation (M8)
 
@@ -180,7 +286,7 @@ authoring and carry no `(decide and record)` debt at completion.
 | Template section | Status | Answer location | ADRs |
 |---|---|---|---|
 | §1 API surface | ANSWERED | [`00-overview.md` §5](00-overview.md#5-query-api) (with §1, §6, §9); restated in [§1](#1-api-surface-non-normative--dq3) | — |
-| §2 Metadata / introspection + serde | PENDING | [§2](#2-metadata--model-input-format-dq5-dq6) | — |
+| §2 Metadata / introspection + serde | ANSWERED | [§2](#2-metadata--model-input-format-dq5-dq6) | [TS-0055](../docs/adr/0055-metamodel-introspection-api-has-generic-and-typed-layers.md), [TS-0056](../docs/adr/0056-one-canonical-serde-shared-by-metamodel-and-operations.md), [TS-0057](../docs/adr/0057-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md) |
 | §3 Transaction-block demarcation | ANSWERED | [`00-overview.md` §8](00-overview.md#8-transactions-and-writes); restated in [§3](#3-transaction-block-demarcation-m8) | — |
 | §4 Test-double integration | PENDING | [§4](#4-test-double-integration-m12-dq15) | — |
 | §5 Codegen-or-not | ANSWERED | [`00-overview.md` §2](00-overview.md#2-metadata-and-generation), [§3](00-overview.md#3-cli); restated in [§5](#5-codegen-or-not-dq5) | — |
