@@ -1,0 +1,7 @@
+# The TypeScript compatibility suite runs on vitest
+
+The TypeScript conformance suite is driven by vitest. The suite is fundamentally a parametrized matrix of discovered compatibility cases × dialects — the same shape the Python reference harness expresses with its parametrized `test_compatibility.py` — and vitest's `test.each` and programmatic test generation are built for exactly that shape, so each `(case, dialect)` pair becomes its own named, independently reportable test.
+
+vitest is chosen because it is first-class TypeScript/ESM, needs no separate transpile step, and gives watch mode, snapshot support, and a parametrized API that maps cleanly onto the discovered-cases generator. It is test tooling, not shipped runtime code, so the dev-dependency does not touch the published surface and is acceptable under the V1 thin-slice posture.
+
+`node:test` was considered and is recorded as the documented fallback if a strict no-dev-dependency stance is later preferred. It would still run the same matrix, but its more spartan parametrization would push the case-matrix generation into a hand-rolled harness module rather than reusing a runner-native `test.each`, so it is the fallback rather than the V1 choice. Either runner consumes the same glob-discovered case set and the same `parallax-conformance` execution boundary, so the runner choice is isolated from how cases are discovered and executed.

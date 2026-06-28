@@ -1,0 +1,9 @@
+# TypeScript runs Postgres-only in CI, pinned to postgres:17
+
+For V1, TypeScript runs a single dialect — Postgres — in CI, provisioned with `@testcontainers/postgresql` pinned to the `postgres:17` image. Postgres is the round-1 normative target (`core/spec/m11-dialect-seam.md`), and the pin matches the image the reference harness already uses (`reference-harness/src/reference_harness/providers/postgres.py`, `POSTGRES_IMAGE = "postgres:17"`), verified during the design discussion. The two are already aligned, so no harness change and no downgrade is required; if the harness bumps its major, the TypeScript pin bumps with it.
+
+The container sits behind the same provider seam the `parallax-conformance run` adapter consumes. Per-test resets use the container's `snapshot` / `restoreSnapshot` so each case starts from a clean, migrated database without re-creating the container, keeping the cases × dialects matrix fast. Per-dialect golden SQL is selected by the provider's own `dialect` identifier, which is the `goldenSql` key; when a case has no entry for the active dialect, database execution is skipped and the dialect-agnostic checks (schema conformance, normalization, serde round-trip, equivalent encodings, round-trip count) still run — the same skip behavior the Python harness applies.
+
+MariaDB is deferred-but-additive, not removed. Adding it later is a new provider behind the same seam plus a `goldenSql.mariadb` key on the affected cases — never a runner redesign — exactly as the dialect seam was designed to allow.
+
+Running Postgres and MariaDB in CI from V1 was rejected: standing up a second database provider buys no additional V1 conformance, the dialect seam is already proven beyond Postgres by the Python oracle, and a second CI database contradicts the V1 thin-slice posture (cf. TS-0054).
