@@ -21,12 +21,14 @@ real implementation, graded against the golden SQL.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import re
+import threading
 from decimal import Decimal
 from typing import Any
 
-from . import serde
+from . import errors, serde
 from .case import Case, Entity, Model
 from .data_loader import load_model
 from .ddl_builder import column_order, ddl_for, quote_identifier
@@ -158,6 +160,16 @@ def _assert_schema(case: Case) -> None:
                 f"{case.path.name}: coherence case asserts nothing — at least the "
                 f"final re-fetch MUST declare observeRows"
             )
+    elif case.is_error:
+        if not case.error_class:
+            raise CaseFailure(f"{case.path.name}: error case missing errorClass")
+        if not case.expected_native_code:
+            raise CaseFailure(f"{case.path.name}: error case missing expectedNativeCode")
+        if not (_error_has_golden(case, "postgres") or _error_has_golden(case, "mariadb")):
+            raise CaseFailure(
+                f"{case.path.name}: error case declares no trigger — needs goldenSql "
+                f"(single-connection) or a non-empty concurrency choreography"
+            )
     elif "operation" not in case.raw:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:
@@ -194,7 +206,7 @@ def _assert_serde(case: Case) -> None:
         for step in case.coherence:
             if "find" in step:
                 serde.assert_roundtrip(step["find"])
-    elif not case.is_write_sequence and not case.is_conflict:
+    elif not case.is_write_sequence and not case.is_conflict and not case.is_error:
         serde.assert_roundtrip(case.operation)
     serde.assert_roundtrip(case.model.descriptor)
 
@@ -208,10 +220,11 @@ def _assert_equivalent_encodings(case: Case) -> None:
     prefix and a fluent surface of the same grouped intent denote one node — in
     the fixture itself rather than in bespoke test code.
     """
-    if case.is_write_sequence or case.is_scenario or case.is_conflict or case.is_coherence:
+    if (case.is_write_sequence or case.is_scenario or case.is_conflict
+            or case.is_coherence or case.is_error):
         # A write-sequence and a conflict case have no operation; a scenario and a
-        # coherence case carry their operations per step. Equivalent-encodings is a
-        # single-operation check.
+        # coherence case carry their operations per step. An error case has no
+        # operation either. Equivalent-encodings is a single-operation check.
         return
     canonical_operation = serde.canonical(case.operation)
     for index, encoding in enumerate(case.equivalent_encodings):
@@ -1282,6 +1295,175 @@ def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
             )
 
 
+# --- error-code classification cases (M11 dialect seam) ----------------------
+
+def _error_statements(case: Case, dialect: str) -> list[str]:
+    """Every golden statement an error case lists for *dialect* (for lint/layer 3).
+
+    Single-connection: the ordered top-level goldenSql. Two-connection: each
+    node's per-round step goldenSql, in round/node order.
+    """
+    if case.concurrency is None:
+        value = case.raw.get("goldenSql", {}).get(dialect)
+        if value is None:
+            return []
+        return [value] if isinstance(value, str) else list(value)
+    statements: list[str] = []
+    for rnd in case.concurrency["rounds"]:
+        for node in ("A", "B"):
+            step = rnd.get(node)
+            if step and dialect in step["goldenSql"]:
+                statements.append(step["goldenSql"][dialect])
+    return statements
+
+
+def _error_has_golden(case: Case, dialect: str) -> bool:
+    return bool(_error_statements(case, dialect))
+
+
+def _assert_error_normalization(case: Case, dialect: str) -> None:
+    for statement in _error_statements(case, dialect):
+        canonical = normalize(statement, dialect)
+        if canonical != statement:
+            raise CaseFailure(
+                f"{case.path.name}: error-case goldenSql.{dialect} is not canonical.\n"
+                f"  stored:     {statement!r}\n"
+                f"  normalized: {canonical!r}"
+            )
+
+
+def _assert_error_classification(case: Case, db: DatabaseProvider) -> None:
+    if case.concurrency is not None:
+        _assert_error_concurrency(case, db)  # Task 8
+    else:
+        _assert_error_single_connection(case, db)
+
+
+def _assert_error_single_connection(case: Case, db: DatabaseProvider) -> None:
+    """Run ordered golden DML; every statement but the last MUST succeed, the
+    last MUST raise, and the raised error MUST classify to errorClass."""
+    _provision(case, db) if case.load_fixtures else _provision_empty(case, db)
+    statements = case.golden_statements(db.dialect)
+    last = len(statements) - 1
+    raised: Exception | None = None
+    for index, statement in enumerate(statements):
+        binds = _binds_for_statement(case, index)
+        try:
+            db.execute(statement, binds)
+        except Exception as exc:  # noqa: BLE001 -- any driver error is the signal
+            if index != last:
+                raise CaseFailure(
+                    f"{case.path.name}: setup statement[{index}] raised before the "
+                    f"trigger: {exc!r}"
+                ) from exc
+            raised = exc
+    if raised is None:
+        raise CaseFailure(
+            f"{case.path.name}: expected the final statement to raise "
+            f"{case.error_class!r}, but no error was raised"
+        )
+    _assert_classified(case, db, raised)
+
+
+def _assert_classified(case: Case, db: DatabaseProvider, exc: Exception) -> None:
+    """Assert the raised error's neutral category, native code, and the call-site
+    predicate partition (so the harness exercises the interface, not a shortcut)."""
+    dialect = db.dialect
+    category = db.classify_error(exc)
+    if category != case.error_class:
+        raise CaseFailure(
+            f"{case.path.name}: error classified as {category!r} on {dialect}, "
+            f"expected {case.error_class!r} (native code "
+            f"{db.native_error_code(exc)!r}; exc {exc!r})"
+        )
+    expected_code = case.expected_native_code.get(dialect)
+    actual_code = db.native_error_code(exc)
+    if str(actual_code) != str(expected_code):
+        raise CaseFailure(
+            f"{case.path.name}: native code on {dialect} was {actual_code!r}, "
+            f"expected {expected_code!r}"
+        )
+    # The call-site predicate interface: exactly the one predicate for this
+    # category is true; the others false. Proves the partition language impls rely
+    # on, not just the category string.
+    truthy = {
+        "is_retriable": errors.is_retriable(category),
+        "violates_unique_index": errors.violates_unique_index(category),
+        "is_timed_out": errors.is_timed_out(category),
+    }
+    expected_true = errors.predicate_for(category)
+    for name, value in truthy.items():
+        if value != (name == expected_true):
+            raise CaseFailure(
+                f"{case.path.name}: predicate {name} was {value} for category "
+                f"{category!r}; expected only {expected_true!r} true"
+            )
+
+
+def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
+    """Two-node, barrier-synchronized lock contention (deadlock / lock timeout).
+
+    Each node (A, B) runs on its own thread over its own non-autocommit session.
+    A threading.Barrier separates rounds so round k completes for both nodes
+    before round k+1 begins -- guaranteeing both first locks are held before the
+    contention round. In that round both statements block; the DB resolves the
+    contention (deadlock victim, or lock-wait timeout) and one statement raises.
+    A thread that catches an error ROLLS BACK immediately (releasing its locks so
+    the peer can proceed) then meets the barrier. The single raised error is
+    classified. Sessions are rolled back + closed in a finally.
+    """
+    dialect = db.dialect
+    rounds = case.concurrency["rounds"]
+    nodes = ("A", "B")
+    barrier = threading.Barrier(len(nodes))
+    raised: dict[str, Exception] = {}
+
+    _provision(case, db)  # loadFixtures seeds the lockable Gauge rows
+
+    def run_node(node: str, session: Any) -> None:
+        for rnd in rounds:
+            step = rnd.get(node)
+            if step is not None and dialect in step["goldenSql"]:
+                try:
+                    session.execute(step["goldenSql"][dialect], step.get("binds", []))
+                except Exception as exc:  # noqa: BLE001 -- the contention signal
+                    raised[node] = exc
+                    with contextlib.suppress(Exception):
+                        session.rollback()  # release locks so the peer unblocks
+            try:
+                barrier.wait(timeout=30)
+            except threading.BrokenBarrierError:
+                return
+
+    with contextlib.ExitStack() as stack:
+        sessions = {node: stack.enter_context(db.open_session()) for node in nodes}
+        threads = [
+            threading.Thread(target=run_node, args=(node, sessions[node]), daemon=True)
+            for node in nodes
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        # Roll back any session that did not error (releases held locks) before
+        # the ExitStack closes them.
+        for session in sessions.values():
+            with contextlib.suppress(Exception):
+                session.rollback()
+
+    if not raised:
+        raise CaseFailure(
+            f"{case.path.name}: expected a {case.error_class!r} error from the "
+            f"contention round, but none was raised on {dialect}"
+        )
+    if len(raised) > 1:
+        raise CaseFailure(
+            f"{case.path.name}: expected exactly one contention error, got "
+            f"{len(raised)} ({list(raised)}): {raised}"
+        )
+    _assert_classified(case, db, next(iter(raised.values())))
+
+
 # --- coherence cases (Phase 11, cross-process cache coherence) ---------------
 
 
@@ -1424,6 +1606,18 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_equivalent_encodings(case)  # layer 4c
         _provision(case, db)  # fixtures loaded: the versioned row exists
         _assert_conflict_retry(case, db)  # precondition + ordered attempts
+        return
+
+    if case.is_error:
+        # A two-connection (concurrency) error case has no top-level goldenSql, so
+        # branch before the goldenSql access below, like the per-step shapes.
+        _assert_schema(case)
+        _assert_serde(case)  # descriptor serde only (error cases have no operation)
+        _assert_equivalent_encodings(case)
+        if not _error_has_golden(case, dialect):
+            return  # no golden for this dialect: dialect-agnostic checks only
+        _assert_error_normalization(case, dialect)  # layer 3
+        _assert_error_classification(case, db)
         return
 
     if dialect not in case.golden_sql:

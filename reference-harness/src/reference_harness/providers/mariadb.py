@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 import pymysql
 from testcontainers.mysql import MySqlContainer
 
+from .. import errors
 from ..ddl_builder import quote_identifier
 from . import register
 
@@ -199,6 +200,40 @@ class MariaDbProvider:
             self._conn.commit()
             return affected
 
+    def native_error_code(self, exc: Exception) -> int | None:
+        """The vendor errno pymysql packs into args[0] (else None)."""
+        if exc.args and isinstance(exc.args[0], int):
+            return exc.args[0]
+        return None
+
+    def classify_error(self, exc: Exception) -> str:
+        """Map a raised pymysql error to a neutral M11 category (see errors.py)."""
+        return errors.classify(self.dialect, self.native_error_code(exc))
+
+    @contextmanager
+    def open_session(self) -> Iterator[_MariaTxSession]:
+        """A second connection in MANUAL-commit mode, for lock contention.
+
+        Mirrors the Postgres session. MariaDB's default
+        ``innodb_lock_wait_timeout`` is 50s -- far too slow for the suite -- so it
+        is lowered to 1s on open; a blocked lock then raises errno 1205 quickly.
+        InnoDB detects deadlocks immediately (no timeout knob needed).
+        """
+        params = {**self._connect_params, "autocommit": False}
+        conn = pymysql.connect(database=self._dbname, **params)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("set innodb_lock_wait_timeout = 1")
+            conn.commit()
+        except BaseException:
+            conn.close()
+            raise
+        session = _MariaTxSession(conn)
+        try:
+            yield session
+        finally:
+            session.close()
+
     @contextmanager
     def open_peer(self) -> Iterator[Node]:
         """Yield a second, independent connection to the SAME MariaDB database.
@@ -226,6 +261,35 @@ class MariaDbProvider:
             yield peer
         finally:
             peer.close()
+
+    def close(self) -> None:
+        if self._conn is not None and self._conn.open:
+            self._conn.close()
+
+
+class _MariaTxSession:
+    """A manual-commit MariaDB connection for two-node lock-contention cases."""
+
+    dialect = "mariadb"
+
+    def __init__(self, conn: pymysql.connections.Connection) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> None:
+        with self._conn.cursor() as cur:
+            if binds:
+                cur.execute(
+                    _to_pymysql(sql, escape_percent=True),
+                    tuple(_to_db_bind(value) for value in binds),
+                )
+            else:
+                cur.execute(_to_pymysql(sql))
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
 
     def close(self) -> None:
         if self._conn is not None and self._conn.open:

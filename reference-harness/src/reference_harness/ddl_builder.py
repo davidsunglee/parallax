@@ -100,6 +100,14 @@ def quote_identifier(name: str, dialect: str) -> str:
     return f"{char}{name.replace(char, char * 2)}{char}"
 
 
+def _column_of_attr(entity: Entity, attr_name: str) -> str:
+    """The physical column backing an attribute *name* on *entity*."""
+    for attribute in entity.attributes:
+        if attribute["name"] == attr_name:
+            return attribute["column"]
+    raise KeyError(f"{entity.name} has no attribute {attr_name!r} (index reference)")
+
+
 def _postgres_column_type(neutral_type: str, max_length: int | None) -> str:
     decimal = _DECIMAL_RE.match(neutral_type)
     if decimal:
@@ -169,6 +177,25 @@ def _create_table(entity: Entity, dialect: str) -> str:
         from_column = as_of["fromColumn"]
         if from_column not in pk_columns:
             pk_columns.append(from_column)
+
+    # Emit a UNIQUE constraint for each declared unique index whose columns are
+    # NOT exactly the primary key (the PK is already unique via `primary key
+    # (...)` below). This lets a model witness a unique-INDEX violation distinct
+    # from a PK collision (M11 error classification). Existing models declare
+    # only PK-backed unique indices, so this is a no-op for them. The guard
+    # compares against the PHYSICAL primary key (declared PK + temporal fromColumns
+    # appended above), so a temporal entity's full-milestone-key unique index is
+    # recognized as PK-backed and not re-emitted.
+    for index in entity.definition.get("indices", []):
+        if not index.get("unique", False):
+            continue
+        index_columns = [
+            _column_of_attr(entity, attr_name) for attr_name in index["attributes"]
+        ]
+        if set(index_columns) == set(pk_columns):
+            continue
+        quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
+        columns.append(f"unique ({quoted})")
 
     if pk_columns:
         quoted_pk = ", ".join(quote_identifier(column, dialect) for column in pk_columns)

@@ -1,0 +1,21 @@
+# Duplicate primary-key INSERT -> uniqueViolation (M11). The first insert
+# succeeds and commits; the second collides on the PK and raises. The neutral
+# category is uniqueViolation on both dialects; the native code each DB raises
+# (PG SQLSTATE 23505 / MariaDB errno 1062) is witnessed per dialect. The classify
+# seam maps both to the single neutral category.
+model: models/error-cases.yaml
+tags: [m11, error-classification, uniqueViolation]
+errorClass: uniqueViolation
+expectedNativeCode:
+  postgres: "23505"
+  mariadb: 1062
+goldenSql:
+  postgres:
+    - insert into widget(id, label) values (?, ?)
+    - insert into widget(id, label) values (?, ?)
+  mariadb:
+    - insert into widget(id, label) values (?, ?)
+    - insert into widget(id, label) values (?, ?)
+binds:
+  - [1, "first"]
+  - [1, "dup"]

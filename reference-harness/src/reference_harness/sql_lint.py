@@ -95,6 +95,22 @@ def lint_tree(compatibility_root: Path) -> list[str]:
                         name,
                         errors,
                     )
+        # An error case (M11) may carry its golden SQL inside a two-connection
+        # `concurrency` choreography (deadlock / timeout); lint each node step's.
+        concurrency = case.get("concurrency")
+        if isinstance(concurrency, dict):
+            for r_index, rnd in enumerate(concurrency.get("rounds", [])):
+                if not isinstance(rnd, dict):
+                    continue
+                for node in ("A", "B"):
+                    step = rnd.get(node)
+                    if isinstance(step, dict):
+                        _lint_golden(
+                            step.get("goldenSql", {}),
+                            f"concurrency.rounds[{r_index}].{node}.goldenSql",
+                            name,
+                            errors,
+                        )
 
         golden = case.get("goldenSql", {})
         dialect = next(iter(golden), "postgres") if isinstance(golden, dict) else "postgres"

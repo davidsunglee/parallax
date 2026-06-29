@@ -246,6 +246,38 @@ class Case:
         return self.raw.get("coherence", [])
 
     @property
+    def is_error(self) -> bool:
+        """True for an M11 error-code classification case.
+
+        An error case carries an ``errorClass`` (the neutral category a triggered
+        DB error MUST classify to) plus an ``expectedNativeCode`` witness keyed by
+        dialect, instead of an ``operation``/``expectedRows``. It triggers a real
+        error EITHER single-connection (ordered ``goldenSql`` whose last statement
+        raises -- ``uniqueViolation``) OR two-connection (a ``concurrency``
+        choreography -- ``deadlock`` / ``lockWaitTimeout``).
+        """
+        return "errorClass" in self.raw
+
+    @property
+    def error_class(self) -> str | None:
+        return self.raw.get("errorClass")
+
+    @property
+    def expected_native_code(self) -> dict[str, Any]:
+        """Per-dialect native code the trigger MUST raise (SQLSTATE / errno)."""
+        return self.raw.get("expectedNativeCode", {})
+
+    @property
+    def concurrency(self) -> dict[str, Any] | None:
+        """The two-connection choreography for deadlock / timeout cases (else None).
+
+        ``{"rounds": [ {"A": step, "B": step}, ... ]}`` where each ``step`` is
+        ``{"goldenSql": {dialect: stmt}, "binds": [...]}``. Rounds are barrier-
+        separated; a node absent from a round does nothing that round.
+        """
+        return self.raw.get("concurrency")
+
+    @property
     def equivalent_encodings(self) -> list[dict[str, Any]]:
         """Alternate surface encodings that MUST canonicalize to ``operation``.
 

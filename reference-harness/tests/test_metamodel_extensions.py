@@ -21,8 +21,8 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from reference_harness.case import Model, discover_cases, load_model
-from reference_harness.ddl_builder import column_order, ddl_for
+from reference_harness.case import Entity, Model, discover_cases, load_model
+from reference_harness.ddl_builder import _create_table, column_order, ddl_for
 from reference_harness.paths import schemas_dir
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -157,3 +157,64 @@ def test_phase9_cases_are_discovered() -> None:
     nested = [c for c in cases.values() if "nested" in c.tags]
     assert inheritance, "no inheritance cases discovered"
     assert nested, "no nested/valueObject cases discovered"
+
+
+# --- unique-index DDL emission (Task 5) --------------------------------------
+
+
+def _entity_with_unique_index() -> Entity:
+    return Entity(
+        definition={
+            "name": "Tag",
+            "table": "tag",
+            "attributes": [
+                {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                {"name": "name", "type": "string", "column": "name", "maxLength": 64},
+            ],
+            "indices": [
+                {"name": "tag_pk", "attributes": ["id"], "unique": True},
+                {"name": "tag_name_uq", "attributes": ["name"], "unique": True},
+            ],
+        }
+    )
+
+
+def test_non_pk_unique_index_emits_unique_constraint() -> None:
+    ddl = _create_table(_entity_with_unique_index(), "postgres")
+    assert "primary key (id)" in ddl
+    assert "unique (name)" in ddl
+    # The PK-backed unique index is NOT re-emitted as a separate UNIQUE clause.
+    assert "unique (id)" not in ddl
+
+
+def test_unique_index_emitted_for_mariadb_too() -> None:
+    ddl = _create_table(_entity_with_unique_index(), "mariadb")
+    assert "unique (name)" in ddl
+
+
+def test_temporal_full_key_unique_index_is_not_re_emitted() -> None:
+    # A temporal entity whose unique index lists the FULL physical key (declared
+    # PK + the as-of fromColumns) is the primary key, not a secondary unique
+    # index -- it must NOT produce a redundant `unique (...)` alongside the PK.
+    entity = Entity(
+        definition={
+            "name": "Milestone",
+            "table": "milestone",
+            "attributes": [
+                {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                {"name": "businessFrom", "type": "timestamp", "column": "from_z"},
+                {"name": "businessTo", "type": "timestamp", "column": "thru_z"},
+            ],
+            "asOfAttributes": [
+                {"name": "businessDate", "fromColumn": "from_z", "toColumn": "thru_z",
+                 "axis": "business", "toIsInclusive": False, "infinity": "infinity",
+                 "default": "now"},
+            ],
+            "indices": [
+                {"name": "milestone_pk", "attributes": ["id", "businessFrom"], "unique": True},
+            ],
+        }
+    )
+    ddl = _create_table(entity, "postgres")
+    assert "primary key (id, from_z)" in ddl
+    assert "unique (" not in ddl  # the PK-backed unique index is not re-emitted

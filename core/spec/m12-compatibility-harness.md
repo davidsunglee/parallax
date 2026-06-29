@@ -18,13 +18,14 @@ A case is a YAML document under `core/compatibility/cases/`, validated against
 [`core/schemas/compatibility-case.schema.json`](../schemas/compatibility-case.schema.json).
 Its fields:
 
-A case is one of five shapes: a **read case** (carries an `operation`), a
+A case is one of six shapes: a **read case** (carries an `operation`), a
 **writeSequence case** (carries a `writeSequence`, Phase 5 / M7), a **scenario
 case** (carries a `scenario` of ordered read *and* committed-write steps, Phase
 6 / M8), a **conflict case** (carries `expectedAffectedRows` for a single
-attempt, or an `attempts` retry sequence, Phase 7 / M10), or a **coherence
-case** (carries a
-`coherence` two-node sequence, Phase 11 / cross-process coherence). The fields:
+attempt, or an `attempts` retry sequence, Phase 7 / M10), a **coherence
+case** (carries a `coherence` two-node sequence, Phase 11 / cross-process
+coherence), or an **error case** (carries `errorClass` and
+`expectedNativeCode`, Phase 12 / M11 error-code classification). The fields:
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -204,6 +205,25 @@ notification bus; it proves the suite's post-write golden SQL is correct against
 real, committed, cross-connection data — the observable contract any conforming
 invalidation mechanism (full-cache re-fetch or partial-cache mark-dirty) must
 satisfy. See [`cross-process-coherence.md`](cross-process-coherence.md).
+
+### Error cases (M11 error-code classification)
+
+- **error** (M11 error-code classification) — triggers a *real* database error and
+  asserts the neutral category it classifies to (`errorClass`) plus the per-dialect
+  native code (`expectedNativeCode`). `uniqueViolation` cases trigger
+  single-connection: ordered golden DML whose final statement raises (a duplicate
+  insert / a colliding update). `deadlock` and `lockWaitTimeout` cases trigger
+  two-connection: a `concurrency` choreography of barrier-separated rounds, each
+  naming the statements nodes A and B run that round. The harness runs each node on
+  its own **non-autocommit session** (the provider seam's `open_session`, with the
+  dialect's lock-contention tuning — Postgres `deadlock_timeout`/`lock_timeout`,
+  MariaDB `innodb_lock_wait_timeout` — applied so a blocked lock fails fast), drives
+  them on threads synchronized by a barrier, and classifies the error raised in the
+  contention round via the provider's `classify_error`. The classifier is a thin
+  per-dialect extraction (Postgres SQLSTATE, MariaDB errno) over the shared,
+  DB-free category map + call-site predicates; the runner asserts the predicate
+  partition, so the harness exercises the interface the language implementations
+  build, not a harness-only shortcut.
 
 ## Provisioning ↔ runner seam (DQ15)
 

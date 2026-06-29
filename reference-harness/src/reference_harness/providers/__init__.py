@@ -89,6 +89,18 @@ class DatabaseProvider(Protocol):
         """
         ...
 
+    def classify_error(self, exc: Exception) -> str:
+        """Map a raised driver error to a neutral M11 error category."""
+        ...
+
+    def native_error_code(self, exc: Exception) -> str | int | None:
+        """The raw native code (SQLSTATE string / vendor errno) of *exc*."""
+        ...
+
+    def open_session(self) -> Iterator[Any]:  # pragma: no cover - protocol stub
+        """Context-manage a manual-commit session for lock-contention cases."""
+        ...
+
 
 # Registry of dialect -> provider factory. Providers register themselves on
 # import; selection is by the PARALLAX_DATABASES env var (comma-separated),
