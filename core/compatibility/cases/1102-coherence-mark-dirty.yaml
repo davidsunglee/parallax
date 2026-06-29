@@ -18,7 +18,7 @@
 #   2  read  on B : the same find now observes the newly-inserted row (mark-dirty +
 #                   re-resolve), proving node B converged on A's committed insert.
 model: models/account.yaml
-tags: [coherence, cross-process, m8, partial-cache-mark-dirty]
+tags: [coherence, cross-process, m14, partial-cache-mark-dirty]
 coherence:
   - node: B
     kind: read

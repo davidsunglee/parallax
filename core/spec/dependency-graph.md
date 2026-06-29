@@ -46,6 +46,7 @@ M12 --> M7
 M12 --> M9
 M12 --> M10
 M13 --> M12
+M14 --> M8
 ```
 
 ## The modules
@@ -65,19 +66,17 @@ M13 --> M12
 | M11 | Database Seam & Portability |
 | M12 | Compatibility Harness & Test-Double Integration |
 | M13 | Performance & Benchmark Harness |
-| — | Cross-Process Cache Coherence (fast-follow; depends on `M8`) |
+| M14 | Cross-Process Cache Coherence (fast-follow; depends on `M8`) |
 
 > `M6` does not exist: aggregation is folded into `M2`. The numbering of
 > `M7`–`M13` is preserved to keep cross-references stable.
 >
-> **Cross-process cache coherence** is an un-numbered fast-follow capability
-> ([`cross-process-coherence.md`](cross-process-coherence.md)) that **depends on
-> `M8`** — it keeps the caches `M8` defines coherent across multiple application
-> servers. Because it carries no `M`-number, it is documented here in prose rather
-> than as an edge in the machine-readable block below (which ranges over the
-> numbered modules); its single legal dependency direction is *coherence → M8*,
-> and, like every edge, the reverse is a spec violation (`M8` MUST NOT depend on
-> it).
+> **Cross-process cache coherence is `M14`**, a fast-follow capability that
+> **depends on `M8`** — it keeps the caches `M8` defines coherent across multiple
+> application servers. Its single legal dependency direction is `M14 --> M8` (the
+> machine-readable edge above); like every edge, the reverse is a spec violation
+> (`M8` MUST NOT depend on it). It was previously left un-numbered; it is now a
+> first-class numbered module on equal footing with the other numbered modules (`M0`–`M13`).
 
 ## Notable directions (and why they may surprise)
 
@@ -142,8 +141,7 @@ a judgment call: if a module in the top three tiers exists in the dependency gra
 but no fixture is tagged to it, the gate fails and names the uncovered module.
 Coverage is measured against the `tags` field of every fixture under
 `core/compatibility/` (cases **and** benchmarks): a module `M`*n* is covered when
-at least one fixture's `tags` contains `m`*n* (case-insensitive); the un-numbered
-cross-process-coherence capability is covered by the `coherence` tag.
+at least one fixture's `tags` contains `m`*n* (case-insensitive).
 
 Run it with the `--coverage` flag, passing the spec and compatibility roots:
 

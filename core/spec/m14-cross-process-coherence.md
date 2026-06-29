@@ -1,4 +1,4 @@
-# Cross-Process Cache Coherence
+# M14 — Cross-Process Cache Coherence
 
 Cross-process coherence keeps the per-process caches of **multiple application
 servers** consistent when they share **one** database. It is the multi-node
@@ -57,6 +57,37 @@ The **observable outcome is identical** — a post-invalidation find on node B
 returns node A's committed row — so the suite asserts the outcome, not the
 strategy. The mark-dirty strategy is the more conservative default; full-cache
 re-fetch is an optimization that keeps the cache warm.
+
+## Identity preservation across the refresh
+
+The observable rule above keeps node B's *values* fresh; it also carries an
+**identity** obligation. The refresh updates the **existing interned object in
+place** — node B **MUST NOT** fork a second object for the same primary key. This
+is the cross-process lift of `M8`'s in-process identity cache (one object per
+primary key): a full-cache re-fetch refreshes the already-interned instance
+(Reladomo's `CacheRefresher`), and a partial-cache mark-dirty re-resolves to the
+same interned identity on the next find. Both keep one-object-per-primary-key
+intact while converging on node A's committed value.
+
+The suite pins this with a `sameObjectAs` assertion on a coherence step — the same
+mechanism the `M8` identity scenario uses (`0602`), lifted to the two-node setting.
+A read step **MAY** declare `sameObjectAs: <earlier-step-index>` (with an optional
+`identityAttr`, defaulting to the entity's primary-key column); the harness asserts
+that step's observed rows carry the **same primary-key identity** as the named
+earlier step. Because identity is a per-process notion, both steps **MUST** run on
+the **same node**, the referenced step **MUST** be a read, and both **MUST** observe
+at least one row — an empty re-fetch (e.g. after a delete) cannot witness
+preservation.
+
+| Step | Node | Effect |
+|---|---|---|
+| seed read | B | B reads and interns the row (by primary key, or by another predicate) |
+| write | A | A commits an in-place update to that row |
+| re-fetch | B | B re-resolves and observes A's new value **at the same identity** (`sameObjectAs` the seed read) — the interned object was refreshed, not replaced |
+
+The corpus exercises both surfacings: an update re-fetched by the same primary key
+(`1105`), and an object first surfaced by a non-key predicate then re-fetched by
+primary key (`1106`, the cross-process lift of `0602`).
 
 ## What the suite pins down
 

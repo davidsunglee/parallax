@@ -139,7 +139,7 @@ A case command is claimed only when **all** of these are true:
 - the command is listed in `commands`
 - the requested dialect is listed in `dialects`
 - the case shape is listed in `caseShapes`
-- every module-like tag on the case (`m0`, `m1`, …, `m13`, or `coherence`) is
+- every module-like tag on the case (`m0`, `m1`, …, `m14`) is
   listed in `modules`
 - if `caseTags.include` is present, the case has at least one listed tag
 - if `caseTags.exclude` is present, the case has none of the listed tags
@@ -266,7 +266,7 @@ assert different things:
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`
-- coherence cases report the final observed `rows`
+- coherence cases report the final observed `rows`, and `identityChecks` for any step that declares `sameObjectAs`
 
 ## `benchmark`
 
