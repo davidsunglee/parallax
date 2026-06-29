@@ -1,0 +1,32 @@
+# Mixed: deep fetch Lease.notes — a TEMPORAL parent (read as of processing
+# LATEST) to a NON-temporal child. The root Lease carries its as-of, but the
+# child LeaseNote is non-temporal, so it carries NO as-of term: a plain
+# `lease_id in (?)` with binds = parent keys only. Lease 10 -> notes signed,
+# renewed.
+model: models/lease.yaml
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, mixed]
+operation:
+  deepFetch:
+    operand:
+      asOf:
+        operand: { all: {} }
+        asOfAttr: Lease.processingDate
+        date: now
+    paths:
+      - [Lease.notes]
+goldenSql:
+  postgres:
+    - select t0.id, t0.tenant_id, t0.term from lease t0 where t0.out_z = ?
+    - select t0.id, t0.lease_id, t0.note_text from lease_note t0 where t0.lease_id in (?)
+binds:
+  - [infinity]
+  - [10]
+roundTrips: 2
+expectedGraph:
+  Lease:
+    - id: 10
+      tenant_id: 1
+      term: "24mo"
+      notes:
+        - { id: 100, lease_id: 10, note_text: signed }
+        - { id: 101, lease_id: 10, note_text: renewed }

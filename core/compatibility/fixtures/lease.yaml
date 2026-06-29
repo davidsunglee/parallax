@@ -1,0 +1,10 @@
+# Mixed-temporality fixtures. Lease 10 corrected 12mo -> 24mo (processing axis).
+# Non-temporal Tenant + LeaseNote have no interval columns.
+Tenant:
+  - { id: 1, name: Acme }
+Lease:
+  - { id: 10, tenantId: 1, term: "12mo", processingFrom: "2024-01-01T00:00:00+00:00", processingTo: "2024-04-01T00:00:00+00:00" }
+  - { id: 10, tenantId: 1, term: "24mo", processingFrom: "2024-04-01T00:00:00+00:00", processingTo: infinity }
+LeaseNote:
+  - { id: 100, leaseId: 10, text: signed }
+  - { id: 101, leaseId: 10, text: renewed }

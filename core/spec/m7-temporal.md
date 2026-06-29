@@ -78,6 +78,11 @@ The injected as-of term composes with any non-temporal predicate via `and`; the
 temporal term is appended **after** the user predicate (so binds read
 left-to-right: user binds, then the as-of bind(s)).
 
+When a read navigates or deep-fetches to another temporal entity, the pinned
+as-of value **propagates per-hop to that entity, matched by axis** — see M4's
+"As-of propagation across relationships". The crossing is auto-injected from the
+as-of model, exactly as the single-entity predicates above.
+
 ## Milestone-chaining writes (audit-only)
 
 A write to a temporal entity **chains milestone rows** rather than mutating in
@@ -129,6 +134,7 @@ containment for a past instant). A read pins **both** axes by composing the two
 |---|---|
 | business now, processing now | `thru_z = ? and out_z = ?` (binds `[infinity, infinity]`) |
 | business past `b`, processing now | `from_z <= ? and thru_z > ? and out_z = ?` (binds `[b, b, infinity]`) |
+| business now, processing past `p` | `thru_z = ? and in_z <= ? and out_z > ?` (binds `[infinity, p, p]`) |
 | business past `b`, processing past `p` | `from_z <= ? and thru_z > ? and in_z <= ? and out_z > ?` (binds `[b, b, p, p]`) |
 
 The last form is the signature bitemporal read: *as the system believed at

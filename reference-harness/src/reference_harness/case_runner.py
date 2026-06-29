@@ -285,6 +285,53 @@ def _deepfetch_root_entity(case: Case) -> Entity:
     return case.model.entity(root_class)
 
 
+# Canonical as-of axis order: business terms precede processing terms in both the
+# golden SQL clause order and the bind order (M7 bitemporal table; case 0803).
+_CANONICAL_AXIS_ORDER: tuple[str, ...] = ("business", "processing")
+
+
+def _root_asof_pins(case: Case) -> dict[str, str]:
+    """Map ``{axis: pinned date}`` from the nested ``asOf`` nodes wrapping the
+    deep-fetch root operand. An axis absent here defaults to the child's own
+    default ("now" = latest) at propagation time. Empty when the root is unpinned.
+    """
+    pins: dict[str, str] = {}
+    node: Any = _deepfetch_root_operand(case)
+    while isinstance(node, dict) and "asOf" in node:
+        asof = node["asOf"]
+        entity_name, attr_name = asof["asOfAttr"].split(".", 1)
+        entity = case.model.entity(entity_name)
+        axis = next(
+            a["axis"] for a in entity.as_of_attributes if a["name"] == attr_name
+        )
+        pins[axis] = asof["date"]
+        node = asof["operand"]
+    return pins
+
+
+def _expected_asof_suffix(child_entity: Entity, pins: dict[str, str]) -> list[Any]:
+    """The as-of binds a temporal child level MUST carry, after its IN-list.
+
+    Per-axis, in canonical order (business, then processing): the propagated value
+    is the root pin for that axis, or the child's own ``default`` ("now") when the
+    root did not pin it. ``now``/latest lowers to the single equality bind
+    (the axis's ``infinity``); a finite instant lowers to the half-open range's
+    two binds ``[D, D]``. A non-temporal child yields ``[]``.
+    """
+    by_axis = {a["axis"]: a for a in child_entity.as_of_attributes}
+    suffix: list[Any] = []
+    for axis in _CANONICAL_AXIS_ORDER:
+        attr = by_axis.get(axis)
+        if attr is None:
+            continue
+        date = pins.get(axis, attr.get("default", "now"))
+        if date == "now":
+            suffix.append(attr["infinity"])
+        else:
+            suffix.extend([date, date])
+    return suffix
+
+
 class _FetchStep:
     """One relationship hop = one golden statement (after the root)."""
 
@@ -505,6 +552,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     steps = _fetch_steps(case)
 
     root_entity = _deepfetch_root_entity(case)
+    root_pins = _root_asof_pins(case)
 
     # Level 0: the root query.
     root_binds = _binds_for_statement(case, 0)
@@ -539,19 +587,38 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
                 f"keys {parent_keys!r}."
             )
 
-        authored = [
-            _coerce_identity_key(b)
-            for b in _binds_for_statement(case, statement_index)
-        ]
-        if sorted(authored) != parent_keys:
+        raw_authored = _binds_for_statement(case, statement_index)
+        in_slice = raw_authored[: len(parent_keys)]
+        asof_suffix = list(raw_authored[len(parent_keys) :])
+        if sorted(_coerce_identity_key(b) for b in in_slice) != parent_keys:
             raise CaseFailure(
                 f"{case.path.name}: goldenSql.{dialect} level {statement_index} "
-                f"({step.rel_ref}) authored binds {authored!r} != gathered parent "
+                f"({step.rel_ref}) IN-list binds {in_slice!r} != gathered parent "
                 f"keys {parent_keys!r}. The child level MUST be keyed by exactly "
                 f"the parents from the previous level (the N+1-eliminating IN list)."
             )
 
-        child_rows = _query_rows(db, statements[statement_index], parent_keys)
+        # As-of propagation oracle: the root pin propagates per-hop, matched by
+        # axis, to each temporal child level. The harness derives the child's
+        # as-of binds independently and asserts the authored suffix matches, so a
+        # dropped/wrong propagated as-of fails the case. A non-temporal child has
+        # an empty suffix (no as-of term).
+        expected_suffix = (
+            _expected_asof_suffix(step.child_entity, root_pins)
+            if step.child_entity.is_temporal
+            else []
+        )
+        if asof_suffix != expected_suffix:
+            raise CaseFailure(
+                f"{case.path.name}: goldenSql.{dialect} level {statement_index} "
+                f"({step.rel_ref}) as-of suffix {asof_suffix!r} != the propagated "
+                f"as-of binds {expected_suffix!r}. The root pin MUST propagate to "
+                f"this temporal child (matched by axis), appended after the IN list."
+            )
+
+        child_rows = _query_rows(
+            db, statements[statement_index], list(parent_keys) + expected_suffix
+        )
         rows_by_entity[step.child_entity.name] = child_rows
 
         child_col = _column_of(step.child_entity, step.child_attr)

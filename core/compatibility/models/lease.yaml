@@ -1,0 +1,59 @@
+# Tenant / Lease / LeaseNote: the MIXED-temporality chain. A single path crosses
+# both mixed directions: Tenant.leases is non-temporal -> temporal (the child
+# Lease defaults every axis to LATEST), and Lease.notes is temporal ->
+# non-temporal (the child LeaseNote carries NO as-of term). Proves the two mixed
+# rules of M4's as-of-propagation section. Row data lives in fixtures/lease.yaml.
+entities:
+  - name: Tenant
+    namespace: parallax.compatibility
+    table: tenant
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: name, type: string, column: name, maxLength: 64 }
+    relationships:
+      - name: leases
+        relatedEntity: Lease
+        cardinality: one-to-many
+        join: this.id = Lease.tenantId
+        reverseName: tenant
+        foreignKey: tenant_id
+    indices:
+      - { name: tenant_pk, attributes: [id], unique: true }
+  - name: Lease
+    namespace: parallax.compatibility
+    table: lease
+    mutability: transactional
+    temporal: unitemporal-processing
+    attributes:
+      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: tenantId, type: int64, column: tenant_id }
+      - { name: term, type: string, column: term, maxLength: 16 }
+      - { name: processingFrom, type: timestamp, column: in_z }
+      - { name: processingTo, type: timestamp, column: out_z }
+    asOfAttributes:
+      - { name: processingDate, fromColumn: in_z, toColumn: out_z, axis: processing, toIsInclusive: false, infinity: infinity, default: now }
+    relationships:
+      - name: notes
+        relatedEntity: LeaseNote
+        cardinality: one-to-many
+        join: this.id = LeaseNote.leaseId
+        reverseName: lease
+        dependent: true
+        foreignKey: lease_id
+    indices:
+      - { name: lease_pk, attributes: [id, processingFrom], unique: true }
+      - { name: lease_tenant, attributes: [tenantId], unique: false }
+  - name: LeaseNote
+    namespace: parallax.compatibility
+    table: lease_note
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: leaseId, type: int64, column: lease_id }
+      - { name: text, type: string, column: note_text, maxLength: 64 }
+    indices:
+      - { name: lease_note_pk, attributes: [id], unique: true }
+      - { name: lease_note_lease, attributes: [leaseId], unique: false }

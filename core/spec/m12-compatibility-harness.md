@@ -109,6 +109,17 @@ cases a dialect's `goldenSql` is an **ordered list** of statements (root plus
 the child levels that execute) rather than a single string, and `expectedGraph`
 replaces (or accompanies) `expectedRows`.
 
+For each deep-fetch level whose child entity is temporal, the harness derives the
+**propagated as-of binds independently** (an oracle, parallel to the ordering
+oracle): it reads the root pin from the operation's nested `asOf` nodes, matches
+each axis to the child entity's as-of dimension, and computes the expected child
+as-of binds (the `infinity` equality for latest, the `[D, D]` range for an
+instant, business axis first). It then splits the authored child binds into the
+IN-list slice and the as-of suffix, asserting the slice equals the gathered
+parent keys and the suffix equals the computed expectation — so a dropped or
+wrong propagated as-of fails the case automatically. A non-temporal child has an
+empty suffix.
+
 ### Write-sequence cases (M7 / M8 / M9 / M5)
 
 A **writeSequence** case proves a write contract by *application*, not

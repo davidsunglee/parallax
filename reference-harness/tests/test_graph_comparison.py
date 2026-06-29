@@ -19,8 +19,10 @@ from reference_harness.case_runner import (
     CaseFailure,
     _assert_child_ordering,
     _assert_deep_fetch,
+    _expected_asof_suffix,
     _FetchStep,
     _graphs_equal,
+    _root_asof_pins,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -254,3 +256,130 @@ def test_child_ordering_rejects_unprojected_orderby_key():
     buckets = {"Order.items": {1: [{"id": 11}, {"id": 12}]}}
     with pytest.raises(CaseFailure):
         _assert_child_ordering("unit", [step], buckets)
+
+
+def test_policy_model_is_temporal_and_relational():
+    model = load_model(COMPATIBILITY_ROOT, "models/policy.yaml")
+    coverage = model.entity("Coverage")
+    assert coverage.is_temporal
+    assert {a["axis"] for a in coverage.as_of_attributes} == {"business", "processing"}
+    assert coverage.relationship_by_name("policy")["cardinality"] == "many-to-one"
+    assert model.entity("Policy").relationship_by_name("coverages")["relatedEntity"] == "Coverage"
+    assert coverage.relationship_by_name("claims")["cardinality"] == "one-to-many"
+
+
+def _policy_model():
+    return load_model(COMPATIBILITY_ROOT, "models/policy.yaml")
+
+
+def test_expected_suffix_both_latest():
+    coverage = _policy_model().entity("Coverage")
+    # No pins -> both axes default to latest -> equality on each axis.
+    assert _expected_asof_suffix(coverage, {}) == ["infinity", "infinity"]
+
+
+def test_expected_suffix_business_past_processing_latest():
+    coverage = _policy_model().entity("Coverage")
+    pins = {"business": "2024-03-01T00:00:00+00:00"}  # processing defaults to latest
+    assert _expected_asof_suffix(coverage, pins) == [
+        "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "infinity",
+    ]
+
+
+def test_expected_suffix_business_latest_processing_past():
+    coverage = _policy_model().entity("Coverage")
+    pins = {"processing": "2024-02-01T00:00:00+00:00"}  # business defaults to latest
+    assert _expected_asof_suffix(coverage, pins) == [
+        "infinity", "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00",
+    ]
+
+
+def test_expected_suffix_both_past_is_business_first():
+    coverage = _policy_model().entity("Coverage")
+    pins = {"business": "2024-03-01T00:00:00+00:00", "processing": "2024-02-01T00:00:00+00:00"}
+    assert _expected_asof_suffix(coverage, pins) == [
+        "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00",
+        "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00",
+    ]
+
+
+def test_expected_suffix_processing_only_latest():
+    line = load_model(COMPATIBILITY_ROOT, "models/invoice.yaml").entity("InvoiceLine")
+    assert _expected_asof_suffix(line, {}) == ["infinity"]
+
+
+def test_expected_suffix_non_temporal_child_is_empty():
+    note = load_model(COMPATIBILITY_ROOT, "models/lease.yaml").entity("LeaseNote")
+    assert _expected_asof_suffix(note, {"processing": "2024-02-01T00:00:00+00:00"}) == []
+
+
+def test_root_pins_reads_nested_asof_by_axis():
+    case = load_case(
+        COMPATIBILITY_ROOT, COMPATIBILITY_ROOT / "cases" / "0327-deepfetch-temporal-both-past.yaml"
+    )
+    assert _root_asof_pins(case) == {
+        "business": "2024-03-01T00:00:00+00:00",
+        "processing": "2024-02-01T00:00:00+00:00",
+    }
+
+
+class _WrongAsofChildDb:
+    """Returns both fully-current Policies and both fully-current Coverages,
+    matching 0324's expectedGraph exactly. The ONLY thing that can fail is the
+    corrupted as-of suffix in the authored binds. Used to prove the suffix
+    enforcement block is load-bearing: without it, the graph matches and no
+    CaseFailure is raised."""
+    dialect = "postgres"
+
+    def query(self, sql, binds=None):
+        if "coverage" in sql:
+            return [
+                {"id": 10, "policy_id": 1, "amount": Decimal("700.00")},
+                {"id": 20, "policy_id": 2, "amount": Decimal("300.00")},
+            ]
+        return [{"id": 1, "name": "Auto"}, {"id": 2, "name": "Home"}]
+
+
+def test_deep_fetch_enforces_propagated_asof_suffix(tmp_path):
+    # An otherwise-valid case whose child as-of suffix is WRONG must raise.
+    # Build it from 0324 with a corrupted level-1 suffix bind.
+    import yaml
+    src = yaml.safe_load(
+        (COMPATIBILITY_ROOT / "cases" / "0324-deepfetch-temporal-both-latest.yaml").read_text()
+    )
+    src["binds"][1][-1] = "2099-01-01T00:00:00+00:00"  # not the propagated `infinity`
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(yaml.safe_dump(src))
+    case = load_case(COMPATIBILITY_ROOT, bad)
+    with pytest.raises(CaseFailure):
+        _assert_deep_fetch(case, _WrongAsofChildDb())
+
+
+def test_existing_non_temporal_deep_fetch_still_passes():
+    # Backward-compat guard: 0311 (non-temporal Order.items) has no as-of suffix.
+    case = load_case(
+        COMPATIBILITY_ROOT,
+        COMPATIBILITY_ROOT / "cases" / "0311-deep-fetch-to-many.yaml",
+    )
+
+    class _OrdersDb:
+        dialect = "postgres"
+        def query(self, sql, binds=None):
+            if "order_item" in sql:
+                return [
+                    {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1},
+                    {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2},
+                    {"id": 21, "order_id": 2, "sku": "A-300", "quantity": 4},
+                    {"id": 422, "order_id": 42, "sku": "B-200", "quantity": 5},
+                    {"id": 421, "order_id": 42, "sku": "A-999", "quantity": 3},
+                ]
+            return [
+                {"id": 1, "name": "Ada", "price": Decimal("10.50")},
+                {"id": 2, "name": "Linus", "price": Decimal("20.00")},
+                {"id": 3, "name": "ada", "price": Decimal("30.25")},
+                {"id": 4, "name": "Margaret", "price": Decimal("40.00")},
+                {"id": 5, "name": "Alan", "price": Decimal("50.75")},
+                {"id": 42, "name": "Grace", "price": Decimal("99.99")},
+            ]
+
+    _assert_deep_fetch(case, _OrdersDb())  # no raise
