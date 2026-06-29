@@ -87,6 +87,13 @@ entities:
         orderBy:
           - { attr: priority, direction: desc }
           - { attr: label, direction: asc }
+      - name: itemsByShipDate
+        relatedEntity: OrderItem
+        cardinality: one-to-many
+        join: this.id = OrderItem.orderId
+        foreignKey: order_id
+        orderBy:
+          - { attr: shippedOn, direction: asc }
     indices:
       - name: orders_pk
         attributes: [id]
@@ -115,6 +122,10 @@ entities:
       - name: quantity
         type: int32
         column: quantity
+      - name: shippedOn
+        type: date
+        column: shipped_on
+        nullable: true
     relationships:
       - name: order
         relatedEntity: Order

@@ -98,15 +98,16 @@ def _from_db_value(value: Any) -> Any:
     * a finite ``datetime`` -> a stable ISO-8601 UTC string with ``+00:00`` (the
       same shape the Postgres provider yields), so instant columns compare across
       dialects;
-    * a ``date`` -> its ISO string; a ``bytes`` JSON payload is left to the
+    * a bare ``date`` -> passed through unchanged as a ``datetime.date``,
+      symmetric with the Postgres provider (which registers no ``date`` loader)
+      and matching how a YAML-authored date scalar parses, so a ``date`` column
+      compares equal across dialects; a ``bytes`` JSON payload is left to the
       caller (we never read JSON columns back for comparison in this phase).
     """
     if isinstance(value, _dt.datetime):
         if value == _INFINITY_SENTINEL:
             return _INFINITY_LITERAL
         return value.replace(tzinfo=_dt.UTC).isoformat()
-    if isinstance(value, _dt.date):
-        return value.isoformat()
     if isinstance(value, _dt.timedelta):
         # pymysql reads a `TIME` column as a `timedelta`; render it as a stable
         # `HH:MM:SS` string so a `time` column compares to a plain YAML string

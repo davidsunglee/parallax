@@ -41,3 +41,4 @@ expectedTableState:
       order_id: 100
       sku: X-1
       quantity: 3
+      shipped_on: null
