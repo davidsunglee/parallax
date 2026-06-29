@@ -14,9 +14,8 @@ suite against real databases.
 
 ## How to read this spec
 
-The spec is a set of **capability modules** (`M0`–`M13` plus cross-process
-coherence). Each module is one file defining its protocol surface, its
-observable behavior, and the compatibility cases that pin it down. Modules
+The spec is a set of **capability modules** (`M0`–`M14`). Each module is one file defining
+its protocol surface, its observable behavior, and the compatibility cases that pin it down. Modules
 depend on one another only in the directions permitted by the **normative
 module-dependency graph** ([`dependency-graph.md`](dependency-graph.md)).
 
@@ -35,7 +34,7 @@ module-dependency graph** ([`dependency-graph.md`](dependency-graph.md)).
 | M11 | [`m11-dialect-seam.md`](m11-dialect-seam.md) | Database seam & portability |
 | M12 | [`m12-compatibility-harness.md`](m12-compatibility-harness.md) | Compatibility harness & test-double integration |
 | M13 | [`m13-performance.md`](m13-performance.md) | Performance & benchmark harness |
-| — | [`cross-process-coherence.md`](cross-process-coherence.md) | Cross-process cache coherence (fast-follow) |
+| M14 | [`m14-cross-process-coherence.md`](m14-cross-process-coherence.md) | Cross-process cache coherence (fast-follow) |
 
 ## Normative vs. non-normative boundary (DQ3)
 

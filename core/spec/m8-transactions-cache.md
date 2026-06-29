@@ -100,7 +100,7 @@ scenario** buffers a write then issues a dependent find that must observe it
 (the unit of work flushes before the dependent read). Cross-**process**
 invalidation
 (one app server seeing another's writes) is a separate, fast-follow concern —
-[cross-process cache coherence](cross-process-coherence.md), which extends exactly
+[cross-process cache coherence](m14-cross-process-coherence.md), which extends exactly
 this rule to multiple application servers sharing one database — not part of this
 MVP module.
 

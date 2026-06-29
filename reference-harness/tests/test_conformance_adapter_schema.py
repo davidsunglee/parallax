@@ -114,6 +114,24 @@ def test_describe_still_allows_omitting_case_tags_for_all_or_nothing_claims() ->
     assert errors == []
 
 
+def test_describe_accepts_m14_coherence_module_claim() -> None:
+    describe = copy.deepcopy(_valid_describe())
+    describe["capabilities"]["modules"] = ["m0", "m8", "m14"]
+
+    errors = list(_validator().iter_errors(describe))
+    assert errors == []
+
+
+def test_describe_rejects_retired_coherence_module_claim() -> None:
+    # Cross-process coherence is module m14 now; the un-numbered "coherence"
+    # module claim is retired (it survives only as an ordinary case tag, not a
+    # module-like capability claim), so an adapter MUST claim m14 instead.
+    describe = copy.deepcopy(_valid_describe())
+    describe["capabilities"]["modules"] = ["m0", "coherence"]
+
+    assert list(_validator().iter_errors(describe))
+
+
 def test_benchmark_accepts_m13_report_shape() -> None:
     errors = list(_validator().iter_errors(_valid_benchmark()))
     assert errors == []

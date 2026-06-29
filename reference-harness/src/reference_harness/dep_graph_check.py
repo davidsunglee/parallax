@@ -16,7 +16,7 @@ The machine-readable source of truth for the graph is the fenced
 ```` ```dependency-graph ```` block in ``dependency-graph.md``. Each line is an
 edge ``A --> B`` meaning "A depends on B". The DAG check asserts:
 
-* every edge names two recognized modules (``M0``–``M13``);
+* every edge names two recognized modules (``M0`` and up; ``M6`` is intentionally absent);
 * the graph is a **directed acyclic graph** (no cycles);
 * edge direction is **legal** — an edge must not point "upward" against the
   layering. We derive a topological level per module from the declared edges and
@@ -48,10 +48,6 @@ _MODULE_TOKEN_RE = re.compile(r"\bM\d+\b")
 # Any module mentioned under one of these (until the next "### " heading) is
 # treated as in-scope for the coverage gate.
 _IN_SCOPE_TIERS = ("mvp", "fast-follow", "definitely-do")
-
-# The un-numbered cross-process-coherence capability: in-scope (fast-follow), but
-# carries no M-number, so it is covered by the ``coherence`` fixture tag.
-_COHERENCE_LABEL = "coherence"
 
 
 class DepGraphFailure(Exception):
@@ -141,15 +137,13 @@ def check(markdown: str) -> list[str]:
 
 
 def parse_in_scope_modules(scope_markdown: str) -> set[str]:
-    """Return the set of in-scope module tokens (``M0``…``M13``) + the coherence
-    capability label, read from the three in-scope tier sections of
-    ``scope-and-tiers.md``.
+    """Return the set of in-scope module tokens (``M0`` and up), read from the
+    three in-scope tier sections of ``scope-and-tiers.md``.
 
     A module is in scope iff it is mentioned under an ``MVP`` / ``Fast-follow`` /
-    ``Definitely-do`` ``### `` heading (until the next ``### `` heading). The
-    un-numbered cross-process-coherence capability is in scope; it has no
-    M-number, so we record it as ``coherence`` (matched against the ``coherence``
-    fixture tag).
+    ``Definitely-do`` ``### `` heading (until the next ``### `` heading).
+    Cross-process cache coherence is ``M14`` and is picked up by the normal
+    ``M\\d+`` token scan.
     """
     in_scope: set[str] = set()
     current_in_scope = False
@@ -163,8 +157,6 @@ def parse_in_scope_modules(scope_markdown: str) -> set[str]:
             continue
         for token in _MODULE_TOKEN_RE.findall(line):
             in_scope.add(token)
-        if re.search(r"cross-process cache coherence", line, re.IGNORECASE):
-            in_scope.add(_COHERENCE_LABEL)
     if not in_scope:
         raise DepGraphFailure(
             "no in-scope modules found under the MVP / fast-follow / definitely-do "

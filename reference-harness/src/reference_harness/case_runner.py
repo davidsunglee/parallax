@@ -155,6 +155,13 @@ def _assert_schema(case: Case) -> None:
                 f"{case.path.name}: coherence case needs at least a write and a "
                 f"re-fetch step"
             )
+        for index, step in enumerate(case.coherence):
+            if step.get("kind") == "write" and "sameObjectAs" in step:
+                raise CaseFailure(
+                    f"{case.path.name}: coherence[{index}] is a write step but "
+                    f"declares sameObjectAs; identity is asserted on read steps "
+                    f"(a write observes no object)."
+                )
         if not any(step.get("observeRows") is not None for step in case.coherence):
             raise CaseFailure(
                 f"{case.path.name}: coherence case asserts nothing — at least the "
@@ -1122,13 +1129,14 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
 
 
 def _identity_keys(
-    case: Case, index: int, rows: list[dict[str, Any]], identity_col: str
+    case: Case, index: int, rows: list[dict[str, Any]], identity_col: str,
+    label: str = "scenario",
 ) -> list[Any]:
     """The ordered set of primary-key identities carried by *rows*."""
     if any(identity_col not in row for row in rows):
         raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] result rows do not carry the "
-            f"identity column {identity_col!r}; a scenario's finds MUST project "
+            f"{case.path.name}: {label}[{index}] result rows do not carry the "
+            f"identity column {identity_col!r}; a {label} step's find MUST project "
             f"the primary key so identity can be checked."
         )
     return sorted(_coerce_identity_key(row[identity_col]) for row in rows)
@@ -1504,7 +1512,11 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
     ``write`` step COMMITs DML on its node; a ``read`` step queries. A step that
     declares ``observeRows`` asserts the rows its node observes — most importantly
     the FINAL node-B re-fetch, which MUST return node A's committed post-write
-    state, never the stale pre-write rows.
+    state, never the stale pre-write rows. A read step MAY additionally declare
+    ``sameObjectAs`` — that its observed object is the SAME logical object (same
+    primary-key identity) as an earlier step, the cross-process lift of the M8
+    identity contract: the refresh updates the interned object in place rather than
+    forking a second object for the same primary key.
 
     The harness contains no cache and no notification bus; it proves the suite's
     post-write golden SQL is correct against real, committed, cross-connection
@@ -1512,10 +1524,12 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
     """
     dialect = db.dialect
     tolerance = case.tolerance
+    default_identity = _pk_column(case.model.root_entity)
 
     _provision(case, db)  # fixtures loaded so the seed read sees a row
     with db.open_peer() as peer:
         nodes: dict[str, Any] = {"A": db, "B": peer}
+        results: list[list[dict[str, Any]]] = []
         for index, step in enumerate(case.coherence):
             node = nodes[step["node"]]
             statements = _coherence_step_statements(step, dialect)
@@ -1525,6 +1539,7 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
                         step.get("binds", []), statement_index, len(statements)
                     )
                     node.execute(statement, binds)
+                results.append([])  # keep indices aligned for sameObjectAs
                 continue
 
             # A read step: execute its SELECT on its node and (when declared)
@@ -1540,6 +1555,8 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
                     step.get("binds", []), statement_index, len(statements)
                 )
                 rows = _query_rows(node, statement, binds)
+            results.append(rows)
+
             observe = step.get("observeRows")
             if observe is not None and not _rows_equal(rows, observe, tolerance):
                 raise CaseFailure(
@@ -1550,6 +1567,63 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
                     f"  (node B's re-fetch after node A's committed write MUST "
                     f"return the new state, never the stale cached rows.)"
                 )
+
+            if "sameObjectAs" in step:
+                _assert_coherence_identity(case, index, step, results, default_identity)
+
+
+def _assert_coherence_identity(
+    case: Case,
+    index: int,
+    step: dict[str, Any],
+    results: list[list[dict[str, Any]]],
+    default_identity: str,
+) -> None:
+    """Assert this read step denotes the SAME logical object as an earlier step.
+
+    Identity preservation across the cross-process refresh: node B's re-fetch
+    resolves the same primary-key identity it interned on the seed read (the
+    interned object is updated in place, not forked). The witness must be
+    discriminating, so the reference MUST be an EARLIER read step on the SAME node
+    (identity is a per-process notion) and BOTH steps MUST observe at least one row
+    (an empty re-fetch — e.g. after a delete — cannot witness preservation).
+    """
+    source = step["sameObjectAs"]
+    # source < 0 defends programmatic (non-YAML) callers; the schema enforces minimum 0.
+    if source < 0 or source >= index:
+        raise CaseFailure(
+            f"{case.path.name}: coherence[{index}].sameObjectAs={source} "
+            f"must reference an EARLIER step."
+        )
+    referenced = case.coherence[source]
+    if referenced["kind"] != "read":
+        raise CaseFailure(
+            f"{case.path.name}: coherence[{index}].sameObjectAs={source} must "
+            f"reference a read step; a write step observes no object."
+        )
+    if referenced["node"] != step["node"]:
+        raise CaseFailure(
+            f"{case.path.name}: coherence[{index}].sameObjectAs={source} crosses "
+            f"nodes ({referenced['node']} -> {step['node']}); identity preservation "
+            f"is per-process, so both steps MUST run on the same node."
+        )
+    identity_col = step.get("identityAttr", default_identity)
+    this_ids = _identity_keys(case, index, results[index], identity_col, label="coherence")
+    that_ids = _identity_keys(case, source, results[source], identity_col, label="coherence")
+    if not this_ids or not that_ids:
+        raise CaseFailure(
+            f"{case.path.name}: coherence[{index}].sameObjectAs={source} has an "
+            f"empty identity witness; both steps MUST observe at least one row for "
+            f"identity preservation to mean anything."
+        )
+    if this_ids != that_ids:
+        raise CaseFailure(
+            f"{case.path.name}: coherence[{index}] is declared to denote the same "
+            f"object(s) as step {source}, but their primary-key identities differ "
+            f"(cross-process refresh forked a new object).\n"
+            f"  step {index}: {this_ids!r}\n"
+            f"  step {source}: {that_ids!r}"
+        )
 
 
 # --- entry point ------------------------------------------------------------

@@ -1,7 +1,7 @@
 # Language-Spec Template
 
 This is the **checklist every per-language spec must pin down** before an
-implementation begins. The core spec (`M0`–`M13` + cross-process coherence) fixes
+implementation begins. The core spec (`M0`–`M14`) fixes
 the *language-neutral* contract — observable behavior, the protocol seams, the
 module-dependency graph. It deliberately leaves the *developer-facing surface* —
 API shape, configuration ergonomics, whether codegen is used — to each language.
@@ -146,7 +146,7 @@ the build.
   examples: `import-linter` / `tach` (Python), **ArchUnit** or Gradle module
   boundaries (Java), `dependency-cruiser` / `eslint-plugin-boundaries`
   (TypeScript), **crate boundaries + visibility** (Rust).
-- **(decide and record)** The mapping from the core modules (`M0`–`M13`) onto
+- **(decide and record)** The mapping from the core modules (`M0`–`M14`) onto
   this language's packages/modules/crates, any non-numbered support packages
   required by the language topology, and the contract that encodes the legal
   edges (the same numbered-module DAG as

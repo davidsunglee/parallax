@@ -203,6 +203,16 @@
             "type": "array",
             "items": { "type": "object" }
           },
+          "sameObjectAs": {
+            "description": "Zero-based index of an earlier coherence step (on the SAME node) whose observed rows denote the SAME logical object(s) as this step — the identity-preservation contract: the cross-process refresh updates the interned object in place (same primary key => same object), never forking a second object. The harness asserts both steps' rows carry the same primary-key identity; the referenced step MUST be an earlier read on the same node and both MUST observe at least one row.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "identityAttr": {
+            "description": "The result-column name carrying the primary-key identity, used to check `sameObjectAs`. Defaults to the model root entity's primary-key column.",
+            "type": "string",
+            "minLength": 1
+          },
           "note": {
             "description": "Optional human-readable description of the step's role in the coherence scenario.",
             "type": "string"

@@ -55,8 +55,8 @@ Required for parity; lands immediately after the MVP:
 - **M5** bulk-set ops + cascade
 - **M9** object lifecycle & detach
 - **M10** optimistic locking
-- **Cross-process cache coherence** — multi-application-server cache coherence,
-  not only client-server (DQ4)
+- **M14** cross-process cache coherence — multi-application-server cache
+  coherence, not only client-server (DQ4)
 - temp-table support (large deep-fetch / large `IN`)
 
 ### Definitely-do
@@ -145,9 +145,8 @@ cross-references stable.
 ## Relationship to the coverage gate
 
 The MVP / fast-follow / definitely-do tiers are exactly the set the **coverage
-gate** enforces: each numbered module in those tiers (and the un-numbered
-cross-process coherence capability) **MUST** have at least one fixture tagged to
-it. The might-do and won't-do tiers — including the MAY-tier temporal mutations —
-are **excluded** from the gate, so "the spec is complete for parity" is a passing
-mechanical check, not a judgment call. See
+gate** enforces: each numbered module in those tiers **MUST** have at least one
+fixture tagged to it. The might-do and won't-do tiers — including the MAY-tier
+temporal mutations — are **excluded** from the gate, so "the spec is complete for
+parity" is a passing mechanical check, not a judgment call. See
 [`dependency-graph.md`](dependency-graph.md) for the gate mechanics.

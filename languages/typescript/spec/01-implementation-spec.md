@@ -828,7 +828,7 @@ The normative module-dependency graph
 legal dependency direction between numbered core modules, and each per-language
 spec **SHOULD** prescribe a build-time mechanism that fails the build on any
 module-to-module dependency the graph does not declare. This section names the
-tool, maps every core module `M0`–`M13` onto a TypeScript package, records the
+tool, maps every core module `M0`–`M14` onto a TypeScript package, records the
 non-numbered support package `@parallax/serde`, and transcribes the legal
 numbered-module edges one-to-one from the core graph so the TypeScript edge set
 is mechanically diff-able against it. The `@parallax/serde` edges are explicit
@@ -886,6 +886,7 @@ module.exports = {
     { from: { path: "^packages/bitemporal/" },     to: { path: "^packages/transactions/" } },
     { from: { path: "^packages/lifecycle/" },      to: { path: "^packages/transactions/" } },
     { from: { path: "^packages/locking/" },        to: { path: "^packages/transactions/" } },
+    { from: { path: "^packages/coherence/" },      to: { path: "^packages/transactions/" } },
     { from: { path: "^packages/conformance/" },    to: { path: "^packages/operation/" } },
     { from: { path: "^packages/conformance/" },    to: { path: "^packages/sql/" } },
     { from: { path: "^packages/conformance/" },    to: { path: "^packages/relationships/" } },
@@ -922,6 +923,7 @@ mechanical gate over the `import` graph.
 | M11 | Database seam & portability | `@parallax/dialect` | M11 |
 | M12 | Compatibility harness | `@parallax/conformance` | M12 |
 | M13 | Performance & benchmark harness | `@parallax/benchmark` | M13 |
+| M14 | Cross-process cache coherence | `@parallax/coherence` | M14 |
 | Support | Canonical metamodel/operation serde | `@parallax/serde` | unnumbered |
 
 **`M6` is deliberately absent** — aggregation is folded into `M2`, and the gap is
@@ -965,16 +967,19 @@ M12 --> M7
 M12 --> M9
 M12 --> M10
 M13 --> M12
+M14 --> M8
 ```
 
 The non-obvious directions carry over verbatim from the core graph: `M8` depends
 on `M2` not `M3` (the transaction / unit-of-work layer is expressed over
 operations, not SQL); `M4` depends on `M5` (relationship navigation yields lists,
 the reverse of the obvious guess); and `M3` depends on `M11` (SQL generation
-routes through the portability seam). The un-numbered cross-process-coherence
-capability is not in
-this block because it carries no `M`-number; its single legal direction is
-*coherence → M8*, added when that fast-follow package lands.
+routes through the portability seam). M14's single legal direction `M14 → M8` is
+transcribed in the block above, keeping the TypeScript edge set one-to-one with
+the core graph; the `@parallax/coherence` package is a **fast-follow** capability
+that TypeScript V1 MAY defer implementing, but its boundary is documented here so
+the dependency-cruiser allowlist stays complete and mechanically diff-able against
+the core graph.
 
 ## 8. Optional optimized data structures (M13, DQ10)
 

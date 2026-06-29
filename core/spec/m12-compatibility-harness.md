@@ -188,7 +188,7 @@ would fail the post-write `expectRows`). The harness asserts per-step round-trip
 / golden-SQL count consistency, executes each step, and checks `sameObjectAs`
 identity assertions; it never compiles an operation to SQL.
 
-### Coherence cases (cross-process coherence)
+### Coherence cases (M14 cross-process coherence)
 
 A **coherence** case proves the cross-process cache-coherence contract (one node
 observes another's committed write) by running a two-node operation sequence over
@@ -204,7 +204,13 @@ descriptor survive serde (layer 4). The harness contains no cache and no
 notification bus; it proves the suite's post-write golden SQL is correct against
 real, committed, cross-connection data — the observable contract any conforming
 invalidation mechanism (full-cache re-fetch or partial-cache mark-dirty) must
-satisfy. See [`cross-process-coherence.md`](cross-process-coherence.md).
+satisfy. See [`m14-cross-process-coherence.md`](m14-cross-process-coherence.md).
+
+A read step MAY additionally declare `sameObjectAs` (with an optional
+`identityAttr`): the harness asserts its observed rows carry the same primary-key
+identity as an earlier same-node read, exercising M14's identity-preservation
+contract (the refresh updates the interned object in place rather than forking a
+new one for the same primary key).
 
 ### Error cases (M11 error-code classification)
 

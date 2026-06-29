@@ -35,6 +35,7 @@ def test_real_dependency_graph_is_a_legal_dag() -> None:
     edges = parse_edges(markdown)
     assert ("M3", "M2") in edges  # sanity: a known edge is present
     assert ("M4", "M5") in edges  # the "surprising" direction is declared
+    assert ("M14", "M8") in edges  # cross-process coherence is now a numbered edge
 
 
 # --- a constructed cycle is rejected -----------------------------------------
@@ -54,7 +55,7 @@ def test_real_spec_is_fully_covered() -> None:
     assert coverage_errors(scope, _COMPATIBILITY_ROOT) == []
 
 
-def test_in_scope_modules_match_the_numbered_graph_plus_coherence() -> None:
+def test_in_scope_modules_match_the_numbered_graph() -> None:
     scope = (_SPEC_DIR / "scope-and-tiers.md").read_text(encoding="utf-8")
     graph = (_SPEC_DIR / "dependency-graph.md").read_text(encoding="utf-8")
     in_scope = parse_in_scope_modules(scope)
@@ -62,8 +63,9 @@ def test_in_scope_modules_match_the_numbered_graph_plus_coherence() -> None:
     # Every numbered module in the graph is an in-scope tier (there is no
     # numbered module in the might-do / won't-do tiers); M6 does not exist.
     assert graph_modules <= in_scope
-    assert "coherence" in in_scope  # the un-numbered fast-follow capability
+    assert "M14" in in_scope  # cross-process coherence, now a numbered module
     assert "M6" not in in_scope  # aggregation is folded into M2
+    assert "coherence" not in in_scope  # retired: M14 is covered by its m14 tag
 
 
 # --- the gate FAILS when an in-scope module is uncovered ---------------------

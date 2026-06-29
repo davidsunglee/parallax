@@ -19,6 +19,7 @@ from reference_harness.case import Case, discover_cases, load_case
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_coherence,
+    _assert_coherence_identity,
     _assert_coherence_normalization,
     _assert_schema,
     _assert_serde,
@@ -170,3 +171,121 @@ def test_coherence_without_assertion_is_rejected() -> None:
     )
     with pytest.raises(CaseFailure):
         _assert_schema(bogus)
+
+
+# --- coherence identity preservation (sameObjectAs) --------------------------
+
+
+def _identity_case(coherence: list[dict[str, Any]]) -> Case:
+    """A minimal coherence Case over the account model for identity-helper tests."""
+    model = load_case(
+        COMPATIBILITY_ROOT, COMPATIBILITY_ROOT / "cases" / "1101-coherence-refetch.yaml"
+    ).model
+    return Case(
+        path=Path("identity-coherence.yaml"),
+        raw={"model": "models/account.yaml", "tags": ["coherence"], "coherence": coherence},
+        model=model,
+    )
+
+
+def test_identity_same_pk_same_node_passes() -> None:
+    case = _identity_case(
+        [
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}},
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}, "sameObjectAs": 0},
+        ]
+    )
+    results = [[{"id": 2}], [{"id": 2}]]
+    # Does not raise.
+    _assert_coherence_identity(case, 1, case.coherence[1], results, "id")
+
+
+def test_identity_mismatched_pk_fails() -> None:
+    case = _identity_case(
+        [
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}},
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}, "sameObjectAs": 0},
+        ]
+    )
+    results = [[{"id": 2}], [{"id": 3}]]
+    with pytest.raises(CaseFailure, match="same object"):
+        _assert_coherence_identity(case, 1, case.coherence[1], results, "id")
+
+
+def test_identity_reference_to_write_step_fails() -> None:
+    case = _identity_case(
+        [
+            {
+                "node": "B",
+                "kind": "write",
+                "goldenSql": {"postgres": "update account set balance = ?"},
+            },
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}, "sameObjectAs": 0},
+        ]
+    )
+    results = [[], [{"id": 2}]]
+    with pytest.raises(CaseFailure, match="must reference a read step"):
+        _assert_coherence_identity(case, 1, case.coherence[1], results, "id")
+
+
+def test_identity_across_nodes_fails() -> None:
+    case = _identity_case(
+        [
+            {"node": "A", "kind": "read", "goldenSql": {"postgres": "select 1"}},
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}, "sameObjectAs": 0},
+        ]
+    )
+    results = [[{"id": 2}], [{"id": 2}]]
+    with pytest.raises(CaseFailure, match="same node"):
+        _assert_coherence_identity(case, 1, case.coherence[1], results, "id")
+
+
+def test_identity_empty_witness_fails() -> None:
+    case = _identity_case(
+        [
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}},
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}, "sameObjectAs": 0},
+        ]
+    )
+    results = [[], [{"id": 2}]]  # referenced step observed no row
+    with pytest.raises(CaseFailure, match="empty"):
+        _assert_coherence_identity(case, 1, case.coherence[1], results, "id")
+
+
+def test_identity_reference_must_be_earlier() -> None:
+    case = _identity_case(
+        [
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}},
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}, "sameObjectAs": 1},
+        ]
+    )
+    results = [[{"id": 2}], [{"id": 2}]]
+    with pytest.raises(CaseFailure, match="EARLIER"):
+        _assert_coherence_identity(case, 1, case.coherence[1], results, "id")
+
+
+def test_identity_this_step_empty_fails() -> None:
+    case = _identity_case(
+        [
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}},
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}, "sameObjectAs": 0},
+        ]
+    )
+    results = [[{"id": 2}], []]  # this step (the re-fetch) observed no row
+    with pytest.raises(CaseFailure, match="empty"):
+        _assert_coherence_identity(case, 1, case.coherence[1], results, "id")
+
+
+def test_write_step_with_sameobjectas_is_rejected() -> None:
+    case = _identity_case(
+        [
+            {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}},
+            {
+                "node": "A", "kind": "write",
+                "goldenSql": {"postgres": "update account set balance = ?"},
+                "sameObjectAs": 0,
+            },
+        ]
+    )
+    with pytest.raises(CaseFailure, match="write step"):
+        _assert_schema(case)

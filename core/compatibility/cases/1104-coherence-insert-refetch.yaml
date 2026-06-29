@@ -14,7 +14,7 @@
 #   1  write on A : A commits an INSERT of account 8 (Trent, 64.00) on its connection.
 #   2  read  on B : node B re-fetches and MUST observe the newly-inserted row.
 model: models/account.yaml
-tags: [coherence, cross-process, m8, full-cache-refetch, insert]
+tags: [coherence, cross-process, m14, full-cache-refetch, insert]
 coherence:
   - node: B
     kind: read
