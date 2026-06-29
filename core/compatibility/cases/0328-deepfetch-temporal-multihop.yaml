@@ -1,0 +1,49 @@
+# Multi-hop deep fetch [Policy.coverages, Coverage.claims], business LATEST /
+# processing LATEST — the temporal analog of the 1 -> N -> N N+1-elimination
+# proof. THREE statements (root + coverages + claims), and the root pin
+# propagates to BOTH temporal child levels (each carries `thru_z = ? and
+# out_z = ?`). coverage 10 -> 700 owns claim 1000 (9000); coverage 20 -> 300 owns
+# claim 2000 (4000).
+model: models/policy.yaml
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, multi-hop]
+operation:
+  deepFetch:
+    operand:
+      asOf:
+        operand:
+          asOf:
+            operand: { all: {} }
+            asOfAttr: Policy.processingDate
+            date: now
+        asOfAttr: Policy.businessDate
+        date: now
+    paths:
+      - [Policy.coverages, Coverage.claims]
+goldenSql:
+  postgres:
+    - select t0.id, t0.name from policy t0 where t0.thru_z = ? and t0.out_z = ?
+    - select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?, ?) and t0.thru_z = ? and t0.out_z = ?
+    - select t0.id, t0.coverage_id, t0.reserve from claim t0 where t0.coverage_id in (?, ?) and t0.thru_z = ? and t0.out_z = ?
+binds:
+  - [infinity, infinity]
+  - [1, 2, infinity, infinity]
+  - [10, 20, infinity, infinity]
+roundTrips: 3
+expectedGraph:
+  Policy:
+    - id: 1
+      name: Auto
+      coverages:
+        - id: 10
+          policy_id: 1
+          amount: 700.00
+          claims:
+            - { id: 1000, coverage_id: 10, reserve: 9000.00 }
+    - id: 2
+      name: Home
+      coverages:
+        - id: 20
+          policy_id: 2
+          amount: 300.00
+          claims:
+            - { id: 2000, coverage_id: 20, reserve: 4000.00 }

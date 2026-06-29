@@ -88,6 +88,34 @@ _Avoid_: transient failure, automatic retry
 The Parallax-level strategy that supplies processing instants for transactions.
 _Avoid_: per-transaction timestamp override, operation timestamp override
 
+### Temporal And Milestoning
+
+**As-Of Axis**:
+A temporal dimension a milestoned entity is read and written along: `processing` records when the system knew a fact, `business` records when a fact was true in the world. A unitemporal entity declares one; a bitemporal entity declares both.
+_Avoid_: temporal column, date dimension
+
+**Milestone**:
+One temporal row covering a half-open `[from, to)` interval on an as-of axis; a write chains a new milestone and closes the prior one rather than mutating a value in place, preserving an audit trail.
+_Avoid_: version row, history row
+
+**Latest**:
+The open milestone on an as-of axis — its upper bound is the infinity sentinel (`to = infinity`), the version with no successor yet. A read pinned to latest lowers to the single equality `to = infinity`, the cheapest as-of predicate.
+_Avoid_: now, current row (when the current wall-clock instant is meant)
+
+**As-Of Instant**:
+A read pinned to a finite point in time on an as-of axis; it selects the milestone whose half-open interval contains that instant (`from <= instant and to > instant`), which may be a superseded version rather than the latest.
+_Avoid_: as of now (for a finite past pin), point-in-time row
+
+**Now**:
+The current wall-clock instant. It coincides with **Latest** on the processing axis (milestones there are never future-dated) but not necessarily on the business axis, where a future-effective milestone can make the latest version differ from the version effective at the current instant.
+_Avoid_: latest (treating the two as interchangeable)
+
+**As-Of Propagation**:
+The rule that an as-of value pinned at the root of a read flows per hop across
+relationship navigation and eager loading to every temporal entity in the path,
+matched by axis — auto-injected from the as-of model, never written by the user.
+_Avoid_: per-hop as-of, manual temporal join
+
 ### Serialization And Input
 
 **Domain Snapshot**:

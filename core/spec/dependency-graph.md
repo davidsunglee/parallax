@@ -35,6 +35,7 @@ M5 --> M2
 M5 --> M8
 M4 --> M5
 M4 --> M8
+M4 --> M7
 M7 --> M8
 M9 --> M8
 M10 --> M8
@@ -93,6 +94,11 @@ M13 --> M12
   operation-backed collection, so **`M5` depends on `M2` and `M8`**.
   Relationship navigation *yields* lists and deep fetch *populates* them, so
   **`M4` depends on `M5`** — the reverse of the obvious guess.
+- **M4 depends on M7 (as-of propagation).** Deep fetch and navigation are
+  temporal-aware: a pinned as-of value propagates per-hop to every temporal
+  entity in the path (M4, "As-of propagation across relationships"), so the
+  relationship layer references the as-of model. The reverse — M7 depending on
+  M4 — remains forbidden.
 
 ## Enforcement expectations
 

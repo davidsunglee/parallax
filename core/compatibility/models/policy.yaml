@@ -1,0 +1,89 @@
+# Policy / Coverage / Claim: three BITEMPORAL entities that also RELATE — the
+# temporal x relationships crossing (as-of propagation). Mirrors position.yaml's
+# bitemporal shape (two axes, half-open [from, to), open bound = infinity) but
+# adds relationships so an as-of read can navigate/deep-fetch across temporal
+# hops. Per M4's as-of-propagation rule, the root pin propagates per-hop, matched
+# by axis, to every temporal entity reached; the harness derives and enforces the
+# propagated child predicate (the propagation oracle).
+#
+# Coverage 10 carries the correction history (the audit teeth): as-of-past
+# returns the superseded value, as-of-latest the corrected one. Row data lives in
+# fixtures/policy.yaml.
+entities:
+  - name: Policy
+    namespace: parallax.compatibility
+    table: policy
+    mutability: transactional
+    temporal: bitemporal
+    attributes:
+      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: name, type: string, column: name, maxLength: 64 }
+      - { name: businessFrom, type: timestamp, column: from_z }
+      - { name: businessTo, type: timestamp, column: thru_z }
+      - { name: processingFrom, type: timestamp, column: in_z }
+      - { name: processingTo, type: timestamp, column: out_z }
+    asOfAttributes:
+      - { name: businessDate, fromColumn: from_z, toColumn: thru_z, axis: business, toIsInclusive: false, infinity: infinity, default: now }
+      - { name: processingDate, fromColumn: in_z, toColumn: out_z, axis: processing, toIsInclusive: false, infinity: infinity, default: now }
+    relationships:
+      - name: coverages
+        relatedEntity: Coverage
+        cardinality: one-to-many
+        join: this.id = Coverage.policyId
+        reverseName: policy
+        dependent: true
+        foreignKey: policy_id
+    indices:
+      - { name: policy_pk, attributes: [id, businessFrom, processingFrom], unique: true }
+  - name: Coverage
+    namespace: parallax.compatibility
+    table: coverage
+    mutability: transactional
+    temporal: bitemporal
+    attributes:
+      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: policyId, type: int64, column: policy_id }
+      - { name: amount, type: "decimal(18,2)", column: amount }
+      - { name: businessFrom, type: timestamp, column: from_z }
+      - { name: businessTo, type: timestamp, column: thru_z }
+      - { name: processingFrom, type: timestamp, column: in_z }
+      - { name: processingTo, type: timestamp, column: out_z }
+    asOfAttributes:
+      - { name: businessDate, fromColumn: from_z, toColumn: thru_z, axis: business, toIsInclusive: false, infinity: infinity, default: now }
+      - { name: processingDate, fromColumn: in_z, toColumn: out_z, axis: processing, toIsInclusive: false, infinity: infinity, default: now }
+    relationships:
+      - name: claims
+        relatedEntity: Claim
+        cardinality: one-to-many
+        join: this.id = Claim.coverageId
+        reverseName: coverage
+        dependent: true
+        foreignKey: coverage_id
+      - name: policy
+        relatedEntity: Policy
+        cardinality: many-to-one
+        join: this.policyId = Policy.id
+        reverseName: coverages
+        foreignKey: policy_id
+    indices:
+      - { name: coverage_pk, attributes: [id, businessFrom, processingFrom], unique: true }
+      - { name: coverage_policy, attributes: [policyId], unique: false }
+  - name: Claim
+    namespace: parallax.compatibility
+    table: claim
+    mutability: transactional
+    temporal: bitemporal
+    attributes:
+      - { name: id, type: int64, column: id, primaryKey: true, pkGenerator: none }
+      - { name: coverageId, type: int64, column: coverage_id }
+      - { name: reserve, type: "decimal(18,2)", column: reserve }
+      - { name: businessFrom, type: timestamp, column: from_z }
+      - { name: businessTo, type: timestamp, column: thru_z }
+      - { name: processingFrom, type: timestamp, column: in_z }
+      - { name: processingTo, type: timestamp, column: out_z }
+    asOfAttributes:
+      - { name: businessDate, fromColumn: from_z, toColumn: thru_z, axis: business, toIsInclusive: false, infinity: infinity, default: now }
+      - { name: processingDate, fromColumn: in_z, toColumn: out_z, axis: processing, toIsInclusive: false, infinity: infinity, default: now }
+    indices:
+      - { name: claim_pk, attributes: [id, businessFrom, processingFrom], unique: true }
+      - { name: claim_coverage, attributes: [coverageId], unique: false }

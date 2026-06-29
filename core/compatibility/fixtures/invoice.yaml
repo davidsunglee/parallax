@@ -1,0 +1,9 @@
+# Processing-only milestone history. InvoiceLine 1000 corrected 50 -> 75
+# (out_z finite on the superseded row). At processing-latest -> 75/25; at
+# processing instant 2024-02-01 -> 50/25.
+Invoice:
+  - { id: 100, name: INV-100, processingFrom: "2024-01-01T00:00:00+00:00", processingTo: infinity }
+InvoiceLine:
+  - { id: 1000, invoiceId: 100, amount: 50.00, processingFrom: "2024-01-01T00:00:00+00:00", processingTo: "2024-04-01T00:00:00+00:00" }
+  - { id: 1000, invoiceId: 100, amount: 75.00, processingFrom: "2024-04-01T00:00:00+00:00", processingTo: infinity }
+  - { id: 1001, invoiceId: 100, amount: 25.00, processingFrom: "2024-01-01T00:00:00+00:00", processingTo: infinity }

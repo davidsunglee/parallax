@@ -105,6 +105,27 @@ list (and per-dialect `IN`-clause limits) degrades.
 > dialect-seam concerns. Round 1 specifies and tests only the simplified `IN`
 > form; the temp-table path is a stub to be filled in with `M5` bulk support.
 
+## As-of propagation across relationships
+
+When a read pins an as-of value on a temporal entity (M7), that value
+**propagates — per hop, matched by axis — to every temporal entity reached by
+navigation or eager loading along the path.** It is auto-injected from the as-of
+model and **never written by the user**. At each temporal entity the propagated
+value drives *that entity's own* as-of predicate: **latest** lowers to the single
+equality `to = infinity`; an **as-of instant** lowers to the half-open
+containment `from <= ? and to > ?`. Each axis propagates and lowers
+independently; an axis unpinned at the root defaults to **latest** (the M7
+default-injection rule, applied per axis).
+
+A **non-temporal** entity in the path carries **no** as-of term. A **temporal**
+entity reached from a **non-temporal** one defaults every axis to latest. Because
+each entity reconstructs the milestone whose interval *contains* the propagated
+date, a deep fetch as of an instant yields a **point-in-time-consistent object
+graph** — every entity as it stood at that instant, including now-superseded
+milestones. The propagated as-of term is appended **after** the navigation/IN-list
+predicate (the bind order is the correlation keys, then the per-axis as-of binds,
+business axis first).
+
 ## Dependent and reverse relationships
 
 - A **reverse** relationship (`reverseName`) is the same association navigated

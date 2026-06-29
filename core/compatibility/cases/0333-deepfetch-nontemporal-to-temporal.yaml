@@ -1,0 +1,26 @@
+# Mixed: deep fetch Tenant.leases — a NON-temporal parent to a TEMPORAL child.
+# The root carries no as-of (Tenant is non-temporal), so the child Lease has no
+# root pin to propagate; per the rule it DEFAULTS every axis to LATEST -> the
+# child carries `out_z = ?` (bind infinity). Lease 10 -> the current term "24mo".
+model: models/lease.yaml
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, mixed]
+operation:
+  deepFetch:
+    operand: { all: {} }
+    paths:
+      - [Tenant.leases]
+goldenSql:
+  postgres:
+    - select t0.id, t0.name from tenant t0
+    - select t0.id, t0.tenant_id, t0.term from lease t0 where t0.tenant_id in (?) and t0.out_z = ?
+binds:
+  - []
+  - [1, infinity]
+referenceSql: select id, name from tenant
+roundTrips: 2
+expectedGraph:
+  Tenant:
+    - id: 1
+      name: Acme
+      leases:
+        - { id: 10, tenant_id: 1, term: "24mo" }

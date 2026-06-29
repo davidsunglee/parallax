@@ -1,0 +1,29 @@
+# Semi-join across a temporal hop: Policies (as of business+processing LATEST)
+# that HAVE a coverage (as of the same LATEST) with amount >= 600. The as-of
+# propagates into the EXISTS subquery: BOTH the outer Policy and the inner
+# Coverage carry the current-row predicate. As of latest, only coverage 10 (700)
+# clears 600, so only policy 1 qualifies (policy 2's coverage is 300). Proven by
+# the independent referenceSql oracle (an `id in (select policy_id ...)`
+# reformulation, as-of included) returning the same rows.
+model: models/policy.yaml
+tags: [m4, m7, temporal, relationship, exists, semi-join, propagation, bitemporal]
+operation:
+  asOf:
+    operand:
+      asOf:
+        operand:
+          exists:
+            rel: Policy.coverages
+            op:
+              greaterThanEquals: { attr: Coverage.amount, value: 600.00 }
+        asOfAttr: Policy.processingDate
+        date: now
+    asOfAttr: Policy.businessDate
+    date: now
+goldenSql:
+  postgres: select t0.id, t0.name from policy t0 where exists (select 1 from coverage t1 where t1.policy_id = t0.id and t1.amount >= ? and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?
+binds: [600.00, infinity, infinity, infinity, infinity]
+referenceSql: select id, name from policy where id in (select policy_id from coverage where amount >= 600.00 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz) and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+expectedRows:
+  - { id: 1, name: Auto }
+roundTrips: 1
