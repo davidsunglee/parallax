@@ -21,6 +21,7 @@ real implementation, graded against the golden SQL.
 
 from __future__ import annotations
 
+import functools
 import re
 from decimal import Decimal
 from typing import Any
@@ -295,6 +296,7 @@ class _FetchStep:
         parent_attr: str,
         child_attr: str,
         cardinality: str,
+        order_by: list[dict[str, Any]] | None = None,
     ) -> None:
         self.rel_ref = rel_ref
         self.rel_name = rel_ref.split(".", 1)[1]
@@ -303,6 +305,7 @@ class _FetchStep:
         self.parent_attr = parent_attr
         self.child_attr = child_attr
         self.cardinality = cardinality
+        self.order_by = order_by or []
 
     @property
     def to_many(self) -> bool:
@@ -336,6 +339,7 @@ def _fetch_steps(case: Case) -> list[_FetchStep]:
                     parent_attr=this_attr,
                     child_attr=other_attr,
                     cardinality=relationship["cardinality"],
+                    order_by=relationship.get("orderBy"),
                 )
             )
     return steps
@@ -404,6 +408,67 @@ def _binds_for_statement(case: Case, index: int) -> list[Any]:
     if raw and isinstance(raw[0], list):
         return raw[index] if index < len(raw) else []
     return raw if index == 0 else []
+
+
+def _sorted_by_order_keys(
+    rows: list[dict[str, Any]],
+    sort_spec: list[tuple[str, bool]],
+) -> list[dict[str, Any]]:
+    """Return *rows* sorted by *sort_spec* — a list of ``(column, descending)``
+    pairs evaluated left to right. Stable: rows tied on every key keep input order.
+    """
+
+    def compare(row_a: dict[str, Any], row_b: dict[str, Any]) -> int:
+        for column, descending in sort_spec:
+            left, right = row_a[column], row_b[column]
+            if left == right:
+                continue
+            ordered = -1 if left < right else 1
+            return -ordered if descending else ordered
+        return 0
+
+    return sorted(rows, key=functools.cmp_to_key(compare))
+
+
+def _assert_child_ordering(
+    case_name: str,
+    steps: list[_FetchStep],
+    children_by_step: dict[str, dict[Any, list[dict[str, Any]]]],
+) -> None:
+    """Assert each ordered to-many level returned its children in the declared order.
+
+    A to-many relationship that declares ``orderBy`` requires the per-level child
+    query to emit ``ORDER BY`` over the declared keys (M4), so the rows the DB
+    returned — preserved in SQL order inside each parent's bucket — must already
+    equal those rows sorted by the declared keys/directions. The harness derives
+    the expected order from the model (an independent oracle) rather than trusting
+    the authored ``expectedGraph`` order. A relationship with no ``orderBy`` is
+    skipped (its order is unspecified). The declared keys are assumed non-null;
+    residual ties beyond the declared keys keep their DB order (the sort is
+    stable), which the contract permits.
+    """
+    for step in steps:
+        if not step.to_many or not step.order_by:
+            continue
+        sort_spec = [
+            (
+                _column_of(step.child_entity, key["attr"]),
+                key.get("direction", "asc") == "desc",
+            )
+            for key in step.order_by
+        ]
+        bucket = children_by_step.get(step.rel_ref, {})
+        for parent_key, rows in bucket.items():
+            expected = _sorted_by_order_keys(rows, sort_spec)
+            if rows != expected:
+                cols = [column for column, _ in sort_spec]
+                got = [[row[c] for c in cols] for row in rows]
+                want = [[row[c] for c in cols] for row in expected]
+                raise CaseFailure(
+                    f"{case_name}: {step.rel_ref} children for parent "
+                    f"{parent_key!r} are not in declared orderBy order "
+                    f"(keys {cols!r}). got {got!r}, expected {want!r}."
+                )
 
 
 def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
@@ -476,6 +541,8 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
             bucket.setdefault(_coerce_identity_key(row[child_col]), []).append(row)
         children_by_step[step.rel_ref] = bucket
         statement_index += 1
+
+    _assert_child_ordering(case.path.name, steps, children_by_step)
 
     if statement_index != len(statements):
         raise CaseFailure(

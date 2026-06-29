@@ -12,8 +12,16 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from reference_harness.case import load_case
-from reference_harness.case_runner import _assert_deep_fetch, _graphs_equal
+import pytest
+
+from reference_harness.case import load_case, load_model
+from reference_harness.case_runner import (
+    CaseFailure,
+    _assert_child_ordering,
+    _assert_deep_fetch,
+    _FetchStep,
+    _graphs_equal,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -91,3 +99,75 @@ def test_empty_root_deep_fetch_executes_no_child_sql() -> None:
         ("select t0.id, t0.name from orders t0 where t0.id = ?", [999]),
         ("select id, name from orders where id = 999", []),
     ]
+
+
+def _orders_model():
+    return load_model(COMPATIBILITY_ROOT, "models/orders.yaml")
+
+
+def _items_step(order_by):
+    model = _orders_model()
+    return _FetchStep(
+        rel_ref="Order.items",
+        parent_entity=model.entity("Order"),
+        child_entity=model.entity("OrderItem"),
+        parent_attr="id",
+        child_attr="orderId",
+        cardinality="one-to-many",
+        order_by=order_by,
+    )
+
+
+def test_child_ordering_accepts_rows_in_declared_desc_order():
+    step = _items_step([{"attr": "id", "direction": "desc"}])
+    buckets = {"Order.items": {1: [{"id": 12}, {"id": 11}]}}
+    _assert_child_ordering("unit", [step], buckets)  # no raise
+
+
+def test_child_ordering_rejects_rows_out_of_declared_order():
+    # Ascending rows are exactly what the DB returns if ORDER BY is dropped.
+    step = _items_step([{"attr": "id", "direction": "desc"}])
+    buckets = {"Order.items": {1: [{"id": 11}, {"id": 12}]}}
+    with pytest.raises(CaseFailure):
+        _assert_child_ordering("unit", [step], buckets)
+
+
+def test_child_ordering_ignores_relationships_without_orderby():
+    step = _items_step(None)
+    buckets = {"Order.items": {1: [{"id": 11}, {"id": 12}]}}
+    _assert_child_ordering("unit", [step], buckets)  # no raise (unordered)
+
+
+def test_child_ordering_multikey_mixed_direction_with_tiebreak():
+    step = _items_step(
+        [{"attr": "quantity", "direction": "desc"}, {"attr": "id", "direction": "asc"}]
+    )
+    # quantity desc, then id asc within the quantity=5 tie.
+    buckets = {
+        "Order.items": {
+            1: [
+                {"id": 12, "quantity": 9},
+                {"id": 11, "quantity": 5},
+                {"id": 13, "quantity": 5},
+            ]
+        }
+    }
+    _assert_child_ordering("unit", [step], buckets)  # no raise
+
+    # Swapping the two quantity=5 rows violates the id-asc tie-break.
+    bad = {
+        "Order.items": {
+            1: [
+                {"id": 12, "quantity": 9},
+                {"id": 13, "quantity": 5},
+                {"id": 11, "quantity": 5},
+            ]
+        }
+    }
+    with pytest.raises(CaseFailure):
+        _assert_child_ordering("unit", [step], bad)
+
+
+def test_child_ordering_accepts_empty_bucket():
+    step = _items_step([{"attr": "id", "direction": "desc"}])
+    _assert_child_ordering("unit", [step], {"Order.items": {}})  # no raise
