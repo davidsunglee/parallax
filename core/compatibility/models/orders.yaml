@@ -78,6 +78,15 @@ entities:
         reverseName: order
         dependent: true
         foreignKey: order_id
+      - name: tags
+        relatedEntity: OrderTag
+        cardinality: one-to-many
+        join: this.id = OrderTag.orderId
+        reverseName: order
+        foreignKey: order_id
+        orderBy:
+          - { attr: priority, direction: desc }
+          - { attr: label, direction: asc }
     indices:
       - name: orders_pk
         attributes: [id]
@@ -169,5 +178,40 @@ entities:
         attributes: [id]
         unique: true
       - name: order_status_order_id
+        attributes: [orderId]
+        unique: false
+  - name: OrderTag
+    namespace: parallax.compatibility
+    table: order_tag
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: orderId
+        type: int64
+        column: order_id
+      - name: label
+        type: string
+        column: label
+        maxLength: 32
+      - name: priority
+        type: int32
+        column: priority
+    relationships:
+      - name: order
+        relatedEntity: Order
+        cardinality: many-to-one
+        join: this.orderId = Order.id
+        reverseName: tags
+        foreignKey: order_id
+    indices:
+      - name: order_tag_pk
+        attributes: [id]
+        unique: true
+      - name: order_tag_order_id
         attributes: [orderId]
         unique: false

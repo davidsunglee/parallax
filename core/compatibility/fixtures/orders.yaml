@@ -117,3 +117,22 @@ OrderStatus:
     orderId: 42
     orderItemId: 421
     code: PICKED
+
+# Tags on order 1, inserted OUT OF declared order so the multi-key orderBy is
+# load-bearing. Declared order is `priority desc, label asc`, so the expected
+# list is fragile(5), then the priority=2 tie broken by `label asc` -> gift,
+# urgent. Only the multi-key ordering case (0322) navigates Order.tags; every
+# other case ignores this table.
+OrderTag:
+  - id: 1
+    orderId: 1
+    label: urgent
+    priority: 2
+  - id: 2
+    orderId: 1
+    label: gift
+    priority: 2
+  - id: 3
+    orderId: 1
+    label: fragile
+    priority: 5

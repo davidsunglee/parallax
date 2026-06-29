@@ -1,0 +1,34 @@
+# Deep fetch, MULTI-KEY / MIXED-DIRECTION ordered to-many (M4). `Order.tags`
+# declares `orderBy: [priority desc, label asc]`. Order 1's tags are inserted
+# [urgent(p2), gift(p2), fragile(p5)] (ascending id = insertion order), so the
+# child query MUST emit `order by t0.priority desc, t0.label asc` and the list
+# comes back [fragile, gift, urgent]: highest priority first, with the priority=2
+# tie between `gift` and `urgent` broken by `label asc`. The second key is
+# load-bearing, so this proves multi-key ordering, not just a single clause.
+model: models/orders.yaml
+tags: [m4, m5, deepFetch, orderBy, ordering, multi-key, relationship]
+operation:
+  deepFetch:
+    operand:
+      eq:
+        attr: Order.id
+        value: 1
+    paths:
+      - [Order.tags]
+goldenSql:
+  postgres:
+    - select t0.id, t0.name from orders t0 where t0.id = ?
+    - select t0.id, t0.order_id, t0.label, t0.priority from order_tag t0 where t0.order_id in (?) order by t0.priority desc, t0.label asc
+binds:
+  - [1]
+  - [1]
+referenceSql: select id, name from orders where id = 1
+roundTrips: 2
+expectedGraph:
+  Order:
+    - id: 1
+      name: Ada
+      tags:
+        - { id: 3, order_id: 1, label: fragile, priority: 5 }
+        - { id: 2, order_id: 1, label: gift, priority: 2 }
+        - { id: 1, order_id: 1, label: urgent, priority: 2 }
