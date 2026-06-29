@@ -220,9 +220,14 @@ admissible.
 
 ## `pkGenerator` — primary-key generation strategy
 
-A primary-key attribute MAY declare how its value is allocated. For the walking
-skeleton, only `none` is exercised; the other strategies are specified so the
-schema is stable.
+A primary-key attribute MAY declare how its value is allocated. `none` (the
+default) is application-assigned; `max` allocates `max(col)+1`; `sequence` is a
+*simulated sequence* (Reladomo-style): a registry table whose counter is advanced
+by `batchSize x incrementSize` per allocation, reserving a block of ids the
+application hands out (a partially-consumed block leaves a gap). All three are
+exercised by the compatibility suite (`max` and `sequence` via writeSequence
+cases `0620`-`0632`); the simulated sequence is realized in portable SQL (a table
+plus an `UPDATE`), so it carries no dialect seam.
 
 | Strategy | Meaning |
 |---|---|

@@ -1,0 +1,41 @@
+# PK generation `sequence` (M1) — stride across two blocks.
+#
+# voucher_seq batch 2, inc 10: insert 4 -> two allocations (next_val 100->120->140).
+# Block 1 (base 100): 100,110. Block 2 (base 120): 120,130.
+model: models/pk-sequence.yaml
+loadFixtures: true
+tags: [m1, m8, pk-generation, sequence, write-sequence]
+writeSequence:
+  - { mutation: update, entity: PkSequence, statements: 1, note: reserve block 1 (base 100) }
+  - { mutation: insert, entity: Voucher, statements: 2, note: "100,110" }
+  - { mutation: update, entity: PkSequence, statements: 1, note: reserve block 2 (base 120) }
+  - { mutation: insert, entity: Voucher, statements: 2, note: "120,130" }
+goldenSql:
+  postgres:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into voucher(id, label) values (?, ?)
+    - insert into voucher(id, label) values (?, ?)
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into voucher(id, label) values (?, ?)
+    - insert into voucher(id, label) values (?, ?)
+  mariadb:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into voucher(id, label) values (?, ?)
+    - insert into voucher(id, label) values (?, ?)
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into voucher(id, label) values (?, ?)
+    - insert into voucher(id, label) values (?, ?)
+binds:
+  - [20, voucher_seq]
+  - [100, spring]
+  - [110, summer]
+  - [20, voucher_seq]
+  - [120, autumn]
+  - [130, winter]
+roundTrips: 6
+expectedTableState:
+  voucher:
+    - { id: 100, label: spring }
+    - { id: 110, label: summer }
+    - { id: 120, label: autumn }
+    - { id: 130, label: winter }

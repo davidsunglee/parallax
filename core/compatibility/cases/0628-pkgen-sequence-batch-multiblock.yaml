@@ -1,0 +1,42 @@
+# PK generation `sequence` (M1) — batchSize across two blocks.
+#
+# pass_seq batch 3: insert 4 rows -> two allocations (next_val 1->4->7). First
+# block hands out 1,2,3; second block base 4 hands out 4 (ids 5,6 reserved-and-
+# lost). Two allocations for 4 rows. Counter 7 asserted by the oracle.
+model: models/pk-sequence.yaml
+loadFixtures: true
+tags: [m1, m8, pk-generation, sequence, write-sequence]
+writeSequence:
+  - { mutation: update, entity: PkSequence, statements: 1, note: reserve block 1 (base 1) }
+  - { mutation: insert, entity: Pass, statements: 3, note: "hand out 1,2,3" }
+  - { mutation: update, entity: PkSequence, statements: 1, note: reserve block 2 (base 4) }
+  - { mutation: insert, entity: Pass, statements: 1, note: "hand out 4 (5,6 lost)" }
+goldenSql:
+  postgres:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into pass(id, zone) values (?, ?)
+    - insert into pass(id, zone) values (?, ?)
+    - insert into pass(id, zone) values (?, ?)
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into pass(id, zone) values (?, ?)
+  mariadb:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into pass(id, zone) values (?, ?)
+    - insert into pass(id, zone) values (?, ?)
+    - insert into pass(id, zone) values (?, ?)
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into pass(id, zone) values (?, ?)
+binds:
+  - [3, pass_seq]
+  - [1, north]
+  - [2, south]
+  - [3, east]
+  - [3, pass_seq]
+  - [4, west]
+roundTrips: 6
+expectedTableState:
+  pass:
+    - { id: 1, zone: north }
+    - { id: 2, zone: south }
+    - { id: 3, zone: east }
+    - { id: 4, zone: west }

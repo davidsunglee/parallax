@@ -120,6 +120,15 @@ parent keys and the suffix equals the computed expectation — so a dropped or
 wrong propagated as-of fails the case automatically. A non-temporal child has an
 empty suffix.
 
+For a writeSequence case inserting into a `sequence`-strategy entity, the
+harness derives the **PK-generation oracle** (`case_runner._assert_pk_allocation`):
+it independently re-derives the allocated primary keys and the registry counter
+from the declared `pkGenerator` config (`initialValue`/`incrementSize`/
+`batchSize`) and asserts both against the post-write DB state — proving the
+golden's hand-authored ids actually follow the declared strategy (block
+reservation, gap-on-unused, stride). `max` is pinned by its self-describing
+`coalesce(max(...),0)+1` golden and needs no oracle.
+
 ### Write-sequence cases (M7 / M8 / M9 / M5)
 
 A **writeSequence** case proves a write contract by *application*, not

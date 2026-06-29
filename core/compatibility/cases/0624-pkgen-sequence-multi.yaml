@@ -1,0 +1,41 @@
+# PK generation `sequence` (M1) — three inserts, batch=1 (one allocation per id).
+#
+# batch=1 -> each row reserves its own block; badge_seq 1->2->3->4; ids 1,2,3.
+model: models/pk-sequence.yaml
+loadFixtures: true
+tags: [m1, m8, pk-generation, sequence, write-sequence]
+writeSequence:
+  - { mutation: update, entity: PkSequence, statements: 1, note: "reserve block, base 1" }
+  - { mutation: insert, entity: Badge, statements: 1, note: id 1 }
+  - { mutation: update, entity: PkSequence, statements: 1, note: "reserve block, base 2" }
+  - { mutation: insert, entity: Badge, statements: 1, note: id 2 }
+  - { mutation: update, entity: PkSequence, statements: 1, note: "reserve block, base 3" }
+  - { mutation: insert, entity: Badge, statements: 1, note: id 3 }
+goldenSql:
+  postgres:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into badge(id, holder) values (?, ?)
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into badge(id, holder) values (?, ?)
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into badge(id, holder) values (?, ?)
+  mariadb:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into badge(id, holder) values (?, ?)
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into badge(id, holder) values (?, ?)
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into badge(id, holder) values (?, ?)
+binds:
+  - [1, badge_seq]
+  - [1, Bo]
+  - [1, badge_seq]
+  - [2, Cy]
+  - [1, badge_seq]
+  - [3, Di]
+roundTrips: 6
+expectedTableState:
+  badge:
+    - { id: 1, holder: Bo }
+    - { id: 2, holder: Cy }
+    - { id: 3, holder: Di }

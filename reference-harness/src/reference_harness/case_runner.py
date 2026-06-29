@@ -332,6 +332,134 @@ def _expected_asof_suffix(child_entity: Entity, pins: dict[str, str]) -> list[An
     return suffix
 
 
+def _expected_sequence_ids(
+    initial: int, increment: int, batch: int, count: int
+) -> list[int]:
+    """The ids a simulated sequence hands out for *count* inserts, in order.
+
+    Within a reserved block of *batch* ids the values step by *increment*; the
+    next block's base is *batch* x *increment* higher. Inserting fewer than a
+    full block consumes the block's leading ids (the rest are reserved-and-lost).
+    """
+    ids: list[int] = []
+    for i in range(count):
+        block, offset = divmod(i, batch)
+        ids.append(initial + block * batch * increment + offset * increment)
+    return ids
+
+
+def _expected_sequence_counter(
+    initial: int, increment: int, batch: int, count: int
+) -> int:
+    """The registry counter after *count* inserts: a full block is reserved per
+    allocation, so it advances by ``batch * increment`` for each block touched.
+    """
+    blocks = -(-count // batch)  # ceil division (count >= 0, batch >= 1)
+    return initial + blocks * batch * increment
+
+
+def _pk_sequence_target(case: Case) -> tuple[Entity, dict[str, Any], dict[str, Any]] | None:
+    """The ``sequence``-strategy entity this writeSequence case inserts into.
+
+    Returns ``(entity, pkGenerator, pk_attribute)`` or ``None`` when the case does
+    not insert into a sequence entity (e.g. ``max`` cases, non-pk-gen cases).
+    """
+    inserted = {
+        step["entity"] for step in case.write_sequence if step.get("mutation") == "insert"
+    }
+    for entity in case.model.entities:
+        if entity.name not in inserted:
+            continue
+        pk_attr = next((a for a in entity.attributes if a.get("primaryKey")), None)
+        if pk_attr is None:
+            continue
+        gen = pk_attr.get("pkGenerator")
+        if isinstance(gen, dict) and gen.get("strategy") == "sequence":
+            return entity, gen, pk_attr
+    return None
+
+
+def _pk_sequence_registry(model: Model, exclude: Entity) -> Entity:
+    """The simulated-sequence registry entity: the string-PK counter table."""
+    for entity in model.entities:
+        if entity.name == exclude.name:
+            continue
+        pk_attr = next((a for a in entity.attributes if a.get("primaryKey")), None)
+        if pk_attr is not None and pk_attr.get("type") == "string":
+            return entity
+    raise CaseFailure(
+        f"model {model.class_name!r} declares a sequence pkGenerator but has no "
+        f"string-PK registry entity"
+    )
+
+
+def _pk_sequence_counter_column(registry: Entity) -> str:
+    """The simulated-sequence registry's counter column: its int64 non-PK
+    attribute. Require exactly one so the selection is unambiguous even if the
+    registry entity ever grows another column.
+    """
+    counters = [
+        a
+        for a in registry.attributes
+        if not a.get("primaryKey") and a.get("type") == "int64"
+    ]
+    if len(counters) != 1:
+        raise CaseFailure(
+            f"simulated-sequence registry {registry.name!r} must have exactly one "
+            f"int64 non-PK counter column, found {len(counters)}"
+        )
+    return counters[0]["column"]
+
+
+def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
+    """PK-generation oracle (sequence strategy).
+
+    Independently re-derives, from the DECLARED pkGenerator config, the ids a
+    simulated sequence should have allocated and the value its registry counter
+    should hold, and asserts both against the real post-write DB state. ``max`` and
+    non-pk-gen writeSequence cases are a no-op (``max`` is pinned by its
+    self-describing ``coalesce(max(...),0)+1`` golden + ``expectedTableState``).
+    """
+    target = _pk_sequence_target(case)
+    if target is None:
+        return
+    entity, gen, pk_attr = target
+    initial = gen.get("initialValue", 1)
+    increment = gen.get("incrementSize", 1)
+    batch = gen.get("batchSize", 1)
+    seq_name = gen["sequenceName"]
+    pk_column = pk_attr["column"]
+
+    actual_rows = _read_table(db, entity)
+    # Assumes target starts empty; row count equals ids allocated from initialValue
+    # (a pre-seeded table would mismatch loudly, not silently).
+    count = len(actual_rows)
+    expected_ids = sorted(_expected_sequence_ids(initial, increment, batch, count))
+    actual_ids = sorted(row[pk_column] for row in actual_rows)
+    if actual_ids != expected_ids:
+        raise CaseFailure(
+            f"{case.path.name}: {entity.name} allocated PKs {actual_ids} != "
+            f"config-derived {expected_ids} "
+            f"(init={initial}, inc={increment}, batch={batch}, count={count})"
+        )
+
+    registry = _pk_sequence_registry(case.model, entity)
+    name_column = next(a for a in registry.attributes if a.get("primaryKey"))["column"]
+    counter_column = _pk_sequence_counter_column(registry)
+    reg_rows = _read_table(db, registry)
+    reg_row = next((r for r in reg_rows if r.get(name_column) == seq_name), None)
+    if reg_row is None:
+        raise CaseFailure(
+            f"{case.path.name}: {registry.name} has no row for sequence {seq_name!r}"
+        )
+    expected_counter = _expected_sequence_counter(initial, increment, batch, count)
+    if reg_row.get(counter_column) != expected_counter:
+        raise CaseFailure(
+            f"{case.path.name}: sequence {seq_name!r} counter "
+            f"{reg_row.get(counter_column)} != config-derived {expected_counter}"
+        )
+
+
 class _FetchStep:
     """One relationship hop = one golden statement (after the root)."""
 
@@ -1315,6 +1443,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_write_step_count(case, dialect)  # layer 5 (count)
         _provision_empty(case, db)
         _assert_write_sequence(case, db)  # apply DML, assert table state
+        _assert_pk_allocation(case, db)  # layer 5b: PK-generation oracle (sequence)
         return
 
     if case.is_conflict:

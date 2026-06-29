@@ -1,0 +1,25 @@
+# PK generation `max` (M1) — allocate into an EMPTY table.
+#
+# `max` strategy: the next id is max(col)+1, expressed portably as an
+# INSERT ... SELECT computing coalesce(max(id), 0) + 1. From an empty table the
+# first allocated id is 1. The strategy lives in the golden SQL; the harness
+# applies the DML and asserts the resulting row. (No oracle: `max` is pinned by its
+# self-describing golden + expectedTableState against the real DB.)
+model: models/pk-max.yaml
+tags: [m1, m8, pk-generation, max, write-sequence]
+writeSequence:
+  - mutation: insert
+    entity: Attendee
+    statements: 1
+    note: allocate the first id via max(id)+1 over an empty table
+goldenSql:
+  postgres:
+    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+  mariadb:
+    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+binds:
+  - [0, 1, Ada]
+roundTrips: 1
+expectedTableState:
+  attendee:
+    - { id: 1, name: Ada }

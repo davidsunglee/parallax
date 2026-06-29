@@ -1,0 +1,30 @@
+# PK generation `max` (M1) — allocate above an existing maximum.
+#
+# Self-seed a baseline row (id 5) via an initial literal insert, then allocate:
+# max(id)+1 = 6. Empty-schema start; the case builds its own state (no fixtures).
+model: models/pk-max.yaml
+tags: [m1, m8, pk-generation, max, write-sequence]
+writeSequence:
+  - mutation: insert
+    entity: Attendee
+    statements: 1
+    note: seed a baseline row with an application-assigned id
+  - mutation: insert
+    entity: Attendee
+    statements: 1
+    note: allocate max(id)+1 = 6
+goldenSql:
+  postgres:
+    - insert into attendee(id, name) values (?, ?)
+    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+  mariadb:
+    - insert into attendee(id, name) values (?, ?)
+    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+binds:
+  - [5, Sol]
+  - [0, 1, Ada]
+roundTrips: 2
+expectedTableState:
+  attendee:
+    - { id: 5, name: Sol }
+    - { id: 6, name: Ada }

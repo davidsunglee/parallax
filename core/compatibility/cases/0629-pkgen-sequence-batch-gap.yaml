@@ -1,0 +1,25 @@
+# PK generation `sequence` (M1) — single consume of a multi-id block (gap proof).
+#
+# pass_seq batch 3: reserve a block of 3 (next_val 1 -> 4) but insert only ONE row
+# (id 1). ids 2 and 3 are reserved-and-lost -> a GAP. Counter lands at 4 (the full
+# block was reserved) -- asserted by the oracle.
+model: models/pk-sequence.yaml
+loadFixtures: true
+tags: [m1, m8, pk-generation, sequence, write-sequence]
+writeSequence:
+  - { mutation: update, entity: PkSequence, statements: 1, note: reserve block of 3 (base 1) }
+  - { mutation: insert, entity: Pass, statements: 1, note: "hand out only id 1 (2,3 lost)" }
+goldenSql:
+  postgres:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into pass(id, zone) values (?, ?)
+  mariadb:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into pass(id, zone) values (?, ?)
+binds:
+  - [3, pass_seq]
+  - [1, north]
+roundTrips: 2
+expectedTableState:
+  pass:
+    - { id: 1, zone: north }
