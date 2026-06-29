@@ -82,6 +82,12 @@ left to right — the first key is primary, later keys break ties — so a multi
 `orderBy` with mixed directions (`[{score, desc}, {name, asc}]`) sorts by `score`
 descending and breaks ties by `name` ascending.
 
+A `NULL` in an `orderBy` key sorts **last** on that key, in both `asc` and
+`desc` — the canonical, dialect-independent rule. The dialects' native `NULL`
+placement differs, so the golden SQL achieves this per dialect (the M11 seam),
+but the observable order is the same everywhere: non-`NULL` values in the
+declared direction, then `NULL`s.
+
 ## Simplified `IN` vs. temp-table threshold
 
 The per-level child query uses a **simplified `IN (…)` list** of the gathered

@@ -214,3 +214,43 @@ def test_child_ordering_skips_to_one_relationship():
         order_by=[{"attr": "id", "direction": "desc"}],
     )
     _assert_child_ordering("unit", [step], {"OrderItem.order": {1: [{"id": 11}, {"id": 12}]}})
+
+
+def test_child_ordering_places_nulls_last_ascending():
+    step = _items_step([{"attr": "id", "direction": "asc"}])
+    buckets = {"Order.items": {1: [{"id": 10}, {"id": 20}, {"id": None}]}}
+    _assert_child_ordering("unit", [step], buckets)  # no raise
+
+
+def test_child_ordering_places_nulls_last_descending():
+    step = _items_step([{"attr": "id", "direction": "desc"}])
+    # NULLs sort last even for desc: non-null descending, then NULL.
+    buckets = {"Order.items": {1: [{"id": 20}, {"id": 10}, {"id": None}]}}
+    _assert_child_ordering("unit", [step], buckets)  # no raise
+
+
+def test_child_ordering_rejects_nulls_first():
+    step = _items_step([{"attr": "id", "direction": "asc"}])
+    buckets = {"Order.items": {1: [{"id": None}, {"id": 10}, {"id": 20}]}}
+    with pytest.raises(CaseFailure):
+        _assert_child_ordering("unit", [step], buckets)
+
+
+def test_child_ordering_null_vs_null_tiebreak_by_next_key():
+    step = _items_step(
+        [{"attr": "quantity", "direction": "asc"}, {"attr": "id", "direction": "asc"}]
+    )
+    # Both NULL on key 1 → equal there → tiebroken by id asc.
+    ok = {"Order.items": {1: [{"id": 11, "quantity": None}, {"id": 13, "quantity": None}]}}
+    _assert_child_ordering("unit", [step], ok)  # no raise
+    bad = {"Order.items": {1: [{"id": 13, "quantity": None}, {"id": 11, "quantity": None}]}}
+    with pytest.raises(CaseFailure):
+        _assert_child_ordering("unit", [step], bad)
+
+
+def test_child_ordering_rejects_unprojected_orderby_key():
+    # orderBy key 'sku' is not present in the returned rows → cannot verify.
+    step = _items_step([{"attr": "sku", "direction": "asc"}])
+    buckets = {"Order.items": {1: [{"id": 11}, {"id": 12}]}}
+    with pytest.raises(CaseFailure):
+        _assert_child_ordering("unit", [step], buckets)

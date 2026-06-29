@@ -416,6 +416,7 @@ def _sorted_by_order_keys(
 ) -> list[dict[str, Any]]:
     """Return *rows* sorted by *sort_spec* — a list of ``(column, descending)``
     pairs evaluated left to right. Stable: rows tied on every key keep input order.
+    NULL values sort LAST on every key, regardless of ``asc``/``desc`` (M4 policy).
     """
 
     def compare(row_a: dict[str, Any], row_b: dict[str, Any]) -> int:
@@ -423,6 +424,11 @@ def _sorted_by_order_keys(
             left, right = row_a[column], row_b[column]
             if left == right:
                 continue
+            # NULLs sort last on every key, regardless of asc/desc (M4 policy).
+            if left is None:
+                return 1
+            if right is None:
+                return -1
             ordered = -1 if left < right else 1
             return -ordered if descending else ordered
         return 0
@@ -443,12 +449,13 @@ def _assert_child_ordering(
     equal those rows sorted by the declared keys/directions. The harness derives
     the expected order from the model (an independent oracle) rather than trusting
     the authored ``expectedGraph`` order. A relationship with no ``orderBy`` is
-    skipped (its order is unspecified). The declared keys are assumed non-null;
-    residual ties beyond the declared keys keep their DB order (the sort is
-    stable), which the contract permits. Precondition: every declared
-    ``orderBy`` key must be present in each child row and non-null; a missing
-    key raises ``KeyError`` and a ``None`` comparison raises ``TypeError``
-    rather than a clean ``CaseFailure``.
+    skipped (its order is unspecified). NULL values sort LAST on every key,
+    regardless of ``asc``/``desc`` (the canonical M4 policy); two NULLs are equal
+    and fall through to the next key. Residual ties beyond the declared keys keep
+    their DB order (the sort is stable), which the contract permits. Every
+    declared ``orderBy`` key MUST be present in the child query's projection; a
+    key absent from the returned rows raises a clean ``CaseFailure`` (the order
+    cannot be verified without the key).
     """
     for step in steps:
         if not step.to_many or not step.order_by:
@@ -462,6 +469,15 @@ def _assert_child_ordering(
         ]
         bucket = children_by_step.get(step.rel_ref, {})
         for parent_key, rows in bucket.items():
+            if not rows:
+                continue
+            missing = [column for column, _ in sort_spec if column not in rows[0]]
+            if missing:
+                raise CaseFailure(
+                    f"{case_name}: {step.rel_ref} orderBy column(s) {missing!r} are "
+                    f"not in the child query's projection, so the order cannot be "
+                    f"verified; project them in the child SELECT."
+                )
             expected = _sorted_by_order_keys(rows, sort_spec)
             if rows != expected:
                 cols = [column for column, _ in sort_spec]

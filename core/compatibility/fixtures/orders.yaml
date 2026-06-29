@@ -64,22 +64,27 @@ OrderItem:
     orderId: 1
     sku: A-100
     quantity: 2
+    shippedOn: null
   - id: 12
     orderId: 1
     sku: B-200
     quantity: 1
+    shippedOn: 2024-02-15
   - id: 21
     orderId: 2
     sku: A-300
     quantity: 4
+    shippedOn: 2024-02-20
   - id: 421
     orderId: 42
     sku: A-999
     quantity: 3
+    shippedOn: 2024-03-10
   - id: 422
     orderId: 42
     sku: B-200
     quantity: 5
+    shippedOn: 2024-02-05
 
 # Status events. Rows with a NULL orderItemId are ORDER-level statuses (reached
 # via Order.statuses); rows with an orderItemId set are ITEM-level statuses

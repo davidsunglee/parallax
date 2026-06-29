@@ -57,6 +57,23 @@ Future dialects with a different document type, such as Snowflake `VARIANT`,
 map the same M0 `json` neutral type behind this seam; the metamodel does not
 name the concrete storage type.
 
+### `NULL` ordering
+
+The canonical ordered-relationship rule (M4) sorts `NULL`s **last** on every
+key. The two dialects reach that order differently, because their native
+`ORDER BY` `NULL` placement diverges:
+
+| direction | Postgres | MariaDB |
+|---|---|---|
+| `asc` | `order by t0.c asc` (NULLs last by default) | `order by t0.c is null, t0.c asc` |
+| `desc` | `order by t0.c desc nulls last` | `order by t0.c desc` (NULLs last by default) |
+
+Postgres treats `NULL` as the largest value (so `asc` already trails `NULL`s and
+`desc` needs an explicit `nulls last`); MariaDB/MySQL treat `NULL` as the
+smallest and have **no** `NULLS FIRST/LAST` syntax, so the ascending case forces
+`NULL`s last with a leading `<col> is null` term. The compatibility suite proves
+both forms yield the identical observable order (case `0323`).
+
 ## Decision points needed now
 
 - **Type mapping.** The dialect maps each M0 neutral type to a concrete column
