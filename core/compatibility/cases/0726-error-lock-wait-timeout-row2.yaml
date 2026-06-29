@@ -1,0 +1,12 @@
+# Lock-wait timeout on the other row: A holds row 2, B blocks on row 2.
+model: models/error-cases.yaml
+tags: [m11, error-classification, lockWaitTimeout]
+loadFixtures: true
+errorClass: lockWaitTimeout
+expectedNativeCode:
+  postgres: "55P03"
+  mariadb: 1205
+concurrency:
+  rounds:
+    - A: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [10, 2] }
+    - B: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [20, 2] }

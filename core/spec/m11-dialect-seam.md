@@ -27,7 +27,7 @@ choices at each point; both are normative for their dialect (M3). The catalog
 | **read-lock suffix** (M8) | `for share of t0` | **`lock in share mode`** (no `for share`; MDEV-17514) |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
 | **infinity representation** (M7) | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
-| error-code classification | SQLSTATE `40P01`/`40001` deadlock, `23505` unique | error `1213` deadlock, `1062` duplicate |
+| error-code classification | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062` duplicate, `1213` deadlock, `1205` lock timeout |
 
 The two decision points MariaDB **diverges** on — the read-lock suffix and the
 infinity representation — are exactly the ones the second dialect was chosen to
@@ -119,6 +119,34 @@ both forms yield the identical observable order (case `0323`).
   lowercase per rule 2; the normalizer renders the MariaDB lock through the seam
   rather than through sqlglot's MySQL generator, which would otherwise rewrite it
   to `for share`).
+- **Error-code classification (M11).** A raised database error MUST be mapped to a
+  neutral **category** so language-neutral code can react without dialect
+  knowledge. The categories are a closed set: `uniqueViolation` (duplicate key /
+  unique-index violation), `deadlock` (a true deadlock **or** a serialization
+  failure — both retriable), `lockWaitTimeout` (blocked past the lock-wait
+  budget), plus `connectionDead` (reserved). Classification is interrogated at
+  **distinct call sites**, so the seam exposes it as predicates defined as
+  category membership — not one stringly-typed method: the transaction retry loop
+  asks `isRetriable` (`category = deadlock`), the insert / detached merge-back
+  path asks `violatesUniqueIndex` (`category = uniqueViolation`), the lock path
+  asks `isTimedOut` (`category = lockWaitTimeout`). The native code source
+  **diverges**: Postgres keys on the **`SQLSTATE` string**, MariaDB on the
+  **vendor errno**. This is load-bearing: `SQLSTATE 40001` is a *serialization
+  failure* on Postgres (distinct from deadlock `40P01`) but the *deadlock* state
+  on MariaDB (whose errno `1213` is what the seam matches) — so a naive
+  cross-dialect `SQLSTATE` compare would misclassify. The mapping:
+
+  | Category | Postgres (`SQLSTATE`) | MariaDB (errno) |
+  |---|---|---|
+  | `uniqueViolation` | `23505` | `1062` |
+  | `deadlock` | `40P01`, `40001` | `1213` |
+  | `lockWaitTimeout` | `55P03` | `1205` |
+
+  The compatibility suite exercises all three classes on both dialects (cases
+  `0720`–`0727`): a case triggers a real error and asserts the neutral category,
+  the per-dialect native code, and the call-site predicate partition. This is the
+  **only** place native error codes are interpreted; everything above the seam
+  reasons in categories.
 
 ## Two concrete dialects prove the seam, and it stays open
 

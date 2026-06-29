@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (M12)",
-  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of five shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind); or a coherence case (Phase 11, cross-process cache coherence — carries a `coherence` two-node operation sequence run over two connections to one database, asserting node B observes node A's committed write rather than a stale cached copy).",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of six shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind); a coherence case (Phase 11, cross-process cache coherence — carries a `coherence` two-node operation sequence run over two connections to one database, asserting node B observes node A's committed write rather than a stale cached copy); or an **error case** (carries `errorClass` + `expectedNativeCode`, M11 error-code classification — triggers a real DB error, single-connection for `uniqueViolation` or a two-connection `concurrency` choreography for `deadlock`/`lockWaitTimeout`, and asserts the neutral category the error classifies to plus the per-dialect native code).",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags"],
@@ -33,6 +33,14 @@
     {
       "description": "A coherence case (Phase 11, cross-process cache coherence): a two-node operation sequence run against ONE database over TWO connections (node A, node B). Each step declares its node and golden SQL; the case asserts what node B observes after node A's committed write (the new state, never a stale cached copy). The harness provisions one database, opens two connections, runs each step on its node, and asserts the final re-fetch returns the post-write rows.",
       "required": ["coherence"]
+    },
+    {
+      "description": "An error-classification case (M11): triggers a real DB error and asserts the neutral category it classifies to (errorClass) plus the per-dialect native code (expectedNativeCode). A case MUST declare a trigger: top-level `goldenSql` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds).",
+      "required": ["errorClass", "expectedNativeCode"],
+      "anyOf": [
+        { "required": ["goldenSql"] },
+        { "required": ["concurrency"] }
+      ]
     }
   ],
   "properties": {
@@ -314,9 +322,56 @@
       "description": "Absolute tolerance for numeric row comparison. Omit for exact comparison (the default; money/counts/exact aggregates compare exactly in Decimal space). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) that cannot be authored exactly and differ in scale across dialects; comparison then becomes abs(actual - expected) <= tolerance.",
       "type": "number",
       "exclusiveMinimum": 0
+    },
+    "errorClass": {
+      "description": "The neutral M11 error category a triggered DB error MUST classify to. uniqueViolation = duplicate-key; deadlock = deadlock or serialization failure (retriable); lockWaitTimeout = blocked past the lock-wait budget.",
+      "type": "string",
+      "enum": ["uniqueViolation", "deadlock", "lockWaitTimeout"]
+    },
+    "expectedNativeCode": {
+      "description": "The native code each dialect's driver MUST surface for this error, witnessing the divergence the classifier absorbs: Postgres a SQLSTATE string (e.g. \"23505\"), MariaDB a vendor errno (e.g. 1062). errorClass is the single dialect-neutral seam output; this is the per-dialect input.",
+      "type": "object",
+      "propertyNames": { "enum": ["postgres", "mariadb"] },
+      "additionalProperties": { "type": ["string", "integer"] },
+      "minProperties": 1
+    },
+    "concurrency": {
+      "description": "The two-connection choreography for deadlock / lockWaitTimeout cases (absent for single-connection uniqueViolation). Ordered, barrier-separated rounds; each round names the statements nodes A and B run that round (a node absent from a round is idle). Each node step carries dialect-keyed goldenSql + binds, mirroring a coherence step. The runner runs each node on its own non-autocommit session, synchronizes rounds with a barrier, and classifies the error raised in the contention round.",
+      "type": "object",
+      "required": ["rounds"],
+      "additionalProperties": false,
+      "properties": {
+        "rounds": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "A": { "$ref": "#/$defs/concurrencyStep" },
+              "B": { "$ref": "#/$defs/concurrencyStep" }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
+    "concurrencyStep": {
+      "type": "object",
+      "required": ["goldenSql"],
+      "additionalProperties": false,
+      "properties": {
+        "goldenSql": {
+          "type": "object",
+          "propertyNames": { "enum": ["postgres", "mariadb"] },
+          "additionalProperties": { "type": "string" },
+          "minProperties": 1
+        },
+        "binds": { "type": "array" }
+      }
+    },
     "dialectSql": {
       "oneOf": [
         {

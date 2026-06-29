@@ -1,0 +1,20 @@
+# A single triggering INSERT that collides with an already-committed row. The
+# first insert (id 7) commits in its own statement; a later, separate insert of
+# id 7 in the SAME case collides -- the violation is against committed data, not
+# an in-flight batch.
+model: models/error-cases.yaml
+tags: [m11, error-classification, uniqueViolation]
+errorClass: uniqueViolation
+expectedNativeCode:
+  postgres: "23505"
+  mariadb: 1062
+goldenSql:
+  postgres:
+    - insert into widget(id, label) values (?, ?)
+    - insert into widget(id, label) values (?, ?)
+  mariadb:
+    - insert into widget(id, label) values (?, ?)
+    - insert into widget(id, label) values (?, ?)
+binds:
+  - [7, "seed"]
+  - [7, "collide"]

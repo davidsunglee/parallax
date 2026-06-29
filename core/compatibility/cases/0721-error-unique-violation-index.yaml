@@ -1,0 +1,19 @@
+# Duplicate value on a non-PK UNIQUE index (Tag.name) -> uniqueViolation. Proves
+# the classification is the same whether the violated constraint is the primary
+# key or a secondary unique index (the DDL emits `unique (name)`; Task 5).
+model: models/error-cases.yaml
+tags: [m11, error-classification, uniqueViolation]
+errorClass: uniqueViolation
+expectedNativeCode:
+  postgres: "23505"
+  mariadb: 1062
+goldenSql:
+  postgres:
+    - insert into tag(id, name) values (?, ?)
+    - insert into tag(id, name) values (?, ?)
+  mariadb:
+    - insert into tag(id, name) values (?, ?)
+    - insert into tag(id, name) values (?, ?)
+binds:
+  - [1, "alpha"]
+  - [2, "alpha"]   # distinct PK, duplicate name -> unique-index violation

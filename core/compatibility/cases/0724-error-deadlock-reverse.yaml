@@ -1,0 +1,16 @@
+# Same deadlock, opposite lock order: A locks row 2 then waits for row 1; B locks
+# row 1 then waits for row 2. Proves classification does not depend on which
+# transaction the DB picks as victim.
+model: models/error-cases.yaml
+tags: [m11, error-classification, deadlock]
+loadFixtures: true
+errorClass: deadlock
+expectedNativeCode:
+  postgres: "40P01"
+  mariadb: 1213
+concurrency:
+  rounds:
+    - A: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [10, 2] }
+      B: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [20, 1] }
+    - A: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [11, 1] }
+      B: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [21, 2] }

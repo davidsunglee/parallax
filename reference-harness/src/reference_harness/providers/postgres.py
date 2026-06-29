@@ -18,6 +18,7 @@ from psycopg.adapt import Loader
 from psycopg.types.json import Jsonb
 from testcontainers.postgres import PostgresContainer
 
+from .. import errors
 from ..ddl_builder import quote_identifier
 from . import register
 
@@ -147,6 +148,40 @@ class PostgresProvider:
                 cur.execute(sql)
             return cur.rowcount
 
+    def native_error_code(self, exc: Exception) -> str | None:
+        """The SQLSTATE psycopg attaches to a database error (else None)."""
+        return getattr(exc, "sqlstate", None)
+
+    def classify_error(self, exc: Exception) -> str:
+        """Map a raised psycopg error to a neutral M11 category (see errors.py)."""
+        return errors.classify(self.dialect, self.native_error_code(exc))
+
+    @contextmanager
+    def open_session(self) -> Iterator[_PgTxSession]:
+        """A second connection in MANUAL-commit mode, for lock contention.
+
+        Deadlock / lock-wait-timeout cases need two connections each holding a row
+        lock across a barrier, so this session does NOT autocommit (unlike the
+        provider's own connection and ``open_peer``). Lock-contention tuning is
+        applied + committed on open so a blocked lock fails fast instead of
+        hanging the suite: ``deadlock_timeout`` shortens PG's cycle-detector delay
+        and ``lock_timeout`` bounds a plain lock wait.
+        """
+        conn = psycopg.connect(self._url, autocommit=False)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("set deadlock_timeout = '100ms'")
+                cur.execute("set lock_timeout = '250ms'")
+            conn.commit()  # persist the SETs beyond this implicit transaction
+        except BaseException:
+            conn.close()
+            raise
+        session = _PgTxSession(conn)
+        try:
+            yield session
+        finally:
+            session.close()
+
     @contextmanager
     def open_peer(self) -> Iterator[Node]:
         """Yield a second, independent connection to the SAME Postgres database.
@@ -163,6 +198,32 @@ class PostgresProvider:
             yield peer
         finally:
             peer.close()
+
+    def close(self) -> None:
+        if self._conn is not None and not self._conn.closed:
+            self._conn.close()
+
+
+class _PgTxSession:
+    """A manual-commit Postgres connection for two-node lock-contention cases."""
+
+    dialect = "postgres"
+
+    def __init__(self, conn: psycopg.Connection[Any]) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> None:
+        with self._conn.cursor() as cur:
+            if binds:
+                cur.execute(sql.replace("?", "%s"), tuple(binds))
+            else:
+                cur.execute(sql)
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def rollback(self) -> None:
+        self._conn.rollback()
 
     def close(self) -> None:
         if self._conn is not None and not self._conn.closed:
