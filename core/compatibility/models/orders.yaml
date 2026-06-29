@@ -120,6 +120,8 @@ entities:
         reverseName: orderItem
         dependent: true
         foreignKey: order_item_id
+        orderBy:
+          - { attr: code, direction: asc }
     indices:
       - name: order_item_pk
         attributes: [id]

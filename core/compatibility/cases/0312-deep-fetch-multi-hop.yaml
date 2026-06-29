@@ -30,7 +30,7 @@ goldenSql:
   postgres:
     - select t0.id, t0.name from orders t0 where t0.id in (?, ?)
     - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
-    - select t0.id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?)
+    - select t0.id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?) order by t0.code asc
 binds:
   - [1, 42]
   - [1, 42]
@@ -53,8 +53,8 @@ expectedGraph:
           sku: A-100
           quantity: 2
           statuses:
-            - { id: 201, order_item_id: 11, code: PICKED }
             - { id: 202, order_item_id: 11, code: PACKED }
+            - { id: 201, order_item_id: 11, code: PICKED }
     - id: 42
       name: Grace
       items:
