@@ -1,0 +1,32 @@
+# PK generation `sequence` (M1) — single insert through a simulated sequence.
+#
+# Reserve a block (batch=1 -> advance next_val by 1*1=1, base=1), insert id 1.
+# Registry badge_seq: 1 -> 2. The advanced counter + allocated id are asserted by
+# the PK-generation oracle (case_runner._assert_pk_allocation), which re-derives
+# them from the declared config; this case asserts the target table only.
+model: models/pk-sequence.yaml
+loadFixtures: true
+tags: [m1, m8, pk-generation, sequence, write-sequence]
+writeSequence:
+  - mutation: update
+    entity: PkSequence
+    statements: 1
+    note: reserve a block of 1 (next_val += 1), base = 1
+  - mutation: insert
+    entity: Badge
+    statements: 1
+    note: hand out the reserved id 1
+goldenSql:
+  postgres:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into badge(id, holder) values (?, ?)
+  mariadb:
+    - update pk_sequence set next_val = next_val + ? where name = ?
+    - insert into badge(id, holder) values (?, ?)
+binds:
+  - [1, badge_seq]
+  - [1, Bo]
+roundTrips: 2
+expectedTableState:
+  badge:
+    - { id: 1, holder: Bo }

@@ -1,0 +1,84 @@
+# Simulated-sequence (Reladomo SimulatedSequence) primary-key allocation.
+#
+# `PkSequence` is the sequence registry: one row per named sequence holding the
+# next value to hand out. An allocation advances `next_val` by
+# `batchSize * incrementSize` in ONE update (reserving a block); the reserved ids
+# are handed out as literal binds in the inserts. Inserting fewer rows than a
+# reserved block leaves a visible GAP (the unused ids are lost) and the counter
+# still lands at the block boundary. The advanced counter and the allocated ids
+# are asserted independently by the PK-generation oracle
+# (case_runner._assert_pk_allocation), which re-derives them from the declared
+# config below — so the cases need not assert the registry table in
+# expectedTableState. All SQL is portable (a plain table + UPDATE), so there is no
+# dialect seam: golden is byte-identical on Postgres and MariaDB.
+#
+# Registry rows are seeded to each sequence's initialValue via fixtures
+# (loadFixtures); the target tables (badge/ticket/pass/voucher) carry no fixtures
+# and start empty.
+entities:
+  - name: PkSequence
+    namespace: parallax.compatibility
+    table: pk_sequence
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - { name: name, type: string, column: name, primaryKey: true, maxLength: 64, pkGenerator: none }
+      - { name: nextVal, type: int64, column: next_val }
+    indices:
+      - { name: pk_sequence_pk, attributes: [name], unique: true }
+  - name: Badge
+    namespace: parallax.compatibility
+    table: badge
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: { strategy: sequence, sequenceName: badge_seq, initialValue: 1, incrementSize: 1, batchSize: 1 }
+      - { name: holder, type: string, column: holder, maxLength: 64 }
+    indices:
+      - { name: badge_pk, attributes: [id], unique: true }
+  - name: Ticket
+    namespace: parallax.compatibility
+    table: ticket
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: { strategy: sequence, sequenceName: ticket_seq, initialValue: 1000, incrementSize: 5, batchSize: 1 }
+      - { name: tier, type: string, column: tier, maxLength: 64 }
+    indices:
+      - { name: ticket_pk, attributes: [id], unique: true }
+  - name: Pass
+    namespace: parallax.compatibility
+    table: pass
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: { strategy: sequence, sequenceName: pass_seq, initialValue: 1, incrementSize: 1, batchSize: 3 }
+      - { name: zone, type: string, column: zone, maxLength: 64 }
+    indices:
+      - { name: pass_pk, attributes: [id], unique: true }
+  - name: Voucher
+    namespace: parallax.compatibility
+    table: voucher
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: { strategy: sequence, sequenceName: voucher_seq, initialValue: 100, incrementSize: 10, batchSize: 2 }
+      - { name: label, type: string, column: label, maxLength: 64 }
+    indices:
+      - { name: voucher_pk, attributes: [id], unique: true }

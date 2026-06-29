@@ -1,0 +1,29 @@
+# PK generation `max` (M1) — two consecutive allocations re-read the max.
+#
+# From empty: first allocation -> 1, second -> 2 (each insert re-reads max(id)).
+model: models/pk-max.yaml
+tags: [m1, m8, pk-generation, max, write-sequence]
+writeSequence:
+  - mutation: insert
+    entity: Attendee
+    statements: 1
+    note: allocate id 1
+  - mutation: insert
+    entity: Attendee
+    statements: 1
+    note: allocate id 2 (re-reads the new max)
+goldenSql:
+  postgres:
+    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+  mariadb:
+    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+binds:
+  - [0, 1, Ada]
+  - [0, 1, Ben]
+roundTrips: 2
+expectedTableState:
+  attendee:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Ben }

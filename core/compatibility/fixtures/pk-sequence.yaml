@@ -1,0 +1,7 @@
+# Seeds the sequence registry to each sequence's initialValue. The target tables
+# (Badge/Ticket/Pass/Voucher) carry no fixtures and load empty.
+PkSequence:
+  - { name: badge_seq, nextVal: 1 }
+  - { name: ticket_seq, nextVal: 1000 }
+  - { name: pass_seq, nextVal: 1 }
+  - { name: voucher_seq, nextVal: 100 }
