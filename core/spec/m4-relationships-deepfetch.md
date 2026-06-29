@@ -66,6 +66,22 @@ the declared `roundTrips` and that the assembled graph equals the expected
 graph, so the N+1-elimination claim is verified **automatically**, not by
 inspection.
 
+### Ordered to-many children
+
+A to-many relationship MAY declare an `orderBy` — a non-empty list of
+`{attr, direction}` keys (`direction ∈ {asc, desc}`, default `asc`). When it
+does, the per-level child query for that relationship **MUST** emit `ORDER BY`
+over the declared keys, in declared sequence, each rendered with its declared
+direction, and the in-memory-assembled to-many list **MUST** preserve that
+order. A relationship with no declared `orderBy` leaves child order
+**unspecified** — the database's natural order, which callers MUST NOT rely on.
+
+Ordering is a property of the relationship, not of the query: every deep fetch
+that materializes the relationship emits the same `ORDER BY`. Keys are evaluated
+left to right — the first key is primary, later keys break ties — so a multi-key
+`orderBy` with mixed directions (`[{score, desc}, {name, asc}]`) sorts by `score`
+descending and breaks ties by `name` ascending.
+
 ## Simplified `IN` vs. temp-table threshold
 
 The per-level child query uses a **simplified `IN (…)` list** of the gathered
@@ -102,4 +118,7 @@ standard layers: the golden SQL statement count equals the declared `roundTrips`
 each non-empty child level executes keyed by the parents gathered from the
 previous level (with the authored `IN` binds matching the gathered keys); empty
 parent-key levels execute no child SQL; and the in-memory-assembled object graph
-equals the case's `expectedGraph`.
+equals the case's `expectedGraph`. Additionally, for each to-many level whose relationship declares `orderBy`, the
+harness derives the expected child order from the declared keys/directions (an
+independent oracle) and asserts the rows the golden SQL returned obey it, so a
+dropped or wrong `ORDER BY` fails the case.
