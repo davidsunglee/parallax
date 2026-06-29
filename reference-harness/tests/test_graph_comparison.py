@@ -171,3 +171,46 @@ def test_child_ordering_multikey_mixed_direction_with_tiebreak():
 def test_child_ordering_accepts_empty_bucket():
     step = _items_step([{"attr": "id", "direction": "desc"}])
     _assert_child_ordering("unit", [step], {"Order.items": {}})  # no raise
+
+
+class _OrderedItemsWrongOrderDb:
+    """Returns the order-1 root row, then its items in ASCENDING id order — i.e.
+    what the DB would return if the declared `id desc` ORDER BY were dropped."""
+
+    dialect = "postgres"
+
+    def query(self, sql, binds=None):
+        if "order_item" in sql:
+            return [
+                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2},
+                {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1},
+            ]
+        return [{"id": 1, "name": "Ada"}]
+
+
+def test_deep_fetch_runner_enforces_child_ordering():
+    # Guards the WIRING: _assert_deep_fetch must invoke the ordering oracle.
+    # 0319 declares Order.items = id desc; the fake DB returns items ascending,
+    # so the runner must raise — if the oracle call were removed, this fails.
+    case = load_case(
+        COMPATIBILITY_ROOT,
+        COMPATIBILITY_ROOT / "cases" / "0319-deep-fetch-ordered-items-desc.yaml",
+    )
+    with pytest.raises(CaseFailure):
+        _assert_deep_fetch(case, _OrderedItemsWrongOrderDb())
+
+
+def test_child_ordering_skips_to_one_relationship():
+    # A to-one step carrying orderBy must be skipped (order is a to-MANY concept),
+    # even when its rows are out of the declared order.
+    model = _orders_model()
+    step = _FetchStep(
+        rel_ref="OrderItem.order",
+        parent_entity=model.entity("OrderItem"),
+        child_entity=model.entity("Order"),
+        parent_attr="orderId",
+        child_attr="id",
+        cardinality="many-to-one",
+        order_by=[{"attr": "id", "direction": "desc"}],
+    )
+    _assert_child_ordering("unit", [step], {"OrderItem.order": {1: [{"id": 11}, {"id": 12}]}})

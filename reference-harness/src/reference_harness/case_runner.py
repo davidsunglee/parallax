@@ -445,7 +445,10 @@ def _assert_child_ordering(
     the authored ``expectedGraph`` order. A relationship with no ``orderBy`` is
     skipped (its order is unspecified). The declared keys are assumed non-null;
     residual ties beyond the declared keys keep their DB order (the sort is
-    stable), which the contract permits.
+    stable), which the contract permits. Precondition: every declared
+    ``orderBy`` key must be present in each child row and non-null; a missing
+    key raises ``KeyError`` and a ``None`` comparison raises ``TypeError``
+    rather than a clean ``CaseFailure``.
     """
     for step in steps:
         if not step.to_many or not step.order_by:
