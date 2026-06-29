@@ -22,7 +22,7 @@ operation:
 goldenSql:
   postgres:
     - select t0.id, t0.name from orders t0 where t0.id = ?
-    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?)
+    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?) order by t0.id desc
 binds:
   - [4]
   - [4]

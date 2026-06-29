@@ -70,7 +70,7 @@ entities:
         dependent: true
         foreignKey: order_id
         orderBy:
-          - { attr: id, direction: asc }
+          - { attr: id, direction: desc }
       - name: statuses
         relatedEntity: OrderStatus
         cardinality: one-to-many
