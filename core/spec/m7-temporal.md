@@ -78,10 +78,9 @@ The injected as-of term composes with any non-temporal predicate via `and`; the
 temporal term is appended **after** the user predicate (so binds read
 left-to-right: user binds, then the as-of bind(s)).
 
-When a read navigates or deep-fetches to another temporal entity, the pinned
-as-of value **propagates per-hop to that entity, matched by axis** — see M4's
-"As-of propagation across relationships". The crossing is auto-injected from the
-as-of model, exactly as the single-entity predicates above.
+These rules are entity-local: each injected predicate is derived only from the
+entity being read, its declared `asOfAttribute` dimensions, and the explicit pin
+or default selected for those dimensions.
 
 ## Milestone-chaining writes (audit-only)
 

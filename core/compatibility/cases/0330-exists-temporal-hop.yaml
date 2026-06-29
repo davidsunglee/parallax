@@ -2,8 +2,10 @@
 # that HAVE a coverage (as of the same LATEST) with amount >= 600. The as-of
 # propagates into the EXISTS subquery: BOTH the outer Policy and the inner
 # Coverage carry the current-row predicate. As of latest, only coverage 10 (700)
-# clears 600, so only policy 1 qualifies (policy 2's coverage is 300). Proven by
-# the independent referenceSql oracle (an `id in (select policy_id ...)`
+# clears 600, so only policy 1 qualifies: policy 2's current coverage is 300.
+# Policy 2 also has historical coverage 21 (900), so dropping the inner Coverage
+# as-of predicates would incorrectly return policies 1 and 2. Proven by the
+# independent referenceSql oracle (an `id in (select policy_id ...)`
 # reformulation, as-of included) returning the same rows.
 model: models/policy.yaml
 tags: [m4, m7, temporal, relationship, exists, semi-join, propagation, bitemporal]
