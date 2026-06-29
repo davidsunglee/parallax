@@ -107,15 +107,18 @@ list (and per-dialect `IN`-clause limits) degrades.
 
 ## As-of propagation across relationships
 
-When a read pins an as-of value on a temporal entity (M7), that value
-**propagates — per hop, matched by axis — to every temporal entity reached by
-navigation or eager loading along the path.** It is auto-injected from the as-of
-model and **never written by the user**. At each temporal entity the propagated
-value drives *that entity's own* as-of predicate: **latest** lowers to the single
-equality `to = infinity`; an **as-of instant** lowers to the half-open
-containment `from <= ? and to > ?`. Each axis propagates and lowers
-independently; an axis unpinned at the root defaults to **latest** (the M7
-default-injection rule, applied per axis).
+M4 owns cross-entity as-of propagation. When a read pins an as-of value on a
+temporal source entity (M7), navigation filters (`navigate` / `exists` /
+`notExists`) and eager-loading paths **MUST propagate that value per hop, matched
+by axis, to every temporal entity reached along the path.** The propagated value
+is auto-injected from the as-of model and **never written by the user**. It is
+part of the SQL for that hop: inside the correlated semi-join for navigation
+filters and inside the per-level child query for deep fetch. At each temporal
+target the propagated value drives *that entity's own* as-of predicate:
+**latest** lowers to the single equality `to = infinity`; an **as-of instant**
+lowers to the half-open containment `from <= ? and to > ?`. Each axis propagates
+and lowers independently; an axis unpinned at the root defaults to **latest**
+(the M7 default-injection rule, applied per axis).
 
 A **non-temporal** entity in the path carries **no** as-of term. A **temporal**
 entity reached from a **non-temporal** one defaults every axis to latest. Because
