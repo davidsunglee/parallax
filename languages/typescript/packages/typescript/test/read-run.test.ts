@@ -56,6 +56,31 @@ function dockerAvailable(): boolean {
 const HAS_DOCKER = dockerAvailable();
 const CASES = readRunCases();
 
+/**
+ * The exact in-scope ID set Phase 4 contracts: `0001`/`0002`/`0006` plus the
+ * full `0201`–`0232` read family (32 cases) = 35. `0003` is excluded
+ * (`OUT_OF_PHASE`, scalar bytes projection); `0004`/`0005` are `writeSequence`
+ * and naturally filtered by shape. Asserting the EXACT set — not a `>= N`
+ * lower bound — makes a discovery regression that silently drops a 02xx case
+ * fail loudly instead of passing vacuously.
+ */
+const EXPECTED_IDS: readonly string[] = [
+  "0001",
+  "0002",
+  "0006",
+  ...Array.from({ length: 32 }, (_, i) => String(201 + i).padStart(4, "0")),
+];
+
+// Discovery is Docker-free, so the in-scope set is asserted unconditionally —
+// independent of whether the Testcontainers run lane below executes.
+it("discovers exactly the in-scope 00xx + 02xx read cases", () => {
+  const discovered = CASES.map(({ id }) => id).sort();
+  expect(discovered).toEqual([...EXPECTED_IDS].sort());
+  // `0003` is read-shaped + mvp-tagged but a documented exclusion (scalar
+  // bytes `encode(...)` projection); it must NOT leak into the in-scope set.
+  expect(discovered).not.toContain("0003");
+});
+
 group.skipIf(!HAS_DOCKER)("read-algebra run lane (Testcontainers postgres:17)", () => {
   const BOOT_TIMEOUT = 240_000;
   let provider: PostgresProvider;
@@ -66,10 +91,6 @@ group.skipIf(!HAS_DOCKER)("read-algebra run lane (Testcontainers postgres:17)", 
 
   afterAll(async () => {
     await provider?.close();
-  });
-
-  it("has the expected number of in-scope read cases", () => {
-    expect(CASES.length).toBeGreaterThanOrEqual(30);
   });
 
   it.each(CASES)(

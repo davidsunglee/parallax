@@ -9,8 +9,11 @@
  * resolves each literal against its M0 neutral type and normalizes it to the
  * canonical wire form the conformance contract compares (§2.2.1):
  *
- *  - `int64`   → keep a float-safe JS number as-is; a preserved source string,
- *               a `bigint`, or a non-safe number → canonical base-10 string.
+ *  - `int64`   → keep a float-safe JS number as-is; a preserved source string or
+ *               a `bigint` → canonical base-10 string. A non-safe JS number is
+ *               rejected (it lost precision before reaching here; the reader
+ *               preserves unsafe int64 tokens as strings, so this never fires for
+ *               serde-produced literals).
  *  - `decimal(p,s)` → keep a float-safe JS number as-is; a preserved source
  *               string → scale-aware canonical decimal string (`toFixedString(s)`).
  *  - every other type (int32 / float / boolean / string / uuid / date / time /
@@ -51,13 +54,24 @@ export function coerceBind(value: Bind, neutralType: string): Bind {
 
 /**
  * Coerce an `int64` literal. A float-safe JS integer stays a JS number (the
- * authored `42` ⇒ `42`); anything that could lose precision — a non-safe number,
- * a source string the reader preserved, or a `bigint` — becomes the canonical
- * base-10 string.
+ * authored `42` ⇒ `42`); a `bigint` or a source string the reader preserved
+ * (precision-unsafe) becomes the canonical base-10 string.
+ *
+ * A non-safe JS `number` is rejected, not stringified. The serde reader
+ * (`parseYamlLossless`) guarantees a precision-unsafe int64 token arrives as a
+ * STRING, so a non-safe `number` reaching here has ALREADY lost precision before
+ * coercion — `BigInt(value).toString()` would only bless a rounded value.
+ * Failing loud forces such a literal to be authored as a string instead.
  */
 function coerceInt64(value: Bind): Bind {
   if (typeof value === "number") {
-    return Number.isSafeInteger(value) ? value : BigInt(value).toString();
+    if (Number.isSafeInteger(value)) {
+      return value;
+    }
+    throw new Error(
+      `int64 literal ${value} exceeds the IEEE-754 safe-integer range ` +
+        `(±${Number.MAX_SAFE_INTEGER}); author it as a string to preserve precision`,
+    );
   }
   if (typeof value === "string") {
     // A preserved exact source string for an out-of-range int64: keep it as the
