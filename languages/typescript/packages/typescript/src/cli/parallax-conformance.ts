@@ -25,6 +25,12 @@ import type { Command, Diagnostic, Envelope, NonOk } from "@parallax/core";
 import { ExitCode } from "@parallax/core";
 import { PostgresProvider } from "../conformance/postgres-provider.js";
 
+/** A resolved command result: the JSON document to emit and its exit code. */
+interface Outcome {
+  readonly document: unknown;
+  readonly code: number;
+}
+
 /** Emit one JSON document to stdout and exit with the given code. */
 function emit(document: unknown, code: number): never {
   process.stdout.write(`${JSON.stringify(document, null, 2)}\n`);
@@ -101,64 +107,92 @@ function asError(command: Command, error: unknown): NonOk {
   });
 }
 
+/** Resolve `describe` to its outcome. */
+function handleDescribe(): Outcome {
+  const envelope = assertValidEnvelope(describe(TYPESCRIPT_ADAPTER));
+  return { document: envelope, code: ExitCode.Ok };
+}
+
+/** Resolve `compile` to its outcome (no database is touched). */
+function handleCompile(rest: readonly string[]): Outcome {
+  const { caseArg, dialect } = requireCaseAndDialect("compile", parseOptions(rest));
+  let envelope: Envelope;
+  try {
+    envelope = runCompile(loadCase(caseArg), dialect, TYPESCRIPT_ADAPTER);
+  } catch (error) {
+    envelope = asError("compile", error);
+  }
+  return { document: envelope, code: exitCodeFor(envelope) };
+}
+
+/**
+ * Resolve `run` to its outcome.
+ *
+ * The "no container for an out-of-claim case" invariant is structural here: the
+ * cheap gate probe (`runCompile`, Docker-free) runs and **returns** for any
+ * non-`ok` result BEFORE `PostgresProvider.start()`, so an out-of-claim or
+ * load-error request never boots a container. The driver `try/finally` wraps only
+ * the provisioning path, so any provider that was started is always closed.
+ */
+async function handleRun(rest: readonly string[]): Promise<Outcome> {
+  const { caseArg, dialect } = requireCaseAndDialect("run", parseOptions(rest));
+
+  // Gate first, without a container. A non-`ok` probe (out-of-claim ⇒
+  // `unsupported`, or a load/compile failure ⇒ `error`) is the final outcome.
+  let loaded: ReturnType<typeof loadCase>;
+  let gateProbe: Envelope;
+  try {
+    loaded = loadCase(caseArg);
+    gateProbe = runCompile(loaded, dialect, TYPESCRIPT_ADAPTER);
+  } catch (error) {
+    const envelope = asError("run", error);
+    return { document: envelope, code: exitCodeFor(envelope) };
+  }
+  if (gateProbe.status !== "ok") {
+    return { document: gateProbe, code: exitCodeFor(gateProbe) };
+  }
+
+  // In claim: provision a clean container, run, and always close the provider.
+  let envelope: Envelope;
+  let provider: PostgresProvider | undefined;
+  try {
+    provider = await PostgresProvider.start();
+    envelope = await runRun(loaded, dialect, TYPESCRIPT_ADAPTER, provider);
+  } catch (error) {
+    envelope = asError("run", error);
+  } finally {
+    await provider?.close();
+  }
+  return { document: envelope, code: exitCodeFor(envelope) };
+}
+
+/**
+ * Dispatch a command to its outcome. Known commands return an {@link Outcome}
+ * for `main` to emit as one JSON document; anything else writes a usage line to
+ * stderr and exits `2` (it emits no JSON document, so it never returns).
+ */
+async function resolveOutcome(
+  command: string | undefined,
+  rest: readonly string[],
+): Promise<Outcome> {
+  if (command === "describe") return handleDescribe();
+  if (command === "compile") return handleCompile(rest);
+  if (command === "run") return handleRun(rest);
+
+  if (command === undefined || command === "" || command === "--help" || command === "-h") {
+    process.stderr.write(
+      "usage: parallax-conformance <describe|compile|run> [--case <path>] [--dialect <dialect>]\n",
+    );
+  } else {
+    process.stderr.write(`unknown command: ${command}\n`);
+  }
+  process.exit(ExitCode.Usage);
+}
+
 async function main(argv: readonly string[]): Promise<void> {
   const [command, ...rest] = argv;
-
-  switch (command) {
-    case "describe": {
-      const envelope = assertValidEnvelope(describe(TYPESCRIPT_ADAPTER));
-      emit(envelope, ExitCode.Ok);
-      break;
-    }
-    case "compile": {
-      const { caseArg, dialect } = requireCaseAndDialect("compile", parseOptions(rest));
-      let envelope: Envelope;
-      try {
-        envelope = runCompile(loadCase(caseArg), dialect, TYPESCRIPT_ADAPTER);
-      } catch (error) {
-        envelope = asError("compile", error);
-      }
-      emit(envelope, exitCodeFor(envelope));
-      break;
-    }
-    case "run": {
-      const { caseArg, dialect } = requireCaseAndDialect("run", parseOptions(rest));
-      let envelope: Envelope;
-      let provider: PostgresProvider | undefined;
-      try {
-        // Provision the database only for an in-claim case: gate first (cheaply,
-        // without booting a container) by compiling, which short-circuits to an
-        // `unsupported` envelope for an out-of-claim request.
-        const loaded = loadCase(caseArg);
-        const gateProbe = runCompile(loaded, dialect, TYPESCRIPT_ADAPTER);
-        if (gateProbe.status !== "ok") {
-          emit(gateProbe, exitCodeFor(gateProbe));
-        }
-        provider = await PostgresProvider.start();
-        envelope = await runRun(loaded, dialect, TYPESCRIPT_ADAPTER, provider);
-      } catch (error) {
-        envelope = asError("run", error);
-      } finally {
-        await provider?.close();
-      }
-      emit(envelope, exitCodeFor(envelope));
-      break;
-    }
-    case undefined:
-    case "":
-    case "--help":
-    case "-h": {
-      process.stderr.write(
-        "usage: parallax-conformance <describe|compile|run> [--case <path>] [--dialect <dialect>]\n",
-      );
-      process.exit(ExitCode.Usage);
-      break;
-    }
-    default: {
-      process.stderr.write(`unknown command: ${command}\n`);
-      process.exit(ExitCode.Usage);
-    }
-  }
+  const { document, code } = await resolveOutcome(command, rest);
+  emit(document, code);
 }
 
 void main(process.argv.slice(2));
