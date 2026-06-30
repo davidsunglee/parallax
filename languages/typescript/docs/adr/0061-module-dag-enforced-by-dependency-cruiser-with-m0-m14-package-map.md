@@ -1,4 +1,4 @@
-# The module DAG is enforced by dependency-cruiser over an M0–M13 package map
+# The module DAG is enforced by dependency-cruiser over an M0–M14 package map
 
 The TypeScript build enforces the normative module-dependency graph
 (`core/spec/dependency-graph.md`) with dependency-cruiser, run as a standalone
@@ -8,12 +8,13 @@ non-numbered support-package edges. A wrong-direction or otherwise unlisted
 package dependency fails the build — the same property the Python reference
 harness gets from `dep_graph_check.py`.
 
-Each core module maps to one pnpm-workspace package under `packages/`, named for
-its responsibility and tagged with its core `M`-number. Non-numbered support
-packages are listed alongside that map when the TypeScript package topology needs
-them. The packages are real workspace packages rather than path-ruled directories
-so the workspace graph itself participates in the layering: a package only lists
-in its `package.json` the sibling packages it is permitted to depend on, and
+Each core module maps to one pnpm-workspace package under
+`languages/typescript/packages/`, named for its responsibility and tagged with
+its core `M`-number. Non-numbered support and composition packages are listed
+alongside that map when the TypeScript package topology needs them. The packages
+are real workspace packages rather than path-ruled directories so the workspace
+graph itself participates in the layering: a package only lists in its
+`package.json` the sibling packages it is permitted to depend on, and
 dependency-cruiser is the mechanical gate that fails the build if an `import`
 crosses an edge the package map does not declare.
 
@@ -31,7 +32,9 @@ M10 optimistic locking                           →  @parallax/locking        (
 M11 database seam & portability                  →  @parallax/dialect        (M11)
 M12 compatibility harness                        →  @parallax/conformance    (M12)
 M13 performance & benchmark harness              →  @parallax/benchmark      (M13)
+M14 cross-process cache coherence                →  @parallax/coherence      (M14)
 —   canonical metamodel/operation serde          →  @parallax/serde          (support)
+—   CLI/generator/facade composition             →  @parallax/typescript     (composition)
 ```
 
 `M6` deliberately has no package: aggregation is folded into `M2`, and the gap is
@@ -41,6 +44,13 @@ canonical serde seam. It has no sibling-package dependencies. The package-level
 DAG explicitly allows only `@parallax/metamodel -> @parallax/serde` and
 `@parallax/operation -> @parallax/serde`; those support-package edges are not new
 numbered-module edges in `core/spec/dependency-graph.md`.
+
+`@parallax/typescript` is a non-numbered composition package at
+`languages/typescript/packages/typescript`. It owns the `parallax` CLI,
+`parallax-conformance` CLI entry point, generator configuration API, public
+runtime facade, and generated-barrel support. It may depend on any numbered
+TypeScript package and on `@parallax/serde`; no numbered or support package may
+depend on it.
 
 dependency-cruiser is preferred over `eslint-plugin-boundaries` because its
 `forbidden`/`allowed` from/to contract encodes the DAG edges directly — an

@@ -619,6 +619,11 @@ a TypeScript ecosystem tool such as `dependency-cruiser` or
 `eslint-plugin-boundaries`, mapping implementation modules to the core
 dependency graph in
 [`../../../core/spec/dependency-graph.md`](../../../core/spec/dependency-graph.md).
+Implementation source lives under `languages/typescript/packages/*`; the
+surrounding `languages/typescript/spec` and `languages/typescript/docs`
+directories are documentation. The non-numbered `@parallax/typescript` package is
+the composition package for the CLI, generator config, public runtime facade, and
+generated-barrel support.
 
 The TypeScript conformance test runner should use the shared compatibility
 corpus and the `parallax-conformance` adapter. Database-backed test provisioning
