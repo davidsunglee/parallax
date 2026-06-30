@@ -16,7 +16,7 @@
 # Resulting state: accounts 10/11/12 inserted; 10 and 11 then re-balanced to 500.00
 # by the batched update; 12 unchanged at 30.00.
 model: models/account.yaml
-tags: [m8, m3, batched-write, write-sequence, transactions cache]
+tags: [m8, m3, batched-write, write-sequence, transactions cache, first-implementation-mvp]
 writeSequence:
   - mutation: insert
     entity: Account

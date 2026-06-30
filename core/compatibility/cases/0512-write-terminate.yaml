@@ -12,7 +12,7 @@
 # Resulting state: one CLOSED milestone, out_z finite — and crucially no
 # out_z = infinity row, the observable signature of termination.
 model: models/balance.yaml
-tags: [m7, m3, temporal mvp, write-sequence, terminate, audit-only]
+tags: [m7, m3, temporal mvp, write-sequence, terminate, audit-only, first-implementation-mvp]
 writeSequence:
   - mutation: insert
     entity: Balance

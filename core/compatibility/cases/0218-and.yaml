@@ -1,7 +1,7 @@
 # and — conjunction of two atomic predicates. Operands serialize in order; binds
 # follow left-to-right appearance.
 model: models/orders.yaml
-tags: [m2, and, boolean]
+tags: [m2, and, boolean, first-implementation-mvp]
 operation:
   and:
     operands:

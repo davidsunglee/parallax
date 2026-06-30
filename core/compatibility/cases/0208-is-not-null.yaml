@@ -2,7 +2,7 @@
 # the negation as `not t0.sku is null` (the normalizer's fixed point); the naive
 # referenceSql uses the more familiar `is not null` to cross-check.
 model: models/orders.yaml
-tags: [m2, isNotNull]
+tags: [m2, isNotNull, first-implementation-mvp]
 operation:
   isNotNull:
     attr: Order.sku

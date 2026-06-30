@@ -7,7 +7,7 @@
 # through membership — the first two rows are the active orders with the lowest
 # qty (ids 1 and 2), not any active order.
 model: models/orders.yaml
-tags: [m2, orderBy, limit, directive, multi-key]
+tags: [m2, orderBy, limit, directive, multi-key, first-implementation-mvp]
 operation:
   limit:
     count: 2

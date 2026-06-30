@@ -36,9 +36,13 @@ lint-schemas:
 # Mechanically check the normative module-dependency graph is a DAG with legal
 # edge directions, AND run the Phase 12 coverage gate: every in-scope module
 # (MVP / fast-follow / definitely-do, read from scope-and-tiers.md) has at least
-# one compatibility fixture tagged to it.
+# one compatibility fixture tagged to it. Then run the first-implementation-mvp
+# profile gate: the cases tagged into that Conformance Slice are consistent with
+# its canonical describe claim in scope-and-tiers.md (no stray module, every
+# claimed module covered, every shape in claim, all Postgres goldens).
 dep-graph:
     cd {{harness}} && uv run python -m reference_harness.dep_graph_check --coverage ../core/spec ../core/compatibility
+    cd {{harness}} && uv run python -m reference_harness.dep_graph_check --profile ../core/spec ../core/compatibility
 
 # ---------------------------------------------------------------------------
 # test: the full compatibility suite. Boots real databases via Testcontainers,

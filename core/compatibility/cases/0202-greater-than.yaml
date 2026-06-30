@@ -1,6 +1,6 @@
 # greaterThan — strict `>` range predicate.
 model: models/orders.yaml
-tags: [m2, greaterThan]
+tags: [m2, greaterThan, first-implementation-mvp]
 operation:
   greaterThan:
     attr: Order.qty

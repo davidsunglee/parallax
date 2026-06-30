@@ -2,7 +2,7 @@
 # semantics: in_z <= asOf < out_z. The row ending at 2024-06-01 is excluded and
 # the row beginning at 2024-06-01 is included.
 model: models/balance.yaml
-tags: [m7, m3, temporal mvp, as-of, audit-only, boundary]
+tags: [m7, m3, temporal mvp, as-of, audit-only, boundary, first-implementation-mvp]
 operation:
   asOf:
     operand:

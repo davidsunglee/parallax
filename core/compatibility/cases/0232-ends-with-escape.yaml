@@ -6,7 +6,7 @@
 # independent `right(sku, 3)` oracle would catch an unescaped `%` (which would
 # match any suffix). Companion to 0231 (startsWith) and 0213 (contains).
 model: models/orders.yaml
-tags: [m2, endsWith, string, escape]
+tags: [m2, endsWith, string, escape, first-implementation-mvp]
 operation:
   endsWith:
     attr: Order.sku

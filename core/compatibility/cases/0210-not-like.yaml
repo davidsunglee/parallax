@@ -2,7 +2,7 @@
 # keyword pair. A NULL sku yields NULL (not true), so id 4 is excluded — exactly
 # the SQL three-valued-logic the naive referenceSql also produces.
 model: models/orders.yaml
-tags: [m2, notLike, string]
+tags: [m2, notLike, string, first-implementation-mvp]
 operation:
   notLike:
     attr: Order.sku

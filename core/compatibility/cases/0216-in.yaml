@@ -5,7 +5,7 @@
 # MariaDB, so this case carries goldenSql for both dialects (a membership matrix
 # row alongside the `eq` one).
 model: models/orders.yaml
-tags: [m2, in, membership, dialect]
+tags: [m2, in, membership, dialect, first-implementation-mvp]
 operation:
   in:
     attr: Order.id

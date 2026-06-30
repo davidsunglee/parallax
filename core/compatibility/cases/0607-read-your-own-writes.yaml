@@ -11,7 +11,7 @@
 # return nothing; asserting the written row proves read-your-own-writes against
 # real committed data. roundTrips = 2 (the committed insert + the dependent find).
 model: models/account.yaml
-tags: [m8, transactions cache, read-your-own-writes, flush, scenario]
+tags: [m8, transactions cache, read-your-own-writes, flush, scenario, first-implementation-mvp]
 roundTrips: 2
 scenario:
   - write: insert
