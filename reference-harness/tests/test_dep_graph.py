@@ -178,6 +178,20 @@ def test_profile_gate_passes_on_a_consistent_slice(tmp_path: Path) -> None:
     assert profile_errors(_synthetic_scope(), tmp_path) == []
 
 
+def test_profile_gate_requires_the_canonical_single_include_tag(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "first-implementation-mvp"]))
+    _write_case(cases, "0002.yaml", _clean_read_case(["m2", "first-implementation-mvp"]))
+
+    for case_tags in (
+        "{}",
+        '{ "include": ["renamed-slice"] }',
+        '{ "include": ["first-implementation-mvp", "extra-slice"] }',
+    ):
+        errors = profile_errors(_synthetic_scope(case_tags=case_tags), tmp_path)
+        assert any("caseTags.include" in e and _SLICE_TAG in e for e in errors)
+
+
 def test_profile_gate_fails_when_a_claimed_module_is_uncovered(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     # only m1 is carried; the claim also lists m2 -> m2 is uncovered.

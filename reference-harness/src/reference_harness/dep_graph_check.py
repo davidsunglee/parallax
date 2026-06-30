@@ -361,8 +361,9 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
     """Assert the tagged slice cases are consistent with the canonical claim.
 
     Mirrors ``coverage_errors``: parse a declared set, scan ``cases/``, diff, and
-    return one error per inconsistency (empty == consistent). Checks both
-    directions:
+    return one error per inconsistency (empty == consistent). First, the canonical
+    claim must select exactly ``caseTags.include: ["first-implementation-mvp"]``;
+    then the gate checks both directions:
 
     * **forward (completeness)** — every module the claim lists has at least one
       tagged case carrying that module tag;
@@ -376,15 +377,26 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
     except DepGraphFailure as exc:
         return [str(exc)]
 
+    errors: list[str] = []
     claim_modules = {m for m in capabilities.get("modules", []) if isinstance(m, str)}
     claim_shapes = {s for s in capabilities.get("caseShapes", []) if isinstance(s, str)}
-    case_tags = capabilities.get("caseTags") or {}
+    case_tags = capabilities.get("caseTags")
+    if not isinstance(case_tags, dict):
+        errors.append(
+            f"slice claim must declare caseTags.include exactly [{_SLICE_TAG!r}]"
+        )
+        case_tags = {}
+    raw_include = case_tags.get("include")
+    if raw_include != [_SLICE_TAG]:
+        errors.append(
+            "slice claim caseTags.include must be exactly "
+            f"[{_SLICE_TAG!r}], got {raw_include!r}"
+        )
     claim_exclude = {
         t for t in case_tags.get("exclude", []) if isinstance(t, str)
     }
 
     tagged = _slice_cases(compatibility_root)
-    errors: list[str] = []
 
     # forward: every claimed module is carried by at least one tagged case.
     covered_modules: set[str] = set()
