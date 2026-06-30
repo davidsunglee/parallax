@@ -12,7 +12,7 @@
 # Postgres and MariaDB, so this case proves the navigation/join contract across
 # both dialects in the matrix.
 model: models/orders.yaml
-tags: [m4, navigate, relationship, dialect]
+tags: [m4, navigate, relationship, dialect, first-implementation-mvp]
 operation:
   navigate:
     rel: Order.items

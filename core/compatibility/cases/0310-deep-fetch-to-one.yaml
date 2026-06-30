@@ -12,7 +12,7 @@
 # Non-trivial (deep fetch) ⇒ referenceSql REQUIRED: it is the naive single-
 # statement oracle for the ROOT row set (all order items).
 model: models/orders.yaml
-tags: [m4, m5, deepFetch, to-one, relationship]
+tags: [m4, m5, deepFetch, to-one, relationship, first-implementation-mvp]
 operation:
   deepFetch:
     operand:

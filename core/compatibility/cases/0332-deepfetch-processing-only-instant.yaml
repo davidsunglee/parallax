@@ -4,7 +4,7 @@
 # 0331, proving the propagated instant selects the milestone whose interval
 # contains it.
 model: models/invoice.yaml
-tags: [m4, m7, temporal, relationship, deepFetch, propagation, audit-only]
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, audit-only, first-implementation-mvp]
 operation:
   deepFetch:
     operand:

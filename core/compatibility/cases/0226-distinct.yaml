@@ -3,7 +3,7 @@
 # the case where the golden SQL's projection is narrower than the usual
 # id/name pair, so the expected rows carry only `active`.
 model: models/orders.yaml
-tags: [m2, distinct, directive]
+tags: [m2, distinct, directive, first-implementation-mvp]
 operation:
   distinct:
     operand:

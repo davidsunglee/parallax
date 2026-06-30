@@ -2,7 +2,7 @@
 # prepends a leading `%` wildcard. `00` has no wildcard chars, so the pattern is
 # `%00`.
 model: models/orders.yaml
-tags: [m2, endsWith, string]
+tags: [m2, endsWith, string, first-implementation-mvp]
 operation:
   endsWith:
     attr: Order.sku

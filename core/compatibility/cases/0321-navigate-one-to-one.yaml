@@ -5,7 +5,7 @@
 # it never multiplies the person rows. Only person 1 holds passport number
 # 'P-AAA'.
 model: models/person.yaml
-tags: [m4, navigate, relationship, one-to-one]
+tags: [m4, navigate, relationship, one-to-one, first-implementation-mvp]
 operation:
   navigate:
     rel: Person.passport

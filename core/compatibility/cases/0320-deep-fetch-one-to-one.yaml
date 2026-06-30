@@ -8,7 +8,7 @@
 # person 3, who has no passport, gets a null peer. Two statements, roundTrips = 2
 # (never one query per person), proving N+1 elimination holds for 1:1 too.
 model: models/person.yaml
-tags: [m4, m5, deepFetch, one-to-one, relationship, nullable]
+tags: [m4, m5, deepFetch, one-to-one, relationship, nullable, first-implementation-mvp]
 operation:
   deepFetch:
     operand:

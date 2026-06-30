@@ -8,7 +8,7 @@
 # (orderItemId set) survive. This discriminates precisely because the FK is
 # nullable.
 model: models/orders.yaml
-tags: [m4, exists, relationship, to-one]
+tags: [m4, exists, relationship, to-one, first-implementation-mvp]
 operation:
   exists:
     rel: OrderStatus.orderItem

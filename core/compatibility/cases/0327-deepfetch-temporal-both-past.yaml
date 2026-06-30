@@ -4,7 +4,7 @@
 # out_z > ?` (binds B, B, P, P). Reconstructs what the system believed on
 # 2024-02-01 about business 2024-03-01: coverage 10 -> 500 (C-R1); coverage 20 -> 300.
 model: models/policy.yaml
-tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, audit]
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, audit, first-implementation-mvp]
 operation:
   deepFetch:
     operand:

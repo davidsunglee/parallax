@@ -7,7 +7,7 @@
 # and over-match; the independent `left(sku, 2)` oracle catches that. Only
 # `C_50%` starts with a literal `C_`.
 model: models/orders.yaml
-tags: [m2, startsWith, string, escape]
+tags: [m2, startsWith, string, escape, first-implementation-mvp]
 operation:
   startsWith:
     attr: Order.sku

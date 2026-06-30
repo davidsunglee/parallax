@@ -7,7 +7,7 @@
 # BEGINNING there (id 1, 150.00) — id 1 appears twice. This is the opposite
 # normative branch of 0507 (exclusive boundary), which drops the ending row.
 model: models/ledger.yaml
-tags: [m7, m3, m1, temporal mvp, as-of, audit-only, boundary, inclusive]
+tags: [m7, m3, m1, temporal mvp, as-of, audit-only, boundary, inclusive, first-implementation-mvp]
 operation:
   asOf:
     operand:

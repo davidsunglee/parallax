@@ -5,7 +5,7 @@
 # pin fetches policies 1 and 2 (`id in (?, ?) and thru_z = ? and out_z = ?`),
 # attached as single objects.
 model: models/policy.yaml
-tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, to-one]
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, to-one, first-implementation-mvp]
 operation:
   deepFetch:
     operand:
