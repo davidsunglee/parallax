@@ -45,6 +45,25 @@ dep-graph:
     cd {{harness}} && uv run python -m reference_harness.dep_graph_check --profile ../core/spec ../core/compatibility
 
 # ---------------------------------------------------------------------------
+# TypeScript workspace recipes. The pnpm workspace lives under
+# languages/typescript/packages/*; these fan out into it the same way the
+# Python recipes fan out into the reference harness. None of them need Docker
+# (the Testcontainers-backed conformance run lane lands with Phase 3).
+# ---------------------------------------------------------------------------
+
+# Static TS lint: Biome (format + lint) and the dependency-cruiser DAG gate.
+ts-lint:
+    pnpm run ts:lint
+
+# TypeScript typecheck across project references (tsc -b, no emit drift).
+ts-typecheck:
+    pnpm run ts:typecheck
+
+# TypeScript unit / adapter tests (vitest) across the workspace.
+ts-test:
+    pnpm run ts:test
+
+# ---------------------------------------------------------------------------
 # test: the full compatibility suite. Boots real databases via Testcontainers,
 # so Docker must be running.
 # ---------------------------------------------------------------------------

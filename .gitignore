@@ -7,6 +7,10 @@
 # Node dev-tooling
 node_modules/
 
+# TypeScript build output (tsc -b project references)
+dist/
+*.tsbuildinfo
+
 # Python / uv (reference-harness)
 .venv/
 __pycache__/

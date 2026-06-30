@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/serde" },
+    { "path": "./packages/metamodel" },
+    { "path": "./packages/operation" },
+    { "path": "./packages/dialect" },
+    { "path": "./packages/sql" },
+    { "path": "./packages/transactions" },
+    { "path": "./packages/lists" },
+    { "path": "./packages/relationships" },
+    { "path": "./packages/bitemporal" },
+    { "path": "./packages/locking" },
+    { "path": "./packages/conformance" },
+    { "path": "./packages/typescript" }
+  ]
+}
