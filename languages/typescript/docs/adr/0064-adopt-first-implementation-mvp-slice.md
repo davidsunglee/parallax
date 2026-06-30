@@ -1,0 +1,16 @@
+# TypeScript V1 adopts the canonical `first-implementation-mvp` Conformance Slice
+
+TypeScript V1 **is** the canonical `first-implementation-mvp` Conformance Slice declared in `core/spec/scope-and-tiers.md`, not a separate hand-authored cross-tier slice. The §4.5 `describe` claim's `capabilities` are exactly the canonical slice's `capabilities`; only the `adapter` identity (`language` / `name` / `version`) differs, and an anti-drift test (`reference-harness/tests/test_conformance_adapter_schema.py`) mechanically asserts the two `capabilities` objects are equal so they can never silently diverge. This makes TypeScript the single worked example of the first build — there is one "first" slice, not two competing ones.
+
+The slice is **include-driven**. V1 switches from the earlier exclude-driven claim (a maintained ~11-tag `caseTags.exclude` list) to `caseTags.include: ["first-implementation-mvp"]`. A case is claimed precisely when it carries that one tag and also passes the broad module / dialect / shape filters. Selection is by *presence* of the tag, never absence, so the claim is immune to the corpus's tag hazards (the `mariadb` and `identity cache` tags each appear on only a single case). This is strictly more precise than the old exclude list, which had to enumerate aggregation, cache, and detach tags by exact string.
+
+Concrete deltas from the earlier §4.5 claim:
+
+- **`modules`**: drop `m13`. The first build does not claim the benchmark module. M13 methodology binding (§9) and the `m13` package in the build-time DAG (§7) are unchanged; only the *conformance claim* drops it. Recorded in the revised TS-0062.
+- **`commands`**: drop `benchmark`. V1 claims `describe` / `compile` / `run` only. The `benchmark` command lands after the first slice.
+- **`caseShapes`**: add `scenario`. The read-your-own-writes scenario `0607-read-your-own-writes` is tagged into the slice as part of the M8 unit-of-work surface, so V1 runs it. The deferred M8 cache `scenario` cases (identity / query cache) stay outside the claim because they are simply untagged, not because the shape is excluded.
+- **selection**: `caseTags.exclude` (the 11-tag list) becomes `caseTags.include: ["first-implementation-mvp"]`.
+
+Everything the slice already deferred stays deferred and is now expressed as untagged-and-therefore-out rather than excluded-by-tag: aggregation / projection (TS-0029), the M8 identity-cache and query-cache scenarios (TS-0054), M9 detached merge-back, plus the slice-level exclusions of PK generation, value objects, inheritance, M11 error classification, bitemporal rectangle-split writes, MariaDB (already out via `dialects: ["postgres"]`), M13 benchmarks, and M14 coherence. An out-of-slice case command returns `unsupported`; an in-slice case returning `unsupported` is a conformance failure.
+
+Keeping TypeScript as a broader, separately defined slice was rejected: it would leave two competing "first" slices — the exact confusion the named slice removes — and would re-introduce the maintained exclude list the include tag eliminates. Keeping `m13` / `benchmark` in the claim as a documented superset was rejected as a less clean single story than full adoption of the canonical slice; the benchmark surface is additive after V1.
