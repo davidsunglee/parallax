@@ -88,8 +88,15 @@ group("compile lane (Docker-free)", () => {
     expect(envelope.caseShape).toBe("read");
     expect(envelope.roundTrips).toBe(1);
 
-    const emissions = envelope.emissions as { sql: string; binds: unknown[] }[];
+    const emissions = envelope.emissions as {
+      casePointer: string;
+      sql: string;
+      binds: unknown[];
+    }[];
     expect(emissions).toHaveLength(1);
+    // The read-operation emission points at the case's `operation` key, per the
+    // conformance contract's `compile` example (not the empty whole-case pointer).
+    expect(emissions[0]?.casePointer).toBe("/operation");
     // The golden SQL the corpus pins for Postgres, by construction.
     expect(emissions[0]?.sql).toBe("select t0.id, t0.name from orders t0 where t0.id = ?");
     // The int64 bind 42 is carried as the JSON number the corpus authors (it is
@@ -130,6 +137,9 @@ group.skipIf(!HAS_DOCKER)("run lane (Testcontainers postgres:17)", () => {
     () => {
       expect(result.exitCode).toBe(0);
       expect(result.envelope.status).toBe("ok");
+      // The run emission carries the same `/operation` read pointer as compile.
+      const emissions = result.envelope.emissions as { casePointer: string }[];
+      expect(emissions[0]?.casePointer).toBe("/operation");
       const observations = result.envelope.observations as {
         roundTrips: number;
         rows: Record<string, unknown>[];

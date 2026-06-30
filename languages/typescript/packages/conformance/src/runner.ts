@@ -55,6 +55,16 @@ import { assertValidEnvelope } from "./schema.js";
 type WireBind = BindValue;
 
 /**
+ * The JSON Pointer an emission carries for a single read-shape operation: the
+ * case's `operation` key. The conformance contract names `/operation` as the
+ * common read-operation pointer (`conformance-adapter-contract.md` — both the
+ * `compile` and `run` examples), reserving the empty pointer `""` for
+ * diagnostics that apply to the whole case (e.g. the out-of-claim gate). Write
+ * sequences / scenarios / deep fetch use per-statement pointers (Phase 4+).
+ */
+const READ_OPERATION_POINTER = "/operation" as const;
+
+/**
  * A `SchemaResolver` over the M1 metamodel reader. Resolves `Class.attr`
  * references to alias-qualified columns and supplies the root entity's table +
  * default read projection that the M3 visitor projects.
@@ -87,7 +97,17 @@ class MetamodelSchema implements SchemaResolver {
  * `orders` root). The corpus authors each entity's read projection into its
  * golden SQL and it is not a pure function of the descriptor across all models,
  * so this is a deliberately small, documented convention that reproduces the
- * Phase 3 golden; Phase 4 generalizes it to the full scalar-column set per case.
+ * Phase 3 golden.
+ *
+ * Phase 4 generalizes this to the full scalar-column set per case. The seam is
+ * localized: only this function (the sole caller is `MetamodelSchema.rootProjection`
+ * above; the M3 visitor consumes `schema.rootProjection()` purely) needs to
+ * change — no compiler edit. The `[pk, firstNonPk]` shortcut already diverges
+ * for models whose golden projects more than two columns, e.g.
+ * `models/scalars.yaml` (0003 projects `id, f32, f64, payload_hex, local_time,
+ * external_id`) and the wider `orders` reads (`02xx`), so Phase 4 must derive the
+ * projection from each entity's full scalar-attribute order (matching the golden
+ * SELECT) rather than this two-column heuristic.
  */
 export function defaultReadProjection(entity: EntityMetadata): readonly NormalizedAttribute[] {
   const attributes = entity.attributes();
@@ -153,7 +173,8 @@ function schemaFor(loaded: LoadedCase, operation: Operation): MetamodelSchema {
 /**
  * Compile a `read` case to its canonical SQL + binds and assemble a schema-valid
  * `compile` envelope. Single-statement read shape only (Phase 3); the emission's
- * `casePointer` is the empty JSON pointer (the whole operation).
+ * `casePointer` is `/operation` (the JSON Pointer to the case's operation key),
+ * per the conformance contract's `compile` example.
  */
 export function runCompile(
   loaded: LoadedCase,
@@ -168,7 +189,11 @@ export function runCompile(
   const schema = schemaFor(loaded, operation);
   const { sql, binds } = compile(operation, schema);
 
-  const emission: Emission = { casePointer: "", sql, binds: binds as readonly WireBind[] };
+  const emission: Emission = {
+    casePointer: READ_OPERATION_POINTER,
+    sql,
+    binds: binds as readonly WireBind[],
+  };
   const envelope: CompileOk = {
     schemaVersion: "1",
     command: "compile",
@@ -211,7 +236,11 @@ export async function runRun(
     roundTrips: 1,
     rows: rows as readonly Row[],
   };
-  const emission: Emission = { casePointer: "", sql, binds: binds as readonly WireBind[] };
+  const emission: Emission = {
+    casePointer: READ_OPERATION_POINTER,
+    sql,
+    binds: binds as readonly WireBind[],
+  };
   const envelope: RunOk = {
     schemaVersion: "1",
     command: "run",

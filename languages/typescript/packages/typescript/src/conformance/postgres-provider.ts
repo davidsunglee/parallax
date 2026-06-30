@@ -28,6 +28,7 @@ import {
 import {
   numericFromRaw,
   POSTGRES_DIALECT,
+  quoteIdentifier,
   RAW_TEXT_OIDS,
   timestampFromDb,
   toPositionalPlaceholders,
@@ -113,6 +114,22 @@ function wireParsers() {
   };
 }
 
+/**
+ * Render the fixture `INSERT` for a table from its raw physical descriptor
+ * `table` / `columns`, quoting every identifier through the SAME M11
+ * `quoteIdentifier` seam the DDL uses. This is the seam that keeps creation and
+ * insertion from diverging: a reserved or non-simple name (`order`, `User`) that
+ * the `CREATE TABLE` quoted is quoted identically here (mirrors the Python
+ * oracle's `PostgresProvider.load`). Extracted as a pure function so the quoting
+ * invariant is unit-testable without a database.
+ */
+export function renderFixtureInsert(table: string, columns: readonly string[]): string {
+  const target = quoteIdentifier(table);
+  const colList = columns.map(quoteIdentifier).join(", ");
+  const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
+  return `insert into ${target} (${colList}) values (${placeholders})`;
+}
+
 /** A Testcontainers-backed Postgres provider for one suite run. */
 export class PostgresProvider implements CompatibilityDatabaseProvider {
   readonly dialect = POSTGRES_DIALECT;
@@ -153,9 +170,9 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
     if (rows.length === 0) {
       return;
     }
-    const colList = columns.join(", ");
-    const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
-    const insert = `insert into ${table} (${colList}) values (${placeholders})`;
+    // `table` / `columns` are raw physical descriptor names; quote them through
+    // the same M11 seam the DDL uses so creation and insertion never diverge.
+    const insert = renderFixtureInsert(table, columns);
     for (const row of rows) {
       await this.sql.unsafe(insert, asParams(row));
     }
