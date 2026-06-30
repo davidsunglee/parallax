@@ -918,6 +918,7 @@ module.exports = {
     { from: { path: "^languages/typescript/packages/lists/" },          to: { path: "^languages/typescript/packages/transactions/" } },
     { from: { path: "^languages/typescript/packages/relationships/" },  to: { path: "^languages/typescript/packages/lists/" } },
     { from: { path: "^languages/typescript/packages/relationships/" },  to: { path: "^languages/typescript/packages/transactions/" } },
+    { from: { path: "^languages/typescript/packages/relationships/" },  to: { path: "^languages/typescript/packages/bitemporal/" } },
     { from: { path: "^languages/typescript/packages/bitemporal/" },     to: { path: "^languages/typescript/packages/transactions/" } },
     { from: { path: "^languages/typescript/packages/lifecycle/" },      to: { path: "^languages/typescript/packages/transactions/" } },
     { from: { path: "^languages/typescript/packages/locking/" },        to: { path: "^languages/typescript/packages/transactions/" } },
@@ -1006,6 +1007,7 @@ M5 --> M2
 M5 --> M8
 M4 --> M5
 M4 --> M8
+M4 --> M7
 M7 --> M8
 M9 --> M8
 M10 --> M8
@@ -1022,8 +1024,11 @@ M14 --> M8
 The non-obvious directions carry over verbatim from the core graph: `M8` depends
 on `M2` not `M3` (the transaction / unit-of-work layer is expressed over
 operations, not SQL); `M4` depends on `M5` (relationship navigation yields lists,
-the reverse of the obvious guess); and `M3` depends on `M11` (SQL generation
-routes through the portability seam). M14's single legal direction `M14 → M8` is
+the reverse of the obvious guess); `M4` depends on `M7` (a pinned as-of value
+propagates per relationship hop, so the relationship layer references the as-of
+model — the edge the claimed temporal deep-fetch 03xx cases require); and `M3`
+depends on `M11` (SQL generation routes through the portability seam). M14's
+single legal direction `M14 → M8` is
 transcribed in the block above, keeping the TypeScript edge set one-to-one with
 the core graph; the `@parallax/coherence` package is a **fast-follow** capability
 that TypeScript V1 MAY defer implementing, but its boundary is documented here so

@@ -1,0 +1,44 @@
+{
+  "name": "@parallax/typescript",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
+    }
+  },
+  "bin": {
+    "parallax": "./dist/cli/parallax.js",
+    "parallax-conformance": "./dist/cli/parallax-conformance.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@parallax/core": "workspace:*",
+    "@parallax/metamodel": "workspace:*",
+    "@parallax/operation": "workspace:*",
+    "@parallax/dialect": "workspace:*",
+    "@parallax/sql": "workspace:*",
+    "@parallax/transactions": "workspace:*",
+    "@parallax/lists": "workspace:*",
+    "@parallax/relationships": "workspace:*",
+    "@parallax/bitemporal": "workspace:*",
+    "@parallax/locking": "workspace:*",
+    "@parallax/conformance": "workspace:*",
+    "@parallax/serde": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}
