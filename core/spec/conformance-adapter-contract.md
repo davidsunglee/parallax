@@ -134,6 +134,16 @@ partial implementation honestly claim, for example, M2 predicate reads while
 deferring M2 aggregation reads, or M8 transaction/write cases while deferring
 query-cache and identity-cache scenarios.
 
+The example above is intentionally minimal. For a worked, canonical
+**include-driven** first slice, see the
+[`first-implementation-mvp`](scope-and-tiers.md#first-implementation-conformance-slice)
+Conformance Slice in `scope-and-tiers.md`: its `describe` claim selects ~97
+Postgres-only cases by a single `caseTags.include: ["first-implementation-mvp"]`
+tag rather than by a fragile list of exclusions, and a consistency gate keeps the
+tagged corpus aligned with that claim. A fresh implementer authoring a first build
+ordinarily adopts that claim's `capabilities` verbatim (only the `adapter`
+identity differs).
+
 A case command is claimed only when **all** of these are true:
 
 - the command is listed in `commands`

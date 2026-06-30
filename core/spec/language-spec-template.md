@@ -110,6 +110,22 @@ test runner wires to the **database provider**.
 - **(decide and record)** Which dialects this language runs in CI (Postgres is
   the round-1 normative target; MariaDB is the proven second dialect) and how the
   per-dialect golden SQL is selected.
+- **(decide and record)** The named **Conformance Slice** this first build
+  claims, its canonical `describe` claim, and the `unsupported` discipline for
+  out-of-slice cases. The recommended first slice is the include-driven
+  [`first-implementation-mvp`](scope-and-tiers.md#first-implementation-conformance-slice)
+  slice — a Postgres-only, ~97-case subset whose canonical `describe` claim lives
+  in `scope-and-tiers.md` and is the single source of truth (a slice is *not* a
+  module tier; it may defer parts of a module). Record the adapter's `capabilities`
+  (`modules` / `dialects` / `caseShapes` / `caseTags.include`) — ordinarily equal
+  to the canonical claim except for the `adapter` identity — and confirm the
+  adapter returns `status: "unsupported"` (exit `10`) for every case command
+  outside the slice (out-of-claim shape, dialect, module tag, or case tag) while
+  never returning `unsupported` for an in-slice case. The slice-matching rules and
+  worked `describe` example are in
+  [`conformance-adapter-contract.md`](conformance-adapter-contract.md); the
+  parallax-core `--profile` gate proves the tagged corpus stays consistent with
+  the canonical claim.
 
 ## 5. Codegen-or-not (DQ5)
 
