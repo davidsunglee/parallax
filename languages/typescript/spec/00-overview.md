@@ -5,8 +5,11 @@ language-neutral contract remains the core specification in
 [`../../../core/spec`](../../../core/spec); this file records the TypeScript
 choices the core deliberately leaves open.
 
-This spec describes the first TypeScript API shape. Some core capabilities are
-deferred from the first implementation slice. A deferred capability is not
+This spec describes the first TypeScript API shape. TypeScript V1 adopts the
+canonical `first-implementation-mvp` conformance slice, which is smaller than
+the core MVP tier: it claims only cases tagged for that slice. Some core
+capabilities are therefore recorded here as future TypeScript surface decisions
+but deferred from the first conformance claim. A deferred capability is not
 removed from Parallax; it is simply not claimed by the TypeScript conformance
 adapter until the corresponding compatibility slice passes.
 
@@ -47,9 +50,10 @@ both the entity symbol value used in expressions and `type Order` is the managed
 object type. Documentation may alias the type as `OrderObject` when clarity
 matters.
 
-TypeScript V1 generates only artifacts derivable from the canonical descriptor.
-The descriptor has no enum element and does not describe value-object fields, so
-V1 does not generate enum types or structured value-object interfaces. Value
+TypeScript generates only artifacts derivable from the canonical descriptor. The
+descriptor has no enum element and does not describe value-object fields, so
+TypeScript does not generate enum types or structured value-object interfaces.
+When value-object descriptors are claimed by a later compatibility slice, value
 objects are exposed as `ParallaxJsonValue` / `null` according to their
 nullability, and nested value-object predicates use untyped string paths after
 the declared value-object name.
@@ -84,7 +88,8 @@ domain functions.
 
 ## 3. CLI
 
-The TypeScript package provides:
+The TypeScript package provides the generated-API CLI and the V1 claimed
+conformance commands:
 
 ```text
 parallax init
@@ -93,7 +98,6 @@ parallax generate --check
 parallax-conformance describe
 parallax-conformance compile --case <case.yaml> --dialect <dialect>
 parallax-conformance run --case <case.yaml> --dialect <dialect>
-parallax-conformance benchmark --benchmark <benchmark.yaml> --dialect <dialect>
 ```
 
 `parallax init` is a conservative setup assistant. It may create or update:
@@ -131,6 +135,16 @@ not through the generated `#parallax` API. Each conformance command writes the
 JSON envelope required by
 [`../../../core/spec/conformance-adapter-contract.md`](../../../core/spec/conformance-adapter-contract.md)
 to stdout.
+
+The M13 benchmark command is a post-slice conformance command:
+
+```text
+parallax-conformance benchmark --benchmark <benchmark.yaml> --dialect <dialect>
+```
+
+TypeScript V1 may document that command shape, but it does not claim
+`benchmark` in `parallax-conformance describe` until the M13 slice is
+implemented.
 
 ## 4. Parallax Handle
 
@@ -511,11 +525,15 @@ Processing instants come from a `Clock Strategy` configured when `Parallax` is
 created. Application code does not pass processing instants to individual
 transactions or operations.
 
-Temporal writes use explicit verbs:
+Temporal writes use explicit verbs. The first TypeScript conformance slice
+claims only non-temporal writes and audit-only processing-temporal writes:
 
 - ordinary `update` performs entity-normal semantics: in-place for non-temporal,
   close-and-chain for temporal
 - `terminate` closes the current temporal row
+
+The business-axis and full-bitemporal write surface is post-slice:
+
 - `createUntil`, `updateUntil`, and `terminateUntil` are bounded business-window
   operations; `createUntil` maps to the core `insertUntil` mutation
 - bounded temporal write options use `business: { start, end }`
@@ -579,10 +597,13 @@ relies on generated types, package versions, documentation, and conformance
 results, not runtime capability branching.
 
 The conformance adapter reports claimed modules through `parallax-conformance
-describe`. Until TypeScript claims the `M8` conformance slice, repeated reads of
-the same primary key are not guaranteed to return the same JavaScript object
-instance. A resolved `ParallaxList` remains stable for its own materialized
-result, but that is not the full core identity-cache guarantee.
+describe`. TypeScript V1 claims the M8 transaction and unit-of-work cases tagged
+`first-implementation-mvp`, including read-your-own-writes, but it does not yet
+claim the M8 identity-cache and query-cache scenario slice. Until that cache
+slice is claimed, repeated reads of the same primary key are not guaranteed to
+return the same JavaScript object instance. A resolved `ParallaxList` remains
+stable for its own materialized result, but that is not the full core
+identity-cache guarantee.
 
 The post-V1 target remains the core `M8` contract: within a cache scope, reads of
 the same primary key resolve to the same logical managed object, repeated equal
@@ -606,7 +627,8 @@ better equivalent seam.
 
 ## 16. Deferred From V1
 
-The following are intentionally deferred from the first TypeScript API slice:
+The following are intentionally deferred from the first TypeScript conformance
+slice:
 
 - projection queries via `project(...)`
 - grouped aggregate projection
@@ -614,11 +636,19 @@ The following are intentionally deferred from the first TypeScript API slice:
 - non-dependent `link` / `unlink`
 - adding existing children and reparenting through collections
 - full `M8` identity cache and query cache conformance
+- PK-generation compatibility cases
+- value-object compatibility cases
+- inheritance compatibility cases
 - detached object lifecycle
+- M11 database error-code classification cases
+- bounded business-window and bitemporal rectangle-split writes
+- MariaDB provider and dialect conformance
+- M13 benchmark command and numeric performance targets
+- M14 cross-process cache coherence
 - public flush
 - runtime capability metadata
 - transaction read lock disabling
 
 Deferred TypeScript API does not weaken the core spec. The implementation must
-not claim a core module or case shape until the corresponding compatibility
-slice passes.
+not claim a core module, dialect, command, case tag, or case shape until the
+corresponding compatibility slice passes.
