@@ -1,6 +1,6 @@
 """Parse the normative module-dependency graph and assert it is a legal DAG.
 
-Two modes:
+Three modes:
 
 * **DAG check** (default) — validate the graph in ``dependency-graph.md``::
 
@@ -11,6 +11,13 @@ Two modes:
   compatibility fixture tagged to it::
 
       uv run python -m reference_harness.dep_graph_check --coverage core/spec core/compatibility
+
+* **Profile gate** (``--profile``) — assert the ``first-implementation-mvp``
+  Conformance Slice's tagged cases are consistent with its canonical ``describe``
+  claim embedded in ``scope-and-tiers.md`` (every claimed module covered, no stray
+  module tag, every shape in claim, every tagged case Postgres-golden)::
+
+      uv run python -m reference_harness.dep_graph_check --profile core/spec core/compatibility
 
 The machine-readable source of truth for the graph is the fenced
 ```` ```dependency-graph ```` block in ``dependency-graph.md``. Each line is an
@@ -33,6 +40,7 @@ listed under the in-scope tier headings).
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -43,11 +51,22 @@ _FENCE_RE = re.compile(r"```dependency-graph\n(.*?)```", re.DOTALL)
 _EDGE_RE = re.compile(r"^\s*(M\d+)\s*-->\s*(M\d+)\s*$")
 _MODULE_RE = re.compile(r"^M\d+$")
 _MODULE_TOKEN_RE = re.compile(r"\bM\d+\b")
+_MODULE_TAG_RE = re.compile(r"^m\d+$")
 
 # The three in-scope tier headings in scope-and-tiers.md, normalized to lower case.
 # Any module mentioned under one of these (until the next "### " heading) is
 # treated as in-scope for the coverage gate.
 _IN_SCOPE_TIERS = ("mvp", "fast-follow", "definitely-do")
+
+# The named conformance slice the profile gate enforces. The slice is selected by
+# this single tag on each included case (see scope-and-tiers.md); the canonical
+# describe claim that declares its boundaries lives in the same file.
+_SLICE_TAG = "first-implementation-mvp"
+
+# The heading under which the canonical slice claim is embedded in
+# scope-and-tiers.md, normalized to lower case (the json fence right after it is the
+# single source of truth for the claim).
+_SLICE_HEADING = "first-implementation conformance slice"
 
 
 class DepGraphFailure(Exception):
@@ -214,6 +233,203 @@ def coverage_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
     ]
 
 
+# --- profile (conformance-slice) consistency gate --------------------------
+
+
+def parse_profile_claim(scope_markdown: str) -> dict:
+    """Return the ``capabilities`` of the canonical slice ``describe`` claim.
+
+    The claim is the single source of truth for the ``first-implementation-mvp``
+    Conformance Slice: a fenced ```` ```json ```` block embedded under the
+    ``## First-implementation Conformance Slice`` heading of ``scope-and-tiers.md``
+    (no new file, no schema change). This parses the first such fenced block,
+    ``json.loads`` it, and returns its ``capabilities`` object
+    (``modules`` / ``dialects`` / ``caseShapes`` / ``caseTags``).
+    """
+    lines = scope_markdown.splitlines()
+    in_section = False
+    fence_lines: list[str] | None = None
+    block: str | None = None
+    for line in lines:
+        heading = re.match(r"^##\s+(.*?)\s*$", line)
+        if heading:
+            # Any "## " heading ends the slice section (the json fence sits
+            # directly under the slice heading, not under a tier ### heading).
+            in_section = heading.group(1).strip().lower() == _SLICE_HEADING
+            continue
+        if not in_section:
+            continue
+        if fence_lines is None:
+            if line.strip() == "```json":
+                fence_lines = []
+            continue
+        if line.strip() == "```":
+            block = "\n".join(fence_lines)
+            break
+        fence_lines.append(line)
+
+    if block is None:
+        raise DepGraphFailure(
+            "no ```json slice claim found under the "
+            "'## First-implementation Conformance Slice' heading of scope-and-tiers.md"
+        )
+    try:
+        claim = json.loads(block)
+    except json.JSONDecodeError as exc:
+        raise DepGraphFailure(
+            f"slice claim is not valid JSON: {exc}"
+        ) from exc
+    capabilities = claim.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raise DepGraphFailure("slice claim has no 'capabilities' object")
+    return capabilities
+
+
+def _case_shape(doc: dict) -> str | None:
+    """Detect the case shape from the present discriminating keys.
+
+    Mirrors the ``oneOf`` discrimination in ``compatibility-case.schema.json`` and
+    the ``is_*`` properties of ``Case``; there is no literal ``shape`` field. Order
+    matters — the more specific shapes are checked before ``read``. Returns one of
+    ``read`` / ``writeSequence`` / ``scenario`` / ``conflict`` / ``coherence`` /
+    ``error``, or ``None`` if the document matches no known shape.
+    """
+    if "errorClass" in doc:
+        return "error"
+    if "coherence" in doc:
+        return "coherence"
+    if "scenario" in doc:
+        return "scenario"
+    if "writeSequence" in doc:
+        return "writeSequence"
+    if "expectedAffectedRows" in doc or "attempts" in doc:
+        return "conflict"
+    if "operation" in doc:
+        return "read"
+    return None
+
+
+def _has_postgres_golden(doc: dict, shape: str) -> bool:
+    """Whether a case carries Postgres golden SQL, shape-aware.
+
+    read / writeSequence / conflict carry golden SQL at the top level — except the
+    ``attempts`` conflict form, whose golden SQL lives per attempt. scenario carries
+    golden SQL per step. A case satisfies the gate when *some* Postgres golden is
+    present where its shape puts it.
+    """
+    if isinstance(doc.get("goldenSql"), dict) and "postgres" in doc["goldenSql"]:
+        return True
+    if shape == "scenario":
+        steps = doc.get("scenario", [])
+    elif shape == "conflict":
+        steps = doc.get("attempts", [])
+    else:
+        steps = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        golden = step.get("goldenSql")
+        if isinstance(golden, dict) and "postgres" in golden:
+            return True
+    return False
+
+
+def _slice_cases(compatibility_root: Path) -> list[tuple[Path, dict]]:
+    """Load (path, doc) for every ``cases/`` fixture carrying the slice tag.
+
+    Benchmarks are intentionally ignored — the slice is a subset of ``cases/``.
+    """
+    cases_dir = compatibility_root / "cases"
+    tagged: list[tuple[Path, dict]] = []
+    if not cases_dir.is_dir():
+        return tagged
+    paths = sorted(cases_dir.glob("**/*.yaml")) + sorted(cases_dir.glob("**/*.yml"))
+    for path in sorted(set(paths)):
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        tags = [t for t in doc.get("tags", []) if isinstance(t, str)]
+        if _SLICE_TAG in tags:
+            tagged.append((path, doc))
+    return tagged
+
+
+def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
+    """Assert the tagged slice cases are consistent with the canonical claim.
+
+    Mirrors ``coverage_errors``: parse a declared set, scan ``cases/``, diff, and
+    return one error per inconsistency (empty == consistent). Checks both
+    directions:
+
+    * **forward (completeness)** — every module the claim lists has at least one
+      tagged case carrying that module tag;
+    * **reverse (no drift), per tagged case** — its shape is in the claim's
+      ``caseShapes``; every ``m\\d+`` tag on it is in the claim's ``modules``; it
+      carries a Postgres golden (shape-aware); and if the claim lists
+      ``caseTags.exclude``, the case carries none of those tags.
+    """
+    try:
+        capabilities = parse_profile_claim(scope_markdown)
+    except DepGraphFailure as exc:
+        return [str(exc)]
+
+    claim_modules = {m for m in capabilities.get("modules", []) if isinstance(m, str)}
+    claim_shapes = {s for s in capabilities.get("caseShapes", []) if isinstance(s, str)}
+    case_tags = capabilities.get("caseTags") or {}
+    claim_exclude = {
+        t for t in case_tags.get("exclude", []) if isinstance(t, str)
+    }
+
+    tagged = _slice_cases(compatibility_root)
+    errors: list[str] = []
+
+    # forward: every claimed module is carried by at least one tagged case.
+    covered_modules: set[str] = set()
+    for _path, doc in tagged:
+        for tag in doc.get("tags", []):
+            if isinstance(tag, str) and _MODULE_TAG_RE.match(tag):
+                covered_modules.add(tag)
+    for module in sorted(claim_modules):
+        if module not in covered_modules:
+            errors.append(
+                f"slice claims module {module!r} but no tagged case carries it"
+            )
+
+    # reverse: every tagged case stays inside the claim.
+    for path, doc in tagged:
+        name = path.name
+        shape = _case_shape(doc)
+        if shape is None:
+            errors.append(f"{name}: tagged case has no recognizable shape")
+        elif shape not in claim_shapes:
+            errors.append(
+                f"{name}: shape {shape!r} is outside the slice claim "
+                f"(allowed: {sorted(claim_shapes)})"
+            )
+
+        case_tags_list = [t for t in doc.get("tags", []) if isinstance(t, str)]
+        for tag in case_tags_list:
+            if _MODULE_TAG_RE.match(tag) and tag not in claim_modules:
+                errors.append(
+                    f"{name}: carries module tag {tag!r} not in the slice claim"
+                )
+
+        if shape is not None and not _has_postgres_golden(doc, shape):
+            errors.append(f"{name}: tagged case has no Postgres golden SQL")
+
+        if claim_exclude:
+            offending = sorted(set(case_tags_list) & claim_exclude)
+            if offending:
+                errors.append(
+                    f"{name}: carries excluded slice tag(s) {offending}"
+                )
+
+    return errors
+
+
 def run_dag_check(spec_path: Path) -> int:
     markdown = spec_path.read_text(encoding="utf-8")
     errors = check(markdown)
@@ -268,6 +484,35 @@ def run_coverage(spec_dir: Path, compatibility_root: Path) -> int:
     return dag_rc
 
 
+def run_profile(spec_dir: Path, compatibility_root: Path) -> int:
+    scope_path = spec_dir / "scope-and-tiers.md"
+    if not scope_path.is_file():
+        print(f"not a file: {scope_path}", file=sys.stderr)
+        return 2
+    if not compatibility_root.is_dir():
+        print(f"not a directory: {compatibility_root}", file=sys.stderr)
+        return 2
+
+    scope_markdown = scope_path.read_text(encoding="utf-8")
+    errors = profile_errors(scope_markdown, compatibility_root)
+    if errors:
+        print(
+            f"profile gate FAILED ({len(errors)} inconsistency(ies) for "
+            f"{_SLICE_TAG!r}):",
+            file=sys.stderr,
+        )
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 1
+
+    tagged = _slice_cases(compatibility_root)
+    print(
+        f"profile gate OK: the {_SLICE_TAG!r} slice is consistent with its claim "
+        f"({len(tagged)} tagged case(s))"
+    )
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "--coverage":
         rest = argv[1:]
@@ -280,11 +525,24 @@ def main(argv: list[str]) -> int:
             return 2
         return run_coverage(Path(rest[0]), Path(rest[1]))
 
+    if argv and argv[0] == "--profile":
+        rest = argv[1:]
+        if len(rest) != 2:
+            print(
+                "usage: python -m reference_harness.dep_graph_check --profile "
+                "<spec-dir> <compatibility-dir>",
+                file=sys.stderr,
+            )
+            return 2
+        return run_profile(Path(rest[0]), Path(rest[1]))
+
     if len(argv) != 1:
         print(
             "usage: python -m reference_harness.dep_graph_check "
             "<dependency-graph.md>\n"
             "   or: python -m reference_harness.dep_graph_check --coverage "
+            "<spec-dir> <compatibility-dir>\n"
+            "   or: python -m reference_harness.dep_graph_check --profile "
             "<spec-dir> <compatibility-dir>",
             file=sys.stderr,
         )

@@ -150,3 +150,64 @@ fixture tagged to it. The might-do and won't-do tiers — including the MAY-tier
 temporal mutations — are **excluded** from the gate, so "the spec is complete for
 parity" is a passing mechanical check, not a judgment call. See
 [`dependency-graph.md`](dependency-graph.md) for the gate mechanics.
+
+## First-implementation Conformance Slice
+
+> **This is a named Conformance Slice, not a module tier.** `first-implementation-mvp`
+> is **not** the **MVP tier** above. The tiers describe *parity scope* at
+> whole-module granularity (what a complete implementation must eventually cover);
+> a Conformance Slice — per `CONTEXT.md`, "a declared subset of the compatibility
+> corpus that an implementation claims through the conformance adapter for a
+> specific implementation milestone" — is what one early build *honestly claims
+> right now*, and it may defer *parts* of a module without redefining that module's
+> boundary.
+>
+> **Naming-collision warning.** The word "MVP" appears in two unrelated places: the
+> **MVP tier** (a parity tier, gated by `dep_graph_check --coverage`) and the
+> **`first-implementation-mvp` slice** (this section, gated by
+> `dep_graph_check --profile`). They are different things. The MVP tier claims whole
+> modules — including `M8` *with* its identity cache and query cache, and PK-
+> generation strategies. The `first-implementation-mvp` slice claims a strictly
+> smaller, agent-buildable first build: Postgres only, the M8 transaction/unit-of-
+> work behavior but **not** its caches, **no** PK generation, no aggregation, no
+> value objects, no inheritance, no M9 detach, no error classification, no
+> bitemporal rectangle-split writes, no MariaDB, no M13 benchmarks, no M14
+> coherence. Reading "build the MVP" as "build the MVP tier" is exactly the
+> confusion this slice removes.
+
+The slice is **include-driven**: membership is the single tag
+`first-implementation-mvp`, appended to the included cases' `tags` lists, and a
+case is *in the slice* precisely when it carries that tag and also passes the
+broad module / dialect / shape filters of the claim below. Nothing is selected by
+the *absence* of a tag, so the slice is immune to the corpus's known tag hazards
+(the `mariadb` literal tag on only one MariaDB-golden case; the single-case
+`identity cache` tag).
+
+The canonical `describe` claim below is the **single source of truth** for the
+slice. It is a legal conformance-adapter `describe` document (it validates against
+`conformance-adapter.schema.json`) and carries **no `profile` wire key** — the
+slice name lives only in documentation and tags, not on the wire, because
+`describeOk` is `additionalProperties: false` at the top level and inside
+`capabilities`. A new consistency gate (`dep_graph_check --profile`, beside the
+parity coverage gate) parses this exact block and asserts the tagged set can never
+silently drift from it.
+
+```json
+{
+  "schemaVersion": "1", "command": "describe", "status": "ok",
+  "adapter": { "language": "reference", "name": "parallax-core", "version": "0.1.0" },
+  "capabilities": {
+    "modules": ["m0","m1","m2","m3","m4","m5","m7","m8","m10","m11","m12"],
+    "dialects": ["postgres"],
+    "caseShapes": ["read","writeSequence","scenario","conflict"],
+    "caseTags": { "include": ["first-implementation-mvp"] },
+    "commands": ["describe","compile","run"],
+    "provisioning": "self-managed"
+  }
+}
+```
+
+An implementation that adopts this slice claims exactly these capabilities and
+returns `unsupported` for every case command outside it — every out-of-slice case
+shape, dialect, module, or tag. The tiers and the parity coverage gate above are
+**unchanged** by this slice.
