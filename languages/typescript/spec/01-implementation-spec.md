@@ -458,6 +458,46 @@ options. They come from the clock strategy supplied to `parallax({ clock })`, so
 production code cannot rewrite audit history while tests can inject a fixed
 clock.
 
+The canonical TypeScript V1 `first-implementation-mvp` slice requires only the
+audit-only processing-temporal write surface below, plus the temporal read
+surface in §1.3. Business-temporal-only writes and bounded bitemporal
+rectangle-split writes are specified here as the post-slice M7 surface, but they
+are not claimed by V1 until the canonical slice's case tags and capabilities are
+expanded.
+
+```ts
+type WriteResult = {
+  affectedRows: number;
+};
+```
+
+The V1 temporal write surface is:
+
+```ts
+await tx.balances.create(input);
+
+await tx.balances.update(Balance.id.eq(1), {
+  set: [Balance.value.set(150)],
+});
+
+await tx.balances.terminate(Balance.id.eq(1));
+```
+
+`create` returns `Promise<T>` for the generated managed-object type `T`.
+`update` and `terminate` return `Promise<WriteResult>`. Each method validates
+the entity's temporal mode before issuing SQL.
+
+`create` on an audit-only processing-temporal entity opens the current milestone
+at the transaction processing instant. `update` closes the current row and chains
+a new current row; `terminate` closes the current row and inserts no replacement.
+`terminate` is temporal removal; `delete` remains the physical-delete operation
+for non-temporal entities.
+
+#### Deferred business-axis temporal writes
+
+The following types and methods belong to a later slice that claims
+business-axis writes:
+
 ```ts
 type BusinessStart = {
   business: {
@@ -471,23 +511,9 @@ type BusinessWindow = {
     end: Temporal.Instant;
   };
 };
-
-type WriteResult = {
-  affectedRows: number;
-};
 ```
 
-The temporal write surface is:
-
 ```ts
-await tx.balances.create(input);
-
-await tx.balances.update(Balance.id.eq(1), {
-  set: [Balance.value.set(150)],
-});
-
-await tx.balances.terminate(Balance.id.eq(1));
-
 await tx.reservations.create(input, {
   business: {
     start: Temporal.Instant.from("2024-01-01T00:00:00Z"),
@@ -518,16 +544,10 @@ await tx.positions.terminateUntil(Position.id.eq(1), {
 });
 ```
 
-`create` and `createUntil` return `Promise<T>` for the generated managed-object
-type `T`. `update`, `terminate`, `updateUntil`, and `terminateUntil` return
-`Promise<WriteResult>`. Each method validates its temporal option before issuing
-SQL.
-
-`create` on an audit-only processing-temporal entity opens the current milestone
-at the transaction processing instant. `update` closes the current row and chains
-a new current row; `terminate` closes the current row and inserts no replacement.
-`terminate` is temporal removal; `delete` remains the physical-delete operation
-for non-temporal entities.
+`create(input, { business: { start } })` and `createUntil` return `Promise<T>`
+for the generated managed-object type `T`. `update`, `terminate`, `updateUntil`,
+and `terminateUntil` return `Promise<WriteResult>`. Each method validates its
+temporal option before issuing SQL.
 
 For a business-temporal-only entity, `create(input, { business: { start } })`
 opens a row effective from `start` to infinity. `update` and `terminate` accept
@@ -796,8 +816,10 @@ the adapter must return `ok` or `error`.
   descriptors, generator configuration, and code generation, failing if generation
   would fail; since generated files are uncommitted, this is not a git drift
   check). Conformance is exposed through the **separate** `parallax-conformance`
-  CLI (`describe` / `compile` / `run` / `benchmark`), not the generated
-  `#parallax` API — see [§4](#4-test-double-integration-m12-dq15).
+  CLI, not the generated `#parallax` API. The canonical V1 command claim exposes
+  `describe` / `compile` / `run`; `benchmark` is the post-slice M13 command
+  described in §9 and is not claimed by the `first-implementation-mvp` slice —
+  see [§4](#4-test-double-integration-m12-dq15).
 - **Where generated artifacts live / regeneration.** Generated output is derived
   code: gitignored by default, written to `./.parallax/generated` (outside
   `src/`, so it does not look like user-owned source), and regenerated during
@@ -1022,17 +1044,21 @@ implemented.
 
 ## 9. Per-language performance targets (M13, DQ10)
 
-**DEFERRED-with-rationale (numeric targets) + the `expectRoundTrips` invariant is
-binding — see
+**DEFERRED-with-rationale (M13 command and numeric targets) + the
+`expectRoundTrips` invariant is binding for V1 compatibility cases — see
 [TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md).**
-TypeScript **binds to the shared `M13` methodology now** and **defers the numeric
-targets** until a real implementation can produce a baseline. Numbers invented
-against a non-existent implementation would be fabricated rather than measured.
+TypeScript records the shared `M13` methodology now, but the canonical
+`first-implementation-mvp` conformance slice does **not** claim module `m13` or
+the `benchmark` command. A V1 adapter adopting that slice may therefore return
+`unsupported` for `parallax-conformance benchmark`. The benchmark command and
+numeric targets are enabled by a later M13 slice, after a real implementation can
+produce a baseline. Numbers invented against a non-existent implementation would
+be fabricated rather than measured.
 
-### 9.1 Bound for V1 (methodology)
+### 9.1 Post-slice benchmark methodology
 
-The methodology is the durable, comparable part of `M13`, and TypeScript adopts
-it in full:
+The methodology is the durable, comparable part of `M13`. When TypeScript claims
+the M13 benchmark slice, it uses this contract:
 
 - **Shared fixtures.** The same benchmark fixtures under
   [`core/compatibility/benchmarks/`](../../../core/compatibility/benchmarks)
@@ -1047,7 +1073,8 @@ it in full:
   workload carrying `name`, `iterations`, `wallTimeMs.{ p50, p95 }`, `roundTrips`,
   and the optional `expectRoundTrips` / `roundTripsOk`), and
   `memory.{ peakBytes, steadyBytes }`.
-- **Execution hook.** Benchmarks run through the
+- **Execution hook.** Once the M13 benchmark command is claimed, benchmarks run
+  through the
   `parallax-conformance benchmark --benchmark <b.yaml> --dialect <d>` command of
   the [conformance adapter
   contract](../../../core/spec/conformance-adapter-contract.md), against the
@@ -1056,7 +1083,7 @@ it in full:
   `report`; for a single benchmark fixture invocation, `report.benchmarks`
   contains one entry for the requested fixture. Writing the same object to
   `report.json` is allowed as a CI artifact, but stdout is the conformance
-  contract.
+  contract. This command is outside the canonical V1 command claim.
 
 ### 9.2 Deferred (numeric targets)
 
@@ -1068,25 +1095,28 @@ baseline run, with this tracking note:
 - **Memory targets** (peak / steady resident set) — **deferred (TODO: set from
   baseline).**
 
-**Tracking note.** Once the first TypeScript implementation runs the benchmark
-suite and records a baseline, this section is updated with grading targets derived
-from that baseline. Until then there are no numeric ceilings to grade against; the
-benchmark suite must still run end-to-end and emit a well-formed `report.json`.
+**Tracking note.** Once the first TypeScript implementation claims M13, runs the
+benchmark suite, and records a baseline, this section is updated with grading
+targets derived from that baseline. Until then there are no numeric ceilings to
+grade against and no V1 conformance requirement to run the benchmark suite
+end-to-end; an implementation that does claim the benchmark command must emit a
+well-formed `report.json`.
 
 ### 9.3 Binding invariant — `expectRoundTrips` (non-placeholder)
 
-The `expectRoundTrips` invariant is **carved out of the deferral and is a hard,
-non-placeholder requirement** for V1: **a deep fetch costs `1 + levels` round
-trips regardless of fan-out, never N+1.** The TypeScript implementation **MUST**
-honor it. It is enforced in both directions the core already enforces it:
+The compatibility `expectRoundTrips` invariant is **carved out of the deferral and
+is a hard, non-placeholder requirement** for V1 claimed cases: **a deep fetch
+costs `1 + levels` round trips regardless of fan-out, never N+1.** The TypeScript
+implementation **MUST** honor it for claimed compatibility cases. It is enforced
+in V1 through M12 and, once M13 is claimed, by the benchmark runner too:
 
-- **`M13` benchmark runner** — a workload's actual round trips MUST equal its
-  declared `expectRoundTrips`; a deep fetch that silently regressed to N+1 would
-  blow its declared round-trip count and fail the run.
 - **`M12` round-trip-count layer** — for every compatibility case,
   `len(goldenSql[dialect])` MUST equal the case's `roundTrips`
   ([§4.2](#42-case-discovery-and-execution-boundary) compares this via the
   `parallax-conformance` envelope's `roundTrips`).
+- **Post-slice `M13` benchmark runner** — when the benchmark command is claimed,
+  a workload's actual round trips MUST equal its declared `expectRoundTrips`; a
+  deep fetch that silently regresses to N+1 fails the benchmark run.
 
 This invariant is binding even though the wall-time and memory numbers are not.
 
