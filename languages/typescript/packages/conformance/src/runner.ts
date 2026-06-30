@@ -66,20 +66,22 @@ const READ_OPERATION_POINTER = "/operation" as const;
 
 /**
  * A `SchemaResolver` over the M1 metamodel reader. Resolves `Class.attr`
- * references to alias-qualified columns and supplies the root entity's table +
- * default read projection that the M3 visitor projects.
+ * references to alias-qualified columns (with the M0 neutral type the compiler
+ * coerces literals against) and supplies the root entity's table + read
+ * projection the M3 visitor projects.
  */
 class MetamodelSchema implements SchemaResolver {
   constructor(
     private readonly metamodel: Metamodel,
     private readonly rootEntity: EntityMetadata,
+    private readonly projection: readonly string[],
   ) {}
 
   resolveAttribute(ref: string): ResolvedColumn {
     const [className, attrName] = splitRef(ref);
     const entity = this.metamodel.entity(className);
     const attr = entity.attributeByName(attrName);
-    return { table: entity.table, column: quoteIdentifier(attr.column) };
+    return { table: entity.table, column: quoteIdentifier(attr.column), type: attr.type };
   }
 
   rootTable(): string {
@@ -87,29 +89,41 @@ class MetamodelSchema implements SchemaResolver {
   }
 
   rootProjection(): readonly string[] {
-    return defaultReadProjection(this.rootEntity).map((attr) => quoteIdentifier(attr.column));
+    return this.projection;
   }
 }
 
 /**
- * The V1 default read projection for an entity: the primary-key attribute(s)
- * followed by the first non-primary-key attribute (yielding `id, name` for the
- * `orders` root). The corpus authors each entity's read projection into its
- * golden SQL and it is not a pure function of the descriptor across all models,
- * so this is a deliberately small, documented convention that reproduces the
- * Phase 3 golden.
+ * Resolve a read case's projection — the ordered, quoted output columns the
+ * canonical SELECT projects — **from the case**, matching the golden by
+ * construction (carry-forward task 2; the Phase-3 `[pk, firstNonPk]` heuristic
+ * could not express `0226`'s `distinct active` nor a wider `orders` read).
  *
- * Phase 4 generalizes this to the full scalar-column set per case. The seam is
- * localized: only this function (the sole caller is `MetamodelSchema.rootProjection`
- * above; the M3 visitor consumes `schema.rootProjection()` purely) needs to
- * change — no compiler edit. The `[pk, firstNonPk]` shortcut already diverges
- * for models whose golden projects more than two columns, e.g.
- * `models/scalars.yaml` (0003 projects `id, f32, f64, payload_hex, local_time,
- * external_id`) and the wider `orders` reads (`02xx`), so Phase 4 must derive the
- * projection from each entity's full scalar-attribute order (matching the golden
- * SELECT) rather than this two-column heuristic.
+ * The case's `expectedRows` keys ARE the SQL output column names the golden
+ * projects and the harness compares against (`{id, name}` ⇒ `id, name`;
+ * `{active}` ⇒ `active`; grade's `{id, order, label}` ⇒ `id, "order", label`).
+ * Each key is quoted through the M11 seam so a reserved/non-simple output name
+ * (`order`) is byte-identical to the golden. When `expectedRows` is empty (e.g.
+ * `0221-none`), the case provides no key witness, so we fall back to the
+ * metamodel default — the primary key plus the first non-key attribute — which
+ * reproduces the `orders` `id, name` projection the corpus authors there.
  */
-export function defaultReadProjection(entity: EntityMetadata): readonly NormalizedAttribute[] {
+export function readProjection(loaded: LoadedCase, rootEntity: EntityMetadata): readonly string[] {
+  const expectedRows = loaded.raw.expectedRows as readonly Record<string, unknown>[] | undefined;
+  const firstRow = expectedRows?.[0];
+  if (firstRow && Object.keys(firstRow).length > 0) {
+    return Object.keys(firstRow).map(quoteIdentifier);
+  }
+  return defaultEntityProjection(rootEntity).map((attr) => quoteIdentifier(attr.column));
+}
+
+/**
+ * The metamodel default projection for an entity: the primary-key attribute(s)
+ * followed by the first non-primary-key attribute (yielding `id, name` for the
+ * `orders` root). Used only as the fallback when a case carries no
+ * `expectedRows` key witness (an all-excluded predicate like `none`).
+ */
+function defaultEntityProjection(entity: EntityMetadata): readonly NormalizedAttribute[] {
   const attributes = entity.attributes();
   const primaryKey = attributes.filter((attr) => attr.primaryKey);
   const firstNonPk = attributes.find((attr) => !attr.primaryKey);
@@ -161,11 +175,12 @@ function firstClassRef(node: unknown): string | undefined {
   return undefined;
 }
 
-/** Build the `MetamodelSchema` resolver for a read case. */
+/** Build the `MetamodelSchema` resolver for a read case (projection case-driven). */
 function schemaFor(loaded: LoadedCase, operation: Operation): MetamodelSchema {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const rootEntity = rootEntityFor(metamodel, operation);
-  return new MetamodelSchema(metamodel, rootEntity);
+  const projection = readProjection(loaded, rootEntity);
+  return new MetamodelSchema(metamodel, rootEntity, projection);
 }
 
 // --- compile lane -----------------------------------------------------------

@@ -17,6 +17,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@parallax/core": "workspace:*",
     "@parallax/operation": "workspace:*",
     "@parallax/dialect": "workspace:*"
   }

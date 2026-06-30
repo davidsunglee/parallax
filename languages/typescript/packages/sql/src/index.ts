@@ -23,6 +23,7 @@
 // M3 stops being the conduit. No change now: the M3 -> M11 edge is real and the
 // arrangement is dependency-cruiser-clean.
 export { columnOrder, ddlForDescriptor, quoteIdentifier } from "@parallax/dialect";
+export { coerceBind, exceedsSafeInteger } from "./bind.js";
 export {
   aliasFor,
   type Bind,
