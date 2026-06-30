@@ -2,7 +2,7 @@
 
 ## Language Implementation Work
 
-- Before implementing a language target, read `README.md`, `IMPLEMENTING.md`, `design-discussion.md`, `core/spec/00-overview.md`, and the target language spec.
+- Before implementing a language target, read `README.md`, `IMPLEMENTING.md`, `core/spec/00-overview.md`, `core/spec/scope-and-tiers.md`, `core/spec/dependency-graph.md`, `core/spec/conformance-adapter-contract.md`, and the target language spec.
 - Do not change `core/spec`, `core/schemas`, or `core/compatibility` only to make a language implementation pass. Treat those artifacts as the source of truth; any change to them must update the spec, schema, fixtures, and cases consistently.
 - Implement capabilities in dependency-graph order from `core/spec/dependency-graph.md`, and preserve any language-module dependency-boundary enforcement.
 - Use compatibility corpus cases as the primary behavioral verification. Add language unit tests for internal seams, diagnostics, and failure modes.

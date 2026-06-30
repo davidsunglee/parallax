@@ -852,16 +852,17 @@ the adapter must return `ok` or `error`.
 
 ## 7. Build-time dependency enforcement (DQ3, dependency-graph)
 
-**ANSWERED — see [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m13-package-map.md).**
+**ANSWERED — see [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m14-package-map.md).**
 The normative module-dependency graph
 ([`dependency-graph.md`](../../../core/spec/dependency-graph.md)) is the **only**
 legal dependency direction between numbered core modules, and each per-language
 spec **SHOULD** prescribe a build-time mechanism that fails the build on any
 module-to-module dependency the graph does not declare. This section names the
-tool, maps every core module `M0`–`M14` onto a TypeScript package, records the
-non-numbered support package `@parallax/serde`, and transcribes the legal
+tool, maps every core module `M0`–`M14` onto a TypeScript package under
+`languages/typescript/packages/*`, records the non-numbered support packages
+`@parallax/serde` and `@parallax/typescript`, and transcribes the legal
 numbered-module edges one-to-one from the core graph so the TypeScript edge set
-is mechanically diff-able against it. The `@parallax/serde` edges are explicit
+is mechanically diff-able against it. The non-numbered package edges are explicit
 package-topology edges, not additions to the core module DAG.
 
 ### 7.1 Enforcement tool
@@ -884,13 +885,13 @@ module.exports = {
   forbidden: [
     {
       name: "no-undeclared-module-dependency",
-      comment: "Only documented numbered-module and support-package edges are legal.",
+      comment: "Only documented numbered-module, support, and composition edges are legal.",
       severity: "error",
-      from: { path: "^packages/([^/]+)/" },
+      from: { path: "^languages/typescript/packages/([^/]+)/" },
       to: {
-        path: "^packages/([^/]+)/",
+        path: "^languages/typescript/packages/([^/]+)/",
         // a cross-package import is forbidden unless it matches an allowed edge
-        pathNot: "^packages/$1/",
+        pathNot: "^languages/typescript/packages/$1/",
         moreThanOneDependencyType: false,
       },
     },
@@ -898,32 +899,36 @@ module.exports = {
   // The legal edges are the allowlist; see the mapping table and edge block below.
   allowed: [
     // Non-numbered support package edges.
-    { from: { path: "^packages/metamodel/" },     to: { path: "^packages/serde/" } },
-    { from: { path: "^packages/operation/" },     to: { path: "^packages/serde/" } },
+    { from: { path: "^languages/typescript/packages/metamodel/" },     to: { path: "^languages/typescript/packages/serde/" } },
+    { from: { path: "^languages/typescript/packages/operation/" },     to: { path: "^languages/typescript/packages/serde/" } },
+
+    // Non-numbered composition package edges. Numbered packages MUST NOT import
+    // from @parallax/typescript; it is the CLI/generator/application facade.
+    { from: { path: "^languages/typescript/packages/typescript/" },    to: { path: "^languages/typescript/packages/(core|metamodel|operation|sql|relationships|lists|bitemporal|transactions|lifecycle|locking|dialect|conformance|benchmark|coherence|serde)/" } },
 
     // Numbered module edges from core/spec/dependency-graph.md.
-    { from: { path: "^packages/metamodel/" },     to: { path: "^packages/core/" } },
-    { from: { path: "^packages/dialect/" },        to: { path: "^packages/core/" } },
-    { from: { path: "^packages/operation/" },      to: { path: "^packages/metamodel/" } },
-    { from: { path: "^packages/sql/" },            to: { path: "^packages/operation/" } },
-    { from: { path: "^packages/sql/" },            to: { path: "^packages/dialect/" } },
-    { from: { path: "^packages/transactions/" },   to: { path: "^packages/operation/" } },
-    { from: { path: "^packages/transactions/" },   to: { path: "^packages/dialect/" } },
-    { from: { path: "^packages/lists/" },          to: { path: "^packages/operation/" } },
-    { from: { path: "^packages/lists/" },          to: { path: "^packages/transactions/" } },
-    { from: { path: "^packages/relationships/" },  to: { path: "^packages/lists/" } },
-    { from: { path: "^packages/relationships/" },  to: { path: "^packages/transactions/" } },
-    { from: { path: "^packages/bitemporal/" },     to: { path: "^packages/transactions/" } },
-    { from: { path: "^packages/lifecycle/" },      to: { path: "^packages/transactions/" } },
-    { from: { path: "^packages/locking/" },        to: { path: "^packages/transactions/" } },
-    { from: { path: "^packages/coherence/" },      to: { path: "^packages/transactions/" } },
-    { from: { path: "^packages/conformance/" },    to: { path: "^packages/operation/" } },
-    { from: { path: "^packages/conformance/" },    to: { path: "^packages/sql/" } },
-    { from: { path: "^packages/conformance/" },    to: { path: "^packages/relationships/" } },
-    { from: { path: "^packages/conformance/" },    to: { path: "^packages/bitemporal/" } },
-    { from: { path: "^packages/conformance/" },    to: { path: "^packages/lifecycle/" } },
-    { from: { path: "^packages/conformance/" },    to: { path: "^packages/locking/" } },
-    { from: { path: "^packages/benchmark/" },      to: { path: "^packages/conformance/" } },
+    { from: { path: "^languages/typescript/packages/metamodel/" },     to: { path: "^languages/typescript/packages/core/" } },
+    { from: { path: "^languages/typescript/packages/dialect/" },        to: { path: "^languages/typescript/packages/core/" } },
+    { from: { path: "^languages/typescript/packages/operation/" },      to: { path: "^languages/typescript/packages/metamodel/" } },
+    { from: { path: "^languages/typescript/packages/sql/" },            to: { path: "^languages/typescript/packages/operation/" } },
+    { from: { path: "^languages/typescript/packages/sql/" },            to: { path: "^languages/typescript/packages/dialect/" } },
+    { from: { path: "^languages/typescript/packages/transactions/" },   to: { path: "^languages/typescript/packages/operation/" } },
+    { from: { path: "^languages/typescript/packages/transactions/" },   to: { path: "^languages/typescript/packages/dialect/" } },
+    { from: { path: "^languages/typescript/packages/lists/" },          to: { path: "^languages/typescript/packages/operation/" } },
+    { from: { path: "^languages/typescript/packages/lists/" },          to: { path: "^languages/typescript/packages/transactions/" } },
+    { from: { path: "^languages/typescript/packages/relationships/" },  to: { path: "^languages/typescript/packages/lists/" } },
+    { from: { path: "^languages/typescript/packages/relationships/" },  to: { path: "^languages/typescript/packages/transactions/" } },
+    { from: { path: "^languages/typescript/packages/bitemporal/" },     to: { path: "^languages/typescript/packages/transactions/" } },
+    { from: { path: "^languages/typescript/packages/lifecycle/" },      to: { path: "^languages/typescript/packages/transactions/" } },
+    { from: { path: "^languages/typescript/packages/locking/" },        to: { path: "^languages/typescript/packages/transactions/" } },
+    { from: { path: "^languages/typescript/packages/coherence/" },      to: { path: "^languages/typescript/packages/transactions/" } },
+    { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/operation/" } },
+    { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/sql/" } },
+    { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/relationships/" } },
+    { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/bitemporal/" } },
+    { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/lifecycle/" } },
+    { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/locking/" } },
+    { from: { path: "^languages/typescript/packages/benchmark/" },      to: { path: "^languages/typescript/packages/conformance/" } },
   ],
   allowedSeverity: "error",
 };
@@ -931,12 +936,15 @@ module.exports = {
 
 ### 7.2 Module → package mapping
 
-Each core module maps to one **pnpm-workspace package** under `packages/`, named
-for its responsibility and tagged with its core `M`-number (TS-0061). Real
-workspace packages — rather than path-ruled directories — make the workspace
-graph itself participate in the layering: a package's `package.json` lists only
-the sibling packages it is permitted to depend on, and dependency-cruiser is the
-mechanical gate over the `import` graph.
+Each core module maps to one **pnpm-workspace package** under
+`languages/typescript/packages/`, named for its responsibility and tagged with
+its core `M`-number (TS-0061). Real workspace packages — rather than path-ruled
+directories — make the workspace graph itself participate in the layering: a
+package's `package.json` lists only the sibling packages it is permitted to
+depend on, and dependency-cruiser is the mechanical gate over the `import` graph.
+The `languages/typescript/` directory is the TypeScript language workspace root:
+`languages/typescript/spec/` and `languages/typescript/docs/` are documentation,
+while `languages/typescript/packages/*` contains implementation source.
 
 | Core module | Responsibility | TS package | Tag |
 |---|---|---|---|
@@ -955,6 +963,7 @@ mechanical gate over the `import` graph.
 | M13 | Performance & benchmark harness | `@parallax/benchmark` | M13 |
 | M14 | Cross-process cache coherence | `@parallax/coherence` | M14 |
 | Support | Canonical metamodel/operation serde | `@parallax/serde` | unnumbered |
+| Facade | CLI, generator config, public runtime facade, generated-barrel support | `@parallax/typescript` | unnumbered |
 
 **`M6` is deliberately absent** — aggregation is folded into `M2`, and the gap is
 preserved to keep cross-references to the core numbering stable. The shared
@@ -966,14 +975,24 @@ it are `@parallax/metamodel -> @parallax/serde` and `@parallax/operation ->
 @parallax/serde`, which the dependency-cruiser allowlist above encodes
 explicitly.
 
+The `@parallax/typescript` package is a non-numbered **composition package** at
+`languages/typescript/packages/typescript`. It owns the `parallax` CLI,
+`parallax-conformance` CLI entry point, generator configuration API
+(`@parallax/typescript/config`), public runtime facade, and generated-barrel
+support. It MAY depend on any numbered TypeScript package and on
+`@parallax/serde`, because it is the composition root. No numbered package or
+support package may depend on `@parallax/typescript`; implementation modules stay
+below the facade.
+
 ### 7.3 Legal-edge contract
 
 The numbered-module legal edges are transcribed **one-to-one** from
 [`dependency-graph.md`](../../../core/spec/dependency-graph.md), keyed by the same
 `M`-numbers so the edge set is mechanically diff-able against core. Each edge
 `A --> B` reads "A depends on B"; the reverse is a spec violation. Combined with
-the mapping table and the two explicit `@parallax/serde` support-package edges
-above, this block is the source the `.dependency-cruiser.js` allowlist encodes.
+the mapping table, the two explicit `@parallax/serde` support-package edges, and
+the top-level `@parallax/typescript` composition edge above, this block is the
+source the `.dependency-cruiser.js` allowlist encodes.
 
 ```dependency-graph
 M1 --> M0
@@ -1216,7 +1235,7 @@ section (`M9`) beyond the template skeleton; it is not a template row.
 | §4 Test-double integration | ANSWERED | [§4](#4-test-double-integration-m12-dq15) | [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md), [TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md), [TS-0060](../docs/adr/0060-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md) |
 | §5 Codegen-or-not | ANSWERED | [§5](#5-codegen-or-not-dq5) | — |
 | §6 Collection idioms | ANSWERED | [§6](#6-collection-idioms-m5) | — |
-| §7 Build-time dependency enforcement | ANSWERED | [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) | [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m13-package-map.md) |
+| §7 Build-time dependency enforcement | ANSWERED | [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) | [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m14-package-map.md) |
 | §8 Optional optimized data structures | DEFERRED-with-rationale | [§8](#8-optional-optimized-data-structures-m13-dq10) | [TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md) |
 | §9 Per-language performance targets | DEFERRED-with-rationale | [§9](#9-per-language-performance-targets-m13-dq10) | [TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md) |
 
@@ -1234,7 +1253,8 @@ This document satisfies the `language-spec-template.md` completion check:
   [§7](#7-build-time-dependency-enforcement-dq3-dependency-graph) legal-edge block
   is transcribed one-to-one from
   [`dependency-graph.md`](../../../core/spec/dependency-graph.md) and keyed by the
-  same `M`-numbers, so it is mechanically diff-able against the core graph; the
+  same `M`-numbers, while the `@parallax/serde` and `@parallax/typescript` edges
+  are explicit TypeScript package-topology edges outside the core graph; the
   [§2](#2-metadata--model-input-format-dq5-dq6) metadata shapes are drawn
   one-to-one from
   [`metamodel.schema.json`](../../../core/schemas/metamodel.schema.json)'s eight
