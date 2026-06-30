@@ -25,18 +25,20 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@parallax/bitemporal": "workspace:*",
+    "@parallax/conformance": "workspace:*",
     "@parallax/core": "workspace:*",
+    "@parallax/dialect": "workspace:*",
+    "@parallax/lists": "workspace:*",
+    "@parallax/locking": "workspace:*",
     "@parallax/metamodel": "workspace:*",
     "@parallax/operation": "workspace:*",
-    "@parallax/dialect": "workspace:*",
+    "@parallax/relationships": "workspace:*",
+    "@parallax/serde": "workspace:*",
     "@parallax/sql": "workspace:*",
     "@parallax/transactions": "workspace:*",
-    "@parallax/lists": "workspace:*",
-    "@parallax/relationships": "workspace:*",
-    "@parallax/bitemporal": "workspace:*",
-    "@parallax/locking": "workspace:*",
-    "@parallax/conformance": "workspace:*",
-    "@parallax/serde": "workspace:*"
+    "@testcontainers/postgresql": "^12.0.4",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@types/node": "^22.10.0"
