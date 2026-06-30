@@ -18,6 +18,11 @@
   },
   "dependencies": {
     "@parallax/metamodel": "workspace:*",
-    "@parallax/serde": "workspace:*"
+    "@parallax/serde": "workspace:*",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
   }
 }
