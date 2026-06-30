@@ -11,7 +11,7 @@
 # `... and version = ?` (bind 1) matches and the UPDATE affects EXACTLY ONE row,
 # advancing version 1 -> 2 while balance stays 250.00.
 model: models/account.yaml
-tags: [m10, m3, optimistic-locking, success, version-only-bump]
+tags: [m10, m3, optimistic-locking, success, version-only-bump, first-implementation-mvp]
 expectedAffectedRows: 1
 goldenSql:
   postgres: update account set version = ? where id = ? and version = ?

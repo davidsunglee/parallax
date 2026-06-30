@@ -3,7 +3,7 @@
 # matching every status row for the order (order-level and item-level). Only
 # order 2 has a SHIPPED status (row 102), so the result is {2}.
 model: models/orders.yaml
-tags: [m4, navigate, relationship]
+tags: [m4, navigate, relationship, first-implementation-mvp]
 operation:
   navigate:
     rel: Order.statuses

@@ -5,7 +5,7 @@
 # no parentheses. The result {1, 5, 42} differs from the grouped {1, 42} — the
 # pair together proves the canonical `group` node faithfully carries precedence.
 model: models/orders.yaml
-tags: [m2, group, boolean, precedence]
+tags: [m2, group, boolean, precedence, first-implementation-mvp]
 operation:
   or:
     operands:

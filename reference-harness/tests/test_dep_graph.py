@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from reference_harness.dep_graph_check import (
+    _SLICE_TAG,
     check,
     coverage_errors,
     parse_edges,
@@ -274,3 +275,33 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
         shapes='["read","writeSequence","scenario"]',
     )
     assert profile_errors(scope, tmp_path) == []
+
+
+# --- the profile gate over the real corpus -----------------------------------
+#
+# The real-corpus assertions: the 97 family-selected cases are internally
+# consistent with the canonical claim, and exactly 97 cases carry the slice tag
+# (a drift tripwire — adding or losing a tagged case fails the count).
+
+
+def test_real_corpus_profile_is_consistent() -> None:
+    scope = (_SPEC_DIR / "scope-and-tiers.md").read_text(encoding="utf-8")
+    assert profile_errors(scope, _COMPATIBILITY_ROOT) == []
+
+
+def test_profile_slice_tag_count() -> None:
+    cases_dir = _COMPATIBILITY_ROOT / "cases"
+    tagged = []
+    for path in sorted(cases_dir.glob("**/*.yaml")) + sorted(
+        cases_dir.glob("**/*.yml")
+    ):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict):
+            continue
+        tags = [t for t in doc.get("tags", []) if isinstance(t, str)]
+        if _SLICE_TAG in tags:
+            tagged.append(path.name)
+    assert len(tagged) == 97, (
+        f"expected exactly 97 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: "
+        f"{sorted(tagged)}"
+    )

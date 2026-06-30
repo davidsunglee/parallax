@@ -16,7 +16,7 @@
 # the precondition's values (the concurrent writer's balance 999.00, version 2),
 # never our stale-version balance.
 model: models/account.yaml
-tags: [m10, m3, optimistic-locking, conflict, optimistic-lock-conflict]
+tags: [m10, m3, optimistic-locking, conflict, optimistic-lock-conflict, first-implementation-mvp]
 precondition: update account set balance = 999.00, version = 2 where id = 2
 expectedAffectedRows: 0
 goldenSql:

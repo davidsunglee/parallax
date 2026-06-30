@@ -1,6 +1,6 @@
 # greaterThanEquals — inclusive `>=` range predicate.
 model: models/orders.yaml
-tags: [m2, greaterThanEquals]
+tags: [m2, greaterThanEquals, first-implementation-mvp]
 operation:
   greaterThanEquals:
     attr: Order.qty

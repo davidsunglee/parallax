@@ -2,7 +2,7 @@
 # binds (lower, upper). `between` is a convenience over `>= lower and <= upper`,
 # which is exactly what the naive referenceSql spells out.
 model: models/orders.yaml
-tags: [m2, between]
+tags: [m2, between, first-implementation-mvp]
 operation:
   between:
     attr: Order.price

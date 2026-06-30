@@ -17,7 +17,7 @@
 # id 2, and id 3's closed-but-overlapping milestone — while excluding id 1's
 # superseded row (proving the overlap predicate filters, unlike `history`).
 model: models/balance.yaml
-tags: [m7, m3, temporal mvp, as-of-range, audit-only]
+tags: [m7, m3, temporal mvp, as-of-range, audit-only, first-implementation-mvp]
 operation:
   asOfRange:
     operand:

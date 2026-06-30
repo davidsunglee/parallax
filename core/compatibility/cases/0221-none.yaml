@@ -3,7 +3,7 @@
 # the dual of `all`; here it gets its dedicated fixture alongside the boolean
 # combinators.
 model: models/orders.yaml
-tags: [m2, none, boolean]
+tags: [m2, none, boolean, first-implementation-mvp]
 operation:
   none: {}
 goldenSql:

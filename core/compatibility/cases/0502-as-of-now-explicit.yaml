@@ -3,7 +3,7 @@
 # node lowers to the identical injected current-row predicate (`out_z = infinity`)
 # the default-injection rule produces — pinning the equivalence in a fixture.
 model: models/balance.yaml
-tags: [m7, m3, temporal mvp, as-of, audit-only, explicit]
+tags: [m7, m3, temporal mvp, as-of, audit-only, explicit, first-implementation-mvp]
 operation:
   asOf:
     operand:

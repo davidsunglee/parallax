@@ -8,7 +8,7 @@
 # carries each rectangle's bounds, exercising native-infinity reads on BOTH axes
 # (the current rows read back thru_z = infinity and/or out_z = infinity).
 model: models/position.yaml
-tags: [m7, m3, bitemporal, temporal, history]
+tags: [m7, m3, bitemporal, temporal, history, first-implementation-mvp]
 operation:
   history:
     operand:

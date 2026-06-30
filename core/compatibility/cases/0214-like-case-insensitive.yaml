@@ -9,7 +9,7 @@
 # matrix. (MariaDB's default collation is case-insensitive on its own, but the
 # explicit `lower()` folding is the portable contract and matches the same rows.)
 model: models/orders.yaml
-tags: [m2, like, string, caseInsensitive, dialect]
+tags: [m2, like, string, caseInsensitive, dialect, first-implementation-mvp]
 operation:
   like:
     attr: Order.name

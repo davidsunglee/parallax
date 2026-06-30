@@ -2,7 +2,7 @@
 # predicate on their to-one parent. This pins reverse/to-one navigation in
 # addition to the existing to-many parent-to-child navigation cases.
 model: models/orders.yaml
-tags: [m4, navigate, relationship, to-one]
+tags: [m4, navigate, relationship, to-one, first-implementation-mvp]
 operation:
   navigate:
     rel: OrderItem.order
