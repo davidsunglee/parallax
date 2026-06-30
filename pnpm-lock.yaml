@@ -164,6 +164,9 @@ importers:
 
   languages/typescript/packages/sql:
     dependencies:
+      '@parallax/core':
+        specifier: workspace:*
+        version: link:../core
       '@parallax/dialect':
         specifier: workspace:*
         version: link:../dialect

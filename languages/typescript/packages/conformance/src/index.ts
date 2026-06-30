@@ -7,6 +7,12 @@
  * Testcontainers provider lives in the `@parallax/typescript` composition root
  * and is injected through the port.
  */
+
+export {
+  compareRowSet,
+  type RowSetComparison,
+  scalarsEqual,
+} from "./compare.js";
 export {
   describe,
   FIRST_IMPLEMENTATION_MVP_CAPABILITIES,
@@ -28,7 +34,7 @@ export {
 } from "./gate.js";
 export { CaseMatrix, type MatrixEntry, type MatrixStatus } from "./matrix.js";
 export type { CompatibilityDatabaseProvider, ProviderRow } from "./provider.js";
-export { defaultReadProjection, runCompile, runRun } from "./runner.js";
+export { readProjection, runCompile, runRun } from "./runner.js";
 export {
   assertValidEnvelope,
   conformanceAdapterValidator,

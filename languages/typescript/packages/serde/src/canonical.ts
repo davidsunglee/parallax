@@ -16,7 +16,13 @@
  *     attribute / row sequences, so arrays are never sorted;
  *  4. an idempotent, lossless round-trip in both JSON and YAML.
  */
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import {
+  parseDocument,
+  parse as parseYaml,
+  type Scalar,
+  stringify as stringifyYaml,
+  visit,
+} from "yaml";
 
 /** The serde formats with concrete writers. */
 export const JSON_FORMAT = "json" as const;
@@ -78,8 +84,100 @@ export function deserialize(text: string, format: SerdeFormat = JSON_FORMAT): un
   if (format === JSON_FORMAT) {
     return JSON.parse(text);
   }
-  return parseYaml(text);
+  return parseYamlLossless(text);
 }
+
+/**
+ * Parse YAML, but preserve the **exact source text** of any numeric scalar whose
+ * value cannot survive a JavaScript `number` round-trip — carried as a string so
+ * downstream type-aware coercion (the M3 compiler resolving a literal against its
+ * M0 neutral type) can recover the exact int64 / decimal value.
+ *
+ * Why this lives in the serde reader and not only the compiler: `yaml.parse`
+ * (like `JSON.parse`) materializes a numeric scalar as a binary-float `number`
+ * **before** any consumer sees it, so `9223372036854775807` is already
+ * `9223372036854776000` and `1234567890123456.78` is already `…6.8`. Precision is
+ * destroyed at parse time, so it must be preserved at parse time.
+ *
+ * The rule is deliberately type-agnostic and conservative: a float-**safe**
+ * authored number (`42`, `20.00`, `50.75`) keeps its JS-number form — exactly the
+ * Phase-3 wire-form decision the corpus goldens assume (`binds: [42]` is a JSON
+ * number) — and only a genuinely-unrepresentable token (`> 2^53`, or a decimal
+ * the double cannot hold) is preserved as its source string. The M3 compiler then
+ * normalizes it against the resolved attribute type into the canonical wire form.
+ */
+export function parseYamlLossless(text: string): unknown {
+  const doc = parseDocument(text);
+  visit(doc, {
+    Scalar(_key, node: Scalar) {
+      if (typeof node.value === "number" && isLossyNumericScalar(node)) {
+        // Re-tag as a string carrying the exact source text. `toJS` then yields
+        // the source string instead of the precision-truncated number.
+        node.value = node.source ?? String(node.value);
+        node.type = "QUOTE_DOUBLE";
+      }
+    },
+  });
+  return doc.toJS();
+}
+
+/**
+ * True when a numeric YAML scalar's exact source text cannot be reproduced from
+ * its parsed JS `number` — i.e. the double silently dropped digits. Compares the
+ * source's exact decimal value against the value the parsed double denotes; a
+ * scale-only difference (`20.00` vs `20`) is **not** lossy (the numeric value is
+ * identical), so float-safe authored numbers are left untouched.
+ */
+function isLossyNumericScalar(node: Scalar): boolean {
+  const source = node.source;
+  if (source === undefined) {
+    return false;
+  }
+  // Only plain (unquoted) numeric tokens are candidates; an explicitly-quoted or
+  // tagged scalar is already a string and never reached the lossy `number` path.
+  const trimmed = source.trim();
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) {
+    return false;
+  }
+  return !numbersEqual(trimmed, node.value as number);
+}
+
+/**
+ * Whether a decimal source string denotes exactly the same value as a JS number.
+ * Normalizes both to a canonical digit form (strip sign, leading/trailing zeros,
+ * a trailing decimal point) so `20.00` ≡ `20` ≡ `20.` but `9223372036854775807`
+ * ≢ `9223372036854776000`.
+ */
+function numbersEqual(source: string, parsed: number): boolean {
+  // Exponent forms are rare in the corpus; fall back to the parsed value's own
+  // string (an exponent token that survived parsing is, by definition, safe).
+  if (/[eE]/.test(source)) {
+    return Number(source) === parsed;
+  }
+  return canonicalDigits(source) === canonicalDigits(String(parsed));
+}
+
+/** Canonical digit signature of a plain decimal string (sign + digits + scale). */
+function canonicalDigits(text: string): string {
+  let sign = "";
+  let body = text;
+  if (body.startsWith("+")) {
+    body = body.slice(1);
+  } else if (body.startsWith("-")) {
+    sign = "-";
+    body = body.slice(1);
+  }
+  const dot = body.indexOf(".");
+  let intPart = dot === -1 ? body : body.slice(0, dot);
+  let fracPart = dot === -1 ? "" : body.slice(dot + 1);
+  intPart = intPart.replace(/^0+(?=\d)/, "");
+  fracPart = fracPart.replace(/0+$/, "");
+  const digits = fracPart === "" ? intPart : `${intPart}.${fracPart}`;
+  return digits === "0" || digits === "" ? "0" : `${sign}${digits}`;
+}
+
+/** Re-export the JSON-only YAML parser (lossy) for callers that need raw parse. */
+export { parseYaml as parseYamlLossy };
 
 /** `serialize -> deserialize` for one format, returning the parsed node. */
 export function roundTrip(value: unknown, format: SerdeFormat): unknown {
