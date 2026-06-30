@@ -50,11 +50,28 @@ function goldenSql(loaded: ReturnType<typeof loadCase>): string {
 
 const CASES = readAlgebraCases();
 
+/**
+ * The exact in-scope ID set Phase 4 contracts: `0001`/`0002`/`0006` plus the
+ * full `0201`–`0232` read family (32 cases) = 35. `0003` is excluded
+ * (`OUT_OF_PHASE`, scalar bytes projection); `0004`/`0005` are `writeSequence`
+ * and naturally filtered by shape. Asserting the EXACT set — not a `>= N`
+ * lower bound — makes a discovery regression that silently drops a 02xx case
+ * fail loudly instead of passing vacuously.
+ */
+const EXPECTED_IDS: readonly string[] = [
+  "0001",
+  "0002",
+  "0006",
+  ...Array.from({ length: 32 }, (_, i) => String(201 + i).padStart(4, "0")),
+];
+
 describe("read-algebra compile lane — emitted === golden over the corpus", () => {
-  it("discovers the expected 00xx + 02xx read cases", () => {
-    // Sanity: the 02xx read family is sizeable; a regression that drops cases
-    // (e.g. a shape misdetection) should fail loudly rather than pass vacuously.
-    expect(CASES.length).toBeGreaterThanOrEqual(30);
+  it("discovers exactly the in-scope 00xx + 02xx read cases", () => {
+    const discovered = CASES.map(({ id }) => id).sort();
+    expect(discovered).toEqual([...EXPECTED_IDS].sort());
+    // `0003` is read-shaped + mvp-tagged but a documented exclusion (scalar
+    // bytes `encode(...)` projection); it must NOT leak into the in-scope set.
+    expect(discovered).not.toContain("0003");
   });
 
   it.each(CASES)("$id compiles to the golden Postgres SQL + binds", ({ path }) => {
