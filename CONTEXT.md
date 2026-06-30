@@ -18,6 +18,34 @@ _Avoid_: client, database connection, global session, ambient context
 The explicit entry point for reads, writes, and managed object graph mutation inside a transaction.
 _Avoid_: transaction client, ambient transaction, hidden unit of work
 
+**Inheritance Family**:
+A closed polymorphic entity family with an abstract root and concrete leaf types, where reads may address the family position or narrow to specific leaves.
+_Avoid_: class tree, inheritance graph, open hierarchy
+
+**Abstract Root Type**:
+The non-instantiable entity that names an inheritance family and carries the attributes common to every concrete leaf type.
+_Avoid_: base class object, root row
+
+**Concrete Leaf Type**:
+An instantiable member of an inheritance family that represents one concrete variant of the family.
+_Avoid_: subclass table, child class
+
+**Family Variant Tag**:
+A stable result value that identifies which concrete leaf type a row belongs to when reading through an abstract family root.
+_Avoid_: discriminator column, class name string
+
+**Subtype-Specific Attribute**:
+An attribute declared by a subtype rather than by the abstract family root.
+_Avoid_: subclass field, subtype column
+
+**Value Object**:
+An identity-free composite value owned by an entity and read or written as part of that owning entity.
+_Avoid_: embedded entity, component object, relationship target
+
+**Structured Column**:
+The single persisted storage position for a value object, carrying the whole composite value as one structured value.
+_Avoid_: flattened columns, JSON blob
+
 ### Expressions And Reads
 
 **Predicate**:
@@ -44,6 +72,14 @@ _Avoid_: deepFetch, populate
 A relationship path listed in `includes`; longer paths imply any intermediate relationship paths needed to load them.
 _Avoid_: include tree, populate path
 
+**Subtype Narrowing**:
+A query or include constraint that limits a polymorphic entity position to one or more concrete leaf types while preserving the surrounding operation shape.
+_Avoid_: manual discriminator filter, type cast
+
+**Nested Value-Object Path**:
+A typed path that starts at an entity-owned value object and addresses a nested member inside that value.
+_Avoid_: relationship path, join path, dotted JSON string
+
 ### Relationships And Object Graphs
 
 **To-One Relationship**:
@@ -65,6 +101,18 @@ _Avoid_: cascade-only relationship, child relationship
 **Association Relationship**:
 A non-dependent relationship whose mutation changes an association, foreign key, or join row without creating or deleting the related object.
 _Avoid_: owned relationship
+
+**Association Entity**:
+A mapped entity whose rows represent links between entity identities, usually backed by an association table. It may be exposed directly for explicit writes and link attributes, while a many-to-many relationship can navigate through it without making callers name it for ordinary reads.
+_Avoid_: join entity, mapping type, link table
+
+**Polymorphic Relationship**:
+A relationship whose target is an abstract family root and whose navigation may produce objects belonging to one or more concrete leaf types in that family.
+_Avoid_: generic relationship, untyped relationship
+
+**Narrowed Relationship View**:
+A named relationship view produced by subtype narrowing, representing the exact narrowed relationship that was requested without implying the full relationship collection is loaded.
+_Avoid_: partially loaded relationship, filtered array
 
 **Managed Object Graph Mutation**:
 A change made through a managed domain object or one of its relationship references.
@@ -129,6 +177,12 @@ _Avoid_: JSON mapper, object dump
 **Create Payload**:
 A plain input object accepted by a create operation to construct and persist a new managed domain object.
 _Avoid_: unmanaged entity, insert entity
+
+### Conformance And Scope
+
+**Conformance Slice**:
+A declared subset of the compatibility corpus that an implementation claims through the conformance adapter for a specific implementation milestone.
+_Avoid_: module tier, partial pass list, ad hoc skip list
 
 ### Future Plain-Data Query Shapes
 
