@@ -16,7 +16,13 @@
 import { quoteIdentifier } from "@parallax/dialect";
 import { type Operation, parseOperation } from "@parallax/operation";
 import { describe, expect, it } from "vitest";
-import { type Bind, compile, type ResolvedColumn, type SchemaResolver } from "../src/index.js";
+import {
+  type Bind,
+  coerceBind,
+  compile,
+  type ResolvedColumn,
+  type SchemaResolver,
+} from "../src/index.js";
 
 /** The `orders` columns the 02xx read algebra ranges over (name → column + M0 type). */
 const ORDERS: Record<string, { column: string; type: string }> = {
@@ -406,5 +412,20 @@ describe("type-aware bind coercion (carry-forward task 1)", () => {
       ordersResolver(),
     );
     expect(result.binds).toEqual([20.0, 50.75]);
+  });
+
+  it("rejects a non-safe JS-number int64 (precision already lost; must be authored as a string)", () => {
+    // The serde reader preserves a precision-unsafe int64 token as a STRING, so a
+    // non-safe JS number reaching coercion has already rounded — stringifying it
+    // would bless a lossy value. The coercer fails loud instead. `MAX_SAFE + 2`
+    // is exactly representable as a double yet `Number.isSafeInteger` is false.
+    const unsafe = Number.MAX_SAFE_INTEGER + 2;
+    expect(Number.isSafeInteger(unsafe)).toBe(false);
+    expect(() => coerceBind(unsafe, "int64")).toThrow(/exceeds the IEEE-754 safe-integer range/);
+  });
+
+  it("keeps a float-safe JS-number int64 as the same number (the safe path is unchanged)", () => {
+    expect(coerceBind(42, "int64")).toBe(42);
+    expect(typeof coerceBind(42, "int64")).toBe("number");
   });
 });
