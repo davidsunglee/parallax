@@ -1,8 +1,9 @@
 /**
  * `@parallax/core` — M0 core conventions.
  *
- * This phase exports only the adapter-envelope types. M0 scalar conventions
- * (`ParallaxDecimal`, `int64`, `timestamp`, wire (de)serialization) land in
- * Phase 2.
+ * Exports the adapter-envelope types and the M0 neutral scalar handling
+ * (`ParallaxDecimal`, `int64` via `bigint`, `timestamp` via `Temporal.Instant`,
+ * the `infinity` sentinel, and the wire (de)serialization rules).
  */
 export * from "./envelope.js";
+export * from "./scalars.js";

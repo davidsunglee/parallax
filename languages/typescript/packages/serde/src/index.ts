@@ -2,7 +2,8 @@
  * `@parallax/serde` — the canonical, format-agnostic serde seam shared by
  * `@parallax/metamodel` (M1) and `@parallax/operation` (M2).
  *
- * The `canonical` / `serialize` / `deserialize` / `assertRoundTrip` surface
- * lands in Phase 2. This phase ships the package shell only.
+ * `canonical` / `serialize` / `deserialize` / `assertRoundTrip` are the public
+ * surface; both consumers route through it so descriptor and operation
+ * encodings canonicalize identically to the Python oracle.
  */
-export {};
+export * from "./canonical.js";

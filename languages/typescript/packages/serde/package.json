@@ -15,5 +15,8 @@
   "scripts": {
     "typecheck": "tsc -b",
     "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
   }
 }
