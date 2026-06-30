@@ -669,11 +669,19 @@ V1 in keeping with the thin-slice posture (cf. TS-0054).
 
 ### 4.5 V1 conformance capability claims
 
-The TypeScript V1 conformance adapter MUST report a case-slice-aware
-`describe` result. A V1 adapter that implements the specified transaction,
-relationship, list, temporal, locking, and M13 benchmark surfaces but still
-defers aggregation, identity-cache scenarios, query-cache scenarios, M9 detached
-merge-back, numeric benchmark targets, and non-Postgres dialects claims
+TypeScript V1 **is** the canonical `first-implementation-mvp` Conformance Slice
+declared in [`scope-and-tiers.md`](../../../core/spec/scope-and-tiers.md#first-implementation-conformance-slice)
+([TS-0064](../docs/adr/0064-adopt-first-implementation-mvp-slice.md)). The V1
+conformance adapter MUST report a case-slice-aware `describe`
+result whose `capabilities` are **exactly** that canonical slice's capabilities —
+the slice is **include-driven** (`caseTags.include: ["first-implementation-mvp"]`),
+so V1 claims precisely the ~97 cases tagged for the slice and returns
+`unsupported` for everything else. A V1 adapter that implements the specified
+transaction, relationship, list, temporal (bitemporal **reads** + audit-only
+processing-temporal), and optimistic-locking surfaces but defers aggregation,
+identity-cache scenarios, query-cache scenarios, M9 detached merge-back, PK
+generation, value objects, inheritance, error classification, bitemporal
+rectangle-split writes, M13 benchmarks, and non-Postgres dialects claims
 capabilities in this shape:
 
 ```json
@@ -698,49 +706,49 @@ capabilities in this shape:
       "m8",
       "m10",
       "m11",
-      "m12",
-      "m13"
+      "m12"
     ],
     "dialects": ["postgres"],
-    "caseShapes": ["read", "writeSequence", "conflict"],
+    "caseShapes": ["read", "writeSequence", "scenario", "conflict"],
     "caseTags": {
-      "exclude": [
-        "aggregate",
-        "projection",
-        "groupBy",
-        "having",
-        "scenario",
-        "cache-hit",
-        "identity",
-        "identity cache",
-        "query cache",
-        "detached",
-        "lifecycle detach"
-      ]
+      "include": ["first-implementation-mvp"]
     },
-    "commands": ["describe", "compile", "run", "benchmark"],
+    "commands": ["describe", "compile", "run"],
     "provisioning": "self-managed"
   }
 }
 ```
 
-The exact module list MUST match the implementation's completed packages. The
+These `capabilities` are mechanically asserted equal to the canonical slice claim
+(see the anti-drift test in
+[`test_conformance_adapter_schema.py`](../../../reference-harness/tests/test_conformance_adapter_schema.py));
+only the `adapter` identity (`language` / `name` / `version`) differs. The
 important V1 rule is the slice boundary:
 
+- The single tag `first-implementation-mvp` **is** the slice: a case is claimed
+  precisely when it carries that tag and also passes the broad module / dialect /
+  shape filters above. Selection is by *presence* of the tag, never by absence, so
+  the V1 claim is immune to the corpus's tag hazards (e.g. the single-case
+  `mariadb` / `identity cache` tags).
 - Aggregation and projection are deferred by §1.8, so 04xx `aggregate` /
-  `groupBy` / `having` cases and cases tagged `projection` are outside the claim
-  even though basic M2 predicate reads are inside it.
+  `groupBy` / `having` cases and cases tagged `projection` are untagged and
+  therefore outside the claim even though basic M2 predicate reads are inside it.
 - The transaction/read-lock/batched-write slice of M8 is inside §3, but the M8
-  identity-cache and query-cache scenario slice is deferred by TS-0054. Therefore
-  `scenario`, `cache-hit`, `identity`, `identity cache`, and `query cache` cases
-  are outside the V1 claim.
-- M9 detached merge-back is deferred by the lifecycle section, so cases tagged
-  `detached` or `lifecycle detach` are outside the V1 claim unless a later
+  identity-cache and query-cache scenario slice is deferred by TS-0054. Those
+  cache/identity cases are untagged and outside the V1 claim.
+- The `scenario` shape is **inside** the claim: the read-your-own-writes scenario
+  `0607-read-your-own-writes` is tagged `first-implementation-mvp` and runs as
+  part of the M8 unit-of-work slice. The deferred M8 cache `scenario` cases
+  (identity / query cache) are simply untagged, so they fall outside the claim
+  without excluding the shape.
+- M9 detached merge-back is deferred by the lifecycle section, so the `detached` /
+  `lifecycle detach` cases are untagged and outside the V1 claim unless a later
   implementation explicitly adds that slice.
-- M13 benchmark execution is inside the V1 claim. The `benchmark` command MUST
-  run the shared benchmark fixtures for the claimed Postgres dialect and emit the
-  report shape specified by §9; only the absolute numeric wall-time and memory
-  targets are deferred pending the first TypeScript baseline.
+- M13 benchmarks are **outside** the V1 claim: `m13` is not in `modules` and the
+  `benchmark` command is not in `commands` (TS-0062, TS-0064). TypeScript still
+  binds to the shared M13 methodology and report shape (§9), but the first build
+  does not *claim* benchmark execution in its conformance slice — the benchmark
+  surface lands after the first slice.
 - MariaDB cases are outside the V1 claim because `dialects` contains only
   `postgres`.
 

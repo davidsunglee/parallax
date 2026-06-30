@@ -13,6 +13,13 @@ from reference_harness.paths import schemas_dir
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 _SPEC_DIR = _REPO_ROOT / "core" / "spec"
+_TS_SPEC = (
+    _REPO_ROOT
+    / "languages"
+    / "typescript"
+    / "spec"
+    / "01-implementation-spec.md"
+)
 
 
 def _validator() -> Draft202012Validator:
@@ -21,17 +28,29 @@ def _validator() -> Draft202012Validator:
     return Draft202012Validator(schema)
 
 
-def _slice_claim_block() -> str:
-    """Extract the canonical slice describe JSON fenced under the slice heading."""
-    scope = (_SPEC_DIR / "scope-and-tiers.md").read_text(encoding="utf-8")
+def _first_json_fence_under_heading(
+    markdown: str, heading_prefix: str, heading_text: str
+) -> str:
+    """Return the first ```json fenced block under the matching heading.
+
+    ``heading_prefix`` is the exact markdown heading marker (e.g. ``"## "`` or
+    ``"### "``); a heading at the same depth (matching ``heading_prefix``) whose
+    text does *not* match ``heading_text`` ends the section. Matching is
+    case-insensitive and trims trailing punctuation/whitespace.
+    """
+    target = heading_text.strip().lower()
+    depth = len(heading_prefix.strip())
     in_section = False
     fence: list[str] | None = None
-    for line in scope.splitlines():
-        if line.startswith("## "):
-            in_section = (
-                line[3:].strip().lower() == "first-implementation conformance slice"
-            )
+    for line in markdown.splitlines():
+        if line.startswith(heading_prefix):
+            in_section = line[len(heading_prefix) :].strip().lower() == target
             continue
+        # A new heading at the same depth (or shallower) closes the section.
+        if in_section and line.startswith("#"):
+            level = len(line) - len(line.lstrip("#"))
+            if level <= depth:
+                break
         if not in_section:
             continue
         if fence is None:
@@ -41,7 +60,25 @@ def _slice_claim_block() -> str:
         if line.strip() == "```":
             return "\n".join(fence)
         fence.append(line)
-    raise AssertionError("no ```json slice claim found under the slice heading")
+    raise AssertionError(
+        f"no ```json block found under heading {heading_text!r}"
+    )
+
+
+def _slice_claim_block() -> str:
+    """Extract the canonical slice describe JSON fenced under the slice heading."""
+    scope = (_SPEC_DIR / "scope-and-tiers.md").read_text(encoding="utf-8")
+    return _first_json_fence_under_heading(
+        scope, "## ", "First-implementation Conformance Slice"
+    )
+
+
+def _ts_v1_claim_block() -> str:
+    """Extract the TypeScript V1 describe JSON fenced under §4.5."""
+    ts_spec = _TS_SPEC.read_text(encoding="utf-8")
+    return _first_json_fence_under_heading(
+        ts_spec, "### ", "4.5 V1 conformance capability claims"
+    )
 
 
 def _valid_describe() -> dict:
@@ -209,3 +246,31 @@ def test_canonical_slice_claim_is_include_driven() -> None:
     assert claim["capabilities"]["caseTags"] == {
         "include": ["first-implementation-mvp"]
     }
+
+
+# --- TypeScript V1 adopts the canonical slice (anti-drift) --------------------
+
+
+def test_typescript_v1_claim_is_schema_valid() -> None:
+    # The §4.5 describe claim must itself be a legal describe document.
+    claim = json.loads(_ts_v1_claim_block())
+    errors = list(_validator().iter_errors(claim))
+    assert errors == []
+
+
+def test_typescript_v1_capabilities_equal_the_canonical_slice() -> None:
+    # TS V1 *is* the canonical first-implementation-mvp slice (Resolved
+    # Question E): its capabilities must equal the canonical claim's
+    # capabilities exactly, so the two can never silently diverge. Only the
+    # adapter identity (language/name/version) is allowed to differ.
+    ts_claim = json.loads(_ts_v1_claim_block())
+    canonical_claim = json.loads(_slice_claim_block())
+    assert ts_claim["capabilities"] == canonical_claim["capabilities"]
+
+
+def test_typescript_v1_claim_adapter_identity_is_typescript() -> None:
+    # Sanity: the one place the two claims are allowed to differ is the adapter
+    # identity. Guards against accidentally copying the reference adapter block.
+    ts_claim = json.loads(_ts_v1_claim_block())
+    assert ts_claim["adapter"]["language"] == "typescript"
+    assert ts_claim["adapter"]["name"] == "@parallax/typescript"
