@@ -11,13 +11,18 @@ filesystem functions. They guard two normative properties of the spec:
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
+
+import yaml
 
 from reference_harness.dep_graph_check import (
     check,
     coverage_errors,
     parse_edges,
     parse_in_scope_modules,
+    parse_profile_claim,
+    profile_errors,
 )
 
 # reference-harness/tests/ -> reference-harness/ -> repo root
@@ -100,3 +105,172 @@ def test_might_do_and_wont_do_tiers_are_excluded_from_the_gate() -> None:
     assert "M98" not in in_scope
     assert "M97" not in in_scope
     assert coverage_errors(scope, _COMPATIBILITY_ROOT) == []
+
+
+# --- the profile (conformance-slice) consistency gate, on synthetic inputs ----
+#
+# These mirror ``test_coverage_gate_fails_on_a_gap``: a synthetic slice claim plus
+# a synthetic ``cases/`` tree, one failing assertion per gate dimension plus a
+# clean pass. The real-corpus assertion lands in Phase 2.
+
+
+def _synthetic_scope(
+    modules: str = '["m1","m2"]',
+    shapes: str = '["read","writeSequence"]',
+    case_tags: str = '{ "include": ["first-implementation-mvp"] }',
+) -> str:
+    """A minimal scope-and-tiers.md carrying the slice heading + a json claim."""
+    return textwrap.dedent(
+        f"""\
+        ## First-implementation Conformance Slice
+
+        Some prose about the slice.
+
+        ```json
+        {{
+          "schemaVersion": "1", "command": "describe", "status": "ok",
+          "adapter": {{ "language": "reference", "name": "parallax-core", "version": "0.1.0" }},
+          "capabilities": {{
+            "modules": {modules},
+            "dialects": ["postgres"],
+            "caseShapes": {shapes},
+            "caseTags": {case_tags},
+            "commands": ["describe","compile","run"],
+            "provisioning": "self-managed"
+          }}
+        }}
+        ```
+
+        Trailing prose.
+        """
+    )
+
+
+def _write_case(cases_dir: Path, name: str, doc: dict) -> None:
+    cases_dir.mkdir(parents=True, exist_ok=True)
+    (cases_dir / name).write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+
+def _clean_read_case(tags: list[str]) -> dict:
+    return {
+        "model": "models/orders.yaml",
+        "tags": tags,
+        "operation": {"all": {}},
+        "goldenSql": {"postgres": "select t0.id from orders t0"},
+        "expectedRows": [{"id": 1}],
+    }
+
+
+def test_parse_profile_claim_extracts_the_embedded_claim() -> None:
+    capabilities = parse_profile_claim(_synthetic_scope())
+    assert capabilities["modules"] == ["m1", "m2"]
+    assert capabilities["caseShapes"] == ["read", "writeSequence"]
+    assert capabilities["caseTags"] == {"include": ["first-implementation-mvp"]}
+
+
+def test_profile_gate_passes_on_a_consistent_slice(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "first-implementation-mvp"]))
+    _write_case(cases, "0002.yaml", _clean_read_case(["m2", "first-implementation-mvp"]))
+    # an untagged case with a stray module must be ignored entirely.
+    _write_case(cases, "0003.yaml", _clean_read_case(["m99", "other"]))
+    assert profile_errors(_synthetic_scope(), tmp_path) == []
+
+
+def test_profile_gate_fails_when_a_claimed_module_is_uncovered(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    # only m1 is carried; the claim also lists m2 -> m2 is uncovered.
+    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "first-implementation-mvp"]))
+    errors = profile_errors(_synthetic_scope(), tmp_path)
+    assert any("m2" in e and "no tagged case" in e for e in errors)
+
+
+def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "first-implementation-mvp"]))
+    # m9 is on a tagged case but not in the claim's modules.
+    _write_case(
+        cases, "0002.yaml", _clean_read_case(["m2", "m9", "first-implementation-mvp"])
+    )
+    errors = profile_errors(_synthetic_scope(), tmp_path)
+    assert any("0002.yaml" in e and "'m9'" in e for e in errors)
+
+
+def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "first-implementation-mvp"]))
+    _write_case(cases, "0002.yaml", _clean_read_case(["m2", "first-implementation-mvp"]))
+    # a conflict-shaped tagged case while the claim allows only read/writeSequence.
+    _write_case(
+        cases,
+        "0003.yaml",
+        {
+            "model": "models/account.yaml",
+            "tags": ["m2", "first-implementation-mvp"],
+            "expectedAffectedRows": 0,
+            "goldenSql": {"postgres": "update account set balance = ? where id = ?"},
+        },
+    )
+    errors = profile_errors(_synthetic_scope(), tmp_path)
+    assert any("0003.yaml" in e and "conflict" in e and "outside" in e for e in errors)
+
+
+def test_profile_gate_fails_on_a_missing_postgres_golden(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "first-implementation-mvp"]))
+    no_golden = _clean_read_case(["m2", "first-implementation-mvp"])
+    no_golden["goldenSql"] = {"mariadb": "select t0.id from orders t0"}
+    _write_case(cases, "0002.yaml", no_golden)
+    errors = profile_errors(_synthetic_scope(), tmp_path)
+    assert any("0002.yaml" in e and "Postgres golden" in e for e in errors)
+
+
+def test_profile_gate_fails_on_an_excluded_tag_when_the_claim_lists_exclude(
+    tmp_path: Path,
+) -> None:
+    cases = tmp_path / "cases"
+    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "first-implementation-mvp"]))
+    _write_case(
+        cases,
+        "0002.yaml",
+        _clean_read_case(["m2", "aggregate", "first-implementation-mvp"]),
+    )
+    scope = _synthetic_scope(
+        case_tags='{ "include": ["first-implementation-mvp"], "exclude": ["aggregate"] }'
+    )
+    errors = profile_errors(scope, tmp_path)
+    assert any("0002.yaml" in e and "excluded" in e and "aggregate" in e for e in errors)
+
+
+def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) -> None:
+    # The scenario shape (0607) carries Postgres golden SQL per step, not at the
+    # top level; the shape-aware golden check must accept it.
+    cases = tmp_path / "cases"
+    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "first-implementation-mvp"]))
+    _write_case(
+        cases,
+        "0002.yaml",
+        {
+            "model": "models/account.yaml",
+            "tags": ["m2", "m8", "first-implementation-mvp"],
+            "roundTrips": 2,
+            "scenario": [
+                {
+                    "write": "insert",
+                    "goldenSql": {"postgres": "insert into account(id) values (?)"},
+                    "binds": [7],
+                },
+                {
+                    "find": {"eq": {"attr": "Account.id", "value": 7}},
+                    "goldenSql": {"postgres": "select t0.id from account t0 where t0.id = ?"},
+                    "binds": [7],
+                    "expectRows": [{"id": 7}],
+                },
+            ],
+        },
+    )
+    scope = _synthetic_scope(
+        modules='["m1","m2","m8"]',
+        shapes='["read","writeSequence","scenario"]',
+    )
+    assert profile_errors(scope, tmp_path) == []
