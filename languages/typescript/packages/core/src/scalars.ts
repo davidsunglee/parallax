@@ -99,12 +99,15 @@ export class ParallaxDecimal {
   }
 
   /**
-   * Construct from any exact source: a decimal string (the canonical wire
-   * form), an integer `number`/`bigint`, or another `ParallaxDecimal`. A
-   * non-integer JS `number` is rejected — binary floats cannot represent exact
-   * decimals, so they must arrive as strings.
+   * Construct from an exact source: a decimal string (the canonical wire form),
+   * an exact `bigint`, or another `ParallaxDecimal`. JS `number` is rejected in
+   * full — even a whole-valued `number` is a binary float that cannot represent
+   * an exact decimal, and the spec's `decimal(p,s)` create/update input is
+   * `ParallaxDecimal | string` with `number` rejected to avoid precision drift
+   * (`spec/01-implementation-spec.md` §2.2.1). Decimals must arrive as exact
+   * strings.
    */
-  static from(input: string | number | bigint | ParallaxDecimal): ParallaxDecimal {
+  static from(input: string | bigint | ParallaxDecimal): ParallaxDecimal {
     if (input instanceof ParallaxDecimal) {
       return input;
     }
@@ -112,12 +115,12 @@ export class ParallaxDecimal {
       return new ParallaxDecimal(new Decimal(input.toString()));
     }
     if (typeof input === "number") {
-      if (!Number.isInteger(input)) {
-        throw new TypeError(
-          `ParallaxDecimal.from rejects a non-integer number (${input}); pass an exact decimal string instead`,
-        );
-      }
-      return new ParallaxDecimal(new Decimal(input));
+      // Defensive runtime guard: the type already excludes `number`, but a JS
+      // caller without types could still pass one. Reject every number — a
+      // float boundary is exactly the precision-drift the seam exists to avoid.
+      throw new TypeError(
+        `ParallaxDecimal.from rejects JS number (${input as number}); pass an exact decimal string instead`,
+      );
     }
     return new ParallaxDecimal(new Decimal(input));
   }
@@ -225,9 +228,10 @@ function normalizeRawTimestamp(raw: string): string {
 }
 
 /**
- * Convert a `bigint` to its exact microsecond count for a `Temporal.Instant`
- * built from a whole-second epoch — a small helper used by interval math in
- * later phases. Exposed here so the µs constants have a single owner.
+ * Build a `Temporal.Instant` from an exact microseconds-since-epoch count
+ * (scaling µs → ns, the unit `Temporal.Instant` stores) — a small helper used
+ * by interval math in later phases. Exposed here so the µs constants have a
+ * single owner.
  */
 export function microsToInstant(epochMicros: bigint): Temporal.Instant {
   return new Temporal.Instant(epochMicros * NANOS_PER_MICRO);
@@ -292,7 +296,18 @@ export function bytesToHex(bytes: Uint8Array): string {
   return hex;
 }
 
-/** Parse a lowercase/uppercase hex string back into a byte buffer. */
+/** A single byte's worth of hex: exactly two hex digits. */
+const HEX_BYTE = /^[0-9a-fA-F]{2}$/;
+
+/**
+ * Parse a lowercase/uppercase hex string back into a byte buffer.
+ *
+ * Each two-character chunk is validated against {@link HEX_BYTE} and a
+ * non-hex chunk throws. This is load-bearing: `Number.parseInt` yields `NaN`
+ * for `"zz"` (silently stored as `0`) and stops at the first invalid char for
+ * `"0g"` (silently `0`), so without per-chunk validation invalid wire bytes
+ * would round-trip as different — but plausible — bytes.
+ */
 export function bytesFromHex(hex: string): Uint8Array {
   const clean = hex.startsWith("\\x") ? hex.slice(2) : hex;
   if (clean.length % 2 !== 0) {
@@ -300,7 +315,11 @@ export function bytesFromHex(hex: string): Uint8Array {
   }
   const out = new Uint8Array(clean.length / 2);
   for (let i = 0; i < out.length; i += 1) {
-    out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+    const chunk = clean.slice(i * 2, i * 2 + 2);
+    if (!HEX_BYTE.test(chunk)) {
+      throw new RangeError(`invalid hex byte '${chunk}' at offset ${i * 2} in: ${hex}`);
+    }
+    out[i] = Number.parseInt(chunk, 16);
   }
   return out;
 }
