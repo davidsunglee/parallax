@@ -1,8 +1,22 @@
 /**
  * `@parallax/dialect` — M11 database seam & portability.
  *
- * The Postgres runtime DB seam (placeholder translation, type coercion, DDL,
- * read-lock suffix, `execute`) lands in Phase 3. This phase ships the package
- * shell only.
+ * The Postgres runtime DB seam: `?`→`$n` placeholder translation, the
+ * neutral-type vocabulary, identifier quoting, the read-lock suffix, the
+ * raw-string type parsers that normalize driver output at the adapter boundary,
+ * and `CREATE TABLE` DDL derivation from a parsed descriptor.
  */
-export {};
+
+export { columnOrder, ddlForDescriptor } from "./ddl.js";
+export {
+  bytesFromDb,
+  int8FromRaw,
+  numericFromRaw,
+  POSTGRES_DIALECT,
+  postgresColumnType,
+  quoteIdentifier,
+  RAW_TEXT_OIDS,
+  readLockSuffix,
+  timestampFromDb,
+  toPositionalPlaceholders,
+} from "./postgres.js";
