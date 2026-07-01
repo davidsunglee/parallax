@@ -260,8 +260,8 @@ export class TransactionWriter {
     }
     const buffered = [...this.insertBuffer];
     this.insertBuffer.length = 0;
-    // Group per entity (one multi-row INSERT each) preserving first-appearance
-    // order, so a referenced parent's inserts precede a child's (`0612`).
+    // Group per entity (one multi-row INSERT each), remembering first-appearance
+    // order (the tiebreaker among FK-independent entities).
     const order: EntityMetadata[] = [];
     const rowsByEntity = new Map<string, unknown[][]>();
     for (const { entity, binds } of buffered) {
@@ -273,7 +273,13 @@ export class TransactionWriter {
         bucket.push([...binds]);
       }
     }
-    const steps: WriteStep[] = order.map((entity) => ({
+    // `combineWrites` flushes steps in DECLARED order — it does NOT infer FK
+    // dependencies (uow.ts) — so a referenced parent's insert must be handed to it
+    // BEFORE a dependent child's. Topologically sort the grouped entities so a
+    // parent precedes a child that points at it (`0612`), regardless of the order
+    // the developer authored the `create` calls in.
+    const sorted = fkSortInsertOrder(order);
+    const steps: WriteStep[] = sorted.map((entity) => ({
       mutation: "insert",
       target: {
         table: quoteIdentifier(entity.table),
@@ -357,22 +363,28 @@ export class TransactionWriter {
     });
   }
 
-  /** A plain non-temporal `update`: one keyed UPDATE for the selected pk. */
+  /**
+   * A plain non-temporal `update`: one keyed UPDATE for the selected pk that
+   * applies EVERY authored assignment (`set col1 = ?, col2 = ?, … where pk = ?`),
+   * binding the values in declaration order followed by the pk (spec §3: `update`
+   * applies the explicit assignment array). An empty `set` is a no-op.
+   */
   private async plainUpdate(
     entity: EntityMetadata,
     predicate: Predicate,
     options: UpdateOptions,
   ): Promise<WriteResult> {
-    const assignment = options.set[0];
-    if (assignment === undefined) {
+    if (options.set.length === 0) {
       return { affectedRows: 0 };
     }
-    const setColumn = quoteIdentifier(entity.attributeByName(assignment.attr).column);
+    const setClause = options.set
+      .map((a) => `${quoteIdentifier(entity.attributeByName(a.attr).column)} = ?`)
+      .join(", ");
     const sql =
-      `update ${quoteIdentifier(entity.table)} set ${setColumn} = ? ` +
+      `update ${quoteIdentifier(entity.table)} set ${setClause} ` +
       `where ${quoteIdentifier(pkColumn(entity))} = ?`;
     const affectedRows = await this.exec(sql, [
-      bindValue(assignment.value),
+      ...options.set.map((a) => bindValue(a.value)),
       this.pkValue(entity, predicate),
     ]);
     return { affectedRows };
@@ -405,6 +417,55 @@ export class TransactionWriter {
 /** Render one named input value to the neutral WIRE form the driver binds. */
 function bindValue(value: unknown): unknown {
   return toWire(value);
+}
+
+/**
+ * Order the grouped insert entities FK-safe: a referenced parent precedes a
+ * dependent child (`0612`). A `many-to-one` relationship is the FK-holding side,
+ * so an entity that declares one depends on that `relatedEntity` — but only when
+ * that parent is ALSO in this insert set (an out-of-set reference is already
+ * present, so it imposes no ordering here). The sort is STABLE: among entities
+ * with no in-set dependency it preserves first-appearance order (the tiebreak),
+ * matching `combineWrites`'s declared-order flush. A dependency cycle (which a
+ * self-consistent model has none of) falls back to first-appearance order.
+ */
+function fkSortInsertOrder(order: readonly EntityMetadata[]): readonly EntityMetadata[] {
+  const inSet = new Set(order.map((entity) => entity.name));
+  // Each entity's in-set parents (the `relatedEntity` of its `many-to-one` rels).
+  const parentsOf = new Map<string, Set<string>>();
+  for (const entity of order) {
+    const parents = new Set<string>();
+    for (const rel of entity.relationships()) {
+      if (rel.cardinality === "many-to-one" && inSet.has(rel.relatedEntity)) {
+        parents.add(rel.relatedEntity);
+      }
+    }
+    parentsOf.set(entity.name, parents);
+  }
+  const emitted = new Set<string>();
+  const result: EntityMetadata[] = [];
+  // Repeatedly emit, in first-appearance order, the first not-yet-emitted entity
+  // all of whose in-set parents are already emitted (a stable topological order).
+  while (result.length < order.length) {
+    const next = order.find(
+      (entity) =>
+        !emitted.has(entity.name) &&
+        [...(parentsOf.get(entity.name) ?? [])].every((parent) => emitted.has(parent)),
+    );
+    if (next === undefined) {
+      // A dependency cycle: fall back to first-appearance order for the rest.
+      for (const entity of order) {
+        if (!emitted.has(entity.name)) {
+          emitted.add(entity.name);
+          result.push(entity);
+        }
+      }
+      break;
+    }
+    emitted.add(next.name);
+    result.push(next);
+  }
+  return result;
 }
 
 /** The quoted columns of an entity in `columnOrder` (descriptor order). */
