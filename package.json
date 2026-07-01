@@ -15,17 +15,24 @@
     "ts:test": "vitest run --root languages/typescript",
     "ts:lint": "pnpm run ts:biome && pnpm run ts:dep-graph",
     "ts:biome": "biome check languages/typescript",
-    "ts:dep-graph": "depcruise --config languages/typescript/.dependency-cruiser.cjs languages/typescript/packages/*/src"
+    "ts:dep-graph": "depcruise --config languages/typescript/.dependency-cruiser.cjs languages/typescript/packages/*/src",
+    "ts:package-check": "pnpm run ts:publint && pnpm run ts:attw && pnpm run ts:knip",
+    "ts:publint": "pnpm -r --filter \"@parallax/*\" exec publint --strict",
+    "ts:attw": "pnpm -r --filter \"@parallax/*\" exec attw --pack --profile esm-only .",
+    "ts:knip": "knip --config languages/typescript/knip.json"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.0",
     "@biomejs/biome": "^2.0.0",
     "@commitlint/cli": "^19.6.1",
     "@commitlint/config-conventional": "^19.6.0",
     "@types/node": "^22.10.0",
     "dependency-cruiser": "^18.0.0",
     "husky": "^9.1.7",
+    "knip": "^5.0.0",
     "lint-staged": "^15.3.0",
     "markdownlint-cli2": "^0.16.0",
+    "publint": "^0.3.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },

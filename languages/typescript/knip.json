@@ -1,0 +1,10 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    "languages/typescript/packages/*": {
+      "ignoreDependencies": ["@parallax/.+"]
+    }
+  },
+  "ignoreExportsUsedInFile": true,
+  "ignore": ["**/test/fixtures/**", "languages/typescript/vitest.config.ts"]
+}
