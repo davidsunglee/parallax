@@ -7,8 +7,13 @@
  * (shared path prefixes are fetched once). The algorithm, per level:
  *
  *  1. Gather the **distinct, non-null** parent-key values from the rows already
- *     fetched at the level above (first-appearance order, so the `IN` binds are
- *     deterministic and match the golden).
+ *     fetched at the level above, in **first-appearance order** (a single dedup
+ *     pass, no sort). The `IN`-list order is semantically irrelevant — it never
+ *     affects which child rows match, and their order is fixed by the level's own
+ *     `orderBy` — so the runtime does NOT pay to canonicalize it (a sort would be
+ *     O(k·log k) over up to millions of keys, purely to satisfy a fixture). The
+ *     conformance harness compares each level's binds as an order-insensitive
+ *     SET, exactly as the reference oracle does, so first-appearance conforms.
  *  2. If that key set is **empty**, the level is elided — no query is issued and
  *     no descendant level below it runs either (an empty root short-circuits the
  *     whole subtree; an empty intermediate elides only its own descendants).
@@ -123,8 +128,13 @@ async function fetchLevels(
 }
 
 /**
- * The distinct, non-null parent-key values from `rows` (first-appearance order).
- * Order is load-bearing: it fixes the `IN`-bind order the golden pins.
+ * The distinct, non-null parent-key values from `rows`, in **first-appearance
+ * order** (one dedup pass, O(k), no sort). The `IN`-list order is not part of the
+ * contract: it never changes which children match, and the child result order is
+ * fixed by the level's `orderBy`. So the runtime keeps the keys in the order the
+ * rows arrived rather than paying an O(k·log k) sort — material at millions of
+ * keys — purely to line up with the golden. The conformance harness compares
+ * these binds as an order-insensitive SET, matching the reference oracle.
  */
 function distinctKeys(rows: readonly Row[], parentColumn: string): readonly Key[] {
   const seen = new Set<string>();
