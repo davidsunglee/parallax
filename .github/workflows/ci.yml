@@ -35,6 +35,53 @@ jobs:
       - name: just dep-graph
         run: just dep-graph
 
+  # The Docker-free TypeScript lane: typecheck (tsc -b), Biome, the
+  # dependency-cruiser DAG gate, the full-slice compile sweep + honesty gate +
+  # case-matrix report, and the package-export health checks (publint / attw /
+  # knip). This is the fast inner-loop lane; no Docker required.
+  ts-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck (tsc -b)
+        run: pnpm run ts:typecheck
+      - name: Lint (biome + dependency-cruiser)
+        run: pnpm run ts:lint
+      - name: Package-export health (publint + attw + knip)
+        run: pnpm run ts:package-check
+      - name: Conformance compile sweep (Docker-free)
+        run: pnpm exec vitest run --root languages/typescript packages/conformance
+
+  # The Docker-backed TypeScript run lane: provision postgres:17 via
+  # Testcontainers and run the full first-implementation-mvp slice end-to-end
+  # (rows / graph / tableState / affectedRows + roundTrips), asserting the
+  # case-matrix report is green. Docker is available on GitHub-hosted ubuntu
+  # runners, so Testcontainers works out of the box.
+  ts-run:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dialect: [postgres]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the composition-root dist (tsc -b)
+        run: pnpm run ts:typecheck
+      - name: Conformance run lane (${{ matrix.dialect }}, Testcontainers)
+        run: pnpm exec vitest run --root languages/typescript packages/typescript
+
   # Conventional-commit validation across the PR commit range.
   commitlint:
     runs-on: ubuntu-latest

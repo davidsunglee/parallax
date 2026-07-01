@@ -66,16 +66,30 @@ const OID = {
  * serializer by the prepared statement's parameter OID (what the server says the
  * column is), so registering a custom `int8` / `numeric` / `date` type means our
  * serializer runs when a fixture value binds to that column. The wire protocol
- * is text, so it MUST return a string (porsager's own `int8`/`numeric` defaults
- * likewise stringify). A `null` binds as SQL NULL untouched.
+ * is text, so the default `serialize` stringifies (porsager's own `int8` /
+ * `numeric` defaults likewise stringify) and a `null` binds as SQL NULL
+ * untouched. A type with a non-string bind form (`bytea`) supplies its own
+ * `serialize` so the byte payload renders to the driver's expected wire form.
  */
-function rawType(oid: number, parse: (raw: string) => unknown) {
-  return {
-    to: oid,
-    from: [oid],
-    serialize: (v: unknown) => (v === null || v === undefined ? v : String(v)),
-    parse,
-  };
+function rawType(
+  oid: number,
+  parse: (raw: string) => unknown,
+  serialize: (v: unknown) => unknown = (v) => (v === null || v === undefined ? v : String(v)),
+) {
+  return { to: oid, from: [oid], serialize, parse };
+}
+
+/**
+ * Serialize a `bytea` bind to Postgres' `\xDEADBEEF` hex wire form (the same
+ * form porsager's native `bytea` serializer produces). A fixture `payload` loaded
+ * from a YAML `!!binary` tag arrives as a `Buffer` / `Uint8Array`; the default
+ * `String(v)` serializer would flatten it to `""`, so `bytea` overrides it.
+ */
+function serializeBytea(v: unknown): unknown {
+  if (v === null || v === undefined) {
+    return v;
+  }
+  return `\\x${Buffer.from(v as Uint8Array).toString("hex")}`;
 }
 
 /** Render a coerced scalar to its canonical neutral **wire** form (§2.2.1). */
@@ -105,8 +119,10 @@ function wireParsers() {
     numeric: rawType(RAW_TEXT_OIDS.numeric, (raw) => numericFromRaw(raw).toFixedString()),
     timestamptz: rawType(RAW_TEXT_OIDS.timestamptz, (raw) => toWireScalar(timestampFromDb(raw))),
     timestamp: rawType(RAW_TEXT_OIDS.timestamp, (raw) => toWireScalar(timestampFromDb(raw))),
-    bytea: rawType(RAW_TEXT_OIDS.bytea, (raw) =>
-      bytesToHex(Buffer.from(raw.startsWith("\\x") ? raw.slice(2) : raw, "hex")),
+    bytea: rawType(
+      RAW_TEXT_OIDS.bytea,
+      (raw) => bytesToHex(Buffer.from(raw.startsWith("\\x") ? raw.slice(2) : raw, "hex")),
+      serializeBytea,
     ),
     date: rawType(OID.date, (raw) => raw.trim()),
     time: rawType(OID.time, (raw) => raw.trim()),

@@ -36,6 +36,7 @@ import {
   type AsOfFragment,
   type Axis,
   type AxisPins as CompilerAxisPins,
+  type ProjectionColumn,
   quoteIdentifier,
   type ResolvedColumn,
   type ResolvedRelationship,
@@ -72,7 +73,7 @@ export class MetamodelSchema implements SchemaResolver {
   constructor(
     private readonly metamodel: Metamodel,
     private readonly rootEntity: EntityMetadata,
-    private readonly projection: readonly string[],
+    private readonly projection: readonly ProjectionColumn[],
   ) {}
 
   resolveAttribute(ref: string): ResolvedColumn {
@@ -119,7 +120,7 @@ export class MetamodelSchema implements SchemaResolver {
     return this.rootEntity.table;
   }
 
-  rootProjection(): readonly string[] {
+  rootProjection(): readonly ProjectionColumn[] {
     return this.projection;
   }
 
@@ -170,25 +171,66 @@ export class MetamodelSchema implements SchemaResolver {
 }
 
 /**
- * Resolve a flat read case's projection — the ordered, quoted output columns the
- * SELECT projects — **from the case**, matching the golden by construction (the
- * Phase-3 `[pk, firstNonPk]` heuristic could not express `0226`'s `distinct
- * active` nor a wider `orders` read).
+ * Resolve a flat read case's projection — the ordered output columns the SELECT
+ * projects — **from the case**, matching the golden by construction (the Phase-3
+ * `[pk, firstNonPk]` heuristic could not express `0226`'s `distinct active` nor a
+ * wider `orders` read).
  *
  * The case's `expectedRows` keys ARE the SQL output column names the golden
- * projects and the harness compares against. Each key is quoted through the M11
- * seam so a reserved/non-simple output name (`order`) is byte-identical to the
- * golden. When `expectedRows` is empty (e.g. `0221-none`), the case provides no
+ * projects and the harness compares against. Each key resolves back to its
+ * physical attribute so the compiler can lower a `bytes` column to the
+ * `encode(t0.<col>, ?) <col>_hex` hex form (M0 scalar-serde projection — `0003`):
+ * a direct column match projects verbatim; an output ending `_hex` whose stripped
+ * name is a `bytes` attribute projects through `encode(...)`. A key that names no
+ * attribute (a computed output) projects verbatim as a plain quoted column, as
+ * before. When `expectedRows` is empty (e.g. `0221-none`), the case provides no
  * key witness, so we fall back to the metamodel default — the primary key plus
  * the first non-key attribute.
  */
-export function readProjection(loaded: LoadedCase, rootEntity: EntityMetadata): readonly string[] {
+export function readProjection(
+  loaded: LoadedCase,
+  rootEntity: EntityMetadata,
+): readonly ProjectionColumn[] {
   const expectedRows = loaded.raw.expectedRows as readonly Record<string, unknown>[] | undefined;
   const firstRow = expectedRows?.[0];
   if (firstRow && Object.keys(firstRow).length > 0) {
-    return Object.keys(firstRow).map(quoteIdentifier);
+    return Object.keys(firstRow).map((output) => projectionForOutput(output, rootEntity));
   }
-  return defaultEntityProjection(rootEntity).map((attr) => quoteIdentifier(attr.column));
+  return defaultEntityProjection(rootEntity).map(attributeProjection);
+}
+
+/**
+ * Resolve one `expectedRows` output column name to its projection descriptor,
+ * against the root entity's attributes. Order of resolution:
+ *  1. an attribute whose physical `column` equals the output → project verbatim
+ *     (with its M0 type, so a `bytes` column authored WITHOUT the `_hex` output
+ *     alias would still lower — belt-and-braces, though the corpus always uses the
+ *     `_hex` form);
+ *  2. an output ending `_hex` whose stripped name is a `bytes` attribute's column
+ *     → project through `encode(t0.<col>, ?) <output>` (the `0003` hex form);
+ *  3. otherwise a plain quoted column named by the output (a computed/derived
+ *     output the model does not declare — the pre-0003 behavior).
+ */
+function projectionForOutput(output: string, entity: EntityMetadata): ProjectionColumn {
+  const direct = entity.attributes().find((attr) => attr.column === output);
+  if (direct) {
+    return attributeProjection(direct);
+  }
+  if (output.endsWith("_hex")) {
+    const physical = output.slice(0, -"_hex".length);
+    const bytesAttr = entity
+      .attributes()
+      .find((attr) => attr.column === physical && attr.type === "bytes");
+    if (bytesAttr) {
+      return { column: quoteIdentifier(bytesAttr.column), type: "bytes", outputName: output };
+    }
+  }
+  return { column: quoteIdentifier(output) };
+}
+
+/** A verbatim projection descriptor for an attribute (quoted column + M0 type). */
+function attributeProjection(attr: NormalizedAttribute): ProjectionColumn {
+  return { column: quoteIdentifier(attr.column), type: attr.type };
 }
 
 /**
@@ -204,25 +246,25 @@ export function readProjection(loaded: LoadedCase, rootEntity: EntityMetadata): 
 export function rootDeepFetchProjection(
   loaded: LoadedCase,
   paths: readonly (readonly string[])[],
-): readonly string[] {
+): readonly ProjectionColumn[] {
   const graph = expectedGraph(loaded);
   const rootEntityName = Object.keys(graph)[0];
   const rootRows = rootEntityName ? (graph[rootEntityName] ?? []) : [];
   const witness = rootRows[0];
   const topLevelRels = new Set(paths.map((path) => relName(path[0] ?? "")));
+  const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
+  const rootClass = classOf(paths[0]?.[0]) ?? rootEntityName;
+  const rootEntity = rootClass ? metamodel.entity(rootClass) : metamodel.entities()[0];
   if (witness && typeof witness === "object") {
-    return objectColumns(witness as Record<string, unknown>, topLevelRels);
+    return objectColumns(witness as Record<string, unknown>, topLevelRels, rootEntity);
   }
   // No witness (empty root): fall back to the metamodel default for the root
   // entity, named by the first hop of the first path (`Order` in `[Order.items,
   // …]`), or the graph root key, or the model's first entity as a last resort.
-  const rootClass = classOf(paths[0]?.[0]) ?? rootEntityName;
-  const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
-  const entity = rootClass ? metamodel.entity(rootClass) : metamodel.entities()[0];
-  if (!entity) {
+  if (!rootEntity) {
     return [];
   }
-  return defaultEntityProjection(entity).map((attr) => quoteIdentifier(attr.column));
+  return defaultEntityProjection(rootEntity).map(attributeProjection);
 }
 
 /** The class part of a `Class.rel` reference, or `undefined` when absent. */
@@ -245,11 +287,11 @@ export function childProjection(
   loaded: LoadedCase,
   node: { relRef: string; children: readonly { relRef: string }[] },
   childEntity: EntityMetadata,
-): readonly string[] {
+): readonly ProjectionColumn[] {
   const witness = findChildWitness(expectedGraph(loaded), node);
   const childRelNames = new Set(node.children.map((child) => relName(child.relRef)));
   if (witness) {
-    return objectColumns(witness, childRelNames);
+    return objectColumns(witness, childRelNames, childEntity);
   }
   return fallbackChildProjection(childEntity, node);
 }
@@ -263,7 +305,7 @@ export function childProjection(
 function fallbackChildProjection(
   childEntity: EntityMetadata,
   node: { relRef: string },
-): readonly string[] {
+): readonly ProjectionColumn[] {
   // The relationship name lives on the PARENT entity; the child entity does not
   // declare it, so the orderBy is unavailable here. The non-temporal corpus only
   // reaches this path for `Order.items` (no nullable orderBy key), so projecting
@@ -273,17 +315,24 @@ function fallbackChildProjection(
   return childEntity
     .attributes()
     .filter((attr) => !attr.nullable)
-    .map((attr) => quoteIdentifier(attr.column));
+    .map(attributeProjection);
 }
 
-/** The keys of an `expectedGraph` object as quoted columns, minus relationship names. */
+/**
+ * The keys of an `expectedGraph` object as projection descriptors, minus
+ * relationship names. Each key resolves back to its physical attribute (so a
+ * `bytes` column would lower, matching the flat-read rule) — but the deep-fetch
+ * corpus projects only plain scalar columns, so this is verbatim in practice.
+ * An `entity` is passed so the type + `_hex` resolution matches `readProjection`.
+ */
 function objectColumns(
   object: Record<string, unknown>,
   excluded: ReadonlySet<string>,
-): readonly string[] {
+  entity: EntityMetadata | undefined,
+): readonly ProjectionColumn[] {
   return Object.keys(object)
     .filter((key) => !excluded.has(key))
-    .map(quoteIdentifier);
+    .map((key) => (entity ? projectionForOutput(key, entity) : { column: quoteIdentifier(key) }));
 }
 
 /**
@@ -363,7 +412,7 @@ function defaultEntityProjection(entity: EntityMetadata): readonly NormalizedAtt
 export function schemaForRoot(
   loaded: LoadedCase,
   operation: Operation,
-  projection: readonly string[],
+  projection: readonly ProjectionColumn[],
 ): MetamodelSchema {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const rootEntity = rootEntityFor(metamodel, operation);
@@ -374,7 +423,7 @@ export function schemaForRoot(
 export function schemaForEntity(
   loaded: LoadedCase,
   entityName: string,
-  projection: readonly string[],
+  projection: readonly ProjectionColumn[],
 ): MetamodelSchema {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   return new MetamodelSchema(metamodel, metamodel.entity(entityName), projection);

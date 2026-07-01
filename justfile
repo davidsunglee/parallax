@@ -63,6 +63,28 @@ ts-typecheck:
 ts-test:
     pnpm run ts:test
 
+# Package-export health across the 13-package ESM workspace: publint (each
+# package's `exports` / type entry points are consumable), attw (cross-resolver
+# type resolution), and knip (unused files / exports / dependencies). Docker-free.
+ts-package-check:
+    pnpm run ts:package-check
+
+# The Docker-free conformance lane: the full-slice compile sweep + the honesty
+# gate (in-claim never `unsupported`; out-of-claim ⇒ `unsupported` with the right
+# diagnostic) + the case-matrix report. This is what agents iterate against in
+# seconds; it needs the built CLI dist, so it typechecks first.
+ts-conformance-compile:
+    pnpm run ts:typecheck
+    pnpm exec vitest run --root languages/typescript packages/conformance
+
+# The Docker-backed conformance run lane: provision `postgres:17` via
+# Testcontainers and run the full `first-implementation-mvp` slice end-to-end
+# (rows / graph / tableState / affectedRows + roundTrips), asserting the
+# case-matrix report is green. Docker must be running.
+ts-conformance-run:
+    pnpm run ts:typecheck
+    pnpm exec vitest run --root languages/typescript packages/typescript
+
 # ---------------------------------------------------------------------------
 # test: the full compatibility suite. Boots real databases via Testcontainers,
 # so Docker must be running.
@@ -71,7 +93,10 @@ test:
     cd {{harness}} && uv run pytest
 
 # verify: everything that must be green before merging (no Docker-less escape).
-verify: lint dep-graph test
+# Folds in the TypeScript lanes: the static checks (typecheck / biome / dep-graph
+# / package-export health) and both conformance lanes (Docker-free compile sweep
+# + Docker-backed run lane).
+verify: lint dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run test
 
 # matrix: emit the compatibility-matrix report (implementations x databases).
 # Wires Postgres + MariaDB (Phase 10 added MariaDB as the second dialect).

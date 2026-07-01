@@ -49,7 +49,16 @@ export {
   type GateResult,
   inClaim,
 } from "./gate.js";
-export { CaseMatrix, type MatrixEntry, type MatrixStatus } from "./matrix.js";
+export {
+  CaseMatrix,
+  isGreenStatus,
+  type MatrixEntry,
+  type MatrixReport,
+  type MatrixResidual,
+  type MatrixStatus,
+  renderMatrixReport,
+  summarizeMatrix,
+} from "./matrix.js";
 export type { CompatibilityDatabaseProvider, ProviderRow } from "./provider.js";
 export { readProjection, runCompile, runRun } from "./runner.js";
 export {

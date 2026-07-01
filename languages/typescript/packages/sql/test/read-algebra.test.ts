@@ -21,6 +21,7 @@ import {
   coerceBind,
   compile,
   type ResolvedColumn,
+  type ResolvedRelationship,
   type SchemaResolver,
 } from "../src/index.js";
 
@@ -46,8 +47,11 @@ function ordersResolver(projection: readonly string[] = ["id", "name"]): SchemaR
       }
       return { table: "orders", column: quoteIdentifier(attr.column), type: attr.type };
     },
+    resolveRelationship(ref: string): ResolvedRelationship {
+      throw new Error(`the read-algebra unit tests do not navigate relationships: '${ref}'`);
+    },
     rootTable: () => "orders",
-    rootProjection: () => projection.map(quoteIdentifier),
+    rootProjection: () => projection.map((name) => ({ column: quoteIdentifier(name) })),
   };
 }
 

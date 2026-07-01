@@ -36,6 +36,7 @@ export {
   compile,
   compilePredicate,
   newCompileCtx,
+  type ProjectionColumn,
   type ResolvedColumn,
   type ResolvedRelationship,
   type SchemaResolver,

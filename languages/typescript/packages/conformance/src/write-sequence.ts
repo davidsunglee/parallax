@@ -220,11 +220,3 @@ function writeTargetFor(entity: EntityMetadata): WriteTarget {
     ...(processing === undefined ? {} : { toColumn: quoteIdentifier(processing.toColumn) }),
   };
 }
-
-/** Read a table's full state, projecting every column in descriptor order. */
-export function tableColumnsInOrder(entity: EntityMetadata): readonly string[] {
-  return columnOrder({
-    table: entity.table,
-    attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
-  });
-}

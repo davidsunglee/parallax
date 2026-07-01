@@ -112,8 +112,13 @@ export interface SchemaResolver {
    * the ordered quoted columns the canonical SELECT projects.
    */
   rootTable(): string;
-  /** The read projection columns for the root entity (quoted names). */
-  rootProjection(): readonly string[];
+  /**
+   * The read projection columns for the root entity, in projection order. Each is
+   * the quoted physical column plus its M0 type / output name, so a `bytes` column
+   * can lower to the `encode(...)` hex form while every other type projects
+   * verbatim (M0 scalar-serde projection).
+   */
+  rootProjection(): readonly ProjectionColumn[];
   /**
    * Resolve a `Class.asOfAttribute` reference (`Balance.processingDate`) to the
    * axis it pins. Used to key the collected as-of pins by axis. Present only when
@@ -142,6 +147,33 @@ export interface SchemaResolver {
 
 /** A bind value carried alongside a `?` placeholder, in placeholder order. */
 export type Bind = string | number | boolean | null;
+
+/**
+ * One column of a read's SELECT projection. A plain scalar column projects
+ * verbatim (`<alias>.<column>`); a `bytes` column lowers through Postgres
+ * `encode(<alias>.<column>, ?) <outputName>` with the `'hex'` format bound in the
+ * projection position, so the byte payload materializes as stable hex text (M0
+ * scalar-serde projection — case `0003`). The projection binds land BEFORE any
+ * `where` binds, matching left-to-right placeholder order.
+ */
+export interface ProjectionColumn {
+  /** The dialect-quoted physical column name (`payload`, `"order"`). */
+  readonly column: string;
+  /**
+   * The attribute's M0 neutral type. A `bytes` type triggers the `encode(...)`
+   * hex lowering; every other type (or `undefined`) projects the column verbatim.
+   */
+  readonly type?: string;
+  /**
+   * The output column name for a lowered projection (`payload_hex`). Only used by
+   * the `bytes` `encode(...)` form, where the output name differs from the
+   * physical column; a verbatim column's output name is the column itself.
+   */
+  readonly outputName?: string;
+}
+
+/** The Postgres `encode(...)` format for a `bytes`-column hex projection. */
+const HEX_ENCODE_FORMAT = "hex";
 
 /**
  * The mutable compile context threaded through one traversal: the schema
@@ -229,10 +261,11 @@ export function compile(op: Operation, schema: SchemaResolver, seedPins?: AxisPi
   // child can propagate them). What remains is the base user predicate.
   const base = peelTemporal(directives.predicate, ctx);
 
-  const projection = schema
-    .rootProjection()
-    .map((column) => `${alias}.${column}`)
-    .join(", ");
+  // Render the projection FIRST so any projection bind (the `bytes` `encode(…, ?)`
+  // hex format) precedes the predicate / as-of / limit binds — the projection sits
+  // before the `where` in the statement, so its `?` is left-most (M3 placeholder
+  // order). A plain column emits no bind; a `bytes` column emits `'hex'` here.
+  const projection = renderProjection(schema.rootProjection(), alias, ctx);
   const select = directives.distinct ? `select distinct ${projection}` : `select ${projection}`;
 
   // Compile the user predicate FIRST so its binds precede the injected as-of binds
@@ -260,6 +293,35 @@ export function compile(op: Operation, schema: SchemaResolver, seedPins?: AxisPi
     sql += " limit ?";
   }
   return { sql, binds: ctx.binds };
+}
+
+/**
+ * Render the SELECT projection list, alias-qualifying each column and lowering a
+ * `bytes` column to the Postgres `encode(<alias>.<column>, ?) <column>_hex` hex
+ * form (the M0 scalar-serde projection — `0003`). A lowered column pushes its
+ * `'hex'` format bind onto the accumulator IN projection order (before the `where`
+ * binds); a plain scalar column projects verbatim and pushes nothing.
+ */
+function renderProjection(
+  columns: readonly ProjectionColumn[],
+  alias: string,
+  ctx: CompileCtx,
+): string {
+  return columns.map((column) => renderProjectionColumn(column, alias, ctx)).join(", ");
+}
+
+/** Render one projection column (verbatim, or the `bytes` `encode(…)` hex form). */
+function renderProjectionColumn(column: ProjectionColumn, alias: string, ctx: CompileCtx): string {
+  const qualified = `${alias}.${column.column}`;
+  if (column.type === "bytes") {
+    // A byte column has no stable text rendering across drivers/dialects, so the
+    // canonical projection encodes it to hex: `encode(t0.payload, ?) payload_hex`,
+    // with the `'hex'` format carried as a bind (not an inline literal).
+    ctx.binds.push(HEX_ENCODE_FORMAT);
+    const output = column.outputName ?? `${column.column}_hex`;
+    return `encode(${qualified}, ?) ${output}`;
+  }
+  return qualified;
 }
 
 /**

@@ -47,9 +47,9 @@ export interface PlannedStatement {
 
 /**
  * Combine the declared write steps into the ordered set-based flush. Steps are
- * flushed in declared order (the caller has already ordered them FK-safe — a
- * referenced parent's `insert` step precedes the child's; see
- * {@link orderInsertStepsForFk}), so this preserves that order.
+ * flushed in declared order: the write-sequence plan builder feeds them in the
+ * case's authored order, which places a referenced parent's `insert` step before
+ * the child's that points at it (`0612`), so this preserves that FK-safe order.
  */
 export function combineWrites(steps: readonly WriteStep[]): readonly PlannedStatement[] {
   const planned: PlannedStatement[] = [];
