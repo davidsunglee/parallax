@@ -190,13 +190,22 @@ export function parseTimestamp(iso: string): Temporal.Instant {
 }
 
 /**
- * Render a `Temporal.Instant` to its canonical UTC wire string at microsecond
- * precision (the form goldens and observed rows compare against).
+ * Render a `Temporal.Instant` to its canonical UTC wire string — the exact form
+ * the compatibility corpus authors and the reference oracle produces (Python's
+ * `datetime.isoformat()`): an explicit `+00:00` offset (not `Z`), with the
+ * fractional-seconds component **omitted when the value is whole-second** and
+ * rendered to full **microsecond** precision otherwise (`.123456`). Matching this
+ * form byte-for-byte is what lets the harness compare a projected/table-state
+ * `timestamp` column against its authored expected value by exact string.
  */
 export function timestampToWire(instant: Temporal.Instant): string {
   // `smallestUnit: "microsecond"` keeps exactly the µs digits the contract
-  // mandates (Temporal otherwise renders nanoseconds when present).
-  return instant.toString({ smallestUnit: "microsecond" });
+  // mandates (Temporal otherwise renders nanoseconds when present) and always
+  // renders a trailing `Z`.
+  const iso = instant.toString({ smallestUnit: "microsecond" });
+  // Drop an all-zero fractional part (Python's isoformat omits it for whole
+  // seconds), then normalize the `Z` designator to the corpus's `+00:00` offset.
+  return iso.replace(".000000Z", "Z").replace(/Z$/, "+00:00");
 }
 
 /**

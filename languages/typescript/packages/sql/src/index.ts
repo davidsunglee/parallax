@@ -25,6 +25,10 @@
 export { columnOrder, ddlForDescriptor, quoteIdentifier } from "@parallax/dialect";
 export { coerceBind, exceedsSafeInteger } from "./bind.js";
 export {
+  type AsOfFragment,
+  type Axis,
+  type AxisPin,
+  type AxisPins,
   aliasFor,
   type Bind,
   type CompileCtx,

@@ -19,6 +19,13 @@
  * `orderBy` key — the documented `0318` path.
  */
 import {
+  type AsOfPredicate,
+  type AxisPins,
+  asOfPredicate as deriveAsOfPredicate,
+  type ResolvedAxis,
+  type Axis as TemporalAxis,
+} from "@parallax/bitemporal";
+import {
   type EntityMetadata,
   Metamodel,
   type NormalizedAttribute,
@@ -26,6 +33,9 @@ import {
   type Operation,
 } from "@parallax/operation";
 import {
+  type AsOfFragment,
+  type Axis,
+  type AxisPins as CompilerAxisPins,
   quoteIdentifier,
   type ResolvedColumn,
   type ResolvedRelationship,
@@ -116,6 +126,46 @@ export class MetamodelSchema implements SchemaResolver {
   /** The root entity's domain class name (the `expectedGraph` key). */
   rootEntityName(): string {
     return this.rootEntity.name;
+  }
+
+  /** Resolve a `Class.asOfAttribute` reference to the axis it pins (M7). */
+  resolveAsOfAxis(ref: string): Axis {
+    const [className, attrName] = splitRef(ref);
+    const entity = this.metamodel.entity(className);
+    return entity.asOfAttributeByName(attrName).axis as Axis;
+  }
+
+  /**
+   * The class name of the related (child) entity a `Class.relationship` reference
+   * navigates to — the EXISTS child, for as-of propagation into the semi-join.
+   */
+  relatedEntityName(ref: string): string {
+    return this.correlation(ref).relatedEntity.name;
+  }
+
+  /**
+   * The injected as-of predicate for an entity's declared axes under a set of
+   * pins, qualified with `alias`. Delegates the per-axis rule + business/processing
+   * composition + default-injection to `@parallax/bitemporal` (the M7 owner),
+   * reached through the composition path (`@parallax/sql` imports no M7). A
+   * non-temporal entity yields an empty fragment.
+   */
+  asOfPredicate(entity: string, alias: string, pins: CompilerAxisPins): AsOfFragment {
+    const axes = this.resolveAxes(entity, alias);
+    const predicate: AsOfPredicate = deriveAsOfPredicate(axes, pins as AxisPins);
+    return { sql: predicate.sql, binds: predicate.binds };
+  }
+
+  /** Resolve an entity's declared as-of axes into alias-qualified {@link ResolvedAxis}. */
+  private resolveAxes(entity: string, alias: string): readonly ResolvedAxis[] {
+    const metadata = this.metamodel.entity(entity);
+    return metadata.asOfAttributes().map((axis) => ({
+      axis: axis.axis as TemporalAxis,
+      fromExpr: `${alias}.${quoteIdentifier(axis.fromColumn)}`,
+      toExpr: `${alias}.${quoteIdentifier(axis.toColumn)}`,
+      toIsInclusive: axis.toIsInclusive,
+      infinity: axis.infinity,
+    }));
   }
 }
 
