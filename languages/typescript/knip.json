@@ -3,6 +3,10 @@
   "workspaces": {
     "languages/typescript/packages/*": {
       "ignoreDependencies": ["@parallax/.+"]
+    },
+    "languages/typescript/examples/*": {
+      "entry": ["parallax.config.js", "src/main.ts"],
+      "ignoreDependencies": ["@parallax/.+"]
     }
   },
   "ignoreExportsUsedInFile": true,

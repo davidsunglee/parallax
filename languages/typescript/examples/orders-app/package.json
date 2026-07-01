@@ -1,0 +1,17 @@
+{
+  "name": "parallax-example-orders-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal sample app: imports the generated `#parallax` barrel, runs `parallax generate`, and exercises a typed `find` for smoke feedback (Phase 9).",
+  "imports": {
+    "#parallax": "./.parallax/generated/index.js"
+  },
+  "scripts": {
+    "parallax:generate": "parallax generate",
+    "parallax:check": "parallax generate --check"
+  },
+  "dependencies": {
+    "@parallax/typescript": "workspace:*"
+  }
+}

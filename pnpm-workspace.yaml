@@ -1,5 +1,6 @@
 packages:
   - "languages/typescript/packages/*"
+  - "languages/typescript/examples/*"
 allowBuilds:
   # esbuild needs its postinstall to fetch the platform binary (vitest/tsx).
   esbuild: true
