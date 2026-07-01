@@ -12,10 +12,12 @@ export {
   type ColumnTypes,
   compareGraph,
   compareRowSet,
+  compareTableState,
   type Graph,
   type GraphColumnTypes,
   type RowSetComparison,
   scalarsEqual,
+  type TableState,
 } from "./compare.js";
 export {
   buildDeepFetchPlan,
@@ -51,3 +53,9 @@ export {
   validateEnvelope,
 } from "./schema.js";
 export { columnTypesForCase } from "./schema-resolver.js";
+export {
+  buildWriteSequencePlan,
+  isWriteSequence,
+  type WriteSequencePlan,
+  type WriteStatementPlan,
+} from "./write-sequence.js";

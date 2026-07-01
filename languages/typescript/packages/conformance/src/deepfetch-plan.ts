@@ -24,7 +24,7 @@
  */
 import { type Operation, parseOperation } from "@parallax/operation";
 import type { DeepFetchNode, Key, LevelQuery } from "@parallax/relationships";
-import { type Bind, compile } from "@parallax/sql";
+import { type AxisPins, type Bind, compile } from "@parallax/sql";
 import type { LoadedCase } from "./discover.js";
 import {
   childProjection,
@@ -81,13 +81,36 @@ export function buildDeepFetchPlan(loaded: LoadedCase): DeepFetchPlan {
     rootEntity === undefined
       ? schemaForRoot(loaded, operand, projection)
       : schemaForEntity(loaded, rootEntity, projection);
+  // The root statement compiles the (possibly temporal) operand directly — the M3
+  // visitor injects the root's own as-of predicate. The pins collected off the
+  // operand also PROPAGATE per-hop into every temporal child level (M4 as-of
+  // propagation), so gather them once here and seed each level's compile.
   const compiled = compile(operand, rootSchema);
-  const tree = buildTree(loaded, body.paths);
+  const rootPins = collectRootPins(rootSchema, operand);
+  const tree = buildTree(loaded, body.paths, rootPins);
   return {
     rootEntity: rootSchema.rootEntityName(),
     root: { sql: compiled.sql, binds: compiled.binds as readonly unknown[] },
     tree,
   };
+}
+
+/**
+ * Collect the deep-fetch root's as-of pins from the nested `asOf` wrappers of its
+ * operand, keyed by axis (via the resolver). `asOfRange` / `history` roots are not
+ * part of the propagation oracle — deep fetch propagates only `asOf` pins — so
+ * only `asOf` nodes are gathered; an unpinned axis defaults to `now` at the child.
+ */
+function collectRootPins(schema: MetamodelSchema, operand: Operation): AxisPins {
+  const pins: AxisPins = {};
+  let node: unknown = operand;
+  while (node !== null && typeof node === "object" && "asOf" in (node as object)) {
+    const asOf = (node as { asOf: { operand: unknown; asOfAttr: string; date: string } }).asOf;
+    const axis = schema.resolveAsOfAxis(asOf.asOfAttr);
+    pins[axis] = asOf.date === "now" ? { kind: "now" } : { kind: "instant", date: asOf.date };
+    node = asOf.operand;
+  }
+  return pins;
 }
 
 /**
@@ -115,6 +138,7 @@ function deepFetchRootEntity(paths: readonly (readonly string[])[]): string | un
 function buildTree(
   loaded: LoadedCase,
   paths: readonly (readonly string[])[],
+  rootPins: AxisPins,
 ): readonly DeepFetchNode[] {
   const roots: NodeBuilder[] = [];
   for (const path of paths) {
@@ -128,7 +152,7 @@ function buildTree(
       siblings = node.children;
     }
   }
-  return roots.map((node) => materialize(loaded, node));
+  return roots.map((node) => materialize(loaded, node, rootPins));
 }
 
 /** A mutable tree node accumulated while merging shared path prefixes. */
@@ -140,9 +164,12 @@ interface NodeBuilder {
 /**
  * Materialize a `NodeBuilder` into a `DeepFetchNode`: resolve the relationship's
  * correlation + cardinality, derive the child projection, and bind a
- * `compileLevel` closure that compiles the child IN-list query for a key set.
+ * `compileLevel` closure that compiles the child IN-list query for a key set. The
+ * child level is compiled with the root pins SEEDED, so a temporal child level
+ * carries the propagated as-of predicate (matched by axis, defaulted to `now`)
+ * appended after its IN list — the M4 as-of-propagation rule.
  */
-function materialize(loaded: LoadedCase, builder: NodeBuilder): DeepFetchNode {
+function materialize(loaded: LoadedCase, builder: NodeBuilder, rootPins: AxisPins): DeepFetchNode {
   const [, relName] = splitRelRef(builder.relRef);
   const schema = schemaForRoot(loaded, parseOperation({ all: {} }), []);
   const correlation = schema.correlation(builder.relRef);
@@ -156,7 +183,7 @@ function materialize(loaded: LoadedCase, builder: NodeBuilder): DeepFetchNode {
   const compileLevel = (keys: readonly Key[]): LevelQuery => {
     const childSchema = schemaForEntity(loaded, childEntity, projection);
     const levelOp = childLevelOperation(childEntity, childAttr, keys, correlation.relationship);
-    const compiled = compile(levelOp, childSchema);
+    const compiled = compile(levelOp, childSchema, rootPins);
     return { sql: compiled.sql, binds: compiled.binds as readonly unknown[] };
   };
 
@@ -166,7 +193,7 @@ function materialize(loaded: LoadedCase, builder: NodeBuilder): DeepFetchNode {
     parentColumn: correlation.parentColumn,
     childColumn: correlation.childColumn,
     compileLevel,
-    children: builder.children.map((child) => materialize(loaded, child)),
+    children: builder.children.map((child) => materialize(loaded, child, rootPins)),
   };
 }
 

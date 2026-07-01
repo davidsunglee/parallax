@@ -69,6 +69,32 @@ export interface ResolvedRelationship {
   readonly parentColumn: string;
 }
 
+/** A temporal axis identity — `business` (from_z/thru_z) or `processing` (in_z/out_z). */
+export type Axis = "business" | "processing";
+
+/**
+ * A per-axis as-of pin collected off the operation's `asOf` / `asOfRange` /
+ * `history` wrappers (an axis absent from the map defaults to `now` — the
+ * default-injection rule). `history` marks an axis as read as edge points (no
+ * predicate injected for it).
+ */
+export type AxisPin =
+  | { readonly kind: "now" }
+  | { readonly kind: "instant"; readonly date: string }
+  | { readonly kind: "range"; readonly from: string; readonly to: string }
+  | { readonly kind: "history" };
+
+/** The as-of pins gathered for one entity read, keyed by axis. */
+export type AxisPins = Partial<Record<Axis, AxisPin>>;
+
+/** A rendered as-of predicate: the `and`-joined SQL fragment and its ordered binds. */
+export interface AsOfFragment {
+  /** The SQL fragment (empty when the entity is non-temporal / every axis history). */
+  readonly sql: string;
+  /** The binds, in placeholder order (appended after the user binds). */
+  readonly binds: readonly Bind[];
+}
+
 /**
  * The schema knowledge the compiler needs, injected so `@parallax/sql` stays
  * free of a metamodel import. The runner implements this over the M1 reader.
@@ -88,6 +114,30 @@ export interface SchemaResolver {
   rootTable(): string;
   /** The read projection columns for the root entity (quoted names). */
   rootProjection(): readonly string[];
+  /**
+   * Resolve a `Class.asOfAttribute` reference (`Balance.processingDate`) to the
+   * axis it pins. Used to key the collected as-of pins by axis. Present only when
+   * the resolver supports temporal reads (M7); the compiler probes for it.
+   */
+  resolveAsOfAxis?(ref: string): Axis;
+  /** The root entity's domain class name (for the root as-of injection). */
+  rootEntityName?(): string;
+  /**
+   * The injected as-of predicate for an entity's declared axes under a set of
+   * pins, qualified with the given alias (the M7 default-injection + composition
+   * rule, delegated to `@parallax/bitemporal` through the composition path). The
+   * `entity` is named by the class the read roots at (or the EXISTS child
+   * entity); a non-temporal entity yields an empty fragment. Present only when the
+   * resolver supports temporal reads.
+   */
+  asOfPredicate?(entity: string, alias: string, pins: AxisPins): AsOfFragment;
+  /**
+   * The class name of the related (child) entity a `Class.relationship` reference
+   * navigates to (the EXISTS child), so the compiler can propagate the root as-of
+   * pins into the semi-join subquery. Present only when temporal reads are
+   * supported.
+   */
+  relatedEntityName?(ref: string): string;
 }
 
 /** A bind value carried alongside a `?` placeholder, in placeholder order. */
@@ -95,7 +145,10 @@ export type Bind = string | number | boolean | null;
 
 /**
  * The mutable compile context threaded through one traversal: the schema
- * resolver, a first-appearance alias allocator, and the binds accumulator.
+ * resolver, a first-appearance alias allocator, and the binds accumulator. The
+ * as-of pins collected off the operation's temporal wrappers travel here too, so
+ * a correlated-EXISTS semi-join can **propagate** them into its child subquery
+ * (M4 as-of propagation across a temporal hop).
  */
 export interface CompileCtx {
   readonly schema: SchemaResolver;
@@ -103,11 +156,13 @@ export interface CompileCtx {
   readonly aliases: Map<string, string>;
   /** The binds accumulator, appended to in placeholder order. */
   readonly binds: Bind[];
+  /** The as-of pins for this read, propagated into any temporal EXISTS child. */
+  asOfPins: AxisPins;
 }
 
 /** Build a fresh compile context for a single operation. */
 export function newCompileCtx(schema: SchemaResolver): CompileCtx {
-  return { schema, aliases: new Map(), binds: [] };
+  return { schema, aliases: new Map(), binds: [], asOfPins: {} };
 }
 
 /**
@@ -153,21 +208,43 @@ interface Directives {
  * first table reference), then the inner operation lowers to a `where` predicate
  * (or none for `all`). Binds are accumulated in the same traversal — the limit
  * bind appends after any predicate binds, matching placeholder order.
+ *
+ * `seedPins` pre-seeds the read's as-of pins before peeling — the M4 deep-fetch
+ * **propagation** path uses it to inject the root's pins (matched by axis) into a
+ * child level's temporal predicate, so the child reads as of the same instant(s).
+ * A single-entity read leaves it empty and collects its pins from its own
+ * `asOf` / `asOfRange` / `history` wrappers.
  */
-export function compile(op: Operation, schema: SchemaResolver): CompileResult {
+export function compile(op: Operation, schema: SchemaResolver, seedPins?: AxisPins): CompileResult {
   const ctx = newCompileCtx(schema);
+  if (seedPins !== undefined) {
+    ctx.asOfPins = { ...seedPins };
+  }
   const table = schema.rootTable();
   const alias = aliasFor(ctx, table);
 
   const directives = peelDirectives(op, ctx);
+  // Peel the temporal wrappers (`asOf` / `asOfRange` / `history`) off the
+  // predicate, collecting per-axis pins into the context (so a temporal EXISTS
+  // child can propagate them). What remains is the base user predicate.
+  const base = peelTemporal(directives.predicate, ctx);
+
   const projection = schema
     .rootProjection()
     .map((column) => `${alias}.${column}`)
     .join(", ");
   const select = directives.distinct ? `select distinct ${projection}` : `select ${projection}`;
 
-  // Compile the predicate FIRST so its binds precede the trailing `limit` bind.
-  const where = compilePredicate(directives.predicate, ctx);
+  // Compile the user predicate FIRST so its binds precede the injected as-of binds
+  // and the trailing `limit` bind (left-to-right placeholder order).
+  const userWhere = compilePredicate(base, ctx);
+  // The injected as-of term is appended AFTER the user predicate (M7): its binds
+  // land after the user binds. Default-injection + axis composition are owned by
+  // the resolver (delegating to `@parallax/bitemporal`); a non-temporal entity or
+  // an all-`history` read yields an empty fragment.
+  const asOf = injectRootAsOf(ctx, alias);
+  const where = combineWhere(userWhere, asOf?.sql);
+
   if (directives.limit !== undefined) {
     ctx.binds.push(directives.limit);
   }
@@ -183,6 +260,91 @@ export function compile(op: Operation, schema: SchemaResolver): CompileResult {
     sql += " limit ?";
   }
   return { sql, binds: ctx.binds };
+}
+
+/**
+ * Combine the user predicate fragment and the injected as-of fragment into one
+ * `where` body (either, both `and`-joined, or `undefined` when neither is present
+ * — an `all` read on a non-temporal entity).
+ */
+function combineWhere(user: string | undefined, asOf: string | undefined): string | undefined {
+  if (user !== undefined && asOf !== undefined && asOf !== "") {
+    return `${user} and ${asOf}`;
+  }
+  if (user !== undefined) {
+    return user;
+  }
+  return asOf !== undefined && asOf !== "" ? asOf : undefined;
+}
+
+/**
+ * Peel every `asOf` / `asOfRange` / `history` wrapper off the outside of a
+ * predicate, recording each into `ctx.asOfPins` keyed by the axis its
+ * `asOfAttr` names. Returns the innermost base predicate (the user filter). A
+ * resolver without temporal support (`resolveAsOfAxis` absent) leaves the wrappers
+ * in place, so the base compile path throws the clear "not supported" error.
+ */
+function peelTemporal(op: Operation, ctx: CompileCtx): Operation {
+  let current = op;
+  for (;;) {
+    const tag = operationTag(current);
+    if (tag === "asOf") {
+      const body = (current as { asOf: { operand: Operation; asOfAttr: string; date: string } })
+        .asOf;
+      recordPin(ctx, body.asOfAttr, temporalPinForDate(body.date));
+      current = body.operand;
+      continue;
+    }
+    if (tag === "asOfRange") {
+      const body = (
+        current as {
+          asOfRange: { operand: Operation; asOfAttr: string; from: string; to: string };
+        }
+      ).asOfRange;
+      recordPin(ctx, body.asOfAttr, { kind: "range", from: body.from, to: body.to });
+      current = body.operand;
+      continue;
+    }
+    if (tag === "history") {
+      const body = (current as { history: { operand: Operation; asOfAttr: string } }).history;
+      recordPin(ctx, body.asOfAttr, { kind: "history" });
+      current = body.operand;
+      continue;
+    }
+    break;
+  }
+  return current;
+}
+
+/** A single-instant pin lowers to `now` (current row) or a past `instant`. */
+function temporalPinForDate(date: string): AxisPin {
+  return date === "now" ? { kind: "now" } : { kind: "instant", date };
+}
+
+/** Record an as-of pin under the axis its `Class.asOfAttribute` reference names. */
+function recordPin(ctx: CompileCtx, asOfAttrRef: string, pin: AxisPin): void {
+  if (ctx.schema.resolveAsOfAxis === undefined) {
+    throw new Error("compile: temporal reads require a temporal-capable SchemaResolver");
+  }
+  const axis = ctx.schema.resolveAsOfAxis(asOfAttrRef);
+  ctx.asOfPins[axis] = pin;
+}
+
+/**
+ * The injected as-of fragment for the root entity under the collected pins, its
+ * binds pushed onto the accumulator (after the user binds). `undefined` when the
+ * resolver is non-temporal or the entity is non-temporal / all-history.
+ */
+function injectRootAsOf(ctx: CompileCtx, alias: string): AsOfFragment | undefined {
+  if (ctx.schema.asOfPredicate === undefined || ctx.schema.rootEntityName === undefined) {
+    return undefined;
+  }
+  const fragment = ctx.schema.asOfPredicate(ctx.schema.rootEntityName(), alias, ctx.asOfPins);
+  if (fragment.sql === "") {
+    return undefined;
+  }
+  ctx.binds.push(...fragment.binds);
+  return fragment;
 }
 
 /**
@@ -494,8 +656,44 @@ function existsSemiJoin(
       inner += ` and ${fragment}`;
     }
   }
+  // As-of propagation (M4): when the read is pinned, the same pins propagate into
+  // the semi-join child, matched by axis, so the EXISTS subquery reads the child
+  // as of the same instant(s). The child's as-of binds land after its inner user
+  // bind and before the outer root as-of (left-to-right placeholder order).
+  const childAsOf = propagateChildAsOf(ctx, body.rel, childAlias);
+  if (childAsOf !== undefined && childAsOf.sql !== "") {
+    inner += ` and ${childAsOf.sql}`;
+    ctx.binds.push(...childAsOf.binds);
+  }
   const exists = `exists (select 1 from ${rel.childTable} ${childAlias} where ${inner})`;
   return negated ? `not ${exists}` : exists;
+}
+
+/**
+ * The propagated child as-of fragment for a semi-join hop: the read's collected
+ * pins applied to the CHILD entity's declared axes (matched by axis, defaulting to
+ * `now`), qualified with the child alias. `undefined` when the resolver is
+ * non-temporal, the read carries no pins, or the child is non-temporal.
+ */
+function propagateChildAsOf(
+  ctx: CompileCtx,
+  relRef: string,
+  childAlias: string,
+): AsOfFragment | undefined {
+  if (
+    ctx.schema.asOfPredicate === undefined ||
+    ctx.schema.relatedEntityName === undefined ||
+    !hasPins(ctx.asOfPins)
+  ) {
+    return undefined;
+  }
+  const childEntity = ctx.schema.relatedEntityName(relRef);
+  return ctx.schema.asOfPredicate(childEntity, childAlias, ctx.asOfPins);
+}
+
+/** True when any axis pin was collected for this read. */
+function hasPins(pins: AxisPins): boolean {
+  return Object.keys(pins).length > 0;
 }
 
 /** Allocate the next fresh alias (`t${size}`) for a new correlation scope. */
