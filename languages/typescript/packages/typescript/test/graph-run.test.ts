@@ -123,6 +123,29 @@ group.skipIf(!HAS_DOCKER)("deep-fetch run lane (Testcontainers postgres:17)", ()
         ?.postgres;
       if (Array.isArray(golden)) {
         expect(envelope.emissions.map((emission) => emission.sql)).toEqual(golden);
+        // Also pin each child level's IN-list binds against the golden — but as an
+        // order-insensitive SET per level, NOT positionally. The IN-list order is
+        // semantically irrelevant (it never affects which children match, and the
+        // child order is fixed by the level's `orderBy`), so the runtime emits keys
+        // in natural first-appearance order and never sorts; the reference oracle
+        // likewise compares these binds as a sorted set (`sorted(in_slice) ==
+        // parent_keys`). What this asserts is the N+1-eliminating invariant: each
+        // level is keyed by EXACTLY the distinct parent keys gathered from the level
+        // above. Binds are normalized to numbers first — the in-scope 03xx identity
+        // keys are small integer ids and an `int8` column can arrive as a decimal
+        // string, so the int64→string wire form (a separate, parked concern the
+        // graph grading already tolerates) is not under test here. Only a
+        // MULTI-statement deep fetch authors per-level bind arrays (array-of-arrays);
+        // a single-statement case (e.g. `0315`, the empty root) authors a flat
+        // scalar list with no child IN list to compare, so it is skipped.
+        const goldenBinds = loaded.raw.binds;
+        if (Array.isArray(goldenBinds) && goldenBinds.every(Array.isArray)) {
+          const sortedNums = (rows: readonly (readonly unknown[])[]): number[][] =>
+            rows.map((level) => level.map(Number).sort((a, b) => a - b));
+          expect(sortedNums(envelope.emissions.map((emission) => emission.binds))).toEqual(
+            sortedNums(goldenBinds),
+          );
+        }
       }
 
       const columnTypes = columnTypesForCase(loaded);

@@ -102,7 +102,12 @@ describe("deepFetch — round-trip discipline (1 + L, never N+1)", () => {
     expect(issued).toHaveLength(2); // deepFetch issues only the CHILD statements.
 
     // Level 1 IN binds = distinct order ids {1, 42}; level 2 = distinct item ids
-    // {12, 11, 422, 421} (first-appearance order), NOT one query per parent.
+    // {12, 11, 422, 421} in FIRST-APPEARANCE order (the items arrive `id desc`).
+    // The IN-list order is NOT part of the contract — it never affects which
+    // children match — so the runtime keeps first-appearance order (no sort) and
+    // the harness compares these binds as an order-insensitive set. What matters
+    // here is that the level is keyed by the DISTINCT key set, NOT one query per
+    // parent.
     expect(issued[0]?.binds).toEqual([1, 42]);
     expect(issued[1]?.binds).toEqual([12, 11, 422, 421]);
 
