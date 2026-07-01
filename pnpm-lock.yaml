@@ -65,6 +65,9 @@ importers:
       '@parallax/sql':
         specifier: workspace:*
         version: link:../sql
+      '@parallax/transactions':
+        specifier: workspace:*
+        version: link:../transactions
       ajv:
         specifier: ^8.17.1
         version: 8.20.0
@@ -100,11 +103,7 @@ importers:
         specifier: workspace:*
         version: link:../transactions
 
-  languages/typescript/packages/locking:
-    dependencies:
-      '@parallax/transactions':
-        specifier: workspace:*
-        version: link:../transactions
+  languages/typescript/packages/locking: {}
 
   languages/typescript/packages/metamodel:
     dependencies:
