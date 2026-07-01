@@ -100,10 +100,16 @@ export function buildDeepFetchPlan(loaded: LoadedCase): DeepFetchPlan {
  * operand, keyed by axis (via the resolver). `asOfRange` / `history` roots are not
  * part of the propagation oracle — deep fetch propagates only `asOf` pins — so
  * only `asOf` nodes are gathered; an unpinned axis defaults to `now` at the child.
+ *
+ * The result directives (`distinct` / `orderBy` / `limit`) are peeled FIRST — the
+ * root `compile()` peels them before the temporal wrappers, so a directive-wrapped
+ * temporal root (`limit(orderBy(asOf(…)))`, case `0336`) still seeds the child
+ * propagation pins from the authored instant rather than silently defaulting the
+ * child to `now`.
  */
 function collectRootPins(schema: MetamodelSchema, operand: Operation): AxisPins {
   const pins: AxisPins = {};
-  let node: unknown = operand;
+  let node: unknown = peelDirectiveWrappers(operand);
   while (node !== null && typeof node === "object" && "asOf" in (node as object)) {
     const asOf = (node as { asOf: { operand: unknown; asOfAttr: string; date: string } }).asOf;
     const axis = schema.resolveAsOfAxis(asOf.asOfAttr);
@@ -111,6 +117,28 @@ function collectRootPins(schema: MetamodelSchema, operand: Operation): AxisPins 
     node = asOf.operand;
   }
   return pins;
+}
+
+/**
+ * Descend past the result-directive wrappers (`distinct` / `orderBy` / `limit`) the
+ * root `compile()` peels before the temporal wrappers, returning the innermost node
+ * (the temporal wrappers, or the base predicate). Mirrors `peelDirectives` in
+ * `@parallax/sql` so pin collection sees the same `asOf` nodes the root compile does.
+ */
+function peelDirectiveWrappers(node: unknown): unknown {
+  let current = node;
+  while (current !== null && typeof current === "object") {
+    if ("distinct" in current) {
+      current = (current as { distinct: { operand: unknown } }).distinct.operand;
+    } else if ("orderBy" in current) {
+      current = (current as { orderBy: { operand: unknown } }).orderBy.operand;
+    } else if ("limit" in current) {
+      current = (current as { limit: { operand: unknown } }).limit.operand;
+    } else {
+      break;
+    }
+  }
+  return current;
 }
 
 /**

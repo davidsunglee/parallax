@@ -2,7 +2,8 @@
  * Temporal **compile lane** over the M7 corpus (Docker-free).
  *
  * Phase 6 lowers the as-of read algebra (`asOf` / `asOfRange` / `history`, single
- * + both axes, default-injection), the temporal EXISTS semi-join (`0330`), and the
+ * + both axes, default-injection), the temporal EXISTS semi-joins (`0330` explicit
+ * as-of + `0335` defaulted root), and the
  * audit-only milestone-chaining writes (`insert` / `update` / `terminate`). Each
  * pins a precise canonical `goldenSql.postgres`, so this lane asserts the emitted
  * SQL + binds equal the golden BY TEXT, complementing the Docker-gated run lane
@@ -10,12 +11,13 @@
  * the right rows / table state.
  *
  * Split by golden shape:
- *  - a **single-statement read** (`05xx` reads, `08xx` reads, `0330`) pins one
- *    `goldenSql.postgres` string — asserted against the sole `/operation` emission;
+ *  - a **single-statement read** (`05xx` reads, `08xx` reads, the temporal EXISTS
+ *    semi-joins `0330`/`0335`) pins one `goldenSql.postgres` string — asserted
+ *    against the sole `/operation` emission;
  *  - a **write sequence** (`0510`–`0512`, `0004`/`0005`) pins an ARRAY of DML
  *    statements with an array-of-arrays `binds` — asserted against the per-statement
  *    emissions, each keyed by its `/writeSequence/<step>` pointer;
- *  - a **deep-fetch** read (`0324`–`0334` minus `0330`) pins an ARRAY whose child
+ *  - a **deep-fetch** read (`0324`–`0336` minus the flat EXISTS `0330`/`0335`) pins an ARRAY whose child
  *    levels are keyed by run-time-gathered parent keys — those emit root-only here
  *    (per the Phase-5 rule) and are pinned per-level in the run lane instead.
  */
@@ -34,11 +36,12 @@ function temporalReadWriteCases(): readonly { id: string; path: string }[] {
     .map(({ id, path }) => ({ id, path }));
 }
 
-/** The temporal deep-fetch `m7` subset (`0324`–`0334`), single + EXISTS (`0330`). */
+/** The temporal deep-fetch `m7` subset (`0324`–`0336`), incl. the flat EXISTS
+ * semi-joins `0330` (explicit as-of) and `0335` (defaulted root). */
 function temporalDeepFetchCases(): readonly { id: string; path: string }[] {
   return discoverCasePaths()
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
-    .filter(({ id }) => /^03(2[4-9]|3[0-4])$/.test(id))
+    .filter(({ id }) => /^03(2[4-9]|3[0-6])$/.test(id))
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
     .filter(({ loaded }) => loaded.tags.includes("first-implementation-mvp"))
     .map(({ id, path }) => ({ id, path }));
@@ -70,8 +73,10 @@ const EXPECTED_READ_WRITE_IDS: readonly string[] = [
   "0805",
 ];
 
-/** The exact temporal deep-fetch `m7` set (`0324`–`0334`, 11 cases). */
-const EXPECTED_DEEP_FETCH_IDS: readonly string[] = Array.from({ length: 11 }, (_, i) =>
+/** The exact temporal deep-fetch `m7` set (`0324`–`0336`, 13 cases: the 11 as-of
+ * propagation cases plus the defaulted-root EXISTS `0335` and the directive-wrapped
+ * temporal deep-fetch root `0336`). */
+const EXPECTED_DEEP_FETCH_IDS: readonly string[] = Array.from({ length: 13 }, (_, i) =>
   String(324 + i).padStart(4, "0"),
 );
 
@@ -83,7 +88,7 @@ describe("temporal compile lane — emitted === golden over the M7 corpus", () =
     expect(READ_WRITE.map(({ id }) => id).sort()).toEqual([...EXPECTED_READ_WRITE_IDS].sort());
   });
 
-  it("discovers exactly the temporal deep-fetch m7 subset (0324–0334)", () => {
+  it("discovers exactly the temporal deep-fetch m7 subset (0324–0336)", () => {
     expect(DEEP_FETCH.map(({ id }) => id).sort()).toEqual([...EXPECTED_DEEP_FETCH_IDS].sort());
   });
 
@@ -117,7 +122,7 @@ describe("temporal compile lane — emitted === golden over the M7 corpus", () =
 
   it.each(DEEP_FETCH)("$id compiles its deep-fetch ROOT to the golden root SQL", ({ path }) => {
     const loaded = loadCase(path);
-    // 0330 is a flat EXISTS read (single golden string), not a deep fetch.
+    // 0330 / 0335 are flat EXISTS reads (single golden string), not deep fetches.
     if (!isDeepFetch(loaded.raw.operation)) {
       const envelope = runCompile(loaded, "postgres", TYPESCRIPT_ADAPTER);
       expect(envelope.status).toBe("ok");

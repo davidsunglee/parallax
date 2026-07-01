@@ -656,10 +656,13 @@ function existsSemiJoin(
       inner += ` and ${fragment}`;
     }
   }
-  // As-of propagation (M4): when the read is pinned, the same pins propagate into
-  // the semi-join child, matched by axis, so the EXISTS subquery reads the child
-  // as of the same instant(s). The child's as-of binds land after its inner user
-  // bind and before the outer root as-of (left-to-right placeholder order).
+  // As-of propagation (M4): a temporal semi-join child carries its OWN as-of
+  // predicate. The root's pins propagate into it matched by axis, and any axis the
+  // root left unpinned defaults to `now` (the per-entity default-injection rule), so
+  // the EXISTS subquery reads the child as of the same instant(s) even when the root
+  // omitted its as-of entirely (the default-now case `0335`). The child's as-of binds
+  // land after its inner user bind and before the outer root as-of (left-to-right
+  // placeholder order). A non-temporal child yields an empty fragment.
   const childAsOf = propagateChildAsOf(ctx, body.rel, childAlias);
   if (childAsOf !== undefined && childAsOf.sql !== "") {
     inner += ` and ${childAsOf.sql}`;
@@ -671,29 +674,28 @@ function existsSemiJoin(
 
 /**
  * The propagated child as-of fragment for a semi-join hop: the read's collected
- * pins applied to the CHILD entity's declared axes (matched by axis, defaulting to
- * `now`), qualified with the child alias. `undefined` when the resolver is
- * non-temporal, the read carries no pins, or the child is non-temporal.
+ * pins applied to the CHILD entity's declared axes (matched by axis, each unpinned
+ * axis defaulting to `now`), qualified with the child alias.
+ *
+ * The child is asked for its predicate **regardless of whether the root collected
+ * any pins** — M7's default-injection rule is entity-local (each temporal read
+ * derives its own as-of predicate), so a temporal child in the semi-join carries
+ * its current-row predicate even when the root omitted its as-of (the default-now
+ * case `0335`) or the root is non-temporal (a temporal child of a non-temporal root
+ * defaults every axis to `now`, per M4). A non-temporal child resolves to no axes
+ * and so yields an empty fragment, which the caller drops. `undefined` only when the
+ * resolver is non-temporal (no `asOfPredicate` / `relatedEntityName`).
  */
 function propagateChildAsOf(
   ctx: CompileCtx,
   relRef: string,
   childAlias: string,
 ): AsOfFragment | undefined {
-  if (
-    ctx.schema.asOfPredicate === undefined ||
-    ctx.schema.relatedEntityName === undefined ||
-    !hasPins(ctx.asOfPins)
-  ) {
+  if (ctx.schema.asOfPredicate === undefined || ctx.schema.relatedEntityName === undefined) {
     return undefined;
   }
   const childEntity = ctx.schema.relatedEntityName(relRef);
   return ctx.schema.asOfPredicate(childEntity, childAlias, ctx.asOfPins);
-}
-
-/** True when any axis pin was collected for this read. */
-function hasPins(pins: AxisPins): boolean {
-  return Object.keys(pins).length > 0;
 }
 
 /** Allocate the next fresh alias (`t${size}`) for a new correlation scope. */
