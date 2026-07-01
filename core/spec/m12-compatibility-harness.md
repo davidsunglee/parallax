@@ -35,7 +35,7 @@ coherence), or an **error case** (carries `errorClass` and
 | `writeSequence` | write | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only + business-only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the full-bitemporal rectangle split |
 | `equivalentEncodings` | no | alternate surface encodings of `operation` (e.g. a prefix vs a fluent spelling); each MUST canonicalize to `operation` |
 | `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit — a single statement, or an **ordered list** of statements (one per deep-fetch level, or one per write-sequence DML step) |
-| `binds` | no | bind values for the `?` placeholders (default `[]`): a flat list for a single statement, or a list-of-lists for a multi-statement case |
+| `binds` | no | bind values for the `?` placeholders (default `[]`): a flat list for a single statement, or a list-of-lists for a multi-statement case. A deep-fetch level's `IN`-list binds are an **unordered set** — authored sorted for readability, but compared order-insensitively (see the fifth assertion layer); an implementation MAY emit them in any order and MUST NOT sort at runtime to match the fixture |
 | `referenceSql` | conditional | an independent naive oracle (see below); for a deep fetch it is the naive single-statement oracle for the **root** row set |
 | `expectedRows` | read | the rows the query must return (single-statement / flat-result cases) |
 | `expectedGraph` | read | the assembled object graph a deep fetch must produce (one of `expectedRows` / `expectedGraph` is REQUIRED for a read case) |
@@ -101,8 +101,13 @@ the harness asserts:
 A fifth layer — **round-trip-count consistency** — applies to relationship /
 deep-fetch cases: the number of authored/executed golden SQL statements equals
 the declared `roundTrips`, each non-empty child level executes keyed by the
-distinct parent keys gathered from the previous level, empty parent-key levels
-execute no child SQL, and the in-memory-assembled object graph equals the case's
+distinct parent keys gathered from the previous level (an **unordered set** — the
+`IN`-list bind order is *not* part of the contract, since it never changes which
+children match, and child result order is fixed by the level's own `orderBy`; the
+harness therefore compares each level's binds order-insensitively, consistent with
+the order-insensitive row comparison of layer 2, and an implementation MUST NOT
+sort these keys at runtime to match the fixture), empty parent-key levels execute
+no child SQL, and the in-memory-assembled object graph equals the case's
 `expectedGraph`. This is what proves N+1 elimination automatically (a 1 → N → N
 deep fetch with non-empty levels must run in exactly 3 statements, not 1 + N +
 N; a deep fetch whose root is empty runs only the root statement). For these
