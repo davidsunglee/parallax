@@ -6,7 +6,7 @@ operations to SQL** — that is exactly what a real implementation must do and
 prove against the golden SQL. The harness only proves the *suite itself* is
 internally consistent and that the golden SQL is correct for the data, across
 every database behind the provider seam. `M12` depends on `M2`, `M3`, `M4`,
-`M7`, `M9`, and `M10`.
+`M7`, `M8`, `M9`, and `M10`.
 
 The canonical reference implementation is `reference-harness/` (Python + uv +
 sqlglot). Its *contract* is language-neutral; another ecosystem can re-implement
