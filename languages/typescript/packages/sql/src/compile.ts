@@ -46,12 +46,41 @@ export interface ResolvedColumn {
 }
 
 /**
+ * A resolved relationship correlation, derived mechanically from the metamodel
+ * `join` predicate (M4 — the user never writes a join). A navigation filter
+ * lowers to `exists (select 1 from <childTable> <childAlias> where
+ * <childAlias>.<childColumn> = <parentAlias>.<parentColumn> [and <inner>])`.
+ *
+ * The columns come from the canonical join form `this.<thisAttr> =
+ * <Related>.<relatedAttr>`: the **parent** (correlating, outer) side is the
+ * relationship's *source* entity (column `parentColumn` from `thisAttr`), the
+ * **child** (inner EXISTS) side is the *related* entity (table `childTable`,
+ * column `childColumn` from `relatedAttr`). The mapping is uniform across
+ * cardinalities — a to-one hop correlates `t1.id = t0.fk`, a to-many hop
+ * correlates `t1.fk = t0.id` — because the join predicate already names the two
+ * key columns and which entity owns each.
+ */
+export interface ResolvedRelationship {
+  /** The related (child) entity's physical table name. */
+  readonly childTable: string;
+  /** The dialect-quoted child-side correlation column (the related-attr column). */
+  readonly childColumn: string;
+  /** The dialect-quoted parent-side correlation column (the this-attr column). */
+  readonly parentColumn: string;
+}
+
+/**
  * The schema knowledge the compiler needs, injected so `@parallax/sql` stays
  * free of a metamodel import. The runner implements this over the M1 reader.
  */
 export interface SchemaResolver {
   /** Resolve a `Class.attribute` reference to its table, quoted column + type. */
   resolveAttribute(ref: string): ResolvedColumn;
+  /**
+   * Resolve a `Class.relationship` reference to its correlation columns + child
+   * table (the navigation/EXISTS semi-join correlation, derived from the join).
+   */
+  resolveRelationship(ref: string): ResolvedRelationship;
   /**
    * The root entity's table name (the `from` target) and its read projection —
    * the ordered quoted columns the canonical SELECT projects.
@@ -214,7 +243,7 @@ function peelDirectives(op: Operation, ctx: CompileCtx): Directives {
  * supported" error so it fails loudly rather than emitting wrong SQL. Later
  * phases extend this switch.
  */
-export function compilePredicate(op: Operation, ctx: CompileCtx): string | undefined {
+export function compilePredicate(op: Operation, ctx: CompileCtx, scope = "t0"): string | undefined {
   const tag = operationTag(op);
   switch (tag) {
     case "all":
@@ -262,13 +291,24 @@ export function compilePredicate(op: Operation, ctx: CompileCtx): string | undef
       return membership(ctx, (op as { notIn: MembershipBody }).notIn, true);
 
     case "and":
-      return junction(ctx, (op as { and: JunctionBody }).and.operands, "and");
+      return junction(ctx, (op as { and: JunctionBody }).and.operands, "and", scope);
     case "or":
-      return junction(ctx, (op as { or: JunctionBody }).or.operands, "or");
+      return junction(ctx, (op as { or: JunctionBody }).or.operands, "or", scope);
     case "not":
-      return `not ${requirePredicate(ctx, (op as { not: UnaryBody }).not.operand)}`;
+      return `not ${requirePredicate(ctx, (op as { not: UnaryBody }).not.operand, scope)}`;
     case "group":
-      return `(${requirePredicate(ctx, (op as { group: UnaryBody }).group.operand)})`;
+      return `(${requirePredicate(ctx, (op as { group: UnaryBody }).group.operand, scope)})`;
+
+    case "navigate":
+      // A navigation FILTER is the positive semi-join (M4): keep parent rows for
+      // which a correlated related row (optionally satisfying the inner op)
+      // exists. `navigate` and `exists` lower to the identical EXISTS form; they
+      // differ only at the algebra level (navigate always carries an inner op).
+      return existsSemiJoin(ctx, (op as { navigate: NavigationBody }).navigate, false, scope);
+    case "exists":
+      return existsSemiJoin(ctx, (op as { exists: NavigationBody }).exists, false, scope);
+    case "notExists":
+      return existsSemiJoin(ctx, (op as { notExists: NavigationBody }).notExists, true, scope);
 
     default:
       throw new Error(`compile: operation '${tag}' is not supported in this phase`);
@@ -303,6 +343,10 @@ interface JunctionBody {
 }
 interface UnaryBody {
   readonly operand: Operation;
+}
+interface NavigationBody {
+  readonly rel: string;
+  readonly op?: Operation;
 }
 
 // --- leaf emitters ----------------------------------------------------------
@@ -417,9 +461,61 @@ function membership(ctx: CompileCtx, body: MembershipBody, negated: boolean): st
   return negated ? `not ${expr}` : expr;
 }
 
+/**
+ * Lower a navigation filter (`navigate` / `exists` / `notExists`) to a correlated
+ * `EXISTS` semi-join (M4). The child table is aliased with the next free alias
+ * (`t1`, then `t2` for a nested hop) so the inner predicate — which references
+ * the child entity by `Class.attr` — resolves against that alias. The correlation
+ * predicate `t1.<childCol> = t0.<parentCol>` is derived mechanically from the
+ * relationship join; the optional inner op (which may itself be a nested
+ * navigation, giving multi-hop nested EXISTS) is appended with ` and `. A
+ * `notExists` prepends `not ` to the whole semi-join (the canonical negated form).
+ *
+ * The correlation binds none; the inner op's binds (if any) accumulate in
+ * traversal order, so an outer scalar bind composed via `and` lands after them.
+ */
+function existsSemiJoin(
+  ctx: CompileCtx,
+  body: NavigationBody,
+  negated: boolean,
+  parentAlias: string,
+): string {
+  const rel = ctx.schema.resolveRelationship(body.rel);
+  // The child gets a fresh alias; the inner predicate is compiled in the CHILD's
+  // scope, so a deeper nested navigation correlates back to THIS child (not the
+  // root) — that is what produces `t2.order_item_id = t1.id` for a 2-hop EXISTS.
+  const childAlias = nextAlias(ctx);
+  registerAlias(ctx, rel.childTable, childAlias);
+  const correlation = `${childAlias}.${rel.childColumn} = ${parentAlias}.${rel.parentColumn}`;
+  let inner = correlation;
+  if (body.op !== undefined) {
+    const fragment = compilePredicate(body.op, ctx, childAlias);
+    if (fragment !== undefined) {
+      inner += ` and ${fragment}`;
+    }
+  }
+  const exists = `exists (select 1 from ${rel.childTable} ${childAlias} where ${inner})`;
+  return negated ? `not ${exists}` : exists;
+}
+
+/** Allocate the next fresh alias (`t${size}`) for a new correlation scope. */
+function nextAlias(ctx: CompileCtx): string {
+  return `t${ctx.aliases.size}`;
+}
+
+/** Register a freshly-allocated alias for a table so the inner predicate resolves it. */
+function registerAlias(ctx: CompileCtx, table: string, alias: string): void {
+  ctx.aliases.set(table, alias);
+}
+
 /** Join boolean operands with ` and ` / ` or `; binds follow left-to-right. */
-function junction(ctx: CompileCtx, operands: readonly Operation[], connector: string): string {
-  return operands.map((operand) => requirePredicate(ctx, operand)).join(` ${connector} `);
+function junction(
+  ctx: CompileCtx,
+  operands: readonly Operation[],
+  connector: string,
+  scope: string,
+): string {
+  return operands.map((operand) => requirePredicate(ctx, operand, scope)).join(` ${connector} `);
 }
 
 /**
@@ -427,8 +523,8 @@ function junction(ctx: CompileCtx, operands: readonly Operation[], connector: st
  * identities `all` / `none` are not legal operands of `and` / `or` / `not` /
  * `group` (they carry no predicate text), so a missing fragment is an error.
  */
-function requirePredicate(ctx: CompileCtx, op: Operation): string {
-  const fragment = compilePredicate(op, ctx);
+function requirePredicate(ctx: CompileCtx, op: Operation, scope: string): string {
+  const fragment = compilePredicate(op, ctx, scope);
   if (fragment === undefined) {
     throw new Error(`compile: '${operationTag(op)}' has no predicate text to combine`);
   }

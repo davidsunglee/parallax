@@ -9,10 +9,19 @@
  */
 
 export {
+  type ColumnTypes,
+  compareGraph,
   compareRowSet,
+  type Graph,
+  type GraphColumnTypes,
   type RowSetComparison,
   scalarsEqual,
 } from "./compare.js";
+export {
+  buildDeepFetchPlan,
+  type DeepFetchPlan,
+  isDeepFetch,
+} from "./deepfetch-plan.js";
 export {
   describe,
   FIRST_IMPLEMENTATION_MVP_CAPABILITIES,
@@ -41,3 +50,4 @@ export {
   type ValidationResult,
   validateEnvelope,
 } from "./schema.js";
+export { columnTypesForCase } from "./schema-resolver.js";

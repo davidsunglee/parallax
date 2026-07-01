@@ -30,26 +30,16 @@ import type {
   Row,
   RunOk,
 } from "@parallax/core";
-import {
-  type EntityMetadata,
-  Metamodel,
-  type NormalizedAttribute,
-  type Operation,
-  parseOperation,
-} from "@parallax/operation";
-import {
-  columnOrder,
-  compile,
-  ddlForDescriptor,
-  quoteIdentifier,
-  type ResolvedColumn,
-  type SchemaResolver,
-} from "@parallax/sql";
+import { Metamodel, parseOperation } from "@parallax/operation";
+import { deepFetch, type Exec, type Row as GraphRow } from "@parallax/relationships";
+import { columnOrder, compile, ddlForDescriptor } from "@parallax/sql";
+import { buildDeepFetchPlan, type DeepFetchPlan, isDeepFetch } from "./deepfetch-plan.js";
 import { FIRST_IMPLEMENTATION_MVP_CAPABILITIES } from "./describe.js";
 import type { LoadedCase } from "./discover.js";
 import { inClaim } from "./gate.js";
 import type { CompatibilityDatabaseProvider } from "./provider.js";
 import { assertValidEnvelope } from "./schema.js";
+import { schemaForReadCase } from "./schema-resolver.js";
 
 /** The case's authored binds carried verbatim (a flat scalar list for a read). */
 type WireBind = BindValue;
@@ -65,131 +55,31 @@ type WireBind = BindValue;
 const READ_OPERATION_POINTER = "/operation" as const;
 
 /**
- * A `SchemaResolver` over the M1 metamodel reader. Resolves `Class.attr`
- * references to alias-qualified columns (with the M0 neutral type the compiler
- * coerces literals against) and supplies the root entity's table + read
- * projection the M3 visitor projects.
+ * The read-projection helper is re-exported from the schema resolver so the CLI /
+ * tests that already imported it from the runner keep working; the resolver + all
+ * projection rules now live in `./schema-resolver.js` (single source of truth).
  */
-class MetamodelSchema implements SchemaResolver {
-  constructor(
-    private readonly metamodel: Metamodel,
-    private readonly rootEntity: EntityMetadata,
-    private readonly projection: readonly string[],
-  ) {}
-
-  resolveAttribute(ref: string): ResolvedColumn {
-    const [className, attrName] = splitRef(ref);
-    const entity = this.metamodel.entity(className);
-    const attr = entity.attributeByName(attrName);
-    return { table: entity.table, column: quoteIdentifier(attr.column), type: attr.type };
-  }
-
-  rootTable(): string {
-    return this.rootEntity.table;
-  }
-
-  rootProjection(): readonly string[] {
-    return this.projection;
-  }
-}
-
-/**
- * Resolve a read case's projection — the ordered, quoted output columns the
- * canonical SELECT projects — **from the case**, matching the golden by
- * construction (carry-forward task 2; the Phase-3 `[pk, firstNonPk]` heuristic
- * could not express `0226`'s `distinct active` nor a wider `orders` read).
- *
- * The case's `expectedRows` keys ARE the SQL output column names the golden
- * projects and the harness compares against (`{id, name}` ⇒ `id, name`;
- * `{active}` ⇒ `active`; grade's `{id, order, label}` ⇒ `id, "order", label`).
- * Each key is quoted through the M11 seam so a reserved/non-simple output name
- * (`order`) is byte-identical to the golden. When `expectedRows` is empty (e.g.
- * `0221-none`), the case provides no key witness, so we fall back to the
- * metamodel default — the primary key plus the first non-key attribute — which
- * reproduces the `orders` `id, name` projection the corpus authors there.
- */
-export function readProjection(loaded: LoadedCase, rootEntity: EntityMetadata): readonly string[] {
-  const expectedRows = loaded.raw.expectedRows as readonly Record<string, unknown>[] | undefined;
-  const firstRow = expectedRows?.[0];
-  if (firstRow && Object.keys(firstRow).length > 0) {
-    return Object.keys(firstRow).map(quoteIdentifier);
-  }
-  return defaultEntityProjection(rootEntity).map((attr) => quoteIdentifier(attr.column));
-}
-
-/**
- * The metamodel default projection for an entity: the primary-key attribute(s)
- * followed by the first non-primary-key attribute (yielding `id, name` for the
- * `orders` root). Used only as the fallback when a case carries no
- * `expectedRows` key witness (an all-excluded predicate like `none`).
- */
-function defaultEntityProjection(entity: EntityMetadata): readonly NormalizedAttribute[] {
-  const attributes = entity.attributes();
-  const primaryKey = attributes.filter((attr) => attr.primaryKey);
-  const firstNonPk = attributes.find((attr) => !attr.primaryKey);
-  const projection = [...primaryKey];
-  if (firstNonPk && !projection.includes(firstNonPk)) {
-    projection.push(firstNonPk);
-  }
-  return projection;
-}
-
-/** Split a `Class.attribute` reference into its two parts. */
-function splitRef(ref: string): [string, string] {
-  const dot = ref.indexOf(".");
-  if (dot === -1) {
-    throw new Error(`malformed reference '${ref}' (expected 'Class.attribute')`);
-  }
-  return [ref.slice(0, dot), ref.slice(dot + 1)];
-}
-
-/** The root entity a read case queries: the operation references it by `Class.attr`. */
-function rootEntityFor(metamodel: Metamodel, operation: Operation): EntityMetadata {
-  // The root class is named by the first `Class.attr` reference in the
-  // operation, or — for `all` with no reference — the model's first entity.
-  const ref = firstClassRef(operation);
-  if (ref) {
-    return metamodel.entity(ref);
-  }
-  const [first] = metamodel.entities();
-  if (!first) {
-    throw new Error("model declares no entities");
-  }
-  return first;
-}
-
-/** The class name of the first `Class.attr` reference reachable in an operation. */
-function firstClassRef(node: unknown): string | undefined {
-  if (node === null || typeof node !== "object") {
-    return undefined;
-  }
-  for (const value of Object.values(node as Record<string, unknown>)) {
-    if (typeof value === "string" && /^[A-Z][A-Za-z0-9]*\.[A-Za-z]/.test(value)) {
-      return value.slice(0, value.indexOf("."));
-    }
-    const nested = firstClassRef(value);
-    if (nested) {
-      return nested;
-    }
-  }
-  return undefined;
-}
-
-/** Build the `MetamodelSchema` resolver for a read case (projection case-driven). */
-function schemaFor(loaded: LoadedCase, operation: Operation): MetamodelSchema {
-  const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
-  const rootEntity = rootEntityFor(metamodel, operation);
-  const projection = readProjection(loaded, rootEntity);
-  return new MetamodelSchema(metamodel, rootEntity, projection);
-}
+export { readProjection } from "./schema-resolver.js";
 
 // --- compile lane -----------------------------------------------------------
 
 /**
  * Compile a `read` case to its canonical SQL + binds and assemble a schema-valid
- * `compile` envelope. Single-statement read shape only (Phase 3); the emission's
- * `casePointer` is `/operation` (the JSON Pointer to the case's operation key),
- * per the conformance contract's `compile` example.
+ * `compile` envelope.
+ *
+ * A single-statement read (including the flat navigation/`exists`/`notExists`
+ * semi-join cases, which lower to one `select … where exists (…)`) emits one
+ * `/operation` emission with `roundTrips: 1`, per the contract's `compile`
+ * example.
+ *
+ * A **deep-fetch** case emits only the ROOT statement (`roundTrips: 1`). Its
+ * child levels are keyed by the DISTINCT parent keys gathered from the previous
+ * level at run time (the N+1-eliminating `IN` list), so their `IN`-bind arity and
+ * values are not statically known — a Docker-free compile cannot reproduce them.
+ * The contract permits an emission-per-static-step and treats run-time-only work
+ * as producing no static emission; the full multi-statement emission (root +
+ * per-level, keyed by real parent keys) is produced by the run lane, which is
+ * where non-temporal 03xx deep fetch is graded (graph + `roundTrips`).
  */
 export function runCompile(
   loaded: LoadedCase,
@@ -200,9 +90,7 @@ export function runCompile(
   if (gate) {
     return gate;
   }
-  const operation = parseOperation(loaded.raw.operation);
-  const schema = schemaFor(loaded, operation);
-  const { sql, binds } = compile(operation, schema);
+  const { sql, binds } = compileRootStatement(loaded);
 
   const emission: Emission = {
     casePointer: READ_OPERATION_POINTER,
@@ -223,12 +111,30 @@ export function runCompile(
   return assertValidEnvelope(envelope);
 }
 
+/**
+ * Compile the single statement a compile emission carries: for a flat read it is
+ * the whole operation; for a deep fetch it is the deep-fetch root statement (the
+ * operand compiled with the deep-fetch root projection). Both reuse the M3
+ * `compile` visitor via a `MetamodelSchema`.
+ */
+function compileRootStatement(loaded: LoadedCase): { sql: string; binds: readonly BindValue[] } {
+  if (isDeepFetch(loaded.raw.operation)) {
+    const plan = buildDeepFetchPlan(loaded);
+    return { sql: plan.root.sql, binds: plan.root.binds as readonly BindValue[] };
+  }
+  const operation = parseOperation(loaded.raw.operation);
+  const schema = schemaForReadCase(loaded, operation);
+  const { sql, binds } = compile(operation, schema);
+  return { sql, binds: binds as readonly BindValue[] };
+}
+
 // --- run lane ---------------------------------------------------------------
 
 /**
  * Run a `read` case end-to-end against an injected provider: provision, derive +
  * apply DDL, load fixtures, execute the compiled SQL, and assemble a schema-valid
- * `run` envelope with `rows` + `roundTrips`.
+ * `run` envelope. A flat read reports `rows`; a deep fetch reports the assembled
+ * `graph` with `roundTrips = 1 + non-elided levels`.
  */
 export async function runRun(
   loaded: LoadedCase,
@@ -240,22 +146,12 @@ export async function runRun(
   if (gate) {
     return gate;
   }
-  const operation = parseOperation(loaded.raw.operation);
-  const schema = schemaFor(loaded, operation);
-  const { sql, binds } = compile(operation, schema);
-
   await provision(loaded, provider);
 
-  const rows = await provider.query(sql, binds as readonly unknown[]);
-  const observations: Observations = {
-    roundTrips: 1,
-    rows: rows as readonly Row[],
-  };
-  const emission: Emission = {
-    casePointer: READ_OPERATION_POINTER,
-    sql,
-    binds: binds as readonly WireBind[],
-  };
+  const { emissions, observations } = isDeepFetch(loaded.raw.operation)
+    ? await runDeepFetch(loaded, provider)
+    : await runFlatRead(loaded, provider);
+
   const envelope: RunOk = {
     schemaVersion: "1",
     command: "run",
@@ -264,10 +160,82 @@ export async function runRun(
     case: loaded.casePath,
     dialect,
     caseShape: loaded.shape,
-    emissions: [emission],
+    emissions,
     observations,
   };
   return assertValidEnvelope(envelope);
+}
+
+/** The emissions + observations a run produces (assembled into the envelope). */
+interface RunResult {
+  readonly emissions: readonly Emission[];
+  readonly observations: Observations;
+}
+
+/**
+ * Execute a flat read: compile the whole operation, run the single statement, and
+ * report the observed `rows` with `roundTrips: 1`. Covers the plain scalar reads
+ * and the navigation/`exists`/`notExists` semi-join cases (one `select`).
+ */
+async function runFlatRead(
+  loaded: LoadedCase,
+  provider: CompatibilityDatabaseProvider,
+): Promise<RunResult> {
+  const operation = parseOperation(loaded.raw.operation);
+  const schema = schemaForReadCase(loaded, operation);
+  const { sql, binds } = compile(operation, schema);
+
+  const rows = await provider.query(sql, binds as readonly unknown[]);
+  return {
+    emissions: [{ casePointer: READ_OPERATION_POINTER, sql, binds: binds as readonly WireBind[] }],
+    observations: { roundTrips: 1, rows: rows as readonly Row[] },
+  };
+}
+
+/**
+ * Execute a deep fetch: build the plan, run the root statement, then let the pure
+ * `@parallax/relationships` strategy fetch one bulk `IN`-keyed query per non-empty
+ * level (never N+1). Assemble the `graph` observation (decorated root rows keyed
+ * by the root entity's domain name), report `roundTrips = 1 + non-elided levels`,
+ * and emit one emission per statement actually issued (root + each executed
+ * level), in execution order.
+ */
+async function runDeepFetch(
+  loaded: LoadedCase,
+  provider: CompatibilityDatabaseProvider,
+): Promise<RunResult> {
+  const plan: DeepFetchPlan = buildDeepFetchPlan(loaded);
+
+  const rootRows = await provider.query(plan.root.sql, plan.root.binds);
+  const emissions: Emission[] = [
+    {
+      casePointer: READ_OPERATION_POINTER,
+      sql: plan.root.sql,
+      binds: plan.root.binds as readonly WireBind[],
+    },
+  ];
+
+  // Each level the strategy issues runs through this `exec`, which records the
+  // exact SQL + binds (the real IN list keyed by gathered parent keys) so the
+  // envelope's emissions mirror the statements executed, in order.
+  const exec: Exec = async (sql, binds) => {
+    emissions.push({
+      casePointer: READ_OPERATION_POINTER,
+      sql,
+      binds: binds as readonly WireBind[],
+    });
+    return (await provider.query(sql, binds)) as readonly GraphRow[];
+  };
+
+  const result = await deepFetch(rootRows as readonly GraphRow[], plan.tree, exec);
+
+  const graph: Record<string, readonly Row[]> = {
+    [plan.rootEntity]: result.rows as readonly Row[],
+  };
+  return {
+    emissions,
+    observations: { roundTrips: result.roundTrips, graph },
+  };
 }
 
 /** Provision a clean DB: reset, derive + apply DDL, load fixtures. */
