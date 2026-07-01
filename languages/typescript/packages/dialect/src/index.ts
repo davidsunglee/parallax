@@ -10,6 +10,7 @@
 export { columnOrder, ddlForDescriptor } from "./ddl.js";
 export {
   bytesFromDb,
+  dateFromDb,
   int8FromRaw,
   numericFromRaw,
   POSTGRES_DIALECT,
@@ -17,6 +18,8 @@ export {
   quoteIdentifier,
   RAW_TEXT_OIDS,
   readLockSuffix,
+  timeFromDb,
   timestampFromDb,
   toPositionalPlaceholders,
+  uuidFromDb,
 } from "./postgres.js";

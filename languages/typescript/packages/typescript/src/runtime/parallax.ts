@@ -15,6 +15,7 @@
  */
 
 import { bytesFromHex } from "@parallax/core";
+import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 import { ParallaxList } from "@parallax/lists";
 import type { Metamodel } from "@parallax/metamodel";
 import { type EntityMetadata, Metamodel as MetamodelReader } from "@parallax/metamodel";
@@ -23,24 +24,12 @@ import { compile } from "@parallax/sql";
 import { buildFindOperation, type FindOptions, Predicate } from "../dsl/find.js";
 import { RuntimeSchema } from "./schema.js";
 
-/** A row as the database port returns it (physical column name → neutral value). */
-export type ParallaxRow = Record<string, unknown>;
-
-/**
- * The database port the factory executes through. A concrete adapter (the
- * Testcontainers Postgres provider at the composition root, or an application's
- * own pool) implements it; the runtime imports no driver. `query` runs a read;
- * `transaction` runs a callback with a bound connection.
- */
-export interface ParallaxDatabase {
-  /** Execute a compiled read (`?`-placeholder SQL + ordered binds) → rows. */
-  query(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]>;
-  /**
-   * Run `body` inside a database transaction, committing on resolve and rolling
-   * back on throw. A connection-bound `ParallaxDatabase` is passed to `body`.
-   */
-  transaction?<T>(body: (tx: ParallaxDatabase) => Promise<T>): Promise<T>;
-}
+// The runtime consumes the abstract execution port (`ParallaxDatabase` +
+// `ParallaxRow`) from `@parallax/db` (M11 port/adapter decomposition); a concrete
+// adapter (the shippable `@parallax/db-postgres`, or an application's own driver)
+// is injected at the composition root. Re-exported below so the generated
+// `#parallax` barrel and applications reach the port types through one package.
+export type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 
 /** The clock strategy (spec §3.1) — supplies the transaction processing instant. */
 export interface ParallaxClock {
@@ -101,7 +90,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     const materialize = this.rowMaterializer();
     return new ParallaxList<T>(
       async () => {
-        const rows = await this.database.query(sql, binds as readonly unknown[]);
+        const rows = await this.database.execute(sql, binds as readonly unknown[]);
         return (materialize ? rows.map(materialize) : rows) as readonly T[];
       },
       pkColumn === undefined

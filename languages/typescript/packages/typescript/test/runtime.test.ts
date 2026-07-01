@@ -29,7 +29,7 @@ interface RecordedQuery {
 
 /**
  * A stub database port that records every compiled read and returns canned rows.
- * `rows` is what the next `query` resolves to; `queries` accumulates every call.
+ * `rows` is what the next `execute` resolves to; `queries` accumulates every call.
  */
 class StubDatabase implements ParallaxDatabase {
   readonly queries: RecordedQuery[] = [];
@@ -40,7 +40,7 @@ class StubDatabase implements ParallaxDatabase {
     this.rows = rows;
   }
 
-  query(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
+  execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
     this.queries.push({ sql, binds });
     return Promise.resolve(this.rows);
   }

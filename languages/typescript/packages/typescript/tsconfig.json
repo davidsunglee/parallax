@@ -10,6 +10,8 @@
     { "path": "../metamodel" },
     { "path": "../operation" },
     { "path": "../dialect" },
+    { "path": "../db" },
+    { "path": "../db-postgres" },
     { "path": "../sql" },
     { "path": "../transactions" },
     { "path": "../lists" },
