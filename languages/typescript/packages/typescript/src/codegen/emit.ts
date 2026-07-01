@@ -190,7 +190,7 @@ function handleType(model: CodegenModel): string {
   return [
     "/** A typed entity finder — `find` returns a `ParallaxList` of managed objects. */",
     "export interface EntityFinder<T> {",
-    "  find(predicate: Predicate, options?: FindOptions): ParallaxList<T>;",
+    "  find(predicate?: Predicate, options?: FindOptions): ParallaxList<T>;",
     "}",
     "",
     "/** The configured, typed Parallax handle (`px`, spec §1.2). */",
