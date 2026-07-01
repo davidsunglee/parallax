@@ -279,5 +279,3 @@ function splitRelRef(ref: string): [string, string] {
   }
   return [ref.slice(0, dot), ref.slice(dot + 1)];
 }
-
-export type { MetamodelSchema };

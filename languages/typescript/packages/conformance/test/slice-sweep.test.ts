@@ -1,0 +1,150 @@
+/**
+ * The full-slice **compile lane + honesty gate** (Docker-free).
+ *
+ * This is the Phase-8 "is the whole slice green?" sweep, at the adapter's
+ * contract boundary (the runner's `runCompile`, the same path the CLI drives):
+ *
+ *  - **Full compile sweep.** `test.each` over EVERY `first-implementation-mvp`
+ *    tagged case (99): each compiles to an `ok` envelope, and for a `read`-shaped
+ *    case (whose golden is a single string) the emitted SQL + binds equal the
+ *    golden by construction. Write / scenario / conflict goldens are multi-string
+ *    / per-step and graded structurally in the run lane; here they must compile
+ *    `ok` (never `unsupported`, never `error`).
+ *  - **Honesty — in-claim never `unsupported`.** No tagged (in-claim) case may
+ *    return `unsupported`; doing so is itself a conformance failure (the six-
+ *    condition gate must route every in-claim case to a real attempt).
+ *  - **Honesty — out-of-claim ⇒ `unsupported` + the right diagnostic.** Four
+ *    representatives exercise each gate branch: a non-Postgres dialect
+ *    (`unsupported-dialect`), an unclaimed module tag (`unsupported-case-tag`), an
+ *    excluded shape (`unsupported-shape`), and an untagged in-claim-module read
+ *    (`missing-include-tag`).
+ *  - **Case-matrix report.** The sweep folds every outcome into the first-class
+ *    matrix report and asserts it is GREEN with zero residuals — the "what
+ *    regressed?" artifact a reader consults at a glance.
+ *
+ * The DB-backed grade (rows / graph / tableState / affectedRows) is the run-lane
+ * sweep (`typescript/test/slice-run.test.ts`), which lives in the composition root
+ * because the concrete Testcontainers provider does.
+ */
+
+import { expect, describe as group, it } from "vitest";
+import {
+  CaseMatrix,
+  discoverCasePaths,
+  type LoadedCase,
+  loadCase,
+  type MatrixStatus,
+  renderMatrixReport,
+  runCompile,
+  TYPESCRIPT_ADAPTER,
+} from "../src/index.js";
+
+/** The full `first-implementation-mvp` tagged slice, in discovery order. */
+function taggedCases(): readonly { id: string; loaded: LoadedCase }[] {
+  return discoverCasePaths()
+    .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
+    .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
+    .filter(({ loaded }) => loaded.tags.includes("first-implementation-mvp"))
+    .map(({ id, loaded }) => ({ id, loaded }));
+}
+
+const CASES = taggedCases();
+
+/** The Postgres golden SQL a `read`-shaped case pins (a single string). */
+function readGolden(loaded: LoadedCase): string | undefined {
+  const golden = loaded.raw.goldenSql as { postgres?: unknown } | undefined;
+  return typeof golden?.postgres === "string" ? golden.postgres : undefined;
+}
+
+group("full-slice compile sweep (Docker-free)", () => {
+  it("discovers the whole first-implementation-mvp slice (99 cases)", () => {
+    // The slice is include-driven; the exact count guards against a discovery
+    // regression that silently drops (or over-collects) a tagged case.
+    expect(CASES.length).toBe(99);
+  });
+
+  it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
+    const envelope = runCompile(loaded, "postgres", TYPESCRIPT_ADAPTER);
+    // Honesty: an in-claim (tagged) case must be attempted — `ok` or `error`,
+    // NEVER `unsupported`. The whole slice is green, so it is `ok`.
+    expect(envelope.status, `${loaded.casePath}: ${JSON.stringify(envelope)}`).toBe("ok");
+    if (envelope.status !== "ok" || envelope.command !== "compile") {
+      throw new Error("expected an ok compile envelope");
+    }
+
+    // A single-statement read golden is compared exactly (`emitted === golden`);
+    // this includes `0003`'s `bytes` `encode(t0.payload, ?) payload_hex`
+    // projection (the scalar-projection residual this phase closes).
+    const golden = loaded.shape === "read" ? readGolden(loaded) : undefined;
+    if (golden !== undefined && envelope.emissions.length === 1) {
+      const [emission] = envelope.emissions;
+      expect(emission?.sql, loaded.casePath).toBe(golden);
+      expect(emission?.binds, loaded.casePath).toEqual(loaded.raw.binds ?? []);
+    }
+  });
+});
+
+/** One representative per out-of-claim gate branch, with its expected diagnostic. */
+const OUT_OF_CLAIM: readonly {
+  label: string;
+  casePath: string;
+  dialect: string;
+  code: string;
+}[] = [
+  {
+    label: "a non-Postgres dialect",
+    casePath: "core/compatibility/cases/0002-eq.yaml",
+    dialect: "mariadb",
+    code: "unsupported-dialect",
+  },
+  {
+    label: "an unclaimed module tag (m9)",
+    casePath: "core/compatibility/cases/0702-detached-update.yaml",
+    dialect: "postgres",
+    code: "unsupported-case-tag",
+  },
+  {
+    label: "an excluded case shape (coherence)",
+    casePath: "core/compatibility/cases/1104-coherence-insert-refetch.yaml",
+    dialect: "postgres",
+    code: "unsupported-shape",
+  },
+  {
+    label: "an untagged in-claim-module read",
+    casePath: "core/compatibility/cases/0401-sum-group-by-having.yaml",
+    dialect: "postgres",
+    code: "missing-include-tag",
+  },
+];
+
+group("honesty — out-of-claim ⇒ unsupported with the first-failed-filter code", () => {
+  it.each(OUT_OF_CLAIM)("$label returns unsupported ($code)", ({ casePath, dialect, code }) => {
+    const envelope = runCompile(loadCase(casePath), dialect, TYPESCRIPT_ADAPTER);
+    expect(envelope.status, JSON.stringify(envelope)).toBe("unsupported");
+    if (envelope.status !== "unsupported") {
+      throw new Error("expected an unsupported envelope");
+    }
+    expect(envelope.diagnostics[0]?.code).toBe(code);
+  });
+});
+
+group("case-matrix report — the slice is green at a glance", () => {
+  it("folds every compile outcome into a GREEN report with no residuals", () => {
+    const matrix = new CaseMatrix();
+    for (const { loaded } of CASES) {
+      const envelope = runCompile(loaded, "postgres", TYPESCRIPT_ADAPTER);
+      matrix.record({
+        casePath: loaded.casePath,
+        command: "compile",
+        status: envelope.status as MatrixStatus,
+      });
+    }
+    const report = matrix.report();
+    // The rendered report is the human-facing artifact; surface it on failure so
+    // a regression names the exact residual case IDs.
+    expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
+    expect(report.total).toBe(99);
+    expect(report.counts.ok).toBe(99);
+    expect(report.residuals).toEqual([]);
+  });
+});

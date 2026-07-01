@@ -20,7 +20,6 @@
 import type {
   AdapterIdentity,
   BindValue,
-  CaseShape,
   CompileOk,
   Diagnostic,
   Emission,
@@ -664,6 +663,3 @@ function gateOrNonOk(
     diagnostics: [diagnostic],
   };
 }
-
-/** Re-export the shape type for consumers assembling envelopes. */
-export type { CaseShape };
