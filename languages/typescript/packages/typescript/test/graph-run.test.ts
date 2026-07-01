@@ -37,12 +37,13 @@ import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import { PostgresProvider } from "../src/conformance/postgres-provider.js";
 
 /**
- * The temporal `m7` deep-fetch subset (`0324`–`0334`), EXCLUDED from Phase 5 with
- * a reason: temporal deep fetch propagates as-of binds per hop (the `relationships
- * -> bitemporal` edge) and lands in Phase 6 once M7 exists. Every non-temporal
- * `03xx` case (`0301`–`0323`) is in scope; there is no `>= N` lower bound.
+ * The temporal `m7` `03xx` subset (`0324`–`0336`), EXCLUDED from this non-temporal
+ * lane with a reason: temporal deep fetch / EXISTS propagates as-of binds per hop
+ * (the `relationships -> bitemporal` edge) and belongs to the Phase-6 temporal
+ * lanes, not this Phase-5 one. Every non-temporal `03xx` case (`0301`–`0323`) is in
+ * scope; there is no `>= N` lower bound.
  */
-const TEMPORAL_M7_EXCLUSIONS: readonly string[] = Array.from({ length: 11 }, (_, i) =>
+const TEMPORAL_M7_EXCLUSIONS: readonly string[] = Array.from({ length: 13 }, (_, i) =>
   String(324 + i).padStart(4, "0"),
 );
 
@@ -74,7 +75,7 @@ const CASES = graphRunCases();
  * The EXACT in-scope set: the contiguous non-temporal `03xx` block `0301`–`0323`
  * (23 cases). Asserting the exact set — not a `>= N` lower bound — makes a
  * discovery regression that silently drops a case fail loudly, and documents the
- * temporal `m7` exclusions (`0324`–`0334`) explicitly rather than by omission.
+ * temporal `m7` exclusions (`0324`–`0336`) explicitly rather than by omission.
  */
 const EXPECTED_IDS: readonly string[] = Array.from({ length: 23 }, (_, i) =>
   String(301 + i).padStart(4, "0"),
@@ -85,7 +86,7 @@ const EXPECTED_IDS: readonly string[] = Array.from({ length: 23 }, (_, i) =>
 it("discovers exactly the in-scope non-temporal 03xx cases (0301–0323)", () => {
   const discovered = CASES.map(({ id }) => id).sort();
   expect(discovered).toEqual([...EXPECTED_IDS].sort());
-  // The temporal m7 subset (0324–0334) is a documented Phase-6 exclusion; it
+  // The temporal m7 subset (0324–0336) is a documented Phase-6 exclusion; it
   // must NOT leak into the Phase-5 in-scope set.
   for (const excluded of TEMPORAL_M7_EXCLUSIONS) {
     expect(discovered).not.toContain(excluded);

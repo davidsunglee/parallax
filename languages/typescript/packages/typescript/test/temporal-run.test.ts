@@ -14,9 +14,10 @@
  *    milestone-chaining DML, then grade the observed `tableState` against
  *    `expectedTableState` (the superseded closed rows + the current `out_z = ∞`
  *    row), with `roundTrips` equal to the declared statement count (1/3/2);
- *  - **temporal deep fetch** (`0324`–`0334`): the assembled `graph` against
+ *  - **temporal deep fetch** (`0324`–`0336`): the assembled `graph` against
  *    `expectedGraph`, plus the per-level golden SQL and the propagated as-of
- *    suffix binds, with `roundTrips` the declared `1 + L`.
+ *    suffix binds, with `roundTrips` the declared `1 + L` (`0336` propagates the
+ *    authored instant through a directive-wrapped `limit(orderBy(asOf(…)))` root).
  *
  * Lives in the composition root because the concrete provider does — the runner
  * depends only on the injected port, so a `conformance/test` run lane would be a
@@ -41,7 +42,7 @@ import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import { PostgresProvider } from "../src/conformance/postgres-provider.js";
 
 /** The in-scope M7 MVP cases: `05xx` (reads + audit writes), `08xx` (bitemporal
- * reads), the temporal deep-fetch `03xx` subset (`0324`–`0334`), and the
+ * reads), the temporal deep-fetch `03xx` subset (`0324`–`0336`), and the
  * timestamp-shape writeSequence cases `0004`/`0005`. Filtered to the tagged slice
  * (so the out-of-V1 `*Until` writes / business-only cases never discover here). */
 function temporalCases(): readonly { id: string; loaded: LoadedCase }[] {
@@ -49,7 +50,7 @@ function temporalCases(): readonly { id: string; loaded: LoadedCase }[] {
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .filter(
       ({ id }) =>
-        /^(05|08)\d\d$/.test(id) || /^03(2[4-9]|3[0-4])$/.test(id) || /^000[45]$/.test(id),
+        /^(05|08)\d\d$/.test(id) || /^03(2[4-9]|3[0-6])$/.test(id) || /^000[45]$/.test(id),
     )
     .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
     .filter(({ loaded }) => loaded.tags.includes("first-implementation-mvp"));
@@ -71,7 +72,7 @@ const CASES = temporalCases();
 /**
  * The EXACT in-scope id set: `0004`/`0005` (timestamp writes), the audit-only
  * `0501`–`0508`/`0510`–`0512`, the bitemporal reads `0801`–`0805`, and the
- * temporal deep-fetch `0324`–`0334`. Asserting the exact set — not a `>= N` bound
+ * temporal deep-fetch `0324`–`0336`. Asserting the exact set — not a `>= N` bound
  * — fails loudly on a discovery regression that silently drops a case.
  */
 const EXPECTED_IDS: readonly string[] = [
@@ -93,7 +94,9 @@ const EXPECTED_IDS: readonly string[] = [
   "0803",
   "0804",
   "0805",
-  ...Array.from({ length: 11 }, (_, i) => String(324 + i).padStart(4, "0")),
+  // The temporal deep-fetch `m7` set `0324`–`0336` (13): the 11 as-of propagation
+  // cases plus the defaulted-root EXISTS `0335` and the directive-wrapped root `0336`.
+  ...Array.from({ length: 13 }, (_, i) => String(324 + i).padStart(4, "0")),
 ];
 
 it("discovers exactly the in-scope temporal cases", () => {
