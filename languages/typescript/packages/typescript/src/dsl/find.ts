@@ -95,6 +95,14 @@ function temporalDate(point: TemporalPoint): TemporalDate {
 export function buildFindOperation(predicate: Predicate, options: FindOptions = {}): Operation {
   let op: Operation = predicate.toOperation();
 
+  // The temporal axes wrap the base predicate INNERMOST (business outside
+  // processing), so the result directives (`distinct` / `orderBy` / `limit`)
+  // wrap OUTSIDE them — matching the corpus `limit(orderBy(asOf(asOf(all))))`
+  // ordering (`0336`): a conforming compiler peels the directives before the
+  // temporal wrappers on the root. Non-temporal reads are unaffected (temporal
+  // is a no-op), so `0224` stays `limit(orderBy(all))`.
+  op = applyTemporal(op, options.temporal, options.axisRefs);
+
   if (options.distinct) {
     op = { distinct: { operand: op } };
   }
@@ -106,11 +114,6 @@ export function buildFindOperation(predicate: Predicate, options: FindOptions = 
     op = { limit: { operand: op, count: options.limit } };
   }
 
-  // The temporal axes wrap the base read (business outside processing) BEFORE
-  // the deep-fetch wrapper, so a temporal deep fetch is `deepFetch(asOf(...))`
-  // (`0324`), matching the corpus.
-  op = applyTemporal(op, options.temporal, options.axisRefs);
-
   if (options.includes && options.includes.length > 0) {
     const paths: readonly NavigationPathRefs[] = options.includes.map((p) => p.refs);
     op = { deepFetch: { operand: op, paths } };
@@ -119,12 +122,12 @@ export function buildFindOperation(predicate: Predicate, options: FindOptions = 
 }
 
 /**
- * Wrap a read operand with the temporal axes. Explicit-`now` and omitted axes
- * are both left unwrapped for `asOf` (the M7 default-injection rule reads an
- * unwrapped axis as current); an explicit non-`now` `asOf`, a `range`, or a
- * `history` axis each emit their wrapper. The business axis wraps outside the
- * processing axis so business binds precede processing binds (spec §1.9,
- * `0801` / `0803`).
+ * Wrap a read operand with the temporal axes (innermost, before the result
+ * directives). Explicit-`now` and omitted axes are both left unwrapped for
+ * `asOf` (the M7 default-injection rule reads an unwrapped axis as current); an
+ * explicit non-`now` `asOf`, a `range`, or a `history` axis each emit their
+ * wrapper. The business axis wraps outside the processing axis so business
+ * binds precede processing binds (spec §1.9, `0801` / `0803`).
  */
 function applyTemporal(
   operand: Operation,

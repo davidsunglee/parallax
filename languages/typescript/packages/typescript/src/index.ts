@@ -42,13 +42,22 @@ export {
 } from "./dsl/index.js";
 // --- runtime factory + handles (spec §1.2, §3) ------------------------------
 export {
+  type Assignment,
   createParallax,
+  type DeepFetchGraph,
   EntityFinder,
+  executeDeepFetch,
+  isDeepFetchOperation,
   Parallax,
   type ParallaxClock,
   type ParallaxDatabase,
+  ParallaxOptimisticLockError,
   type ParallaxOptions,
   type ParallaxRow,
   ParallaxTransaction,
   RuntimeSchema,
+  TransactionEntity,
+  TransactionWriter,
+  type UpdateOptions,
+  type WriteResult,
 } from "./runtime/index.js";

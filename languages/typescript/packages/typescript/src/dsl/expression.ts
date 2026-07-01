@@ -200,6 +200,17 @@ export class AttributeExpression {
     return new Predicate({ notIn: { attr: this.ref, values } });
   }
 
+  /**
+   * A named write assignment (`Balance.value.set(150)`), spec §3. The write DSL is
+   * explicit assignment arrays (not partial objects); the runtime's write surface
+   * consumes `{ attr, value }`. The `attr` is the DSL attribute NAME (the part
+   * after the class), which the runtime resolves to a physical column.
+   */
+  set(value: unknown): { readonly attr: string; readonly value: unknown } {
+    const dot = this.ref.indexOf(".");
+    return { attr: dot === -1 ? this.ref : this.ref.slice(dot + 1), value };
+  }
+
   /** Ascending sort key (`orderBy` option). */
   asc(): OrderKeyExpression {
     return new OrderKeyExpression({ attr: this.ref, direction: "asc" });
@@ -263,6 +274,17 @@ export class ToManyRelationshipExpression {
     return new Predicate({
       notExists: { rel: this.ref, ...(inner ? { op: inner.toOperation() } : {}) },
     });
+  }
+
+  /**
+   * Navigate the relationship, filtering the root by an inner predicate over the
+   * related entity (`0301` `Order.items.navigate(OrderItem.sku.eq("A-100"))`). A
+   * `navigate` lowers to the same correlated-EXISTS semi-join as `exists`, but is a
+   * distinct algebra node that always carries an inner predicate (spec §1.6). Used
+   * for both to-many and to-one navigations (`0307` / `0321`).
+   */
+  navigate(inner: Predicate): Predicate {
+    return new Predicate({ navigate: { rel: this.ref, op: inner.toOperation() } });
   }
 }
 
