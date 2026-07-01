@@ -4,7 +4,9 @@
  * the database port. A thin typed surface over the same generic runtime the
  * conformance adapter uses (design Q1 Option B).
  */
+export { type DeepFetchGraph, executeDeepFetch, isDeepFetchOperation } from "./deep-fetch.js";
 export {
+  type Assignment,
   createParallax,
   EntityFinder,
   Parallax,
@@ -13,5 +15,12 @@ export {
   type ParallaxOptions,
   type ParallaxRow,
   ParallaxTransaction,
+  TransactionEntity,
 } from "./parallax.js";
 export { RuntimeSchema } from "./schema.js";
+export {
+  ParallaxOptimisticLockError,
+  TransactionWriter,
+  type UpdateOptions,
+  type WriteResult,
+} from "./writes.js";
