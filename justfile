@@ -85,6 +85,18 @@ ts-conformance-run:
     pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/typescript
 
+# The Docker-backed developer-showcase lane (Phase 10c): run the idiomatic `px.*` /
+# `px.transaction` showcase over the shipped `@parallax/db-postgres` adapter against
+# `postgres:17`, mirroring the whole `first-implementation-mvp` slice (reads / deep
+# fetch / temporal / transactions / locking) — asserting managed shapes AND the
+# corpus results, plus the no-drift + no-silent-gap coverage guards. Also renders
+# the developer guide from the (tested) snippets and checks it is up to date. A
+# merge-gating lane alongside the conformance run lane. Docker must be running.
+ts-showcase:
+    pnpm run ts:typecheck
+    node languages/typescript/scripts/render-guide.mjs --check
+    pnpm exec vitest run --root languages/typescript packages/typescript/test/showcase
+
 # ---------------------------------------------------------------------------
 # test: the full compatibility suite. Boots real databases via Testcontainers,
 # so Docker must be running.
@@ -94,9 +106,9 @@ test:
 
 # verify: everything that must be green before merging (no Docker-less escape).
 # Folds in the TypeScript lanes: the static checks (typecheck / biome / dep-graph
-# / package-export health) and both conformance lanes (Docker-free compile sweep
-# + Docker-backed run lane).
-verify: lint dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run test
+# / package-export health), both conformance lanes (Docker-free compile sweep +
+# Docker-backed run lane), and the Docker-backed developer-showcase lane (Phase 10c).
+verify: lint dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run ts-showcase test
 
 # matrix: emit the compatibility-matrix report (implementations x databases).
 # Wires Postgres + MariaDB (Phase 10 added MariaDB as the second dialect).

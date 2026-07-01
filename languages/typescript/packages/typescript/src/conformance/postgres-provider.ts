@@ -103,6 +103,16 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
     return this.db.pool;
   }
 
+  /**
+   * The shipped `@parallax/db-postgres` adapter bound to this container — the
+   * production execution path. The Phase-10c developer showcase builds its `px`
+   * handle on THIS adapter (not a bespoke provider) so the showcased developer
+   * code runs the exact adapter a real application imports, on the provisioned DB.
+   */
+  get database(): PostgresDatabase {
+    return this.db;
+  }
+
   async reset(): Promise<void> {
     await this.sql.unsafe("drop schema if exists public cascade");
     await this.sql.unsafe("create schema public");

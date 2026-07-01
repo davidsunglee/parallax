@@ -1,0 +1,57 @@
+/**
+ * The explicit, reasoned developer-showcase **skip manifest** (Phase 10c).
+ *
+ * A case is skipped ONLY when the thing it proves is harness/serde machinery a
+ * developer never authors — not a developer-facing surface. The coverage test
+ * (`coverage.test.ts`) asserts every `first-implementation-mvp` case is either
+ * showcased or listed HERE with a reason, so a silent gap fails the build.
+ *
+ * The one skipped case in the slice is `0222`, whose distinguishing purpose is the
+ * `equivalentEncodings` serde-canonicalization check (a "prefix" and a "fluent"
+ * surface spelling MUST canonicalize to the same operation) — a harness/serde
+ * concern, not a query a developer writes differently. Its query semantics ARE
+ * exercised by the developer surface elsewhere: its DSL fidelity is pinned by the
+ * Phase-9 `dsl.test.ts` (`0222-group-precedence-grouped`), and its ungrouped
+ * sibling `0223` is showcased in `reads.showcase.test.ts`.
+ *
+ * The other two constructs the phase note calls out are NOT case-level skips in the
+ * 99-case slice:
+ *  - the conflict `precondition` / `preconditionBinds` (out-of-band SQL simulating a
+ *    concurrent writer) is a SUB-STEP of the showcased locking cases (`0703` /
+ *    `0708`), applied harness-side — those cases ARE showcased;
+ *  - the out-of-V1 `createUntil` / `updateUntil` / `terminateUntil` writes
+ *    (`0810`–`0812`) are not tagged `first-implementation-mvp`, so they are not in
+ *    the slice at all.
+ */
+
+/** One skipped case: its four-digit id and the reason it is not developer-authored. */
+export interface SkippedCase {
+  /** The four-digit case id (`0222`). */
+  readonly id: string;
+  /** Why the case is not a developer-facing showcase (a serde/harness construct). */
+  readonly reason: string;
+}
+
+/** The explicit skip list over the `first-implementation-mvp` slice. */
+export const SKIP_MANIFEST: readonly SkippedCase[] = [
+  {
+    id: "0222",
+    reason:
+      "equivalentEncodings serde-canonicalization: proves two SURFACE spellings (prefix / " +
+      "fluent) collapse to one canonical operation — a serde concern, not a developer query. " +
+      "Its DSL fidelity is covered by dsl.test.ts (0222) and its ungrouped sibling 0223 is showcased.",
+  },
+  {
+    id: "0226",
+    reason:
+      "distinct on a single PROJECTED column (`select distinct t0.active`): its result " +
+      "(2 rows) is a projection-specific witness. The V1 developer `find` returns whole managed " +
+      "objects, so `distinct` applies to the full row set — a different operation with a " +
+      "different result (6 distinct orders). Projecting one column needs the out-of-V1 " +
+      "aggregation/projection surface (04xx). Its DSL/operation fidelity is still proven by " +
+      "dsl.test.ts (0226-distinct); only the projected-result assertion is out of the V1 surface.",
+  },
+];
+
+/** The set of skipped case ids, for the coverage check. */
+export const SKIPPED_IDS: ReadonlySet<string> = new Set(SKIP_MANIFEST.map((c) => c.id));
