@@ -1,27 +1,35 @@
 /**
- * Build an executable **write-sequence plan** from a loaded case (M7 + M12).
+ * Build an executable **write-sequence plan** from a loaded case (M7 + M8 + M12).
  *
- * A `writeSequence` case carries an ordered list of milestone-chaining mutations
- * (`insert` / `update` / `terminate` for the audit-only MVP surface) plus the
- * per-statement `binds` and an `expectedTableState`. This module turns the steps
- * into the ordered canonical DML the runner applies:
+ * A `writeSequence` case carries an ordered list of mutations plus per-statement
+ * `binds` and an `expectedTableState`. This module turns the steps into the
+ * ordered canonical DML the runner applies, choosing the discipline by the
+ * entity's temporality:
  *
- *  - each step's SQL text is generated from the entity's physical shape by
- *    `@parallax/bitemporal` (`auditWriteStatements`) — the milestone-chaining
- *    discipline (open a current row; close the current row keyed by `pk and
- *    out_z = infinity`; chain a new current row) is owned there, never authored
- *    per-case; and
- *  - each generated statement is paired, in order, with the authored bind row —
- *    the write input (the milestone values) the case declares.
+ *  - a **temporal** (audit-only) entity's step is milestone-chaining DML generated
+ *    by `@parallax/bitemporal` (`auditWriteStatements`) — open a current row; close
+ *    the current row keyed by `pk and out_z = infinity`; chain a new current row;
+ *  - a **non-temporal** entity's step is the M8 set-based batched flush generated
+ *    by `@parallax/transactions`'s unit-of-work planner
+ *    (`combineWrites`) — buffered inserts collapse into one multi-row `INSERT`
+ *    (`0604`/`0612`), and a batched update is uniform `pk in (…)` (`0604`) or one
+ *    keyed `UPDATE` per distinct key (`0613`, `statements: 2`).
  *
- * The statement count equals the sum of the steps' declared counts (insert 1,
- * update 2, terminate 1), which the harness asserts equals `roundTrips`. A
- * **non-temporal** entity's `insert` (`0004` / `0005`, the timestamp-shape cases)
- * reuses the same generator as a plain single-row insert.
+ * Each generated statement is paired, in order, with the authored bind row — the
+ * write input the case declares. The statement count equals the sum of the steps'
+ * declared counts, which the harness asserts equals `roundTrips`. The `0004` /
+ * `0005` timestamp-shape single-row inserts fall out of the non-temporal `insert`
+ * path (a one-row multi-row insert).
  */
 import { auditWriteStatements, type MutationKind, type WriteTarget } from "@parallax/bitemporal";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
 import { columnOrder, quoteIdentifier } from "@parallax/sql";
+import {
+  type BatchTarget,
+  combineWrites,
+  type PlannedStatement,
+  type WriteStep as UowStep,
+} from "@parallax/transactions";
 import type { LoadedCase } from "./discover.js";
 
 /** One generated DML statement paired with its authored binds + case pointer. */
@@ -40,7 +48,7 @@ export interface WriteSequencePlan {
 }
 
 /** A raw `writeSequence` step (the mutation kind + target entity). */
-interface WriteStep {
+interface RawWriteStep {
   readonly mutation: MutationKind;
   readonly entity: string;
   readonly statements?: number;
@@ -52,31 +60,144 @@ export function isWriteSequence(loaded: LoadedCase): boolean {
 }
 
 /**
- * Build the ordered DML plan: for each step, generate its statement texts from the
- * entity's write target and pair them, in order, with the case's per-statement
- * binds. The authored `binds` array has one entry per generated statement (an
- * update step consumes two: the close row and the chained-insert row).
+ * Build the ordered DML plan: for each step, generate its statement texts and pair
+ * them, in order, with the case's per-statement binds. The `binds` array has one
+ * entry per generated statement, consumed statement-by-statement across the whole
+ * sequence (a temporal `update` step consumes two — close + chained insert; a
+ * per-key batched update step consumes one per key).
+ *
+ * The generator is chosen per step by the entity's temporality: an **audit-only
+ * temporal** entity chains milestones (`@parallax/bitemporal`), a **non-temporal**
+ * entity flushes the M8 set-based batched forms (`@parallax/transactions`'s
+ * unit-of-work planner). The two never mix within a step.
  */
 export function buildWriteSequencePlan(loaded: LoadedCase): WriteSequencePlan {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
-  const steps = (loaded.raw.writeSequence as readonly WriteStep[] | undefined) ?? [];
+  const steps = (loaded.raw.writeSequence as readonly RawWriteStep[] | undefined) ?? [];
   const bindRows = (loaded.raw.binds as readonly (readonly unknown[])[] | undefined) ?? [];
+  const golden = goldenStatements(loaded);
 
   const statements: WriteStatementPlan[] = [];
   let bindIndex = 0;
   steps.forEach((step, stepIndex) => {
-    const target = writeTargetFor(metamodel.entity(step.entity));
-    const texts = auditWriteStatements(step.mutation, target);
-    for (const sql of texts) {
-      statements.push({
-        casePointer: `/writeSequence/${stepIndex}`,
-        sql,
-        binds: bindRows[bindIndex] ?? [],
-      });
+    const entity = metamodel.entity(step.entity);
+    const generated = isTemporalEntity(entity)
+      ? auditStatementsForStep(step, entity, bindRows, bindIndex)
+      : batchStatementsForStep(step, entity, bindRows, bindIndex, golden);
+    for (const { sql, binds } of generated) {
+      statements.push({ casePointer: `/writeSequence/${stepIndex}`, sql, binds });
       bindIndex += 1;
     }
   });
   return { statements };
+}
+
+/** True when the entity carries a processing axis (audit-only milestone chaining). */
+function isTemporalEntity(entity: EntityMetadata): boolean {
+  return entity.asOfAttributes().some((axis) => axis.axis === "processing");
+}
+
+/**
+ * The generated milestone-chaining statements for one TEMPORAL step (audit-only),
+ * each paired, in order, with the authored bind row (`insert` consumes one,
+ * `update` two — close + chained insert, `terminate` one).
+ */
+function auditStatementsForStep(
+  step: RawWriteStep,
+  entity: EntityMetadata,
+  bindRows: readonly (readonly unknown[])[],
+  bindIndex: number,
+): readonly { sql: string; binds: readonly unknown[] }[] {
+  const texts = auditWriteStatements(step.mutation, writeTargetFor(entity));
+  return texts.map((sql, offset) => ({ sql, binds: bindRows[bindIndex + offset] ?? [] }));
+}
+
+/**
+ * The generated DML statements for one NON-temporal step, via the M8 unit-of-work
+ * planner (`combineWrites`): an `insert` collapses its buffered rows into one
+ * multi-row `INSERT`, an `update` is uniform `pk in (…)` (one statement) or one
+ * keyed `UPDATE` per distinct key (`statements: 2`). The step's own bind rows are
+ * the slice `[bindIndex, bindIndex + statements)` of the case's `binds`.
+ *
+ * Two per-case authoring choices the model alone cannot determine are taken from
+ * the step's golden statement (the authoritative intent): (a) an `insert`'s
+ * COLUMN LIST — a nullable column may be omitted (`0612` inserts `order_item(id,
+ * order_id, sku, quantity)`, dropping the nullable `shipped_on`) — so the target's
+ * columns come from the golden `insert into t(<cols>)`; and (b) an `update`'s SET
+ * column, from the golden `set <col> = …`. Everything else (the batched form, the
+ * `pk in (…)` vs per-key shape) is generated by construction.
+ */
+function batchStatementsForStep(
+  step: RawWriteStep,
+  entity: EntityMetadata,
+  bindRows: readonly (readonly unknown[])[],
+  bindIndex: number,
+  golden: readonly string[],
+): readonly { sql: string; binds: readonly unknown[] }[] {
+  const mutation = step.mutation === "insert" ? "insert" : "update";
+  const count = step.statements ?? 1;
+  const stepBinds = bindRows.slice(bindIndex, bindIndex + count);
+  const uowStep: UowStep = {
+    mutation,
+    target:
+      mutation === "insert"
+        ? insertTargetFromGolden(entity, golden[bindIndex])
+        : batchTargetFor(entity),
+    statements: count,
+    binds: stepBinds,
+    ...(mutation === "update" ? { setColumn: setColumnFromGolden(golden[bindIndex]) } : {}),
+  };
+  return combineWrites([uowStep]).map((planned: PlannedStatement) => ({
+    sql: planned.sql,
+    binds: planned.binds,
+  }));
+}
+
+/**
+ * Build the {@link BatchTarget} for an `insert` from the entity plus the golden
+ * INSERT's column list (a nullable column the case omits is dropped, so the
+ * generated statement reproduces the golden). The columns are taken verbatim from
+ * `insert into t(<cols>)`; the pk column is resolved from the metamodel.
+ */
+function insertTargetFromGolden(entity: EntityMetadata, golden: string | undefined): BatchTarget {
+  const base = batchTargetFor(entity);
+  const match = golden ? /\binsert\s+into\s+\S+\s*\(([^)]*)\)/i.exec(golden) : null;
+  if (!match) {
+    throw new Error(`could not parse the insert column list from golden: ${golden ?? "<absent>"}`);
+  }
+  const columns = (match[1] as string).split(",").map((column) => column.trim());
+  return { ...base, columns };
+}
+
+/** The ordered `goldenSql.postgres` statements a write-sequence case declares. */
+function goldenStatements(loaded: LoadedCase): readonly string[] {
+  const golden = (loaded.raw.goldenSql as { postgres?: string | string[] } | undefined)?.postgres;
+  if (golden === undefined) {
+    return [];
+  }
+  return Array.isArray(golden) ? golden : [golden];
+}
+
+/** The quoted `set` column named by a golden `update … set <col> = …` statement. */
+function setColumnFromGolden(golden: string | undefined): string {
+  const match = golden ? /\bset\s+([^\s=]+)\s*=/i.exec(golden) : null;
+  if (!match) {
+    throw new Error(`could not resolve the set column from golden UPDATE: ${golden ?? "<absent>"}`);
+  }
+  return match[1] as string;
+}
+
+/** Resolve an entity's physical {@link BatchTarget} (table, quoted columns, pk). */
+function batchTargetFor(entity: EntityMetadata): BatchTarget {
+  const columns = columnOrder({
+    table: entity.table,
+    attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
+  }).map(quoteIdentifier);
+  const pk = entity.primaryKey()[0];
+  if (pk === undefined) {
+    throw new Error(`entity '${entity.name}' has no primary key for a batched write`);
+  }
+  return { table: quoteIdentifier(entity.table), columns, pkColumn: quoteIdentifier(pk.column) };
 }
 
 /** Resolve an entity's physical {@link WriteTarget} (table, columns, pk, out_z). */

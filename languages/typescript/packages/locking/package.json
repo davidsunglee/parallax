@@ -15,8 +15,5 @@
   "scripts": {
     "typecheck": "tsc -b",
     "test": "vitest run --passWithNoTests"
-  },
-  "dependencies": {
-    "@parallax/transactions": "workspace:*"
   }
 }

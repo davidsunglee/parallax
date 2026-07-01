@@ -927,6 +927,7 @@ module.exports = {
     { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/sql/" } },
     { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/relationships/" } },
     { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/bitemporal/" } },
+    { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/transactions/" } },
     { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/lifecycle/" } },
     { from: { path: "^languages/typescript/packages/conformance/" },    to: { path: "^languages/typescript/packages/locking/" } },
     { from: { path: "^languages/typescript/packages/benchmark/" },      to: { path: "^languages/typescript/packages/conformance/" } },
@@ -1015,6 +1016,7 @@ M12 --> M2
 M12 --> M3
 M12 --> M4
 M12 --> M7
+M12 --> M8
 M12 --> M9
 M12 --> M10
 M13 --> M12
@@ -1027,7 +1029,11 @@ operations, not SQL); `M4` depends on `M5` (relationship navigation yields lists
 the reverse of the obvious guess); `M4` depends on `M7` (a pinned as-of value
 propagates per relationship hop, so the relationship layer references the as-of
 model — the edge the claimed temporal deep-fetch 03xx cases require); and `M3`
-depends on `M11` (SQL generation routes through the portability seam). M14's
+depends on `M11` (SQL generation routes through the portability seam). `M12` additionally
+depends on `M8` directly — the harness realizes M8 unit-of-work behavior itself
+(batched write-sequence flushes, read-your-own-writes scenarios, the automatic
+in-transaction read lock), a direct edge that coexists with the transitive
+`M12 → M10 → M8` path, mirroring how `M4 → M8` coexists with `M4 → M5 → M8`. M14's
 single legal direction `M14 → M8` is
 transcribed in the block above, keeping the TypeScript edge set one-to-one with
 the core graph; the `@parallax/coherence` package is a **fast-follow** capability

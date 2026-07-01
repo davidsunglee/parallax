@@ -101,11 +101,16 @@ module.exports = {
     edge("relationships", "transactions"), // M4 -> M8
     edge("relationships", "bitemporal"), //   M4 -> M7  (design Q5 correction)
     edge("bitemporal", "transactions"), //    M7 -> M8
-    edge("locking", "transactions"), //       M10 -> M8
+    // Note: M10 -> M8 (locking -> transactions) is spec-legal but omitted here —
+    // the M10 package renders versioned-UPDATE text only and does not import the
+    // M8 unit of work, so per the "an edge exists only when there is an
+    // implementation behind it" policy above it is absent until locking's code
+    // uses transactions. The core DAG keeps M10 -> M8.
     edge("conformance", "operation"), //      M12 -> M2
     edge("conformance", "sql"), //            M12 -> M3
     edge("conformance", "relationships"), //  M12 -> M4
     edge("conformance", "bitemporal"), //     M12 -> M7
+    edge("conformance", "transactions"), //   M12 -> M8  (write-sequence / scenario / read-lock shapes)
     edge("conformance", "locking"), //        M12 -> M10
   ],
   allowedSeverity: "error",
