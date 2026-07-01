@@ -1,0 +1,37 @@
+# Sample-app descriptor — a minimal `Order` entity plus its line `items`.
+#
+# A descriptor is an instance of core/schemas/metamodel.schema.json (spec §2.1):
+# pure serialized metamodel, no fixture rows. `parallax generate` reads it and
+# emits the typed `#parallax` barrel (entity symbols + the `parallax(...)`
+# factory). This is the same canonical format the compatibility corpus uses.
+entities:
+  - name: Order
+    table: orders
+    mutability: transactional
+    attributes:
+      - { name: id, type: int64, column: id, primaryKey: true }
+      - { name: name, type: string, column: name, maxLength: 255 }
+      - { name: sku, type: string, column: sku, maxLength: 32, nullable: true }
+      - { name: qty, type: int32, column: qty }
+      - { name: price, type: "decimal(18,2)", column: price }
+      - { name: active, type: boolean, column: active }
+    relationships:
+      - name: items
+        relatedEntity: OrderItem
+        cardinality: one-to-many
+        join: this.id = OrderItem.orderId
+        foreignKey: order_id
+  - name: OrderItem
+    table: order_item
+    mutability: transactional
+    attributes:
+      - { name: id, type: int64, column: id, primaryKey: true }
+      - { name: orderId, type: int64, column: order_id }
+      - { name: sku, type: string, column: sku, maxLength: 32 }
+      - { name: quantity, type: int32, column: quantity }
+    relationships:
+      - name: order
+        relatedEntity: Order
+        cardinality: many-to-one
+        join: this.orderId = Order.id
+        foreignKey: order_id

@@ -1,11 +1,54 @@
 /**
- * `@parallax/typescript` — the composition root.
+ * `@parallax/typescript` — the composition root and public runtime facade.
  *
- * Owns the `parallax` and `parallax-conformance` CLIs, the generator config
- * API, the public runtime facade, and generated-barrel support. It may import
- * any numbered or support package; no package may import it.
+ * Owns the `parallax` and `parallax-conformance` CLIs, the generator config API
+ * (`@parallax/typescript/config`), the codegen pipeline, the fluent query DSL,
+ * and the `parallax(...)` runtime the generated `#parallax` barrel wires
+ * together. It may import any numbered or support package; no package may import
+ * it (dependency-cruiser enforces this — generated code lives in an application,
+ * not a numbered package).
  *
- * The public runtime facade (`parallax(...)`, the typed surface) lands in
- * Phase 9. This phase ships the CLI entry points only.
+ * The Phase 9 developer surface (design Q1 Option B) is a thin typed layer over
+ * the SAME generic runtime the conformance adapter uses: the DSL builds canonical
+ * M2 operations, the runtime lowers them with the M3 compiler, so conformance is
+ * unaffected. This barrel re-exports the public runtime types (`ParallaxList`,
+ * the error classes, `ParallaxDecimal`, `Temporal`) so the generated barrel — and
+ * applications — reach them through one package (spec §1.1).
  */
-export {};
+
+export { ParallaxDecimal, type ParallaxJsonValue, Temporal } from "@parallax/core";
+// --- public runtime re-exports (spec §1.1, §2.2.1) --------------------------
+export {
+  ParallaxError,
+  ParallaxList,
+  ParallaxNotFoundError,
+  ParallaxTooManyResultsError,
+} from "@parallax/lists";
+// --- fluent query DSL (spec §1) ---------------------------------------------
+export {
+  AttributeExpression,
+  type AxisRefs,
+  buildFindOperation,
+  type FindOptions,
+  NavigationPath,
+  OrderKeyExpression,
+  Predicate,
+  type StringPredicateOptions,
+  type TemporalAxis,
+  type TemporalPoint,
+  type TemporalRange,
+  type TemporalReadOptions,
+  ToManyRelationshipExpression,
+} from "./dsl/index.js";
+// --- runtime factory + handles (spec §1.2, §3) ------------------------------
+export {
+  createParallax,
+  EntityFinder,
+  Parallax,
+  type ParallaxClock,
+  type ParallaxDatabase,
+  type ParallaxOptions,
+  type ParallaxRow,
+  ParallaxTransaction,
+  RuntimeSchema,
+} from "./runtime/index.js";

@@ -57,6 +57,11 @@ jobs:
         run: pnpm run ts:package-check
       - name: Conformance compile sweep (Docker-free)
         run: pnpm exec vitest run --root languages/typescript packages/conformance
+      - name: DSL fidelity + codegen (Docker-free)
+        run: >-
+          pnpm exec vitest run --root languages/typescript
+          packages/typescript/test/dsl.test.ts
+          packages/typescript/test/generate.test.ts
 
   # The Docker-backed TypeScript run lane: provision postgres:17 via
   # Testcontainers and run the full first-implementation-mvp slice end-to-end

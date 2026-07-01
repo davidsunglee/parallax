@@ -48,6 +48,12 @@ importers:
         specifier: ^3.0.0
         version: 3.2.6(@types/node@22.20.0)(jiti@2.6.1)(yaml@2.9.0)
 
+  languages/typescript/examples/orders-app:
+    dependencies:
+      '@parallax/typescript':
+        specifier: workspace:*
+        version: link:../../packages/typescript
+
   languages/typescript/packages/bitemporal:
     dependencies:
       '@parallax/transactions':

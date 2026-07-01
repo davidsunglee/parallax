@@ -60,6 +60,20 @@ export type NeutralScalar =
   | "json"
   | `decimal(${number},${number})`;
 
+/**
+ * The structural JSON value type (spec §2.2.1) — the public runtime mapping for
+ * the M0 `json` scalar and for value-object properties (which V1 exposes as
+ * unstructured JSON, spec §1.1). The generated `#parallax` barrel re-exports it
+ * from here alongside {@link ParallaxDecimal}.
+ */
+export type ParallaxJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | ParallaxJsonValue[]
+  | { readonly [key: string]: ParallaxJsonValue };
+
 /** Matches a `decimal(p,s)` neutral type token and captures precision/scale. */
 const DECIMAL_TYPE = /^decimal\((\d+),(\d+)\)$/;
 
