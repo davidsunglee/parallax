@@ -6,9 +6,14 @@
     },
     "languages/typescript/examples/*": {
       "entry": ["parallax.config.js", "src/main.ts"],
-      "ignoreDependencies": ["@parallax/.+"]
+      "ignoreDependencies": ["@parallax/.+"],
+      "ignoreUnresolved": ["#parallax"]
     }
   },
   "ignoreExportsUsedInFile": true,
-  "ignore": ["**/test/fixtures/**", "languages/typescript/vitest.config.ts"]
+  "ignore": [
+    "**/test/fixtures/**",
+    "languages/typescript/vitest.config.ts",
+    "languages/typescript/scripts/render-guide.mjs"
+  ]
 }
