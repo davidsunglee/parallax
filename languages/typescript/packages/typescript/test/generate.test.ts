@@ -57,10 +57,21 @@ describe("parallax generate", () => {
     const barrelPath = join(outputDir, BARREL_FILE);
     expect(result.files).toHaveLength(1);
 
-    // Typecheck the emitted barrel with `@parallax/typescript` mapped to the
-    // built dist (`.d.ts`). A generated symbol that does not typecheck fails here.
+    // A consumer that exercises the generated typed surface as an application
+    // would — crucially, the no-arg `find()` shorthand (MAJOR-2): the generated
+    // `EntityFinder<T>` interface MUST accept `find()` with no predicate.
+    const consumerPath = join(outputDir, "consumer.ts");
+    writeFileSync(consumerPath, CONSUMER_SOURCE, "utf8");
+
+    // Typecheck the emitted barrel + the consumer with `@parallax/typescript`
+    // mapped to the built dist (`.d.ts`). A generated symbol that does not
+    // typecheck — or a `find()` the interface rejects — fails here.
     const tsconfigPath = join(workDir, "tsconfig.typecheck.json");
-    writeFileSync(tsconfigPath, JSON.stringify(typecheckConfig(barrelPath), null, 2), "utf8");
+    writeFileSync(
+      tsconfigPath,
+      JSON.stringify(typecheckConfig(barrelPath, consumerPath), null, 2),
+      "utf8",
+    );
     const tsc = resolve(PACKAGE_ROOT, "../../../../node_modules/.bin/tsc");
     expect(() =>
       execFileSync(tsc, ["-p", tsconfigPath], { stdio: "pipe", cwd: workDir }),
@@ -69,12 +80,29 @@ describe("parallax generate", () => {
 });
 
 /**
- * A standalone tsconfig that typechecks ONLY the generated barrel, resolving
- * `@parallax/typescript` (its lone workspace import) to the built dist so the
- * check needs no workspace linkage. Node-next resolution + the strict base flags
- * mirror the package's own tsconfig.
+ * A tiny application consumer of the generated barrel. It proves the generated
+ * typed surface accepts BOTH the no-arg `find()` shorthand (spec §1.3, MAJOR-2)
+ * and the explicit `find(Entity.all())` form. `orders` is the `Order` finder
+ * (its table `orders` camelizes to itself); `Order.all()` is the generated
+ * unfiltered predicate.
  */
-function typecheckConfig(barrelPath: string): unknown {
+const CONSUMER_SOURCE = [
+  'import { parallax, Order } from "./index.js";',
+  'import type { ParallaxDatabase } from "@parallax/typescript";',
+  "declare const db: ParallaxDatabase;",
+  "const px = parallax({ database: db });",
+  "px.orders.find(); // no-arg shorthand — MUST typecheck (MAJOR-2)",
+  "px.orders.find(Order.all()); // explicit form still typechecks",
+  "",
+].join("\n");
+
+/**
+ * A standalone tsconfig that typechecks the generated barrel and its consumer,
+ * resolving `@parallax/typescript` (their lone workspace import) to the built
+ * dist so the check needs no workspace linkage. Node-next resolution + the strict
+ * base flags mirror the package's own tsconfig.
+ */
+function typecheckConfig(barrelPath: string, consumerPath: string): unknown {
   return {
     compilerOptions: {
       target: "ES2023",
@@ -93,6 +121,6 @@ function typecheckConfig(barrelPath: string): unknown {
         "@parallax/typescript/config": [join(DIST, "config.d.ts")],
       },
     },
-    files: [barrelPath],
+    files: [barrelPath, consumerPath],
   };
 }

@@ -90,11 +90,26 @@ export class RuntimeSchema implements SchemaResolver {
     return this.rootEntity.table;
   }
 
-  /** A `find` returns managed objects, so it projects every attribute column. */
+  /**
+   * A `find` returns managed objects, so it projects every attribute column.
+   *
+   * A `bytes` column is projected **verbatim** (no `type`), NOT through the
+   * `encode(<alias>.<col>, ?) <col>_hex` hex lowering: the runtime normalizes
+   * bytes to a fresh `Uint8Array` in `EntityFinder`'s row materializer (spec
+   * §2.2.1). The `encode(...,'hex')` lowering — which fires solely when a
+   * projection carries `type === "bytes"` in the compiler — stays EXCLUSIVE to
+   * the conformance `MetamodelSchema`/`readProjection` case-driven path (the
+   * `_hex` row-observation seam, case `0003`). Every non-bytes column keeps its
+   * M0 `type` (no consumer other than the bytes trigger, but harmless).
+   */
   rootProjection(): readonly ProjectionColumn[] {
     return this.rootEntity
       .attributes()
-      .map((attr) => ({ column: quoteIdentifier(attr.column), type: attr.type }));
+      .map((attr) =>
+        attr.type === "bytes"
+          ? { column: quoteIdentifier(attr.column) }
+          : { column: quoteIdentifier(attr.column), type: attr.type },
+      );
   }
 
   rootEntityName(): string {
