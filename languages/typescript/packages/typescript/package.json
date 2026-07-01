@@ -28,6 +28,8 @@
     "@parallax/bitemporal": "workspace:*",
     "@parallax/conformance": "workspace:*",
     "@parallax/core": "workspace:*",
+    "@parallax/db": "workspace:*",
+    "@parallax/db-postgres": "workspace:*",
     "@parallax/dialect": "workspace:*",
     "@parallax/lists": "workspace:*",
     "@parallax/locking": "workspace:*",

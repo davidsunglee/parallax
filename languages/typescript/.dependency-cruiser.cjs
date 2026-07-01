@@ -76,14 +76,30 @@ module.exports = {
     edge("metamodel", "serde"),
     edge("operation", "serde"),
 
+    // --- M11 port/adapter support edges (@parallax/db, @parallax/db-postgres) ---
+    // The M11 database seam is normatively decomposed (core spec
+    // `m11-dialect-seam.md` → *M11 decomposition*) into the pure dialect layer
+    // (`@parallax/dialect`, M11 = portability), an abstract runtime port
+    // (`@parallax/db` = port; a leaf reaching only `core`, already allowed by the
+    // universal core rule above), and N concrete adapters (`@parallax/db-postgres`
+    // = adapter). A concrete adapter depends ONLY on the port and the pure dialect
+    // layer; only the composition root may depend on a concrete adapter. These are
+    // language-impl support edges (like the `serde` edges), NOT numbered core-DAG
+    // modules — the whole seam already shares the one `M11 --> M0` numbered edge,
+    // so `dependency-graph.md` is unchanged.
+    edge("db-postgres", "db"), //      adapter -> port
+    edge("db-postgres", "dialect"), // adapter -> pure dialect layer
+
     // --- Non-numbered composition package edges (@parallax/typescript) ---
     // The composition root may import any scaffolded package. lifecycle /
     // benchmark / coherence are intentionally absent from this `to` set
-    // because they are not scaffolded for the slice.
+    // because they are not scaffolded for the slice. `db` (the port) and
+    // `db-postgres` (the concrete adapter) are added: the composition root is the
+    // only layer allowed to depend on a concrete adapter.
     {
       from: { path: `${PKG}typescript/` },
       to: {
-        path: `${PKG}(?:core|metamodel|operation|sql|relationships|lists|bitemporal|transactions|locking|dialect|conformance|serde)/`,
+        path: `${PKG}(?:core|metamodel|operation|sql|relationships|lists|bitemporal|transactions|locking|dialect|db|db-postgres|conformance|serde)/`,
       },
     },
 
