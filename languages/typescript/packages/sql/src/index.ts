@@ -33,5 +33,6 @@ export {
   compilePredicate,
   newCompileCtx,
   type ResolvedColumn,
+  type ResolvedRelationship,
   type SchemaResolver,
 } from "./compile.js";

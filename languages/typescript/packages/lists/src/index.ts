@@ -1,7 +1,15 @@
 /**
  * `@parallax/lists` — M5 lists & bulk/set operations.
  *
- * The lazy, operation-backed `ParallaxList` lands in Phase 5. This phase ships
- * the package shell only.
+ * The lazy, operation-backed `ParallaxList` and the public error classes it
+ * throws (`ParallaxError` / `ParallaxNotFoundError` / `ParallaxTooManyResultsError`).
  */
-export {};
+export {
+  type IdentityKey,
+  type ListResolver,
+  ParallaxError,
+  ParallaxList,
+  type ParallaxListOptions,
+  ParallaxNotFoundError,
+  ParallaxTooManyResultsError,
+} from "./parallax-list.js";
