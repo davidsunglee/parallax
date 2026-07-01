@@ -323,6 +323,21 @@ def test_root_pins_reads_nested_asof_by_axis():
     }
 
 
+def test_root_pins_peels_result_directives_before_asof():
+    # 0336 wraps the temporal root in `limit(orderBy(asOf(asOf(all))))`. The pin
+    # collector MUST descend past the result directives first (exactly as the root
+    # compile peels distinct/orderBy/limit before the temporal wrappers); otherwise a
+    # directive-wrapped root seeds NO pins and the child wrongly defaults to now.
+    case = load_case(
+        COMPATIBILITY_ROOT,
+        COMPATIBILITY_ROOT / "cases" / "0336-deepfetch-temporal-ordered-root.yaml",
+    )
+    assert _root_asof_pins(case) == {
+        "business": "2024-03-01T00:00:00+00:00",
+        "processing": "now",
+    }
+
+
 class _WrongAsofChildDb:
     """Returns both fully-current Policies and both fully-current Coverages,
     matching 0324's expectedGraph exactly. The ONLY thing that can fail is the

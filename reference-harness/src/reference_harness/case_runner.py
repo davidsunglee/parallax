@@ -310,13 +310,33 @@ def _deepfetch_root_entity(case: Case) -> Entity:
 _CANONICAL_AXIS_ORDER: tuple[str, ...] = ("business", "processing")
 
 
+def _peel_directive_wrappers(node: Any) -> Any:
+    """Descend past the result-directive wrappers (``distinct`` / ``orderBy`` /
+    ``limit``) that the root compile peels *before* the temporal wrappers, returning
+    the innermost node. Without this, a directive-wrapped temporal root (e.g.
+    ``limit(orderBy(asOf(...)))``, case 0336) would seed no child propagation pins
+    and the child would wrongly default to now (mismatching the authored instant).
+    """
+    while isinstance(node, dict):
+        for directive in ("distinct", "orderBy", "limit"):
+            if directive in node:
+                node = node[directive]["operand"]
+                break
+        else:
+            break
+    return node
+
+
 def _root_asof_pins(case: Case) -> dict[str, str]:
     """Map ``{axis: pinned date}`` from the nested ``asOf`` nodes wrapping the
     deep-fetch root operand. An axis absent here defaults to the child's own
     default ("now" = latest) at propagation time. Empty when the root is unpinned.
+
+    Result directives (``distinct`` / ``orderBy`` / ``limit``) are peeled first,
+    mirroring the root compile, so a directive-wrapped temporal root still pins.
     """
     pins: dict[str, str] = {}
-    node: Any = _deepfetch_root_operand(case)
+    node: Any = _peel_directive_wrappers(_deepfetch_root_operand(case))
     while isinstance(node, dict) and "asOf" in node:
         asof = node["asOf"]
         entity_name, attr_name = asof["asOfAttr"].split(".", 1)

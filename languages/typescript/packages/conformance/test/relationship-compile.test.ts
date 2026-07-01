@@ -21,11 +21,12 @@ import { discoverCasePaths } from "../src/discover.js";
 import { loadCase, runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
 
 /**
- * The temporal `m7` subset (`0324`–`0334`) is a documented Phase-6 exclusion
- * (per-hop as-of propagation), filtered out of this Phase-5 lane.
+ * The temporal `m7` `03xx` subset (`0324`–`0336`) is a documented Phase-6 exclusion
+ * (per-hop as-of propagation, incl. the defaulted-root EXISTS `0335` and the
+ * directive-wrapped deep-fetch root `0336`), filtered out of this Phase-5 lane.
  */
 const TEMPORAL_M7_EXCLUSIONS: ReadonlySet<string> = new Set(
-  Array.from({ length: 11 }, (_, i) => String(324 + i).padStart(4, "0")),
+  Array.from({ length: 13 }, (_, i) => String(324 + i).padStart(4, "0")),
 );
 
 /** The postgres golden as a single statement (flat case) or `undefined` (deep fetch). */
