@@ -30,9 +30,9 @@ import type {
   Row,
   RunOk,
 } from "@parallax/core";
-import { Metamodel, parseOperation } from "@parallax/operation";
+import { type EntityMetadata, Metamodel, parseOperation } from "@parallax/operation";
 import { deepFetch, type Exec, type Row as GraphRow } from "@parallax/relationships";
-import { columnOrder, compile, ddlForDescriptor } from "@parallax/sql";
+import { columnOrder, compile, ddlForDescriptor, quoteIdentifier } from "@parallax/sql";
 import { buildDeepFetchPlan, type DeepFetchPlan, isDeepFetch } from "./deepfetch-plan.js";
 import { FIRST_IMPLEMENTATION_MVP_CAPABILITIES } from "./describe.js";
 import type { LoadedCase } from "./discover.js";
@@ -40,6 +40,7 @@ import { inClaim } from "./gate.js";
 import type { CompatibilityDatabaseProvider } from "./provider.js";
 import { assertValidEnvelope } from "./schema.js";
 import { schemaForReadCase } from "./schema-resolver.js";
+import { buildWriteSequencePlan, isWriteSequence } from "./write-sequence.js";
 
 /** The case's authored binds carried verbatim (a flat scalar list for a read). */
 type WireBind = BindValue;
@@ -90,8 +91,31 @@ export function runCompile(
   if (gate) {
     return gate;
   }
-  const { sql, binds } = compileRootStatement(loaded);
 
+  // A write-sequence case emits one item per generated DML statement, in
+  // execution order, with `roundTrips` equal to the statement count.
+  if (isWriteSequence(loaded)) {
+    const plan = buildWriteSequencePlan(loaded);
+    const emissions: Emission[] = plan.statements.map((statement) => ({
+      casePointer: statement.casePointer,
+      sql: statement.sql,
+      binds: statement.binds as readonly WireBind[],
+    }));
+    const envelope: CompileOk = {
+      schemaVersion: "1",
+      command: "compile",
+      status: "ok",
+      adapter,
+      case: loaded.casePath,
+      dialect,
+      caseShape: loaded.shape,
+      emissions,
+      roundTrips: emissions.length,
+    };
+    return assertValidEnvelope(envelope);
+  }
+
+  const { sql, binds } = compileRootStatement(loaded);
   const emission: Emission = {
     casePointer: READ_OPERATION_POINTER,
     sql,
@@ -146,13 +170,31 @@ export async function runRun(
   if (gate) {
     return gate;
   }
-  await provision(loaded, provider);
 
+  // A write-sequence case constructs its own milestone history from its ordered
+  // DML, so it provisions an EMPTY table (no fixtures) and asserts the resulting
+  // `tableState` — the observable form of the milestone-chaining write contract.
+  if (isWriteSequence(loaded)) {
+    const { emissions, observations } = await runWriteSequence(loaded, provider);
+    return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
+  }
+
+  await provision(loaded, provider);
   const { emissions, observations } = isDeepFetch(loaded.raw.operation)
     ? await runDeepFetch(loaded, provider)
     : await runFlatRead(loaded, provider);
+  return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
+}
 
-  const envelope: RunOk = {
+/** Assemble a `run` success envelope from its emissions + observations. */
+function runOk(
+  loaded: LoadedCase,
+  dialect: string,
+  adapter: AdapterIdentity,
+  emissions: readonly Emission[],
+  observations: Observations,
+): RunOk {
+  return {
     schemaVersion: "1",
     command: "run",
     status: "ok",
@@ -163,7 +205,6 @@ export async function runRun(
     emissions,
     observations,
   };
-  return assertValidEnvelope(envelope);
 }
 
 /** The emissions + observations a run produces (assembled into the envelope). */
@@ -238,6 +279,75 @@ async function runDeepFetch(
   };
 }
 
+/**
+ * Execute a write sequence: provision an EMPTY table (the case builds its own
+ * milestone history from its ordered DML — no fixtures), apply the generated DML
+ * statements in order with the authored per-statement binds, then read back the
+ * resulting `tableState` (every table the case's `expectedTableState` names). One
+ * emission per statement, `roundTrips` = statement count.
+ */
+async function runWriteSequence(
+  loaded: LoadedCase,
+  provider: CompatibilityDatabaseProvider,
+): Promise<RunResult> {
+  await provisionEmpty(loaded, provider);
+  const plan = buildWriteSequencePlan(loaded);
+
+  const emissions: Emission[] = [];
+  for (const statement of plan.statements) {
+    emissions.push({
+      casePointer: statement.casePointer,
+      sql: statement.sql,
+      binds: statement.binds as readonly WireBind[],
+    });
+    await provider.exec(statement.sql, statement.binds);
+  }
+
+  const tableState = await readTableState(loaded, provider);
+  return {
+    emissions,
+    observations: { roundTrips: emissions.length, tableState },
+  };
+}
+
+/**
+ * Read the resulting state of every table the case's `expectedTableState` names,
+ * projecting each entity's columns in descriptor order (matching the golden
+ * table-state authoring). Keyed by physical table name.
+ */
+async function readTableState(
+  loaded: LoadedCase,
+  provider: CompatibilityDatabaseProvider,
+): Promise<Record<string, readonly Row[]>> {
+  const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
+  const byTable = new Map<string, EntityMetadata>();
+  for (const entity of metamodel.entities()) {
+    if (!byTable.has(entity.table)) {
+      byTable.set(entity.table, entity);
+    }
+  }
+  const expected = (loaded.raw.expectedTableState as Record<string, unknown> | undefined) ?? {};
+  const state: Record<string, readonly Row[]> = {};
+  for (const table of Object.keys(expected)) {
+    const entity = byTable.get(table);
+    if (entity === undefined) {
+      throw new Error(`expectedTableState names table '${table}' not in the model`);
+    }
+    state[table] = (await provider.query(readTableSql(entity), [])) as readonly Row[];
+  }
+  return state;
+}
+
+/** `select t0.<col>, … from <table> t0` — the full table state, column-ordered. */
+function readTableSql(entity: EntityMetadata): string {
+  const columns = columnOrder({
+    table: entity.table,
+    attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
+  });
+  const projection = columns.map((column) => `t0.${quoteIdentifier(column)}`).join(", ");
+  return `select ${projection} from ${quoteIdentifier(entity.table)} t0`;
+}
+
 /** Provision a clean DB: reset, derive + apply DDL, load fixtures. */
 async function provision(
   loaded: LoadedCase,
@@ -246,6 +356,15 @@ async function provision(
   await provider.reset();
   await provider.applyDdl(ddlForDescriptor(loaded.descriptor));
   await loadFixtures(loaded, provider);
+}
+
+/** Provision a clean, EMPTY DB (reset + DDL, no fixtures) for a write sequence. */
+async function provisionEmpty(
+  loaded: LoadedCase,
+  provider: CompatibilityDatabaseProvider,
+): Promise<void> {
+  await provider.reset();
+  await provider.applyDdl(ddlForDescriptor(loaded.descriptor));
 }
 
 /**

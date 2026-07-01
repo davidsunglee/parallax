@@ -173,6 +173,33 @@ export function scalarsEqual(observed: unknown, expected: unknown, columnType?: 
   return String(observed) === String(expected);
 }
 
+// --- table-state comparison (write sequences) -------------------------------
+
+/** An observed / expected table state: table name -> its full row set. */
+export type TableState = Readonly<Record<string, readonly Row[]>>;
+
+/**
+ * Compare an observed table state against `expectedTableState` (M7 write
+ * sequences). Each named table's rows are compared as an order-insensitive
+ * multiset under the M12 scalar rules (exact decimal, µs timestamps, native
+ * `infinity` read back as the `"infinity"` string), graded by each column's M0
+ * type. The tables must match on the set the expected state names.
+ */
+export function compareTableState(
+  observed: TableState,
+  expected: TableState,
+  columnTypes: ColumnTypes = {},
+): RowSetComparison {
+  const expectedTables = Object.keys(expected).sort();
+  for (const table of expectedTables) {
+    const comparison = compareRowSet(observed[table] ?? [], expected[table] ?? [], columnTypes);
+    if (!comparison.equal) {
+      return { equal: false, reason: `table '${table}': ${comparison.reason}` };
+    }
+  }
+  return { equal: true, reason: "" };
+}
+
 // --- graph comparison -------------------------------------------------------
 
 /** A decorated graph observation: root entity domain name -> decorated rows. */
