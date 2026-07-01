@@ -168,6 +168,18 @@ the build.
   edges (the same numbered-module DAG as
   [`dependency-graph.md`](dependency-graph.md), plus any explicitly documented
   support-package edges).
+- **(decide and record)** **`M11` maps to more than one package.** The database
+  seam is normatively decomposed (see [`m11-dialect-seam.md`](m11-dialect-seam.md)
+  → *M11 decomposition*) into a **pure dialect / portability** module, an
+  **abstract runtime database port** module, and **N concrete adapter** modules
+  (one per database type, each depending only on the port and the dialect layer).
+  Record each as its own row in the module → package mapping, and encode the two
+  structural rules in the legal-edge contract: **only the composition root may
+  depend on a concrete adapter**, and **the port depends on nothing
+  application-specific**. A single-package `M11` mapping is a gap — the seam is
+  normatively decomposed even though all of its parts share the one `M11 --> M0`
+  numbered edge (the decomposition is a rule *within* the module, not new DAG
+  nodes).
 
 ## 8. Optional optimized data structures (M13, DQ10)
 
