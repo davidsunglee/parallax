@@ -103,6 +103,24 @@ importers:
         specifier: ^1.0.1
         version: 1.0.1
 
+  languages/typescript/packages/db: {}
+
+  languages/typescript/packages/db-postgres:
+    dependencies:
+      '@parallax/db':
+        specifier: workspace:*
+        version: link:../db
+      '@parallax/dialect':
+        specifier: workspace:*
+        version: link:../dialect
+      postgres:
+        specifier: ^3.4.9
+        version: 3.4.9
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+
   languages/typescript/packages/dialect:
     dependencies:
       '@parallax/core':
@@ -208,6 +226,12 @@ importers:
       '@parallax/core':
         specifier: workspace:*
         version: link:../core
+      '@parallax/db':
+        specifier: workspace:*
+        version: link:../db
+      '@parallax/db-postgres':
+        specifier: workspace:*
+        version: link:../db-postgres
       '@parallax/dialect':
         specifier: workspace:*
         version: link:../dialect

@@ -7,6 +7,8 @@
     { "path": "./packages/metamodel" },
     { "path": "./packages/operation" },
     { "path": "./packages/dialect" },
+    { "path": "./packages/db" },
+    { "path": "./packages/db-postgres" },
     { "path": "./packages/sql" },
     { "path": "./packages/transactions" },
     { "path": "./packages/lists" },

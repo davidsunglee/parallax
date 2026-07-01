@@ -960,7 +960,9 @@ while `languages/typescript/packages/*` contains implementation source.
 | M8 | Transactions, UoW & identity/query cache | `@parallax/transactions` | M8 |
 | M9 | Object lifecycle & detach | `@parallax/lifecycle` | M9 |
 | M10 | Optimistic locking | `@parallax/locking` | M10 |
-| M11 | Database seam & portability | `@parallax/dialect` | M11 |
+| M11 (portability) | Pure dialect / portability layer (SQL strings + type-parse fns; no I/O) | `@parallax/dialect` | M11 |
+| M11 (port) | Abstract runtime database port (`execute`/`transaction`; normalize-at-boundary) | `@parallax/db` | M11 |
+| M11 (adapter) | Concrete Postgres adapter over the `postgres` driver (one per DB type) | `@parallax/db-postgres` | M11 |
 | M12 | Compatibility harness | `@parallax/conformance` | M12 |
 | M13 | Performance & benchmark harness | `@parallax/benchmark` | M13 |
 | M14 | Cross-process cache coherence | `@parallax/coherence` | M14 |
@@ -986,15 +988,60 @@ support. It MAY depend on any numbered TypeScript package and on
 support package may depend on `@parallax/typescript`; implementation modules stay
 below the facade.
 
+**`M11` maps to more than one package** (per the core
+[`language-spec-template.md`](../../../core/spec/language-spec-template.md) §7 rule
+and [`m11-dialect-seam.md`](../../../core/spec/m11-dialect-seam.md) →
+*M11 decomposition*): the database seam is normatively decomposed into a **pure
+dialect / portability** module (`@parallax/dialect` — SQL strings + type-parse
+functions to managed values; no I/O, no driver), an **abstract runtime database
+port** (`@parallax/db` — the `execute(sql, binds)` / `transaction(body)` contract
+plus the normalize-at-boundary rule so an adapter returns managed scalars), and
+**N concrete adapters** (`@parallax/db-postgres`, and a future
+`@parallax/db-mysql`), one per database type, each depending **only** on the port
+and the pure dialect layer. All three share the single `M11 --> M0` numbered edge
+— the decomposition is a rule *within* the module, not new DAG nodes, so
+[`dependency-graph.md`](../../../core/spec/dependency-graph.md) is unchanged and
+`@parallax/db` / `@parallax/db-postgres` are **language-impl support edges** (like
+the `@parallax/serde` edges), documented in §7.3 but absent from the numbered-edge
+block. `@parallax/db` is a leaf (it reaches only `@parallax/core`), and
+`@parallax/db-postgres` carries the `postgres` driver + porsager OID registration
+but **no** wire/grading logic (*managed at the boundary, wire at the grader*). The
+two structural rules the core spec mandates hold: **only the composition root
+(`@parallax/typescript`) may depend on a concrete adapter** (`@parallax/db-postgres`
+appears nowhere in the numbered packages), and **the port depends on nothing
+application-specific**. The composition-root conformance provider retains
+provisioning (Testcontainers + `reset`/`applyDdl`/`loadFixtures`) but delegates
+SQL execution to a `@parallax/db-postgres` instance, then renders its managed
+scalars to the canonical wire form for the run envelope — so there is **no
+`M12 → M11` edge** and the 99-case slice is continuous proof the shipped adapter
+works.
+
 ### 7.3 Legal-edge contract
 
 The numbered-module legal edges are transcribed **one-to-one** from
 [`dependency-graph.md`](../../../core/spec/dependency-graph.md), keyed by the same
 `M`-numbers so the edge set is mechanically diff-able against core. Each edge
 `A --> B` reads "A depends on B"; the reverse is a spec violation. Combined with
-the mapping table, the two explicit `@parallax/serde` support-package edges, and
-the top-level `@parallax/typescript` composition edge above, this block is the
-source the `.dependency-cruiser.js` allowlist encodes.
+the mapping table, the two explicit `@parallax/serde` support-package edges, the
+two **M11 port/adapter support edges** below, and the top-level
+`@parallax/typescript` composition edge above, this block is the source the
+`.dependency-cruiser.js` allowlist encodes.
+
+Beyond the numbered edges, the M11 decomposition (§7.2) contributes two
+**support edges** that are *not* new numbered-DAG edges (the whole seam shares the
+one `M11 --> M0` edge above) but are enforced by the allowlist:
+
+- `@parallax/db-postgres --> @parallax/db` — a concrete adapter depends on the
+  abstract port.
+- `@parallax/db-postgres --> @parallax/dialect` — the adapter delegates every
+  parse decision to the pure dialect layer (the single source of parse logic), so
+  parse rules are never duplicated across adapters.
+
+`@parallax/db` (the port) depends only on `@parallax/core` (the universal leaf
+allowance), and `@parallax/db` + `@parallax/db-postgres` are added to the
+composition-root `@parallax/typescript --> (…)` `to` set — the composition root is
+the only layer permitted to depend on the concrete adapter. No numbered package
+depends on `@parallax/db-postgres`, and no above-seam module reaches a driver.
 
 ```dependency-graph
 M1 --> M0

@@ -21,7 +21,7 @@ import {
   INFINITY,
   type Infinity as InfinitySentinel,
   ParallaxDecimal,
-  type Temporal,
+  Temporal,
   timestampFromRaw,
 } from "@parallax/core";
 
@@ -193,6 +193,12 @@ export const RAW_TEXT_OIDS = {
   timestamp: 1114,
   /** `bytea` — `Uint8Array`, parsed from the `\x…` hex rendering. */
   bytea: 17,
+  /** `date` — `Temporal.PlainDate` (calendar date, no time / offset). */
+  date: 1082,
+  /** `time` — `Temporal.PlainTime` (wall-clock time, no date / offset). */
+  time: 1083,
+  /** `uuid` — a canonical lowercase string (no managed carrier). */
+  uuid: 2950,
 } as const;
 
 /**
@@ -232,4 +238,31 @@ export function timestampFromDb(raw: string): Temporal.Instant | InfinitySentine
  */
 export function bytesFromDb(raw: string): Uint8Array {
   return bytesFromHex(raw.trim());
+}
+
+/**
+ * Materialize a raw `date` string (`2024-03-01`) into a `Temporal.PlainDate` —
+ * a calendar date with no time or offset (the managed carrier for `date`, §2.2.1).
+ */
+export function dateFromDb(raw: string): Temporal.PlainDate {
+  return Temporal.PlainDate.from(raw.trim());
+}
+
+/**
+ * Materialize a raw `time` string (`12:34:56`, optionally with fractional
+ * seconds) into a `Temporal.PlainTime` — a wall-clock time with no date or
+ * offset (the managed carrier for `time`, §2.2.1).
+ */
+export function timeFromDb(raw: string): Temporal.PlainTime {
+  return Temporal.PlainTime.from(raw.trim());
+}
+
+/**
+ * Materialize a raw `uuid` string into a canonical lowercase string — `uuid` has
+ * no managed carrier beyond `string`, but the parse fn lives here so the dialect
+ * stays the single source of parse logic and an adapter owns only OID
+ * registration.
+ */
+export function uuidFromDb(raw: string): string {
+  return raw.trim();
 }

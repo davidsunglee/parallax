@@ -16,7 +16,7 @@ import { Order, parallax, type ParallaxDatabase, type ParallaxRow } from "#paral
 /** A trivial in-memory `ParallaxDatabase` for the smoke example (no real driver). */
 function stubDatabase(rows: readonly ParallaxRow[]): ParallaxDatabase {
   return {
-    async query(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
+    async execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
       // A real adapter runs `sql` (with `?`→`$n` translation) against Postgres;
       // the stub just echoes the fixture rows so the typed surface is exercised.
       void sql;
