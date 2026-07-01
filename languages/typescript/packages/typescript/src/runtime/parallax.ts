@@ -14,12 +14,13 @@
  * typing is layered on by the generated wrapper.
  */
 
+import { bytesFromHex } from "@parallax/core";
 import { ParallaxList } from "@parallax/lists";
 import type { Metamodel } from "@parallax/metamodel";
 import { type EntityMetadata, Metamodel as MetamodelReader } from "@parallax/metamodel";
 import type { Operation } from "@parallax/operation";
 import { compile } from "@parallax/sql";
-import { buildFindOperation, type FindOptions, type Predicate } from "../dsl/find.js";
+import { buildFindOperation, type FindOptions, Predicate } from "../dsl/find.js";
 import { RuntimeSchema } from "./schema.js";
 
 /** A row as the database port returns it (physical column name → neutral value). */
@@ -82,9 +83,13 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
    * lazy `ParallaxList` keyed on the entity's primary key (same PK ⇒ same object).
    * The element type `T` is the generated managed-object type the barrel binds;
    * rows materialize to it at the adapter boundary (spec §2.2.1).
+   *
+   * `find()` with no predicate is shorthand for `find(Entity.all())` (spec §1.3):
+   * the operand defaults to the entity-agnostic `all` predicate, which the
+   * compiler roots at this finder's entity (`select … from <table>`, no `where`).
    */
-  find(predicate: Predicate, options: FindOptions = {}): ParallaxList<T> {
-    const operation = buildFindOperation(predicate, options);
+  find(predicate?: Predicate, options: FindOptions = {}): ParallaxList<T> {
+    const operation = buildFindOperation(predicate ?? new Predicate({ all: {} }), options);
     return this.runOperation(operation);
   }
 
@@ -93,13 +98,56 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     const schema = new RuntimeSchema(this.metamodel, this.entity);
     const { sql, binds } = compile(operation, schema);
     const pkColumn = this.entity.primaryKey()[0]?.column;
+    const materialize = this.rowMaterializer();
     return new ParallaxList<T>(
-      async () => (await this.database.query(sql, binds as readonly unknown[])) as readonly T[],
+      async () => {
+        const rows = await this.database.query(sql, binds as readonly unknown[]);
+        return (materialize ? rows.map(materialize) : rows) as readonly T[];
+      },
       pkColumn === undefined
         ? {}
         : { identity: (row) => row[pkColumn] as string | number | bigint | null | undefined },
     );
   }
+
+  /**
+   * A per-row normalizer for the entity's `bytes` columns, or `undefined` when
+   * the entity has none (so the common case pays no per-row cost). Each `bytes`
+   * column is normalized to a **fresh `Uint8Array`** at the adapter boundary
+   * (spec §2.2.1): a Node `Buffer` / `Uint8Array` is copied, a hex string
+   * (possibly `\x`-prefixed) is parsed via `bytesFromHex`, and `null` / other
+   * values pass through unchanged. Because the columns are KNOWN `bytes` from the
+   * metamodel, a string value is unambiguously hex — no heuristic.
+   */
+  private rowMaterializer(): ((row: ParallaxRow) => ParallaxRow) | undefined {
+    const bytesColumns = this.entity
+      .attributes()
+      .filter((attr) => attr.type === "bytes")
+      .map((attr) => attr.column);
+    if (bytesColumns.length === 0) {
+      return undefined;
+    }
+    return (row) => {
+      const out: ParallaxRow = { ...row };
+      for (const column of bytesColumns) {
+        out[column] = normalizeBytes(out[column]);
+      }
+      return out;
+    };
+  }
+}
+
+/** Normalize one adapter-returned `bytes` value to a fresh `Uint8Array` (spec §2.2.1). */
+function normalizeBytes(value: unknown): unknown {
+  if (value instanceof Uint8Array) {
+    // Covers a Node `Buffer` (a `Uint8Array` subclass); copy so the managed
+    // object never aliases the adapter's buffer.
+    return Uint8Array.from(value);
+  }
+  if (typeof value === "string") {
+    return bytesFromHex(value);
+  }
+  return value;
 }
 
 /**
