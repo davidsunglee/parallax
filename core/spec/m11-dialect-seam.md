@@ -9,6 +9,98 @@ precisely because dialect divergence is localized to one swappable component.
 This mirrors Reladomo's `DatabaseType` seam — obtained from the connection
 manager at every SQL decision point, never from a global registry.
 
+## M11 decomposition — pure dialect, execution port, and concrete adapters
+
+The seam is **not** a single indivisible unit. `M11` **MUST** decompose into three
+cooperating logical layers plus N concrete adapters, and this decomposition is
+itself normative — it is what makes "swap the database, not the application" real
+rather than aspirational:
+
+1. **A pure dialect / portability layer** — the `Dialect` authority detailed in
+   the next section: SQL-fragment production (SELECT shape, identifier quoting,
+   row-limit clause, read-lock suffix, temp-table DDL), the neutral-type →
+   column-type mapping, and the **type-parse functions** that turn a driver's raw
+   column value into a core **managed value** (`int8` → the language's big-integer
+   type, `numeric` → its exact-decimal type, `timestamp` → a UTC instant at core
+   microsecond precision, `bytes` → a byte array). This layer performs **no I/O**:
+   it holds no connection, opens no socket, and imports no database driver. It
+   depends only on `M0`, and it is the single source of truth for every
+   dialect-specific string and every dialect-specific parse rule.
+2. **An abstract runtime database port** — the execution interface the layers
+   above the seam (transactions `M8`, and the composition root) call to run
+   compiled SQL and demarcate transactions. The port names an
+   `execute(sql, binds) → rows` / `transaction(body)` contract and nothing more.
+   It **depends on nothing application-specific** (beyond the neutral `M0` types
+   its contract names) — no driver, no concrete database, no harness — so any
+   layer may hold the port without acquiring a database dependency. The port
+   carries the **normalize-at-boundary contract**: an adapter behind it returns
+   rows whose scalars are already **managed values** (produced by the dialect
+   layer's parse functions), never raw driver representations. Nothing above the
+   seam ever sees a driver's `Date`, a binary-float `numeric`, or a raw byte
+   buffer.
+3. **N concrete adapter modules — one per database type.** Each adapter
+   implements the port over exactly one driver. An adapter depends **only on the
+   port and the pure dialect layer**: it owns driver setup and registration (which
+   type codes to read as raw text, connection/pool acquisition) and delegates
+   every parse decision to the dialect layer, so parse logic is never duplicated
+   across adapters. Adding a database type is a **new adapter module**, not a
+   change to the port, the dialect layer, or anything above the seam.
+
+Two structural rules make the decomposition load-bearing:
+
+- **Only the composition root may depend on a *concrete* adapter.** Every layer
+  above the seam depends on the **port**, never on a specific adapter; a concrete
+  adapter is selected and injected once, at the top. This is what lets one program
+  target the production database and a test target a different one without
+  recompiling the layers between.
+- **The port depends on nothing application-specific, and the pure dialect layer
+  performs no I/O.** A wrong-direction dependency here — the port reaching for a
+  driver, or an above-seam module importing a concrete adapter — is the same class
+  of spec violation the module-dependency graph forbids.
+
+### Managed at the boundary, wire at the grader
+
+The normalize-at-boundary contract fixes **where** a raw database value becomes a
+first-class typed value: at the adapter boundary, **once**. An adapter returns
+**managed** scalars — the language's exact-decimal type, big-integer type,
+UTC-instant type, byte-array type — so every consumer above the seam reasons in
+managed types and none re-parses driver text.
+
+The compatibility harness (`M12`) grades in a **different** domain and must not be
+conflated with the runtime path. It takes the adapter's **managed** rows and
+**serializes them to the canonical wire form** (`M0`) for its result envelope,
+then grades in **wire space** (decimals compared in decimal space, instants as
+canonical UTC strings, and so on) so grading is cross-language-consistent and
+independent of any one language's managed representation. **The wire rendering is a
+grader concern, never an adapter concern:** a concrete adapter emits managed types
+only and contains **no** wire or grading logic. This is the normative split —
+*managed at the boundary, wire at the grader*: the runtime consumes managed types;
+the harness serializes managed → canonical wire for its envelope and compares
+there.
+
+### Packaging latitude
+
+This decomposition mandates the **separation** — one pure dialect layer, one
+abstract port, and N concrete adapters, under the two dependency rules above —
+**not** a particular packaging mechanism. Whether the port and the dialect layer
+ship as one distributable or two, and how the N adapters are published, is a
+per-ecosystem choice (consistent with the per-language enforcement-tooling table
+in [`dependency-graph.md`](dependency-graph.md)). What every ecosystem MUST
+preserve is the **direction**: above-seam code binds to the port, and concrete
+adapters are leaf modules the composition root selects.
+
+A **concrete dialect strategy** — one database's pure SQL strings and parse
+functions — is a **different thing** from a **concrete adapter** — that database's
+driver-bound port implementation — even though both are per-database. Only the
+adapter carries a driver. The concrete dialect strategies MAY ship as a single
+catalog or be split one pure module per database; either way they stay
+**driver-free**, and each adapter depends on its matching dialect strategy (never
+the reverse). Folding a database's dialect strings *into* its adapter is
+**forbidden**: `M3` (SQL generation) and `M8` (transactions) depend on the dialect
+layer to emit compiled SQL, so co-locating dialect strings with a driver would pull
+that driver into modules that MUST stay database-free — defeating the driver-free
+compile/golden path.
+
 ## The `Dialect` interface
 
 A `Dialect` is the abstract authority for every dialect-specific decision. With
