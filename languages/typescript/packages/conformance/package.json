@@ -22,6 +22,7 @@
     "@parallax/sql": "workspace:*",
     "@parallax/relationships": "workspace:*",
     "@parallax/bitemporal": "workspace:*",
+    "@parallax/transactions": "workspace:*",
     "@parallax/locking": "workspace:*",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1"

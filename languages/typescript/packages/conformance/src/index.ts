@@ -20,6 +20,12 @@ export {
   type TableState,
 } from "./compare.js";
 export {
+  buildConflictPlan,
+  type ConflictAttempt,
+  type ConflictPlan,
+  isConflict,
+} from "./conflict.js";
+export {
   buildDeepFetchPlan,
   type DeepFetchPlan,
   isDeepFetch,
@@ -46,6 +52,12 @@ export {
 export { CaseMatrix, type MatrixEntry, type MatrixStatus } from "./matrix.js";
 export type { CompatibilityDatabaseProvider, ProviderRow } from "./provider.js";
 export { readProjection, runCompile, runRun } from "./runner.js";
+export {
+  buildScenarioPlan,
+  isScenario,
+  type ScenarioPlan,
+  type ScenarioStep,
+} from "./scenario.js";
 export {
   assertValidEnvelope,
   conformanceAdapterValidator,
