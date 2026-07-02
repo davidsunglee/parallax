@@ -282,7 +282,9 @@ def test_expected_suffix_business_past_processing_latest():
     coverage = _policy_model().entity("Coverage")
     pins = {"business": "2024-03-01T00:00:00+00:00"}  # processing defaults to latest
     assert _expected_asof_suffix(coverage, pins) == [
-        "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "infinity",
+        "2024-03-01T00:00:00+00:00",
+        "2024-03-01T00:00:00+00:00",
+        "infinity",
     ]
 
 
@@ -290,7 +292,9 @@ def test_expected_suffix_business_latest_processing_past():
     coverage = _policy_model().entity("Coverage")
     pins = {"processing": "2024-02-01T00:00:00+00:00"}  # business defaults to latest
     assert _expected_asof_suffix(coverage, pins) == [
-        "infinity", "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00",
+        "infinity",
+        "2024-02-01T00:00:00+00:00",
+        "2024-02-01T00:00:00+00:00",
     ]
 
 
@@ -298,8 +302,10 @@ def test_expected_suffix_both_past_is_business_first():
     coverage = _policy_model().entity("Coverage")
     pins = {"business": "2024-03-01T00:00:00+00:00", "processing": "2024-02-01T00:00:00+00:00"}
     assert _expected_asof_suffix(coverage, pins) == [
-        "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00",
-        "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00",
+        "2024-03-01T00:00:00+00:00",
+        "2024-03-01T00:00:00+00:00",
+        "2024-02-01T00:00:00+00:00",
+        "2024-02-01T00:00:00+00:00",
     ]
 
 
@@ -344,6 +350,7 @@ class _WrongAsofChildDb:
     corrupted as-of suffix in the authored binds. Used to prove the suffix
     enforcement block is load-bearing: without it, the graph matches and no
     CaseFailure is raised."""
+
     dialect = "postgres"
 
     def query(self, sql, binds=None):
@@ -359,6 +366,7 @@ def test_deep_fetch_enforces_propagated_asof_suffix(tmp_path):
     # An otherwise-valid case whose child as-of suffix is WRONG must raise.
     # Build it from 0324 with a corrupted level-1 suffix bind.
     import yaml
+
     src = yaml.safe_load(
         (COMPATIBILITY_ROOT / "cases" / "0324-deepfetch-temporal-both-latest.yaml").read_text()
     )
@@ -379,6 +387,7 @@ def test_existing_non_temporal_deep_fetch_still_passes():
 
     class _OrdersDb:
         dialect = "postgres"
+
         def query(self, sql, binds=None):
             if "order_item" in sql:
                 return [

@@ -75,6 +75,13 @@ export {
 } from "./schema.js";
 export { columnTypesForCase } from "./schema-resolver.js";
 export {
+  buildConformanceSliceCoverageReport,
+  type CommandSliceCoverage,
+  type ConformanceSliceCoverageOptions,
+  type ConformanceSliceCoverageReport,
+  renderConformanceSliceCoverageMarkdown,
+} from "./slice-coverage.js";
+export {
   buildWriteSequencePlan,
   isWriteSequence,
   type WriteSequencePlan,

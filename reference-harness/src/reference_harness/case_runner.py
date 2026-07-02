@@ -102,9 +102,7 @@ def _scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
     return left == right
 
 
-def _row_matches(
-    left: dict[str, Any], right: dict[str, Any], tolerance: Decimal | None
-) -> bool:
+def _row_matches(left: dict[str, Any], right: dict[str, Any], tolerance: Decimal | None) -> bool:
     if left.keys() != right.keys():
         return False
     return all(_scalars_equal(left[key], right[key], tolerance) for key in left)
@@ -152,8 +150,7 @@ def _assert_schema(case: Case) -> None:
     elif case.is_coherence:
         if len(case.coherence) < 2:
             raise CaseFailure(
-                f"{case.path.name}: coherence case needs at least a write and a "
-                f"re-fetch step"
+                f"{case.path.name}: coherence case needs at least a write and a re-fetch step"
             )
         for index, step in enumerate(case.coherence):
             if step.get("kind") == "write" and "sameObjectAs" in step:
@@ -227,8 +224,13 @@ def _assert_equivalent_encodings(case: Case) -> None:
     prefix and a fluent surface of the same grouped intent denote one node — in
     the fixture itself rather than in bespoke test code.
     """
-    if (case.is_write_sequence or case.is_scenario or case.is_conflict
-            or case.is_coherence or case.is_error):
+    if (
+        case.is_write_sequence
+        or case.is_scenario
+        or case.is_conflict
+        or case.is_coherence
+        or case.is_error
+    ):
         # A write-sequence and a conflict case have no operation; a scenario and a
         # coherence case carry their operations per step. An error case has no
         # operation either. Equivalent-encodings is a single-operation check.
@@ -341,9 +343,7 @@ def _root_asof_pins(case: Case) -> dict[str, str]:
         asof = node["asOf"]
         entity_name, attr_name = asof["asOfAttr"].split(".", 1)
         entity = case.model.entity(entity_name)
-        axis = next(
-            a["axis"] for a in entity.as_of_attributes if a["name"] == attr_name
-        )
+        axis = next(a["axis"] for a in entity.as_of_attributes if a["name"] == attr_name)
         pins[axis] = asof["date"]
         node = asof["operand"]
     return pins
@@ -372,9 +372,7 @@ def _expected_asof_suffix(child_entity: Entity, pins: dict[str, str]) -> list[An
     return suffix
 
 
-def _expected_sequence_ids(
-    initial: int, increment: int, batch: int, count: int
-) -> list[int]:
+def _expected_sequence_ids(initial: int, increment: int, batch: int, count: int) -> list[int]:
     """The ids a simulated sequence hands out for *count* inserts, in order.
 
     Within a reserved block of *batch* ids the values step by *increment*; the
@@ -388,9 +386,7 @@ def _expected_sequence_ids(
     return ids
 
 
-def _expected_sequence_counter(
-    initial: int, increment: int, batch: int, count: int
-) -> int:
+def _expected_sequence_counter(initial: int, increment: int, batch: int, count: int) -> int:
     """The registry counter after *count* inserts: a full block is reserved per
     allocation, so it advances by ``batch * increment`` for each block touched.
     """
@@ -404,9 +400,7 @@ def _pk_sequence_target(case: Case) -> tuple[Entity, dict[str, Any], dict[str, A
     Returns ``(entity, pkGenerator, pk_attribute)`` or ``None`` when the case does
     not insert into a sequence entity (e.g. ``max`` cases, non-pk-gen cases).
     """
-    inserted = {
-        step["entity"] for step in case.write_sequence if step.get("mutation") == "insert"
-    }
+    inserted = {step["entity"] for step in case.write_sequence if step.get("mutation") == "insert"}
     for entity in case.model.entities:
         if entity.name not in inserted:
             continue
@@ -439,9 +433,7 @@ def _pk_sequence_counter_column(registry: Entity) -> str:
     registry entity ever grows another column.
     """
     counters = [
-        a
-        for a in registry.attributes
-        if not a.get("primaryKey") and a.get("type") == "int64"
+        a for a in registry.attributes if not a.get("primaryKey") and a.get("type") == "int64"
     ]
     if len(counters) != 1:
         raise CaseFailure(
@@ -489,9 +481,7 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     reg_rows = _read_table(db, registry)
     reg_row = next((r for r in reg_rows if r.get(name_column) == seq_name), None)
     if reg_row is None:
-        raise CaseFailure(
-            f"{case.path.name}: {registry.name} has no row for sequence {seq_name!r}"
-        )
+        raise CaseFailure(f"{case.path.name}: {registry.name} has no row for sequence {seq_name!r}")
     expected_counter = _expected_sequence_counter(initial, increment, batch, count)
     if reg_row.get(counter_column) != expected_counter:
         raise CaseFailure(
@@ -736,11 +726,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         parents = rows_by_entity.get(step.parent_entity.name, [])
         parent_col = _column_of(step.parent_entity, step.parent_attr)
         parent_keys = sorted(
-            {
-                _coerce_identity_key(p[parent_col])
-                for p in parents
-                if p.get(parent_col) is not None
-            }
+            {_coerce_identity_key(p[parent_col]) for p in parents if p.get(parent_col) is not None}
         )
 
         if not parent_keys:
@@ -1149,7 +1135,10 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
 
 
 def _identity_keys(
-    case: Case, index: int, rows: list[dict[str, Any]], identity_col: str,
+    case: Case,
+    index: int,
+    rows: list[dict[str, Any]],
+    identity_col: str,
     label: str = "scenario",
 ) -> list[Any]:
     """The ordered set of primary-key identities carried by *rows*."""
@@ -1325,6 +1314,7 @@ def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
 
 # --- error-code classification cases (M11 dialect seam) ----------------------
 
+
 def _error_statements(case: Case, dialect: str) -> list[str]:
     """Every golden statement an error case lists for *dialect* (for lint/layer 3).
 
@@ -1381,8 +1371,7 @@ def _assert_error_single_connection(case: Case, db: DatabaseProvider) -> None:
         except Exception as exc:  # noqa: BLE001 -- any driver error is the signal
             if index != last:
                 raise CaseFailure(
-                    f"{case.path.name}: setup statement[{index}] raised before the "
-                    f"trigger: {exc!r}"
+                    f"{case.path.name}: setup statement[{index}] raised before the trigger: {exc!r}"
                 ) from exc
             raised = exc
     if raised is None:
@@ -1441,7 +1430,10 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     classified. Sessions are rolled back + closed in a finally.
     """
     dialect = db.dialect
-    rounds = case.concurrency["rounds"]
+    concurrency = case.concurrency
+    if concurrency is None:
+        raise CaseFailure(f"{case.path.name}: error case missing concurrency choreography")
+    rounds = concurrency["rounds"]
     nodes = ("A", "B")
     barrier = threading.Barrier(len(nodes))
     raised: dict[str, Exception] = {}
@@ -1555,9 +1547,7 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
             statements = _coherence_step_statements(step, dialect)
             if step["kind"] == "write":
                 for statement_index, statement in enumerate(statements):
-                    binds = _binds_for_list(
-                        step.get("binds", []), statement_index, len(statements)
-                    )
+                    binds = _binds_for_list(step.get("binds", []), statement_index, len(statements))
                     node.execute(statement, binds)
                 results.append([])  # keep indices aligned for sameObjectAs
                 continue
@@ -1571,9 +1561,7 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
                 )
             rows: list[dict[str, Any]] = []
             for statement_index, statement in enumerate(statements):
-                binds = _binds_for_list(
-                    step.get("binds", []), statement_index, len(statements)
-                )
+                binds = _binds_for_list(step.get("binds", []), statement_index, len(statements))
                 rows = _query_rows(node, statement, binds)
             results.append(rows)
 

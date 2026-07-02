@@ -204,9 +204,7 @@ def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     _write_case(cases, "0001.yaml", _clean_read_case(["m1", "first-implementation-mvp"]))
     # m9 is on a tagged case but not in the claim's modules.
-    _write_case(
-        cases, "0002.yaml", _clean_read_case(["m2", "m9", "first-implementation-mvp"])
-    )
+    _write_case(cases, "0002.yaml", _clean_read_case(["m2", "m9", "first-implementation-mvp"]))
     errors = profile_errors(_synthetic_scope(), tmp_path)
     assert any("0002.yaml" in e and "'m9'" in e for e in errors)
 
@@ -308,9 +306,7 @@ def test_real_corpus_profile_is_consistent() -> None:
 def test_profile_slice_tag_count() -> None:
     cases_dir = _COMPATIBILITY_ROOT / "cases"
     tagged = []
-    for path in sorted(cases_dir.glob("**/*.yaml")) + sorted(
-        cases_dir.glob("**/*.yml")
-    ):
+    for path in sorted(cases_dir.glob("**/*.yaml")) + sorted(cases_dir.glob("**/*.yml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(doc, dict):
             continue
@@ -318,6 +314,5 @@ def test_profile_slice_tag_count() -> None:
         if _SLICE_TAG in tags:
             tagged.append(path.name)
     assert len(tagged) == 99, (
-        f"expected exactly 99 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: "
-        f"{sorted(tagged)}"
+        f"expected exactly 99 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
     )

@@ -77,9 +77,7 @@ def parse_edges(markdown: str) -> list[tuple[str, str]]:
     """Extract the (depends-on) edges from the dependency-graph fenced block."""
     match = _FENCE_RE.search(markdown)
     if not match:
-        raise DepGraphFailure(
-            "no ```dependency-graph fenced block found in the spec file"
-        )
+        raise DepGraphFailure("no ```dependency-graph fenced block found in the spec file")
     edges: list[tuple[str, str]] = []
     for lineno, line in enumerate(match.group(1).splitlines(), start=1):
         if not line.strip():
@@ -223,9 +221,7 @@ def coverage_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
     if not fixture_tags:
         return [f"no fixture tags discovered under {compatibility_root}"]
 
-    uncovered = sorted(
-        module for module in in_scope if module.lower() not in fixture_tags
-    )
+    uncovered = sorted(module for module in in_scope if module.lower() not in fixture_tags)
     return [
         f"in-scope module {module} has no fixture tagged to it "
         f"(expected at least one fixture with tag {module.lower()!r})"
@@ -276,9 +272,7 @@ def parse_profile_claim(scope_markdown: str) -> dict:
     try:
         claim = json.loads(block)
     except json.JSONDecodeError as exc:
-        raise DepGraphFailure(
-            f"slice claim is not valid JSON: {exc}"
-        ) from exc
+        raise DepGraphFailure(f"slice claim is not valid JSON: {exc}") from exc
     capabilities = claim.get("capabilities")
     if not isinstance(capabilities, dict):
         raise DepGraphFailure("slice claim has no 'capabilities' object")
@@ -382,19 +376,14 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
     claim_shapes = {s for s in capabilities.get("caseShapes", []) if isinstance(s, str)}
     case_tags = capabilities.get("caseTags")
     if not isinstance(case_tags, dict):
-        errors.append(
-            f"slice claim must declare caseTags.include exactly [{_SLICE_TAG!r}]"
-        )
+        errors.append(f"slice claim must declare caseTags.include exactly [{_SLICE_TAG!r}]")
         case_tags = {}
     raw_include = case_tags.get("include")
     if raw_include != [_SLICE_TAG]:
         errors.append(
-            "slice claim caseTags.include must be exactly "
-            f"[{_SLICE_TAG!r}], got {raw_include!r}"
+            f"slice claim caseTags.include must be exactly [{_SLICE_TAG!r}], got {raw_include!r}"
         )
-    claim_exclude = {
-        t for t in case_tags.get("exclude", []) if isinstance(t, str)
-    }
+    claim_exclude = {t for t in case_tags.get("exclude", []) if isinstance(t, str)}
 
     tagged = _slice_cases(compatibility_root)
 
@@ -406,9 +395,7 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
                 covered_modules.add(tag)
     for module in sorted(claim_modules):
         if module not in covered_modules:
-            errors.append(
-                f"slice claims module {module!r} but no tagged case carries it"
-            )
+            errors.append(f"slice claims module {module!r} but no tagged case carries it")
 
     # reverse: every tagged case stays inside the claim.
     for path, doc in tagged:
@@ -425,9 +412,7 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
         case_tags_list = [t for t in doc.get("tags", []) if isinstance(t, str)]
         for tag in case_tags_list:
             if _MODULE_TAG_RE.match(tag) and tag not in claim_modules:
-                errors.append(
-                    f"{name}: carries module tag {tag!r} not in the slice claim"
-                )
+                errors.append(f"{name}: carries module tag {tag!r} not in the slice claim")
 
         if shape is not None and not _has_postgres_golden(doc, shape):
             errors.append(f"{name}: tagged case has no Postgres golden SQL")
@@ -435,9 +420,7 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
         if claim_exclude:
             offending = sorted(set(case_tags_list) & claim_exclude)
             if offending:
-                errors.append(
-                    f"{name}: carries excluded slice tag(s) {offending}"
-                )
+                errors.append(f"{name}: carries excluded slice tag(s) {offending}")
 
     return errors
 
@@ -509,8 +492,7 @@ def run_profile(spec_dir: Path, compatibility_root: Path) -> int:
     errors = profile_errors(scope_markdown, compatibility_root)
     if errors:
         print(
-            f"profile gate FAILED ({len(errors)} inconsistency(ies) for "
-            f"{_SLICE_TAG!r}):",
+            f"profile gate FAILED ({len(errors)} inconsistency(ies) for {_SLICE_TAG!r}):",
             file=sys.stderr,
         )
         for error in errors:

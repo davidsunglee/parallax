@@ -165,9 +165,7 @@ class MariaDbProvider:
         target = quote_identifier(table, self.dialect)
         sql = f"insert into {target} ({col_list}) values ({placeholders})"
         with self._conn.cursor() as cur:
-            cur.executemany(
-                sql, [tuple(_to_db_bind(value) for value in row) for row in rows]
-            )
+            cur.executemany(sql, [tuple(_to_db_bind(value) for value in row) for row in rows])
         self._conn.commit()
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
@@ -368,9 +366,7 @@ def _connect_with_retry(
         except pymysql.err.OperationalError as exc:  # noqa: PERF203
             last_error = exc
             time.sleep(delay)
-    raise RuntimeError(
-        f"could not connect to MariaDB after {attempts} attempts"
-    ) from last_error
+    raise RuntimeError(f"could not connect to MariaDB after {attempts} attempts") from last_error
 
 
 class _MariaDbFactory:

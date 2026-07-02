@@ -44,8 +44,7 @@ def _load_entity(entity: Entity, db: DatabaseProvider) -> None:
         unknown = set(row) - set(name_to_column)
         if unknown:
             raise ValueError(
-                f"fixture row for {entity.name} references unknown "
-                f"attribute(s) {sorted(unknown)}"
+                f"fixture row for {entity.name} references unknown attribute(s) {sorted(unknown)}"
             )
         tuples.append([row.get(column_to_name[column]) for column in columns])
 

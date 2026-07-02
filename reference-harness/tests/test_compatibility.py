@@ -50,8 +50,7 @@ def test_cases_discovered() -> None:
 
 def test_a_dialect_is_available() -> None:
     assert DIALECTS, (
-        "no database providers available; set PARALLAX_DATABASES or ensure a "
-        "provider is registered"
+        "no database providers available; set PARALLAX_DATABASES or ensure a provider is registered"
     )
 
 

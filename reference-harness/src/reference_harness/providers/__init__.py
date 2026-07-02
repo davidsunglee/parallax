@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -80,7 +80,7 @@ class DatabaseProvider(Protocol):
         """Run a write statement (DML); return the affected-row count."""
         ...
 
-    def open_peer(self) -> Iterator[Node]:  # pragma: no cover - protocol stub
+    def open_peer(self) -> AbstractContextManager[Node]:  # pragma: no cover - protocol stub
         """Context-manage a second, independent connection to the SAME database.
 
         OPTIONAL (Phase 11, cross-process coherence). The yielded :class:`Node` is
@@ -97,7 +97,7 @@ class DatabaseProvider(Protocol):
         """The raw native code (SQLSTATE string / vendor errno) of *exc*."""
         ...
 
-    def open_session(self) -> Iterator[Any]:  # pragma: no cover - protocol stub
+    def open_session(self) -> AbstractContextManager[Any]:  # pragma: no cover - protocol stub
         """Context-manage a manual-commit session for lock-contention cases."""
         ...
 

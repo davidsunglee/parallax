@@ -11,6 +11,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Secret scanning: fail fast on live credentials or credentials whose verifier
+  # could not conclusively determine status. GitHub secret scanning should still
+  # be enabled for continuous repository monitoring where available.
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for leaked secrets
+        uses: trufflesecurity/trufflehog@v3.95.7
+        with:
+          extra_args: --results=verified,unknown
+
   # Static checks: lint + schema/meta-schema validation + sqlglot-parse +
   # dependency-graph DAG check + the coverage gate (every in-scope module has a
   # fixture) + the first-implementation-mvp profile gate (the tagged slice is
@@ -62,6 +76,19 @@ jobs:
           pnpm exec vitest run --root languages/typescript
           packages/typescript/test/dsl.test.ts
           packages/typescript/test/generate.test.ts
+      - name: Conformance slice coverage report
+        run: pnpm run ts:conformance-coverage
+      - name: Add conformance slice coverage summary
+        run: cat coverage/conformance-slice.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload conformance slice coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-slice-coverage
+          path: |
+            coverage/conformance-slice.json
+            coverage/conformance-slice.md
+          if-no-files-found: warn
 
   # The Docker-backed TypeScript run lane: provision postgres:17 via
   # Testcontainers and run the full first-implementation-mvp slice end-to-end
@@ -86,6 +113,33 @@ jobs:
         run: pnpm run ts:typecheck
       - name: Conformance run lane (${{ matrix.dialect }}, Testcontainers)
         run: pnpm exec vitest run --root languages/typescript packages/typescript
+
+  # TypeScript V8 line coverage. This produces a GitHub job-summary table and
+  # uploads the full report, including lcov.info for later Codecov/Coveralls use.
+  ts-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build TypeScript workspace (tsc -b)
+        run: pnpm run ts:typecheck
+      - name: TypeScript line coverage
+        run: pnpm run ts:coverage
+      - name: Add TypeScript coverage summary
+        if: always()
+        run: node languages/typescript/scripts/coverage-summary.mjs coverage/typescript/coverage-summary.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload TypeScript coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typescript-coverage
+          path: coverage/typescript
+          if-no-files-found: warn
 
   # Conventional-commit validation across the PR commit range.
   commitlint:

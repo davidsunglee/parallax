@@ -13,13 +13,7 @@ from reference_harness.paths import schemas_dir
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 _SPEC_DIR = _REPO_ROOT / "core" / "spec"
-_TS_SPEC = (
-    _REPO_ROOT
-    / "languages"
-    / "typescript"
-    / "spec"
-    / "01-implementation-spec.md"
-)
+_TS_SPEC = _REPO_ROOT / "languages" / "typescript" / "spec" / "01-implementation-spec.md"
 
 
 def _validator() -> Draft202012Validator:
@@ -28,9 +22,7 @@ def _validator() -> Draft202012Validator:
     return Draft202012Validator(schema)
 
 
-def _first_json_fence_under_heading(
-    markdown: str, heading_prefix: str, heading_text: str
-) -> str:
+def _first_json_fence_under_heading(markdown: str, heading_prefix: str, heading_text: str) -> str:
     """Return the first ```json fenced block under the matching heading.
 
     ``heading_prefix`` is the exact markdown heading marker (e.g. ``"## "`` or
@@ -60,25 +52,19 @@ def _first_json_fence_under_heading(
         if line.strip() == "```":
             return "\n".join(fence)
         fence.append(line)
-    raise AssertionError(
-        f"no ```json block found under heading {heading_text!r}"
-    )
+    raise AssertionError(f"no ```json block found under heading {heading_text!r}")
 
 
 def _slice_claim_block() -> str:
     """Extract the canonical slice describe JSON fenced under the slice heading."""
     scope = (_SPEC_DIR / "scope-and-tiers.md").read_text(encoding="utf-8")
-    return _first_json_fence_under_heading(
-        scope, "## ", "First-implementation Conformance Slice"
-    )
+    return _first_json_fence_under_heading(scope, "## ", "First-implementation Conformance Slice")
 
 
 def _ts_v1_claim_block() -> str:
     """Extract the TypeScript V1 describe JSON fenced under §4.5."""
     ts_spec = _TS_SPEC.read_text(encoding="utf-8")
-    return _first_json_fence_under_heading(
-        ts_spec, "### ", "4.5 V1 conformance capability claims"
-    )
+    return _first_json_fence_under_heading(ts_spec, "### ", "4.5 V1 conformance capability claims")
 
 
 def _valid_describe() -> dict:
@@ -95,9 +81,7 @@ def _valid_describe() -> dict:
             "modules": ["m0", "m1", "m2", "m3", "m8", "m11", "m12"],
             "dialects": ["postgres"],
             "caseShapes": ["read", "writeSequence"],
-            "caseTags": {
-                "exclude": ["aggregate", "identity cache", "query cache"]
-            },
+            "caseTags": {"exclude": ["aggregate", "identity cache", "query cache"]},
             "commands": ["describe", "compile", "run"],
             "provisioning": "self-managed",
         },
@@ -160,9 +144,7 @@ def test_case_tag_claims_must_have_include_or_exclude() -> None:
 
 def test_case_tag_claims_reject_duplicate_tags() -> None:
     describe = _valid_describe()
-    describe["capabilities"]["caseTags"] = {
-        "exclude": ["aggregate", "aggregate"]
-    }
+    describe["capabilities"]["caseTags"] = {"exclude": ["aggregate", "aggregate"]}
 
     assert list(_validator().iter_errors(describe))
 
@@ -243,9 +225,7 @@ def test_canonical_slice_claim_carries_no_profile_wire_key() -> None:
 
 def test_canonical_slice_claim_is_include_driven() -> None:
     claim = json.loads(_slice_claim_block())
-    assert claim["capabilities"]["caseTags"] == {
-        "include": ["first-implementation-mvp"]
-    }
+    assert claim["capabilities"]["caseTags"] == {"include": ["first-implementation-mvp"]}
 
 
 # --- TypeScript V1 adopts the canonical slice (anti-drift) --------------------

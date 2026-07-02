@@ -21,3 +21,5 @@ __pycache__/
 # Build / report artifacts
 report.json
 matrix.json
+coverage/
+.pnpm-store/
