@@ -10,7 +10,6 @@
       "ignoreUnresolved": ["#parallax"]
     }
   },
-  "ignoreDependencies": ["@vitest/coverage-v8"],
   "ignoreExportsUsedInFile": true,
   "ignore": [
     ".uv-cache/**",
