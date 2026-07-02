@@ -18,7 +18,7 @@
 # even though sqlglot tokenizes them as values, so the golden SQL passes the
 # layer-3 canonical-form check.
 model: models/account.yaml
-tags: [m8, m3, read-lock, transactions cache, first-implementation-mvp]
+tags: [m8, m3, read-lock, transactions cache, slice-mvp-1]
 operation:
   eq:
     attr: Account.id

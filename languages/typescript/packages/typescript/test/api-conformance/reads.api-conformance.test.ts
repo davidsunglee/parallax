@@ -1,5 +1,5 @@
 /**
- * Developer showcase — **reads** family (Phase 10c): non-temporal single-entity
+ * API Conformance Suite — **reads** family (Phase 10c): non-temporal single-entity
  * reads (00xx / 02xx) and flat navigate / exists reads (03xx flat), written as an
  * application developer would, run against `postgres:17` through the SHIPPED
  * `@parallax/db-postgres` adapter.
@@ -13,7 +13,7 @@
  *     (10b `instanceof` + value).
  *
  * The entity symbols are hand-authored the way codegen emits them (mirroring
- * `dsl.test.ts`), so the showcase exercises the same classes the generated barrel
+ * `dsl.test.ts`), so the suite exercises the same classes the generated barrel
  * uses. The official grade stays contract-driven over the generic runtime; this is
  * additive proof the developer surface + shipped adapter produce the corpus rows.
  */
@@ -60,7 +60,7 @@ const Person = { passport: rel("Person.passport") };
 const Passport = { number: attr("Passport.number") };
 const Grade = { ordinal: attr("Grade.ordinal") };
 
-/** One showcase row: the DSL a developer writes, its root entity, and the case stem. */
+/** One suite row: the DSL a developer writes, its root entity, and the case stem. */
 interface Row {
   readonly stem: string;
   readonly entity: string;
@@ -172,11 +172,11 @@ function dockerAvailable(): boolean {
 
 const HAS_DOCKER = dockerAvailable();
 
-it("the reads showcase covers exactly the READS family", () => {
+it("the reads suite covers exactly the READS family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...READS].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("reads showcase (Testcontainers postgres:17)", () => {
+group.skipIf(!HAS_DOCKER)("reads suite (Testcontainers postgres:17)", () => {
   const BOOT_TIMEOUT = 600_000;
   let provider: PostgresProvider;
 

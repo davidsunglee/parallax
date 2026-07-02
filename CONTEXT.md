@@ -180,9 +180,21 @@ _Avoid_: unmanaged entity, insert entity
 
 ### Conformance And Scope
 
+**Feature**:
+A named behavior within a module, identified by a feature tag on the compatibility cases that exercise it. Features are finer-grained than modules: module tiers cut parity scope at whole-module granularity, while a Conformance Slice cuts the corpus at feature granularity.
+_Avoid_: capability, sub-module, facet
+
 **Conformance Slice**:
-A declared subset of the compatibility corpus that an implementation claims through the conformance adapter for a specific implementation milestone.
+A declared, case-granular subset of the compatibility corpus that an implementation claims through the conformance adapter for a specific implementation milestone. Because cases carry both module and feature tags, a slice may include some features of a module while deferring others, without redefining that module's boundary.
 _Avoid_: module tier, partial pass list, ad hoc skip list
+
+**API Conformance Suite**:
+A test suite that proves an implementation's idiomatic public developer API reproduces the claimed Conformance Slice — running the code a developer writes through the shipped adapter against a real database, partitioning the slice with reasoned skips, asserting the corpus's expected results, and guarding that the idiomatic query builds the corpus operation. Additive proof beside the conformance-adapter grade, never a substitute.
+_Avoid_: showcase, demo, examples suite, idiomatic suite
+
+**Usage Guide**:
+A rendered document demonstrating idiomatic use of the developer surface, generated from the API Conformance Suite's source and drift-checked in CI so its examples are always executed, passing tests.
+_Avoid_: showcase doc, cookbook
 
 ### Future Plain-Data Query Shapes
 

@@ -45,7 +45,7 @@ function txnCases(): readonly { id: string; loaded: LoadedCase }[] {
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .filter(({ id }) => /^(06|07)\d\d$/.test(id))
     .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
-    .filter(({ loaded }) => loaded.tags.includes("first-implementation-mvp"));
+    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"));
 }
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */

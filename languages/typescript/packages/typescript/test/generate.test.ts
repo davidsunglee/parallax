@@ -8,7 +8,7 @@
  *  2. `generate` materializes a well-formed `#parallax` barrel.
  *  3. The generated barrel TYPECHECKS: `tsc --noEmit` over the emitted file
  *     (with `@parallax/typescript` mapped to the built dist) exits 0, so the
- *     generated typed surface is statically sound (spec §5, codegen not
+ *     generated typed surface is statically sound (spec §7, codegen not
  *     reflection).
  */
 import { execFileSync } from "node:child_process";
@@ -50,7 +50,7 @@ describe("parallax generate", () => {
     expect(result.files.map((f) => f.path)).toEqual([BARREL_FILE]);
   });
 
-  it("generate materializes a barrel that typechecks (spec §5)", () => {
+  it("generate materializes a barrel that typechecks (spec §7)", () => {
     const outputDir = join(workDir, "generated");
     const config = defineParallaxConfig({ descriptors: ["parallax/**/*.yaml"], output: outputDir });
     const result = generate(config, SAMPLE_APP);
@@ -81,7 +81,7 @@ describe("parallax generate", () => {
 
 /**
  * A tiny application consumer of the generated barrel. It proves the generated
- * typed surface accepts BOTH the no-arg `find()` shorthand (spec §1.3, MAJOR-2)
+ * typed surface accepts BOTH the no-arg `find()` shorthand (spec §2.3, MAJOR-2)
  * and the explicit `find(Entity.all())` form. `orders` is the `Order` finder
  * (its table `orders` camelizes to itself); `Order.all()` is the generated
  * unfiltered predicate.

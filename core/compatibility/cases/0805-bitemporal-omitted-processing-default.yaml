@@ -2,7 +2,7 @@
 # axis defaults to "now", so the golden SQL includes the current-processing
 # predicate out_z = infinity.
 model: models/position.yaml
-tags: [m7, m3, bitemporal, temporal, as-of, default-processing, first-implementation-mvp]
+tags: [m7, m3, bitemporal, temporal, as-of, default-processing, slice-mvp-1]
 operation:
   asOf:
     operand:

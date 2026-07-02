@@ -108,3 +108,8 @@ files and emits JSON validated by
 > case is internally consistent and that its golden SQL returns the right rows.
 > Whether the golden SQL *reads* as idiomatic, well-optimized SQL is a
 > human-judgment spot check, reserved for manual review.
+
+The reference harness's internals are non-normative and
+MUST NOT be used as design input for a language implementation; the binding
+inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the
+conformance-adapter contract.

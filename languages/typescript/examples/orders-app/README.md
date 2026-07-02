@@ -1,7 +1,7 @@
 # orders-app — minimal `#parallax` sample
 
 A minimal application that exercises the Phase 9 developer surface: the generated
-`#parallax` barrel, the `parallax(...)` factory, and a typed `find` (spec §1).
+`#parallax` barrel, the `parallax(...)` factory, and a typed `find` (spec §2).
 
 ## Layout
 

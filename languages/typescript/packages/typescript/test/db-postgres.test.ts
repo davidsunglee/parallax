@@ -7,7 +7,7 @@
  * (`bigint` / `ParallaxDecimal` / `Temporal.Instant` / `Temporal.PlainDate` /
  * `Temporal.PlainTime` / `Uint8Array` / string), NOT a porsager driver default
  * (a ms-precision `Date`, a binary-float `numeric`, a raw `Buffer`). This is the
- * §2.2.1 "normalize at the adapter boundary" contract the M11 decomposition
+ * §3.2.1 "normalize at the adapter boundary" contract the M11 decomposition
  * mandates — the adapter returns managed types and no wire/grading logic.
  *
  * Testcontainers lives in the composition root, so this integration test lives

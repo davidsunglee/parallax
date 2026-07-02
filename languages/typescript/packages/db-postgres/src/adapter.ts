@@ -7,7 +7,7 @@
  * implements the abstract `@parallax/db` port: `execute` runs a compiled
  * `?`-placeholder statement, `transaction` demarcates a unit of work, and every
  * returned scalar is a **managed** value (`bigint` / `ParallaxDecimal` /
- * `Temporal.*` / `Uint8Array` / string) normalized at the boundary (§2.2.1).
+ * `Temporal.*` / `Uint8Array` / string) normalized at the boundary (§3.2.1).
  *
  * It depends only on the **port** (`@parallax/db`) and the **pure dialect layer**
  * (`@parallax/dialect`): the dialect owns the `?`→`$n` translation and every
@@ -84,7 +84,7 @@ export class PostgresDatabase implements ParallaxDatabase {
   /**
    * Execute a compiled statement (`?`-placeholder SQL + ordered binds). The
    * dialect translates `?`→`$n`; every returned scalar is a managed value
-   * (§2.2.1). Rows are copied into plain objects so callers never hold a driver
+   * (§3.2.1). Rows are copied into plain objects so callers never hold a driver
    * row proxy.
    */
   async execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {

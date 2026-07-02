@@ -14,7 +14,7 @@
 # referenceSql oracle (an `id in (select policy_id ...)` reformulation, as-of
 # included) returning the same single row.
 model: models/policy.yaml
-tags: [m4, m7, temporal, relationship, exists, semi-join, propagation, bitemporal, default-injection, first-implementation-mvp]
+tags: [m4, m7, temporal, relationship, exists, semi-join, propagation, bitemporal, default-injection, slice-mvp-1]
 operation:
   exists:
     rel: Policy.coverages

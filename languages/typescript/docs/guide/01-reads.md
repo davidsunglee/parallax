@@ -1,10 +1,10 @@
-<!-- AUTO-GENERATED from the showcase tests by scripts/render-guide.mjs — DO NOT EDIT. -->
+<!-- AUTO-GENERATED from the API Conformance Suite tests by scripts/render-guide.mjs — DO NOT EDIT. -->
 
 # Reading data
 
 Every read is a typed `find` over an entity finder. A predicate is built from the generated entity symbols (`Order.id.eq(42)`), which serialize to the same canonical operation the engine compiles — so the query you write is the query that runs. A `find` returns a lazy `ParallaxList` of **managed objects**: `id` is a `bigint`, `price` a `ParallaxDecimal`, a timestamp a `Temporal.Instant`. Each predicate below is a real, tested case.
 
-Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/showcase/reads.showcase.test.ts`).
+Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/reads.api-conformance.test.ts`).
 
 ## 0001-find-all
 

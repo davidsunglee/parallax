@@ -4,7 +4,7 @@
 # business 2024-03-01 with the current belief, coverage 10 is the HEAD -> 600
 # (C-R2); coverage 20 -> 300.
 model: models/policy.yaml
-tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, first-implementation-mvp]
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, slice-mvp-1]
 operation:
   deepFetch:
     operand:

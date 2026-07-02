@@ -4,9 +4,9 @@ import type { LoadedCase } from "../src/discover.js";
 import {
   buildConformanceSliceCoverageReport,
   discoverCasePaths,
-  FIRST_IMPLEMENTATION_MVP_CAPABILITIES,
   loadCase,
   renderConformanceSliceCoverageMarkdown,
+  SLICE_MVP_1_CAPABILITIES,
 } from "../src/index.js";
 
 function loaded(id: string, shape: CaseShape, tags: readonly string[]): LoadedCase {
@@ -67,14 +67,11 @@ describe("conformance slice coverage report", () => {
     expect(renderConformanceSliceCoverageMarkdown(report)).toContain("| `compile` | 1 | 0 |");
   });
 
-  it("covers the real first-implementation-mvp slice", () => {
+  it("covers the real slice-mvp-1 slice", () => {
     const cases = discoverCasePaths().map(loadCase);
-    const report = buildConformanceSliceCoverageReport(
-      cases,
-      FIRST_IMPLEMENTATION_MVP_CAPABILITIES,
-    );
+    const report = buildConformanceSliceCoverageReport(cases, SLICE_MVP_1_CAPABILITIES);
 
-    expect(report.sliceTag).toBe("first-implementation-mvp");
+    expect(report.sliceTag).toBe("slice-mvp-1");
     expect(report.claimedCases).toBe(99);
     expect(report.byCommand.map((c) => [c.command, c.claimedCases])).toEqual([
       ["compile", 99],

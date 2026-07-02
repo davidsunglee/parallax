@@ -9,7 +9,7 @@
 #   id 3:  50.00 ([2024-03-01, 2024-08-01) contains 2024-04-01)
 # The later id-1 (150.00) milestone is excluded — it was not yet known.
 model: models/balance.yaml
-tags: [m7, m3, temporal mvp, as-of, audit-only, past, first-implementation-mvp]
+tags: [m7, m3, temporal mvp, as-of, audit-only, past, slice-mvp-1]
 operation:
   asOf:
     operand:

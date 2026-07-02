@@ -11,8 +11,9 @@ The feature set is derived from the bitemporal object-relational mapper
 [Reladomo](https://github.com/goldmansachs/reladomo).
 
 This repository is data- and contract-first. The root package provides project
-tooling. Future language implementations are forthcoming. They will live beside
-`core/` and prove conformance by running the same suite.
+tooling. Language implementations live beside `core/` under `languages/` and
+prove conformance by running the same suite; the TypeScript implementation in
+`languages/typescript/` is the first worked example.
 
 ## Repository Map
 
@@ -26,6 +27,10 @@ core/
     cases/              Read, write, scenario, conflict, and coherence cases
     benchmarks/         M13 benchmark workloads and generated datasets
 reference-harness/      Python runner that validates and executes the suite
+languages/
+  typescript/           First language implementation (idiomatic API + adapter)
+docs/adr/               Architecture decision records
+IMPLEMENTING.md         Playbook for building a language implementation
 justfile                Common verification commands
 package.json            Markdown, commit, and repo-level developer tooling
 ```
@@ -135,6 +140,11 @@ an `expectedGraph`, not just flat rows.
 ORM and it does not compile operations into SQL. Its job is to verify that the
 spec artifacts are coherent.
 
+The reference harness's internals are non-normative and
+MUST NOT be used as design input for a language implementation; the binding
+inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the
+conformance-adapter contract.
+
 For each case the harness:
 
 1. Validates the descriptor, operation, and case JSON/YAML against schemas.
@@ -147,7 +157,7 @@ For each case the harness:
 7. Checks SQL normalization and deterministic descriptor/operation serde.
 
 Database-specific behavior is isolated behind the provider seam in
-`reference-harness/parallax_harness/providers/`. The built-in providers cover
+`reference-harness/src/reference_harness/providers/`. The built-in providers cover
 Postgres and MariaDB through Testcontainers, including type mapping, temporal
 infinity handling, bind translation, JSON values, read-lock syntax, and peer
 connections for coherence cases.
@@ -174,13 +184,13 @@ just lint
 Validate schemas, SQL shape, and the module dependency graph:
 
 ```bash
-just dep-graph
+just core-dep-graph
 ```
 
 Run the compatibility suite against available database providers:
 
 ```bash
-just test
+just oracle-test
 ```
 
 Run all verification gates:
@@ -198,7 +208,7 @@ just matrix
 Provider selection is controlled by `PARALLAX_DATABASES`. For example:
 
 ```bash
-PARALLAX_DATABASES=postgres just test
+PARALLAX_DATABASES=postgres just oracle-test
 PARALLAX_DATABASES=postgres,mariadb just matrix
 ```
 
@@ -223,6 +233,34 @@ When adding a dialect, implement a new provider behind the M11 seam and add a
 new `goldenSql.<dialect>` entry to cases and benchmarks that need dialect-
 specific SQL.
 
+## Building A Language Implementation
+
+Building an idiomatic Parallax for a new language starts by declaring a
+**Conformance Slice**: the subset of the compatibility corpus this first build
+claims right now, captured as a machine-readable `describe` claim (see
+[`core/spec/scope-and-tiers.md`](core/spec/scope-and-tiers.md)). A slice is
+case-granular — it may claim some features of a module while deferring others,
+without redefining that module's boundary — so an early build can commit to
+exactly what it can honestly prove.
+
+The declared slice is then proven two ways, and both are official deliverables:
+
+- the wire-level **conformance-adapter grade** in
+  [`core/spec/conformance-adapter-contract.md`](core/spec/conformance-adapter-contract.md)
+  — the SQL and observations your adapter emits, compared against the corpus
+  oracles; and
+- the developer-surface **API Conformance Suite** and its rendered **Usage
+  Guide** in
+  [`core/spec/api-conformance-contract.md`](core/spec/api-conformance-contract.md)
+  — the idiomatic code an application writes, run through the shipped adapter
+  against a real database, reproducing the corpus's results.
+
+Both prove the same slice while each language builds its own idiomatic public
+API. [`IMPLEMENTING.md`](IMPLEMENTING.md) is the step-by-step playbook: it lays
+out the reading order, planning deliverables, implementation sequence,
+verification ladder, and completion checklist that carry you from the shared
+contract to a conforming target.
+
 ## Current Status
 
 The core spec, schemas, compatibility suite, benchmark definitions, and
@@ -231,7 +269,11 @@ operation serde, SQL canonicalization, real database execution, deep-fetch graph
 assembly, temporal write expectations, cache and identity scenarios,
 optimistic-lock conflicts, dialect differences, and cross-process coherence.
 
-Future language implementations should treat `core/` as the shared contract and
-use `reference-harness/` as the executable oracle. They prove implementation
-conformance through the adapter contract in
-`core/spec/conformance-adapter-contract.md` while building their own public APIs.
+The TypeScript implementation in
+[`languages/typescript/`](languages/typescript/README.md) is the first worked
+example: it declares the canonical `slice-mvp-1` Conformance Slice and proves it
+with both official artifacts. Further language implementations should treat
+`core/` as the shared contract and use `reference-harness/` as the executable
+oracle. See
+[Building A Language Implementation](#building-a-language-implementation) for the
+slice-first process and its two official proof artifacts.

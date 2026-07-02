@@ -52,7 +52,7 @@ const Order = {
 
 /**
  * The unfiltered identity predicate, spelled as codegen emits `Entity.all()`
- * (`find()` shorthand, spec §1.3). Built through the real `Predicate` so the
+ * (`find()` shorthand, spec §2.3). Built through the real `Predicate` so the
  * fidelity check exercises the same class the generated barrel uses.
  */
 function all(): Predicate {
@@ -262,7 +262,7 @@ describe("DSL → canonical operation fidelity", () => {
     });
   }
 
-  it("empty membership normalizes: in([]) → none, notIn([]) → all (spec §1.5)", () => {
+  it("empty membership normalizes: in([]) → none, notIn([]) → all (spec §2.5)", () => {
     expect(new AttributeExpression("Order.id").in([]).toOperation()).toEqual({ none: {} });
     expect(new AttributeExpression("Order.id").notIn([]).toOperation()).toEqual({ all: {} });
   });

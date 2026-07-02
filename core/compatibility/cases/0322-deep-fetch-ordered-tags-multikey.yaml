@@ -6,7 +6,7 @@
 # tie between `gift` and `urgent` broken by `label asc`. The second key is
 # load-bearing, so this proves multi-key ordering, not just a single clause.
 model: models/orders.yaml
-tags: [m4, m5, deepFetch, orderBy, ordering, multi-key, relationship, first-implementation-mvp]
+tags: [m4, m5, deepFetch, orderBy, ordering, multi-key, relationship, slice-mvp-1]
 operation:
   deepFetch:
     operand:

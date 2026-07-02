@@ -1,10 +1,10 @@
-<!-- AUTO-GENERATED from the showcase tests by scripts/render-guide.mjs — DO NOT EDIT. -->
+<!-- AUTO-GENERATED from the API Conformance Suite tests by scripts/render-guide.mjs — DO NOT EDIT. -->
 
 # Transactions and writes
 
 All writes run inside `px.transaction(async tx => …)`. `create` / `update` / `delete` buffer and flush set-based at commit (FK-safe). Audit-only entities chain milestones: `create` opens `[now, ∞)`, `update` closes the current row and chains a new one, `terminate` closes only — the prior values survive as the audit trail.
 
-Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/showcase/transactions.showcase.test.ts`).
+Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/transactions.api-conformance.test.ts`).
 
 ## 0004: a timestamp insert stores as UTC
 

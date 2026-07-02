@@ -1,4 +1,4 @@
-// Sample-app Parallax generator config (spec §5). `parallax generate` reads this
+// Sample-app Parallax generator config (spec §7). `parallax generate` reads this
 // and materializes the `#parallax` barrel at `output`.
 import { defineParallaxConfig } from "@parallax/typescript/config";
 

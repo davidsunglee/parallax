@@ -1,12 +1,12 @@
 /**
- * The application-runtime `SchemaResolver` (spec §1, §2.2).
+ * The application-runtime `SchemaResolver` (spec §2, §3.2).
  *
  * The `parallax(...)` factory's `find` compiles a DSL-built operation with the
  * SAME M3 `compile` visitor the conformance adapter uses — so it needs a
  * `SchemaResolver`. The conformance-side `MetamodelSchema` is case-driven (its
  * projection comes from a case's `expectedRows`); the application runtime instead
  * projects the root entity's FULL attribute set, because `find` returns managed
- * domain objects (spec §1.3). Both resolve `Class.attr` / `Class.relationship` /
+ * domain objects (spec §2.3). Both resolve `Class.attr` / `Class.relationship` /
  * as-of axes the same way, over the shared M1 reader.
  *
  * As-of predicate injection delegates to `@parallax/bitemporal` (the M7 owner),
@@ -96,7 +96,7 @@ export class RuntimeSchema implements SchemaResolver {
    * A `bytes` column is projected **verbatim** (no `type`), NOT through the
    * `encode(<alias>.<col>, ?) <col>_hex` hex lowering: the runtime normalizes
    * bytes to a fresh `Uint8Array` in `EntityFinder`'s row materializer (spec
-   * §2.2.1). The `encode(...,'hex')` lowering — which fires solely when a
+   * §3.2.1). The `encode(...,'hex')` lowering — which fires solely when a
    * projection carries `type === "bytes"` in the compiler — stays EXCLUSIVE to
    * the conformance `MetamodelSchema`/`readProjection` case-driven path (the
    * `_hex` row-observation seam, case `0003`). Every non-bytes column keeps its

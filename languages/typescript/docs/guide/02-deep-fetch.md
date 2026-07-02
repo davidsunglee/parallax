@@ -1,10 +1,10 @@
-<!-- AUTO-GENERATED from the showcase tests by scripts/render-guide.mjs — DO NOT EDIT. -->
+<!-- AUTO-GENERATED from the API Conformance Suite tests by scripts/render-guide.mjs — DO NOT EDIT. -->
 
 # Deep fetch (eager relationships)
 
 `find(..., { includes })` eager-loads relationships in **one bulk query per level** (`1 + L` round trips, never N+1). Each parent is decorated with its children under the relationship's name; the children are managed objects too. Each `find` below is a real, tested case (shown as the operation it builds).
 
-Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/showcase/deep-fetch.showcase.test.ts`).
+Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/deep-fetch.api-conformance.test.ts`).
 
 ## 0310-deep-fetch-to-one
 

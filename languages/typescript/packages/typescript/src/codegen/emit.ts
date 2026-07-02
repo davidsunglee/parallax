@@ -1,5 +1,5 @@
 /**
- * The `#parallax` barrel emitter (spec §1.1, §5).
+ * The `#parallax` barrel emitter (spec §2.1, §7).
  *
  * Renders the generated barrel source from the {@link CodegenModel}: one entity
  * symbol per entity (the value used in DSL expressions AND its `type` managed
@@ -70,7 +70,7 @@ function imports(model: CodegenModel): string {
       "  type FindOptions,\n" +
       '} from "@parallax/typescript";',
   );
-  // The public runtime types the barrel re-exports for applications (spec §1.1).
+  // The public runtime types the barrel re-exports for applications (spec §2.1).
   const runtimeReexports = ["ParallaxList"];
   lines.push(`import { ${runtimeReexports.join(", ")} } from "@parallax/typescript";`);
   lines.push(
@@ -105,7 +105,7 @@ function managedProperty(attr: AttributeModel): string {
 function managedType(entity: EntityModel): string {
   const props = entity.attributes.map(managedProperty).join("\n");
   return [
-    `/** The managed \`${entity.name}\` domain object — its scalar attributes (spec §2.2.1). */`,
+    `/** The managed \`${entity.name}\` domain object — its scalar attributes (spec §3.2.1). */`,
     `export type ${entity.name} = {`,
     props,
     "};",
@@ -129,8 +129,8 @@ function toOneSymbol(rel: ToOneRelationshipModel): string {
 
 /**
  * Render the entity symbol value (`export const Order = { … }`) — the RelatedFinder
- * analogue (spec §1.1). Carries the DSL attribute/relationship expressions, the
- * `all()` / `none()` identity predicates (spec §1.3), and the read metadata.
+ * analogue (spec §2.1). Carries the DSL attribute/relationship expressions, the
+ * `all()` / `none()` identity predicates (spec §2.3), and the read metadata.
  *
  * The DSL attribute/relationship fields are authoritative: an attribute named
  * `table` (or a model whose attribute shadows the metadata key) wins, and the
@@ -161,17 +161,17 @@ function entitySymbol(entity: EntityModel): string {
     ...entity.attributes.map(attributeSymbol),
     ...entity.toMany.map(toManySymbol),
     ...entity.toOne.map(toOneSymbol),
-    `  /** The unfiltered identity predicate (\`find()\` shorthand, spec §1.3). */`,
+    `  /** The unfiltered identity predicate (\`find()\` shorthand, spec §2.3). */`,
     `  all(): Predicate {`,
     `    return new Predicate({ all: {} });`,
     `  },`,
-    `  /** The empty predicate, for dynamic construction (spec §1.3). */`,
+    `  /** The empty predicate, for dynamic construction (spec §2.3). */`,
     `  none(): Predicate {`,
     `    return new Predicate({ none: {} });`,
     `  },`,
   ];
   return [
-    `/** The \`${entity.name}\` entity symbol — DSL expression + metadata surface (spec §1.1). */`,
+    `/** The \`${entity.name}\` entity symbol — DSL expression + metadata surface (spec §2.1). */`,
     `export const ${entity.name} = {`,
     fields.join("\n"),
     "} as const;",
@@ -193,14 +193,14 @@ function handleType(model: CodegenModel): string {
     "  find(predicate?: Predicate, options?: FindOptions): ParallaxList<T>;",
     "}",
     "",
-    "/** The configured, typed Parallax handle (`px`, spec §1.2). */",
+    "/** The configured, typed Parallax handle (`px`, spec §2.2). */",
     "export interface TypedParallax {",
     finders,
-    "  /** Closure-demarcated unit of work (spec §3). */",
+    "  /** Closure-demarcated unit of work (spec §4). */",
     "  transaction<T>(body: (tx: TypedParallaxTransaction) => Promise<T>): Promise<T>;",
     "}",
     "",
-    "/** The typed in-transaction handle (`tx`, spec §3). */",
+    "/** The typed in-transaction handle (`tx`, spec §4). */",
     "export interface TypedParallaxTransaction {",
     model.entities.map((e) => `  readonly ${e.finderName}: EntityFinder<${e.name}>;`).join("\n"),
     "}",
@@ -208,7 +208,7 @@ function handleType(model: CodegenModel): string {
 }
 
 /**
- * Render the `parallax(...)` factory (spec §1.2). It bundles the descriptor,
+ * Render the `parallax(...)` factory (spec §2.2). It bundles the descriptor,
  * delegates to the generic `createParallax`, and casts the entity-agnostic handle
  * to the typed shape — the generated finders are the same runtime `EntityFinder`,
  * typed to each entity's managed object.
@@ -221,14 +221,14 @@ function factory(model: CodegenModel, descriptorJson: string): string {
     .map((e) => `          ${e.finderName}: tx.entity<${e.name}>(${stringLiteral(e.name)}),`)
     .join("\n");
   return [
-    "/** The bundled canonical descriptor the metamodel is read from (spec §5). */",
+    "/** The bundled canonical descriptor the metamodel is read from (spec §7). */",
     `const DESCRIPTOR = ${descriptorJson} as const;`,
     "",
     "/** Options accepted by the generated `parallax(...)` factory. */",
     'export type ParallaxConfigOptions = Omit<ParallaxOptions, "descriptor">;',
     "",
     "/**",
-    " * Create the configured, typed Parallax handle (`px`, spec §1.2). Binds the",
+    " * Create the configured, typed Parallax handle (`px`, spec §2.2). Binds the",
     " * bundled descriptor, database adapter, and clock; exposes typed per-entity",
     " * finders and the transaction demarcation.",
     " */",
@@ -249,10 +249,10 @@ function factory(model: CodegenModel, descriptorJson: string): string {
   ].join("\n");
 }
 
-/** The public runtime re-exports every barrel carries (spec §1.1). */
+/** The public runtime re-exports every barrel carries (spec §2.1). */
 function reexports(): string {
   return [
-    "// Public runtime types + error classes, re-exported for applications (spec §1.1).",
+    "// Public runtime types + error classes, re-exported for applications (spec §2.1).",
     "export {",
     "  ParallaxError,",
     "  ParallaxList,",

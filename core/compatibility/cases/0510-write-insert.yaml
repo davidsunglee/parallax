@@ -14,7 +14,7 @@
 # `expectedTableState` (authored once, with `out_z: infinity`) holds on both. A
 # writeSequence case has no referenceSql, so it runs cleanly against both dialects.
 model: models/balance.yaml
-tags: [m7, m3, temporal mvp, write-sequence, insert, audit-only, dialect, first-implementation-mvp]
+tags: [m7, m3, temporal mvp, write-sequence, insert, audit-only, dialect, slice-mvp-1]
 writeSequence:
   - mutation: insert
     entity: Balance

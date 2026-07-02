@@ -2,7 +2,7 @@
 # existence predicate over two relationship hops. Only order 1 has an item-level
 # PACKED status (row 202 on item 11).
 model: models/orders.yaml
-tags: [m4, exists, relationship, multi-hop, first-implementation-mvp]
+tags: [m4, exists, relationship, multi-hop, slice-mvp-1]
 operation:
   exists:
     rel: Order.items

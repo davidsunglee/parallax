@@ -147,7 +147,7 @@ group.skipIf(!HAS_DOCKER)("run lane (Testcontainers postgres:17)", () => {
       expect(observations.roundTrips).toBe(1);
       expect(observations.rows).toHaveLength(1);
       const [row] = observations.rows;
-      // int64 `id` is carried as its canonical wire string (§2.2.1); `name` is text.
+      // int64 `id` is carried as its canonical wire string (§3.2.1); `name` is text.
       expect(row?.id).toBe("42");
       expect(row?.name).toBe("Grace");
     },

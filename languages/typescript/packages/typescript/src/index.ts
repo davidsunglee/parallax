@@ -13,18 +13,18 @@
  * M2 operations, the runtime lowers them with the M3 compiler, so conformance is
  * unaffected. This barrel re-exports the public runtime types (`ParallaxList`,
  * the error classes, `ParallaxDecimal`, `Temporal`) so the generated barrel — and
- * applications — reach them through one package (spec §1.1).
+ * applications — reach them through one package (spec §2.1).
  */
 
 export { ParallaxDecimal, type ParallaxJsonValue, Temporal } from "@parallax/core";
-// --- public runtime re-exports (spec §1.1, §2.2.1) --------------------------
+// --- public runtime re-exports (spec §2.1, §3.2.1) --------------------------
 export {
   ParallaxError,
   ParallaxList,
   ParallaxNotFoundError,
   ParallaxTooManyResultsError,
 } from "@parallax/lists";
-// --- fluent query DSL (spec §1) ---------------------------------------------
+// --- fluent query DSL (spec §2) ---------------------------------------------
 export {
   AttributeExpression,
   type AxisRefs,
@@ -40,7 +40,7 @@ export {
   type TemporalReadOptions,
   ToManyRelationshipExpression,
 } from "./dsl/index.js";
-// --- runtime factory + handles (spec §1.2, §3) ------------------------------
+// --- runtime factory + handles (spec §2.2, §4) ------------------------------
 export {
   type Assignment,
   createParallax,

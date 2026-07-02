@@ -6,7 +6,7 @@
 # 3VL companion to 0201 (notEq over non-null data) — the classic SQL footgun the
 # spec mandates, proven against real data.
 model: models/orders.yaml
-tags: [m2, notEq, "null", three-valued-logic, first-implementation-mvp]
+tags: [m2, notEq, "null", three-valued-logic, slice-mvp-1]
 operation:
   notEq:
     attr: Order.sku

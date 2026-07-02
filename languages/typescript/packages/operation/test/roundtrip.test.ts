@@ -29,7 +29,7 @@ function loadCase(name: string): CaseDoc {
 }
 
 /**
- * The `first-implementation-mvp` cases that carry an `operation` (the read
+ * The `slice-mvp-1` cases that carry an `operation` (the read
  * shape) from the 0001 / 0002 / 02xx families — exactly the operations the
  * compile path will consume.
  */
@@ -38,10 +38,7 @@ function claimedReadCases(): readonly { name: string; doc: CaseDoc }[] {
     .filter((name) => /^(0001|0002|02\d\d)-.*\.ya?ml$/.test(name))
     .sort()
     .map((name) => ({ name, doc: loadCase(name) }))
-    .filter(
-      ({ doc }) =>
-        doc.operation !== undefined && (doc.tags ?? []).includes("first-implementation-mvp"),
-    );
+    .filter(({ doc }) => doc.operation !== undefined && (doc.tags ?? []).includes("slice-mvp-1"));
 }
 
 const READ_CASES = claimedReadCases();

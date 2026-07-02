@@ -4,11 +4,16 @@ This handoff note is the operational path for the first TypeScript
 implementation. The normative contract remains `core/spec`, `core/schemas`,
 `core/compatibility`, and `languages/typescript/spec/01-implementation-spec.md`.
 
+The reference harness's internals are non-normative and
+MUST NOT be used as design input for a language implementation; the binding
+inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the
+conformance-adapter contract.
+
 ## First Claim
 
-Implement the canonical `first-implementation-mvp` conformance slice first. It is
+Implement the canonical `slice-mvp-1` conformance slice first. It is
 an include-driven slice: a case is in scope only when it carries the
-`first-implementation-mvp` tag and passes the broad claim filters in
+`slice-mvp-1` tag and passes the broad claim filters in
 `core/spec/scope-and-tiers.md`.
 
 The TypeScript adapter's `describe` response must claim exactly the canonical
@@ -28,7 +33,7 @@ slice capabilities, changing only the adapter identity:
     "modules": ["m0","m1","m2","m3","m4","m5","m7","m8","m10","m11","m12"],
     "dialects": ["postgres"],
     "caseShapes": ["read","writeSequence","scenario","conflict"],
-    "caseTags": { "include": ["first-implementation-mvp"] },
+    "caseTags": { "include": ["slice-mvp-1"] },
     "commands": ["describe","compile","run"],
     "provisioning": "self-managed"
   }
@@ -66,7 +71,7 @@ facade, and generated-barrel support.
    binds, runs against `postgres:17`, and reports a valid conformance-adapter
    JSON envelope.
 6. Expand by case family in dependency-graph order, using the tagged
-   `first-implementation-mvp` slice as the active matrix.
+   `slice-mvp-1` slice as the active matrix.
 
 ## Explicitly Out Of V1
 
@@ -97,7 +102,7 @@ pnpm --filter @parallax/typescript run dep-graph
 Also keep the core profile gate green:
 
 ```sh
-just dep-graph
+just core-dep-graph
 ```
 
 For database-backed work, report whether the Postgres conformance slice was run

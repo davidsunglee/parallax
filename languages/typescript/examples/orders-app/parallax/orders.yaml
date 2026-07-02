@@ -1,6 +1,6 @@
 # Sample-app descriptor — a minimal `Order` entity plus its line `items`.
 #
-# A descriptor is an instance of core/schemas/metamodel.schema.json (spec §2.1):
+# A descriptor is an instance of core/schemas/metamodel.schema.json (spec §3.1):
 # pure serialized metamodel, no fixture rows. `parallax generate` reads it and
 # emits the typed `#parallax` barrel (entity symbols + the `parallax(...)`
 # factory). This is the same canonical format the compatibility corpus uses.

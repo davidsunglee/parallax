@@ -1,12 +1,12 @@
 /**
  * The codegen intermediate model — the per-entity shape the emitter renders from
- * (spec §5, §2.2). Derived purely from the fully-defaulted M1 metamodel reader,
+ * (spec §7, §3.2). Derived purely from the fully-defaulted M1 metamodel reader,
  * so codegen emits only artifacts the descriptor declares (no invented enum or
- * value-object field types — spec §1.1).
+ * value-object field types — spec §2.1).
  */
 import type { EntityMetadata, Metamodel, NormalizedAttribute } from "@parallax/metamodel";
 
-/** The generated TS property type for one M0 neutral scalar (spec §2.2.1). */
+/** The generated TS property type for one M0 neutral scalar (spec §3.2.1). */
 export function propertyTypeFor(type: string): string {
   if (/^decimal\(\d+,\d+\)$/.test(type)) {
     return "ParallaxDecimal";
@@ -35,7 +35,7 @@ export function propertyTypeFor(type: string): string {
       return "ParallaxJsonValue";
     default:
       // An unrecognized type is a descriptor the codegen cannot type; fall back
-      // to the structural JSON value rather than inventing a type (spec §1.1).
+      // to the structural JSON value rather than inventing a type (spec §2.1).
       return "ParallaxJsonValue";
   }
 }
@@ -48,9 +48,9 @@ export interface AttributeModel {
   readonly ref: string;
   /** The raw M0 neutral type (`int64`, `decimal(18,2)`), for import decisions. */
   readonly attributeType: string;
-  /** The generated managed-object property type (spec §2.2.1). */
+  /** The generated managed-object property type (spec §3.2.1). */
   readonly propertyType: string;
-  /** Whether the property/input unions `| null` (spec §2.2.1). */
+  /** Whether the property/input unions `| null` (spec §3.2.1). */
   readonly nullable: boolean;
 }
 

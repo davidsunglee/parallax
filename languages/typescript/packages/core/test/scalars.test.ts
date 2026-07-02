@@ -1,7 +1,7 @@
 import { expect, describe as group, it } from "vitest";
 import { bytesFromHex, bytesToHex, ParallaxDecimal, toWire } from "../src/scalars.js";
 
-group("ParallaxDecimal.from input rules (spec §2.2.1: reject number)", () => {
+group("ParallaxDecimal.from input rules (spec §3.2.1: reject number)", () => {
   it("accepts an exact decimal string and preserves scale digits", () => {
     // The canonical wire form is a string; trailing-zero scale is preserved.
     expect(ParallaxDecimal.from("5.00").toString()).toBe("5");

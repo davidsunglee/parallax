@@ -7,9 +7,9 @@ const { join } = require("node:path");
  *
  * This is the trimmed + corrected encoding of the module DAG from
  * `core/spec/dependency-graph.md`, mapped onto the `@parallax/*` packages by
- * `languages/typescript/spec/01-implementation-spec.md` §7.
+ * `languages/typescript/spec/01-implementation-spec.md` §9.
  *
- * Trimmed (design Q4): only the 13 packages the `first-implementation-mvp`
+ * Trimmed (design Q4): only the 13 packages the `slice-mvp-1`
  * slice actually implements are scaffolded, so `lifecycle` (M9),
  * `benchmark` (M13), and `coherence` (M14) — and every numbered edge that
  * touches them — are intentionally absent. They are added when their slice
@@ -18,7 +18,7 @@ const { join } = require("node:path");
  *
  * Corrected (design Q5): the `relationships -> bitemporal` (M4 -> M7) edge that
  * core declares (as-of binds propagate per relationship hop) but the spec's
- * §7.3 transcription previously omitted is present here.
+ * §9.3 transcription previously omitted is present here.
  *
  * Semantics: with an `allowed` array, any dependency that matches no rule is
  * reported as `not-in-allowed`. `allowedSeverity: "error"` makes that fail the

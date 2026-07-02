@@ -1,5 +1,5 @@
 /**
- * The developer-runtime **deep-fetch executor** (spec §1.6), at the composition
+ * The developer-runtime **deep-fetch executor** (spec §2.6), at the composition
  * root over the injected `ParallaxDatabase`.
  *
  * A typed `find(predicate, { includes: [...] })` compiles to a `{ deepFetch: {

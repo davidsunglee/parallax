@@ -7,7 +7,7 @@
 # flushes one keyed UPDATE per distinct key. Fixtures are loaded first; accounts 1
 # and 2 receive different balances, account 3 is untouched.
 model: models/account.yaml
-tags: [m8, m3, batched-write, write-sequence, per-key, transactions cache, first-implementation-mvp]
+tags: [m8, m3, batched-write, write-sequence, per-key, transactions cache, slice-mvp-1]
 loadFixtures: true
 writeSequence:
   - mutation: update

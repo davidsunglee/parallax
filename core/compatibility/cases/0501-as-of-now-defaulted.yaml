@@ -17,7 +17,7 @@
 # because its referenceSql uses the Postgres-specific `'infinity'::timestamptz`
 # cast, which the harness runs verbatim and MariaDB would reject.
 model: models/balance.yaml
-tags: [m7, m3, m0, temporal mvp, as-of, audit-only, defaulted, infinity, first-implementation-mvp]
+tags: [m7, m3, m0, temporal mvp, as-of, audit-only, defaulted, infinity, slice-mvp-1]
 operation:
   all: {}
 goldenSql:

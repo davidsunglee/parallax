@@ -1,7 +1,7 @@
 /**
- * The real-DB developer-showcase harness (Phase 10c).
+ * The real-DB API Conformance Suite harness (Phase 10c).
  *
- * Every showcase case runs the SAME developer code an application would write —
+ * Every suite case runs the SAME developer code an application would write —
  * `px.*` / `px.transaction` over the SHIPPED `@parallax/db-postgres` adapter — and
  * asserts the corpus's expected results AND the managed shapes (10b). It does NOT
  * touch the grader: the official conformance grade stays contract-driven over the
@@ -51,7 +51,7 @@ export function casePath(stem: string): string {
 }
 
 /** Load a corpus case by stem (`0002-eq`). */
-export function showcaseCase(stem: string): LoadedCase {
+export function suiteCase(stem: string): LoadedCase {
   return loadCase(casePath(stem));
 }
 
@@ -78,7 +78,7 @@ export async function provisionCase(
   stem: string,
   options: { readonly loadFixtures?: boolean; readonly now?: string } = {},
 ): Promise<CaseFixture> {
-  const loaded = showcaseCase(stem);
+  const loaded = suiteCase(stem);
   await provider.reset();
   await provider.applyDdl(ddlForDescriptor(loaded.descriptor));
   if (options.loadFixtures ?? shouldLoadFixtures(loaded)) {
@@ -133,7 +133,7 @@ async function loadCaseFixtures(provider: PostgresProvider, loaded: LoadedCase):
 
 /**
  * Assert the DSL builds the corpus's canonical `operation` (the no-drift guard).
- * A read-shaped showcase snippet that stops matching its canonical case fails here.
+ * A read-shaped suite snippet that stops matching its canonical case fails here.
  */
 export function assertSameOperation(operation: unknown, loaded: LoadedCase): void {
   const corpus = loaded.raw.operation;
@@ -315,7 +315,7 @@ export async function assertTableState(
  * Assert every scalar of a returned row is its MANAGED carrier (the 10b contract),
  * by `instanceof` / `typeof` per the entity's M0 types (null passes for a nullable
  * column). This is what the grader deliberately does NOT check (it grades wire
- * values); the showcase proves the developer receives managed objects.
+ * values); the suite proves the developer receives managed objects.
  */
 export function assertManagedShape(
   row: ParallaxRow,

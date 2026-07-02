@@ -101,8 +101,9 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
    * Eager-fetch variant that returns the assembled graph AND the round-trip count
    * (spec §1.6): the decorated managed root objects (relationships attached under
    * their DSL names) plus the `1 + L` statement count that proves N+1 elimination.
-   * A developer normally consumes `find(..., { includes })` as a list; the showcase
-   * (and any caller needing the round-trip proof) uses this to assert both.
+   * A developer normally consumes `find(..., { includes })` as a list; the API
+   * Conformance Suite (and any caller needing the round-trip proof) uses this to
+   * assert both.
    */
   async findGraph(
     predicate: Predicate | undefined,
@@ -120,7 +121,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
   /**
    * Run a pre-built canonical operation as a lazy list (the same wire form
    * `find` produces). Convenience for callers that already hold the M2 operation —
-   * the developer showcase builds an operation once (for its `assertSameOperation`
+   * the API Conformance Suite builds an operation once (for its `assertSameOperation`
    * drift check) and runs it here, so the executed read and the asserted operation
    * are provably the same object.
    */
@@ -357,7 +358,7 @@ export class ParallaxTransaction {
   }
 }
 
-/** The named-assignment helper the write showcase uses (`{ attr, value }`). */
+/** The named-assignment helper the API Conformance Suite write cases use (`{ attr, value }`). */
 export type { Assignment };
 
 /**

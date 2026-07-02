@@ -4,7 +4,7 @@
 # the IN list. Each coverage resolves to its fully-current milestone:
 # coverage 10 -> 700 (C-R3), coverage 20 -> 300.
 model: models/policy.yaml
-tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, first-implementation-mvp]
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, slice-mvp-1]
 operation:
   deepFetch:
     operand:

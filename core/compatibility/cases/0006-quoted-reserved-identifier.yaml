@@ -10,7 +10,7 @@
 # a dialect-matrix witness; the trivial single-table predicate needs no
 # referenceSql (expectedRows are eyeball-verifiable).
 model: models/grade.yaml
-tags: [m1, m3, m11, identifier, quoting, reserved-word, dialect, first-implementation-mvp]
+tags: [m1, m3, m11, identifier, quoting, reserved-word, dialect, slice-mvp-1]
 operation:
   greaterThan:
     attr: Grade.ordinal

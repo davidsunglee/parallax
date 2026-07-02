@@ -12,6 +12,14 @@ The canonical reference implementation is `reference-harness/` (Python + uv +
 sqlglot). Its *contract* is language-neutral; another ecosystem can re-implement
 the runner.
 
+**The harness is not an input to a language implementation.** The reference
+harness is an executable oracle for the compatibility corpus, not a reference
+architecture. Its internals — the SQL normalization strategy, the provider
+seam, the assertion layering, and the module layout — are non-normative and
+MUST NOT be used as design input for a language implementation. The binding
+inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the
+conformance-adapter contract.
+
 ## The compatibility case
 
 A case is a YAML document under `core/compatibility/cases/`, validated against

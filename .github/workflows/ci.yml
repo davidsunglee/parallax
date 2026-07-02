@@ -27,7 +27,7 @@ jobs:
 
   # Static checks: lint + schema/meta-schema validation + sqlglot-parse +
   # dependency-graph DAG check + the coverage gate (every in-scope module has a
-  # fixture) + the first-implementation-mvp profile gate (the tagged slice is
+  # fixture) + the slice-mvp-1 profile gate (the tagged slice is
   # consistent with its canonical describe claim). No Docker required.
   lint:
     runs-on: ubuntu-latest
@@ -46,8 +46,8 @@ jobs:
         run: uv sync --frozen
       - name: just lint
         run: just lint
-      - name: just dep-graph
-        run: just dep-graph
+      - name: just core-dep-graph
+        run: just core-dep-graph
 
   # The Docker-free TypeScript lane: typecheck (tsc -b), Biome, the
   # dependency-cruiser DAG gate, the full-slice compile sweep + honesty gate +
@@ -91,7 +91,7 @@ jobs:
           if-no-files-found: warn
 
   # The Docker-backed TypeScript run lane: provision postgres:17 via
-  # Testcontainers and run the full first-implementation-mvp slice end-to-end
+  # Testcontainers and run the full slice-mvp-1 slice end-to-end
   # (rows / graph / tableState / affectedRows + roundTrips), asserting the
   # case-matrix report is green. Docker is available on GitHub-hosted ubuntu
   # runners, so Testcontainers works out of the box.
@@ -176,4 +176,4 @@ jobs:
       - name: Run suite (${{ matrix.database }})
         env:
           PARALLAX_DATABASES: ${{ matrix.database }}
-        run: just test
+        run: just oracle-test
