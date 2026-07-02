@@ -37,10 +37,11 @@ Before writing runtime code, read these files in this order:
 5. [core/spec/language-spec-template.md](core/spec/language-spec-template.md)
 6. [core/spec/m12-compatibility-harness.md](core/spec/m12-compatibility-harness.md)
 7. [core/spec/conformance-adapter-contract.md](core/spec/conformance-adapter-contract.md)
-8. [core/schemas/](core/schemas/)
-9. [core/compatibility/models/](core/compatibility/models/)
-10. [core/compatibility/cases/](core/compatibility/cases/)
-11. [core/compatibility/benchmarks/](core/compatibility/benchmarks/)
+8. [core/spec/api-conformance-contract.md](core/spec/api-conformance-contract.md)
+9. [core/schemas/](core/schemas/)
+10. [core/compatibility/models/](core/compatibility/models/)
+11. [core/compatibility/cases/](core/compatibility/cases/)
+12. [core/compatibility/benchmarks/](core/compatibility/benchmarks/)
 
 Then copy the language spec template into the language module, for example:
 
@@ -114,6 +115,12 @@ starts.
 | 11 | M11 second dialect support | `1001` and `1002`, then every case with that dialect's `goldenSql` |
 | 12 | Cross-process coherence | `1101` and `1102` |
 | 13 | M13 benchmark methodology and reports | Every file in `core/compatibility/benchmarks/` |
+| Suite | API Conformance Suite + Usage Guide over the claimed slice (grows with the developer surface) | Coverage partition is green (exercised ∪ skipped == slice); the Usage Guide renders clean |
+
+The API Conformance Suite is not a trailing phase — it grows alongside the
+developer surface, exercising each family of the claimed slice through the
+idiomatic public API as that API lands. See
+[core/spec/api-conformance-contract.md](core/spec/api-conformance-contract.md).
 
 The first green slice should be intentionally small. A useful first slice is:
 
@@ -154,21 +161,24 @@ walk upward before claiming a milestone.
 1. Language unit tests for parser/compiler/cache internals.
 2. Language dependency-boundary enforcement.
 3. Language conformance tests for the active case slice.
-4. Root static checks:
+4. API Conformance Suite: the coverage partition over the claimed slice
+   (Docker-free), the Docker-backed developer-surface run through the shipped
+   adapter, and the Usage Guide drift check.
+5. Root static checks:
 
    ```bash
    just lint
    just dep-graph
    ```
 
-5. Root compatibility corpus sanity check:
+6. Root compatibility corpus sanity check:
 
    ```bash
    PARALLAX_DATABASES=postgres just test
    ```
 
-6. Claimed language implementation matrix for every supported dialect.
-7. Benchmark report when claiming M13.
+7. Claimed language implementation matrix for every supported dialect.
+8. Benchmark report when claiming M13.
 
 The root Python harness validates the core corpus. It does not prove a language
 implementation conforms unless that implementation is wired through its own
@@ -225,6 +235,10 @@ A language spec is ready for implementation when it answers these questions:
 - What benchmark targets are claimed?
 - How does `parallax-conformance benchmark` emit the M13 report shape in the
   adapter envelope, and is any `report.json` file only an artifact copy?
+- Does the API Conformance Suite exercise or reason-skip every case in the claimed
+  slice, with the coverage partition asserted green (suite partition is green)?
+- Is the Usage Guide generated from the suite's source and drift-checked in CI so
+  it renders clean?
 
 When in doubt, keep the public surface idiomatic and keep the conformance seam
 boring.

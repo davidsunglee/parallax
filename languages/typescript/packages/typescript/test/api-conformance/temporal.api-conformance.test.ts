@@ -1,5 +1,5 @@
 /**
- * Developer showcase — **temporal reads** family (Phase 10c): processing-axis reads
+ * API Conformance Suite — **temporal reads** family (Phase 10c): processing-axis reads
  * (`find(..., { asOf })`, ranged, full history) and bitemporal reads, plus the two
  * exists-temporal-hop reads, written as a developer would and run against
  * `postgres:17` through the SHIPPED `@parallax/db-postgres` adapter.
@@ -46,7 +46,7 @@ const POLICY_AXES: AxisRefs = {
   business: "Policy.businessDate",
 };
 
-/** One temporal showcase row: the DSL `find` operation and its root entity. */
+/** One temporal suite row: the DSL `find` operation and its root entity. */
 interface Row {
   readonly stem: string;
   readonly entity: string;
@@ -208,11 +208,11 @@ function dockerAvailable(): boolean {
 
 const HAS_DOCKER = dockerAvailable();
 
-it("the temporal showcase covers exactly the TEMPORAL family", () => {
+it("the temporal suite covers exactly the TEMPORAL family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...TEMPORAL].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("temporal reads showcase (Testcontainers postgres:17)", () => {
+group.skipIf(!HAS_DOCKER)("temporal reads suite (Testcontainers postgres:17)", () => {
   const BOOT_TIMEOUT = 600_000;
   let provider: PostgresProvider;
 

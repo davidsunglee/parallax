@@ -38,10 +38,7 @@ function claimedReadCases(): readonly { name: string; doc: CaseDoc }[] {
     .filter((name) => /^(0001|0002|02\d\d)-.*\.ya?ml$/.test(name))
     .sort()
     .map((name) => ({ name, doc: loadCase(name) }))
-    .filter(
-      ({ doc }) =>
-        doc.operation !== undefined && (doc.tags ?? []).includes("slice-mvp-1"),
-    );
+    .filter(({ doc }) => doc.operation !== undefined && (doc.tags ?? []).includes("slice-mvp-1"));
 }
 
 const READ_CASES = claimedReadCases();

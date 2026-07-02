@@ -4,9 +4,9 @@ import type { LoadedCase } from "../src/discover.js";
 import {
   buildConformanceSliceCoverageReport,
   discoverCasePaths,
-  SLICE_MVP_1_CAPABILITIES,
   loadCase,
   renderConformanceSliceCoverageMarkdown,
+  SLICE_MVP_1_CAPABILITIES,
 } from "../src/index.js";
 
 function loaded(id: string, shape: CaseShape, tags: readonly string[]): LoadedCase {
@@ -69,10 +69,7 @@ describe("conformance slice coverage report", () => {
 
   it("covers the real slice-mvp-1 slice", () => {
     const cases = discoverCasePaths().map(loadCase);
-    const report = buildConformanceSliceCoverageReport(
-      cases,
-      SLICE_MVP_1_CAPABILITIES,
-    );
+    const report = buildConformanceSliceCoverageReport(cases, SLICE_MVP_1_CAPABILITIES);
 
     expect(report.sliceTag).toBe("slice-mvp-1");
     expect(report.claimedCases).toBe(99);

@@ -1,9 +1,9 @@
 /**
- * The developer-showcase **coverage map**: every `slice-mvp-1` case
- * grouped by the family file that showcases it (Phase 10c).
+ * The API Conformance Suite **coverage map**: every `slice-mvp-1` case
+ * grouped by the family file that exercises it (Phase 10c).
  *
  * `coverage.test.ts` asserts the union of these ids plus the skip manifest equals
- * the whole 99-case slice — so a case that is neither showcased nor explicitly
+ * the whole 99-case slice — so a case that is neither exercised nor explicitly
  * skipped fails the build (no silent gaps). Each family file drives its `it.each`
  * off the matching list here, so the list and the tested cases stay in lockstep.
  *
@@ -20,7 +20,7 @@
  *    locking happy + retry (07xx).
  */
 
-/** Non-temporal single-entity + flat navigate/exists reads (`reads.showcase.test.ts`). */
+/** Non-temporal single-entity + flat navigate/exists reads (`reads.api-conformance.test.ts`). */
 export const READS: readonly string[] = [
   // 00xx scalars / identity / quoting
   "0001-find-all",
@@ -72,7 +72,7 @@ export const READS: readonly string[] = [
   "0321-navigate-one-to-one",
 ];
 
-/** Deep-fetch graph assembly (`deep-fetch.showcase.test.ts`), incl. temporal deep fetch. */
+/** Deep-fetch graph assembly (`deep-fetch.api-conformance.test.ts`), incl. temporal deep fetch. */
 export const DEEP_FETCH: readonly string[] = [
   "0310-deep-fetch-to-one",
   "0311-deep-fetch-to-many",
@@ -140,8 +140,8 @@ export const LOCKING: readonly string[] = [
   "0708-optimistic-lock-retry-after-conflict",
 ];
 
-/** Every showcased case stem across all families. */
-export const SHOWCASED: readonly string[] = [
+/** Every exercised case stem across all families. */
+export const EXERCISED: readonly string[] = [
   ...READS,
   ...DEEP_FETCH,
   ...TEMPORAL,

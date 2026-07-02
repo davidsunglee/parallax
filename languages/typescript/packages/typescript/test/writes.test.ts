@@ -2,7 +2,7 @@
  * Runtime `TransactionWriter` behavior (developer-surface remediation).
  *
  * Two write-surface guarantees the conformance slice does not exercise, because
- * the showcase authors parent inserts before children and only ever assigns a
+ * the API Conformance Suite authors parent inserts before children and only ever assigns a
  * single plain column — masking these developer-runtime bugs:
  *
  *  1. FK-safe insert ordering (spec §3, `0612`): buffered inserts flush with a

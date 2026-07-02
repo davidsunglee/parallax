@@ -1,10 +1,10 @@
-<!-- AUTO-GENERATED from the showcase tests by scripts/render-guide.mjs — DO NOT EDIT. -->
+<!-- AUTO-GENERATED from the API Conformance Suite tests by scripts/render-guide.mjs — DO NOT EDIT. -->
 
 # Temporal reads
 
 Temporal reads pin one or both axes with `{ asOf }`, a `range`, or full `history`. An omitted axis defaults to *now* (the current row); the business axis is applied outside the processing axis. You never write the interval predicates — the engine injects them. Each `find` below is a real, tested case.
 
-Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/showcase/temporal.showcase.test.ts`).
+Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/temporal.api-conformance.test.ts`).
 
 ## 0330-exists-temporal-hop
 

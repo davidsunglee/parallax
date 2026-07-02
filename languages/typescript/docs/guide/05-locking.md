@@ -1,10 +1,10 @@
-<!-- AUTO-GENERATED from the showcase tests by scripts/render-guide.mjs — DO NOT EDIT. -->
+<!-- AUTO-GENERATED from the API Conformance Suite tests by scripts/render-guide.mjs — DO NOT EDIT. -->
 
 # Locking
 
 In-transaction reads take a shared row lock **automatically** — you write no locking SQL. Version-column optimistic locking is caller-driven: read the object (capturing its `version`), then `update` gates on that version; a concurrent change throws `ParallaxOptimisticLockError`, which you catch and retry on the fresh version.
 
-Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/showcase/locking.showcase.test.ts`).
+Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/locking.api-conformance.test.ts`).
 
 ## 0603: a transaction-scoped read takes the automatic shared lock and returns the row
 

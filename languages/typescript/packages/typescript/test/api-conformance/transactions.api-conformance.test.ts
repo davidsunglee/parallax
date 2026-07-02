@@ -1,5 +1,5 @@
 /**
- * Developer showcase — **transactions + audit writes** family (Phase 10c): the
+ * API Conformance Suite — **transactions + audit writes** family (Phase 10c): the
  * write surface (`px.transaction(async tx => tx.<entity>.create / update /
  * terminate)`, spec §3.1) written as a developer would, run against `postgres:17`
  * through the SHIPPED `@parallax/db-postgres` adapter, asserting the corpus's
@@ -45,7 +45,7 @@ function dockerAvailable(): boolean {
 
 const HAS_DOCKER = dockerAvailable();
 
-it("the transactions showcase covers exactly the TRANSACTIONS family", () => {
+it("the transactions suite covers exactly the TRANSACTIONS family", () => {
   const covered = [
     "0004-timestamp-utc-normalization",
     "0005-timestamp-microsecond-precision",
@@ -60,7 +60,7 @@ it("the transactions showcase covers exactly the TRANSACTIONS family", () => {
   expect(covered.sort()).toEqual([...TRANSACTIONS].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("transactions showcase (Testcontainers postgres:17)", () => {
+group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () => {
   const BOOT_TIMEOUT = 600_000;
   let provider: PostgresProvider;
 

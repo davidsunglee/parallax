@@ -105,8 +105,8 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
 
   /**
    * The shipped `@parallax/db-postgres` adapter bound to this container — the
-   * production execution path. The Phase-10c developer showcase builds its `px`
-   * handle on THIS adapter (not a bespoke provider) so the showcased developer
+   * production execution path. The Phase-10c API Conformance Suite builds its `px`
+   * handle on THIS adapter (not a bespoke provider) so the exercised developer
    * code runs the exact adapter a real application imports, on the provisioned DB.
    */
   get database(): PostgresDatabase {

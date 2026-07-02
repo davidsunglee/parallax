@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Render the developer guide (`docs/guide/*.md`) FROM the showcase test snippets
- * (Phase 10c), so the shown examples are the TESTED code — prose and tests stay in
- * lockstep. The script extracts each showcase family's per-case `it(...)` blocks
+ * Render the developer guide (`docs/guide/*.md`) FROM the API Conformance Suite
+ * test snippets (Phase 10c), so the shown examples are the TESTED code — prose and
+ * tests stay in lockstep. The script extracts each suite family's per-case `it(...)` blocks
  * (title + the `px.*` / `tx.*` snippet inside) and emits one guide page per family,
  * with a short curated intro.
  *
@@ -22,13 +22,13 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TS_ROOT = resolve(HERE, "..");
-const SHOWCASE_DIR = resolve(TS_ROOT, "packages/typescript/test/showcase");
+const SUITE_DIR = resolve(TS_ROOT, "packages/typescript/test/api-conformance");
 const GUIDE_DIR = resolve(TS_ROOT, "docs/guide");
 
 /** The families, in reading order, with a title + intro for each guide page. */
 const FAMILIES = [
   {
-    file: "reads.showcase.test.ts",
+    file: "reads.api-conformance.test.ts",
     slug: "01-reads",
     title: "Reading data",
     tableDriven: true,
@@ -42,7 +42,7 @@ const FAMILIES = [
       "tested case.",
   },
   {
-    file: "deep-fetch.showcase.test.ts",
+    file: "deep-fetch.api-conformance.test.ts",
     slug: "02-deep-fetch",
     title: "Deep fetch (eager relationships)",
     tableDriven: true,
@@ -54,7 +54,7 @@ const FAMILIES = [
       "tested case (shown as the operation it builds).",
   },
   {
-    file: "temporal.showcase.test.ts",
+    file: "temporal.api-conformance.test.ts",
     slug: "03-temporal-reads",
     title: "Temporal reads",
     tableDriven: true,
@@ -66,7 +66,7 @@ const FAMILIES = [
       "Each `find` below is a real, tested case.",
   },
   {
-    file: "transactions.showcase.test.ts",
+    file: "transactions.api-conformance.test.ts",
     slug: "04-transactions",
     title: "Transactions and writes",
     tableDriven: false,
@@ -77,7 +77,7 @@ const FAMILIES = [
       "`terminate` closes only — the prior values survive as the audit trail.",
   },
   {
-    file: "locking.showcase.test.ts",
+    file: "locking.api-conformance.test.ts",
     slug: "05-locking",
     title: "Locking",
     tableDriven: false,
@@ -211,7 +211,7 @@ function parseFamily(source) {
 /** Render one family guide page. */
 function renderPage(family, entries) {
   const parts = [
-    "<!-- AUTO-GENERATED from the showcase tests by scripts/render-guide.mjs — DO NOT EDIT. -->",
+    "<!-- AUTO-GENERATED from the API Conformance Suite tests by scripts/render-guide.mjs — DO NOT EDIT. -->",
     "",
     `# ${family.title}`,
     "",
@@ -219,7 +219,7 @@ function renderPage(family, entries) {
     "",
     "Every snippet below is extracted from a test that runs it against a real Postgres " +
       "through `@parallax/db-postgres` and asserts the shown result " +
-      `(\`packages/typescript/test/showcase/${family.file}\`).`,
+      `(\`packages/typescript/test/api-conformance/${family.file}\`).`,
     "",
   ];
   for (const entry of entries) {
@@ -232,11 +232,11 @@ function renderPage(family, entries) {
 function renderIndex() {
   const rows = FAMILIES.map((f) => `- [${f.title}](./${f.slug}.md)`).join("\n");
   return [
-    "<!-- AUTO-GENERATED from the showcase tests by scripts/render-guide.mjs — DO NOT EDIT. -->",
+    "<!-- AUTO-GENERATED from the API Conformance Suite tests by scripts/render-guide.mjs — DO NOT EDIT. -->",
     "",
     "# Parallax (TypeScript) — developer guide",
     "",
-    "A tour of the typed developer surface, rendered from the executable showcase suite: " +
+    "A tour of the typed developer surface, rendered from the executable API Conformance Suite: " +
       "every example is a test that runs against a real Postgres and asserts the shown result, " +
       "so the guide can never drift from the code.",
     "",
@@ -251,7 +251,7 @@ function main() {
   const outputs = new Map();
   outputs.set(resolve(GUIDE_DIR, "index.md"), renderIndex());
   for (const family of FAMILIES) {
-    const source = readFileSync(resolve(SHOWCASE_DIR, family.file), "utf8");
+    const source = readFileSync(resolve(SUITE_DIR, family.file), "utf8");
     const entries = family.tableDriven
       ? parseTableFamily(source, family)
       : parseFamily(source);

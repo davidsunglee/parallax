@@ -36,9 +36,7 @@ function readAlgebraCases(): readonly { id: string; path: string }[] {
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .filter(({ id }) => /^(00|02)\d\d$/.test(id) && !OUT_OF_PHASE.has(id))
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
-    .filter(
-      ({ loaded }) => loaded.shape === "read" && loaded.tags.includes("slice-mvp-1"),
-    )
+    .filter(({ loaded }) => loaded.shape === "read" && loaded.tags.includes("slice-mvp-1"))
     .map(({ id, path }) => ({ id, path }));
 }
 

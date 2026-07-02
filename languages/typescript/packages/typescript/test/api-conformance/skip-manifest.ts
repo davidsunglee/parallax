@@ -1,10 +1,10 @@
 /**
- * The explicit, reasoned developer-showcase **skip manifest** (Phase 10c).
+ * The explicit, reasoned API Conformance Suite **skip manifest** (Phase 10c).
  *
  * A case is skipped ONLY when the thing it proves is harness/serde machinery a
  * developer never authors — not a developer-facing surface. The coverage test
  * (`coverage.test.ts`) asserts every `slice-mvp-1` case is either
- * showcased or listed HERE with a reason, so a silent gap fails the build.
+ * exercised or listed HERE with a reason, so a silent gap fails the build.
  *
  * The one skipped case in the slice is `0222`, whose distinguishing purpose is the
  * `equivalentEncodings` serde-canonicalization check (a "prefix" and a "fluent"
@@ -12,13 +12,13 @@
  * concern, not a query a developer writes differently. Its query semantics ARE
  * exercised by the developer surface elsewhere: its DSL fidelity is pinned by the
  * Phase-9 `dsl.test.ts` (`0222-group-precedence-grouped`), and its ungrouped
- * sibling `0223` is showcased in `reads.showcase.test.ts`.
+ * sibling `0223` is exercised in `reads.api-conformance.test.ts`.
  *
  * The other two constructs the phase note calls out are NOT case-level skips in the
  * 99-case slice:
  *  - the conflict `precondition` / `preconditionBinds` (out-of-band SQL simulating a
- *    concurrent writer) is a SUB-STEP of the showcased locking cases (`0703` /
- *    `0708`), applied harness-side — those cases ARE showcased;
+ *    concurrent writer) is a SUB-STEP of the exercised locking cases (`0703` /
+ *    `0708`), applied harness-side — those cases ARE exercised;
  *  - the out-of-V1 `createUntil` / `updateUntil` / `terminateUntil` writes
  *    (`0810`–`0812`) are not tagged `slice-mvp-1`, so they are not in
  *    the slice at all.
@@ -28,7 +28,7 @@
 export interface SkippedCase {
   /** The four-digit case id (`0222`). */
   readonly id: string;
-  /** Why the case is not a developer-facing showcase (a serde/harness construct). */
+  /** Why the case is not a developer-facing suite case (a serde/harness construct). */
   readonly reason: string;
 }
 
@@ -39,7 +39,7 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
     reason:
       "equivalentEncodings serde-canonicalization: proves two SURFACE spellings (prefix / " +
       "fluent) collapse to one canonical operation — a serde concern, not a developer query. " +
-      "Its DSL fidelity is covered by dsl.test.ts (0222) and its ungrouped sibling 0223 is showcased.",
+      "Its DSL fidelity is covered by dsl.test.ts (0222) and its ungrouped sibling 0223 is exercised.",
   },
   {
     id: "0226",

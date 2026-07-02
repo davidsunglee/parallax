@@ -237,6 +237,12 @@ assembly, temporal write expectations, cache and identity scenarios,
 optimistic-lock conflicts, dialect differences, and cross-process coherence.
 
 Future language implementations should treat `core/` as the shared contract and
-use `reference-harness/` as the executable oracle. They prove implementation
-conformance through the adapter contract in
-`core/spec/conformance-adapter-contract.md` while building their own public APIs.
+use `reference-harness/` as the executable oracle. They declare a **Conformance
+Slice** of the corpus and prove it two ways: the wire-level
+**conformance-adapter grade** in
+`core/spec/conformance-adapter-contract.md`, and the developer-surface
+**API Conformance Suite** plus its rendered **Usage Guide** in
+`core/spec/api-conformance-contract.md` — the code an application writes, run
+through the shipped adapter against a real database, reproducing the corpus's
+results. Both prove the same slice while each implementation builds its own
+idiomatic public API.

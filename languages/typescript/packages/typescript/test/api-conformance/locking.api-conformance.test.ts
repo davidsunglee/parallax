@@ -1,11 +1,11 @@
 /**
- * Developer showcase — **locking** family (Phase 10c): the automatic in-transaction
+ * API Conformance Suite — **locking** family (Phase 10c): the automatic in-transaction
  * read lock (`0603`) and version-column optimistic locking (`0703` / `0704` /
  * `0707` / `0708`), written as a developer would and run against `postgres:17`
  * through the SHIPPED `@parallax/db-postgres` adapter.
  *
  * **Read lock (`0603`).** The default in-transaction read takes a shared row lock
- * AUTOMATICALLY (M8) — there is NO explicit developer lock call in V1. The showcase
+ * AUTOMATICALLY (M8) — there is NO explicit developer lock call in V1. The suite
  * asserts the RETURNED ROW (what `0603` proves), demonstrating the "you write no
  * locking SQL" value prop; the `for share of t0` SQL-text assertion stays in the
  * conformance/compile lane (SQL text is not a developer-facing surface).
@@ -43,7 +43,7 @@ function dockerAvailable(): boolean {
 
 const HAS_DOCKER = dockerAvailable();
 
-it("the locking showcase covers exactly the LOCKING family", () => {
+it("the locking suite covers exactly the LOCKING family", () => {
   const covered = [
     "0603-read-lock",
     "0703-optimistic-lock-conflict",
@@ -54,7 +54,7 @@ it("the locking showcase covers exactly the LOCKING family", () => {
   expect(covered.sort()).toEqual([...LOCKING].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("locking showcase (Testcontainers postgres:17)", () => {
+group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
   const BOOT_TIMEOUT = 600_000;
   let provider: PostgresProvider;
 

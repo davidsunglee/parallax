@@ -176,7 +176,7 @@ export class TransactionWriter {
 
   /**
    * Attempt a versioned UPDATE and return the classified outcome + affected count
-   * WITHOUT throwing — the showcase's explicit retry path reads the conflict signal
+   * WITHOUT throwing — the API Conformance Suite's explicit retry path reads the conflict signal
    * and re-applies on the fresh version (`0708`). `expectedVersion` pins the gate;
    * when omitted, the current version is read first (the value the developer would
    * have read off the managed object).
@@ -523,7 +523,7 @@ function insertBinds(
 
 /**
  * Extract the primary-key literal a pk-equality predicate carries (the bare `eq`
- * the showcase write predicates use); `undefined` for anything else.
+ * the API Conformance Suite write predicates use); `undefined` for anything else.
  */
 function pkLiteral(operation: Operation, pkName: string | undefined): unknown {
   const eq = (operation as { eq?: { attr?: string; value?: unknown } }).eq;
@@ -536,5 +536,5 @@ function pkLiteral(operation: Operation, pkName: string | undefined): unknown {
   return eq.value;
 }
 
-/** Re-exported managed carriers so a write showcase can author managed inputs. */
+/** Re-exported managed carriers so the API Conformance Suite can author managed write inputs. */
 export { ParallaxDecimal, Temporal };

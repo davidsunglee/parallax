@@ -53,9 +53,7 @@ function graphRunCases(): readonly { id: string; loaded: LoadedCase }[] {
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .filter(({ id }) => /^03\d\d$/.test(id) && !TEMPORAL_M7_EXCLUSIONS.includes(id))
     .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
-    .filter(
-      ({ loaded }) => loaded.shape === "read" && loaded.tags.includes("slice-mvp-1"),
-    );
+    .filter(({ loaded }) => loaded.shape === "read" && loaded.tags.includes("slice-mvp-1"));
 }
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */

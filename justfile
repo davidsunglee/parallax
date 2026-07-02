@@ -103,17 +103,17 @@ ts-conformance-run:
     pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/typescript
 
-# The Docker-backed developer-showcase lane (Phase 10c): run the idiomatic `px.*` /
-# `px.transaction` showcase over the shipped `@parallax/db-postgres` adapter against
+# The Docker-backed API Conformance Suite lane (Phase 10c): run the idiomatic `px.*` /
+# `px.transaction` suite over the shipped `@parallax/db-postgres` adapter against
 # `postgres:17`, mirroring the whole `slice-mvp-1` slice (reads / deep
 # fetch / temporal / transactions / locking) — asserting managed shapes AND the
 # corpus results, plus the no-drift + no-silent-gap coverage guards. Also renders
-# the developer guide from the (tested) snippets and checks it is up to date. A
-# merge-gating lane alongside the conformance run lane. Docker must be running.
-ts-showcase:
+# the developer guide (Usage Guide) from the (tested) snippets and checks it is up
+# to date. A merge-gating lane alongside the conformance run lane. Docker must be running.
+ts-api-conformance:
     pnpm run ts:typecheck
     node languages/typescript/scripts/render-guide.mjs --check
-    pnpm exec vitest run --root languages/typescript packages/typescript/test/showcase
+    pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
 
 # ---------------------------------------------------------------------------
 # test: the full compatibility suite. Boots real databases via Testcontainers,
@@ -126,8 +126,8 @@ test:
 # Folds in the Python typecheck lane and the TypeScript static checks (typecheck
 # / biome / dep-graph / package-export health), both conformance lanes
 # (Docker-free compile sweep + Docker-backed run lane), and the Docker-backed
-# developer-showcase lane (Phase 10c).
-verify: lint py-typecheck dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run ts-showcase test
+# API Conformance Suite lane (Phase 10c).
+verify: lint py-typecheck dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run ts-api-conformance test
 
 # matrix: emit the compatibility-matrix report (implementations x databases).
 # Wires Postgres + MariaDB (Phase 10 added MariaDB as the second dialect).
