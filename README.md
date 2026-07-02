@@ -184,13 +184,13 @@ just lint
 Validate schemas, SQL shape, and the module dependency graph:
 
 ```bash
-just dep-graph
+just core-dep-graph
 ```
 
 Run the compatibility suite against available database providers:
 
 ```bash
-just test
+just oracle-test
 ```
 
 Run all verification gates:
@@ -208,7 +208,7 @@ just matrix
 Provider selection is controlled by `PARALLAX_DATABASES`. For example:
 
 ```bash
-PARALLAX_DATABASES=postgres just test
+PARALLAX_DATABASES=postgres just oracle-test
 PARALLAX_DATABASES=postgres,mariadb just matrix
 ```
 

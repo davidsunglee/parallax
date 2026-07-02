@@ -102,7 +102,7 @@ pnpm --filter @parallax/typescript run dep-graph
 Also keep the core profile gate green:
 
 ```sh
-just dep-graph
+just core-dep-graph
 ```
 
 For database-backed work, report whether the Postgres conformance slice was run

@@ -46,8 +46,8 @@ jobs:
         run: uv sync --frozen
       - name: just lint
         run: just lint
-      - name: just dep-graph
-        run: just dep-graph
+      - name: just core-dep-graph
+        run: just core-dep-graph
 
   # The Docker-free TypeScript lane: typecheck (tsc -b), Biome, the
   # dependency-cruiser DAG gate, the full-slice compile sweep + honesty gate +
@@ -176,4 +176,4 @@ jobs:
       - name: Run suite (${{ matrix.database }})
         env:
           PARALLAX_DATABASES: ${{ matrix.database }}
-        run: just test
+        run: just oracle-test

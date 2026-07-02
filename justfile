@@ -1,8 +1,16 @@
 # parallax root orchestration.
 #
 # `just` is the language-agnostic orchestrator that ties the polyglot modules
-# together. Each module (core/, reference-harness/, future python/, java/, ...)
-# uses its own native toolchain; this file only fans out into them.
+# together. Each module (core/, reference-harness/, languages/<lang>/) uses its
+# own native toolchain; this file only fans out into them.
+#
+# Recipes are grouped by scope. Repo-wide gates and reports stay bare; every
+# other recipe carries a scope prefix so its category is obvious and future
+# languages slot in cleanly:
+#   (bare)     repo-wide gates and reports: verify, lint, lint-md, matrix
+#   core-      validation of the core spec + compatibility corpus
+#   oracle-    the Python reference harness (its own checks + running the oracle)
+#   ts-        the TypeScript implementation (future: java-, rust-, py-, ...)
 
 # Path to the reference harness module.
 harness := "reference-harness"
@@ -11,52 +19,69 @@ harness := "reference-harness"
 default:
     @just --list
 
-# ---------------------------------------------------------------------------
-# lint: every static check that does not require a database.
-#   - ruff format check + lint of the Python harness
-#   - markdownlint (spec prose)
-#   - JSON Schema meta-schema validation (the schemas are themselves valid)
-#   - schema validation of every fixture
-#   - sqlglot-parse of all golden/reference SQL
-# ---------------------------------------------------------------------------
-lint: lint-py lint-md lint-schemas
+# ===========================================================================
+# Repo-wide: the top-level gates and reports that span every module.
+# ===========================================================================
 
-format-py:
-    cd {{harness}} && uv run ruff format .
+# Full merge gate: repo lint + core gates + all TS lanes + the harness suite (Docker).
+verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run ts-api-conformance oracle-test
 
-lint-py:
-    cd {{harness}} && uv run ruff format --check .
-    cd {{harness}} && uv run ruff check .
+# Every static check that needs no database: harness ruff, markdown, core schema/SQL.
+lint: oracle-lint lint-md core-schemas
 
-py-typecheck:
-    cd {{harness}} && uv run basedpyright
-
+# Markdown lint across core/spec, languages/**/spec, and root.
 lint-md:
     pnpm exec markdownlint-cli2
 
-# Validate the schemas against the JSON Schema meta-schema, validate every
-# fixture against its schema, and parse all golden/reference SQL with sqlglot.
-lint-schemas:
-    cd {{harness}} && uv run python -m reference_harness.schema_validate ../core/compatibility
-    cd {{harness}} && uv run python -m reference_harness.sql_lint ../core/compatibility
+# Compatibility-matrix report (implementations x databases; Postgres + MariaDB).
+matrix:
+    cd {{harness}} && uv run python -m reference_harness.matrix ../core/compatibility
 
-# Mechanically check the normative module-dependency graph is a DAG with legal
-# edge directions, AND run the Phase 12 coverage gate: every in-scope module
-# (MVP / fast-follow / definitely-do, read from scope-and-tiers.md) has at least
-# one compatibility fixture tagged to it. Then run the slice-mvp-1
-# profile gate: the cases tagged into that Conformance Slice are consistent with
-# its canonical describe claim in scope-and-tiers.md (no stray module, every
-# claimed module covered, every shape in claim, all Postgres goldens).
-dep-graph:
+# ===========================================================================
+# Core spec: validation of the core specification and compatibility corpus.
+#   dep-graph: DAG legality; the coverage gate (every in-scope module from
+#   scope-and-tiers.md has a tagged fixture); the slice-mvp-1 profile gate (the
+#   tagged slice matches its canonical describe claim). schemas: meta-schema +
+#   fixture validation + sqlglot parse of all golden/reference SQL.
+# ===========================================================================
+
+# Core module DAG + coverage gate + the slice-mvp-1 profile gate.
+core-dep-graph:
     cd {{harness}} && uv run python -m reference_harness.dep_graph_check --coverage ../core/spec ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.dep_graph_check --profile ../core/spec ../core/compatibility
 
-# ---------------------------------------------------------------------------
-# TypeScript workspace recipes. The pnpm workspace lives under
-# languages/typescript/packages/*; these fan out into it the same way the
-# Python recipes fan out into the reference harness. None of them need Docker
-# (the Testcontainers-backed conformance run lane lands with Phase 3).
-# ---------------------------------------------------------------------------
+# Validate the schemas (meta-schema), every fixture, and all golden/reference SQL.
+core-schemas:
+    cd {{harness}} && uv run python -m reference_harness.schema_validate ../core/compatibility
+    cd {{harness}} && uv run python -m reference_harness.sql_lint ../core/compatibility
+
+# ===========================================================================
+# Oracle: the Python reference harness — its own code health, and running it as
+# the executable oracle over the compatibility corpus.
+# ===========================================================================
+
+# Static lint of the harness: ruff format check + ruff lint.
+oracle-lint:
+    cd {{harness}} && uv run ruff format --check .
+    cd {{harness}} && uv run ruff check .
+
+# Auto-format the harness (mutates in place).
+oracle-format:
+    cd {{harness}} && uv run ruff format .
+
+# Typecheck the harness with basedpyright.
+oracle-typecheck:
+    cd {{harness}} && uv run basedpyright
+
+# The compatibility suite + the harness's own unit tests (pytest, Testcontainers; Docker).
+oracle-test:
+    cd {{harness}} && uv run pytest
+
+# ===========================================================================
+# Language: TypeScript. The pnpm workspace lives under
+# languages/typescript/packages/*; these fan out into it. Future languages get
+# their own <lang>- section (java-, rust-, py-, ...).
+# ===========================================================================
 
 # Static TS lint: Biome (format + lint) and the dependency-cruiser DAG gate.
 ts-lint:
@@ -70,66 +95,32 @@ ts-typecheck:
 ts-test:
     pnpm run ts:test
 
-# TypeScript V8 line coverage. Emits text, json-summary, and lcov under
-# coverage/typescript, then prints the same markdown summary CI uses.
+# TypeScript V8 line coverage + the same markdown summary CI prints.
 ts-coverage:
     pnpm run ts:typecheck
     pnpm run ts:coverage
     node languages/typescript/scripts/coverage-summary.mjs coverage/typescript/coverage-summary.json
 
-# TypeScript conformance-slice coverage. Emits JSON + markdown under coverage/.
+# Conformance-slice coverage report (JSON + markdown under coverage/).
 ts-conformance-coverage:
     pnpm run ts:conformance-coverage
 
-# Package-export health across the 13-package ESM workspace: publint (each
-# package's `exports` / type entry points are consumable), attw (cross-resolver
-# type resolution), and knip (unused files / exports / dependencies). Docker-free.
+# Package-export health across the @parallax/* ESM workspace: publint + attw + knip (Docker-free).
 ts-package-check:
     pnpm run ts:package-check
 
-# The Docker-free conformance lane: the full-slice compile sweep + the honesty
-# gate (in-claim never `unsupported`; out-of-claim ⇒ `unsupported` with the right
-# diagnostic) + the case-matrix report. This is what agents iterate against in
-# seconds; it needs the built CLI dist, so it typechecks first.
+# Docker-free conformance lane: full-slice compile sweep + honesty gate + matrix report.
 ts-conformance-compile:
     pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/conformance
 
-# The Docker-backed conformance run lane: provision `postgres:17` via
-# Testcontainers and run the full `slice-mvp-1` slice end-to-end
-# (rows / graph / tableState / affectedRows + roundTrips), asserting the
-# case-matrix report is green. Docker must be running.
+# Docker-backed conformance run lane: the full slice-mvp-1 slice end-to-end over postgres:17.
 ts-conformance-run:
     pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/typescript
 
-# The Docker-backed API Conformance Suite lane (Phase 10c): run the idiomatic `px.*` /
-# `px.transaction` suite over the shipped `@parallax/db-postgres` adapter against
-# `postgres:17`, mirroring the whole `slice-mvp-1` slice (reads / deep
-# fetch / temporal / transactions / locking) — asserting managed shapes AND the
-# corpus results, plus the no-drift + no-silent-gap coverage guards. Also renders
-# the developer guide (Usage Guide) from the (tested) snippets and checks it is up
-# to date. A merge-gating lane alongside the conformance run lane. Docker must be running.
+# Docker-backed API Conformance Suite + Usage Guide drift check over postgres:17.
 ts-api-conformance:
     pnpm run ts:typecheck
     node languages/typescript/scripts/render-guide.mjs --check
     pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
-
-# ---------------------------------------------------------------------------
-# test: the full compatibility suite. Boots real databases via Testcontainers,
-# so Docker must be running.
-# ---------------------------------------------------------------------------
-test:
-    cd {{harness}} && uv run pytest
-
-# verify: everything that must be green before merging (no Docker-less escape).
-# Folds in the Python typecheck lane and the TypeScript static checks (typecheck
-# / biome / dep-graph / package-export health), both conformance lanes
-# (Docker-free compile sweep + Docker-backed run lane), and the Docker-backed
-# API Conformance Suite lane (Phase 10c).
-verify: lint py-typecheck dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run ts-api-conformance test
-
-# matrix: emit the compatibility-matrix report (implementations x databases).
-# Wires Postgres + MariaDB (Phase 10 added MariaDB as the second dialect).
-matrix:
-    cd {{harness}} && uv run python -m reference_harness.matrix ../core/compatibility

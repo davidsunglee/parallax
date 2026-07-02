@@ -206,13 +206,13 @@ walk upward before claiming a milestone.
 
    ```bash
    just lint
-   just dep-graph
+   just core-dep-graph
    ```
 
 6. Root compatibility corpus sanity check:
 
    ```bash
-   PARALLAX_DATABASES=postgres just test
+   PARALLAX_DATABASES=postgres just oracle-test
    ```
 
 7. Claimed language implementation matrix for every supported dialect.
