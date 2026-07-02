@@ -11,8 +11,9 @@ The feature set is derived from the bitemporal object-relational mapper
 [Reladomo](https://github.com/goldmansachs/reladomo).
 
 This repository is data- and contract-first. The root package provides project
-tooling. Future language implementations are forthcoming. They will live beside
-`core/` and prove conformance by running the same suite.
+tooling. Language implementations live beside `core/` under `languages/` and
+prove conformance by running the same suite; the TypeScript implementation in
+`languages/typescript/` is the first worked example.
 
 ## Repository Map
 
@@ -26,6 +27,10 @@ core/
     cases/              Read, write, scenario, conflict, and coherence cases
     benchmarks/         M13 benchmark workloads and generated datasets
 reference-harness/      Python runner that validates and executes the suite
+languages/
+  typescript/           First language implementation (idiomatic API + adapter)
+docs/adr/               Architecture decision records
+IMPLEMENTING.md         Playbook for building a language implementation
 justfile                Common verification commands
 package.json            Markdown, commit, and repo-level developer tooling
 ```
@@ -264,7 +269,11 @@ operation serde, SQL canonicalization, real database execution, deep-fetch graph
 assembly, temporal write expectations, cache and identity scenarios,
 optimistic-lock conflicts, dialect differences, and cross-process coherence.
 
-Future language implementations should treat `core/` as the shared contract and
-use `reference-harness/` as the executable oracle. See
+The TypeScript implementation in
+[`languages/typescript/`](languages/typescript/README.md) is the first worked
+example: it declares the canonical `slice-mvp-1` Conformance Slice and proves it
+with both official artifacts. Further language implementations should treat
+`core/` as the shared contract and use `reference-harness/` as the executable
+oracle. See
 [Building A Language Implementation](#building-a-language-implementation) for the
 slice-first process and its two official proof artifacts.
