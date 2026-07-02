@@ -1,7 +1,7 @@
 /**
  * Adapter-boundary row comparison rules (M12, the case's row comparison rules).
  *
- * A `run` envelope reports observed `rows` in the **neutral wire form** (§2.2.1):
+ * A `run` envelope reports observed `rows` in the **neutral wire form** (§3.2.1):
  * an `int64` arrives as its canonical base-10 string (`"42"`), an exact
  * `decimal(p,s)` as its scale-aware string (`"20.00"`), a `boolean` as a JS
  * boolean, a `timestamp` as its microsecond UTC string. A case's `expectedRows`

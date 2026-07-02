@@ -10,7 +10,7 @@
 # childless parents). The harness asserts the gathered parent keys equal the
 # authored level-1 binds and that statement count == roundTrips.
 model: models/orders.yaml
-tags: [m4, m5, deepFetch, to-many, relationship, first-implementation-mvp]
+tags: [m4, m5, deepFetch, to-many, relationship, slice-mvp-1]
 operation:
   deepFetch:
     operand:

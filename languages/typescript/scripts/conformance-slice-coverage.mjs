@@ -3,14 +3,14 @@ import { dirname } from "node:path";
 import {
   buildConformanceSliceCoverageReport,
   discoverCasePaths,
-  FIRST_IMPLEMENTATION_MVP_CAPABILITIES,
+  SLICE_MVP_1_CAPABILITIES,
   loadCase,
   renderConformanceSliceCoverageMarkdown,
 } from "../packages/conformance/dist/index.js";
 
 const args = parseArgs(process.argv.slice(2));
 const cases = discoverCasePaths().map(loadCase);
-const report = buildConformanceSliceCoverageReport(cases, FIRST_IMPLEMENTATION_MVP_CAPABILITIES);
+const report = buildConformanceSliceCoverageReport(cases, SLICE_MVP_1_CAPABILITIES);
 const markdown = renderConformanceSliceCoverageMarkdown(report);
 
 if (args.json) {

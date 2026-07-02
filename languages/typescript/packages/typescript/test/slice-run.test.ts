@@ -1,5 +1,5 @@
 /**
- * The full-slice **run lane** over the whole `first-implementation-mvp` corpus,
+ * The full-slice **run lane** over the whole `slice-mvp-1` corpus,
  * Testcontainers `postgres:17` — the Phase-8 "is the slice green against a real
  * database?" sweep.
  *
@@ -46,12 +46,12 @@ import type { Envelope } from "@parallax/core";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import { PostgresProvider } from "../src/conformance/postgres-provider.js";
 
-/** The full `first-implementation-mvp` tagged slice, in discovery order. */
+/** The full `slice-mvp-1` tagged slice, in discovery order. */
 function taggedCases(): readonly { id: string; loaded: LoadedCase }[] {
   return discoverCasePaths()
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
-    .filter(({ loaded }) => loaded.tags.includes("first-implementation-mvp"));
+    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"));
 }
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */
@@ -68,7 +68,7 @@ const HAS_DOCKER = dockerAvailable();
 const CASES = taggedCases();
 
 // Discovery is Docker-free; assert the exact slice size unconditionally.
-it("discovers the whole first-implementation-mvp slice (99 cases)", () => {
+it("discovers the whole slice-mvp-1 slice (99 cases)", () => {
   expect(CASES.length).toBe(99);
 });
 

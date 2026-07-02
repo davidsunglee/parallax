@@ -5,7 +5,7 @@
 # out_z = ?`). coverage 10 -> 700 owns claim 1000 (9000); coverage 20 -> 300 owns
 # claim 2000 (4000).
 model: models/policy.yaml
-tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, multi-hop, first-implementation-mvp]
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, multi-hop, slice-mvp-1]
 operation:
   deepFetch:
     operand:

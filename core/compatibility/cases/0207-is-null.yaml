@@ -1,6 +1,6 @@
 # isNull — nullability predicate on the nullable `sku` column.
 model: models/orders.yaml
-tags: [m2, isNull, first-implementation-mvp]
+tags: [m2, isNull, slice-mvp-1]
 operation:
   isNull:
     attr: Order.sku

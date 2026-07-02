@@ -53,7 +53,7 @@ function temporalCases(): readonly { id: string; loaded: LoadedCase }[] {
         /^(05|08)\d\d$/.test(id) || /^03(2[4-9]|3[0-6])$/.test(id) || /^000[45]$/.test(id),
     )
     .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
-    .filter(({ loaded }) => loaded.tags.includes("first-implementation-mvp"));
+    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"));
 }
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */

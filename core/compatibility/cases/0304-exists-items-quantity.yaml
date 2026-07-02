@@ -3,7 +3,7 @@
 # (alias t1). Item 21 (qty 4, order 2) and item 422 (qty 5, order 42) qualify, so
 # the result is orders {2, 42}.
 model: models/orders.yaml
-tags: [m4, exists, relationship, first-implementation-mvp]
+tags: [m4, exists, relationship, slice-mvp-1]
 operation:
   exists:
     rel: Order.items

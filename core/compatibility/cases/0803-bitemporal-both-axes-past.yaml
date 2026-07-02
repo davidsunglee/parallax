@@ -13,7 +13,7 @@
 # business date NOW (case 0802). The four binds read business-axis-first (outer
 # pin), then processing.
 model: models/position.yaml
-tags: [m7, m3, bitemporal, temporal, as-of, both-axes, past, audit, first-implementation-mvp]
+tags: [m7, m3, bitemporal, temporal, as-of, both-axes, past, audit, slice-mvp-1]
 operation:
   asOf:
     operand:

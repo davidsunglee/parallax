@@ -1,5 +1,5 @@
 /**
- * Descriptor-glob resolution for the generate driver (spec §5).
+ * Descriptor-glob resolution for the generate driver (spec §7).
  *
  * Resolves the config `descriptors` glob(s) against the config-file directory
  * with Node's built-in `fs.globSync` (Node ≥ 22) — no glob dependency is added.

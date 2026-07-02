@@ -2,7 +2,7 @@
 # is the default direction, so the canonical SQL emits the bare `asc` keyword for
 # clarity and limits to 3, selecting ids 1, 2, 3 via the ordering.
 model: models/orders.yaml
-tags: [m2, orderBy, limit, directive, first-implementation-mvp]
+tags: [m2, orderBy, limit, directive, slice-mvp-1]
 operation:
   limit:
     count: 3

@@ -1,5 +1,5 @@
 /**
- * Locate + load a project's `parallax.config.*` (spec §5).
+ * Locate + load a project's `parallax.config.*` (spec §7).
  *
  * `parallax generate` reads a config module that default-exports the result of
  * `defineParallaxConfig(...)`. V1 loads a JS/MJS/CJS config by dynamic import (no

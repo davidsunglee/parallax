@@ -33,7 +33,7 @@ import { coerceBind } from "./bind.js";
  * A resolved physical column: the table alias plus the quoted column name, ready
  * to splice into SQL as `<alias>.<column>`, plus the attribute's M0 neutral type
  * so the compiler can normalize a literal bound against it into the canonical
- * wire form (§2.2.1 — int64 / decimal beyond float-safe range become canonical
+ * wire form (§3.2.1 — int64 / decimal beyond float-safe range become canonical
  * strings; everything else keeps its authored JSON form).
  */
 export interface ResolvedColumn {
@@ -802,7 +802,7 @@ function qualify(ctx: CompileCtx, ref: string): string {
 
 /**
  * Append a literal to the binds accumulator, normalized to its canonical wire
- * form against the attribute's M0 neutral type (§2.2.1). Float-safe authored
+ * form against the attribute's M0 neutral type (§3.2.1). Float-safe authored
  * numbers keep their JSON form; an int64 / decimal value the serde reader
  * preserved as an exact source string (precision-unsafe) becomes the canonical
  * wire string here.

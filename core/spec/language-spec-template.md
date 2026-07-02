@@ -17,7 +17,42 @@ whole core spec**.
 > ([`dependency-graph.md`](dependency-graph.md)); this template only fills in the
 > non-normative, per-language choices the core spec leaves open (DQ3).
 
-## 1. API surface (non-normative — DQ3)
+## 1. Conformance Slice declaration
+
+The **named Conformance Slice** this build claims leads the template because it
+scopes everything downstream — the module → package map, the case/dialect
+matrix, the conformance-adapter grade, and the API Conformance Suite ([§6](#6-api-conformance-suite--usage-guide))
+are all bounded by it. A Conformance Slice is a declared, **case-granular**
+subset of the compatibility corpus (it may claim some *features* of a module
+while deferring others; it is **not** a module tier). Its machine-readable form
+is a `describeOk` envelope validated against
+[`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json),
+and its name is its `caseTags.include` tag. Slice mechanics and the canonical
+claim live in
+[`scope-and-tiers.md`](scope-and-tiers.md#first-implementation-conformance-slice).
+
+- **(decide and record)** The named **Conformance Slice** this build claims — its
+  name **MUST** equal the `caseTags.include` tag and follow the slice-naming
+  convention `^slice-[a-z0-9][a-z0-9-]*$` — or the definition of a new named
+  slice in [`scope-and-tiers.md`](scope-and-tiers.md). The recommended first
+  slice is the include-driven
+  [`slice-mvp-1`](scope-and-tiers.md#first-implementation-conformance-slice)
+  slice: a Postgres-only, 99-case subset whose canonical `describe` claim lives
+  in `scope-and-tiers.md` and is the single source of truth (a slice is *not* a
+  module tier; it may defer parts of a module).
+- **(decide and record)** The adapter's `capabilities` block
+  (`modules` / `dialects` / `caseShapes` / `caseTags.include`) — **byte-equal to
+  the canonical claim except for the `adapter` identity**. This block is the
+  slice's machine-readable declaration; the parallax-core `--profile` gate proves
+  the tagged corpus stays consistent with it.
+- **(decide and record)** The `unsupported` discipline for out-of-slice cases:
+  confirm the adapter returns `status: "unsupported"` (exit `10`) for every case
+  command outside the slice (out-of-claim shape, dialect, module tag, or case
+  tag) while **never** returning `unsupported` for an in-slice case. The
+  slice-matching rules and a worked `describe` example are in
+  [`conformance-adapter-contract.md`](conformance-adapter-contract.md).
+
+## 2. API surface (non-normative — DQ3)
 
 The shape of the developer-facing API is **per-language and non-normative**. The
 core mandates only the *canonical operation algebra* (`M2`) and its serde; how a
@@ -44,7 +79,7 @@ developer *spells* an operation in this language is a DX choice.
   from `M0`, how `now` / omitted axes are represented, and how invalid
   combinations are rejected (for example, point and history on the same axis).
 
-## 2. Metadata / model input format (DQ5, DQ6)
+## 3. Metadata / model input format (DQ5, DQ6)
 
 The metamodel is a **mandated protocol** (introspection **and** serde); the
 canonical descriptor (`metamodel.schema.json`) is its serialized form. **How a
@@ -68,7 +103,7 @@ developer authors a domain model** is the per-language choice.
   metamodel serialize/deserialize, with **round-trip
   (serialize → deserialize → serialize) tests** in both JSON and YAML.
 
-## 3. Transaction-block demarcation (M8)
+## 4. Transaction-block demarcation (M8)
 
 The transaction **boundary** is **user-specified per-language and never expressed
 in raw SQL** in the core spec. Pin down the idiom.
@@ -87,7 +122,7 @@ in raw SQL** in the core spec. Pin down the idiom.
   Record where processing instants come from, how business start/window options
   are passed, and which timestamp precision validation applies.
 
-## 4. Test-double integration (M12, DQ15)
+## 5. Test-double integration (M12, DQ15)
 
 The compatibility suite is the **primary behavioral surface**; most tests bubble
 up to it rather than living in per-language units. Pin down how the language's
@@ -110,24 +145,36 @@ test runner wires to the **database provider**.
 - **(decide and record)** Which dialects this language runs in CI (Postgres is
   the round-1 normative target; MariaDB is the proven second dialect) and how the
   per-dialect golden SQL is selected.
-- **(decide and record)** The named **Conformance Slice** this first build
-  claims, its canonical `describe` claim, and the `unsupported` discipline for
-  out-of-slice cases. The recommended first slice is the include-driven
-  [`first-implementation-mvp`](scope-and-tiers.md#first-implementation-conformance-slice)
-  slice — a Postgres-only, ~97-case subset whose canonical `describe` claim lives
-  in `scope-and-tiers.md` and is the single source of truth (a slice is *not* a
-  module tier; it may defer parts of a module). Record the adapter's `capabilities`
-  (`modules` / `dialects` / `caseShapes` / `caseTags.include`) — ordinarily equal
-  to the canonical claim except for the `adapter` identity — and confirm the
-  adapter returns `status: "unsupported"` (exit `10`) for every case command
-  outside the slice (out-of-claim shape, dialect, module tag, or case tag) while
-  never returning `unsupported` for an in-slice case. The slice-matching rules and
-  worked `describe` example are in
-  [`conformance-adapter-contract.md`](conformance-adapter-contract.md); the
-  parallax-core `--profile` gate proves the tagged corpus stays consistent with
-  the canonical claim.
+- The named **Conformance Slice** this build claims — the cases the test runner
+  provisions and executes — is declared and recorded in
+  [§1](#1-conformance-slice-declaration), including the `unsupported` discipline
+  for out-of-slice case commands.
 
-## 5. Codegen-or-not (DQ5)
+## 6. API Conformance Suite & Usage Guide
+
+The **API Conformance Suite** proves that the idiomatic developer surface of
+[§2](#2-api-surface-non-normative--dq3) — not merely the wire-level conformance
+adapter — reproduces the claimed slice against a real database through the
+shipped adapter, and the **Usage Guide** is a rendered document generated from
+that suite's source so demonstration prose and executed proof cannot drift. Both
+are official deliverables and additive proof beside the conformance-adapter grade
+— never a substitute, and they never touch the grader. The portable discipline
+(coverage-partition rule, expected-results assertions, the no-drift guard,
+golden-SQL-text exclusion, and the guide's CI drift check) is normative in
+[`api-conformance-contract.md`](api-conformance-contract.md).
+
+- **(decide and record)** The test framework and the location of the API
+  Conformance Suite, which runs the idiomatic public API against a real database
+  of a claimed dialect through the shipped adapter.
+- **(decide and record)** How the coverage partition is asserted: that every
+  in-slice case is either exercised or carries a reasoned skip (exercised ∪
+  skipped == the claimed slice, no stale ids, every skip records a non-empty
+  reason), and how the no-drift guard ties each idiomatically-built operation to
+  the corpus operation.
+- **(decide and record)** How the Usage Guide is rendered from the suite's source
+  and drift-checked in CI so the guide can never diverge from the executed proof.
+
+## 7. Codegen-or-not (DQ5)
 
 Code generation is a **per-language technique, never a mandate.** The metamodel
 is mandated; *how* the in-memory model and the typed surface are produced is open.
@@ -144,7 +191,7 @@ is mandated; *how* the in-memory model and the typed surface are produced is ope
   paths, or other typed surfaces unless the core descriptor schema contains the
   data needed to generate them.
 
-## 6. Collection idioms (M5)
+## 8. Collection idioms (M5)
 
 - **(decide and record)** The concrete collection type a list result exposes
   (the language's idiomatic lazy/eager collection), and how laziness +
@@ -152,7 +199,7 @@ is mandated; *how* the in-memory model and the typed surface are produced is ope
 - **(decide and record)** Iteration, indexing, and bulk-operation ergonomics on
   list results.
 
-## 7. Build-time dependency enforcement (DQ3, dependency-graph)
+## 9. Build-time dependency enforcement (DQ3, dependency-graph)
 
 The normative module-dependency graph is **MUST** in core; each language
 **SHOULD** enforce it mechanically at build time so a wrong-direction edge fails
@@ -181,7 +228,7 @@ the build.
   numbered edge (the decomposition is a rule *within* the module, not new DAG
   nodes).
 
-## 8. Optional optimized data structures (M13, DQ10)
+## 10. Optional optimized data structures (M13, DQ10)
 
 These are **optional, non-normative** levers for hitting performance targets —
 enumerated so an implementer knows the proven techniques exist, not so they must
@@ -196,7 +243,7 @@ use them.
   technique (e.g. Apache Arrow in Python) — wholly per-language; the core spec
   makes no Arrow mandate or seam (DQ12).
 
-## 9. Per-language performance targets (M13, DQ10)
+## 11. Per-language performance targets (M13, DQ10)
 
 The benchmark **fixtures and the measurement protocol** are shared and normative
 (`M13`); the **numeric ceilings are per-language placeholders** — a Rust target is

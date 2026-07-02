@@ -12,7 +12,7 @@ Three modes:
 
       uv run python -m reference_harness.dep_graph_check --coverage core/spec core/compatibility
 
-* **Profile gate** (``--profile``) — assert the ``first-implementation-mvp``
+* **Profile gate** (``--profile``) — assert the ``slice-mvp-1``
   Conformance Slice's tagged cases are consistent with its canonical ``describe``
   claim embedded in ``scope-and-tiers.md`` (every claimed module covered, no stray
   module tag, every shape in claim, every tagged case Postgres-golden)::
@@ -61,7 +61,7 @@ _IN_SCOPE_TIERS = ("mvp", "fast-follow", "definitely-do")
 # The named conformance slice the profile gate enforces. The slice is selected by
 # this single tag on each included case (see scope-and-tiers.md); the canonical
 # describe claim that declares its boundaries lives in the same file.
-_SLICE_TAG = "first-implementation-mvp"
+_SLICE_TAG = "slice-mvp-1"
 
 # The heading under which the canonical slice claim is embedded in
 # scope-and-tiers.md, normalized to lower case (the json fence right after it is the
@@ -235,7 +235,7 @@ def coverage_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
 def parse_profile_claim(scope_markdown: str) -> dict:
     """Return the ``capabilities`` of the canonical slice ``describe`` claim.
 
-    The claim is the single source of truth for the ``first-implementation-mvp``
+    The claim is the single source of truth for the ``slice-mvp-1``
     Conformance Slice: a fenced ```` ```json ```` block embedded under the
     ``## First-implementation Conformance Slice`` heading of ``scope-and-tiers.md``
     (no new file, no schema change). This parses the first such fenced block,
@@ -356,7 +356,7 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
 
     Mirrors ``coverage_errors``: parse a declared set, scan ``cases/``, diff, and
     return one error per inconsistency (empty == consistent). First, the canonical
-    claim must select exactly ``caseTags.include: ["first-implementation-mvp"]``;
+    claim must select exactly ``caseTags.include: ["slice-mvp-1"]``;
     then the gate checks both directions:
 
     * **forward (completeness)** — every module the claim lists has at least one

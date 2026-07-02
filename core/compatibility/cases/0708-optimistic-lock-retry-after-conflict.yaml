@@ -13,7 +13,7 @@
 # The resulting state confirms the retried write landed: account 2 carries the
 # retried balance 250.00 at version 3, not the concurrent writer's 999.00.
 model: models/account.yaml
-tags: [m10, m3, optimistic-locking, conflict, retry, success, first-implementation-mvp]
+tags: [m10, m3, optimistic-locking, conflict, retry, success, slice-mvp-1]
 precondition: update account set balance = 999.00, version = 2 where id = 2
 attempts:
   - note: stale-version UPDATE — gates on version 1, which no longer matches ⇒ 0 rows

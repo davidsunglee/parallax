@@ -136,13 +136,20 @@ query-cache and identity-cache scenarios.
 
 The example above is intentionally minimal. For a worked, canonical
 **include-driven** first slice, see the
-[`first-implementation-mvp`](scope-and-tiers.md#first-implementation-conformance-slice)
-Conformance Slice in `scope-and-tiers.md`: its `describe` claim selects ~97
-Postgres-only cases by a single `caseTags.include: ["first-implementation-mvp"]`
+[`slice-mvp-1`](scope-and-tiers.md#first-implementation-conformance-slice)
+Conformance Slice in `scope-and-tiers.md`: its `describe` claim selects 99
+Postgres-only cases by a single `caseTags.include: ["slice-mvp-1"]`
 tag rather than by a fragile list of exclusions, and a consistency gate keeps the
 tagged corpus aligned with that claim. A fresh implementer authoring a first build
 ordinarily adopts that claim's `capabilities` verbatim (only the `adapter`
 identity differs).
+
+That canonical block is the general rule, not a one-off: a slice's
+machine-readable form is a `describeOk` envelope validated against this schema,
+and its name is its `caseTags.include` tag, which follows the slice-naming
+convention `^slice-[a-z0-9][a-z0-9-]*$`. Both the rule and the convention are
+stated with the slice in
+[`scope-and-tiers.md`](scope-and-tiers.md#first-implementation-conformance-slice).
 
 A case command is claimed only when **all** of these are true:
 

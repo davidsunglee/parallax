@@ -17,7 +17,7 @@
 # correctly absent here: the OrderItem.statuses hop keys on order_item_id, so only
 # item-level statuses are reached. Item 422 has no statuses ⇒ an empty list.
 model: models/orders.yaml
-tags: [m4, m5, deepFetch, multi-hop, relationship, first-implementation-mvp]
+tags: [m4, m5, deepFetch, multi-hop, relationship, slice-mvp-1]
 operation:
   deepFetch:
     operand:

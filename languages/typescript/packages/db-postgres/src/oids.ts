@@ -7,7 +7,7 @@
  * of parse logic; M11 decomposition). Registering a custom type per OID forces
  * porsager to hand that column back as raw text so the dialect parser
  * materializes it into a **managed** scalar (`bigint` / `ParallaxDecimal` /
- * `Temporal.*` / `Uint8Array` / string) at the adapter boundary (§2.2.1), rather
+ * `Temporal.*` / `Uint8Array` / string) at the adapter boundary (§3.2.1), rather
  * than the driver default (a ms-precision `Date`, a binary-float `numeric`, …).
  *
  * There is **no wire / grading logic here** — an adapter emits managed types

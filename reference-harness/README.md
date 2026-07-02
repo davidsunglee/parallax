@@ -8,6 +8,11 @@ It only proves the compatibility suite is internally consistent and that the
 golden SQL is correct for the fixture data, across every database behind the
 **database-provider seam**.
 
+The reference harness's internals are non-normative and
+MUST NOT be used as design input for a language implementation; the binding
+inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the
+conformance-adapter contract.
+
 ## Layout
 
 ```text

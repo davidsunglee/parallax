@@ -6,7 +6,7 @@
  * is the only place the comparator was previously exercised. The central
  * invariant locked in here is the **genuine-numeric discriminator**: a numeric
  * wire STRING reconciles against a genuine `number` / `bigint` in decimal space
- * (the §2.2.1 int64 / decimal wire form vs an authored JS number), but two
+ * (the §3.2.1 int64 / decimal wire form vs an authored JS number), but two
  * strings compare as EXACT canonical strings — so a textual / projection bug
  * (`"042"` vs `"42"`) surfaces instead of being masked. This mirrors the Python
  * oracle, whose `_to_decimal` never decimalizes a string.
@@ -16,7 +16,7 @@ import { compareGraph, compareRowSet, scalarsEqual } from "../src/index.js";
 
 describe("scalarsEqual — genuine-numeric reconciliation vs exact-string", () => {
   it("reconciles an int64 wire string against a genuine number (string vs number)", () => {
-    // §2.2.1: an int64 arrives as its canonical base-10 string; the case authors
+    // §3.2.1: an int64 arrives as its canonical base-10 string; the case authors
     // the same value as a JS number. They denote the same number.
     expect(scalarsEqual("42", 42)).toBe(true);
     expect(scalarsEqual(42, "42")).toBe(true);

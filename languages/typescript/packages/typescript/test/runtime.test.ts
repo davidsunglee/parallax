@@ -5,12 +5,12 @@
  * conformance reads through the case-driven `MetamodelSchema`/`readProjection`
  * path, not the application `RuntimeSchema` + `EntityFinder` path:
  *
- *  1. No-arg `find()` is shorthand for `find(Entity.all())` (spec §1.3): a
+ *  1. No-arg `find()` is shorthand for `find(Entity.all())` (spec §2.3): a
  *     no-predicate call compiles to an `all` read (`select … from <table>`, no
  *     `where`), not a runtime throw.
  *  2. A `bytes` managed-object attribute is projected VERBATIM (never the
  *     `encode(…) <col>_hex` conformance lowering) and materialized as a fresh
- *     `Uint8Array` at the adapter boundary (spec §2.2.1), whether the adapter
+ *     `Uint8Array` at the adapter boundary (spec §3.2.1), whether the adapter
  *     returns a Node `Buffer` or a hex string.
  *
  * The runtime is built through the real `createParallax` factory with a stub
@@ -50,7 +50,7 @@ class StubDatabase implements ParallaxDatabase {
 /** The scalars descriptor (`ScalarThing`, the only in-corpus `bytes`-bearing model). */
 const SCALARS = loadCase("core/compatibility/cases/0003-scalar-types-roundtrip.yaml").descriptor;
 
-describe("EntityFinder no-arg find() shorthand (spec §1.3)", () => {
+describe("EntityFinder no-arg find() shorthand (spec §2.3)", () => {
   it("compiles find() with no predicate to an `all` read (no where clause)", async () => {
     const db = new StubDatabase([]);
     const px = createParallax({ descriptor: SCALARS, database: db });
@@ -64,7 +64,7 @@ describe("EntityFinder no-arg find() shorthand (spec §1.3)", () => {
   });
 });
 
-describe("EntityFinder bytes materialization (spec §2.2.1)", () => {
+describe("EntityFinder bytes materialization (spec §3.2.1)", () => {
   it("projects bytes verbatim (no encode/_hex) and materializes a Node Buffer to a fresh Uint8Array", async () => {
     const payload = Buffer.from([1, 2, 3, 4]);
     const db = new StubDatabase([{ id: "1", payload }]);
@@ -150,7 +150,7 @@ const EVERY_SCALAR = {
   },
 };
 
-describe("EntityFinder managed-object materialization (spec §2.2.1)", () => {
+describe("EntityFinder managed-object materialization (spec §3.2.1)", () => {
   it("maps physical column → DSL name and coerces a RAW (thin BYO adapter) row per type", async () => {
     // Every value is the raw driver representation a thin BYO adapter would hand
     // back: bigint/decimal/timestamp/date/time as strings, bytes as hex, booleans

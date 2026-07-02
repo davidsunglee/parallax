@@ -1,5 +1,5 @@
 /**
- * Developer showcase — **deep-fetch** family (Phase 10c): eager relationship
+ * API Conformance Suite — **deep-fetch** family (Phase 10c): eager relationship
  * loading (`find(..., { includes })`), written as a developer would and run against
  * `postgres:17` through the SHIPPED `@parallax/db-postgres` adapter.
  *
@@ -51,7 +51,7 @@ const COVERAGE_AXES: AxisRefs = {
 const INVOICE_AXES: AxisRefs = { processing: "Invoice.processingDate" };
 const LEASE_AXES: AxisRefs = { processing: "Lease.processingDate" };
 
-/** One deep-fetch showcase row: the DSL that builds the corpus operation + its root. */
+/** One deep-fetch suite row: the DSL that builds the corpus operation + its root. */
 interface Row {
   readonly stem: string;
   readonly entity: string;
@@ -263,11 +263,11 @@ function dockerAvailable(): boolean {
 
 const HAS_DOCKER = dockerAvailable();
 
-it("the deep-fetch showcase covers exactly the DEEP_FETCH family", () => {
+it("the deep-fetch suite covers exactly the DEEP_FETCH family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...DEEP_FETCH].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("deep-fetch showcase (Testcontainers postgres:17)", () => {
+group.skipIf(!HAS_DOCKER)("deep-fetch suite (Testcontainers postgres:17)", () => {
   const BOOT_TIMEOUT = 600_000;
   let provider: PostgresProvider;
 

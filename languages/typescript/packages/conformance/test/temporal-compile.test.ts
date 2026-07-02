@@ -32,7 +32,7 @@ function temporalReadWriteCases(): readonly { id: string; path: string }[] {
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .filter(({ id }) => /^(05|08)\d\d$/.test(id))
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
-    .filter(({ loaded }) => loaded.tags.includes("first-implementation-mvp"))
+    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"))
     .map(({ id, path }) => ({ id, path }));
 }
 
@@ -43,7 +43,7 @@ function temporalDeepFetchCases(): readonly { id: string; path: string }[] {
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .filter(({ id }) => /^03(2[4-9]|3[0-6])$/.test(id))
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
-    .filter(({ loaded }) => loaded.tags.includes("first-implementation-mvp"))
+    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"))
     .map(({ id, path }) => ({ id, path }));
 }
 
@@ -51,7 +51,7 @@ function temporalDeepFetchCases(): readonly { id: string; path: string }[] {
  * The EXACT in-scope M7 MVP `05xx`/`08xx` set: the audit-only reads/writes
  * `0501`–`0508`/`0510`–`0512` and the bitemporal reads `0801`–`0805`. The
  * out-of-V1 `*Until` writes (`0810`–`0812`) and the business-only slice
- * (`0820`–`0826`) are NOT tagged `first-implementation-mvp`, so they never
+ * (`0820`–`0826`) are NOT tagged `slice-mvp-1`, so they never
  * discover here. Asserting the exact set fails loudly on a discovery regression.
  */
 const EXPECTED_READ_WRITE_IDS: readonly string[] = [

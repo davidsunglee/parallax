@@ -1,5 +1,5 @@
 /**
- * Row materialization for the developer runtime (`px.*` finds), spec §2.2.1.
+ * Row materialization for the developer runtime (`px.*` finds), spec §3.2.1.
  *
  * A `find` compiles to a projection keyed by **physical column** (`RuntimeSchema`
  * projects `attr.column`), so the raw rows the database port returns are keyed by
@@ -46,7 +46,7 @@ const DECIMAL_TYPE = /^decimal\(\d+,\d+\)$/;
  *
  * Only the entity's own attributes are projected into the managed object; a raw
  * row carries exactly those columns (the runtime projects the full attribute set,
- * spec §1.3), so there is no stray column to preserve.
+ * spec §2.3), so there is no stray column to preserve.
  */
 export function rowMaterializer(entity: EntityMetadata): (row: ParallaxRow) => ParallaxRow {
   const attributes = entity.attributes();
@@ -144,7 +144,7 @@ function coerceString(value: unknown): unknown {
 /**
  * `boolean` → `boolean`. An already-boolean passes; a driver's text (`t`/`f`,
  * `true`/`false`, `1`/`0`) or numeric (`0`/`1`) form is mapped without the
- * `== 1` pitfall (spec §2.2.1 comparison rule).
+ * `== 1` pitfall (spec §3.2.1 comparison rule).
  */
 function coerceBoolean(value: unknown): unknown {
   if (typeof value === "boolean") {
@@ -166,7 +166,7 @@ function coerceBoolean(value: unknown): unknown {
 }
 
 /**
- * `bytes` → a **fresh** `Uint8Array` (spec §2.2.1). A Node `Buffer` /
+ * `bytes` → a **fresh** `Uint8Array` (spec §3.2.1). A Node `Buffer` /
  * `Uint8Array` is copied so the managed object never aliases the adapter's
  * buffer; a hex string (possibly `\x`-prefixed) is parsed. Because the column is
  * a KNOWN `bytes` column, a string value is unambiguously hex — no heuristic.

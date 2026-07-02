@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `parallax` — the developer-facing CLI (spec §5).
+ * `parallax` — the developer-facing CLI (spec §7).
  *
  * Sub-commands:
  *  - `parallax init` — scaffold `parallax.config.js` + add `parallax:generate` /
@@ -12,7 +12,7 @@
  *    this is not a git-drift check).
  *
  * Conformance is exposed through the separate `parallax-conformance` CLI, not
- * here (spec §5).
+ * here (spec §7).
  */
 import { checkGenerate, generate, summarize } from "../codegen/index.js";
 import { loadConfig, resolveConfigPath } from "./config-loader.js";

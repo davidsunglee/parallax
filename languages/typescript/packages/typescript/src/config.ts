@@ -1,5 +1,5 @@
 /**
- * Generator configuration (spec §5, ADR-0002) — exposed as the
+ * Generator configuration (spec §7, ADR-0002) — exposed as the
  * `@parallax/typescript/config` subpath.
  *
  * A project authors a `parallax.config.ts` that default-exports
@@ -19,7 +19,7 @@ export interface ParallaxConfig {
   /**
    * Glob(s) selecting the canonical descriptor documents to generate from (e.g.
    * `["./parallax/**\/*.yaml"]`). Each matched file validates against
-   * `metamodel.schema.json` (spec §2.1).
+   * `metamodel.schema.json` (spec §3.1).
    */
   readonly descriptors: readonly string[];
   /**
@@ -29,7 +29,7 @@ export interface ParallaxConfig {
   readonly output: string;
   /**
    * The package-local import alias the barrel is reachable through (default
-   * `#parallax`, spec §1.1). Applications import the generated API through it so
+   * `#parallax`, spec §2.1). Applications import the generated API through it so
    * the physical output path stays hidden.
    */
   readonly importAlias: string;
@@ -45,11 +45,11 @@ export interface ParallaxConfigInput {
 /** The default output directory for generated code (ADR-0003 — gitignored). */
 export const DEFAULT_OUTPUT = "./.parallax/generated" as const;
 
-/** The default package-local import alias (spec §1.1). */
+/** The default package-local import alias (spec §2.1). */
 export const DEFAULT_IMPORT_ALIAS = "#parallax" as const;
 
 /**
- * Define a Parallax generator configuration (spec §5). Applies the `output` and
+ * Define a Parallax generator configuration (spec §7). Applies the `output` and
  * `importAlias` defaults and freezes the result so a config object is a stable,
  * shareable value; a project default-exports the return value from its
  * `parallax.config.ts`.
