@@ -144,6 +144,13 @@ tagged corpus aligned with that claim. A fresh implementer authoring a first bui
 ordinarily adopts that claim's `capabilities` verbatim (only the `adapter`
 identity differs).
 
+That canonical block is the general rule, not a one-off: a slice's
+machine-readable form is a `describeOk` envelope validated against this schema,
+and its name is its `caseTags.include` tag, which follows the slice-naming
+convention `^slice-[a-z0-9][a-z0-9-]*$`. Both the rule and the convention are
+stated with the slice in
+[`scope-and-tiers.md`](scope-and-tiers.md#first-implementation-conformance-slice).
+
 A case command is claimed only when **all** of these are true:
 
 - the command is listed in `commands`

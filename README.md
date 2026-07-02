@@ -228,6 +228,34 @@ When adding a dialect, implement a new provider behind the M11 seam and add a
 new `goldenSql.<dialect>` entry to cases and benchmarks that need dialect-
 specific SQL.
 
+## Building A Language Implementation
+
+Building an idiomatic Parallax for a new language starts by declaring a
+**Conformance Slice**: the subset of the compatibility corpus this first build
+claims right now, captured as a machine-readable `describe` claim (see
+[`core/spec/scope-and-tiers.md`](core/spec/scope-and-tiers.md)). A slice is
+case-granular — it may claim some features of a module while deferring others,
+without redefining that module's boundary — so an early build can commit to
+exactly what it can honestly prove.
+
+The declared slice is then proven two ways, and both are official deliverables:
+
+- the wire-level **conformance-adapter grade** in
+  [`core/spec/conformance-adapter-contract.md`](core/spec/conformance-adapter-contract.md)
+  — the SQL and observations your adapter emits, compared against the corpus
+  oracles; and
+- the developer-surface **API Conformance Suite** and its rendered **Usage
+  Guide** in
+  [`core/spec/api-conformance-contract.md`](core/spec/api-conformance-contract.md)
+  — the idiomatic code an application writes, run through the shipped adapter
+  against a real database, reproducing the corpus's results.
+
+Both prove the same slice while each language builds its own idiomatic public
+API. [`IMPLEMENTING.md`](IMPLEMENTING.md) is the step-by-step playbook: it lays
+out the reading order, planning deliverables, implementation sequence,
+verification ladder, and completion checklist that carry you from the shared
+contract to a conforming target.
+
 ## Current Status
 
 The core spec, schemas, compatibility suite, benchmark definitions, and
@@ -237,12 +265,6 @@ assembly, temporal write expectations, cache and identity scenarios,
 optimistic-lock conflicts, dialect differences, and cross-process coherence.
 
 Future language implementations should treat `core/` as the shared contract and
-use `reference-harness/` as the executable oracle. They declare a **Conformance
-Slice** of the corpus and prove it two ways: the wire-level
-**conformance-adapter grade** in
-`core/spec/conformance-adapter-contract.md`, and the developer-surface
-**API Conformance Suite** plus its rendered **Usage Guide** in
-`core/spec/api-conformance-contract.md` — the code an application writes, run
-through the shipped adapter against a real database, reproducing the corpus's
-results. Both prove the same slice while each implementation builds its own
-idiomatic public API.
+use `reference-harness/` as the executable oracle. See
+[Building A Language Implementation](#building-a-language-implementation) for the
+slice-first process and its two official proof artifacts.

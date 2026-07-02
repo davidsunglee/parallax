@@ -81,6 +81,11 @@ collection behavior, dependency enforcement, or performance targets.
 Before implementation, produce a short plan in the language module that records:
 
 - The completed language spec path.
+- The named **Conformance Slice** this build claims — or the definition of a new
+  named slice in
+  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md) — recorded as its
+  `describe` claim. This is the first decision; see
+  [Declaring The Conformance Slice](#declaring-the-conformance-slice).
 - The module/package map for M0, M1, M2, M3, M4, M5, M7, M8, M9, M10, M11, M12,
   M13, cross-process coherence, and any non-numbered support packages.
 - The dependency-boundary enforcement tool and configuration.
@@ -92,6 +97,39 @@ Before implementation, produce a short plan in the language module that records:
 - The final case/dialect matrix the implementation intends to claim.
 - Any deferred modules, with tier justification from
   [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md).
+
+## Declaring The Conformance Slice
+
+Slice selection is the first step, taken before any runtime code. It decides what
+this build actually claims, and everything downstream — the module/package map,
+the case/dialect matrix, the conformance grade, the API Conformance Suite — is
+scoped by it. Choose (or define) the named Conformance Slice:
+
+- **Adopt an existing slice.** A fresh first build ordinarily adopts the
+  canonical `slice-mvp-1` slice defined in
+  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md): Postgres-only, 99
+  cases selected by the single `caseTags.include: ["slice-mvp-1"]` tag. Copy its
+  `capabilities` block verbatim, changing only the `adapter` identity.
+- **Or define a new slice.** If no existing slice fits, define one in
+  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md) following the
+  slice-naming convention (`^slice-[a-z0-9][a-z0-9-]*$`, where the slice's name
+  is its tag) and tag the included cases. A slice is case-granular: it may claim
+  some features of a module while deferring others, without redefining that
+  module's boundary.
+
+Record the claim as a `describe` (`describeOk`) envelope that validates against
+[core/schemas/conformance-adapter.schema.json](core/schemas/conformance-adapter.schema.json).
+That envelope is the slice's machine-readable form, and its `caseTags.include`
+tag is the slice's name. Inside it, `modules`, `dialects`, and `caseShapes` are
+broad filters and `caseTags` is the fine-grained slice filter; a case command is
+in-claim only when it satisfies all of them (see
+[core/spec/conformance-adapter-contract.md](core/spec/conformance-adapter-contract.md)).
+
+Then hold the `unsupported` discipline. For every case command outside the
+claimed slice — an out-of-slice case shape, dialect, module, or tag — the adapter
+MUST return `status: "unsupported"` (exit `10`), and it MUST NOT return
+`unsupported` for any in-slice case command. That two-sided rule is what makes the
+slice an honest claim rather than an ad hoc partial-pass list.
 
 ## Implementation Sequence
 

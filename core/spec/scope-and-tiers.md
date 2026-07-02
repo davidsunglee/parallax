@@ -153,6 +153,11 @@ parity" is a passing mechanical check, not a judgment call. See
 
 ## First-implementation Conformance Slice
 
+A slice's machine-readable form is a `describeOk` envelope validated against
+`conformance-adapter.schema.json`; its name is its `caseTags.include` tag. There
+is no separate slice file or schema — the canonical `describe` claim below is the
+slice, and the single include tag it names is the slice's identity.
+
 > **This is a named Conformance Slice, not a module tier.** `slice-mvp-1`
 > is **not** the **MVP tier** above. The tiers describe *parity scope* at
 > whole-module granularity (what a complete implementation must eventually cover);

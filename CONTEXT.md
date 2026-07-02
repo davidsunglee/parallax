@@ -180,8 +180,12 @@ _Avoid_: unmanaged entity, insert entity
 
 ### Conformance And Scope
 
+**Feature**:
+A named behavior within a module, identified by a feature tag on the compatibility cases that exercise it. Features are finer-grained than modules: module tiers cut parity scope at whole-module granularity, while a Conformance Slice cuts the corpus at feature granularity.
+_Avoid_: capability, sub-module, facet
+
 **Conformance Slice**:
-A declared subset of the compatibility corpus that an implementation claims through the conformance adapter for a specific implementation milestone.
+A declared, case-granular subset of the compatibility corpus that an implementation claims through the conformance adapter for a specific implementation milestone. Because cases carry both module and feature tags, a slice may include some features of a module while deferring others, without redefining that module's boundary.
 _Avoid_: module tier, partial pass list, ad hoc skip list
 
 **API Conformance Suite**:
