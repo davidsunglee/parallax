@@ -85,9 +85,7 @@ def test_schema_rejects_table_per_class() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     descriptor = copy.deepcopy(model.descriptor)
     descriptor["entities"][0]["inheritance"]["strategy"] = "table-per-class"
-    assert not _is_valid(descriptor), (
-        "table-per-class must be rejected by the metamodel schema"
-    )
+    assert not _is_valid(descriptor), "table-per-class must be rejected by the metamodel schema"
 
 
 def test_schema_rejects_subtype_without_parent() -> None:
@@ -206,9 +204,15 @@ def test_temporal_full_key_unique_index_is_not_re_emitted() -> None:
                 {"name": "businessTo", "type": "timestamp", "column": "thru_z"},
             ],
             "asOfAttributes": [
-                {"name": "businessDate", "fromColumn": "from_z", "toColumn": "thru_z",
-                 "axis": "business", "toIsInclusive": False, "infinity": "infinity",
-                 "default": "now"},
+                {
+                    "name": "businessDate",
+                    "fromColumn": "from_z",
+                    "toColumn": "thru_z",
+                    "axis": "business",
+                    "toIsInclusive": False,
+                    "infinity": "infinity",
+                    "default": "now",
+                },
             ],
             "indices": [
                 {"name": "milestone_pk", "attributes": ["id", "businessFrom"], "unique": True},

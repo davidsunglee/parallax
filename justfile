@@ -13,7 +13,7 @@ default:
 
 # ---------------------------------------------------------------------------
 # lint: every static check that does not require a database.
-#   - ruff (Python lint of the harness)
+#   - ruff format check + lint of the Python harness
 #   - markdownlint (spec prose)
 #   - JSON Schema meta-schema validation (the schemas are themselves valid)
 #   - schema validation of every fixture
@@ -21,8 +21,15 @@ default:
 # ---------------------------------------------------------------------------
 lint: lint-py lint-md lint-schemas
 
+format-py:
+    cd {{harness}} && uv run ruff format .
+
 lint-py:
+    cd {{harness}} && uv run ruff format --check .
     cd {{harness}} && uv run ruff check .
+
+py-typecheck:
+    cd {{harness}} && uv run basedpyright
 
 lint-md:
     pnpm exec markdownlint-cli2
@@ -62,6 +69,17 @@ ts-typecheck:
 # TypeScript unit / adapter tests (vitest) across the workspace.
 ts-test:
     pnpm run ts:test
+
+# TypeScript V8 line coverage. Emits text, json-summary, and lcov under
+# coverage/typescript, then prints the same markdown summary CI uses.
+ts-coverage:
+    pnpm run ts:typecheck
+    pnpm run ts:coverage
+    node languages/typescript/scripts/coverage-summary.mjs coverage/typescript/coverage-summary.json
+
+# TypeScript conformance-slice coverage. Emits JSON + markdown under coverage/.
+ts-conformance-coverage:
+    pnpm run ts:conformance-coverage
 
 # Package-export health across the 13-package ESM workspace: publint (each
 # package's `exports` / type entry points are consumable), attw (cross-resolver
@@ -105,10 +123,11 @@ test:
     cd {{harness}} && uv run pytest
 
 # verify: everything that must be green before merging (no Docker-less escape).
-# Folds in the TypeScript lanes: the static checks (typecheck / biome / dep-graph
-# / package-export health), both conformance lanes (Docker-free compile sweep +
-# Docker-backed run lane), and the Docker-backed developer-showcase lane (Phase 10c).
-verify: lint dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run ts-showcase test
+# Folds in the Python typecheck lane and the TypeScript static checks (typecheck
+# / biome / dep-graph / package-export health), both conformance lanes
+# (Docker-free compile sweep + Docker-backed run lane), and the Docker-backed
+# developer-showcase lane (Phase 10c).
+verify: lint py-typecheck dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run ts-showcase test
 
 # matrix: emit the compatibility-matrix report (implementations x databases).
 # Wires Postgres + MariaDB (Phase 10 added MariaDB as the second dialect).

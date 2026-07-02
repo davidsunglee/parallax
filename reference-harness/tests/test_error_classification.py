@@ -106,9 +106,7 @@ def test_mariadb_provider_classifies_via_errno() -> None:
 
 
 def _error_case(raw: dict) -> Case:
-    descriptor = {
-        "entity": {"name": "W", "table": "w", "attributes": []}
-    }
+    descriptor = {"entity": {"name": "W", "table": "w", "attributes": []}}
     model = Model(path=Path("m.yaml"), descriptor=descriptor)
     return Case(path=Path("0720-x.yaml"), raw=raw, model=model)
 
@@ -128,11 +126,7 @@ def test_case_recognizes_single_connection_error_shape() -> None:
         }
     )
     assert case.is_error
-    assert (
-        not case.is_conflict
-        and not case.is_coherence
-        and not case.is_scenario
-    )
+    assert not case.is_conflict and not case.is_coherence and not case.is_scenario
     assert case.error_class == "uniqueViolation"
     assert case.expected_native_code == {"postgres": "23505", "mariadb": 1062}
     assert case.concurrency is None
@@ -186,8 +180,10 @@ def test_schema_accepts_single_connection_error_case() -> None:
         "errorClass": "uniqueViolation",
         "expectedNativeCode": {"postgres": "23505", "mariadb": 1062},
         "goldenSql": {
-            "postgres": ["insert into widget (id, label) values (?, ?)",
-                         "insert into widget (id, label) values (?, ?)"]
+            "postgres": [
+                "insert into widget (id, label) values (?, ?)",
+                "insert into widget (id, label) values (?, ?)",
+            ]
         },
         "binds": [[1, "a"], [1, "b"]],
         "tags": ["m11", "error-classification", "uniqueViolation"],
@@ -297,5 +293,6 @@ def test_runner_assert_schema_raises_for_triggerless_error_case() -> None:
         }
     )
     import pytest
+
     with pytest.raises(CaseFailure, match="no trigger"):
         _assert_schema(case)

@@ -37,6 +37,9 @@ From the repo root via `just` (preferred), or directly here with `uv run`:
 uv run python -m reference_harness.schema_validate ../core/compatibility
 uv run python -m reference_harness.sql_lint ../core/compatibility
 uv run python -m reference_harness.dep_graph_check ../core/spec/dependency-graph.md
+uv run ruff format --check .
+uv run ruff check .
+uv run basedpyright
 uv run pytest          # boots Postgres via Testcontainers (Docker required)
 uv run python -m reference_harness.matrix ../core/compatibility
 ```

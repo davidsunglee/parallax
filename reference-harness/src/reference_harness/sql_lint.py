@@ -137,9 +137,7 @@ def lint_tree(compatibility_root: Path) -> list[str]:
                 try:
                     sqlglot.parse_one(sql, read=sqlglot_dialect(dialect))
                 except Exception as exc:  # noqa: BLE001
-                    errors.append(
-                        f"case {name}: precondition[{index}] does not parse: {exc}"
-                    )
+                    errors.append(f"case {name}: precondition[{index}] does not parse: {exc}")
 
     return errors
 

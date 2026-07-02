@@ -86,9 +86,7 @@ def main(argv: list[str]) -> int:
     _print_grid(matrix)
 
     all_green = all(
-        result["green"]
-        for impl in matrix["results"].values()
-        for result in impl.values()
+        result["green"] for impl in matrix["results"].values() for result in impl.values()
     )
     if not matrix["databases"]:
         print("no database providers selected (set PARALLAX_DATABASES)", file=sys.stderr)

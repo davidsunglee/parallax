@@ -71,13 +71,58 @@ _SIMPLE_IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
 # simple name (uppercase / special) is caught by the regex regardless.
 _RESERVED_WORDS = frozenset(
     {
-        "all", "and", "as", "asc", "between", "by", "case", "check", "column",
-        "constraint", "create", "default", "delete", "desc", "distinct", "drop",
-        "else", "end", "exists", "foreign", "from", "group", "having", "in",
-        "index", "insert", "into", "is", "join", "key", "like", "limit", "not",
-        "null", "on", "or", "order", "primary", "references", "select", "set",
-        "table", "then", "to", "union", "unique", "update", "user", "using",
-        "values", "when", "where",
+        "all",
+        "and",
+        "as",
+        "asc",
+        "between",
+        "by",
+        "case",
+        "check",
+        "column",
+        "constraint",
+        "create",
+        "default",
+        "delete",
+        "desc",
+        "distinct",
+        "drop",
+        "else",
+        "end",
+        "exists",
+        "foreign",
+        "from",
+        "group",
+        "having",
+        "in",
+        "index",
+        "insert",
+        "into",
+        "is",
+        "join",
+        "key",
+        "like",
+        "limit",
+        "not",
+        "null",
+        "on",
+        "or",
+        "order",
+        "primary",
+        "references",
+        "select",
+        "set",
+        "table",
+        "then",
+        "to",
+        "union",
+        "unique",
+        "update",
+        "user",
+        "using",
+        "values",
+        "when",
+        "where",
     }
 )
 
@@ -148,9 +193,7 @@ def _create_table(entity: Entity, dialect: str) -> str:
     columns: list[str] = []
     pk_columns: list[str] = []
     for attribute in entity.attributes:
-        column_type = _column_type(
-            attribute["type"], attribute.get("maxLength"), dialect
-        )
+        column_type = _column_type(attribute["type"], attribute.get("maxLength"), dialect)
         parts = [quote_identifier(attribute["column"], dialect), column_type]
         if not attribute.get("nullable", False):
             parts.append("not null")
@@ -189,9 +232,7 @@ def _create_table(entity: Entity, dialect: str) -> str:
     for index in entity.definition.get("indices", []):
         if not index.get("unique", False):
             continue
-        index_columns = [
-            _column_of_attr(entity, attr_name) for attr_name in index["attributes"]
-        ]
+        index_columns = [_column_of_attr(entity, attr_name) for attr_name in index["attributes"]]
         if set(index_columns) == set(pk_columns):
             continue
         quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)

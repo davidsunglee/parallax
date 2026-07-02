@@ -28,7 +28,8 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect
-from sqlglot.tokens import Token, TokenType
+from sqlglot.expressions.core import Expr
+from sqlglot.tokenizer_core import Token, TokenType
 
 # Map a parallax dialect identifier to the sqlglot dialect that parses/renders
 # it. ``mariadb`` (Phase 10, the second dialect behind the M11 seam) has no
@@ -48,6 +49,7 @@ def sqlglot_dialect(dialect: str) -> str:
     SQL lint so a ``goldenSql.mariadb`` statement is parsed under the right dialect.
     """
     return _SQLGLOT_DIALECT.get(dialect, dialect)
+
 
 # Token types that carry a value / identifier and MUST keep their original case
 # (identifiers are lowercased separately on the AST when unquoted).
@@ -91,8 +93,10 @@ _KEYWORD_VARS = frozenset({"SHARE", "OF"})
 # ``t0.`order``` on MariaDB).
 _QUOTE_CHAR = {"postgres": '"', "mariadb": "`"}
 
+_RenderTokenType = TokenType | str
 
-def _lowercase_unquoted_identifiers(tree: exp.Expression) -> None:
+
+def _lowercase_unquoted_identifiers(tree: Expr) -> None:
     for node in tree.walk():
         if isinstance(node, exp.Identifier) and not node.args.get("quoted"):
             node.set("this", node.this.lower())
@@ -101,7 +105,7 @@ def _lowercase_unquoted_identifiers(tree: exp.Expression) -> None:
 def _render_tokens(tokens: list[Token], dialect: str) -> str:
     """Reassemble a token stream into canonical single-space-separated SQL."""
     quote_char = _QUOTE_CHAR.get(dialect, '"')
-    parts: list[tuple[TokenType, str]] = []
+    parts: list[tuple[_RenderTokenType, str]] = []
     for index, token in enumerate(tokens):
         if token.token_type in _DROP_TOKENS:
             continue
@@ -123,9 +127,7 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
         )
         # A lock-clause keyword sqlglot tokenized as VAR (``SHARE``/``OF``) must
         # be lowercased like any other keyword (M3 rule 2), not preserved.
-        is_keyword_var = (
-            token.token_type is TokenType.VAR and text.upper() in _KEYWORD_VARS
-        )
+        is_keyword_var = token.token_type is TokenType.VAR and text.upper() in _KEYWORD_VARS
         if token.token_type not in _VALUE_TOKENS or is_function_name or is_keyword_var:
             text = text.lower()
         token_type = _FUNCTION_NAME if is_function_name else token.token_type
@@ -135,8 +137,8 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
     # ``)`` and no space after ``(`` ``.`` and a function name).
     out: list[str] = []
     no_space_before = {TokenType.COMMA, TokenType.DOT, TokenType.R_PAREN}
-    no_space_after = {TokenType.L_PAREN, TokenType.DOT, _FUNCTION_NAME}
-    prev_type: TokenType | None = None
+    no_space_after: set[_RenderTokenType] = {TokenType.L_PAREN, TokenType.DOT, _FUNCTION_NAME}
+    prev_type: _RenderTokenType | None = None
     for token_type, text in parts:
         if out and token_type not in no_space_before and prev_type not in no_space_after:
             out.append(" ")
@@ -156,7 +158,7 @@ class NonCanonicalError(ValueError):
     """
 
 
-def _inline_parameter_literal(tree: exp.Expression) -> exp.Expression | None:
+def _inline_parameter_literal(tree: Expr) -> Expr | None:
     """The first literal used as a *parameter* (which must therefore be a ``?``
     bind), or ``None``. A literal compared against a column, listed in an
     ``in`` / ``between`` against a column, used as a row ``limit``, or placed in
@@ -164,7 +166,7 @@ def _inline_parameter_literal(tree: exp.Expression) -> exp.Expression | None:
     ``1 = 0`` none-identity and the ``select 1`` EXISTS probe — are not
     parameters and are left alone."""
 
-    def col_vs_lit(a: exp.Expression, b: exp.Expression) -> bool:
+    def col_vs_lit(a: Expr, b: Expr) -> bool:
         return isinstance(a, exp.Column) and isinstance(b, exp.Literal)
 
     for node in tree.find_all(exp.Binary):
@@ -190,7 +192,7 @@ def _inline_parameter_literal(tree: exp.Expression) -> exp.Expression | None:
     return None
 
 
-def _assert_canonical(tree: exp.Expression) -> None:
+def _assert_canonical(tree: Expr) -> None:
     """Enforce the M3 canonical rules that re-rendering cannot. Parameters must
     be ``?`` binds (rule 4) in every statement; and for *read* (``SELECT``)
     statements the alias scheme is ``t0, t1, …`` in first-appearance order with
@@ -233,7 +235,7 @@ def _assert_canonical(tree: exp.Expression) -> None:
 _MARIADB_READ_LOCK = "lock in share mode"
 
 
-def _detach_read_lock(tree: exp.Expression, dialect: str) -> str:
+def _detach_read_lock(tree: Expr, dialect: str) -> str:
     """Pop a non-update ``exp.Lock`` for MariaDB, returning the canonical suffix.
 
     Returns ``""`` (and leaves the tree untouched) for any other dialect or when

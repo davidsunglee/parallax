@@ -10,8 +10,10 @@
       "ignoreUnresolved": ["#parallax"]
     }
   },
+  "ignoreDependencies": ["@vitest/coverage-v8"],
   "ignoreExportsUsedInFile": true,
   "ignore": [
+    ".uv-cache/**",
     "**/test/fixtures/**",
     "languages/typescript/vitest.config.ts",
     "languages/typescript/scripts/render-guide.mjs"

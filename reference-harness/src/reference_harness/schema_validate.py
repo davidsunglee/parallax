@@ -126,9 +126,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         if isinstance(case, dict) and isinstance(case.get("model"), str):
             referenced = compatibility_root / case["model"]
             if not referenced.is_file():
-                errors.append(
-                    f"case {case_path.name}: model {case['model']} does not exist"
-                )
+                errors.append(f"case {case_path.name}: model {case['model']} does not exist")
 
     return errors
 

@@ -28,6 +28,7 @@ COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
 # --- pure derivation -------------------------------------------------------
 
+
 def test_sequence_ids_basic() -> None:
     # init 1, inc 1, batch 1 -> 1,2,3
     assert _expected_sequence_ids(1, 1, 1, 3) == [1, 2, 3]
@@ -40,8 +41,8 @@ def test_sequence_ids_initial_and_increment() -> None:
 
 def test_sequence_ids_batch_partial_and_full() -> None:
     # init 1, inc 1, batch 3
-    assert _expected_sequence_ids(1, 1, 3, 2) == [1, 2]          # 2 of a block of 3
-    assert _expected_sequence_ids(1, 1, 3, 4) == [1, 2, 3, 4]    # full block + 1
+    assert _expected_sequence_ids(1, 1, 3, 2) == [1, 2]  # 2 of a block of 3
+    assert _expected_sequence_ids(1, 1, 3, 4) == [1, 2, 3, 4]  # full block + 1
 
 
 def test_sequence_ids_stride() -> None:
@@ -50,15 +51,16 @@ def test_sequence_ids_stride() -> None:
 
 
 def test_sequence_counter_reserves_full_blocks() -> None:
-    assert _expected_sequence_counter(1, 1, 1, 3) == 4          # 3 single-id blocks
-    assert _expected_sequence_counter(1000, 5, 1, 3) == 1015    # 3 blocks of stride 5
-    assert _expected_sequence_counter(1, 1, 3, 2) == 4          # 1 block of 3 reserved
-    assert _expected_sequence_counter(1, 1, 3, 4) == 7          # 2 blocks of 3 reserved
-    assert _expected_sequence_counter(100, 10, 2, 4) == 140     # 2 blocks of stride 20
-    assert _expected_sequence_counter(1, 1, 3, 0) == 1          # nothing allocated
+    assert _expected_sequence_counter(1, 1, 1, 3) == 4  # 3 single-id blocks
+    assert _expected_sequence_counter(1000, 5, 1, 3) == 1015  # 3 blocks of stride 5
+    assert _expected_sequence_counter(1, 1, 3, 2) == 4  # 1 block of 3 reserved
+    assert _expected_sequence_counter(1, 1, 3, 4) == 7  # 2 blocks of 3 reserved
+    assert _expected_sequence_counter(100, 10, 2, 4) == 140  # 2 blocks of stride 20
+    assert _expected_sequence_counter(1, 1, 3, 0) == 1  # nothing allocated
 
 
 # --- oracle against a fake DB ----------------------------------------------
+
 
 class _FakePkDb:
     """Returns canned rows for `_read_table`'s `select ... from <table> t0`."""

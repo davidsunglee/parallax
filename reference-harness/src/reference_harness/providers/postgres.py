@@ -11,9 +11,10 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
+from psycopg.abc import QueryNoTemplate
 from psycopg.adapt import Loader
 from psycopg.types.json import Jsonb
 from testcontainers.postgres import PostgresContainer
@@ -39,6 +40,11 @@ def _adapt(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return Jsonb(value)
     return value
+
+
+def _trusted_query(sql: str) -> QueryNoTemplate:
+    """Mark harness-controlled SQL as trusted for psycopg's LiteralString stubs."""
+    return cast(QueryNoTemplate, sql)
 
 
 class _IsoTimestamptzLoader(Loader):
@@ -106,7 +112,7 @@ class PostgresProvider:
     def apply_ddl(self, statements: Sequence[str]) -> None:
         with self._conn.cursor() as cur:
             for statement in statements:
-                cur.execute(statement)
+                cur.execute(_trusted_query(statement))
 
     def load(
         self,
@@ -121,7 +127,9 @@ class PostgresProvider:
         target = quote_identifier(table, self.dialect)
         sql = f"insert into {target} ({col_list}) values ({placeholders})"
         with self._conn.cursor() as cur:
-            cur.executemany(sql, [tuple(_adapt(value) for value in row) for row in rows])
+            cur.executemany(
+                _trusted_query(sql), [tuple(_adapt(value) for value in row) for row in rows]
+            )
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
         # The harness stores golden SQL with `?` placeholders (M3); psycopg uses
@@ -129,13 +137,16 @@ class PostgresProvider:
         # appears literally in our SQL outside a placeholder position.
         with self._conn.cursor() as cur:
             if binds:
-                cur.execute(sql.replace("?", "%s"), tuple(binds))
+                cur.execute(_trusted_query(sql.replace("?", "%s")), tuple(binds))
             else:
                 # No binds: execute the SQL verbatim with NO params, so psycopg
                 # does not treat literal `%` (e.g. a `like '%a%'` pattern in a
                 # naive referenceSql) as a parameter placeholder.
-                cur.execute(sql)
-            column_names = [desc.name for desc in cur.description]
+                cur.execute(_trusted_query(sql))
+            description = cur.description
+            if description is None:
+                raise RuntimeError("query produced no result columns")
+            column_names = [desc.name for desc in description]
             return [dict(zip(column_names, row, strict=True)) for row in cur.fetchall()]
 
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
@@ -143,9 +154,9 @@ class PostgresProvider:
         # positional placeholders for execution, mirroring `query`.
         with self._conn.cursor() as cur:
             if binds:
-                cur.execute(sql.replace("?", "%s"), tuple(binds))
+                cur.execute(_trusted_query(sql.replace("?", "%s")), tuple(binds))
             else:
-                cur.execute(sql)
+                cur.execute(_trusted_query(sql))
             return cur.rowcount
 
     def native_error_code(self, exc: Exception) -> str | None:
@@ -170,8 +181,8 @@ class PostgresProvider:
         conn = psycopg.connect(self._url, autocommit=False)
         try:
             with conn.cursor() as cur:
-                cur.execute("set deadlock_timeout = '100ms'")
-                cur.execute("set lock_timeout = '250ms'")
+                cur.execute(_trusted_query("set deadlock_timeout = '100ms'"))
+                cur.execute(_trusted_query("set lock_timeout = '250ms'"))
             conn.commit()  # persist the SETs beyond this implicit transaction
         except BaseException:
             conn.close()
@@ -215,9 +226,9 @@ class _PgTxSession:
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> None:
         with self._conn.cursor() as cur:
             if binds:
-                cur.execute(sql.replace("?", "%s"), tuple(binds))
+                cur.execute(_trusted_query(sql.replace("?", "%s")), tuple(binds))
             else:
-                cur.execute(sql)
+                cur.execute(_trusted_query(sql))
 
     def commit(self) -> None:
         self._conn.commit()

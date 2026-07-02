@@ -30,9 +30,7 @@ from reference_harness.case_runner import (
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
-COHERENCE_CASES = [
-    case for case in discover_cases(COMPATIBILITY_ROOT) if case.is_coherence
-]
+COHERENCE_CASES = [case for case in discover_cases(COMPATIBILITY_ROOT) if case.is_coherence]
 
 
 class _RecordingNode:
@@ -281,7 +279,8 @@ def test_write_step_with_sameobjectas_is_rejected() -> None:
         [
             {"node": "B", "kind": "read", "goldenSql": {"postgres": "select 1"}},
             {
-                "node": "A", "kind": "write",
+                "node": "A",
+                "kind": "write",
                 "goldenSql": {"postgres": "update account set balance = ?"},
                 "sameObjectAs": 0,
             },

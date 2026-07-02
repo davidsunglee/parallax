@@ -81,9 +81,7 @@ def test_business_only_ddl_primary_key_spans_the_business_from_column() -> None:
 def test_business_only_unique_index_matches_physical_primary_key() -> None:
     entity = _reservation_model().root_entity
     unique_index = next(
-        index
-        for index in entity.definition["indices"]
-        if index["name"] == "reservation_pk"
+        index for index in entity.definition["indices"] if index["name"] == "reservation_pk"
     )
     assert unique_index == {
         "name": "reservation_pk",
@@ -93,9 +91,7 @@ def test_business_only_unique_index_matches_physical_primary_key() -> None:
 
 
 def test_bitemporal_history_case_suppresses_both_axes() -> None:
-    history_case = next(
-        c for c in _phase8_cases() if c.path.stem == "0804-bitemporal-history"
-    )
+    history_case = next(c for c in _phase8_cases() if c.path.stem == "0804-bitemporal-history")
     business_history = history_case.operation["history"]
     processing_history = business_history["operand"]["history"]
     assert business_history["asOfAttr"] == "Position.businessDate"

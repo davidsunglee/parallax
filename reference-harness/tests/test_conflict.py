@@ -77,9 +77,7 @@ def test_conflict_case_precondition_is_optional_but_present_for_the_conflict() -
 
 
 def test_detached_update_loads_fixtures() -> None:
-    detached_updates = [
-        c for c in _cases() if c.is_write_sequence and "detached-update" in c.tags
-    ]
+    detached_updates = [c for c in _cases() if c.is_write_sequence and "detached-update" in c.tags]
     assert detached_updates, "no M9 detached-update write-sequence case discovered"
     for case in detached_updates:
         # The original persisted row must exist before the merge-back UPDATE.

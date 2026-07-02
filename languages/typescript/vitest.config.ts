@@ -11,7 +11,10 @@ export default defineConfig({
     include: ["packages/*/test/**/*.test.ts"],
     coverage: {
       provider: "v8",
+      all: true,
       include: ["packages/*/src/**/*.ts"],
+      reporter: ["text", "json-summary", "lcov"],
+      reportsDirectory: "../../coverage/typescript",
     },
   },
 });

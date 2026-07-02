@@ -192,9 +192,7 @@ def _percentile(samples: list[float], pct: float) -> float:
     return ordered[rank]
 
 
-def _run_workload(
-    workload: dict[str, Any], db: DatabaseProvider
-) -> dict[str, Any]:
+def _run_workload(workload: dict[str, Any], db: DatabaseProvider) -> dict[str, Any]:
     dialect = db.dialect
     is_cache_hit = workload.get("kind") == "cache-hit"
     is_write = workload.get("kind") == "write"
