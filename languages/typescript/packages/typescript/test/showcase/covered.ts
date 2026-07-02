@@ -1,5 +1,5 @@
 /**
- * The developer-showcase **coverage map**: every `first-implementation-mvp` case
+ * The developer-showcase **coverage map**: every `slice-mvp-1` case
  * grouped by the family file that showcases it (Phase 10c).
  *
  * `coverage.test.ts` asserts the union of these ids plus the skip manifest equals

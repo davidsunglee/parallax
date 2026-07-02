@@ -2,7 +2,7 @@
  * Developer-showcase **coverage** check (Phase 10c): no in-slice case is silently
  * absent.
  *
- * Every `first-implementation-mvp` case MUST be either showcased (in a family file)
+ * Every `slice-mvp-1` case MUST be either showcased (in a family file)
  * or listed in the skip manifest with a reason. This test discovers the whole slice
  * off the corpus and asserts that partition exactly — so adding a corpus case, or
  * dropping a showcase, fails the build until the coverage map or the skip manifest
@@ -14,11 +14,11 @@ import { expect, it } from "vitest";
 import { idOf, SHOWCASED } from "./covered.js";
 import { SKIP_MANIFEST, SKIPPED_IDS } from "./skip-manifest.js";
 
-/** The four-digit ids of the whole `first-implementation-mvp` slice, from the corpus. */
+/** The four-digit ids of the whole `slice-mvp-1` slice, from the corpus. */
 function sliceIds(): readonly string[] {
   return discoverCasePaths()
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
-    .filter(({ path }) => loadCase(path).tags.includes("first-implementation-mvp"))
+    .filter(({ path }) => loadCase(path).tags.includes("slice-mvp-1"))
     .map(({ id }) => id)
     .sort();
 }
@@ -26,7 +26,7 @@ function sliceIds(): readonly string[] {
 const SLICE = sliceIds();
 const SHOWCASED_IDS = new Set(SHOWCASED.map(idOf));
 
-it("discovers the whole first-implementation-mvp slice (99 cases)", () => {
+it("discovers the whole slice-mvp-1 slice (99 cases)", () => {
   expect(SLICE.length).toBe(99);
 });
 

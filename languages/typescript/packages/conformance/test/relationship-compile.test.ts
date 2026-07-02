@@ -46,7 +46,7 @@ function flatRelationshipCases(): readonly { id: string; path: string }[] {
     .filter(({ id }) => /^03\d\d$/.test(id) && !TEMPORAL_M7_EXCLUSIONS.has(id))
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
     .filter(
-      ({ loaded }) => loaded.shape === "read" && loaded.tags.includes("first-implementation-mvp"),
+      ({ loaded }) => loaded.shape === "read" && loaded.tags.includes("slice-mvp-1"),
     )
     .filter(({ loaded }) => flatGolden(loaded) !== undefined)
     .map(({ id, path }) => ({ id, path }));

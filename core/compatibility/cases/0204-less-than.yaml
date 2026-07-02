@@ -1,6 +1,6 @@
 # lessThan — strict `<` range predicate.
 model: models/orders.yaml
-tags: [m2, lessThan, first-implementation-mvp]
+tags: [m2, lessThan, slice-mvp-1]
 operation:
   lessThan:
     attr: Order.qty

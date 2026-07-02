@@ -43,7 +43,7 @@ lint-schemas:
 # Mechanically check the normative module-dependency graph is a DAG with legal
 # edge directions, AND run the Phase 12 coverage gate: every in-scope module
 # (MVP / fast-follow / definitely-do, read from scope-and-tiers.md) has at least
-# one compatibility fixture tagged to it. Then run the first-implementation-mvp
+# one compatibility fixture tagged to it. Then run the slice-mvp-1
 # profile gate: the cases tagged into that Conformance Slice are consistent with
 # its canonical describe claim in scope-and-tiers.md (no stray module, every
 # claimed module covered, every shape in claim, all Postgres goldens).
@@ -96,7 +96,7 @@ ts-conformance-compile:
     pnpm exec vitest run --root languages/typescript packages/conformance
 
 # The Docker-backed conformance run lane: provision `postgres:17` via
-# Testcontainers and run the full `first-implementation-mvp` slice end-to-end
+# Testcontainers and run the full `slice-mvp-1` slice end-to-end
 # (rows / graph / tableState / affectedRows + roundTrips), asserting the
 # case-matrix report is green. Docker must be running.
 ts-conformance-run:
@@ -105,7 +105,7 @@ ts-conformance-run:
 
 # The Docker-backed developer-showcase lane (Phase 10c): run the idiomatic `px.*` /
 # `px.transaction` showcase over the shipped `@parallax/db-postgres` adapter against
-# `postgres:17`, mirroring the whole `first-implementation-mvp` slice (reads / deep
+# `postgres:17`, mirroring the whole `slice-mvp-1` slice (reads / deep
 # fetch / temporal / transactions / locking) — asserting managed shapes AND the
 # corpus results, plus the no-drift + no-silent-gap coverage guards. Also renders
 # the developer guide from the (tested) snippets and checks it is up to date. A

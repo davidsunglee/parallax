@@ -4,7 +4,7 @@
  * This is the Phase-8 "is the whole slice green?" sweep, at the adapter's
  * contract boundary (the runner's `runCompile`, the same path the CLI drives):
  *
- *  - **Full compile sweep.** `test.each` over EVERY `first-implementation-mvp`
+ *  - **Full compile sweep.** `test.each` over EVERY `slice-mvp-1`
  *    tagged case (99): each compiles to an `ok` envelope, and for a `read`-shaped
  *    case (whose golden is a single string) the emitted SQL + binds equal the
  *    golden by construction. Write / scenario / conflict goldens are multi-string
@@ -39,12 +39,12 @@ import {
   TYPESCRIPT_ADAPTER,
 } from "../src/index.js";
 
-/** The full `first-implementation-mvp` tagged slice, in discovery order. */
+/** The full `slice-mvp-1` tagged slice, in discovery order. */
 function taggedCases(): readonly { id: string; loaded: LoadedCase }[] {
   return discoverCasePaths()
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
-    .filter(({ loaded }) => loaded.tags.includes("first-implementation-mvp"))
+    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"))
     .map(({ id, loaded }) => ({ id, loaded }));
 }
 
@@ -57,7 +57,7 @@ function readGolden(loaded: LoadedCase): string | undefined {
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the whole first-implementation-mvp slice (99 cases)", () => {
+  it("discovers the whole slice-mvp-1 slice (99 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case.
     expect(CASES.length).toBe(99);

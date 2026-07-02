@@ -203,7 +203,7 @@ def test_benchmark_rejects_legacy_metrics_shape() -> None:
     assert list(_validator().iter_errors(benchmark))
 
 
-# --- the canonical first-implementation-mvp slice claim ----------------------
+# --- the canonical slice-mvp-1 slice claim ----------------------
 
 
 def test_canonical_slice_claim_is_schema_valid() -> None:
@@ -225,7 +225,7 @@ def test_canonical_slice_claim_carries_no_profile_wire_key() -> None:
 
 def test_canonical_slice_claim_is_include_driven() -> None:
     claim = json.loads(_slice_claim_block())
-    assert claim["capabilities"]["caseTags"] == {"include": ["first-implementation-mvp"]}
+    assert claim["capabilities"]["caseTags"] == {"include": ["slice-mvp-1"]}
 
 
 # --- TypeScript V1 adopts the canonical slice (anti-drift) --------------------
@@ -239,7 +239,7 @@ def test_typescript_v1_claim_is_schema_valid() -> None:
 
 
 def test_typescript_v1_capabilities_equal_the_canonical_slice() -> None:
-    # TS V1 *is* the canonical first-implementation-mvp slice (Resolved
+    # TS V1 *is* the canonical slice-mvp-1 slice (Resolved
     # Question E): its capabilities must equal the canonical claim's
     # capabilities exactly, so the two can never silently diverge. Only the
     # adapter identity (language/name/version) is allowed to differ.

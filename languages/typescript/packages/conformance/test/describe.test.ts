@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, describe as group, it } from "vitest";
 import {
   describe as buildDescribe,
-  FIRST_IMPLEMENTATION_MVP_CAPABILITIES,
+  SLICE_MVP_1_CAPABILITIES,
   TYPESCRIPT_ADAPTER,
   validateEnvelope,
 } from "../src/index.js";
@@ -48,14 +48,14 @@ group("describe", () => {
         name: "@parallax/typescript",
         version: "0.1.0",
       },
-      capabilities: FIRST_IMPLEMENTATION_MVP_CAPABILITIES,
+      capabilities: SLICE_MVP_1_CAPABILITIES,
     });
   });
 
   it("claims exactly the canonical slice capabilities (anti-drift)", () => {
     // Only the adapter identity may differ from the reference claim; the
     // capabilities must match the embedded block byte-for-byte in meaning.
-    expect(FIRST_IMPLEMENTATION_MVP_CAPABILITIES).toEqual(canonicalSliceCapabilities());
+    expect(SLICE_MVP_1_CAPABILITIES).toEqual(canonicalSliceCapabilities());
   });
 
   it("validates against conformance-adapter.schema.json", () => {

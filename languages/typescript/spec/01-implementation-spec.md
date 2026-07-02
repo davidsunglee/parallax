@@ -458,7 +458,7 @@ options. They come from the clock strategy supplied to `parallax({ clock })`, so
 production code cannot rewrite audit history while tests can inject a fixed
 clock.
 
-The canonical TypeScript V1 `first-implementation-mvp` slice requires only the
+The canonical TypeScript V1 `slice-mvp-1` slice requires only the
 audit-only processing-temporal write surface below, plus the temporal read
 surface in §1.3. Business-temporal-only writes and bounded bitemporal
 rectangle-split writes are specified here as the post-slice M7 surface, but they
@@ -689,13 +689,13 @@ V1 in keeping with the thin-slice posture (cf. TS-0054).
 
 ### 4.5 V1 conformance capability claims
 
-TypeScript V1 **is** the canonical `first-implementation-mvp` Conformance Slice
+TypeScript V1 **is** the canonical `slice-mvp-1` Conformance Slice
 declared in [`scope-and-tiers.md`](../../../core/spec/scope-and-tiers.md#first-implementation-conformance-slice)
 ([TS-0064](../docs/adr/0064-adopt-first-implementation-mvp-slice.md)). The V1
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
-the slice is **include-driven** (`caseTags.include: ["first-implementation-mvp"]`),
-so V1 claims precisely the ~97 cases tagged for the slice and returns
+the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
+so V1 claims precisely the 99 cases tagged for the slice and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads** + audit-only
 processing-temporal), and optimistic-locking surfaces but defers aggregation,
@@ -731,7 +731,7 @@ capabilities in this shape:
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict"],
     "caseTags": {
-      "include": ["first-implementation-mvp"]
+      "include": ["slice-mvp-1"]
     },
     "commands": ["describe", "compile", "run"],
     "provisioning": "self-managed"
@@ -745,7 +745,7 @@ These `capabilities` are mechanically asserted equal to the canonical slice clai
 only the `adapter` identity (`language` / `name` / `version`) differs. The
 important V1 rule is the slice boundary:
 
-- The single tag `first-implementation-mvp` **is** the slice: a case is claimed
+- The single tag `slice-mvp-1` **is** the slice: a case is claimed
   precisely when it carries that tag and also passes the broad module / dialect /
   shape filters above. Selection is by *presence* of the tag, never by absence, so
   the V1 claim is immune to the corpus's tag hazards (e.g. the single-case
@@ -757,7 +757,7 @@ important V1 rule is the slice boundary:
   identity-cache and query-cache scenario slice is deferred by TS-0054. Those
   cache/identity cases are untagged and outside the V1 claim.
 - The `scenario` shape is **inside** the claim: the read-your-own-writes scenario
-  `0607-read-your-own-writes` is tagged `first-implementation-mvp` and runs as
+  `0607-read-your-own-writes` is tagged `slice-mvp-1` and runs as
   part of the M8 unit-of-work slice. The deferred M8 cache `scenario` cases
   (identity / query cache) are simply untagged, so they fall outside the claim
   without excluding the shape.
@@ -818,7 +818,7 @@ the adapter must return `ok` or `error`.
   check). Conformance is exposed through the **separate** `parallax-conformance`
   CLI, not the generated `#parallax` API. The canonical V1 command claim exposes
   `describe` / `compile` / `run`; `benchmark` is the post-slice M13 command
-  described in §9 and is not claimed by the `first-implementation-mvp` slice —
+  described in §9 and is not claimed by the `slice-mvp-1` slice —
   see [§4](#4-test-double-integration-m12-dq15).
 - **Where generated artifacts live / regeneration.** Generated output is derived
   code: gitignored by default, written to `./.parallax/generated` (outside
@@ -1125,7 +1125,7 @@ implemented.
 `expectRoundTrips` invariant is binding for V1 compatibility cases — see
 [TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md).**
 TypeScript records the shared `M13` methodology now, but the canonical
-`first-implementation-mvp` conformance slice does **not** claim module `m13` or
+`slice-mvp-1` conformance slice does **not** claim module `m13` or
 the `benchmark` command. A V1 adapter adopting that slice may therefore return
 `unsupported` for `parallax-conformance benchmark`. The benchmark command and
 numeric targets are enabled by a later M13 slice, after a real implementation can

@@ -4,7 +4,7 @@
 # `lease_id in (?)` with binds = parent keys only. Lease 10 -> notes signed,
 # renewed.
 model: models/lease.yaml
-tags: [m4, m7, temporal, relationship, deepFetch, propagation, mixed, first-implementation-mvp]
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, mixed, slice-mvp-1]
 operation:
   deepFetch:
     operand:

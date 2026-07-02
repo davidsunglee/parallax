@@ -2,7 +2,7 @@
  * Read-algebra **run lane** over the `00xx` + `02xx` corpus (Testcontainers).
  *
  * Provisions a single `postgres:17` once, then for each `read`-shaped case tagged
- * `first-implementation-mvp` runs the adapter's `runRun` (the same orchestration
+ * `slice-mvp-1` runs the adapter's `runRun` (the same orchestration
  * the CLI uses) with the concrete composition-root provider injected, and
  * compares the observed `rows` against the case's `expectedRows` under the M12
  * adapter-boundary rules (exact decimal, boolean never `== 1`, microsecond
@@ -39,7 +39,7 @@ function readRunCases(): readonly { id: string; loaded: LoadedCase }[] {
     .filter(({ id }) => /^(00|02)\d\d$/.test(id) && !OUT_OF_PHASE.has(id))
     .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
     .filter(
-      ({ loaded }) => loaded.shape === "read" && loaded.tags.includes("first-implementation-mvp"),
+      ({ loaded }) => loaded.shape === "read" && loaded.tags.includes("slice-mvp-1"),
     );
 }
 

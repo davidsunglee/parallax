@@ -113,7 +113,7 @@ test runner wires to the **database provider**.
 - **(decide and record)** The named **Conformance Slice** this first build
   claims, its canonical `describe` claim, and the `unsupported` discipline for
   out-of-slice cases. The recommended first slice is the include-driven
-  [`first-implementation-mvp`](scope-and-tiers.md#first-implementation-conformance-slice)
+  [`slice-mvp-1`](scope-and-tiers.md#first-implementation-conformance-slice)
   slice — a Postgres-only, ~97-case subset whose canonical `describe` claim lives
   in `scope-and-tiers.md` and is the single source of truth (a slice is *not* a
   module tier; it may defer parts of a module). Record the adapter's `capabilities`

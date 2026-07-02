@@ -7,7 +7,7 @@
 # columns so the result carries the current row's open bound (`out_z = infinity`)
 # alongside a finite, superseded `out_z` — exercising the native-infinity read.
 model: models/balance.yaml
-tags: [m7, m3, temporal mvp, history, audit-only, first-implementation-mvp]
+tags: [m7, m3, temporal mvp, history, audit-only, slice-mvp-1]
 operation:
   history:
     operand:

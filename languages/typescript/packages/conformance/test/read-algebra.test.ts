@@ -2,7 +2,7 @@
  * M3 read-algebra **compile lane** over the real corpus (Docker-free).
  *
  * Drives the adapter's `runCompile` — the same path the CLI exercises — over
- * every `read`-shaped `00xx` + `02xx` case tagged `first-implementation-mvp`,
+ * every `read`-shaped `00xx` + `02xx` case tagged `slice-mvp-1`,
  * asserting the emitted SQL equals `goldenSql.postgres` and the emitted binds
  * equal the case's authored `binds`. This proves the compiler against the real
  * metamodel-backed resolver (projection resolved from the case, attribute types
@@ -30,14 +30,14 @@ const OUT_OF_PHASE: ReadonlyMap<string, string> = new Map([
   ["0003", "scalar bytes encode(...) projection — not predicate algebra"],
 ]);
 
-/** The `00xx` + `02xx` read cases tagged `first-implementation-mvp`, in scope. */
+/** The `00xx` + `02xx` read cases tagged `slice-mvp-1`, in scope. */
 function readAlgebraCases(): readonly { id: string; path: string }[] {
   return discoverCasePaths()
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .filter(({ id }) => /^(00|02)\d\d$/.test(id) && !OUT_OF_PHASE.has(id))
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
     .filter(
-      ({ loaded }) => loaded.shape === "read" && loaded.tags.includes("first-implementation-mvp"),
+      ({ loaded }) => loaded.shape === "read" && loaded.tags.includes("slice-mvp-1"),
     )
     .map(({ id, path }) => ({ id, path }));
 }

@@ -14,7 +14,7 @@
 # infinity]`, appended after the IN list. Mirrors 0325 (business-past deep fetch) but
 # proves propagation survives the directive peel; `limit 1` keeps only Policy 1.
 model: models/policy.yaml
-tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, orderBy, limit, first-implementation-mvp]
+tags: [m4, m7, temporal, relationship, deepFetch, propagation, bitemporal, orderBy, limit, slice-mvp-1]
 operation:
   deepFetch:
     operand:

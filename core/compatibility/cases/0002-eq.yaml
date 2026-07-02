@@ -9,7 +9,7 @@
 # Postgres and MariaDB (no dialect divergence), so this case carries goldenSql for
 # BOTH dialects and the harness runs it against both — the simplest matrix row.
 model: models/orders.yaml
-tags: [m2, m12, eq, dialect, first-implementation-mvp]
+tags: [m2, m12, eq, dialect, slice-mvp-1]
 operation:
   eq:
     attr: Order.id

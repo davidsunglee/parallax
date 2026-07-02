@@ -11,7 +11,7 @@
 # A naive reading would fetch `Order.items` twice (once per path); the harness
 # asserts exactly 3 statements, proving the prefix is shared.
 model: models/orders.yaml
-tags: [m4, m5, deepFetch, shared-prefix, relationship, first-implementation-mvp]
+tags: [m4, m5, deepFetch, shared-prefix, relationship, slice-mvp-1]
 operation:
   deepFetch:
     operand:

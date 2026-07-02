@@ -2,7 +2,7 @@
 # appends a trailing `%` wildcard and escapes any wildcard chars in the literal.
 # `A-` has no wildcard chars, so the pattern is simply `A-%`.
 model: models/orders.yaml
-tags: [m2, startsWith, string, first-implementation-mvp]
+tags: [m2, startsWith, string, slice-mvp-1]
 operation:
   startsWith:
     attr: Order.sku

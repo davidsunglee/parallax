@@ -6,7 +6,7 @@ language-neutral contract remains the core specification in
 choices the core deliberately leaves open.
 
 This spec describes the first TypeScript API shape. TypeScript V1 adopts the
-canonical `first-implementation-mvp` conformance slice, which is smaller than
+canonical `slice-mvp-1` conformance slice, which is smaller than
 the core MVP tier: it claims only cases tagged for that slice. Some core
 capabilities are therefore recorded here as future TypeScript surface decisions
 but deferred from the first conformance claim. A deferred capability is not
@@ -598,7 +598,7 @@ results, not runtime capability branching.
 
 The conformance adapter reports claimed modules through `parallax-conformance
 describe`. TypeScript V1 claims the M8 transaction and unit-of-work cases tagged
-`first-implementation-mvp`, including read-your-own-writes, but it does not yet
+`slice-mvp-1`, including read-your-own-writes, but it does not yet
 claim the M8 identity-cache and query-cache scenario slice. Until that cache
 slice is claimed, repeated reads of the same primary key are not guaranteed to
 return the same JavaScript object instance. A resolved `ParallaxList` remains

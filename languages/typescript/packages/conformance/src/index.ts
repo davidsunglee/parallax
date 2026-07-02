@@ -32,7 +32,7 @@ export {
 } from "./deepfetch-plan.js";
 export {
   describe,
-  FIRST_IMPLEMENTATION_MVP_CAPABILITIES,
+  SLICE_MVP_1_CAPABILITIES,
   TYPESCRIPT_ADAPTER,
 } from "./describe.js";
 export {

@@ -9,7 +9,7 @@ const { join } = require("node:path");
  * `core/spec/dependency-graph.md`, mapped onto the `@parallax/*` packages by
  * `languages/typescript/spec/01-implementation-spec.md` §7.
  *
- * Trimmed (design Q4): only the 13 packages the `first-implementation-mvp`
+ * Trimmed (design Q4): only the 13 packages the `slice-mvp-1`
  * slice actually implements are scaffolded, so `lifecycle` (M9),
  * `benchmark` (M13), and `coherence` (M14) — and every numbered edge that
  * touches them — are intentionally absent. They are added when their slice

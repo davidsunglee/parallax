@@ -6,7 +6,7 @@
 # so the expected row is stable text; the Postgres provider reads time/uuid as
 # stable text for the same reason.
 model: models/scalars.yaml
-tags: [m0, m1, m3, scalar, postgres, first-implementation-mvp]
+tags: [m0, m1, m3, scalar, postgres, slice-mvp-1]
 operation:
   all: {}
 goldenSql:

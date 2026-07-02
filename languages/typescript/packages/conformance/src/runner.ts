@@ -36,7 +36,7 @@ import { columnOrder, compile, ddlForDescriptor, quoteIdentifier } from "@parall
 import { appendReadLock } from "@parallax/transactions";
 import { buildConflictPlan, isConflict } from "./conflict.js";
 import { buildDeepFetchPlan, type DeepFetchPlan, isDeepFetch } from "./deepfetch-plan.js";
-import { FIRST_IMPLEMENTATION_MVP_CAPABILITIES } from "./describe.js";
+import { SLICE_MVP_1_CAPABILITIES } from "./describe.js";
 import type { LoadedCase } from "./discover.js";
 import { inClaim } from "./gate.js";
 import type { CompatibilityDatabaseProvider } from "./provider.js";
@@ -645,7 +645,7 @@ function gateOrNonOk(
     { shape: loaded.shape, tags: loaded.tags },
     command,
     dialect,
-    FIRST_IMPLEMENTATION_MVP_CAPABILITIES,
+    SLICE_MVP_1_CAPABILITIES,
   );
   if (gate.inClaim) {
     return undefined;

@@ -9,7 +9,7 @@
 # rows landed; authoring the child insert first would violate the FK against real
 # data.
 model: models/orders.yaml
-tags: [m8, m3, write-sequence, insert, fk-ordering, transactions cache, first-implementation-mvp]
+tags: [m8, m3, write-sequence, insert, fk-ordering, transactions cache, slice-mvp-1]
 writeSequence:
   - mutation: insert
     entity: Order

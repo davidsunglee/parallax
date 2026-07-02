@@ -153,7 +153,7 @@ parity" is a passing mechanical check, not a judgment call. See
 
 ## First-implementation Conformance Slice
 
-> **This is a named Conformance Slice, not a module tier.** `first-implementation-mvp`
+> **This is a named Conformance Slice, not a module tier.** `slice-mvp-1`
 > is **not** the **MVP tier** above. The tiers describe *parity scope* at
 > whole-module granularity (what a complete implementation must eventually cover);
 > a Conformance Slice — per `CONTEXT.md`, "a declared subset of the compatibility
@@ -164,10 +164,10 @@ parity" is a passing mechanical check, not a judgment call. See
 >
 > **Naming-collision warning.** The word "MVP" appears in two unrelated places: the
 > **MVP tier** (a parity tier, gated by `dep_graph_check --coverage`) and the
-> **`first-implementation-mvp` slice** (this section, gated by
+> **`slice-mvp-1` slice** (this section, gated by
 > `dep_graph_check --profile`). They are different things. The MVP tier claims whole
 > modules — including `M8` *with* its identity cache and query cache, and PK-
-> generation strategies. The `first-implementation-mvp` slice claims a strictly
+> generation strategies. The `slice-mvp-1` slice claims a strictly
 > smaller, agent-buildable first build: Postgres only, the M8 transaction/unit-of-
 > work behavior but **not** its caches, **no** PK generation, no aggregation, no
 > value objects, no inheritance, no M9 detach, no error classification, no
@@ -176,12 +176,20 @@ parity" is a passing mechanical check, not a judgment call. See
 > confusion this slice removes.
 
 The slice is **include-driven**: membership is the single tag
-`first-implementation-mvp`, appended to the included cases' `tags` lists, and a
+`slice-mvp-1`, appended to the included cases' `tags` lists, and a
 case is *in the slice* precisely when it carries that tag and also passes the
 broad module / dialect / shape filters of the claim below. Nothing is selected by
 the *absence* of a tag, so the slice is immune to the corpus's known tag hazards
 (the `mariadb` literal tag on only one MariaDB-golden case; the single-case
 `identity cache` tag).
+
+Slice tags follow a **naming convention**: a slice's name *is* its tag —
+lowercase and matching `^slice-[a-z0-9][a-z0-9-]*$`. The `slice-` prefix makes
+slice tags structurally recognizable in a case's flat `tags` array, the way
+`^m\d+$` marks module tags, and it is followed by a short, language-neutral
+purpose name plus an ordinal. `slice-mvp-1` is the first such slice, leaving room
+for successors (`slice-mvp-2`) and siblings (`slice-temporal-1`). The convention
+is recorded in `docs/adr/0028-slice-tags-follow-the-slice-naming-convention.md`.
 
 The canonical `describe` claim below is the **single source of truth** for the
 slice. It is a legal conformance-adapter `describe` document (it validates against
@@ -200,7 +208,7 @@ silently drift from it.
     "modules": ["m0","m1","m2","m3","m4","m5","m7","m8","m10","m11","m12"],
     "dialects": ["postgres"],
     "caseShapes": ["read","writeSequence","scenario","conflict"],
-    "caseTags": { "include": ["first-implementation-mvp"] },
+    "caseTags": { "include": ["slice-mvp-1"] },
     "commands": ["describe","compile","run"],
     "provisioning": "self-managed"
   }

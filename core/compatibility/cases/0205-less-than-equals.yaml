@@ -1,6 +1,6 @@
 # lessThanEquals — inclusive `<=` range predicate.
 model: models/orders.yaml
-tags: [m2, lessThanEquals, first-implementation-mvp]
+tags: [m2, lessThanEquals, slice-mvp-1]
 operation:
   lessThanEquals:
     attr: Order.qty

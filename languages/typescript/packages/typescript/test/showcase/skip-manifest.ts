@@ -3,7 +3,7 @@
  *
  * A case is skipped ONLY when the thing it proves is harness/serde machinery a
  * developer never authors — not a developer-facing surface. The coverage test
- * (`coverage.test.ts`) asserts every `first-implementation-mvp` case is either
+ * (`coverage.test.ts`) asserts every `slice-mvp-1` case is either
  * showcased or listed HERE with a reason, so a silent gap fails the build.
  *
  * The one skipped case in the slice is `0222`, whose distinguishing purpose is the
@@ -20,7 +20,7 @@
  *    concurrent writer) is a SUB-STEP of the showcased locking cases (`0703` /
  *    `0708`), applied harness-side — those cases ARE showcased;
  *  - the out-of-V1 `createUntil` / `updateUntil` / `terminateUntil` writes
- *    (`0810`–`0812`) are not tagged `first-implementation-mvp`, so they are not in
+ *    (`0810`–`0812`) are not tagged `slice-mvp-1`, so they are not in
  *    the slice at all.
  */
 
@@ -32,7 +32,7 @@ export interface SkippedCase {
   readonly reason: string;
 }
 
-/** The explicit skip list over the `first-implementation-mvp` slice. */
+/** The explicit skip list over the `slice-mvp-1` slice. */
 export const SKIP_MANIFEST: readonly SkippedCase[] = [
   {
     id: "0222",
