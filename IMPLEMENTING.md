@@ -70,6 +70,10 @@ collection behavior, dependency enforcement, or performance targets.
   tests. Use unit tests for internal seams, edge cases, and diagnostics.
 - Postgres is the first required dialect. Additional dialects are added behind
   the M11 seam.
+- The reference harness's internals are non-normative and
+  MUST NOT be used as design input for a language implementation; the binding
+  inputs are the spec modules, `core/schemas/`, the compatibility corpus, and
+  the conformance-adapter contract.
 
 ## Planning Deliverables
 

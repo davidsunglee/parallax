@@ -4,6 +4,11 @@ This handoff note is the operational path for the first TypeScript
 implementation. The normative contract remains `core/spec`, `core/schemas`,
 `core/compatibility`, and `languages/typescript/spec/01-implementation-spec.md`.
 
+The reference harness's internals are non-normative and
+MUST NOT be used as design input for a language implementation; the binding
+inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the
+conformance-adapter contract.
+
 ## First Claim
 
 Implement the canonical `slice-mvp-1` conformance slice first. It is

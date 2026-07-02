@@ -135,6 +135,11 @@ an `expectedGraph`, not just flat rows.
 ORM and it does not compile operations into SQL. Its job is to verify that the
 spec artifacts are coherent.
 
+The reference harness's internals are non-normative and
+MUST NOT be used as design input for a language implementation; the binding
+inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the
+conformance-adapter contract.
+
 For each case the harness:
 
 1. Validates the descriptor, operation, and case JSON/YAML against schemas.
@@ -147,7 +152,7 @@ For each case the harness:
 7. Checks SQL normalization and deterministic descriptor/operation serde.
 
 Database-specific behavior is isolated behind the provider seam in
-`reference-harness/parallax_harness/providers/`. The built-in providers cover
+`reference-harness/src/reference_harness/providers/`. The built-in providers cover
 Postgres and MariaDB through Testcontainers, including type mapping, temporal
 infinity handling, bind translation, JSON values, read-lock syntax, and peer
 connections for coherence cases.

@@ -7,6 +7,7 @@
 - Implement capabilities in dependency-graph order from `core/spec/dependency-graph.md`, and preserve any language-module dependency-boundary enforcement.
 - Use compatibility corpus cases as the primary behavioral verification. Add language unit tests for internal seams, diagnostics, and failure modes.
 - Expose implementation conformance through `core/spec/conformance-adapter-contract.md`; do not invent a different language-specific conformance surface.
+- The reference harness's internals are non-normative and MUST NOT be used as design input for a language implementation; the binding inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the conformance-adapter contract.
 - For implementation changes, run the smallest relevant language conformance slice plus feasible root verification. Report any skipped database-backed checks.
 
 ## Commit Messages
