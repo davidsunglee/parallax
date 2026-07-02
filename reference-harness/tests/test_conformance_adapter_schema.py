@@ -62,9 +62,9 @@ def _slice_claim_block() -> str:
 
 
 def _ts_v1_claim_block() -> str:
-    """Extract the TypeScript V1 describe JSON fenced under §4.5."""
+    """Extract the TypeScript V1 describe JSON fenced under §1.1."""
     ts_spec = _TS_SPEC.read_text(encoding="utf-8")
-    return _first_json_fence_under_heading(ts_spec, "### ", "4.5 V1 conformance capability claims")
+    return _first_json_fence_under_heading(ts_spec, "### ", "1.1 V1 conformance capability claims")
 
 
 def _valid_describe() -> dict:

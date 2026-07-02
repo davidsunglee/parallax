@@ -11,7 +11,7 @@
  * conformance/compile lane (SQL text is not a developer-facing surface).
  *
  * **Optimistic locking.** A developer reads a managed object (capturing its
- * `version`), and a later `update` gates on THAT version (spec §3: conflicts are
+ * `version`), and a later `update` gates on THAT version (spec §4: conflicts are
  * caller-driven). A concurrent writer is modeled by the corpus `precondition` (raw
  * SQL) applied OUT OF BAND between the read and the write — harness-side, exactly
  * as the run lane does. `0703` conflicts (stale version → 0 rows →
@@ -150,7 +150,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
       const account = "Account";
       const pred = new Predicate({ eq: { attr: "Account.id", value: 2 } });
       // Attempt 1 (stale, gate on 1) conflicts; retry re-reads the fresh version (2)
-      // and re-applies — a caller-driven retry loop (spec §3).
+      // and re-applies — a caller-driven retry loop (spec §4).
       const result = await f.px.transaction(async (tx) => {
         try {
           return await tx

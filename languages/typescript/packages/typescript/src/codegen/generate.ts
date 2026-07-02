@@ -1,5 +1,5 @@
 /**
- * The generate driver (spec §5) — the code path `parallax generate` and
+ * The generate driver (spec §7) — the code path `parallax generate` and
  * `parallax generate --check` run.
  *
  * `generate(config, cwd)` resolves the descriptor glob against `cwd`, parses each
@@ -7,7 +7,7 @@
  * metamodel, builds the codegen model, emits the `#parallax` barrel, and writes
  * it under `config.output`. `checkGenerate` runs the same pipeline **without
  * writing** (validating descriptors + generation), so `--check` fails if
- * generation would fail without touching the filesystem (spec §5: generated files
+ * generation would fail without touching the filesystem (spec §7: generated files
  * are uncommitted, so this is not a git-drift check).
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -38,7 +38,7 @@ function parseDescriptor(path: string): unknown {
 
 /**
  * Lift a parsed descriptor to its flat entity array. A descriptor is either a
- * single `entity` or an `entities` array (spec §2.1); both forms merge into one
+ * single `entity` or an `entities` array (spec §3.1); both forms merge into one
  * metamodel so relationships can name siblings across files.
  */
 function entitiesOf(descriptor: unknown): readonly unknown[] {
@@ -92,7 +92,7 @@ export function generate(config: ParallaxConfig, cwd: string = process.cwd()): G
 }
 
 /**
- * Validate descriptors + generation WITHOUT writing (spec §5, `generate
+ * Validate descriptors + generation WITHOUT writing (spec §7, `generate
  * --check`). Returns the plan on success; throws with a descriptive message on
  * any failure the generate would have hit.
  */

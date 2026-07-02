@@ -61,9 +61,9 @@ export type NeutralScalar =
   | `decimal(${number},${number})`;
 
 /**
- * The structural JSON value type (spec §2.2.1) — the public runtime mapping for
+ * The structural JSON value type (spec §3.2.1) — the public runtime mapping for
  * the M0 `json` scalar and for value-object properties (which V1 exposes as
- * unstructured JSON, spec §1.1). The generated `#parallax` barrel re-exports it
+ * unstructured JSON, spec §2.1). The generated `#parallax` barrel re-exports it
  * from here alongside {@link ParallaxDecimal}.
  */
 export type ParallaxJsonValue =
@@ -118,7 +118,7 @@ export class ParallaxDecimal {
    * full — even a whole-valued `number` is a binary float that cannot represent
    * an exact decimal, and the spec's `decimal(p,s)` create/update input is
    * `ParallaxDecimal | string` with `number` rejected to avoid precision drift
-   * (`spec/01-implementation-spec.md` §2.2.1). Decimals must arrive as exact
+   * (`spec/01-implementation-spec.md` §3.2.1). Decimals must arrive as exact
    * strings.
    */
   static from(input: string | bigint | ParallaxDecimal): ParallaxDecimal {
@@ -224,7 +224,7 @@ export function timestampToWire(instant: Temporal.Instant): string {
 
 /**
  * Materialize a raw `timestamptz` string from the driver into a
- * `Temporal.Instant` at the adapter boundary (the §2.2.1 "normalize at the
+ * `Temporal.Instant` at the adapter boundary (the §3.2.1 "normalize at the
  * adapter boundary" rule). Drivers parse `timestamptz` into a millisecond JS
  * `Date` by default, which would lose µs precision; the adapter registers
  * raw-string parsers and materializes the instant itself.

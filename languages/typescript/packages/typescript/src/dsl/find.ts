@@ -1,5 +1,5 @@
 /**
- * `find(...)` → canonical M2 operation (spec §1.3, §1.9).
+ * `find(...)` → canonical M2 operation (spec §2.3, §2.9).
  *
  * Serializes a {@link Predicate} plus the read options (`orderBy`, `limit`,
  * `includes`/deep-fetch, and the temporal `asOf` / `range` / `history` axes)
@@ -23,7 +23,7 @@ import type {
 } from "@parallax/operation";
 import { NavigationPath, OrderKeyExpression, Predicate } from "./expression.js";
 
-/** The current-row token — serializes to the core `now` temporal pin (spec §1.9). */
+/** The current-row token — serializes to the core `now` temporal pin (spec §2.9). */
 export type TemporalPoint = Temporal.Instant | "now";
 
 /** A half-open temporal range `[start, end)` on one axis. */
@@ -36,7 +36,7 @@ export interface TemporalRange {
 export type TemporalAxis = "processing" | "business";
 
 /**
- * The temporal read options (spec §1.9). `asOf`, `range`, and `history` are
+ * The temporal read options (spec §2.9). `asOf`, `range`, and `history` are
  * mutually exclusive per axis; supplying an axis the entity does not declare is
  * a validation error the caller (a typed `find`) is responsible for — the
  * serializer maps axis names to the entity's as-of-attribute refs it is given.
@@ -63,17 +63,17 @@ export interface AxisRefs {
   readonly business?: AsOfAttributeRef;
 }
 
-/** The non-temporal read options (spec §1.3). */
+/** The non-temporal read options (spec §2.3). */
 export interface FindOptions {
-  /** Eager-fetch navigation set; longer paths imply their prefixes (spec §1.6). */
+  /** Eager-fetch navigation set; longer paths imply their prefixes (spec §2.6). */
   readonly includes?: readonly NavigationPath[];
-  /** Generated sort keys (`orderBy: [Order.qty.desc()]`, spec §1.7). */
+  /** Generated sort keys (`orderBy: [Order.qty.desc()]`, spec §2.7). */
   readonly orderBy?: readonly OrderKeyExpression[];
   /** Row cap, bound as `?` (`0224`). */
   readonly limit?: number;
   /** Emit a `select distinct` (`0226`). */
   readonly distinct?: boolean;
-  /** Temporal read axes (spec §1.9); serialized outermost. */
+  /** Temporal read axes (spec §2.9); serialized outermost. */
   readonly temporal?: TemporalReadOptions;
   /** The entity's axis → as-of-attribute-ref mapping (supplied by the typed `find`). */
   readonly axisRefs?: AxisRefs;
@@ -127,7 +127,7 @@ export function buildFindOperation(predicate: Predicate, options: FindOptions = 
  * `asOf` (the M7 default-injection rule reads an unwrapped axis as current); an
  * explicit non-`now` `asOf`, a `range`, or a `history` axis each emit their
  * wrapper. The business axis wraps outside the processing axis so business
- * binds precede processing binds (spec §1.9, `0801` / `0803`).
+ * binds precede processing binds (spec §2.9, `0801` / `0803`).
  */
 function applyTemporal(
   operand: Operation,
@@ -174,7 +174,7 @@ function applyAxis(
       },
     };
   }
-  // An explicit `now` still serializes to an `asOf … now` wrapper (spec §1.9:
+  // An explicit `now` still serializes to an `asOf … now` wrapper (spec §2.9:
   // `"now"` in an asOf option serializes to the core `now` pin — the corpus
   // `0502` authors it explicitly; an OMITTED axis is left unwrapped).
   return { asOf: { operand, asOfAttr, date: temporalDate(asOf as TemporalPoint) } };

@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   // Typed finder + generated entity symbol → canonical operation → compiled SQL.
   // A predicate literal is the JSON wire form the operation carries (`42`), which
   // the compiler normalizes against the attribute's M0 `int64` type; the resolved
-  // row's `id` materializes back to `bigint` (spec §2.2.1).
+  // row's `id` materializes back to `bigint` (spec §3.2.1).
   const grace = await px.orders.find(Order.id.eq(42)).single();
   process.stdout.write(`found order: ${JSON.stringify(grace, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}\n`);
 

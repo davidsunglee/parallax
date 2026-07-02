@@ -136,7 +136,7 @@ dependency.
 
 Each per-language spec records its chosen tool and the module → package/crate
 mapping (see the
-[language-spec template](language-spec-template.md), §7).
+[language-spec template](language-spec-template.md), §9).
 
 ### The coverage gate
 

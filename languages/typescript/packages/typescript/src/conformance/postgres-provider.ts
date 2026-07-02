@@ -16,7 +16,7 @@
  *    the adapter's `bytea` serializer (the `\xDEADBEEF` hex wire form; a blanket
  *    `String(v)` would flatten a `Buffer` to `""`).
  *  - **Wire rendering** — the adapter returns **managed** scalars (`bigint` /
- *    `ParallaxDecimal` / `Temporal.*` / `Uint8Array` / string, §2.2.1); the runner
+ *    `ParallaxDecimal` / `Temporal.*` / `Uint8Array` / string, §3.2.1); the runner
  *    grades in the **wire domain**, so the provider renders each returned scalar
  *    to its canonical neutral wire form with the core serializer (`toWire`, which
  *    dispatches to `timestampToWire` / `toFixedString` / `bytesToHex`). *Managed at
@@ -51,7 +51,7 @@ function asParams(binds: readonly unknown[]): DriverParams {
 
 /**
  * Render one column value the adapter returned (a **managed** scalar) to its
- * canonical neutral **wire** form (§2.2.1). Delegates to the core serializer, the
+ * canonical neutral **wire** form (§3.2.1). Delegates to the core serializer, the
  * SAME renderer the run envelope uses — so this is "truly just formatting" by
  * construction (`bigint` → decimal string, `ParallaxDecimal` → fixed string,
  * `Temporal.Instant` → µs UTC string, `Temporal.PlainDate`/`PlainTime` → ISO,

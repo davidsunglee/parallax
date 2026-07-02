@@ -1,5 +1,5 @@
 /**
- * The `#parallax` barrel generator (spec §5) — descriptor-first codegen over the
+ * The `#parallax` barrel generator (spec §7) — descriptor-first codegen over the
  * canonical metamodel. Generated output is uncommitted / gitignored (ADR-0003)
  * and produced by `parallax generate`.
  */

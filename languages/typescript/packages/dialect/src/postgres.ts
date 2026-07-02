@@ -6,7 +6,7 @@
  * the identifier-quoting rule, the shared read-lock suffix, and the
  * **raw-string type parsers** that materialize `timestamptz` / `numeric` /
  * `int8` / `bytea` into `Temporal.Instant` / `ParallaxDecimal` / `bigint` /
- * `Uint8Array` at the adapter boundary (the §2.2.1 "normalize at the adapter
+ * `Uint8Array` at the adapter boundary (the §3.2.1 "normalize at the adapter
  * boundary" rule). The concrete Testcontainers provider (composition root)
  * delegates SQL execution and coercion to this seam — it owns no SQL text and no
  * type rules of its own.
@@ -242,7 +242,7 @@ export function bytesFromDb(raw: string): Uint8Array {
 
 /**
  * Materialize a raw `date` string (`2024-03-01`) into a `Temporal.PlainDate` —
- * a calendar date with no time or offset (the managed carrier for `date`, §2.2.1).
+ * a calendar date with no time or offset (the managed carrier for `date`, §3.2.1).
  */
 export function dateFromDb(raw: string): Temporal.PlainDate {
   return Temporal.PlainDate.from(raw.trim());
@@ -251,7 +251,7 @@ export function dateFromDb(raw: string): Temporal.PlainDate {
 /**
  * Materialize a raw `time` string (`12:34:56`, optionally with fractional
  * seconds) into a `Temporal.PlainTime` — a wall-clock time with no date or
- * offset (the managed carrier for `time`, §2.2.1).
+ * offset (the managed carrier for `time`, §3.2.1).
  */
 export function timeFromDb(raw: string): Temporal.PlainTime {
   return Temporal.PlainTime.from(raw.trim());

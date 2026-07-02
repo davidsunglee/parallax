@@ -1,5 +1,5 @@
 /**
- * The fluent query DSL expression surface (spec §1.5–§1.7).
+ * The fluent query DSL expression surface (spec §2.5–§2.7).
  *
  * This is the **entity-agnostic runtime** the generated entity symbols hang off
  * (`codegen/`): an `AttributeExpression` knows only its qualified metamodel ref
@@ -33,7 +33,7 @@ export interface StringPredicateOptions {
  * A predicate expression — a thin, immutable wrapper over one canonical
  * {@link Operation} node, exposing the boolean combinators (`and` / `or` / `not`
  * / `group`) that serialize to the M2 boolean junctions. Boolean chaining is
- * left-associative; explicit precedence is postfix `.group()` (spec §1.5).
+ * left-associative; explicit precedence is postfix `.group()` (spec §2.5).
  */
 export class Predicate {
   constructor(private readonly node: Operation) {}
@@ -62,7 +62,7 @@ export class Predicate {
     return new Predicate({ not: { operand: this.node } });
   }
 
-  /** Postfix precedence marker → the canonical `group` wrapper (spec §1.5). */
+  /** Postfix precedence marker → the canonical `group` wrapper (spec §2.5). */
   group(): Predicate {
     return new Predicate({ group: { operand: this.node } });
   }
@@ -111,7 +111,7 @@ export class AttributeExpression {
     return new Predicate({ [tag]: body } as unknown as Operation);
   }
 
-  /** `= ?` (`0002`). `eq(null)` is rejected in favor of {@link isNull} (spec §1.5). */
+  /** `= ?` (`0002`). `eq(null)` is rejected in favor of {@link isNull} (spec §2.5). */
   eq(value: Exclude<Literal, null>): Predicate {
     return this.cmp("eq", value);
   }
@@ -183,7 +183,7 @@ export class AttributeExpression {
 
   /**
    * `in (?, …)` (`0216`). Empty membership normalizes before serialization:
-   * `in([])` → `none` (spec §1.5).
+   * `in([])` → `none` (spec §2.5).
    */
   in(values: readonly Exclude<Literal, null>[]): Predicate {
     if (values.length === 0) {
@@ -192,7 +192,7 @@ export class AttributeExpression {
     return new Predicate({ in: { attr: this.ref, values } });
   }
 
-  /** `not in (?, …)` (`0217`). Empty membership → `all` (spec §1.5). */
+  /** `not in (?, …)` (`0217`). Empty membership → `all` (spec §2.5). */
   notIn(values: readonly Exclude<Literal, null>[]): Predicate {
     if (values.length === 0) {
       return new Predicate({ all: {} });
@@ -201,7 +201,7 @@ export class AttributeExpression {
   }
 
   /**
-   * A named write assignment (`Balance.value.set(150)`), spec §3. The write DSL is
+   * A named write assignment (`Balance.value.set(150)`), spec §4. The write DSL is
    * explicit assignment arrays (not partial objects); the runtime's write surface
    * consumes `{ attr, value }`. The `attr` is the DSL attribute NAME (the part
    * after the class), which the runtime resolves to a physical column.
@@ -256,7 +256,7 @@ type StringTags = {
 
 /**
  * A to-many relationship reference (`Order.items`). To-many relationships
- * require an explicit quantifier (spec §1.6): `exists` / `notExists`, optionally
+ * require an explicit quantifier (spec §2.6): `exists` / `notExists`, optionally
  * filtered by an inner predicate over the child entity (`0308` multi-hop).
  */
 export class ToManyRelationshipExpression {
@@ -280,7 +280,7 @@ export class ToManyRelationshipExpression {
    * Navigate the relationship, filtering the root by an inner predicate over the
    * related entity (`0301` `Order.items.navigate(OrderItem.sku.eq("A-100"))`). A
    * `navigate` lowers to the same correlated-EXISTS semi-join as `exists`, but is a
-   * distinct algebra node that always carries an inner predicate (spec §1.6). Used
+   * distinct algebra node that always carries an inner predicate (spec §2.6). Used
    * for both to-many and to-one navigations (`0307` / `0321`).
    */
   navigate(inner: Predicate): Predicate {

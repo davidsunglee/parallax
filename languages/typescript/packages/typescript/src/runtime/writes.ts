@@ -1,5 +1,5 @@
 /**
- * The developer-runtime **write surface** (spec §3.1), executed at the composition
+ * The developer-runtime **write surface** (spec §4.1), executed at the composition
  * root over the injected `ParallaxDatabase`.
  *
  * The typed `tx.<entity>.create / update / terminate / delete` methods let an
@@ -15,7 +15,7 @@
  *    M10 versioned `UPDATE` (gate on the read version, advance it) and classifies
  *    the affected count (`0703` / `0704` / `0707` / `0708`); WITHOUT one it is a
  *    plain keyed `UPDATE` that neither gates on nor advances the version, one per
- *    selected key (`0604` / `0613`) — optimistic locking is caller-driven (spec §3);
+ *    selected key (`0604` / `0613`) — optimistic locking is caller-driven (spec §4);
  *  - **audit-only (`unitemporal-processing`) writes** chain milestones through the
  *    M7 `auditWriteStatements` generator: `create` opens `[processingInstant,
  *    infinity)`, `update` closes the current row and chains a new one carrying the
@@ -25,12 +25,12 @@
  * Named inputs map to canonical `columnOrder` binds via the entity metamodel, and
  * scalar values render to the neutral WIRE form the driver binds (the same
  * `toWire` the adapter uses). Processing instants come ONLY from the transaction
- * clock (spec §3.1) — never a per-operation option — so production code cannot
+ * clock (spec §4.1) — never a per-operation option — so production code cannot
  * rewrite audit history.
  *
  * The `@parallax/db` port returns rows, not an affected-row count, so a set-based
  * write runs with a trailing `returning 1`; `rows.length` is then the affected
- * count (spec §3 `WriteResult.affectedRows`). This is the idiomatic way an ORM
+ * count (spec §4 `WriteResult.affectedRows`). This is the idiomatic way an ORM
  * reads the affected count through a rows-only port and stays driver-agnostic.
  */
 
@@ -49,13 +49,13 @@ import { columnOrder, quoteIdentifier } from "@parallax/sql";
 import { combineWrites, type WriteStep } from "@parallax/transactions";
 import type { Predicate } from "../dsl/find.js";
 
-/** The result of a set-based write (`update` / `terminate` / `delete`), spec §3. */
+/** The result of a set-based write (`update` / `terminate` / `delete`), spec §4. */
 export interface WriteResult {
   /** The number of physical rows the write affected. */
   readonly affectedRows: number;
 }
 
-/** Thrown when a versioned write expects one row and affects zero (spec §3). */
+/** Thrown when a versioned write expects one row and affects zero (spec §4). */
 export class ParallaxOptimisticLockError extends Error {
   constructor(entity: string) {
     super(`optimistic-lock conflict writing '${entity}': the row was modified concurrently`);
@@ -64,7 +64,7 @@ export class ParallaxOptimisticLockError extends Error {
   }
 }
 
-/** A named attribute assignment (`Balance.value.set(150)`), spec §3. */
+/** A named attribute assignment (`Balance.value.set(150)`), spec §4. */
 export interface Assignment {
   /** The attribute NAME (DSL property name) the assignment targets. */
   readonly attr: string;
@@ -72,12 +72,12 @@ export interface Assignment {
   readonly value: unknown;
 }
 
-/** Options accepted by `update` (spec §3): the explicit assignment array. */
+/** Options accepted by `update` (spec §4): the explicit assignment array. */
 export interface UpdateOptions {
   readonly set: readonly Assignment[];
   /**
    * For an optimistically-locked entity, the version the caller READ off the
-   * managed object earlier — the value the versioned UPDATE gates on (spec §3:
+   * managed object earlier — the value the versioned UPDATE gates on (spec §4:
    * conflicts are caller-driven). When omitted, the current version is read at
    * write time. A conflict (a concurrent writer advanced the row since the read)
    * throws `ParallaxOptimisticLockError`.
@@ -132,7 +132,7 @@ export class TransactionWriter {
     this.insertBuffer.push({ entity, binds });
   }
 
-  /** Force any buffered inserts to flush (before a dependent read, spec §3). */
+  /** Force any buffered inserts to flush (before a dependent read, spec §4). */
   async flush(): Promise<void> {
     await this.flushInserts();
   }
@@ -140,7 +140,7 @@ export class TransactionWriter {
   /**
    * `update`. An audit-only entity chains milestones (close + new current row); an
    * optimistically-locked entity issues the M10 versioned UPDATE (throwing on a
-   * conflict, spec §3); a plain entity issues one keyed UPDATE.
+   * conflict, spec §4); a plain entity issues one keyed UPDATE.
    */
   async update(
     entity: EntityMetadata,
@@ -151,7 +151,7 @@ export class TransactionWriter {
     if (isAuditOnly(entity)) {
       return this.auditUpdate(entity, predicate, options);
     }
-    // Optimistic locking is CALLER-DRIVEN (spec §3): a developer opts into a
+    // Optimistic locking is CALLER-DRIVEN (spec §4): a developer opts into a
     // version-gated write by supplying the `expectedVersion` they read off the
     // managed object. WITHOUT it, an `update` is a plain keyed UPDATE that neither
     // gates on nor advances the version (`0604` / `0613`) — even on an entity that
@@ -366,7 +366,7 @@ export class TransactionWriter {
   /**
    * A plain non-temporal `update`: one keyed UPDATE for the selected pk that
    * applies EVERY authored assignment (`set col1 = ?, col2 = ?, … where pk = ?`),
-   * binding the values in declaration order followed by the pk (spec §3: `update`
+   * binding the values in declaration order followed by the pk (spec §4: `update`
    * applies the explicit assignment array). An empty `set` is a no-op.
    */
   private async plainUpdate(
@@ -405,7 +405,7 @@ export class TransactionWriter {
   /**
    * Execute a set-based DML statement and return its affected-row count. The port
    * returns rows, not a count, so a trailing `returning 1` makes `rows.length` the
-   * affected count (spec §3). Every issued statement increments the round-trip count.
+   * affected count (spec §4). Every issued statement increments the round-trip count.
    */
   private async exec(sql: string, binds: readonly unknown[]): Promise<number> {
     const rows = await this.database.execute(`${sql} returning 1`, binds);

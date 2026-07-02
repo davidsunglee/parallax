@@ -1,7 +1,7 @@
 /**
  * API Conformance Suite — **transactions + audit writes** family (Phase 10c): the
  * write surface (`px.transaction(async tx => tx.<entity>.create / update /
- * terminate)`, spec §3.1) written as a developer would, run against `postgres:17`
+ * terminate)`, spec §4.1) written as a developer would, run against `postgres:17`
  * through the SHIPPED `@parallax/db-postgres` adapter, asserting the corpus's
  * `expectedTableState` (write sequences) or `expectRows` (read-your-own-writes).
  *

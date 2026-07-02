@@ -1,5 +1,5 @@
 /**
- * `parallax init` — the conservative setup assistant (spec §5).
+ * `parallax init` — the conservative setup assistant (spec §7).
  *
  * Scaffolds a `parallax.config.js` (if absent) and adds explicit
  * `parallax:generate` / `parallax:check` scripts to the project `package.json`;
@@ -43,7 +43,7 @@ export function configScaffold(): string {
   ].join("\n");
 }
 
-/** The scripts `init` adds by default (spec §5). */
+/** The scripts `init` adds by default (spec §7). */
 const DEFAULT_SCRIPTS: Record<string, string> = {
   "parallax:generate": "parallax generate",
   "parallax:check": "parallax generate --check",

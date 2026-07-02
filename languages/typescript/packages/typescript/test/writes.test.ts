@@ -5,11 +5,11 @@
  * the API Conformance Suite authors parent inserts before children and only ever assigns a
  * single plain column — masking these developer-runtime bugs:
  *
- *  1. FK-safe insert ordering (spec §3, `0612`): buffered inserts flush with a
+ *  1. FK-safe insert ordering (spec §4, `0612`): buffered inserts flush with a
  *     referenced parent's INSERT before a dependent child's, EVEN WHEN the
  *     developer authored the child `create` first (`combineWrites` does not infer
  *     FK dependencies, so the runtime must topologically order them itself).
- *  2. Plain `update` applies the WHOLE assignment array (spec §3), not just the
+ *  2. Plain `update` applies the WHOLE assignment array (spec §4), not just the
  *     first entry — `update <t> set c1 = ?, c2 = ? where pk = ?`, values in
  *     declaration order then the pk.
  *
@@ -70,7 +70,7 @@ function indexOf(queries: readonly RecordedQuery[], needle: string): number {
   return queries.findIndex((q) => q.sql.includes(needle));
 }
 
-describe("TransactionWriter FK-safe insert ordering (spec §3, 0612)", () => {
+describe("TransactionWriter FK-safe insert ordering (spec §4, 0612)", () => {
   it("orders a parent INSERT before a child even when the child was created first", async () => {
     const db = new StubDatabase([]);
     const px = createParallax({ descriptor: ORDERS, database: db });
@@ -122,7 +122,7 @@ describe("TransactionWriter FK-safe insert ordering (spec §3, 0612)", () => {
   });
 });
 
-describe("TransactionWriter plain update applies every assignment (spec §3)", () => {
+describe("TransactionWriter plain update applies every assignment (spec §4)", () => {
   it("sets ALL columns in a multi-assignment plain update and binds values then pk", async () => {
     const db = new StubDatabase([]);
     const px = createParallax({ descriptor: ACCOUNT, database: db });

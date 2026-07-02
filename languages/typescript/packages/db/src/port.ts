@@ -40,7 +40,7 @@ export interface ParallaxDatabase {
   /**
    * Execute a compiled statement (`?`-placeholder SQL + ordered binds) and
    * return its rows. Row scalars are **managed values** normalized at the
-   * adapter boundary (§2.2.1), not raw driver output.
+   * adapter boundary (§3.2.1), not raw driver output.
    */
   execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]>;
   /**

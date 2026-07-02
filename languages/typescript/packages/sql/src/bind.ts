@@ -7,7 +7,7 @@
  * a double (`9223372036854775807`, `1234567890123456.78`) is preserved as its
  * exact source **string** (`serde/canonical.ts` `parseYamlLossless`). This module
  * resolves each literal against its M0 neutral type and normalizes it to the
- * canonical wire form the conformance contract compares (§2.2.1):
+ * canonical wire form the conformance contract compares (§3.2.1):
  *
  *  - `int64`   → keep a float-safe JS number as-is; a preserved source string or
  *               a `bigint` → canonical base-10 string. A non-safe JS number is
