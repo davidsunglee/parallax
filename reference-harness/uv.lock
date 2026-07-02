@@ -443,7 +443,7 @@ dev = [
 requires-dist = [
     { name = "basedpyright", marker = "extra == 'dev'", specifier = ">=1.31" },
     { name = "jsonschema", specifier = ">=4.21" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
     { name = "pymysql", specifier = ">=1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
