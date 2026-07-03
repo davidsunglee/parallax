@@ -14,6 +14,7 @@
  * typing is layered on by the generated wrapper.
  */
 
+import { toWire } from "@parallax/core";
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 import { ParallaxTransientError } from "@parallax/db";
 import { ParallaxList } from "@parallax/lists";
@@ -521,21 +522,43 @@ export class ParallaxTransaction {
   }
 
   /**
-   * Record the version this unit of work observed for each hydrated versioned row
-   * (`entity#pk → version`), so a subsequent keyed update gates on it (optimistic
-   * mode) or advances from it (both modes). A non-versioned entity records nothing.
+   * Record the optimistic key this unit of work observed for each hydrated row
+   * (`entity#pk → version | in_z`), so a subsequent gated write gates on it
+   * (optimistic mode) or advances from it (versioned entities, both modes):
+   *
+   *  - a VERSIONED entity records the observed `version` NUMBER;
+   *  - a processing-axis TEMPORAL (audit-only) entity — which carries no version
+   *    column — records the observed processing-from (`in_z`) as its wire STRING, the
+   *    version analogue an optimistic close gates on (M7/M10). The current-milestone
+   *    read hydrates the current `in_z`.
+   *
+   * A non-versioned, non-temporal entity records nothing.
    */
   private recordObserved(entity: EntityMetadata, rows: readonly ParallaxRow[]): void {
-    const version = entity.versionAttribute();
     const pk = entity.primaryKey()[0];
-    if (version === undefined || pk === undefined) {
+    if (pk === undefined) {
+      return;
+    }
+    const version = entity.versionAttribute();
+    if (version !== undefined) {
+      for (const row of rows) {
+        const pkValue = row[pk.name];
+        const versionValue = row[version.name];
+        if (pkValue != null && versionValue != null) {
+          this.observed.set(observedKey(entity.name, pkValue), Number(versionValue));
+        }
+      }
+      return;
+    }
+    const processingFrom = entity.processingFromAttribute();
+    if (processingFrom === undefined) {
       return;
     }
     for (const row of rows) {
       const pkValue = row[pk.name];
-      const versionValue = row[version.name];
-      if (pkValue != null && versionValue != null) {
-        this.observed.set(observedKey(entity.name, pkValue), Number(versionValue));
+      const inZValue = row[processingFrom.name];
+      if (pkValue != null && inZValue != null) {
+        this.observed.set(observedKey(entity.name, pkValue), toWire(inZValue) as string);
       }
     }
   }

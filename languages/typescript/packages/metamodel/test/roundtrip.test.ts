@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { assertRoundTrip, canonical, deserialize, serialize } from "@parallax/serde";
 import { expect, describe as group, it } from "vitest";
-import { deriveTemporal, Metamodel, validateDescriptor } from "../src/index.js";
+import { deriveTemporal, Metamodel, normalizeEntity, validateDescriptor } from "../src/index.js";
 
 /**
  * Resolve a repo-root-relative path from this test file. The metamodel package
@@ -113,6 +113,49 @@ group("default surfacing", () => {
     const version = account.versionAttribute();
     expect(version?.name).toBe("version");
     expect(version?.optimisticLocking).toBe(true);
+  });
+
+  it("derives the temporal optimistic key from the processing-from column (in_z), M7/M10", () => {
+    const balance = Metamodel.fromDescriptor(loadDescriptor("balance.yaml")).entity("Balance");
+    // A processing-axis temporal entity carries no version column; its optimistic key
+    // is derived from the processing-from column (in_z) — the version analogue.
+    const inZ = balance.processingFromAttribute();
+    expect(inZ?.name).toBe("processingFrom");
+    expect(inZ?.column).toBe("in_z");
+    expect(balance.versionAttribute()).toBeUndefined();
+    // A non-temporal entity has no processing axis, so no derived key.
+    const order = Metamodel.fromDescriptor(loadDescriptor("orders.yaml")).entity("Order");
+    expect(order.processingFromAttribute()).toBeUndefined();
+  });
+
+  it("rejects optimisticLocking + asOfAttributes on one entity (invalid composition, M1/M7/M10)", () => {
+    // A temporal entity DERIVES its optimistic key from the processing-from column, so
+    // combining an explicit `optimisticLocking` attribute with `asOfAttributes` is invalid.
+    const bad = JSON.parse(JSON.stringify(loadDescriptor("balance.yaml"))) as {
+      entity: { attributes: { name: string; optimisticLocking?: boolean }[] };
+    };
+    const value = bad.entity.attributes.find((a) => a.name === "value");
+    if (value === undefined) {
+      throw new Error("balance model has no 'value' attribute");
+    }
+    value.optimisticLocking = true;
+    // Rejected at the SCHEMA layer (the entity `contains` rule) — `fromDescriptor`
+    // validates before it normalizes, so it fails here.
+    expect(validateDescriptor(bad).valid).toBe(false);
+    expect(() => Metamodel.fromDescriptor(bad)).toThrow();
+    // Rejected ALSO by the imperative normalize check (defense-in-depth), which owns
+    // the descriptive message — exercised directly by bypassing the schema layer.
+    expect(() =>
+      normalizeEntity({
+        name: "Bad",
+        table: "bad",
+        attributes: [
+          { name: "id", type: "int64", column: "id", primaryKey: true },
+          { name: "v", type: "int64", column: "v", optimisticLocking: true },
+        ],
+        asOfAttributes: [{ name: "p", fromColumn: "in_z", toColumn: "out_z", axis: "processing" }],
+      }),
+    ).toThrow(/optimisticLocking|asOfAttributes/);
   });
 
   it("surfaces asOfAttribute defaults (toIsInclusive/infinity/default)", () => {

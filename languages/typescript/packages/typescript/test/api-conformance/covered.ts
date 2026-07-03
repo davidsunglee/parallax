@@ -3,7 +3,7 @@
  * grouped by the family file that exercises it (Phase 10c).
  *
  * `coverage.test.ts` asserts the union of these ids plus the skip manifest equals
- * the whole 116-case slice — so a case that is neither exercised nor explicitly
+ * the whole 120-case slice — so a case that is neither exercised nor explicitly
  * skipped fails the build (no silent gaps). Each family file drives its `it.each`
  * off the matching list here, so the list and the tested cases stay in lockstep.
  *
@@ -142,8 +142,11 @@ export const TRANSACTIONS: readonly string[] = [
  * a versioned entity resolves the predicate, then updates per object, gated in
  * optimistic mode / ungated version-advancing in locking mode), the read-lock
  * matrix (`0616`-`0619`, `api-conformance` lane — object find locks, projection
- * omits, deep fetch locks every level, optimistic omits), and optimistic-mode
- * version-column locking (07xx).
+ * omits, deep fetch locks every level, optimistic omits), optimistic-mode
+ * version-column locking (07xx), and the optimistic × temporal close cases
+ * (`0730`-`0733` — the observed processing-from `in_z` is the version analogue:
+ * a gated close on a fresh `in_z` succeeds, a stale `in_z` conflicts, a retry
+ * re-reads and succeeds, and a locking-mode zero-row close raises).
  */
 export const LOCKING: readonly string[] = [
   "0603-read-lock",
@@ -158,6 +161,10 @@ export const LOCKING: readonly string[] = [
   "0703-optimistic-lock-conflict",
   "0704-optimistic-lock-success",
   "0708-optimistic-lock-retry-after-conflict",
+  "0730-temporal-close-optimistic-success",
+  "0731-temporal-close-optimistic-conflict",
+  "0732-temporal-close-retry-after-conflict",
+  "0733-temporal-close-zero-rows-error",
 ];
 
 /**

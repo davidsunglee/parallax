@@ -269,6 +269,16 @@ export function normalizeEntity(raw: RawEntity): NormalizedEntity {
       `entity '${raw.name}' declares temporal '${raw.temporal}' but its asOfAttributes derive '${derived}'`,
     );
   }
+  // Optimistic-lock composition (M1/M7/M10): a temporal (as-of) entity derives its
+  // optimistic key from the processing-from column, so it MUST NOT also declare an
+  // explicit `optimisticLocking` version attribute (the combination is invalid).
+  if (raw.attributes.some((a) => a.optimisticLocking) && (raw.asOfAttributes?.length ?? 0) > 0) {
+    throw new Error(
+      `entity '${raw.name}' combines an 'optimisticLocking' attribute with 'asOfAttributes'; ` +
+        `a temporal entity derives its optimistic key from the processing-from column and MUST NOT ` +
+        `declare a version attribute`,
+    );
+  }
   return {
     name: raw.name,
     ...(raw.namespace === undefined ? {} : { namespace: raw.namespace }),

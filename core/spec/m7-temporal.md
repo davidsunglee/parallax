@@ -112,6 +112,34 @@ Key invariants the suite pins down:
 This matches `AuditOnlyTemporalDirector` / `GenericBiTemporalDirector`'s
 close-old-insert-new discipline (research §6), restricted to the processing axis.
 
+### Affected-row conflict contract for closes
+
+The close `UPDATE` **MUST** affect exactly **one** row. A close that affects
+**zero** rows is an **error in any mode** — it **MUST NOT** silently succeed and
+proceed to chain the replacement row (which would produce a duplicate or an
+orphaned current row). The current-row predicate (`pk and out_z = infinity`) alone
+is **not** a sufficient gate against a concurrent writer: a fully-committed
+concurrent chain leaves a *new* current row that a stale close would silently
+re-close — a lost update — so under optimistic mode the close carries an additional
+`and <in_z> = ?` gate on the processing-from the unit of work **observed**:
+
+```text
+update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+binds: [<txInstant>, <pk>, <infinity>, <observedInZ>]
+```
+
+The observed `in_z` is the optimistic-lock **version analogue** for a temporal
+entity, which carries no version column (the `M10` composition, `M10 --> M7`). A
+zero-row gated close is a **retriable conflict** (`updatedRows != 1`); a zero-row
+*ungated* (locking-mode) close is a distinct **non-retriable** stale/consistency
+error. On **success** the gate applies **per closed/inactivated current row** — one
+gated `UPDATE` per such row, each binding *that row's* observed `in_z`, each
+affecting exactly one row — while the chained replacement rows are plain ungated
+`INSERT`s whose fresh `in_z = txInstant` is the advance a later stale writer then
+misses. No version column exists or advances. Current rows of the same key
+*outside* the written window keep their `in_z`: conflict granularity is the
+milestone, not the primary key. The conflict/retry contract itself is `M10`.
+
 ## Full bitemporal
 
 A **bitemporal** entity declares **two** `asOfAttribute` dimensions — one
@@ -169,6 +197,14 @@ trail. Key invariants the suite pins down:
   the `head` / `middle` / `tail` rectangles; the `middle` carries the new value.
 - After a `terminateUntil`, the window `[businessFrom, businessTo)` is covered by
   **no** current-on-processing row.
+- The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
+  inactivation is an error in any mode (the affected-row conflict contract above).
+  In optimistic mode the inactivation gates on the observed processing-from — and,
+  when the key's current rows share an `in_z` (distinct business windows current at
+  the same processing time), on the **business** discriminator too, to inactivate
+  exactly the observed rectangle: `… and out_z = ? and from_z = ? and in_z = ?`.
+  The observed `in_z` is the version analogue (`M10`, `M10 --> M7`); the chained
+  `head` / `middle` / `tail` rows are ungated `INSERT`s at the fresh `in_z`.
 
 This mirrors `GenericBiTemporalDirector.updateUntil` / `splitTailEnd`
 (research §6, the bitemporal rectangle split).

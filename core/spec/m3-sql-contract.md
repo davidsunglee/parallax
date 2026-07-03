@@ -380,6 +380,18 @@ out_z = ?` / `infinity`), so only the open milestone is closed. The harness
 `expectedTableState` — including the `out_z = infinity` current row — so the
 chaining contract is proven against real data, not merely asserted.
 
+**Optimistic-mode close (M10 × M7).** In optimistic mode the close `update` gains
+an `and in_z = ?` gate on the observed processing-from — the version analogue for a
+temporal entity (`M10`, `M10 --> M7`):
+
+| Mutation | Golden DML | Binds |
+|---|---|---|
+| **close** (optimistic) | `update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?` | `[txInstant, pk, infinity, observedInZ]` |
+
+The locking-mode close keeps the ungated form above (`… where bal_id = ? and
+out_z = ?`). A close **MUST** affect exactly one row; a zero-row close is a conflict
+(optimistic) or a stale/consistency error (locking), never silent (`M7`/`M10`).
+
 ### Bitemporal as-of reads (both axes)
 
 A **bitemporal** entity is pinned on both axes by nesting two `asOf` nodes; each
@@ -418,6 +430,20 @@ original (`out_z` finite) plus the `head` / `middle` / `tail` rectangles current
 on processing (`out_z = infinity`) — so the rectangle split is proven against real
 data, not merely asserted. The same multi-row physical primary key (business key
 plus each axis's `fromColumn`, `M1`) makes the chained rectangles admissible.
+
+**Optimistic-mode inactivation (M10 × M7).** In optimistic mode the inactivate
+`update` gains the observed-processing-from gate; when the key's current rows share
+an `in_z` (distinct business windows current at the same processing time) the gate
+also carries the **business** discriminator `from_z = ?` to inactivate exactly the
+observed rectangle:
+
+| Mutation | Golden DML | Binds |
+|---|---|---|
+| **inactivate** (optimistic) | `update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?` | `[txInstant, pk, infinity, observedFromZ, observedInZ]` |
+
+The chained `head` / `middle` / `tail` rows stay ungated `INSERT`s at the fresh
+`in_z`. A zero-row inactivation is a conflict (optimistic) or a stale error
+(locking), never silent.
 
 ## Transactional SQL fragments (M8)
 

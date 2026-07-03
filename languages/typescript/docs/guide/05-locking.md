@@ -115,5 +115,40 @@ const result = await f.px.transaction(
     return await accounts.update(accountPk(2), {
     await accounts.find(Account.id.eq(2)).single();
     return accounts.update(accountPk(2), { set: [Account.balance.set(dec("250.00"))] });
+```
+
+## 0730: an optimistic close on a fresh observed in_z closes exactly the current milestone
+
+```ts
+const result = await f.px.transaction(
+  const balances = tx.entity("Balance");
+  await balances.find(Balance.id.eq(2)).single();
+  return balances.update(balancePk(2), { set: [Balance.value.set(dec("250.00"))] });
+```
+
+## 0731: an optimistic close on a STALE observed in_z conflicts (a current row still exists)
+
+```ts
+await f.px.transaction(
+    const balances = tx.entity("Balance");
+    await balances.find(Balance.id.eq(2)).single();
+    await balances.update(balancePk(2), { set: [Balance.value.set(dec("250.00"))] });
+```
+
+## 0732: a retry re-reads the fresh current in_z after the temporal conflict and succeeds
+
+```ts
+const result = await f.px.transaction(
+  const balances = tx.entity("Balance");
+  await balances.find(Balance.id.eq(2)).single(); // observes in_z 2024-02-01
+    return await balances.update(balancePk(2), {
+    await balances.find(Balance.id.eq(2)).single();
+    return balances.update(balancePk(2), { set: [Balance.value.set(dec("250.00"))] });
+```
+
+## 0733: a locking-mode close that finds no current row raises (never silent)
+
+```ts
+await f.px.transaction((tx) => tx.entity("Balance").terminate(balancePk(2)), {
 * `px.transaction` holds the connection would deadlock.
 ```

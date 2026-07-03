@@ -90,6 +90,21 @@ export class EntityMetadata {
     return this.entity.attributes.find((attr) => attr.optimisticLocking);
   }
 
+  /**
+   * The processing-axis `from` attribute (`in_z`), if this entity has a processing
+   * axis. This is the DERIVED optimistic key for a processing-axis temporal entity
+   * (M7/M10): a temporal entity carries no version column, so the observed
+   * processing-from value is the optimistic-lock version analogue an optimistic
+   * close gates on. `undefined` for a non-temporal or business-only entity.
+   */
+  processingFromAttribute(): NormalizedAttribute | undefined {
+    const processing = this.entity.asOfAttributes.find((axis) => axis.axis === "processing");
+    if (processing === undefined) {
+      return undefined;
+    }
+    return this.entity.attributes.find((attr) => attr.column === processing.fromColumn);
+  }
+
   /** The temporal dimensions (one for unitemporal, two for bitemporal). */
   asOfAttributes(): readonly NormalizedAsOfAttribute[] {
     return this.entity.asOfAttributes;

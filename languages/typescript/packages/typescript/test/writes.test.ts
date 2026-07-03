@@ -29,6 +29,8 @@ import {
   ParallaxOptimisticLockError,
   ParallaxReadBeforeWriteError,
   type ParallaxRow,
+  ParallaxTemporalCloseError,
+  ParallaxTemporalOptimisticError,
   Predicate,
 } from "../src/index.js";
 
@@ -101,6 +103,29 @@ const ACCOUNT = loadCase(
 
 /** A physical Account row the stub returns for an in-transaction find (version 1). */
 const ACCOUNT_ROW: ParallaxRow = { id: 2, owner: "Linus", balance: "250.00", version: 1 };
+
+/** The audit-only (processing-temporal) `Balance` descriptor — no version column. */
+const BALANCE = loadCase(
+  "core/compatibility/cases/0730-temporal-close-optimistic-success.yaml",
+).descriptor;
+
+/** The business-temporal-only `Reservation` descriptor (a business axis, no processing). */
+const RESERVATION = loadCase(
+  "core/compatibility/cases/0820-business-as-of-now-defaulted.yaml",
+).descriptor;
+
+/**
+ * A PHYSICAL Balance current-milestone row the stub returns (keyed by physical
+ * column; the materializer renames `in_z` -> the `processingFrom` DSL name). Its
+ * `in_z` is the observed processing-from an optimistic close gates on (M7/M10).
+ */
+const BALANCE_ROW: ParallaxRow = {
+  bal_id: 2,
+  acct_num: "B",
+  val: "200.00",
+  in_z: "2024-02-01T00:00:00+00:00",
+  out_z: "infinity",
+};
 
 /**
  * A synthetic VERSIONED root (`Vault`) that carries a to-many relationship
@@ -178,6 +203,10 @@ const vaultPk = (id: number): Predicate => new Predicate({ eq: { attr: "Vault.id
 /** A pk-equality predicate on `Account.id`. */
 const accountPk = (id: number): Predicate =>
   new Predicate({ eq: { attr: "Account.id", value: id } });
+
+/** A pk-equality predicate on `Balance.id`. */
+const balancePk = (id: number): Predicate =>
+  new Predicate({ eq: { attr: "Balance.id", value: id } });
 
 /** The index of the first recorded statement whose SQL contains `needle`. */
 function indexOf(queries: readonly RecordedQuery[], needle: string): number {
@@ -629,5 +658,112 @@ describe("in-transaction projection/aggregation read omits the lock (never throw
     const read = db.queries.find((q) => q.sql.includes("select distinct"));
     expect(read).toBeDefined();
     expect(read?.sql.includes("for share")).toBe(false);
+  });
+});
+
+describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", () => {
+  /** The recorded milestone-CLOSE UPDATE (`update balance set out_z = …`). */
+  const closeOf = (queries: readonly RecordedQuery[]): RecordedQuery | undefined =>
+    queries.find((q) => q.sql.startsWith("update balance set out_z"));
+
+  it("optimistic mode: an observed close GATES on the observed in_z (the version analogue)", async () => {
+    const db = new StubDatabase([BALANCE_ROW]);
+    const px = createParallax({ descriptor: BALANCE, database: db });
+
+    const result = await px.transaction(
+      async (tx) => {
+        const balances = tx.entity("Balance");
+        // Read the current milestone of id 2 (records its observed in_z), then update it.
+        await balances.find(balancePk(2)).single();
+        return balances.update(balancePk(2), { set: [{ attr: "value", value: "250.00" }] });
+      },
+      { concurrency: "optimistic" },
+    );
+
+    const close = closeOf(db.queries);
+    // The gated close: set out_z, key on pk + out_z + the observed in_z gate.
+    expect(close?.sql).toContain(
+      "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?",
+    );
+    // Binds: [txInstant, pk, infinity, observedInZ] — the 4th is the observed in_z.
+    expect(close?.binds).toHaveLength(4);
+    expect(close?.binds[1]).toBe(2);
+    expect(String(close?.binds[3])).toContain("2024-02-01");
+    expect(result.affectedRows).toBe(1);
+  });
+
+  it("optimistic mode: a zero-row gated close throws ParallaxOptimisticLockError", async () => {
+    const db = new StubDatabase([BALANCE_ROW]);
+    db.setUpdateAffected(0); // the gate matches no current milestone — a concurrent supersede
+    const px = createParallax({ descriptor: BALANCE, database: db });
+
+    await expect(
+      px.transaction(
+        async (tx) => {
+          const balances = tx.entity("Balance");
+          await balances.find(balancePk(2)).single();
+          return balances.update(balancePk(2), { set: [{ attr: "value", value: "250.00" }] });
+        },
+        { concurrency: "optimistic" },
+      ),
+    ).rejects.toBeInstanceOf(ParallaxOptimisticLockError);
+  });
+
+  it("optimistic mode: closing an UNOBSERVED milestone is a read-before-write error", async () => {
+    const db = new StubDatabase([BALANCE_ROW]);
+    const px = createParallax({ descriptor: BALANCE, database: db });
+
+    await expect(
+      // No prior find — the current in_z was never observed, so a gated close has no
+      // version analogue to bind.
+      px.transaction((tx) => tx.entity("Balance").terminate(balancePk(2)), {
+        concurrency: "optimistic",
+      }),
+    ).rejects.toBeInstanceOf(ParallaxReadBeforeWriteError);
+    // No close was issued (the read-before-write short-circuits).
+    expect(closeOf(db.queries)).toBeUndefined();
+  });
+
+  it("locking mode: the close is UNGATED, but a zero-row close still raises (never silent)", async () => {
+    const db = new StubDatabase([BALANCE_ROW]);
+    db.setUpdateAffected(0); // no current row to close (concurrently terminated)
+    const px = createParallax({ descriptor: BALANCE, database: db });
+
+    let raised = false;
+    try {
+      // Locking mode: no `and in_z = ?` gate is emitted, but a zero-row close is a
+      // distinct non-retriable stale/consistency error (not an optimistic conflict).
+      await px.transaction((tx) => tx.entity("Balance").terminate(balancePk(2)), {
+        concurrency: "locking",
+      });
+    } catch (error) {
+      raised = error instanceof ParallaxTemporalCloseError;
+    }
+    expect(raised, "expected a ParallaxTemporalCloseError").toBe(true);
+    // The close was UNGATED (no in_z gate) — three binds, not four.
+    const close = closeOf(db.queries);
+    expect(close?.sql).toContain("update balance set out_z = ? where bal_id = ? and out_z = ?");
+    expect(close?.sql).not.toContain("and in_z = ?");
+    expect(close?.binds).toHaveLength(3);
+  });
+
+  it("business-temporal-only x optimistic is rejected at the write boundary", async () => {
+    const db = new StubDatabase([]);
+    const px = createParallax({ descriptor: RESERVATION, database: db });
+
+    // A business-only entity has no processing axis to derive an optimistic key from,
+    // so writing it under `optimistic` mode is invalid (M1/M7/M10).
+    await expect(
+      px.transaction(
+        (tx) =>
+          tx.entity("Reservation").create({ id: 99, room: "101", guest: "Ada" }) as Promise<void>,
+        { concurrency: "optimistic" },
+      ),
+    ).rejects.toBeInstanceOf(ParallaxTemporalOptimisticError);
+    // In the default locking mode the same entity is NOT rejected on the mode check
+    // (the guard is optimistic-only) — proving the rejection is mode-scoped.
+    expect(() =>
+      createParallax({ descriptor: RESERVATION, database: new StubDatabase([]) }),
+    ).not.toThrow();
   });
 });

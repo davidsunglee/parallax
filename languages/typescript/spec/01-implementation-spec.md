@@ -59,7 +59,7 @@ declared in [`scope-and-tiers.md`](../../../core/spec/scope-and-tiers.md#first-i
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
 the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
-so V1 claims precisely the 116 cases tagged for the slice and returns
+so V1 claims precisely the 120 cases tagged for the slice and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads** + audit-only
 processing-temporal), and optimistic-locking surfaces but defers aggregation,
@@ -861,7 +861,7 @@ partition below.
 ### 6.2 Coverage partition and no-drift guard
 
 - **Coverage partition.** `coverage.test.ts` (Docker-free) discovers exactly the
-  116 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
+  120 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
   with no stale ids: every in-slice case is either exercised by a family suite
   (`covered.ts`) or listed in the reasoned skip manifest (`skip-manifest.ts`),
   and every skip carries a non-empty reason — a silent gap fails the build.
@@ -877,7 +877,7 @@ partition below.
 
 ### 6.3 Reasoned skips
 
-Two of the 116 cases are reason-skipped because what they prove is serde/harness
+Two of the 120 cases are reason-skipped because what they prove is serde/harness
 machinery a developer never authors, not a developer-facing surface:
 
 - **`0222`** — an `equivalentEncodings` serde-canonicalization check (two surface
@@ -1133,7 +1133,7 @@ application-specific**. The composition-root conformance provider retains
 provisioning (Testcontainers + `reset`/`applyDdl`/`loadFixtures`) but delegates
 SQL execution to a `@parallax/db-postgres` instance, then renders its managed
 scalars to the canonical wire form for the run envelope — so there is **no
-`M12 → M11` edge** and the 116-case slice is continuous proof the shipped adapter
+`M12 → M11` edge** and the 120-case slice is continuous proof the shipped adapter
 works.
 
 ### 9.3 Legal-edge contract

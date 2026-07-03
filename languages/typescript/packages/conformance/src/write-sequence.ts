@@ -268,8 +268,14 @@ function batchTargetFor(entity: EntityMetadata): BatchTarget {
   return { table: quoteIdentifier(entity.table), columns, pkColumn: quoteIdentifier(pk.column) };
 }
 
-/** Resolve an entity's physical {@link WriteTarget} (table, columns, pk, out_z). */
-function writeTargetFor(entity: EntityMetadata): WriteTarget {
+/**
+ * Resolve an entity's physical {@link WriteTarget} (table, columns, pk, out_z,
+ * in_z). Shared by the write-sequence chaining generator and the conflict-plan
+ * temporal gated-close re-derivation (`conflict.ts`), so both derive the close text
+ * from ONE resolver (no drift). `fromColumn` (`in_z`) is the derived optimistic gate
+ * an OPTIMISTIC-mode close binds the observed value on (M10).
+ */
+export function writeTargetFor(entity: EntityMetadata): WriteTarget {
   const columns = columnOrder({
     table: entity.table,
     attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
@@ -278,13 +284,19 @@ function writeTargetFor(entity: EntityMetadata): WriteTarget {
   if (pk === undefined) {
     throw new Error(`entity '${entity.name}' has no primary key for a write sequence`);
   }
-  // The processing axis's `toColumn` (`out_z`) the close UPDATE sets + keys on.
-  // Absent for a non-temporal entity (only `insert` is legal there).
+  // The processing axis's `toColumn` (`out_z`) the close UPDATE sets + keys on, and
+  // its `fromColumn` (`in_z`) the optimistic gate. Absent for a non-temporal entity
+  // (only `insert` is legal there).
   const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
   return {
     table: quoteIdentifier(entity.table),
     columns,
     pkColumn: quoteIdentifier(pk.column),
-    ...(processing === undefined ? {} : { toColumn: quoteIdentifier(processing.toColumn) }),
+    ...(processing === undefined
+      ? {}
+      : {
+          toColumn: quoteIdentifier(processing.toColumn),
+          fromColumn: quoteIdentifier(processing.fromColumn),
+        }),
   };
 }
