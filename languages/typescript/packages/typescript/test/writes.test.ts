@@ -49,6 +49,7 @@ interface RecordedQuery {
 class StubDatabase implements ParallaxDatabase {
   readonly queries: RecordedQuery[] = [];
   private updateAffected: number | undefined;
+  private updateAffectedQueue: number[] | undefined;
 
   constructor(private rows: readonly ParallaxRow[] = []) {}
 
@@ -61,10 +62,22 @@ class StubDatabase implements ParallaxDatabase {
     this.updateAffected = count;
   }
 
+  /**
+   * Force a SEQUENCE of affected-row counts, one consumed per write in order (for
+   * the mid-batch materialize conflict: first per-object update succeeds `1`, the
+   * next conflicts `0`). Falls back to `setUpdateAffected` once the queue drains.
+   */
+  setUpdateAffectedSequence(counts: readonly number[]): void {
+    this.updateAffectedQueue = [...counts];
+  }
+
   execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
     this.queries.push({ sql, binds });
     if (/returning 1$/.test(sql)) {
-      const count = this.updateAffected ?? this.rows.length;
+      const count =
+        this.updateAffectedQueue !== undefined && this.updateAffectedQueue.length > 0
+          ? (this.updateAffectedQueue.shift() as number)
+          : (this.updateAffected ?? this.rows.length);
       return Promise.resolve(Array.from({ length: count }, () => ({}) as ParallaxRow));
     }
     return Promise.resolve(this.rows);
@@ -355,6 +368,113 @@ describe("TransactionWriter versioned update (M10 framework-owned versions)", ()
         { concurrency: "optimistic" },
       ),
     ).rejects.toBeInstanceOf(ParallaxOptimisticLockError);
+  });
+});
+
+describe("TransactionWriter versioned SET-BASED update materializes (M10, ADR 0032)", () => {
+  // Two Account rows the materialize read resolves (`balance < 200` matches both).
+  const ACCOUNT_1: ParallaxRow = { id: 1, owner: "Ada", balance: "100.00", version: 1 };
+  const ACCOUNT_3: ParallaxRow = { id: 3, owner: "Grace", balance: "10.00", version: 1 };
+  /** A NON-pk predicate (`balance < 200`) — the set-based update that materializes. */
+  const balanceUnder = (limit: number): Predicate =>
+    new Predicate({ lessThan: { attr: "Account.balance", value: limit } });
+
+  /** The recorded `update account` statements, in emission order. */
+  const updates = (queries: readonly RecordedQuery[]): readonly RecordedQuery[] =>
+    queries.filter((q) => q.sql.includes("update account"));
+
+  it("locking mode: resolves the predicate, then updates per object (ungated, version-advancing)", async () => {
+    const db = new StubDatabase([ACCOUNT_1, ACCOUNT_3]);
+    db.setUpdateAffected(1); // each per-object keyed update affects exactly one row
+    const px = createParallax({ descriptor: ACCOUNT, database: db });
+
+    // No explicit prior find: the set-based update MATERIALIZES — it reads the
+    // matching rows itself (recording their versions), then updates per object.
+    const result = await px.transaction(async (tx) =>
+      tx.entity("Account").update(balanceUnder(200), { set: [{ attr: "balance", value: "0.00" }] }),
+    );
+
+    // (a) the materialize read ran and, in locking mode, took the M8 shared lock.
+    const read = db.queries.find((q) => q.sql.startsWith("select"));
+    expect(read?.sql).toContain("where t0.balance < ?");
+    expect(read?.sql.endsWith("for share of t0")).toBe(true);
+    // (b) ONE keyed per-object UPDATE per resolved row, ungated, version 1 -> 2.
+    const emitted = updates(db.queries);
+    expect(emitted).toHaveLength(2);
+    for (const u of emitted) {
+      expect(u.sql).toContain("set balance = ?, version = ? where id = ?");
+      expect(u.sql).not.toContain("and version = ?");
+    }
+    // Binds: the domain value + new version + that row's pk (per object).
+    expect(emitted[0]?.binds).toEqual(["0.00", 2, "1"]);
+    expect(emitted[1]?.binds).toEqual(["0.00", 2, "3"]);
+    expect(result.affectedRows).toBe(2);
+  });
+
+  it("optimistic mode: each per-object update GATES on that row's observed version", async () => {
+    const db = new StubDatabase([ACCOUNT_1, ACCOUNT_3]);
+    db.setUpdateAffected(1);
+    const px = createParallax({ descriptor: ACCOUNT, database: db });
+
+    const result = await px.transaction(
+      async (tx) =>
+        tx
+          .entity("Account")
+          .update(balanceUnder(200), { set: [{ attr: "balance", value: "0.00" }] }),
+      { concurrency: "optimistic" },
+    );
+
+    // The materialize read takes NO lock in optimistic mode.
+    const read = db.queries.find((q) => q.sql.startsWith("select"));
+    expect(read?.sql.includes("for share")).toBe(false);
+    // Each per-object UPDATE gates on the observed version (1) it recorded.
+    const emitted = updates(db.queries);
+    expect(emitted).toHaveLength(2);
+    for (const u of emitted) {
+      expect(u.sql).toContain("set balance = ?, version = ? where id = ? and version = ?");
+    }
+    expect(emitted[0]?.binds).toEqual(["0.00", 2, "1", 1]);
+    expect(emitted[1]?.binds).toEqual(["0.00", 2, "3", 1]);
+    expect(result.affectedRows).toBe(2);
+  });
+
+  it("optimistic mode: a MID-BATCH conflict (0-row per-object update) throws", async () => {
+    const db = new StubDatabase([ACCOUNT_1, ACCOUNT_3]);
+    // The first per-object update succeeds (1); the second conflicts (0 rows).
+    db.setUpdateAffectedSequence([1, 0]);
+    const px = createParallax({ descriptor: ACCOUNT, database: db });
+
+    await expect(
+      px.transaction(
+        async (tx) =>
+          tx
+            .entity("Account")
+            .update(balanceUnder(200), { set: [{ attr: "balance", value: "0.00" }] }),
+        { concurrency: "optimistic" },
+      ),
+    ).rejects.toBeInstanceOf(ParallaxOptimisticLockError);
+    // Both per-object updates were attempted before the second surfaced the conflict.
+    expect(updates(db.queries)).toHaveLength(2);
+  });
+
+  it("a NON-versioned entity does NOT materialize (its keyed path is unchanged)", async () => {
+    const db = new StubDatabase([]);
+    const px = createParallax({ descriptor: WALLET, database: db });
+
+    // A non-versioned entity has no framework-owned version, so a non-pk predicate
+    // does NOT take the materialize branch — it stays on the unchanged plain keyed-
+    // update path, which requires a single pk and rejects a set-based predicate
+    // (status quo, ADR 0011). The point: no materialize READ is issued.
+    await expect(
+      px.transaction(async (tx) =>
+        tx
+          .entity("Wallet")
+          .update(new Predicate({ lessThan: { attr: "Wallet.balance", value: 100 } }), {
+            set: [{ attr: "balance", value: 0 }],
+          }),
+      ),
+    ).rejects.toThrow(/primary key/);
+    expect(db.queries.some((q) => q.sql.startsWith("select"))).toBe(false);
   });
 });
 

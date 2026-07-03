@@ -1,0 +1,63 @@
+# Versioned SET-BASED update materializes, locking mode (M10 materialize, ADR 0032).
+#
+# A set-based update targeting a VERSIONED entity has no set-based template — the
+# gate binds a per-row observed version, so a single `where balance < ?` UPDATE
+# cannot carry it. Instead the update MATERIALIZES: the runtime resolves the
+# predicate to rows (a real read that records each row's observed version, and in
+# locking mode takes the shared lock), then issues ONE keyed per-object UPDATE per
+# resolved row. Round-trip accounting is 1 read + N updates.
+#
+# The scenario makes that cost observable, step by step:
+#   step 0 find  : the materialize read — `balance < 200` matches accounts 1 (Ada,
+#                  100.00) and 3 (Grace, 10.00), both at version 1 (account 2 at
+#                  250.00 is excluded), 1 round trip.
+#   step 1 write : set `balance = 0.00` on the matched rows — TWO per-object
+#                  version-advancing UPDATEs (locking mode: NO `and version = ?`
+#                  gate), one keyed on id 1, one on id 3, each advancing the
+#                  version 1 -> 2, 2 round trips.
+#   step 2 find  : the SAME `balance < 200` re-resolves (cache MISS after the write)
+#                  and MUST observe both accounts at balance 0.00, version 2.
+# Under the DEFAULT `locking` strategy the read took a shared lock, so the per-
+# object writes need no version check — the ungated version-advancing form (0611
+# shape) per row. Optimistic mode (0614) adds the `and version = ?` gate per row.
+# roundTrips = 4 (one materialize read + two per-object updates + one verify read).
+model: models/account.yaml
+tags: [m10, m3, m8, optimistic-locking, locking-mode, materialize, set-based, scenario, slice-mvp-1]
+uow:
+  concurrency: locking
+roundTrips: 4
+scenario:
+  - find:
+      lessThan:
+        attr: Account.balance
+        value: 200.00
+    roundTrips: 1
+    note: the materialize read — resolve `balance < 200` to rows (ids 1 and 3, version 1)
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+    binds: [200.00]
+    expectRows:
+      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+  - write: update
+    roundTrips: 2
+    note: one per-object version-advancing UPDATE per materialized row (no gate, locking mode)
+    goldenSql:
+      postgres:
+        - update account set balance = ?, version = ? where id = ?
+        - update account set balance = ?, version = ? where id = ?
+    binds:
+      - [0.00, 2, 1]
+      - [0.00, 2, 3]
+  - find:
+      lessThan:
+        attr: Account.balance
+        value: 200.00
+    roundTrips: 1
+    note: the SAME find re-resolves (cache MISS) and MUST observe both rows at balance 0.00, version 2
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+    binds: [200.00]
+    expectRows:
+      - { id: 1, owner: Ada, balance: 0.00, version: 2 }
+      - { id: 3, owner: Grace, balance: 0.00, version: 2 }

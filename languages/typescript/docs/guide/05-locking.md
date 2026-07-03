@@ -70,6 +70,24 @@ await accounts.find(Account.id.eq(2)).single();
 return accounts.update(accountPk(2), { set: [Account.balance.set(dec("500.00"))] });
 ```
 
+## 0615: a versioned set-based update materializes into per-object version-advancing updates
+
+```ts
+const observed = await f.px.transaction(
+  const accounts = tx.entity("Account");
+  const result = await accounts.update(Account.balance.lt(200), {
+  return accounts.find(Account.balance.lt(200)).toArray();
+```
+
+## 0614: a versioned set-based update materializes into per-object GATED updates
+
+```ts
+const observed = await f.px.transaction(
+  const accounts = tx.entity("Account");
+  const result = await accounts.update(Account.balance.lt(200), {
+  return accounts.find(Account.balance.lt(200)).toArray();
+```
+
 ## 0703: a stale-version update conflicts (affects 0 rows) — the row is unchanged
 
 ```ts

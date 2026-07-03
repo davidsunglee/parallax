@@ -4,7 +4,7 @@
  * database?" sweep.
  *
  * One container serves every case (the provider resets the schema per case). For
- * each of the 102 harness-lane tagged cases the sweep runs the adapter's `runRun` (the same
+ * each of the 104 harness-lane tagged cases the sweep runs the adapter's `runRun` (the same
  * orchestration the CLI drives) with the concrete composition-root provider
  * injected, and grades the observation the case SHAPE asserts, reusing the M12
  * comparison rules (exact decimal, boolean never `== 1`, µs timestamps,
@@ -50,8 +50,9 @@ import { PostgresProvider } from "../src/conformance/postgres-provider.js";
  * The full `slice-mvp-1` tagged slice the HARNESS runs, in discovery order.
  * `api-conformance`-lane cases (boundary retry cases + the read-lock matrix reads)
  * are excluded — they have no harness-executable golden (the API Conformance Suite
- * proves them) — so the run sweep covers the 102 harness-lane cases (101 pre-Phase-4
- * cases + the harness-lane auto-retry case `0710`).
+ * proves them) — so the run sweep covers the 104 harness-lane cases (101 pre-Phase-4
+ * cases + the harness-lane auto-retry case `0710` + the two Phase-5 versioned
+ * set-based materialize scenarios `0614`/`0615`).
  */
 function taggedCases(): readonly { id: string; loaded: LoadedCase }[] {
   return discoverCasePaths()
@@ -75,8 +76,8 @@ const HAS_DOCKER = dockerAvailable();
 const CASES = taggedCases();
 
 // Discovery is Docker-free; assert the exact slice size unconditionally.
-it("discovers the harness-lane slice-mvp-1 slice (102 cases)", () => {
-  expect(CASES.length).toBe(102);
+it("discovers the harness-lane slice-mvp-1 slice (104 cases)", () => {
+  expect(CASES.length).toBe(104);
 });
 
 group.skipIf(!HAS_DOCKER)("full-slice run lane (Testcontainers postgres:17)", () => {
@@ -118,7 +119,7 @@ group.skipIf(!HAS_DOCKER)("full-slice run lane (Testcontainers postgres:17)", ()
   it("the case-matrix report is GREEN with no residuals", () => {
     const report = matrix.report();
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(102);
+    expect(report.total).toBe(104);
     expect(report.residuals).toEqual([]);
   });
 });

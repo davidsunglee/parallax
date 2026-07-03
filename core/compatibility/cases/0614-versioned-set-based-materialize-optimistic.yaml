@@ -1,0 +1,64 @@
+# Versioned SET-BASED update materializes, optimistic mode (M10 materialize, ADR 0032).
+#
+# The optimistic-mode companion to 0615. A set-based update targeting a VERSIONED
+# entity has no set-based template — the gate binds a per-row observed version — so
+# it MATERIALIZES: resolve the predicate to rows (a real read that records each
+# row's observed version; optimistic mode takes NO lock), then issue ONE keyed
+# per-object GATED UPDATE per resolved row. Round-trip accounting is 1 read + N
+# updates.
+#
+# Step by step:
+#   step 0 find  : the materialize read — `balance < 200` matches accounts 1 (Ada,
+#                  100.00) and 3 (Grace, 10.00), both at version 1 (account 2 at
+#                  250.00 is excluded), 1 round trip. Optimistic mode takes no lock.
+#   step 1 write : set `balance = 0.00` on the matched rows — TWO per-object GATED
+#                  UPDATEs (`and version = ?` binding the observed version 1), one
+#                  keyed on id 1, one on id 3, each advancing the version 1 -> 2 and
+#                  each affecting exactly 1 row (no concurrent writer here), 2 round
+#                  trips. A per-object gate matching 0 rows would be the conflict
+#                  signal (0703 / updatedRows != 1).
+#   step 2 find  : the SAME `balance < 200` re-resolves (cache MISS after the write)
+#                  and MUST observe both accounts at balance 0.00, version 2.
+# The only difference from 0615 is the per-object gate (`and version = ?`) and its
+# extra observed-version bind — the version is framework-owned (ADR 0029), never a
+# caller number. roundTrips = 4 (materialize read + two per-object updates + verify read).
+model: models/account.yaml
+tags: [m10, m3, m8, optimistic-locking, materialize, set-based, scenario, slice-mvp-1]
+uow:
+  concurrency: optimistic
+roundTrips: 4
+scenario:
+  - find:
+      lessThan:
+        attr: Account.balance
+        value: 200.00
+    roundTrips: 1
+    note: the materialize read — resolve `balance < 200` to rows (ids 1 and 3, version 1); optimistic mode takes no lock
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+    binds: [200.00]
+    expectRows:
+      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+  - write: update
+    roundTrips: 2
+    note: one per-object GATED UPDATE per materialized row (`and version = ?` binds the observed version 1)
+    goldenSql:
+      postgres:
+        - update account set balance = ?, version = ? where id = ? and version = ?
+        - update account set balance = ?, version = ? where id = ? and version = ?
+    binds:
+      - [0.00, 2, 1, 1]
+      - [0.00, 2, 3, 1]
+  - find:
+      lessThan:
+        attr: Account.balance
+        value: 200.00
+    roundTrips: 1
+    note: the SAME find re-resolves (cache MISS) and MUST observe both rows at balance 0.00, version 2
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+    binds: [200.00]
+    expectRows:
+      - { id: 1, owner: Ada, balance: 0.00, version: 2 }
+      - { id: 3, owner: Grace, balance: 0.00, version: 2 }

@@ -115,6 +115,19 @@ export interface UpdateOptions {
   readonly set: readonly Assignment[];
 }
 
+/**
+ * The shared physical shape of a versioned `UPDATE`: the {@link VersionedTarget}
+ * (table + pk column + version column) plus the quoted DOMAIN `set` columns and
+ * their binds (the framework-owned version column dropped). Resolved once from the
+ * assignments, then reused for one keyed update or per resolved row of a set-based
+ * materialize (ADR 0032), so both paths render identical statements.
+ */
+interface VersionedUpdateShape {
+  readonly target: VersionedTarget;
+  readonly setColumns: readonly string[];
+  readonly domainBinds: readonly unknown[];
+}
+
 /** True when an entity chains audit milestones (declares a processing as-of axis). */
 export function isAuditOnly(entity: EntityMetadata): boolean {
   return entity.asOfAttributes().some((axis) => axis.axis === "processing");
@@ -200,10 +213,10 @@ export class TransactionWriter {
   }
 
   /**
-   * A versioned-entity `update` (M10). The version is FRAMEWORK-OWNED (ADR 0029):
-   * the write advances it in BOTH modes, and in `optimistic` mode also gates on the
-   * version the unit of work OBSERVED for the row (a prior transaction-scoped find
-   * populated the observed map). Three rules:
+   * A KEYED versioned-entity `update` (M10). The version is FRAMEWORK-OWNED (ADR
+   * 0029): the write advances it in BOTH modes, and in `optimistic` mode also gates
+   * on the version the unit of work OBSERVED for the row (a prior transaction-scoped
+   * find populated the observed map). Three rules:
    *
    *  - a `set` that changes NO domain attribute issues no DML (`0609`);
    *  - an unobserved row is a read-before-write error (there is no observed version
@@ -219,19 +232,70 @@ export class TransactionWriter {
     options: UpdateOptions,
     version: NormalizedAttribute,
   ): Promise<WriteResult> {
-    // The version column is framework-owned: drop any caller assignment to it.
-    const domain = options.set.filter((a) => a.attr !== version.name);
+    const shape = this.versionedShape(entity, options, version);
     // A no-op update (no domain attribute changes) issues NO DML (M10).
-    if (domain.length === 0) {
+    if (shape === undefined) {
       return { affectedRows: 0 };
     }
-    const pkLiteral = this.pkLiteralOf(entity, predicate);
-    const key = observedKey(entity.name, pkLiteral);
-    const observedVersion = this.observed.get(key);
-    if (observedVersion === undefined) {
-      throw new ParallaxReadBeforeWriteError(entity.name);
+    const affectedRows = await this.emitVersionedRowUpdate(
+      entity,
+      shape,
+      this.pkLiteralOf(entity, predicate),
+    );
+    return { affectedRows };
+  }
+
+  /**
+   * A SET-BASED versioned-entity `update` (M10 materialize, ADR 0032). A versioned
+   * set-based update has NO set-based template — the optimistic gate binds a
+   * per-row observed version, so a single statement cannot carry it. The caller
+   * (`TransactionEntity.update`) has already resolved the predicate to rows through
+   * the OBSERVING finder — which recorded each row's observed version and, in
+   * `locking` mode, took the M8 shared lock — and passes their primary keys here;
+   * this emits ONE keyed per-object `UPDATE` per resolved pk (gated in optimistic
+   * mode, ungated version-advancing in locking mode), advancing the observed version
+   * per row. A no-op `set` issues no DML; a mid-batch optimistic conflict (a
+   * per-object gated update affecting 0 rows) throws `ParallaxOptimisticLockError`.
+   * Reuses the same per-row emitter the keyed update uses (no drift). Non-versioned
+   * entities never reach here — they keep the readless batched path (ADR 0011).
+   */
+  async versionedSetUpdate(
+    entity: EntityMetadata,
+    pks: readonly unknown[],
+    options: UpdateOptions,
+  ): Promise<WriteResult> {
+    await this.flushInserts();
+    const version = entity.versionAttribute();
+    if (version === undefined) {
+      throw new Error(`'${entity.name}' is not a versioned entity — no set-based materialize`);
     }
-    const newVersion = observedVersion + 1;
+    const shape = this.versionedShape(entity, options, version);
+    if (shape === undefined) {
+      return { affectedRows: 0 };
+    }
+    let affectedRows = 0;
+    for (const pkLiteral of pks) {
+      affectedRows += await this.emitVersionedRowUpdate(entity, shape, pkLiteral);
+    }
+    return { affectedRows };
+  }
+
+  /**
+   * Resolve the shared versioned-update shape — the physical {@link VersionedTarget},
+   * the quoted DOMAIN `set` columns, and their binds — dropping the framework-owned
+   * version column (a caller assignment to it is ignored, M10). Returns `undefined`
+   * when the `set` changes no domain attribute (a no-op update — the caller issues no
+   * DML). Shared by the keyed update and the set-based materialize.
+   */
+  private versionedShape(
+    entity: EntityMetadata,
+    options: UpdateOptions,
+    version: NormalizedAttribute,
+  ): VersionedUpdateShape | undefined {
+    const domain = options.set.filter((a) => a.attr !== version.name);
+    if (domain.length === 0) {
+      return undefined;
+    }
     const target: VersionedTarget = {
       table: quoteIdentifier(entity.table),
       pkColumn: quoteIdentifier(pkColumn(entity)),
@@ -239,24 +303,52 @@ export class TransactionWriter {
     };
     const setColumns = domain.map((a) => quoteIdentifier(entity.attributeByName(a.attr).column));
     const domainBinds = domain.map((a) => bindValue(a.value));
+    return { target, setColumns, domainBinds };
+  }
+
+  /**
+   * Emit ONE keyed versioned `UPDATE` for a single resolved primary key and return
+   * its affected-row count, advancing the framework-owned observed version. Gates on
+   * the observed version in `optimistic` mode (a 0-row conflict throws
+   * `ParallaxOptimisticLockError`, `0703`); emits the ungated version-advancing form
+   * in `locking` mode (`0611`). An unobserved row is a read-before-write error (M10).
+   * The single per-row emitter both the keyed update and the set-based materialize
+   * (ADR 0032) share, so the two paths never drift.
+   */
+  private async emitVersionedRowUpdate(
+    entity: EntityMetadata,
+    shape: VersionedUpdateShape,
+    pkLiteral: unknown,
+  ): Promise<number> {
+    const key = observedKey(entity.name, pkLiteral);
+    const observedVersion = this.observed.get(key);
+    if (observedVersion === undefined) {
+      throw new ParallaxReadBeforeWriteError(entity.name);
+    }
+    const newVersion = observedVersion + 1;
     const pk = bindValue(pkLiteral);
     if (this.concurrency === "optimistic") {
       // Gate on the observed version; a concurrent writer that advanced it first
       // makes the gate match 0 rows (the conflict signal).
-      const sql = versionedUpdate(target, setColumns);
-      const affectedRows = await this.exec(sql, [...domainBinds, newVersion, pk, observedVersion]);
+      const sql = versionedUpdate(shape.target, shape.setColumns);
+      const affectedRows = await this.exec(sql, [
+        ...shape.domainBinds,
+        newVersion,
+        pk,
+        observedVersion,
+      ]);
       if (classifyOutcome(affectedRows) === "conflict") {
         throw new ParallaxOptimisticLockError(entity.name);
       }
       this.observed.set(key, newVersion);
-      return { affectedRows };
+      return affectedRows;
     }
     // Locking mode: the M8 shared read lock makes the write correct, so the version
     // advances WITHOUT a gate (the `0702` / `0611` shape).
-    const sql = versionAdvancingUpdate(target, setColumns);
-    const affectedRows = await this.exec(sql, [...domainBinds, newVersion, pk]);
+    const sql = versionAdvancingUpdate(shape.target, shape.setColumns);
+    const affectedRows = await this.exec(sql, [...shape.domainBinds, newVersion, pk]);
     this.observed.set(key, newVersion);
-    return { affectedRows };
+    return affectedRows;
   }
 
   /** `terminate` (audit-only): close the current milestone, insert nothing. */
@@ -562,6 +654,20 @@ function insertBinds(
     }
     return null;
   });
+}
+
+/**
+ * Whether a write predicate selects exactly one row by PRIMARY-KEY equality
+ * (`Account.id.eq(1)`). A versioned `update` on such a predicate is a KEYED update
+ * (the caller observed the row first, then updates it by pk); a versioned update on
+ * ANY OTHER predicate — a range (`balance < ?`), a non-pk equality, `all` — has no
+ * single pk to key on and MATERIALIZES instead: `TransactionEntity.update` resolves
+ * the predicate to rows through the observing finder, then updates per object (M10,
+ * ADR 0032). A non-versioned entity keeps its readless batched path either way.
+ */
+export function isPkEqualityPredicate(entity: EntityMetadata, predicate: Predicate): boolean {
+  const pkName = entity.primaryKey()[0]?.name;
+  return pkLiteral(predicate.toOperation(), pkName) !== undefined;
 }
 
 /**
