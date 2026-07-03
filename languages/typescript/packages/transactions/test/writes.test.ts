@@ -25,6 +25,7 @@ import {
   combineWrites,
   keyedUpdate,
   multiRowInsert,
+  ParallaxUnlockableReadError,
   uniformUpdate,
   type WriteStep,
 } from "@parallax/transactions";
@@ -135,5 +136,21 @@ describe("appendReadLock (0603)", () => {
     expect(appendReadLock("select t1.x from y t1", "t1")).toBe(
       "select t1.x from y t1 for share of t1",
     );
+  });
+
+  it("rejects a `distinct` read rather than emit a lock the database forbids", () => {
+    // A row lock applies to base rows, so Postgres/MariaDB reject `FOR SHARE` on a
+    // DISTINCT result. The seam refuses it here instead of suffixing illegal SQL.
+    const distinctRead = "select distinct t0.owner from account t0";
+    expect(() => appendReadLock(distinctRead)).toThrow(ParallaxUnlockableReadError);
+    // The guard is shape-based (leading `select distinct`), not alias-dependent.
+    expect(() => appendReadLock(distinctRead, "t3")).toThrow(/cannot take the .* read lock/);
+  });
+
+  it("locks an ordinary (non-distinct) read whose column name merely contains 'distinct'", () => {
+    // The guard keys on the `select distinct` projection shape, not a substring, so a
+    // plain read that happens to project a `distinct_flag` column is still lockable.
+    const read = "select t0.distinct_flag from account t0";
+    expect(appendReadLock(read)).toBe(`${read} for share of t0`);
   });
 });

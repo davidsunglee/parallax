@@ -92,12 +92,13 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
      */
     private readonly lockReads = false,
     /**
-     * A hook called with the materialized rows a flat read produced, so the unit
-     * of work can record the version it OBSERVED for each versioned row (the M10
-     * observed-version map a later gated / advancing update reads). Absent on the
-     * root handle.
+     * A hook called with a fetched level's entity and its materialized rows, so the
+     * unit of work can record the version it OBSERVED for each versioned row (the M10
+     * observed-version map a later gated / advancing update reads). A flat read calls
+     * it once for this finder's entity; a deep fetch calls it once per fetched level
+     * (root + each included child). Absent on the root handle.
      */
-    private readonly onObserved?: (rows: readonly ParallaxRow[]) => void,
+    private readonly onObserved?: (entity: EntityMetadata, rows: readonly ParallaxRow[]) => void,
   ) {}
 
   /**
@@ -192,7 +193,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
       const materialized = rows.map(materialize) as readonly T[];
       // Record the version this unit of work OBSERVED for each versioned row, so a
       // later keyed update gates on / advances from it (M10 framework-owned versions).
-      this.onObserved?.(materialized);
+      this.onObserved?.(this.entity, materialized);
       return materialized;
     }, identity);
   }
@@ -227,11 +228,12 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
 
   /**
    * Execute a deep-fetch operation, returning the decorated managed graph + round
-   * trips. In a transaction the ROOT read carries the SAME read context a flat read
-   * does — the M8 shared lock in `locking` mode and the M10 observed-version
-   * recording — so an included versioned root can be updated without a spurious
-   * `ParallaxReadBeforeWriteError`. On the root handle both are inert (no lock, no
-   * recording).
+   * trips. In a transaction EVERY fetched level — the root read AND each included
+   * child-level read — carries the SAME read context a flat read does: the M8 shared
+   * lock in `locking` mode and the M10 observed-version recording (keyed by each
+   * level's own entity). So a versioned root OR a versioned included child can be
+   * updated without a spurious `ParallaxReadBeforeWriteError`. On the root handle
+   * both are inert (no lock, no recording).
    */
   private executeGraph(operation: Operation): Promise<DeepFetchGraph> {
     return executeDeepFetch(this.metamodel, operation, this.database, {
@@ -410,7 +412,10 @@ export class ParallaxTransaction {
         this.database,
         () => this.writer.flush(),
         this.concurrency === "locking",
-        (rows) => this.recordObserved(metadata, rows),
+        // A flat read reports this finder's entity; a deep fetch reports each fetched
+        // level's own entity (root + included children), so a versioned child read is
+        // recorded under the CHILD entity, not the root.
+        (entity, rows) => this.recordObserved(entity, rows),
       );
       handle = new TransactionEntity(finder, metadata, this.writer);
       this.handles.set(name, handle);
