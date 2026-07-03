@@ -12,9 +12,11 @@
  *  - **write sequence** (`0604`/`0612`/`0613`): apply the generated batched DML,
  *    then grade the resulting `tableState` against `expectedTableState`, with the
  *    emissions pinned to the golden and `roundTrips` the statement count;
- *  - **scenario** (`0607`): commit the write step, run the dependent find, and
- *    grade its observed rows against `expectRows` (read-your-own-writes),
- *    `roundTrips` the declared case total (2);
+ *  - **scenario** (`0607`, read-your-own-writes; `0608`, rollback/abort): apply the
+ *    write step (committed for `0607`, applied-then-ROLLED-BACK for `0608`), run the
+ *    dependent find, and grade its observed rows against `expectRows` — for `0608`
+ *    the ORIGINAL rows, proving the aborted write is discarded — `roundTrips` the
+ *    declared case total;
  *  - **conflict** (`0703`/`0704`/`0707`/`0708`): load fixtures, apply the
  *    precondition, apply the versioned UPDATE(s), and grade `affectedRows`
  *    (terminal outcome) + the resulting `tableState`.
@@ -61,11 +63,12 @@ function dockerAvailable(): boolean {
 const HAS_DOCKER = dockerAvailable();
 const CASES = txnCases();
 
-/** The EXACT in-scope id set (the nine tagged `06xx`/`07xx` Phase-7 cases). */
+/** The EXACT in-scope id set (the ten tagged `06xx`/`07xx` Phase-7 + abort cases). */
 const EXPECTED_IDS: readonly string[] = [
   "0603",
   "0604",
   "0607",
+  "0608",
   "0612",
   "0613",
   "0703",

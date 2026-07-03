@@ -56,6 +56,15 @@ export interface CompatibilityDatabaseProvider {
    */
   exec(sql: string, binds: readonly unknown[]): Promise<number>;
 
+  /**
+   * Apply a DML statement inside a transaction and then ROLL IT BACK, returning
+   * the affected-row count it reported before the rollback. This is the M8 abort
+   * contract's execution seam: the write lands inside an atomic scope that is
+   * discarded, so a subsequent `query` observes the ORIGINAL rows. Used by the
+   * `rollback: true` scenario write step.
+   */
+  execRolledBack(sql: string, binds: readonly unknown[]): Promise<number>;
+
   /** Release the database resources held by this provider. */
   close(): Promise<void>;
 }

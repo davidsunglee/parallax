@@ -104,6 +104,35 @@ invalidation
 this rule to multiple application servers sharing one database — not part of this
 MVP module.
 
+## Abort
+
+A unit of work either **commits** or **aborts** (rolls back). A commit makes its
+writes durable and observable; an **abort discards them entirely**. The
+observable contract:
+
+- A write performed inside a unit of work that aborts **MUST NOT** be observable
+  after the abort — whether it was still **buffered**, had been **force-flushed**
+  to serve a dependent read (read-your-own-writes, above), or had populated the
+  **identity / query cache**. A find issued after the abort **MUST** re-resolve
+  and observe the **pre-transaction** state.
+- The transaction callback's return value is **withheld on abort**: if the unit
+  of work rolls back — or its commit fails — the operation **fails** rather than
+  returning the callback value as though it were durable (promoting ADR 0008 into
+  normative text).
+
+This reconciles the abort contract with the **read-your-own-writes forced flush**
+(above). The forced flush is safe precisely *because* it lands **inside the
+still-open atomic scope** the abort discards: the unit of work may push a
+buffered write to the database mid-transaction so a dependent read observes it,
+yet an abort still erases that write — the flush never escapes the transaction it
+belongs to. An implementation **MUST NOT** satisfy read-your-own-writes with a
+flush that survives the abort.
+
+The suite proves this with a **rollback scenario**: a find, a write step whose
+golden DML is applied and then **rolled back**, and the *same* find re-issued —
+which **MUST** re-resolve (a cache miss) and observe the **original** rows, never
+the aborted write.
+
 ## Buffered, batched, ordered writes
 
 At the unit-of-work boundary the buffered writes are flushed as **set-based**
@@ -169,6 +198,7 @@ cache assertions — and as plain read / write cases for the SQL fragments:
 | identity scenario | two finds for the same primary key ⇒ the **same logical object** |
 | read-lock case | the `for share of t0` read is valid and result-correct |
 | batched-write case | a multi-row `INSERT` and a batched `UPDATE` produce the expected rows |
+| rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
 
 A scenario's declared round-trip counts **MUST** be internally consistent with
 the golden SQL it lists: each step's `roundTrips` equals the number of golden

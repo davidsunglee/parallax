@@ -3,7 +3,7 @@
  * corpus (`06xx` + `07xx`), Docker-free.
  *
  * Drives the adapter's `runCompile` — the same path the CLI exercises — over the
- * nine `slice-mvp-1` `06xx`/`07xx` cases, asserting the emitted SQL +
+ * ten `slice-mvp-1` `06xx`/`07xx` cases, asserting the emitted SQL +
  * binds equal the golden BY TEXT. The four shapes this slice exercises for the
  * first time:
  *
@@ -13,9 +13,9 @@
  *    emission per generated DML statement — a multi-row `INSERT`, a uniform
  *    `pk in (…)` update, one keyed `UPDATE` per distinct key — each keyed by its
  *    `/writeSequence/<step>` pointer, `roundTrips` the statement count;
- *  - **scenario** (`0607`, read-your-own-writes): a scenario is NOT compiled to
- *    SQL, but the adapter surfaces the per-step golden so the gate classifies it
- *    in-claim, `roundTrips` the declared case total;
+ *  - **scenario** (`0607`, read-your-own-writes; `0608`, rollback/abort): a scenario
+ *    is NOT compiled to SQL, but the adapter surfaces the per-step golden so the
+ *    gate classifies it in-claim, `roundTrips` the declared case total;
  *  - **conflict** (`0703`/`0704`/`0707`/`0708`, optimistic locking): one emission
  *    per attempt's generated versioned `UPDATE`, keyed by its case pointer.
  *
@@ -41,8 +41,8 @@ function txnCases(): readonly { id: string; path: string }[] {
 
 /**
  * The EXACT in-scope `06xx`/`07xx` MVP id set: read-lock `0603`, batched writes
- * `0604`/`0612`/`0613`, read-your-own-writes `0607`, and the optimistic-lock
- * conflict/retry `0703`/`0704`/`0707`/`0708`. Asserting the exact set fails loudly
+ * `0604`/`0612`/`0613`, read-your-own-writes `0607`, rollback/abort `0608`, and the
+ * optimistic-lock conflict/retry `0703`/`0704`/`0707`/`0708`. Asserting the exact set fails loudly
  * on a discovery regression (the untagged pkgen / cache / cascade / detached-merge
  * / error-class `06xx`/`07xx` cases must NOT leak in).
  */
@@ -50,6 +50,7 @@ const EXPECTED_IDS: readonly string[] = [
   "0603",
   "0604",
   "0607",
+  "0608",
   "0612",
   "0613",
   "0703",

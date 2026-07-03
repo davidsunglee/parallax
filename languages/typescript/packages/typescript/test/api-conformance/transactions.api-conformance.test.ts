@@ -54,6 +54,7 @@ it("the transactions suite covers exactly the TRANSACTIONS family", () => {
     "0512-write-terminate",
     "0604-batched-write",
     "0607-read-your-own-writes",
+    "0608-rollback-discards-writes",
     "0612-fk-insert-ordering",
     "0613-batched-update-per-key",
   ];
@@ -181,6 +182,31 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
         // The dependent find MUST observe the just-written row (a forced flush precedes it).
         return accounts.find(Account.id.eq(7)).toArray();
       });
+      assertRows(observed, f.loaded, "Account", f.metamodel);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
+    "0608: an aborted transaction discards its writes (rollback)",
+    async () => {
+      const f = await provisionCase(provider, "0608-rollback-discards-writes");
+      const abort = new Error("abort the unit of work");
+      // A write + a dependent find (forcing the RYOW flush), then a throw: the whole
+      // unit of work maps onto ONE atomic scope, so the throw rolls the write back.
+      await expect(
+        f.px.transaction(async (tx) => {
+          const accounts = tx.entity("Account");
+          await accounts.update(Account.id.eq(1), { set: [Account.balance.set(dec("999.00"))] });
+          const midTx = await accounts.find(Account.id.eq(1)).toArray();
+          expect(midTx).toHaveLength(1);
+          throw abort;
+        }),
+      ).rejects.toBe(abort);
+      // After the abort, a fresh find re-resolves and MUST observe the ORIGINAL rows.
+      const observed = await f.px.transaction(async (tx) =>
+        tx.entity("Account").find(Account.id.eq(1)).toArray(),
+      );
       assertRows(observed, f.loaded, "Account", f.metamodel);
     },
     BOOT_TIMEOUT,

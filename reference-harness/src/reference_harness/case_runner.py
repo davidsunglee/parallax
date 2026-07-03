@@ -1078,14 +1078,26 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
         statements = _step_statements(step, dialect)
         binds = step.get("binds", [])
         if "write" in step:
-            # A committed write between finds (M8 read-your-own-writes / cache
-            # invalidation): apply and COMMIT each DML statement on the unit of
-            # work's connection. It captures no rows; a later find observes the
-            # committed state. Its index still occupies a slot so `sameObjectAs`
-            # references stay aligned.
-            for statement_index, statement in enumerate(statements):
-                stmt_binds = _binds_for_list(binds, statement_index, len(statements))
-                db.execute(statement, stmt_binds)
+            if step.get("rollback"):
+                # An ABORTED write (M8 abort contract): apply each DML statement
+                # inside a manual-commit session, then ROLL BACK. The write lands
+                # in the atomic scope the abort discards, so a later find MUST
+                # re-resolve and observe the ORIGINAL rows, never the aborted write.
+                with db.open_session() as session:
+                    for statement_index, statement in enumerate(statements):
+                        stmt_binds = _binds_for_list(binds, statement_index, len(statements))
+                        session.execute(statement, stmt_binds)
+                    session.rollback()
+            else:
+                # A committed write between finds (M8 read-your-own-writes / cache
+                # invalidation): apply and COMMIT each DML statement on the unit of
+                # work's connection. It captures no rows; a later find observes the
+                # committed state.
+                for statement_index, statement in enumerate(statements):
+                    stmt_binds = _binds_for_list(binds, statement_index, len(statements))
+                    db.execute(statement, stmt_binds)
+            # The step's index still occupies a slot so `sameObjectAs` references
+            # stay aligned.
             results.append([])
             continue
         if statements:

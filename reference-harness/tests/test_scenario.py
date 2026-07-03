@@ -54,6 +54,24 @@ def test_cache_hit_scenario_has_a_zero_round_trip_step() -> None:
         assert not hit.get("goldenSql"), "a cache-hit step must list no golden SQL"
 
 
+def test_rollback_scenario_step_is_discovered_and_self_describes() -> None:
+    case = next(
+        (c for c in _scenario_cases() if any(step.get("rollback") for step in c.scenario)),
+        None,
+    )
+    assert case is not None, "no rollback scenario case discovered (0608)"
+    rollback_steps = [step for step in case.scenario if step.get("rollback")]
+    for step in rollback_steps:
+        # An ABORTED write step is still a write step that lists golden DML (it is
+        # applied then rolled back) and declares its round trips (the DML executes).
+        assert "write" in step
+        assert step.get("goldenSql"), "a rollback write step must list golden DML"
+        assert step["roundTrips"] >= 1
+    # The rolled-back step's statements are counted as round trips exactly like a
+    # committed write, so the count-consistency check MUST still hold.
+    _assert_scenario_count_consistency(case, "postgres")
+
+
 def test_scenario_count_consistency_holds_for_authored_cases() -> None:
     for case in _scenario_cases():
         # Must not raise: per-step counts match the golden SQL and total roundTrips.
