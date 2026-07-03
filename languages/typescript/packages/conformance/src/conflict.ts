@@ -21,10 +21,12 @@
  * The `precondition` is an out-of-band naive statement run VERBATIM (it models a
  * concurrent writer, not our runtime's output).
  */
+import { auditWriteStatements } from "@parallax/bitemporal";
 import { quoteIdentifier } from "@parallax/dialect";
 import { type VersionedTarget, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
 import type { LoadedCase } from "./discover.js";
+import { writeTargetFor } from "./write-sequence.js";
 
 /** One versioned-UPDATE attempt: its generated SQL, binds, expected affected count. */
 export interface ConflictAttempt {
@@ -77,15 +79,15 @@ interface RawAttempt {
  */
 export function buildConflictPlan(loaded: LoadedCase): ConflictPlan {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
-  const entity = versionedEntity(metamodel);
-  const target = versionedTargetFor(entity);
+  const entity = conflictEntity(metamodel);
+  const deriveSql = conflictSqlDeriver(entity, loaded);
 
   const attempts = rawAttempts(loaded).map((attempt) => {
     const golden = attempt.golden;
-    const sql = versionedUpdate(target, setColumnsFromGolden(golden, target));
+    const sql = deriveSql(golden);
     if (sql !== golden) {
       throw new Error(
-        `generated versioned UPDATE != golden:\n  generated: ${sql}\n  golden:    ${golden}`,
+        `generated conflict UPDATE != golden:\n  generated: ${sql}\n  golden:    ${golden}`,
       );
     }
     return {
@@ -97,6 +99,36 @@ export function buildConflictPlan(loaded: LoadedCase): ConflictPlan {
   });
 
   return { precondition: preconditionStatements(loaded), attempts };
+}
+
+/**
+ * The generator that re-derives a conflict case's golden `UPDATE` from the entity's
+ * physical shape, chosen by the entity kind:
+ *
+ *  - a VERSIONED entity → the M10 versioned `UPDATE` (`@parallax/locking`
+ *    `versionedUpdate`, gate on the version column);
+ *  - a processing-axis TEMPORAL (audit-only) entity, which carries no version column
+ *    → the M7 milestone CLOSE (`@parallax/bitemporal` `auditWriteStatements`,
+ *    `"terminate"` yields the single close), GATED on the observed processing-from
+ *    (`in_z`) in optimistic mode and ungated in locking mode (the mode the case's
+ *    `uow` block declares). The observed `in_z` is the version analogue (M10),
+ *    `0730`-`0733`.
+ *
+ * Each is pinned equal to the authored golden by `buildConflictPlan`'s no-drift
+ * guard, so the runtime — not the case — owns the conflict DML shape.
+ */
+function conflictSqlDeriver(
+  entity: EntityMetadata,
+  loaded: LoadedCase,
+): (golden: string) => string {
+  if (entity.versionAttribute() !== undefined) {
+    const target = versionedTargetFor(entity);
+    return (golden) => versionedUpdate(target, setColumnsFromGolden(golden, target));
+  }
+  const target = writeTargetFor(entity);
+  const gated = loaded.uow?.concurrency === "optimistic";
+  const [close] = auditWriteStatements("terminate", target, { gated });
+  return () => close as string;
 }
 
 /** A normalized attempt with its golden text resolved (single or retry form). */
@@ -150,10 +182,20 @@ function preconditionStatements(loaded: LoadedCase): readonly PreconditionStatem
   }));
 }
 
-/** The single optimistically-locked entity a conflict case targets. */
-function versionedEntity(metamodel: Metamodel): EntityMetadata {
+/**
+ * The single entity a conflict case targets: a VERSIONED entity (the M10 optimistic
+ * gate on a version column) if one is declared, else a processing-axis TEMPORAL
+ * (audit-only) entity (the M7 milestone close gated on the observed `in_z`,
+ * `0730`-`0733`), else the first entity.
+ */
+function conflictEntity(metamodel: Metamodel): EntityMetadata {
   for (const entity of metamodel.entities()) {
     if (entity.versionAttribute() !== undefined) {
+      return entity;
+    }
+  }
+  for (const entity of metamodel.entities()) {
+    if (entity.asOfAttributes().some((axis) => axis.axis === "processing")) {
       return entity;
     }
   }

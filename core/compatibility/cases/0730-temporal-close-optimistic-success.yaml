@@ -1,0 +1,52 @@
+# Optimistic temporal close, FRESH observed in_z (M7 + M10): the close gates on the
+# processing-from (in_z) the unit of work observed and affects EXACTLY one row.
+#
+# A processing-axis (audit-only) temporal entity carries NO version column, so the
+# observed processing-from (in_z) is the optimistic-lock version analogue (Reladomo's
+# IN_Z rule). In optimistic mode the milestone-closing UPDATE gains the `and in_z = ?`
+# gate bound to the in_z the unit of work read; a fresh (still-current) in_z matches
+# the one current milestone, so the close affects exactly 1 row.
+#
+# Balance id 2 (acct B) has a single clean current milestone: value 200.00, known
+# [2024-02-01, infinity). The unit of work observed its in_z (2024-02-01) at read.
+# The gated close then closes that current row at the transaction instant (2024-10-01):
+#   update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+#   binds [2024-10-01, 2, infinity, 2024-02-01]  ->  1 row closed.
+#
+# A conflict case executes the precondition (none here) + a SINGLE close and asserts
+# its affected-row count; it does NOT run the chained replacement INSERT. So
+# expectedTableState reflects ONLY the executed SQL: the fixtures with id 2's current
+# row now closed at 2024-10-01. The documentary replacement row a full update would
+# chain (value corrected, in_z = 2024-10-01, out_z = infinity — a plain ungated INSERT
+# whose fresh in_z is the version advance) is NOT inserted here.
+model: models/balance.yaml
+tags: [m7, m10, m3, temporal, conflict, optimistic, slice-mvp-1]
+uow:
+  concurrency: optimistic
+expectedAffectedRows: 1
+goldenSql:
+  postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+binds: ["2024-10-01T00:00:00+00:00", 2, infinity, "2024-02-01T00:00:00+00:00"]
+expectedTableState:
+  balance:
+    - bal_id: 1
+      acct_num: A
+      val: 100.00
+      in_z: "2024-01-01T00:00:00+00:00"
+      out_z: "2024-06-01T00:00:00+00:00"
+    - bal_id: 1
+      acct_num: A
+      val: 150.00
+      in_z: "2024-06-01T00:00:00+00:00"
+      out_z: infinity
+    # id 2's current milestone, now CLOSED by our gated close at 2024-10-01.
+    - bal_id: 2
+      acct_num: B
+      val: 200.00
+      in_z: "2024-02-01T00:00:00+00:00"
+      out_z: "2024-10-01T00:00:00+00:00"
+    - bal_id: 3
+      acct_num: C
+      val: 50.00
+      in_z: "2024-03-01T00:00:00+00:00"
+      out_z: "2024-08-01T00:00:00+00:00"

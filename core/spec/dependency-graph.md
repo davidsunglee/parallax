@@ -39,6 +39,7 @@ M4 --> M7
 M7 --> M8
 M9 --> M8
 M10 --> M8
+M10 --> M7
 M12 --> M2
 M12 --> M3
 M12 --> M4
@@ -100,6 +101,13 @@ M14 --> M8
   entity in the path (M4, "As-of propagation across relationships"), so the
   relationship layer references the as-of model. The reverse — M7 depending on
   M4 — remains forbidden.
+- **M10 depends on M7 (optimistic × temporal composition).** For a processing-axis
+  temporal entity the optimistic-lock key is DERIVED from the processing-from
+  column — the observed `in_z` is the version analogue — so an optimistic close
+  gates on it (`… and in_z = ?`); optimistic locking therefore composes *over* the
+  milestoning model and references it. The single legal direction is `M10 --> M7`;
+  the reverse — M7 depending on M10 — is forbidden. The DAG stays acyclic:
+  `M7 --> M8` and `M10 --> M8`, so `M10 --> M7 --> M8` introduces no cycle.
 - **M12 depends on M8 directly, not only via M10.** The compatibility harness
   executes M8 unit-of-work behavior itself — batched write-sequence flushes and
   read-your-own-writes scenarios — independently of optimistic locking, so it

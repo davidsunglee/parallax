@@ -17,8 +17,9 @@
  *    no-op-update-no-DML): apply the write step(s) (committed for `0607`, applied-
  *    then-ROLLED-BACK for `0608`, no DML for `0609`), run the dependent find, and
  *    grade its observed rows against `expectRows` — `roundTrips` the declared total;
- *  - **conflict** (`0703`/`0704`/`0708`): load fixtures, apply the precondition,
- *    apply the versioned UPDATE(s), and grade `affectedRows` (terminal outcome) +
+ *  - **conflict** (`0703`/`0704`/`0708` versioned; `0730`-`0733` optimistic ×
+ *    temporal close): load fixtures, apply the precondition, apply the versioned
+ *    UPDATE / gated milestone close(s), and grade `affectedRows` (terminal outcome) +
  *    the resulting `tableState`.
  *
  * Lives in the composition root because the concrete provider does — the runner
@@ -71,7 +72,8 @@ const CASES = txnCases();
 
 /**
  * The EXACT in-scope harness-lane id set (tagged `06xx`/`07xx` Phase-7 + abort +
- * the versioned set-based materialize scenarios `0614`/`0615` + `0710`).
+ * the versioned set-based materialize scenarios `0614`/`0615` + `0710` + the
+ * Phase-6 optimistic × temporal close cases `0730`-`0733`).
  */
 const EXPECTED_IDS: readonly string[] = [
   "0603",
@@ -88,6 +90,10 @@ const EXPECTED_IDS: readonly string[] = [
   "0704",
   "0708",
   "0710",
+  "0730",
+  "0731",
+  "0732",
+  "0733",
 ];
 
 it("discovers exactly the in-scope 06xx + 07xx cases", () => {

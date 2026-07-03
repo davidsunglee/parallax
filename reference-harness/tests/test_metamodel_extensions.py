@@ -146,6 +146,31 @@ def test_shared_hierarchy_table_ddl_includes_later_subtype_columns() -> None:
     assert len(ddl_for(sparse_root_model, "postgres")) == 1
 
 
+# --- negative: optimistic-lock x temporal composition is rejected (COR-14) ---
+
+
+def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
+    """A temporal (as-of) entity that ALSO declares an ``optimisticLocking``
+    attribute MUST fail metamodel validation (M1/M7/M10, COR-14).
+
+    A processing-axis temporal entity DERIVES its optimistic key from the
+    processing-from column (`in_z` is the version analogue), so it carries no
+    version column; combining `asOfAttributes` with an explicit `optimisticLocking`
+    attribute on one entity is invalid. Proven with an inline descriptor (a
+    deep-copied real Balance model with the combination injected) rather than a
+    fixture file, mirroring the other metamodel-negative tests.
+    """
+    model = load_model(COMPATIBILITY_ROOT, "models/balance.yaml")
+    descriptor = copy.deepcopy(model.descriptor)
+    # Balance is a single-`entity` descriptor with `asOfAttributes` (processing).
+    # Inject `optimisticLocking` on its `value` attribute -> the forbidden combo.
+    value_attr = next(a for a in descriptor["entity"]["attributes"] if a["name"] == "value")
+    value_attr["optimisticLocking"] = True
+    assert not _is_valid(descriptor), (
+        "an entity combining optimisticLocking with asOfAttributes must be rejected"
+    )
+
+
 # --- the authored 09xx cases self-describe -----------------------------------
 
 

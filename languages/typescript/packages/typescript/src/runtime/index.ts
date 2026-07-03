@@ -23,6 +23,8 @@ export {
   type Concurrency,
   ParallaxOptimisticLockError,
   ParallaxReadBeforeWriteError,
+  ParallaxTemporalCloseError,
+  ParallaxTemporalOptimisticError,
   TransactionWriter,
   type UpdateOptions,
   type WriteResult,

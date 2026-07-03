@@ -3,7 +3,7 @@
  * corpus (`06xx` + `07xx`), Docker-free.
  *
  * Drives the adapter's `runCompile` — the same path the CLI exercises — over the
- * fourteen `slice-mvp-1` `06xx`/`07xx` harness-lane cases, asserting the emitted
+ * eighteen `slice-mvp-1` `06xx`/`07xx` harness-lane cases, asserting the emitted
  * SQL + binds equal the golden BY TEXT. The four shapes this slice exercises for
  * the first time:
  *
@@ -19,8 +19,9 @@
  *    write step lists SEVERAL per-object `UPDATE`s): a scenario is NOT compiled to
  *    SQL, but the adapter surfaces the per-step golden so the gate classifies it
  *    in-claim, `roundTrips` the declared case total;
- *  - **conflict** (`0703`/`0704`/`0708`, optimistic locking): one emission per
- *    attempt's generated versioned `UPDATE`, keyed by its case pointer.
+ *  - **conflict** (`0703`/`0704`/`0708`, optimistic locking; `0730`-`0733`,
+ *    optimistic × temporal close): one emission per attempt's generated versioned
+ *    `UPDATE` / gated milestone close, keyed by its case pointer.
  *
  * The Docker-gated run lane (`@parallax/typescript`'s `txn-run.test.ts`) proves
  * the SQL leaves the right rows / table state / affected-row counts.
@@ -53,8 +54,9 @@ function txnCases(): readonly { id: string; path: string }[] {
  * The EXACT in-scope harness-lane `06xx`/`07xx` MVP id set: read-lock `0603`,
  * batched writes `0604`/`0612`/`0613`, read-your-own-writes `0607`, rollback/abort
  * `0608`, no-op update `0609`, locking-mode versioned update `0611`, the
- * optimistic-lock conflict/retry `0703`/`0704`/`0708`, and the harness-lane
- * auto-retry `0710`. Asserting the exact set fails loudly on a discovery regression
+ * optimistic-lock conflict/retry `0703`/`0704`/`0708`, the harness-lane auto-retry
+ * `0710`, and the optimistic × temporal close cases `0730`-`0733`. Asserting the
+ * exact set fails loudly on a discovery regression
  * (the untagged pkgen / cache / cascade / detached-merge / error-class `06xx`/`07xx`
  * cases, and the api-conformance-lane read-lock / boundary cases, must NOT leak in).
  */
@@ -73,6 +75,10 @@ const EXPECTED_IDS: readonly string[] = [
   "0704",
   "0708",
   "0710",
+  "0730",
+  "0731",
+  "0732",
+  "0733",
 ];
 
 const CASES = txnCases();

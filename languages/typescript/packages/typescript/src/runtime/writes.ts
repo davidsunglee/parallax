@@ -68,6 +68,45 @@ export class ParallaxOptimisticLockError extends Error {
 }
 
 /**
+ * Thrown when a temporal (audit-only) milestone CLOSE affects zero rows in LOCKING
+ * mode (M7/M10) — the current milestone was superseded or terminated concurrently,
+ * so there is no current row to close. Distinct from {@link ParallaxOptimisticLockError}:
+ * a locking-mode zero-row close is a stale/consistency error, NOT a conflict — it
+ * must surface to the caller and MUST NOT join the retry loop (a retry would re-read
+ * the same absent current row and loop). A zero-row close is never silent in any mode.
+ */
+export class ParallaxTemporalCloseError extends Error {
+  constructor(entity: string) {
+    super(
+      `temporal close affected 0 rows for '${entity}': the current milestone was ` +
+        `superseded or terminated concurrently (no current row to close)`,
+    );
+    this.name = "ParallaxTemporalCloseError";
+    Object.setPrototypeOf(this, ParallaxTemporalCloseError.prototype);
+  }
+}
+
+/**
+ * Thrown when a BUSINESS-temporal-only entity is written under `concurrency:
+ * "optimistic"` (M1/M7/M10). Optimistic participation derives its key from the
+ * PROCESSING axis (`in_z` is the version analogue); a business-only entity has no
+ * processing axis, so it cannot participate in optimistic mode. The invalid
+ * combination surfaces at the unit-of-work write boundary (mode is not a static
+ * model property, so it cannot be a metamodel-validation error).
+ */
+export class ParallaxTemporalOptimisticError extends Error {
+  constructor(entity: string) {
+    super(
+      `'${entity}' is a business-temporal-only entity and cannot participate in ` +
+        `optimistic mode: an optimistic key is derived from the processing axis, ` +
+        `which it does not have`,
+    );
+    this.name = "ParallaxTemporalOptimisticError";
+    Object.setPrototypeOf(this, ParallaxTemporalOptimisticError.prototype);
+  }
+}
+
+/**
  * Thrown when a versioned entity's row is updated WITHOUT the unit of work having
  * observed it first (M10 read-before-write). Optimistic-lock version values are
  * framework-owned (ADR 0029): the gate binds — and the advance is computed from —
@@ -89,13 +128,17 @@ export class ParallaxReadBeforeWriteError extends Error {
 export type Concurrency = "locking" | "optimistic";
 
 /**
- * The per-unit-of-work observed-state map: `entity#pk → observed version`,
- * populated when a transaction-scoped find hydrates a versioned row. A versioned
- * update reads the observed version from it (the gate bind in optimistic mode; the
- * base for the framework-computed advance in both modes). Keyed dialect-free so a
+ * The per-unit-of-work observed-state map: `entity#pk → observed version | in_z`,
+ * populated when a transaction-scoped find hydrates a row whose optimistic key the
+ * unit of work tracks. For a VERSIONED entity the value is the observed `version`
+ * NUMBER; for a processing-axis TEMPORAL (audit-only) entity — which carries no
+ * version column — it is the observed processing-from (`in_z`) wire STRING, the
+ * version analogue an optimistic close gates on (M7/M10). A gated write reads the
+ * observed value from it (the gate bind in optimistic mode; the base for the
+ * framework-computed advance, for versioned entities). Keyed dialect-free so a
  * `bigint` pk and its numeric literal collide on the same normalized key.
  */
-export type ObservedVersions = Map<string, number>;
+export type ObservedVersions = Map<string, number | string>;
 
 /** The observed-version map key for one row (`Entity#<pk>`). */
 export function observedKey(entityName: string, pk: unknown): string {
@@ -176,6 +219,7 @@ export class TransactionWriter {
    * txInstant, out_z = infinity)`).
    */
   async create(entity: EntityMetadata, input: Record<string, unknown>): Promise<void> {
+    this.assertOptimisticParticipation(entity);
     const binds = insertBinds(entity, input, this.processingInstant);
     if (isAuditOnly(entity)) {
       const [sql] = auditWriteStatements("insert", writeTargetFor(entity));
@@ -202,6 +246,7 @@ export class TransactionWriter {
     options: UpdateOptions,
   ): Promise<WriteResult> {
     await this.flushInserts();
+    this.assertOptimisticParticipation(entity);
     if (isAuditOnly(entity)) {
       return this.auditUpdate(entity, predicate, options);
     }
@@ -321,10 +366,17 @@ export class TransactionWriter {
     pkLiteral: unknown,
   ): Promise<number> {
     const key = observedKey(entity.name, pkLiteral);
-    const observedVersion = this.observed.get(key);
-    if (observedVersion === undefined) {
+    const observed = this.observed.get(key);
+    if (observed === undefined) {
       throw new ParallaxReadBeforeWriteError(entity.name);
     }
+    // A versioned entity records a numeric version (a temporal in_z string never
+    // reaches this per-object emitter — the composition rule forbids a versioned
+    // temporal entity, M1/M10).
+    if (typeof observed !== "number") {
+      throw new Error(`observed value for '${key}' is not a version number`);
+    }
+    const observedVersion = observed;
     const newVersion = observedVersion + 1;
     const pk = bindValue(pkLiteral);
     if (this.concurrency === "optimistic") {
@@ -354,21 +406,25 @@ export class TransactionWriter {
   /** `terminate` (audit-only): close the current milestone, insert nothing. */
   async terminate(entity: EntityMetadata, predicate: Predicate): Promise<WriteResult> {
     await this.flushInserts();
+    this.assertOptimisticParticipation(entity);
     if (!isAuditOnly(entity)) {
       throw new Error(`'terminate' is a temporal removal; '${entity.name}' is non-temporal`);
     }
-    const [closeSql] = auditWriteStatements("terminate", writeTargetFor(entity));
-    const affectedRows = await this.exec(closeSql as string, [
-      this.processingInstant,
-      this.pkValue(entity, predicate),
-      INFINITY,
-    ]);
+    const gated = this.concurrency === "optimistic";
+    const [closeSql] = auditWriteStatements("terminate", writeTargetFor(entity), { gated });
+    const affectedRows = await this.closeMilestone(
+      entity,
+      closeSql as string,
+      this.pkLiteralOf(entity, predicate),
+      gated,
+    );
     return { affectedRows };
   }
 
   /** `delete` (physical, non-temporal entities only). */
   async delete(entity: EntityMetadata, predicate: Predicate): Promise<WriteResult> {
     await this.flushInserts();
+    this.assertOptimisticParticipation(entity);
     if (isAuditOnly(entity)) {
       throw new Error(
         `'delete' is physical; use 'terminate' for the audit entity '${entity.name}'`,
@@ -424,23 +480,79 @@ export class TransactionWriter {
     }
   }
 
-  /** An audit-only `update`: close the current row, then chain a new current row. */
+  /**
+   * An audit-only `update`: close the current row, then chain a new current row. In
+   * OPTIMISTIC mode the close gates on the observed processing-from (`in_z`), so a
+   * concurrent supersession is caught (M10); a zero-row close raises BEFORE the
+   * chained insert in any mode (never silent).
+   */
   private async auditUpdate(
     entity: EntityMetadata,
     predicate: Predicate,
     options: UpdateOptions,
   ): Promise<WriteResult> {
-    const [closeSql, insertSql] = auditWriteStatements("update", writeTargetFor(entity));
-    const pk = this.pkValue(entity, predicate);
+    const gated = this.concurrency === "optimistic";
+    const [closeSql, insertSql] = auditWriteStatements("update", writeTargetFor(entity), { gated });
+    const pkLiteral = this.pkLiteralOf(entity, predicate);
     // Read the row being superseded so unchanged business columns carry forward.
     const current = await this.currentRow(entity, predicate);
-    const affectedRows = await this.exec(closeSql as string, [
-      this.processingInstant,
-      pk,
-      INFINITY,
-    ]);
+    const affectedRows = await this.closeMilestone(entity, closeSql as string, pkLiteral, gated);
     await this.exec(insertSql as string, this.chainedBinds(entity, current, options));
     return { affectedRows };
+  }
+
+  /**
+   * Execute an audit milestone CLOSE and return its affected-row count, enforcing
+   * the M7/M10 conflict contract:
+   *
+   *  - OPTIMISTIC mode (`gated`) binds the observed processing-from (`in_z`) as the
+   *    optimistic gate — a temporal entity carries no version column, so the observed
+   *    `in_z` is the version analogue. An unobserved row is a read-before-write error
+   *    (M10); a zero-row close (a concurrent writer superseded the milestone, leaving
+   *    a fresh `in_z`) throws `ParallaxOptimisticLockError` (retriable under the
+   *    phase-4 flag).
+   *  - LOCKING mode closes UNGATED (the M8 shared read lock makes it correct), but a
+   *    zero-row close still raises a DISTINCT non-retriable `ParallaxTemporalCloseError`
+   *    (a stale/consistency error). A zero-row close is never silent in ANY mode.
+   */
+  private async closeMilestone(
+    entity: EntityMetadata,
+    closeSql: string,
+    pkLiteral: unknown,
+    gated: boolean,
+  ): Promise<number> {
+    const pk = bindValue(pkLiteral);
+    let binds: readonly unknown[];
+    if (gated) {
+      const observedInZ = this.observed.get(observedKey(entity.name, pkLiteral));
+      if (observedInZ === undefined) {
+        throw new ParallaxReadBeforeWriteError(entity.name);
+      }
+      binds = [this.processingInstant, pk, INFINITY, observedInZ];
+    } else {
+      binds = [this.processingInstant, pk, INFINITY];
+    }
+    const affectedRows = await this.exec(closeSql, binds);
+    if (affectedRows === 0) {
+      throw gated
+        ? new ParallaxOptimisticLockError(entity.name)
+        : new ParallaxTemporalCloseError(entity.name);
+    }
+    return affectedRows;
+  }
+
+  /**
+   * Reject a write to a BUSINESS-temporal-only entity under `optimistic` mode
+   * (M1/M7/M10): its optimistic key would derive from a processing axis it does not
+   * have (`isAuditOnly` keys on the processing axis, so it does not cover business
+   * only). The invalid combination surfaces at the write boundary — mode is a
+   * per-unit-of-work property, not a static model one, so it cannot be a
+   * metamodel-validation error.
+   */
+  private assertOptimisticParticipation(entity: EntityMetadata): void {
+    if (this.concurrency === "optimistic" && entity.temporal === "unitemporal-business") {
+      throw new ParallaxTemporalOptimisticError(entity.name);
+    }
   }
 
   /** The current (open, `out_z = infinity`) row of an audit entity, by pk. */
@@ -620,14 +732,23 @@ function pkColumn(entity: EntityMetadata): string {
   return pk.column;
 }
 
-/** Resolve an entity's audit {@link WriteTarget} (table, columns, pk, out_z). */
+/**
+ * Resolve an entity's audit {@link WriteTarget} (table, columns, pk, out_z, in_z).
+ * `fromColumn` (`in_z`) is the optimistic gate an OPTIMISTIC-mode close binds the
+ * observed value on (M10); `toColumn` (`out_z`) is set + keyed by every close.
+ */
 function writeTargetFor(entity: EntityMetadata): WriteTarget {
   const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
   return {
     table: quoteIdentifier(entity.table),
     columns: quotedColumnOrder(entity),
     pkColumn: quoteIdentifier(pkColumn(entity)),
-    ...(processing === undefined ? {} : { toColumn: quoteIdentifier(processing.toColumn) }),
+    ...(processing === undefined
+      ? {}
+      : {
+          toColumn: quoteIdentifier(processing.toColumn),
+          fromColumn: quoteIdentifier(processing.fromColumn),
+        }),
   };
 }
 
