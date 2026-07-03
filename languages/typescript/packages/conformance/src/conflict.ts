@@ -21,9 +21,9 @@
  * The `precondition` is an out-of-band naive statement run VERBATIM (it models a
  * concurrent writer, not our runtime's output).
  */
+import { quoteIdentifier } from "@parallax/dialect";
 import { type VersionedTarget, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
-import { quoteIdentifier } from "@parallax/sql";
 import type { LoadedCase } from "./discover.js";
 
 /** One versioned-UPDATE attempt: its generated SQL, binds, expected affected count. */

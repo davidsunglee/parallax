@@ -13,6 +13,13 @@ const account = await f.px.transaction((tx) =>
 tx.entity("Account").find(Account.id.eq(2)).single(),
 ```
 
+## a distinct/projection read in a locking transaction proceeds unlocked and returns rows
+
+```ts
+const rows = await f.px.transaction((tx) =>
+tx.entity("Account").find(Account.id.eq(2), { distinct: true }).toArray(),
+```
+
 ## 0609: a versioned update that changes no attribute issues no DML
 
 ```ts

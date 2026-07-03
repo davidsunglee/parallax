@@ -176,17 +176,25 @@ one.
 
 Reads performed **inside a unit of work** that intends to write **MUST** be made
 correct without the caller writing locking SQL. The default (`locking`) in-
-transaction read acquires a **shared row lock**, so a concurrent transaction
-cannot mutate the row out from under the read-then-write. The **lock suffix is a
-dialect decision** owned by `M11`:
+transaction **object find** acquires a **shared row lock**, so a concurrent
+transaction cannot mutate the row out from under the read-then-write.
 
-| Dialect | Read-lock suffix |
-|---|---|
-| Postgres | `for share of t0` |
-| (MariaDB) | `lock in share mode` (added with the MariaDB dialect) |
+The lock applies to **object finds only**. A **projection or aggregation** read
+inside a unit of work takes **no** lock and **proceeds unlocked — it never
+errors**: its result rows have no identifiable base row to lock (the database
+rejects a row-lock clause on a `distinct` / grouped / aggregate result), and per
+ADR 0024 a projection returns **plain, unmanaged data** that never enters the
+observed-version map or the write path — so there is nothing for a lock to
+protect. Omitting the lock is therefore both necessary and safe.
 
-The canonical Postgres golden SQL appends the suffix to the otherwise-ordinary
-read (`M3`):
+**Whether and where to attach the lock is a `M11` dialect decision**, not M8's:
+M8 asks the dialect to apply this unit of work's read lock to a compiled read, and
+the dialect returns an object find with its shared-row-lock form appended (Postgres
+`for share of t0`; MariaDB `lock in share mode`, added with that dialect) and a
+projection/aggregation read unchanged. M8 contains no dialect-specific SQL shaping.
+
+The canonical Postgres golden SQL for an object find appends the suffix to the
+otherwise-ordinary read (`M3`):
 
 ```text
 select t0.id, t0.balance from account t0 where t0.id = ? for share of t0
@@ -201,9 +209,10 @@ The suite proves the read-lock golden SQL is **valid SQL that executes and
 returns the expected rows** against real Postgres (the lock itself is a
 concurrency property; the suite asserts the locking read is well-formed and
 result-correct, which is the observable contract a single-connection harness can
-verify). Optimistic locking — the *alternative* correctness strategy, where a
-read takes **no** lock and a version column is checked in the `UPDATE` — is
-`M10`.
+verify). The object-find-vs-aggregation split is recorded in ADR 0030 (which
+supersedes-in-part ADR 0009). Optimistic locking — the *alternative* correctness
+strategy, where a read takes **no** lock and a version column is checked in the
+`UPDATE` — is `M10`.
 
 ## What the suite pins down
 
