@@ -1,0 +1,51 @@
+# Rollback / abort scenario (M8): a write performed inside a unit of work that
+# ABORTS is discarded — a post-abort find re-resolves and observes the ORIGINAL rows.
+#
+# 0607 proves read-your-own-writes (a committed write is observed mid-transaction).
+# This proves the complementary ABORT contract: a write applied inside a unit of
+# work — even one force-flushed to serve a dependent read — MUST NOT survive the
+# abort. The scenario interleaves an aborted write between two identical finds:
+#   step 0 find  : cache MISS — read account 1 (Ada, balance 100.00), 1 round trip
+#   step 1 write : apply `balance = 999.00` for account 1, then ROLL BACK
+#                  (rollback: true) — the write lands inside the atomic scope the
+#                  abort discards, so it never becomes durable.
+#   step 2 find  : the SAME find re-resolves (cache MISS) and MUST observe the
+#                  ORIGINAL balance 100.00, never the aborted 999.00.
+# The teeth: step 2 cannot be a cache HIT — a hit would reuse step 0's rows, and
+# the aborted write must leave the row exactly as step 0 read it. The golden UPDATE
+# is the ungated version-advancing form (the 0702 shape) so a later phase's
+# optimistic-mode semantics never re-touch it. roundTrips = 3 (two finds + the
+# rolled-back write, whose DML still executes).
+model: models/account.yaml
+tags: [m8, transactions cache, rollback, abort, scenario, slice-mvp-1]
+roundTrips: 3
+scenario:
+  - find:
+      eq:
+        attr: Account.id
+        value: 1
+    roundTrips: 1
+    note: cache MISS — read account 1 (balance 100.00) before the aborted write
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+    binds: [1]
+    expectRows:
+      - { id: 1, owner: Ada, balance: 100.00 }
+  - write: update
+    rollback: true
+    roundTrips: 1
+    note: apply a new balance for account 1, then ROLL BACK — the write is discarded
+    goldenSql:
+      postgres: update account set balance = ?, version = ? where id = ?
+    binds: [999.00, 2, 1]
+  - find:
+      eq:
+        attr: Account.id
+        value: 1
+    roundTrips: 1
+    note: the SAME find re-resolves (cache MISS) and MUST observe 100.00, not 999.00
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+    binds: [1]
+    expectRows:
+      - { id: 1, owner: Ada, balance: 100.00 }

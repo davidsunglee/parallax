@@ -57,10 +57,10 @@ function readGolden(loaded: LoadedCase): string | undefined {
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the whole slice-mvp-1 slice (99 cases)", () => {
+  it("discovers the whole slice-mvp-1 slice (100 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case.
-    expect(CASES.length).toBe(99);
+    expect(CASES.length).toBe(100);
   });
 
   it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
@@ -143,8 +143,8 @@ group("case-matrix report — the slice is green at a glance", () => {
     // The rendered report is the human-facing artifact; surface it on failure so
     // a regression names the exact residual case IDs.
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(99);
-    expect(report.counts.ok).toBe(99);
+    expect(report.total).toBe(100);
+    expect(report.counts.ok).toBe(100);
     expect(report.residuals).toEqual([]);
   });
 });

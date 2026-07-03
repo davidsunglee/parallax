@@ -476,7 +476,14 @@ async function runScenario(
           sql,
           binds: step.binds as readonly WireBind[],
         });
-        await provider.exec(sql, step.binds);
+        // A `rollback: true` step applies the DML then ROLLS IT BACK (the M8 abort
+        // contract): the write lands in an atomic scope that is discarded, so a
+        // later find MUST observe the ORIGINAL rows. A default write COMMITs.
+        if (step.rollback === true) {
+          await provider.execRolledBack(sql, step.binds);
+        } else {
+          await provider.exec(sql, step.binds);
+        }
       }
       results.push([]);
       continue;

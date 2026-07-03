@@ -68,8 +68,8 @@ const HAS_DOCKER = dockerAvailable();
 const CASES = taggedCases();
 
 // Discovery is Docker-free; assert the exact slice size unconditionally.
-it("discovers the whole slice-mvp-1 slice (99 cases)", () => {
-  expect(CASES.length).toBe(99);
+it("discovers the whole slice-mvp-1 slice (100 cases)", () => {
+  expect(CASES.length).toBe(100);
 });
 
 group.skipIf(!HAS_DOCKER)("full-slice run lane (Testcontainers postgres:17)", () => {
@@ -111,7 +111,7 @@ group.skipIf(!HAS_DOCKER)("full-slice run lane (Testcontainers postgres:17)", ()
   it("the case-matrix report is GREEN with no residuals", () => {
     const report = matrix.report();
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(99);
+    expect(report.total).toBe(100);
     expect(report.residuals).toEqual([]);
   });
 });
