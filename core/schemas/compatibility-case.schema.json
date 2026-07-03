@@ -43,8 +43,12 @@
       ]
     },
     {
-      "description": "A boundary case (M8/M10 bounded automatic retry): a unit-of-work loop-mechanics case the single-connection M12 harness cannot provoke (injected transient failures, retry counting, error surfacing). It carries `lane: api-conformance` and is satisfied by each language's API Conformance Suite; the harness schema-validates it but does not execute it. It declares the portable unit-of-work body (`boundary` ordered actions), the portable expected outcome (`expect`: `committed` or a surfaced error kind), an OPTIONAL injected fault (`inject`), and its retry configuration under `uow` (`retries` / `retryOptimisticConflicts`). It carries no golden SQL — the concrete DML and error types stay per-language.",
-      "required": ["boundary", "expect"]
+      "description": "A boundary case (M8/M10 bounded automatic retry): a unit-of-work loop-mechanics case the single-connection M12 harness cannot provoke (injected transient failures, retry counting, error surfacing). It carries `lane: api-conformance` and is satisfied by each language's API Conformance Suite; the harness schema-validates it but does not execute it. It declares the portable unit-of-work body (`boundary` ordered actions), the portable expected outcome (`expect`: `committed` or a surfaced error kind), an OPTIONAL injected fault (`inject`), and its retry configuration under `uow` (`retries` / `retryOptimisticConflicts`). It carries no golden SQL — the concrete DML and error types stay per-language. Both invariants are enforced here: `lane` is REQUIRED and pinned to `api-conformance` (a boundary case cannot silently default to the `harness` lane and fall into compile/run paths not shaped for it), and `goldenSql` is disallowed.",
+      "required": ["boundary", "expect", "lane"],
+      "properties": {
+        "lane": { "const": "api-conformance" }
+      },
+      "not": { "required": ["goldenSql"] }
     }
   ],
   "properties": {
