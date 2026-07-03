@@ -24,6 +24,7 @@ import { loadCase } from "@parallax/conformance";
 import { describe, expect, it } from "vitest";
 import {
   createParallax,
+  NavigationPath,
   type ParallaxDatabase,
   ParallaxOptimisticLockError,
   ParallaxReadBeforeWriteError,
@@ -87,6 +88,75 @@ const ACCOUNT = loadCase(
 
 /** A physical Account row the stub returns for an in-transaction find (version 1). */
 const ACCOUNT_ROW: ParallaxRow = { id: 2, owner: "Linus", balance: "250.00", version: 1 };
+
+/**
+ * A synthetic VERSIONED root (`Vault`) that carries a to-many relationship
+ * (`entries`), so a `find(pred, { includes: [Vault.entries] })` compiles to a
+ * DEEP FETCH rooted at the versioned entity. The corpus versioned model (`Account`)
+ * declares no relationship, so this is the only way to exercise a deep-fetch read of
+ * a versioned root — the read-context wiring the flat path already has.
+ */
+const VAULT_DESCRIPTOR = {
+  entities: [
+    {
+      name: "Vault",
+      namespace: "parallax.test",
+      table: "vault",
+      mutability: "transactional",
+      temporal: "non-temporal",
+      attributes: [
+        { name: "id", type: "int64", column: "id", primaryKey: true, pkGenerator: "none" },
+        { name: "owner", type: "string", column: "owner", maxLength: 64 },
+        { name: "balance", type: "decimal(18,2)", column: "balance" },
+        { name: "version", type: "int32", column: "version", optimisticLocking: true },
+      ],
+      relationships: [
+        {
+          name: "entries",
+          relatedEntity: "VaultEntry",
+          cardinality: "one-to-many",
+          join: "this.id = VaultEntry.vaultId",
+          reverseName: "vault",
+          dependent: true,
+          foreignKey: "vault_id",
+        },
+      ],
+      indices: [{ name: "vault_pk", attributes: ["id"], unique: true }],
+    },
+    {
+      name: "VaultEntry",
+      namespace: "parallax.test",
+      table: "vault_entry",
+      mutability: "transactional",
+      temporal: "non-temporal",
+      attributes: [
+        { name: "id", type: "int64", column: "id", primaryKey: true, pkGenerator: "none" },
+        { name: "vaultId", type: "int64", column: "vault_id" },
+        { name: "memo", type: "string", column: "memo", maxLength: 64 },
+      ],
+      relationships: [
+        {
+          name: "vault",
+          relatedEntity: "Vault",
+          cardinality: "many-to-one",
+          join: "this.vaultId = Vault.id",
+          reverseName: "entries",
+          foreignKey: "vault_id",
+        },
+      ],
+      indices: [{ name: "vault_entry_pk", attributes: ["id"], unique: true }],
+    },
+  ],
+};
+
+/** A physical Vault row the stub returns for the deep-fetch ROOT read (version 1). */
+const VAULT_ROW: ParallaxRow = { id: 2, owner: "Vera", balance: "250.00", version: 1 };
+
+/** The `Vault.entries` include path — makes a `find` a deep fetch rooted at Vault. */
+const VAULT_ENTRIES = new NavigationPath(["Vault.entries"]);
+
+/** A pk-equality predicate on `Vault.id`. */
+const vaultPk = (id: number): Predicate => new Predicate({ eq: { attr: "Vault.id", value: id } });
 
 /** A pk-equality predicate on `Account.id`. */
 const accountPk = (id: number): Predicate =>
@@ -281,5 +351,63 @@ describe("TransactionWriter versioned update (M10 framework-owned versions)", ()
         { concurrency: "optimistic" },
       ),
     ).rejects.toBeInstanceOf(ParallaxOptimisticLockError);
+  });
+});
+
+describe("deep-fetch in-transaction read carries the M8/M10 read context", () => {
+  it("locking mode: a deep-fetch root read locks and records the observed version (no read-before-write)", async () => {
+    const db = new StubDatabase([{ ...VAULT_ROW }]);
+    const px = createParallax({ descriptor: VAULT_DESCRIPTOR, database: db });
+
+    // A deep-fetch find of the versioned root, THEN an update of that same root.
+    // Before the read-context wiring, the deep-fetch read populated no observed
+    // version, so this update threw ParallaxReadBeforeWriteError.
+    const result = await px.transaction(async (tx) => {
+      const vaults = tx.entity("Vault");
+      await vaults.find(vaultPk(2), { includes: [VAULT_ENTRIES] }).toArray();
+      return vaults.update(vaultPk(2), { set: [{ attr: "balance", value: "500.00" }] });
+    });
+
+    // (a) the ROOT deep-fetch read took the M8 shared row lock (0603), like a flat read.
+    const rootRead = db.queries.find(
+      (q) => q.sql.startsWith("select") && q.sql.includes("from vault t0"),
+    );
+    expect(rootRead?.sql.endsWith("for share of t0")).toBe(true);
+    // (b) the child level read participates in the deep fetch but takes no lock
+    //     (only the root read is locked — the minimal, flat-consistent fix).
+    const childRead = db.queries.find((q) => q.sql.includes("from vault_entry"));
+    expect(childRead).toBeDefined();
+    expect(childRead?.sql.includes("for share")).toBe(false);
+    // (c) the versioned update advanced the OBSERVED version (1 -> 2), ungated, applied.
+    const update = db.queries.find((q) => q.sql.includes("update vault "));
+    expect(update?.sql).toContain("set balance = ?, version = ? where id = ?");
+    expect(update?.sql).not.toContain("and version = ?");
+    expect(update?.binds).toEqual(["500.00", 2, 2]);
+    expect(result.affectedRows).toBe(1);
+  });
+
+  it("optimistic mode: a deep-fetch root read records the observed version the gate binds, and takes no lock", async () => {
+    const db = new StubDatabase([{ ...VAULT_ROW }]);
+    const px = createParallax({ descriptor: VAULT_DESCRIPTOR, database: db });
+
+    const result = await px.transaction(
+      async (tx) => {
+        const vaults = tx.entity("Vault");
+        await vaults.find(vaultPk(2), { includes: [VAULT_ENTRIES] }).toArray();
+        return vaults.update(vaultPk(2), { set: [{ attr: "balance", value: "500.00" }] });
+      },
+      { concurrency: "optimistic" },
+    );
+
+    // Optimistic reads take NO lock, even through a deep fetch.
+    const rootRead = db.queries.find(
+      (q) => q.sql.startsWith("select") && q.sql.includes("from vault t0"),
+    );
+    expect(rootRead?.sql.includes("for share")).toBe(false);
+    // The gated update binds the observed version (1) the deep-fetch read recorded.
+    const update = db.queries.find((q) => q.sql.includes("update vault "));
+    expect(update?.sql).toContain("set balance = ?, version = ? where id = ? and version = ?");
+    expect(update?.binds).toEqual(["500.00", 2, 2, 1]);
+    expect(result.affectedRows).toBe(1);
   });
 });

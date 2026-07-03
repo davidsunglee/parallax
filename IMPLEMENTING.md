@@ -107,7 +107,7 @@ scoped by it. Choose (or define) the named Conformance Slice:
 
 - **Adopt an existing slice.** A fresh first build ordinarily adopts the
   canonical `slice-mvp-1` slice defined in
-  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md): Postgres-only, 99
+  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md): Postgres-only, 101
   cases selected by the single `caseTags.include: ["slice-mvp-1"]` tag. Copy its
   `capabilities` block verbatim, changing only the `adapter` identity.
 - **Or define a new slice.** If no existing slice fits, define one in

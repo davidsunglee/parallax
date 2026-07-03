@@ -49,9 +49,12 @@ into the identity cache (a detached copy carries the one read at detachment,
 the gate or as the new version; the new version is always runtime-computed
 (`observed + 1`). "Caller-driven" refers to conflict *handling* only, never to the
 version *value*. A keyed `UPDATE` of a versioned row the unit of work never
-observed is a **read-before-write** error in optimistic mode: with no observed
-version there is nothing to gate on, so the implementation **MUST** raise rather
-than write blindly.
+observed is a **read-before-write** error in **either** mode: the new version is
+computed from the observed one (`observed + 1`), so with no observed version
+there is nothing to advance from — and, in optimistic mode, nothing to gate on —
+so the implementation **MUST** raise rather than write blindly. (Only optimistic
+mode additionally emits the version *gate*; both modes require the observed
+version to advance it.)
 
 ### No-op updates issue no DML
 
