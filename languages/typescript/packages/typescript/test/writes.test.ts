@@ -692,6 +692,51 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
     expect(result.affectedRows).toBe(1);
   });
 
+  it("optimistic mode: a multi-milestone read gates on the CURRENT in_z, not a stale closed one", async () => {
+    // A history/as-of read returns BOTH milestones for one pk: the CURRENT row
+    // (out_z = infinity) and a CLOSED historical row (out_z = a past instant). The
+    // CLOSED row is returned LAST, so a naive last-row-wins recording would latch its
+    // stale in_z; recording must FILTER to the current (out_z = infinity) milestone.
+    const current: ParallaxRow = {
+      bal_id: 2,
+      acct_num: "B",
+      val: "200.00",
+      in_z: "2024-02-01T00:00:00+00:00",
+      out_z: "infinity",
+    };
+    const closed: ParallaxRow = {
+      bal_id: 2,
+      acct_num: "B",
+      val: "150.00",
+      in_z: "2023-01-01T00:00:00+00:00",
+      out_z: "2024-02-01T00:00:00+00:00",
+    };
+    // Order the CLOSED (stale) row LAST: under the bug it wins the recording loop.
+    const db = new StubDatabase([current, closed]);
+    // A real close affects exactly ONE current milestone (the stub otherwise reports
+    // its two-row select count for the `returning 1` write).
+    db.setUpdateAffected(1);
+    const px = createParallax({ descriptor: BALANCE, database: db });
+
+    const result = await px.transaction(
+      async (tx) => {
+        const balances = tx.entity("Balance");
+        // A multi-row read (`.single()` rejects >1 row) hydrates BOTH milestones and
+        // records the observed in_z for the current one.
+        await balances.find(balancePk(2)).toArray();
+        return balances.update(balancePk(2), { set: [{ attr: "value", value: "250.00" }] });
+      },
+      { concurrency: "optimistic" },
+    );
+
+    const close = closeOf(db.queries);
+    expect(close?.binds).toHaveLength(4);
+    // The 4th bind gates on the CURRENT milestone's in_z, NOT the stale closed one.
+    expect(String(close?.binds[3])).toContain("2024-02-01");
+    expect(String(close?.binds[3])).not.toContain("2023-01-01");
+    expect(result.affectedRows).toBe(1);
+  });
+
   it("optimistic mode: a zero-row gated close throws ParallaxOptimisticLockError", async () => {
     const db = new StubDatabase([BALANCE_ROW]);
     db.setUpdateAffected(0); // the gate matches no current milestone — a concurrent supersede

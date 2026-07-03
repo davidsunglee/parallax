@@ -14,7 +14,7 @@
  * typing is layered on by the generated wrapper.
  */
 
-import { toWire } from "@parallax/core";
+import { isInfinity, toWire } from "@parallax/core";
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 import { ParallaxTransientError } from "@parallax/db";
 import { ParallaxList } from "@parallax/lists";
@@ -529,8 +529,11 @@ export class ParallaxTransaction {
    *  - a VERSIONED entity records the observed `version` NUMBER;
    *  - a processing-axis TEMPORAL (audit-only) entity — which carries no version
    *    column — records the observed processing-from (`in_z`) as its wire STRING, the
-   *    version analogue an optimistic close gates on (M7/M10). The current-milestone
-   *    read hydrates the current `in_z`.
+   *    version analogue an optimistic close gates on (M7/M10). Recording FILTERS to the
+   *    CURRENT (`out_z = infinity`) milestone: a multi-milestone as-of/history read
+   *    returns both the current row AND closed rows for one pk, so recording every row
+   *    (last-row-wins) could overwrite the current `in_z` with a stale closed one — the
+   *    gate must key on the CURRENT milestone's processing-from.
    *
    * A non-versioned, non-temporal entity records nothing.
    */
@@ -554,10 +557,20 @@ export class ParallaxTransaction {
     if (processingFrom === undefined) {
       return;
     }
+    // Only the CURRENT milestone (`out_z = infinity`) carries the observed `in_z` an
+    // optimistic close gates on; skip closed milestones so a history/as-of read that
+    // returns them too cannot overwrite the current observation (last-row-wins). If a
+    // temporal entity somehow declares no processing-to attribute we cannot identify
+    // the current milestone, so we record NOTHING rather than risk latching a stale
+    // `in_z` — a subsequent gated close then read-before-writes, which is safe.
+    const processingTo = entity.processingToAttribute();
+    if (processingTo === undefined) {
+      return;
+    }
     for (const row of rows) {
       const pkValue = row[pk.name];
       const inZValue = row[processingFrom.name];
-      if (pkValue != null && inZValue != null) {
+      if (pkValue != null && inZValue != null && isInfinity(toWire(row[processingTo.name]))) {
         this.observed.set(observedKey(entity.name, pkValue), toWire(inZValue) as string);
       }
     }
