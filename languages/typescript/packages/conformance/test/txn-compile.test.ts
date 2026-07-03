@@ -3,9 +3,9 @@
  * corpus (`06xx` + `07xx`), Docker-free.
  *
  * Drives the adapter's `runCompile` — the same path the CLI exercises — over the
- * eleven `slice-mvp-1` `06xx`/`07xx` cases, asserting the emitted SQL +
- * binds equal the golden BY TEXT. The four shapes this slice exercises for the
- * first time:
+ * fourteen `slice-mvp-1` `06xx`/`07xx` harness-lane cases, asserting the emitted
+ * SQL + binds equal the golden BY TEXT. The four shapes this slice exercises for
+ * the first time:
  *
  *  - **read-lock** (`0603`, `read` shape + `read-lock` tag): the single emission is
  *    the plain `eq` read with the dialect lock suffix `for share of t0` appended;
@@ -15,9 +15,10 @@
  *    update, one keyed `UPDATE` per distinct key, or the ungated version-advancing
  *    `UPDATE` — each keyed by its `/writeSequence/<step>` pointer;
  *  - **scenario** (`0607`, read-your-own-writes; `0608`, rollback/abort; `0609`,
- *    no-op-update-no-DML): a scenario is NOT compiled to SQL, but the adapter
- *    surfaces the per-step golden so the gate classifies it in-claim, `roundTrips`
- *    the declared case total;
+ *    no-op-update-no-DML; `0614`/`0615`, versioned set-based materialize — whose
+ *    write step lists SEVERAL per-object `UPDATE`s): a scenario is NOT compiled to
+ *    SQL, but the adapter surfaces the per-step golden so the gate classifies it
+ *    in-claim, `roundTrips` the declared case total;
  *  - **conflict** (`0703`/`0704`/`0708`, optimistic locking): one emission per
  *    attempt's generated versioned `UPDATE`, keyed by its case pointer.
  *
@@ -66,6 +67,8 @@ const EXPECTED_IDS: readonly string[] = [
   "0611",
   "0612",
   "0613",
+  "0614",
+  "0615",
   "0703",
   "0704",
   "0708",
@@ -74,11 +77,27 @@ const EXPECTED_IDS: readonly string[] = [
 
 const CASES = txnCases();
 
+/** The binds for statement `index` of a (possibly multi-statement) scenario step. */
+function stepBinds(binds: readonly unknown[], index: number): readonly unknown[] {
+  if (binds.length > 0 && Array.isArray(binds[0])) {
+    return (binds[index] as readonly unknown[] | undefined) ?? [];
+  }
+  return index === 0 ? binds : [];
+}
+
 /** The ordered golden `postgres` statements a case declares, per its shape. */
 function goldenStatements(loaded: ReturnType<typeof loadCase>): readonly string[] {
   if (isScenario(loaded)) {
-    const steps = (loaded.raw.scenario as { goldenSql?: { postgres?: string } }[]) ?? [];
-    return steps.flatMap((step) => (step.goldenSql?.postgres ? [step.goldenSql.postgres] : []));
+    const steps = (loaded.raw.scenario as { goldenSql?: { postgres?: string | string[] } }[]) ?? [];
+    // A step may list SEVERAL golden statements (a versioned set-based materialize
+    // write, `0614`/`0615`) — flatten them so each per-object `UPDATE` is one entry.
+    return steps.flatMap((step) => {
+      const golden = step.goldenSql?.postgres;
+      if (golden === undefined) {
+        return [];
+      }
+      return Array.isArray(golden) ? golden : [golden];
+    });
   }
   if (isConflict(loaded)) {
     const attempts = loaded.raw.attempts as { goldenSql?: { postgres?: string } }[] | undefined;
@@ -98,8 +117,21 @@ function goldenStatements(loaded: ReturnType<typeof loadCase>): readonly string[
 function goldenBinds(loaded: ReturnType<typeof loadCase>): readonly (readonly unknown[])[] {
   if (isScenario(loaded)) {
     const steps =
-      (loaded.raw.scenario as { goldenSql?: { postgres?: string }; binds?: unknown[] }[]) ?? [];
-    return steps.flatMap((step) => (step.goldenSql?.postgres ? [step.binds ?? []] : []));
+      (loaded.raw.scenario as {
+        goldenSql?: { postgres?: string | string[] };
+        binds?: unknown[];
+      }[]) ?? [];
+    // A multi-statement step carries a list-of-lists `binds` (one row per per-object
+    // `UPDATE`); slice it per statement so each emission's binds line up.
+    return steps.flatMap((step) => {
+      const golden = step.goldenSql?.postgres;
+      if (golden === undefined) {
+        return [];
+      }
+      const statements = Array.isArray(golden) ? golden : [golden];
+      const binds = (step.binds ?? []) as unknown[];
+      return statements.map((_stmt, index) => stepBinds(binds, index));
+    });
   }
   if (isConflict(loaded)) {
     const attempts = loaded.raw.attempts as { binds?: unknown[] }[] | undefined;

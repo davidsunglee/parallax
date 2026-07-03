@@ -40,7 +40,7 @@ import { SLICE_MVP_1_CAPABILITIES } from "./describe.js";
 import type { LoadedCase } from "./discover.js";
 import { inClaim } from "./gate.js";
 import type { CompatibilityDatabaseProvider } from "./provider.js";
-import { buildScenarioPlan, isScenario } from "./scenario.js";
+import { buildScenarioPlan, isScenario, stepBindsAt } from "./scenario.js";
 import { assertValidEnvelope } from "./schema.js";
 import { schemaForReadCase } from "./schema-resolver.js";
 import { buildWriteSequencePlan, isWriteSequence } from "./write-sequence.js";
@@ -130,10 +130,13 @@ export function runCompile(
   if (isScenario(loaded)) {
     const plan = buildScenarioPlan(loaded);
     const emissions: Emission[] = plan.steps.flatMap((step) =>
-      step.statements.map((sql) => ({
+      // A MULTI-statement step (a versioned set-based materialize write, `0614` /
+      // `0615`) carries a list-of-lists `binds`, one per statement — slice it so
+      // each per-object `UPDATE` emission carries its own bind row.
+      step.statements.map((sql, statementIndex) => ({
         casePointer: step.casePointer,
         sql,
-        binds: step.binds as readonly WireBind[],
+        binds: stepBindsAt(step.binds, statementIndex) as readonly WireBind[],
       })),
     );
     return assertValidEnvelope({
@@ -480,19 +483,23 @@ async function runScenario(
 
   for (const [index, step] of plan.steps.entries()) {
     if (step.kind === "write") {
-      for (const sql of step.statements) {
+      // A step may emit SEVERAL statements (a versioned set-based materialize write,
+      // `0614` / `0615`: one per-object `UPDATE` per row); its `binds` is then a
+      // list-of-lists sliced per statement (`stepBindsAt`).
+      for (const [statementIndex, sql] of step.statements.entries()) {
+        const stmtBinds = stepBindsAt(step.binds, statementIndex);
         emissions.push({
           casePointer: step.casePointer,
           sql,
-          binds: step.binds as readonly WireBind[],
+          binds: stmtBinds as readonly WireBind[],
         });
         // A `rollback: true` step applies the DML then ROLLS IT BACK (the M8 abort
         // contract): the write lands in an atomic scope that is discarded, so a
         // later find MUST observe the ORIGINAL rows. A default write COMMITs.
         if (step.rollback === true) {
-          await provider.execRolledBack(sql, step.binds);
+          await provider.execRolledBack(sql, stmtBinds);
         } else {
-          await provider.exec(sql, step.binds);
+          await provider.exec(sql, stmtBinds);
         }
       }
       results.push([]);
@@ -500,16 +507,18 @@ async function runScenario(
     }
 
     // A find step: execute its golden (a cache hit lists none and reuses a prior
-    // step's rows via `sameObjectAs`, or the immediately-preceding step).
+    // step's rows via `sameObjectAs`, or the immediately-preceding step). A find is
+    // single-statement, so its binds are the (flat) statement-0 binds.
     let rows: readonly Row[];
     if (step.statements.length > 0) {
       const sql = step.statements[0] as string;
+      const stmtBinds = stepBindsAt(step.binds, 0);
       emissions.push({
         casePointer: step.casePointer,
         sql,
-        binds: step.binds as readonly WireBind[],
+        binds: stmtBinds as readonly WireBind[],
       });
-      rows = (await provider.query(sql, step.binds)) as readonly Row[];
+      rows = (await provider.query(sql, stmtBinds)) as readonly Row[];
     } else {
       const source = step.sameObjectAs ?? index - 1;
       rows = results[source] ?? [];

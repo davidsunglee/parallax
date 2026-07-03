@@ -527,6 +527,21 @@ count** (`M12` conflict case), and proves the locking-mode advance by applying
 the ungated golden and asserting the resulting table state (`M12` write-sequence
 case), so both are verified against real data.
 
+### Versioned set-based updates materialize
+
+There is **no** set-based versioned `UPDATE` template — no versioned analogue of
+the batched `where <pk> in (…)` form above — because the gate binds a *per-row*
+observed version a single statement cannot carry. A set-based update targeting a
+versioned entity therefore **materializes** (`M10`, ADR 0032): the runtime
+resolves the predicate to rows (a read that records each row's observed version
+and, in `locking` mode, takes the shared lock), then **lowers to one keyed
+per-object `UPDATE` per resolved row** — the gated optimistic form or the ungated
+locking form above. The scenario golden lists those per-object statements in order
+(one per matched row) with a list-of-lists of binds, and the declared round trips
+are `1` read + `N` updates. For a **non-versioned** entity the readless batched
+forms above stand (ADR 0011); materialization applies only where a framework-owned
+version must ride each write.
+
 ### Versioned-read projection
 
 A read of a versioned entity **projects the version column** alongside the row's
