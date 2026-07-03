@@ -25,7 +25,12 @@ from reference_harness.providers import available_dialects, provider_for
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
-CASES = discover_cases(COMPATIBILITY_ROOT)
+# api-conformance-lane cases (boundary retry cases, read-lock matrix reads) are
+# schema-validated by the harness but satisfied by each language's API Conformance
+# Suite, so they are NOT executed here. They still round-trip through schema
+# validation (test_schema_validate) and the profile gate (test_dep_graph).
+ALL_CASES = discover_cases(COMPATIBILITY_ROOT)
+CASES = [c for c in ALL_CASES if c.lane != "api-conformance"]
 DIALECTS = available_dialects()
 
 
@@ -46,6 +51,21 @@ def provider(request):
 
 def test_cases_discovered() -> None:
     assert CASES, "no compatibility cases discovered under core/compatibility/cases"
+
+
+def test_api_conformance_lane_cases_are_not_executed() -> None:
+    # DB-free pin: the api-conformance lane is filtered out of the executed set (the
+    # M12 harness only schema-validates it), yet the cases DO exist in the corpus —
+    # a regression that silently ran or dropped them fails here without Docker.
+    executed = {c.path.name for c in CASES}
+    skipped = {c.path.name for c in ALL_CASES if c.lane == "api-conformance"}
+    assert skipped, "expected some api-conformance-lane cases in the corpus"
+    assert executed.isdisjoint(skipped), "an api-conformance case leaked into the executed set"
+    for case in ALL_CASES:
+        if case.lane == "api-conformance":
+            # run_case must early-return (schema-validate only) without a database —
+            # None is a safe stand-in because no provisioning/execution is reached.
+            run_case(case, None)  # type: ignore[arg-type]
 
 
 def test_a_dialect_is_available() -> None:

@@ -15,7 +15,7 @@
  * sibling `0223` is exercised in `reads.api-conformance.test.ts`.
  *
  * The other two constructs the phase note calls out are NOT case-level skips in the
- * 101-case slice:
+ * 114-case slice:
  *  - the conflict `precondition` / `preconditionBinds` (out-of-band SQL simulating a
  *    concurrent writer) is a SUB-STEP of the exercised locking cases (`0703` /
  *    `0708`), applied harness-side — those cases ARE exercised;

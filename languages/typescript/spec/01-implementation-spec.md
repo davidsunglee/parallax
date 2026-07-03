@@ -59,7 +59,7 @@ declared in [`scope-and-tiers.md`](../../../core/spec/scope-and-tiers.md#first-i
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
 the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
-so V1 claims precisely the 101 cases tagged for the slice and returns
+so V1 claims precisely the 114 cases tagged for the slice and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads** + audit-only
 processing-temporal), and optimistic-locking surfaces but defers aggregation,
@@ -93,7 +93,7 @@ capabilities in this shape:
       "m12"
     ],
     "dialects": ["postgres"],
-    "caseShapes": ["read", "writeSequence", "scenario", "conflict"],
+    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary"],
     "caseTags": {
       "include": ["slice-mvp-1"]
     },
@@ -544,6 +544,30 @@ transaction; reads may use `px`, writes are available only through `tx`.
   });
   ```
 
+- **Bounded automatic retry.** `TransactionOptions.retries` (default **10**; `0`
+  disables the loop) and `TransactionOptions.retryOptimisticConflicts` (default
+  `false`) configure the M8/M10 retry contract (ADR 0031 / TS ADR 0065). On a
+  **retriable** failure the boundary rolls back, discards the unit of work's
+  observed state, and re-executes the body against fresh state, up to `retries`
+  re-executions — each attempt opens a **fresh** driver transaction and a **fresh**
+  `ParallaxTransaction`, so the retry re-reads (there is no process-wide cache to
+  invalidate). A **transient** database failure (a `ParallaxTransientError` whose
+  `retriable` is set — the `deadlock` category, covering deadlock and serialization
+  failure, classified from the driver's SQLSTATE through `@parallax/dialect`) is
+  retried by default; a `ParallaxOptimisticLockError` joins the retriable set only
+  when `retryOptimisticConflicts` is `true` (then a re-executed body re-reads the
+  fresh version and succeeds with no caller retry code). A lock-wait timeout
+  (`55P03`) is not retriable. An exhausted bound surfaces the failure to the caller,
+  its message annotated with the attempt count.
+
+  ```ts
+  await px.transaction(body, {
+    concurrency: "optimistic",
+    retries: 10,                     // default; 0 disables the loop
+    retryOptimisticConflicts: true,  // else a conflict surfaces after one attempt
+  });
+  ```
+
 - **Nested / re-entrant transactions.** Nested transactions **join** the active
   transaction. There are no savepoints in V1; an inner failure rolls back the
   enclosing transaction.
@@ -837,7 +861,7 @@ partition below.
 ### 6.2 Coverage partition and no-drift guard
 
 - **Coverage partition.** `coverage.test.ts` (Docker-free) discovers exactly the
-  101 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
+  114 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
   with no stale ids: every in-slice case is either exercised by a family suite
   (`covered.ts`) or listed in the reasoned skip manifest (`skip-manifest.ts`),
   and every skip carries a non-empty reason — a silent gap fails the build.
@@ -853,7 +877,7 @@ partition below.
 
 ### 6.3 Reasoned skips
 
-Two of the 101 cases are reason-skipped because what they prove is serde/harness
+Two of the 114 cases are reason-skipped because what they prove is serde/harness
 machinery a developer never authors, not a developer-facing surface:
 
 - **`0222`** — an `equivalentEncodings` serde-canonicalization check (two surface
@@ -1109,7 +1133,7 @@ application-specific**. The composition-root conformance provider retains
 provisioning (Testcontainers + `reset`/`applyDdl`/`loadFixtures`) but delegates
 SQL execution to a `@parallax/db-postgres` instance, then renders its managed
 scalars to the canonical wire form for the run envelope — so there is **no
-`M12 → M11` edge** and the 101-case slice is continuous proof the shipped adapter
+`M12 → M11` edge** and the 114-case slice is continuous proof the shipped adapter
 works.
 
 ### 9.3 Legal-edge contract

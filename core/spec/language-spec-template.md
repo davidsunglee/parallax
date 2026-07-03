@@ -37,7 +37,7 @@ claim live in
   slice in [`scope-and-tiers.md`](scope-and-tiers.md). The recommended first
   slice is the include-driven
   [`slice-mvp-1`](scope-and-tiers.md#first-implementation-conformance-slice)
-  slice: a Postgres-only, 101-case subset whose canonical `describe` claim lives
+  slice: a Postgres-only, 114-case subset whose canonical `describe` claim lives
   in `scope-and-tiers.md` and is the single source of truth (a slice is *not* a
   module tier; it may defer parts of a module).
 - **(decide and record)** The adapter's `capabilities` block

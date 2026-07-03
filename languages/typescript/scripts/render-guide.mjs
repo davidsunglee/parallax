@@ -89,7 +89,15 @@ const FAMILIES = [
       "of work observed. Version values are **framework-owned**: you read the object, then `update` " +
       "— never passing a raw version. A stale gate throws `ParallaxOptimisticLockError`, which you " +
       "catch and retry after re-reading the fresh row; a no-op `update` (no changed attribute) " +
-      "issues no DML.",
+      "issues no DML.\n\n" +
+      "The boundary also offers **bounded automatic retry**: `px.transaction(body, { retries, " +
+      "retryOptimisticConflicts })`. On a retriable failure it rolls back, discards the unit of " +
+      "work's observed state, and re-executes the body against fresh state — up to `retries` " +
+      "re-executions (default 10; `0` disables). Transient database failures (deadlock / " +
+      "serialization) are retried automatically; an optimistic-lock conflict is retried only with " +
+      "`retryOptimisticConflicts: true`, in which case the re-executed body re-reads the fresh " +
+      "version and succeeds with **no caller retry code**. The loop-mechanics cases live in " +
+      "`boundary.api-conformance.test.ts`.",
   },
 ];
 

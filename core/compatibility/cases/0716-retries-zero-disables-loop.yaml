@@ -1,0 +1,24 @@
+# Boundary case (M8): `retries: 0` DISABLES the loop — even a transient failure
+# surfaces to the caller — `api-conformance` lane.
+#
+# The retry bound is configurable (default 10); a bound of `0` disables the loop
+# entirely. This case injects a `serialization-failure` — normally auto-retried —
+# under `retries: 0`, and asserts it SURFACES to the caller after the single attempt
+# rather than being retried away. This pins the lower boundary of the bound: a
+# transient is retriable by default, but a disabled loop still surfaces it.
+#
+# `lane: api-conformance`: injected transient + a loop-configuration observable;
+# suite-driven via a fault-injecting decorator around the shipped adapter.
+model: models/account.yaml
+tags: [m8, m10, optimistic-locking, retry, transient, slice-mvp-1]
+lane: api-conformance
+uow:
+  concurrency: locking
+  retries: 0
+inject: serialization-failure
+boundary:
+  - action: read
+    note: observe the versioned row
+  - action: update
+    note: the write raises an injected serialization failure — with retries 0 it surfaces
+expect: serialization-failure

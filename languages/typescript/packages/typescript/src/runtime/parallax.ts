@@ -15,6 +15,7 @@
  */
 
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
+import { ParallaxTransientError } from "@parallax/db";
 import { ParallaxList } from "@parallax/lists";
 import type { Metamodel } from "@parallax/metamodel";
 import { type EntityMetadata, Metamodel as MetamodelReader } from "@parallax/metamodel";
@@ -31,6 +32,7 @@ import {
   isAuditOnly,
   type ObservedVersions,
   observedKey,
+  ParallaxOptimisticLockError,
   TransactionWriter,
   type UpdateOptions,
   type WriteResult,
@@ -292,6 +294,17 @@ export class Parallax {
    * in `locking` mode in-transaction reads take the automatic shared row lock
    * (M8); in `optimistic` mode reads take no lock and versioned updates gate on the
    * observed version (M10).
+   *
+   * The boundary offers **bounded automatic retry** (M8/M10, ADR 0031/0065): on a
+   * retriable failure it rolls back, discards stale state, and re-executes the body
+   * against fresh state, up to `options.retries` re-executions (default 10; `0`
+   * disables the loop). Each attempt opens a **fresh** driver transaction and a
+   * **fresh** `ParallaxTransaction` — so the per-unit-of-work observed-version map
+   * is discarded by construction and the retry re-reads (the "invalidate stale
+   * state" step; there is no process-wide cache to invalidate). Transient database
+   * failures (`ParallaxTransientError.retriable` — deadlock / serialization) are
+   * retried by default; an optimistic-lock conflict (`ParallaxOptimisticLockError`)
+   * is retried only when `options.retryOptimisticConflicts` is set.
    */
   async transaction<T>(
     body: (tx: ParallaxTransaction) => Promise<T>,
@@ -300,28 +313,86 @@ export class Parallax {
     if (this.database.transaction === undefined) {
       throw new Error("the configured ParallaxDatabase does not support transactions");
     }
+    const runTransaction = this.database.transaction.bind(this.database);
     const concurrency: Concurrency = options.concurrency ?? "locking";
-    return this.database.transaction(async (boundDb) => {
-      const tx = new ParallaxTransaction(this.metamodel, boundDb, this.clock.now(), concurrency);
-      const result = await body(tx);
-      // Flush any buffered writes at the unit-of-work boundary (spec §3: no public
-      // flush; the runtime flushes at commit) before the transaction commits.
-      await tx.flushWrites();
-      return result;
-    });
+    const retries = options.retries ?? DEFAULT_RETRIES;
+    const retryOptimisticConflicts = options.retryOptimisticConflicts ?? false;
+
+    let attempt = 0;
+    for (;;) {
+      try {
+        // Each attempt opens a FRESH driver transaction + a FRESH ParallaxTransaction
+        // (a fresh observed-version map), so a retry re-reads current state.
+        return await runTransaction(async (boundDb) => {
+          const tx = new ParallaxTransaction(
+            this.metamodel,
+            boundDb,
+            this.clock.now(),
+            concurrency,
+          );
+          const result = await body(tx);
+          // Flush any buffered writes at the unit-of-work boundary (spec §3: no
+          // public flush; the runtime flushes at commit) before the tx commits.
+          await tx.flushWrites();
+          return result;
+        });
+      } catch (error) {
+        if (attempt < retries && isRetriableFailure(error, retryOptimisticConflicts)) {
+          attempt += 1;
+          continue;
+        }
+        // Surface the failure. If it survived one or more retries, annotate the
+        // message with the attempt count so a hot loop is diagnosable (the error
+        // TYPE is preserved — a caller's `instanceof` check still holds).
+        if (attempt > 0 && error instanceof Error) {
+          error.message = `${error.message} (surfaced after ${attempt + 1} attempts)`;
+        }
+        throw error;
+      }
+    }
   }
 }
 
-/** Options for a unit of work (spec §3 / M8 strategy selection). */
+/** The default bound on automatic unit-of-work re-executions (M8/M10; Reladomo parity). */
+const DEFAULT_RETRIES = 10;
+
+/**
+ * Whether a failed unit-of-work attempt is retriable. A transient database failure
+ * (`ParallaxTransientError.retriable` — the `deadlock` category, covering deadlock
+ * and serialization failure) is always retriable; an optimistic-lock conflict joins
+ * the retriable set only when the unit of work opted in. Everything else surfaces.
+ */
+function isRetriableFailure(error: unknown, retryOptimisticConflicts: boolean): boolean {
+  if (error instanceof ParallaxTransientError) {
+    return error.retriable;
+  }
+  if (error instanceof ParallaxOptimisticLockError) {
+    return retryOptimisticConflicts;
+  }
+  return false;
+}
+
+/** Options for a unit of work (spec §3 / M8 strategy selection + bounded retry). */
 export interface TransactionOptions {
   /**
    * The correctness strategy for this unit of work. `locking` (the default) takes
    * the M8 implicit shared read lock on in-transaction reads; `optimistic` (M10)
-   * takes no lock and gates versioned updates on the observed version. (Bounded
-   * automatic retry keys — `retries` / `retryOptimisticConflicts` — arrive with the
-   * boundary retry contract.)
+   * takes no lock and gates versioned updates on the observed version.
    */
   readonly concurrency?: Concurrency;
+  /**
+   * The bound on automatic re-executions of the body after a retriable failure
+   * (M8/M10 bounded automatic retry). Default 10; `0` disables the loop, so even a
+   * transient failure surfaces after the first attempt.
+   */
+  readonly retries?: number;
+  /**
+   * Whether an optimistic-lock conflict (`ParallaxOptimisticLockError`) joins the
+   * retriable set for this unit of work. Default false — a conflict surfaces to the
+   * caller after one attempt. Transient database failures are always retriable
+   * regardless of this flag.
+   */
+  readonly retryOptimisticConflicts?: boolean;
 }
 
 /**

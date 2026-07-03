@@ -106,15 +106,24 @@ A detected conflict is **retriable**. On conflict an implementation **MUST**:
 3. permit a **retry** that re-reads the fresh version and re-applies the
    intended change against it.
 
-Whether retry is **automatic** (a bounded retry loop around the unit of work, as
-Reladomo does by default) or **caller-driven** is a per-language policy; core
-mandates only that a conflict is *retriable* and that a retry re-reads the fresh
-version. A retry that exhausts its bound surfaces the conflict to the caller.
+The unit-of-work boundary **MUST** offer **bounded automatic retry** as specified
+in `M8` (*Bounded automatic retry*): a configurable bound (default **10**; `0`
+disables the loop), and on a retriable failure a rollback, a freshness
+invalidation, and a re-execution of the closure against fresh state. A conflict is
+**not** automatically retried by default — it surfaces to the caller — and joins
+the retriable set only when the unit of work opts in (`retryOptimisticConflicts`,
+Reladomo's `setRetryOnOptimisticLockFailure`, default off). Transient database
+failures (deadlock / serialization failure) are always retriable regardless of
+that flag. A retry that exhausts its bound surfaces the conflict to the caller.
 
 The suite proves the retriable half observably with a conflict case's
 **`attempts`** sequence (M12): a stale-version `UPDATE` affects `0` rows, then a
 retry that re-reads the fresh version and re-applies affects `1` — the `0`-then-
-`1` transition, asserted against real data.
+`1` transition, asserted against real data. The loop-mechanics branches a
+single-connection harness cannot provoke (a conflict surfacing without the opt-in,
+an injected transient auto-retried, `retries: 0`, bound exhaustion) are authored as
+**boundary** cases on the `api-conformance` lane and satisfied by each language's
+API Conformance Suite.
 
 Optimistic locking composes with **detached merge-back** (`M9`): the version a
 detached copy carries is the one read at detachment, so a merge-back `UPDATE`

@@ -26,19 +26,23 @@ A case is a YAML document under `core/compatibility/cases/`, validated against
 [`core/schemas/compatibility-case.schema.json`](../schemas/compatibility-case.schema.json).
 Its fields:
 
-A case is one of six shapes: a **read case** (carries an `operation`), a
+A case is one of seven shapes: a **read case** (carries an `operation`), a
 **writeSequence case** (carries a `writeSequence`, Phase 5 / M7), a **scenario
 case** (carries a `scenario` of ordered read *and* committed-write steps, Phase
 6 / M8), a **conflict case** (carries `expectedAffectedRows` for a single
 attempt, or an `attempts` retry sequence, Phase 7 / M10), a **coherence
 case** (carries a `coherence` two-node sequence, Phase 11 / cross-process
-coherence), or an **error case** (carries `errorClass` and
-`expectedNativeCode`, Phase 12 / M11 error-code classification). The fields:
+coherence), an **error case** (carries `errorClass` and
+`expectedNativeCode`, Phase 12 / M11 error-code classification), or a **boundary
+case** (carries `boundary` + `expect`, M8/M10 bounded automatic retry — an
+`api-conformance`-lane case the harness schema-validates but does not execute).
+The fields:
 
 | Field | Required | Meaning |
 |---|---|---|
 | `model` | yes | path (relative to `core/compatibility/`) to the model descriptor |
 | `tags` | yes | module/feature tags (e.g. `["m2", "eq"]`); drive coverage + test selection |
+| `lane` | no | which executor satisfies the case (default `harness`): `harness` — the M12 harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
 | `operation` | read | a canonical M2 algebra node, validated against the operation schema (read cases) |
 | `writeSequence` | write | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only + business-only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the full-bitemporal rectangle split |
 | `equivalentEncodings` | no | alternate surface encodings of `operation` (e.g. a prefix vs a fluent spelling); each MUST canonicalize to `operation` |
@@ -258,6 +262,41 @@ new one for the same primary key).
   DB-free category map + call-site predicates; the runner asserts the predicate
   partition, so the harness exercises the interface the language implementations
   build, not a harness-only shortcut.
+
+### Boundary cases (M8 / M10 bounded automatic retry)
+
+A **boundary** case proves the unit-of-work **bounded automatic retry** contract
+(`M8` *Bounded automatic retry*, `M10` *Retry contract*): a loop-mechanics branch
+whose observable — a retriable failure auto-retried away, a conflict surfaced
+without the opt-in, a disabled loop (`retries: 0`), an exhausted bound, a callback
+value withheld on abort — a **single-connection** harness cannot provoke, because
+it needs an **injected transient failure** and a re-executed closure. It carries a
+portable `boundary` (the ordered unit-of-work actions), an OPTIONAL `inject` (a
+portable fault kind — `serialization-failure` / `deadlock` / `lock-wait-timeout` /
+`optimistic-lock-conflict`, aligned with the `M11` `errorClass` vocabulary), an
+`expect` (the portable outcome — `committed`, or a surfaced error kind), and its
+retry configuration under `uow` (`retries` / `retryOptimisticConflicts`). It
+carries **no** golden SQL — the concrete DML and error types stay per-language.
+Every boundary case is on the `api-conformance` lane.
+
+## Case lanes
+
+Every case declares a **lane** (`lane`, default `harness`) naming which executor
+satisfies it:
+
+- **`harness`** — the M12 harness executes the case as today: it runs the golden
+  SQL / data observables against a provisioned database.
+- **`api-conformance`** — the harness **schema-validates** the case (layer 1) but
+  does **not** execute it: its observable is a runtime-loop or read-lock-matrix
+  branch (an injected transient, retry counting, error surfacing, the emitted
+  read-lock proof) that a single-connection harness cannot provoke. **Each
+  language's API Conformance Suite MUST satisfy every `api-conformance`-lane
+  case**, with coverage enforced the way the suite's own partition assertion
+  (`covered.ts`) self-asserts today. This keeps every clarified branch specified in
+  core and executably covered, even the ones the harness itself cannot run. Every
+  `boundary`-shape case is `api-conformance`; the read-lock matrix reads (object
+  find locks, projection omits the lock, deep fetch locks every level, optimistic
+  reads omit the lock) are `read`-shape `api-conformance` cases.
 
 ## Provisioning ↔ runner seam (DQ15)
 

@@ -6,7 +6,8 @@
  * Since Phase 10a the provider **delegates SQL execution to the shipped
  * `@parallax/db-postgres` adapter** (bound to the container URI) instead of
  * driving porsager itself. This keeps the harness on the exact production path:
- * the same adapter a real application imports is the one the whole 101-case slice
+ * the same adapter a real application imports is the one the whole harness-lane
+ * slice (102 cases; api-conformance-lane cases run in the API Conformance Suite)
  * runs through. The provider owns only the two grader-side concerns the adapter
  * deliberately does not:
  *

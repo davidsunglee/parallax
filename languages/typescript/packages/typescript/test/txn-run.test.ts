@@ -41,13 +41,19 @@ import {
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import { PostgresProvider } from "../src/conformance/postgres-provider.js";
 
-/** The in-scope `06xx`/`07xx` MVP cases (the four Phase-7 shapes). */
+/**
+ * The in-scope `06xx`/`07xx` MVP cases the HARNESS runs (the four Phase-7 shapes +
+ * the harness-lane auto-retry `0710`). `api-conformance`-lane cases (the read-lock
+ * matrix `0616`-`0619`, the boundary retry cases `0711`-`0718`) are excluded — they
+ * have no harness-executable golden; the API Conformance Suite satisfies them.
+ */
 function txnCases(): readonly { id: string; loaded: LoadedCase }[] {
   return discoverCasePaths()
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .filter(({ id }) => /^(06|07)\d\d$/.test(id))
     .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
-    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"));
+    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"))
+    .filter(({ loaded }) => loaded.lane !== "api-conformance");
 }
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */
@@ -63,7 +69,7 @@ function dockerAvailable(): boolean {
 const HAS_DOCKER = dockerAvailable();
 const CASES = txnCases();
 
-/** The EXACT in-scope id set (the tagged `06xx`/`07xx` Phase-7 + abort cases). */
+/** The EXACT in-scope harness-lane id set (tagged `06xx`/`07xx` Phase-7 + abort + `0710`). */
 const EXPECTED_IDS: readonly string[] = [
   "0603",
   "0604",
@@ -76,6 +82,7 @@ const EXPECTED_IDS: readonly string[] = [
   "0703",
   "0704",
   "0708",
+  "0710",
 ];
 
 it("discovers exactly the in-scope 06xx + 07xx cases", () => {

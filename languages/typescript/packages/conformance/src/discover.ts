@@ -11,6 +11,10 @@
  * descriptor (a plain metamodel document), the fixtures keyed by class name, and
  * the repo-relative case path the envelope's `case` field requires.
  */
+// The M12 lane a case runs on: `harness` (executed) or `api-conformance`
+// (schema-validated by the harness, satisfied by the language's suite).
+export type CaseLane = "harness" | "api-conformance";
+
 import { readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +43,13 @@ export interface LoadedCase {
   /** The module tags (e.g. `["m2", "m12"]`) the case declares. */
   readonly tags: readonly string[];
   /**
+   * The M12 lane the case runs on (default `harness`). An `api-conformance`-lane
+   * case (every boundary case, plus the read-lock matrix reads `0616`-`0619`) is
+   * suite-satisfied, not harness-run: the runner marks it suite-satisfied and the
+   * harness sweeps exclude it, while the API Conformance Suite exercises it.
+   */
+  readonly lane: CaseLane;
+  /**
    * The declared unit-of-work config (M8 strategy selection), or `undefined`. A
    * descriptive passthrough: `{ concurrency: "locking" | "optimistic" }` records
    * which mode produced the authored golden SQL (the harness runs it either way).
@@ -63,6 +74,9 @@ export function detectShape(raw: Record<string, unknown>): CaseShape {
   }
   if ("coherence" in raw) {
     return "coherence";
+  }
+  if ("boundary" in raw) {
+    return "boundary";
   }
   return "read";
 }
@@ -115,6 +129,7 @@ export function loadCase(path: string): LoadedCase {
     raw,
     shape: detectShape(raw),
     tags: (raw.tags as string[] | undefined) ?? [],
+    lane: (raw.lane as CaseLane | undefined) ?? "harness",
     ...(raw.uow === undefined
       ? {}
       : { uow: raw.uow as { concurrency?: "locking" | "optimistic" } }),

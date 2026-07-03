@@ -31,23 +31,31 @@ import { runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
 import { isScenario } from "../src/scenario.js";
 import { isWriteSequence } from "../src/write-sequence.js";
 
-/** The in-scope `06xx`/`07xx` MVP cases (the four Phase-7 shapes). */
+/**
+ * The in-scope `06xx`/`07xx` MVP cases the HARNESS compiles (the four Phase-7
+ * shapes + the harness-lane auto-retry `0710`). `api-conformance`-lane cases (the
+ * read-lock matrix `0616`-`0619`, the boundary retry cases `0711`-`0718`) are
+ * excluded — they have no harness-compiled golden (the API Conformance Suite
+ * satisfies them), so `runCompile` routes them to a suite-satisfied `unsupported`.
+ */
 function txnCases(): readonly { id: string; path: string }[] {
   return discoverCasePaths()
     .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
     .filter(({ id }) => /^(06|07)\d\d$/.test(id))
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
     .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"))
+    .filter(({ loaded }) => loaded.lane !== "api-conformance")
     .map(({ id, path }) => ({ id, path }));
 }
 
 /**
- * The EXACT in-scope `06xx`/`07xx` MVP id set: read-lock `0603`, batched writes
- * `0604`/`0612`/`0613`, read-your-own-writes `0607`, rollback/abort `0608`, no-op
- * update `0609`, locking-mode versioned update `0611`, and the optimistic-lock
- * conflict/retry `0703`/`0704`/`0708`. Asserting the exact set fails loudly on a
- * discovery regression (the untagged pkgen / cache / cascade / detached-merge /
- * error-class `06xx`/`07xx` cases must NOT leak in).
+ * The EXACT in-scope harness-lane `06xx`/`07xx` MVP id set: read-lock `0603`,
+ * batched writes `0604`/`0612`/`0613`, read-your-own-writes `0607`, rollback/abort
+ * `0608`, no-op update `0609`, locking-mode versioned update `0611`, the
+ * optimistic-lock conflict/retry `0703`/`0704`/`0708`, and the harness-lane
+ * auto-retry `0710`. Asserting the exact set fails loudly on a discovery regression
+ * (the untagged pkgen / cache / cascade / detached-merge / error-class `06xx`/`07xx`
+ * cases, and the api-conformance-lane read-lock / boundary cases, must NOT leak in).
  */
 const EXPECTED_IDS: readonly string[] = [
   "0603",
@@ -61,6 +69,7 @@ const EXPECTED_IDS: readonly string[] = [
   "0703",
   "0704",
   "0708",
+  "0710",
 ];
 
 const CASES = txnCases();
