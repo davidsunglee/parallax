@@ -56,6 +56,8 @@ export {
   type ParallaxOptions,
   ParallaxReadBeforeWriteError,
   type ParallaxRow,
+  ParallaxTemporalCloseError,
+  ParallaxTemporalOptimisticError,
   ParallaxTransaction,
   RuntimeSchema,
   TransactionEntity,

@@ -41,6 +41,13 @@ export interface WriteTarget {
    * (quoted). Absent for a non-temporal entity (only `insert` is legal there).
    */
   readonly toColumn?: string;
+  /**
+   * The processing axis's `fromColumn` (`in_z`) — the DERIVED optimistic key (M10):
+   * an OPTIMISTIC-mode close gates on the `in_z` the unit of work observed, since a
+   * temporal entity carries no version column and the observed processing-from is
+   * the version analogue. Present only for a gated (optimistic) close.
+   */
+  readonly fromColumn?: string;
 }
 
 /** A generated DML statement: canonical `?`-placeholder SQL text. */
@@ -49,21 +56,45 @@ export type WriteStatement = string;
 /** The MVP audit-only mutation kinds. */
 export type MutationKind = "insert" | "update" | "terminate";
 
+/** Options for {@link auditWriteStatements}. */
+export interface AuditWriteOptions {
+  /**
+   * Emit the OPTIMISTIC-mode gated close (`… and <in_z> = ?`) rather than the plain
+   * close (M10). A gated close binds the observed processing-from as the version
+   * analogue, so a concurrent writer that superseded the milestone matches 0 rows
+   * (the conflict signal). Requires {@link WriteTarget.fromColumn}. Default `false`
+   * (the plain close, used in locking mode — no drift with {@link closeStatement}).
+   */
+  readonly gated?: boolean;
+}
+
 /**
  * Generate the ordered DML statement texts for one milestone-chaining mutation.
  * The number of statements matches the mutation's declared step count (insert 1,
  * update 2, terminate 1); the caller pairs each with the authored bind row.
+ *
+ * In OPTIMISTIC mode (`options.gated`) the close/terminate `UPDATE` gains the
+ * `… and <in_z> = ?` optimistic gate on the observed processing-from (M10); the
+ * plain close stays for locking mode (no drift).
  */
-export function auditWriteStatements(kind: MutationKind, target: WriteTarget): WriteStatement[] {
+export function auditWriteStatements(
+  kind: MutationKind,
+  target: WriteTarget,
+  options: AuditWriteOptions = {},
+): WriteStatement[] {
+  // Resolve the close LAZILY — only `update`/`terminate` close a milestone, so a
+  // non-temporal `insert` (`0004`/`0005`, no processing axis) never demands one.
+  const close = (): WriteStatement =>
+    options.gated ? gatedCloseStatement(target) : closeStatement(target);
   switch (kind) {
     case "insert":
       return [insertStatement(target)];
     case "update":
       // Close the current row, then chain a new current milestone.
-      return [closeStatement(target), insertStatement(target)];
+      return [close(), insertStatement(target)];
     case "terminate":
       // Close the current row and insert nothing.
-      return [closeStatement(target)];
+      return [close()];
   }
 }
 
@@ -86,4 +117,30 @@ function closeStatement(target: WriteTarget): WriteStatement {
     );
   }
   return `update ${target.table} set ${target.toColumn} = ? where ${target.pkColumn} = ? and ${target.toColumn} = ?`;
+}
+
+/**
+ * `update <table> set out_z = ? where <pk> = ? and out_z = ? and <in_z> = ?` — the
+ * OPTIMISTIC-mode gated close (M10). Like {@link closeStatement} but with the
+ * `… and <in_z> = ?` gate on the observed processing-from (the version analogue for
+ * a temporal entity, which carries no version column). The gate shape mirrors
+ * `@parallax/locking`'s `versionedUpdate` `… and <version> = ?`: a concurrent writer
+ * that superseded the milestone leaves a fresh `in_z`, so the stale gate matches
+ * ZERO rows — the `updatedRows != 1` conflict signal.
+ */
+function gatedCloseStatement(target: WriteTarget): WriteStatement {
+  if (target.toColumn === undefined) {
+    throw new Error(
+      "audit close/terminate requires a processing toColumn; the entity is non-temporal",
+    );
+  }
+  if (target.fromColumn === undefined) {
+    throw new Error(
+      "a gated (optimistic) audit close requires a processing fromColumn (the in_z gate)",
+    );
+  }
+  return (
+    `update ${target.table} set ${target.toColumn} = ? ` +
+    `where ${target.pkColumn} = ? and ${target.toColumn} = ? and ${target.fromColumn} = ?`
+  );
 }

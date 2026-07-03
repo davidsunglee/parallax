@@ -1,0 +1,56 @@
+# Optimistic BITEMPORAL inactivation, FRESH observed in_z (M7 + M10): the rectangle-
+# split inactivation gates on the observed processing-from and inactivates EXACTLY the
+# one observed current row.
+#
+# A bitemporal entity carries no version column, so the observed processing-from (in_z)
+# is the optimistic-lock version analogue. But a bitemporal key spans BOTH axes: the
+# Position fixture rows R2 and R3 SHARE in_z = 2024-04-01 and are BOTH current on the
+# processing axis (out_z = infinity), differing only by their business window. So the
+# gate must add the business discriminator `from_z = ?` to inactivate exactly one row:
+#   update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
+# targeting R3 (value 200, business [2024-06-01, infinity), processing [2024-04-01, inf)).
+#   binds [2024-10-01, 1, infinity, 2024-06-01, 2024-04-01]  ->  1 row inactivated.
+#
+# A conflict case runs the SINGLE inactivating close and asserts its affected-row count;
+# it does NOT run the chained head/middle/tail replacement INSERTs (a full rectangle
+# split chains up to three ungated INSERTs at fresh in_z = txInstant — that fresh in_z
+# IS the version advance). So expectedTableState reflects ONLY the executed SQL: the
+# fixtures with R3 now closed on the processing axis at 2024-10-01; R1/R2 untouched
+# (conflict granularity is the rectangle, not the primary key).
+#
+# Harness-only (bitemporal writes are outside slice-mvp-1: no TS *Until runtime exists).
+model: models/position.yaml
+tags: [m7, m10, m3, bitemporal, temporal, conflict, optimistic]
+uow:
+  concurrency: optimistic
+expectedAffectedRows: 1
+goldenSql:
+  postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
+binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+expectedTableState:
+  position:
+    # R1 — superseded on the processing axis (out_z finite), untouched.
+    - pos_id: 1
+      acct_num: A
+      val: 90.00
+      from_z: "2024-01-01T00:00:00+00:00"
+      thru_z: infinity
+      in_z: "2024-01-01T00:00:00+00:00"
+      out_z: "2024-04-01T00:00:00+00:00"
+    # R2 — the head (business [2024-01-01, 2024-06-01)), still current, untouched: the
+    # gate's from_z discriminator kept our close off it (conflict granularity = rectangle).
+    - pos_id: 1
+      acct_num: A
+      val: 100.00
+      from_z: "2024-01-01T00:00:00+00:00"
+      thru_z: "2024-06-01T00:00:00+00:00"
+      in_z: "2024-04-01T00:00:00+00:00"
+      out_z: infinity
+    # R3 — the observed current row, now INACTIVATED on the processing axis at 2024-10-01.
+    - pos_id: 1
+      acct_num: A
+      val: 200.00
+      from_z: "2024-06-01T00:00:00+00:00"
+      thru_z: infinity
+      in_z: "2024-04-01T00:00:00+00:00"
+      out_z: "2024-10-01T00:00:00+00:00"

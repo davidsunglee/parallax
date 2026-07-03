@@ -75,7 +75,25 @@
           "items": { "$ref": "#/$defs/valueObject" }
         },
         "inheritance": { "$ref": "#/$defs/inheritance" }
-      }
+      },
+      "allOf": [
+        {
+          "$comment": "Optimistic-lock composition (M1/M7/M10): a temporal (as-of) entity DERIVES its optimistic key from the processing-from column, so it MUST NOT also declare an explicit `optimisticLocking` version attribute. Combining `asOfAttributes` with an `optimisticLocking` attribute on one entity is invalid.",
+          "if": { "required": ["asOfAttributes"] },
+          "then": {
+            "properties": {
+              "attributes": {
+                "not": {
+                  "contains": {
+                    "required": ["optimisticLocking"],
+                    "properties": { "optimisticLocking": { "const": true } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "attribute": {
       "type": "object",

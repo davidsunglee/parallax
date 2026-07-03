@@ -26,6 +26,7 @@ import {
   AttributeExpression,
   NavigationPath,
   ParallaxOptimisticLockError,
+  ParallaxTemporalCloseError,
   Predicate,
 } from "../../src/index.js";
 import { assertGraph, assertRows, assertTableState, provisionCase } from "./_harness.js";
@@ -37,6 +38,13 @@ const Account = { id: attr("Account.id"), balance: attr("Account.balance") };
 const accountPk = (id: number): Predicate =>
   new Predicate({ eq: { attr: "Account.id", value: id } });
 const all = (): Predicate => new Predicate({ all: {} });
+
+// Balance — the audit-only (processing-temporal) model the optimistic × temporal
+// close cases (`0730`-`0733`) drive: the observed processing-from (`in_z`) is the
+// optimistic-lock version analogue (M7/M10).
+const Balance = { id: attr("Balance.id"), value: attr("Balance.value") };
+const balancePk = (id: number): Predicate =>
+  new Predicate({ eq: { attr: "Balance.id", value: id } });
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */
 function dockerAvailable(): boolean {
@@ -66,6 +74,11 @@ it("the locking suite covers exactly the LOCKING family", () => {
     "0703-optimistic-lock-conflict",
     "0704-optimistic-lock-success",
     "0708-optimistic-lock-retry-after-conflict",
+    // the optimistic x temporal close cases (0730-0733)
+    "0730-temporal-close-optimistic-success",
+    "0731-temporal-close-optimistic-conflict",
+    "0732-temporal-close-retry-after-conflict",
+    "0733-temporal-close-zero-rows-error",
   ];
   expect(covered.sort()).toEqual([...LOCKING].sort());
 });
@@ -339,6 +352,113 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
     },
     BOOT_TIMEOUT,
   );
+
+  // --- optimistic x temporal close (0730-0733) ------------------------------
+  // A processing-axis (audit-only) temporal entity carries NO version column, so the
+  // observed processing-from (in_z) is the optimistic-lock version analogue (M7/M10).
+  // The developer reads the current milestone (which records its in_z), then closes
+  // it; in optimistic mode the close gates on that observed in_z. Table state is NOT
+  // asserted here — the runtime close's out_z is the transaction CLOCK instant, not
+  // the corpus's authored txInstant, so the observable is the affected count / the
+  // thrown conflict (the golden close text is pinned by the harness compile lane).
+
+  it(
+    "0730: an optimistic close on a fresh observed in_z closes exactly the current milestone",
+    async () => {
+      const f = await provisionCase(provider, "0730-temporal-close-optimistic-success");
+      const result = await f.px.transaction(
+        async (tx) => {
+          const balances = tx.entity("Balance");
+          // Read the current milestone of id 2 (records its observed in_z), then update
+          // it (close the current row + chain a new one); the close gates on that in_z.
+          await balances.find(Balance.id.eq(2)).single();
+          return balances.update(balancePk(2), { set: [Balance.value.set(dec("250.00"))] });
+        },
+        { concurrency: "optimistic" },
+      );
+      // The gated close matched the one current milestone (fresh in_z) — 1 row closed.
+      expect(result.affectedRows).toBe(1);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
+    "0731: an optimistic close on a STALE observed in_z conflicts (a current row still exists)",
+    async () => {
+      const f = await provisionCase(provider, "0731-temporal-close-optimistic-conflict");
+      let conflicted = false;
+      try {
+        await f.px.transaction(
+          async (tx) => {
+            const balances = tx.entity("Balance");
+            // Observe id 2's current milestone (in_z 2024-02-01), no lock.
+            await balances.find(Balance.id.eq(2)).single();
+            // A concurrent writer fully re-chains id 2 (close old, open a fresh current
+            // row at a new in_z) — so a current row EXISTS, but it is a different milestone.
+            await applyPrecondition(provider, f);
+            // Our close gates on the STALE observed in_z ⇒ 0 rows ⇒ conflict.
+            await balances.update(balancePk(2), { set: [Balance.value.set(dec("250.00"))] });
+          },
+          { concurrency: "optimistic" },
+        );
+      } catch (error) {
+        conflicted = error instanceof ParallaxOptimisticLockError;
+      }
+      expect(conflicted, "expected a ParallaxOptimisticLockError").toBe(true);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
+    "0732: a retry re-reads the fresh current in_z after the temporal conflict and succeeds",
+    async () => {
+      const f = await provisionCase(provider, "0732-temporal-close-retry-after-conflict");
+      const result = await f.px.transaction(
+        async (tx) => {
+          const balances = tx.entity("Balance");
+          await balances.find(Balance.id.eq(2)).single(); // observes in_z 2024-02-01
+          await applyPrecondition(provider, f); // concurrent writer re-chains id 2
+          try {
+            return await balances.update(balancePk(2), {
+              set: [Balance.value.set(dec("250.00"))],
+            });
+          } catch (error) {
+            if (!(error instanceof ParallaxOptimisticLockError)) {
+              throw error;
+            }
+            // Re-read the fresh current milestone (records the new observed in_z) + retry.
+            await balances.find(Balance.id.eq(2)).single();
+            return balances.update(balancePk(2), { set: [Balance.value.set(dec("250.00"))] });
+          }
+        },
+        { concurrency: "optimistic" },
+      );
+      expect(result.affectedRows).toBe(1);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
+    "0733: a locking-mode close that finds no current row raises (never silent)",
+    async () => {
+      const f = await provisionCase(provider, "0733-temporal-close-zero-rows-error");
+      // A concurrent writer TERMINATED id 2's current row out of band (committed BEFORE
+      // our transaction opens, so our locking read takes no lock on an already-closed row).
+      await applyPrecondition(provider, f);
+      let raised = false;
+      try {
+        // Locking mode: the close is UNGATED, but a zero-row close still raises — a
+        // distinct non-retriable stale/consistency error (the current milestone is gone).
+        await f.px.transaction((tx) => tx.entity("Balance").terminate(balancePk(2)), {
+          concurrency: "locking",
+        });
+      } catch (error) {
+        raised = error instanceof ParallaxTemporalCloseError;
+      }
+      expect(raised, "expected a ParallaxTemporalCloseError").toBe(true);
+    },
+    BOOT_TIMEOUT,
+  );
 });
 
 /**
@@ -353,8 +473,15 @@ async function applyPrecondition(
   provider: PostgresProvider,
   fixture: Awaited<ReturnType<typeof provisionCase>>,
 ): Promise<void> {
-  const precondition = fixture.loaded.raw.precondition as string | undefined;
-  if (precondition !== undefined) {
-    await provider.peer.execute(precondition, []);
+  const precondition = fixture.loaded.raw.precondition as string | readonly string[] | undefined;
+  if (precondition === undefined) {
+    return;
+  }
+  // A precondition may be a single statement (`0703`) or an ORDERED LIST — the
+  // temporal-close conflict cases (`0731`/`0732`) chain a full new current row
+  // (close the old milestone, then insert a fresh one). Apply each in order.
+  const statements = Array.isArray(precondition) ? precondition : [precondition as string];
+  for (const statement of statements) {
+    await provider.peer.execute(statement, []);
   }
 }

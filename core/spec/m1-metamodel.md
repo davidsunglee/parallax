@@ -94,6 +94,19 @@ purely metamodel here; its conflict-detection semantics are `M10`, and the
 object-lifecycle states that decide *when* an attribute is written (in-memory vs.
 persisted vs. detached) are `M9`.
 
+**Composition with `asOfAttribute` (temporal entities).** A processing-axis
+temporal entity **derives** its optimistic key from the processing-from column —
+the observed processing-from (`in_z`) is the version analogue — and therefore
+declares **no** version attribute. Combining an explicit `optimisticLocking`
+attribute with `asOfAttributes` on one entity is **invalid** and an implementation
+**MUST** reject such a descriptor (a schema-level metamodel error). A
+**business-temporal-only** entity has no processing axis to derive the key from, so
+it **cannot** participate in optimistic mode; because mode is the unit of work's
+per-transaction choice (not a static model property), that combination surfaces as a
+validation error **at the unit-of-work write boundary**, not at metamodel-load time.
+The composition contract is `M10` (which owns the derived key and the conflict
+contract) over `M7` (which owns the temporal write shapes).
+
 ## `relationship` — a navigable association
 
 A `relationship` is a **named, navigable association** from its owning entity to

@@ -91,6 +91,27 @@ keyed update *requires* a prior observe (above), and a set-based update
 (`M3`, ADR 0011) — materialization applies only where a framework-owned version
 must ride each write.
 
+### Temporal entities derive the version from the processing axis
+
+A processing-axis temporal entity (`M7`) carries **no** version column, so its
+optimistic key is **derived**: the observed processing-from (`in_z`) value **is**
+the version analogue (Reladomo's `IN_Z` rule). In optimistic mode the milestone
+close/inactivate `UPDATE` the write already issues gains an `and <in_z> = ?` gate
+bound to the `in_z` the unit of work observed for the current milestone; a
+concurrent chain that superseded that milestone left a **fresh** `in_z`, so the
+stale gate matches zero rows — the same `updatedRows != 1` conflict. On **success**
+no version numbers exist to bump: the gate rides only on the close(s) (one per
+closed/inactivated current row, each binding *that row's* observed `in_z`, each
+**MUST** affect exactly one row), and the chained replacement rows are plain
+ungated `INSERT`s whose fresh `in_z = txInstant` **is** the advance. A **zero-row**
+close is an error in **any** mode (never silent) — a retriable conflict in
+optimistic mode, a distinct non-retriable stale/consistency error in locking mode.
+The write shapes and the current-row-predicate-is-not-a-gate rationale are `M7`;
+the conflict/retry contract is this module (the `M10 --> M7` composition edge).
+Combining an explicit `optimisticLocking` attribute with `asOfAttributes` is
+invalid (`M1`), and a business-temporal-only entity cannot participate in
+optimistic mode (no processing axis to derive the key from).
+
 ## Conflict detection
 
 In **optimistic mode** the version turns a lost update into a **detectable**

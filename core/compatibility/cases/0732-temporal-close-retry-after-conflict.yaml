@@ -1,0 +1,65 @@
+# Optimistic temporal close RETRY after conflict (M7 + M10 retry contract): the
+# `attempts` 0-then-1 transition on the gated close (the 0708 analogue for a temporal
+# entity).
+#
+# 0731 stops at the conflict signal (a stale-in_z close affects 0 rows). This proves
+# the retry closes the loop: after the conflict, a retry that re-reads the now-current
+# in_z and re-applies affects exactly 1 row. The `attempts` sequence makes the two-step
+# observable (0 then 1) expressible in one case.
+#
+# A concurrent writer fully chained id 2 (precondition): closed the old current row at
+# 2024-09-01 and opened a fresh current row (value 999.00, in_z 2024-09-01). Then:
+#   attempt 0 (stale): gate on the in_z we first read (2024-02-01) ⇒ 0 rows — conflict.
+#   attempt 1 (retry): re-read the fresh current in_z (2024-09-01), re-apply ⇒ 1 row,
+#                      closing the concurrent writer's current milestone at 2024-10-01.
+#
+# The case runs the precondition + the ordered attempts and asserts each affected count.
+# It does NOT run any replacement INSERT, so expectedTableState is the fixtures + the
+# precondition + the retry's close of the fresh current row.
+model: models/balance.yaml
+tags: [m7, m10, m3, temporal, conflict, retry, optimistic, slice-mvp-1]
+uow:
+  concurrency: optimistic
+precondition:
+  - update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'
+  - insert into balance(bal_id, acct_num, val, in_z, out_z) values (2, 'B', 999.00, '2024-09-01T00:00:00+00:00', 'infinity')
+attempts:
+  - note: stale close — gates on the observed in_z 2024-02-01, which no longer matches ⇒ 0 rows
+    goldenSql:
+      postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+    binds: ["2024-10-01T00:00:00+00:00", 2, infinity, "2024-02-01T00:00:00+00:00"]
+    expectedAffectedRows: 0
+  - note: retry — re-read the fresh current in_z (2024-09-01) and re-apply ⇒ 1 row closed
+    goldenSql:
+      postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+    binds: ["2024-10-01T00:00:00+00:00", 2, infinity, "2024-09-01T00:00:00+00:00"]
+    expectedAffectedRows: 1
+expectedTableState:
+  balance:
+    - bal_id: 1
+      acct_num: A
+      val: 100.00
+      in_z: "2024-01-01T00:00:00+00:00"
+      out_z: "2024-06-01T00:00:00+00:00"
+    - bal_id: 1
+      acct_num: A
+      val: 150.00
+      in_z: "2024-06-01T00:00:00+00:00"
+      out_z: infinity
+    # id 2's original current milestone, CLOSED by the concurrent writer at 2024-09-01.
+    - bal_id: 2
+      acct_num: B
+      val: 200.00
+      in_z: "2024-02-01T00:00:00+00:00"
+      out_z: "2024-09-01T00:00:00+00:00"
+    # id 2's concurrent-writer milestone, now CLOSED by the retry at 2024-10-01.
+    - bal_id: 2
+      acct_num: B
+      val: 999.00
+      in_z: "2024-09-01T00:00:00+00:00"
+      out_z: "2024-10-01T00:00:00+00:00"
+    - bal_id: 3
+      acct_num: C
+      val: 50.00
+      in_z: "2024-03-01T00:00:00+00:00"
+      out_z: "2024-08-01T00:00:00+00:00"
