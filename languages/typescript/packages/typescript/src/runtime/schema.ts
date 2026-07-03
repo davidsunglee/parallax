@@ -20,16 +20,16 @@ import {
   type ResolvedAxis,
   type Axis as TemporalAxis,
 } from "@parallax/bitemporal";
+import { quoteIdentifier } from "@parallax/dialect";
 import type { EntityMetadata, Metamodel } from "@parallax/metamodel";
-import {
-  type AsOfFragment,
-  type Axis,
-  type AxisPins as CompilerAxisPins,
-  type ProjectionColumn,
-  quoteIdentifier,
-  type ResolvedColumn,
-  type ResolvedRelationship,
-  type SchemaResolver,
+import type {
+  AsOfFragment,
+  Axis,
+  AxisPins as CompilerAxisPins,
+  ProjectionColumn,
+  ResolvedColumn,
+  ResolvedRelationship,
+  SchemaResolver,
 } from "@parallax/sql";
 
 /** Split a `Class.member` reference into its class + member parts. */

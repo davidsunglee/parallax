@@ -40,6 +40,7 @@
 import { auditWriteStatements, type WriteTarget } from "@parallax/bitemporal";
 import { INFINITY, ParallaxDecimal, Temporal, toWire } from "@parallax/core";
 import type { ParallaxDatabase } from "@parallax/db";
+import { columnOrder, quoteIdentifier } from "@parallax/dialect";
 import {
   classifyOutcome,
   type VersionedTarget,
@@ -48,7 +49,6 @@ import {
 } from "@parallax/locking";
 import type { EntityMetadata, NormalizedAttribute } from "@parallax/metamodel";
 import type { Operation } from "@parallax/operation";
-import { columnOrder, quoteIdentifier } from "@parallax/sql";
 import { combineWrites, type WriteStep } from "@parallax/transactions";
 import type { Predicate } from "../dsl/find.js";
 

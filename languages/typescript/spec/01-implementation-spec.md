@@ -550,11 +550,16 @@ transaction; reads may use `px`, writes are available only through `tx`.
 - **Unit-of-work surfacing.** There is **no public `flush` API** in V1. The
   runtime flushes at commit and uses unit-of-work state for read-your-writes
   behavior.
-- **In-transaction reads.** Reads performed through `ParallaxTransaction` in the
-  default `locking` mode take the core shared row lock automatically (the runtime
-  appends the dialect read-lock suffix); `optimistic`-mode reads take no lock. A
-  versioned read records the observed version so a later update can gate on /
-  advance from it. V1 does not expose a per-read `lock: false`.
+- **In-transaction reads.** An **object find** performed through
+  `ParallaxTransaction` in the default `locking` mode takes the core shared row lock
+  automatically — applying the lock is a **dialect concern** (the runtime asks
+  `@parallax/dialect`'s `applyReadLock` to attach `for share of t0`), shared by the
+  flat find and every deep-fetch level through one in-transaction read executor. A
+  **projection / aggregation** read (a `distinct` result) takes **no** lock and
+  **proceeds unlocked — it never errors** (no base row to lock; unmanaged data per
+  ADR 0024 / ADR 0030); `optimistic`-mode reads take no lock either. A versioned
+  read records the observed version so a later update can gate on / advance from it.
+  V1 does not expose a per-read `lock: false`.
 - **Set-based writes.** `update` / `delete` accept either a predicate or an
   unresolved `ParallaxList` target, use explicit assignment arrays (not partial
   objects), and return result objects carrying at least `affectedRows`. On a
@@ -1157,6 +1162,7 @@ M12 --> M7
 M12 --> M8
 M12 --> M9
 M12 --> M10
+M12 --> M11
 M13 --> M12
 M14 --> M8
 ```
@@ -1167,11 +1173,13 @@ operations, not SQL); `M4` depends on `M5` (relationship navigation yields lists
 the reverse of the obvious guess); `M4` depends on `M7` (a pinned as-of value
 propagates per relationship hop, so the relationship layer references the as-of
 model — the edge the claimed temporal deep-fetch 03xx cases require); and `M3`
-depends on `M11` (SQL generation routes through the portability seam). `M12` additionally
-depends on `M8` directly — the harness realizes M8 unit-of-work behavior itself
-(batched write-sequence flushes, read-your-own-writes scenarios, the automatic
-in-transaction read lock), a direct edge that coexists with the transitive
-`M12 → M10 → M8` path, mirroring how `M4 → M8` coexists with `M4 → M5 → M8`. M14's
+depends on `M11` (SQL generation routes through the portability seam). `M12`
+additionally depends on `M8` directly — the harness realizes M8 unit-of-work
+behavior itself (batched write-sequence flushes, read-your-own-writes scenarios),
+a direct edge that coexists with the transitive `M12 → M10 → M8` path, mirroring
+how `M4 → M8` coexists with `M4 → M5 → M8` — and on `M11` directly, since the
+harness applies the dialect's DDL / quoting / read-lock-application rules to
+assemble SQL (`applyReadLock`). M14's
 single legal direction `M14 → M8` is
 transcribed in the block above, keeping the TypeScript edge set one-to-one with
 the core graph; the `@parallax/coherence` package is a **fast-follow** capability

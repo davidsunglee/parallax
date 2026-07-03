@@ -3,10 +3,10 @@
  *
  * The Phase-7 slice: the closure-demarcated unit of work's combined/flushed
  * writes (buffered inserts → one multi-row `INSERT`; a batched update → uniform
- * `pk in (…)` or one keyed `UPDATE` per key; FK-safe insert ordering) and the
- * automatic in-transaction shared read lock. Each exposes only the pure DML
- * planning / SQL-text discipline; the caller resolves physical targets from the
- * metamodel and executes.
+ * `pk in (…)` or one keyed `UPDATE` per key; FK-safe insert ordering). Each
+ * exposes only the pure DML planning / SQL-text discipline; the caller resolves
+ * physical targets from the metamodel and executes. The in-transaction shared read
+ * lock is a dialect decision (M11 `applyReadLock`), applied at the composition root.
  */
 export {
   type BatchStatement,
@@ -15,7 +15,6 @@ export {
   multiRowInsert,
   uniformUpdate,
 } from "./batch.js";
-export { appendReadLock, ParallaxUnlockableReadError } from "./read-lock.js";
 export {
   type BatchMutation,
   combineWrites,

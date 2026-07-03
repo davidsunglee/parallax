@@ -18,7 +18,7 @@ rather than aspirational:
 
 1. **A pure dialect / portability layer** — the `Dialect` authority detailed in
    the next section: SQL-fragment production (SELECT shape, identifier quoting,
-   row-limit clause, read-lock suffix, temp-table DDL), the neutral-type →
+   row-limit clause, read-lock application, temp-table DDL), the neutral-type →
    column-type mapping, and the **type-parse functions** that turn a driver's raw
    column value into a core **managed value** (`int8` → the language's big-integer
    type, `numeric` → its exact-decimal type, `timestamp` → a UTC instant at core
@@ -116,14 +116,14 @@ choices at each point; both are normative for their dialect (M3). The catalog
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
-| **read-lock suffix** (M8) | `for share of t0` | **`lock in share mode`** (no `for share`; MDEV-17514) |
+| **read-lock application** (M8) | object find: `for share of t0`; projection/aggregation: omitted | object find: **`lock in share mode`** (no `for share`; MDEV-17514); projection/aggregation: omitted |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
 | **infinity representation** (M7) | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
 | error-code classification | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062` duplicate, `1213` deadlock, `1205` lock timeout |
 
-The two decision points MariaDB **diverges** on — the read-lock suffix and the
-infinity representation — are exactly the ones the second dialect was chosen to
-exercise; they are detailed below. The divergent **type mappings** are
+The two decision points MariaDB **diverges** on — the read-lock (application) and
+the infinity representation — are exactly the ones the second dialect was chosen
+to exercise; they are detailed below. The divergent **type mappings** are
 round-tripped against real MariaDB by the scalar witness (compatibility case
 `1005`), and the UTC-instant normalization + microsecond precision of
 `datetime(6)` by the timestamp write cases (`0004`/`0005`).
@@ -200,17 +200,27 @@ both forms yield the identical observable order (case `0323`).
   sentinel orders correctly above every finite milestone, preserving the
   current-row predicate. (The cost relative to native infinity is the Y9999 cliff
   Postgres avoids — acceptable for a dialect that offers no alternative.)
-- **Read-lock suffix (M8).** The shared-row-lock clause an in-transaction read
-  appends for automatic read correctness (M8) is a dialect decision. **Postgres**
-  appends `for share of t0` (the alias-qualified `for share`). **MariaDB** has no
-  `for share` keyword (MDEV-17514); its shared lock is the unaliased
-  **`lock in share mode`**, appended after every other clause. This divergence is
-  surfaced here and **only** here — the operation, the result, and the
-  independent oracle are identical; just the lock spelling differs. Each form is
-  the canonical fixed point of the M3 normalizer for its own dialect (fully
-  lowercase per rule 2; the normalizer renders the MariaDB lock through the seam
-  rather than through sqlglot's MySQL generator, which would otherwise rewrite it
-  to `for share`).
+- **Read-lock application (M8).** *Applying* the in-transaction shared read lock
+  is a dialect decision — not merely spelling the suffix, but deciding **whether,
+  where, and when** to attach it. Given a compiled read and the unit-of-work mode,
+  the dialect returns the read with this dialect's locking applied:
+  - a lockable **object find** in `locking` mode gets the shared-row-lock form
+    appended after every other clause — **Postgres** `for share of t0` (the
+    alias-qualified `for share`), **MariaDB** the unaliased **`lock in share
+    mode`** (no `for share` keyword; MDEV-17514);
+  - a **projection / aggregation** read (a `distinct` / grouped / aggregate
+    result) is returned **unchanged** — it has no identifiable base row to lock and
+    the database rejects the clause on such shapes, so the dialect **omits** the
+    lock rather than erroring (ADR 0030; mirrors Reladomo's never-locking
+    `getSelectForAggregatedData` beside the object-find `getSelect(isInTransaction)`);
+  - any read in **optimistic** mode is returned unchanged (M10 takes no lock).
+
+  This divergence is surfaced here and **only** here — the operation, the result,
+  and the independent oracle are identical; just the lock spelling differs. Each
+  object-find form is the canonical fixed point of the M3 normalizer for its own
+  dialect (fully lowercase per rule 2; the normalizer renders the MariaDB lock
+  through the seam rather than through sqlglot's MySQL generator, which would
+  otherwise rewrite it to `for share`).
 - **Error-code classification (M11).** A raised database error MUST be mapped to a
   neutral **category** so language-neutral code can react without dialect
   knowledge. The categories are a closed set: `uniqueViolation` (duplicate key /

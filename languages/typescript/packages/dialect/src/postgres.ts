@@ -3,7 +3,7 @@
  *
  * All Postgres-specific SQL decisions live here (and only here): the
  * `?`→`$n` placeholder translation, the neutral-type → column-type vocabulary,
- * the identifier-quoting rule, the shared read-lock suffix, and the
+ * the identifier-quoting rule, the in-transaction read-lock application, and the
  * **raw-string type parsers** that materialize `timestamptz` / `numeric` /
  * `int8` / `bytea` into `Temporal.Instant` / `ParallaxDecimal` / `bigint` /
  * `Uint8Array` at the adapter boundary (the §3.2.1 "normalize at the adapter
@@ -45,15 +45,42 @@ export function toPositionalPlaceholders(sql: string): string {
   });
 }
 
+/** The canonical root-table alias the M3 SELECT projects from (`from tbl t0`). */
+const READ_LOCK_ALIAS = "t0";
+
 /**
- * The read-lock suffix for an in-transaction shared row lock (M8), owned by the
- * M11 seam. Postgres renders the shared lock as `for share of <alias>`
- * (alias-qualified, lowercased). MariaDB diverges (`lock in share mode`); that
- * lands when the second dialect does. The locking package (Phase 7) appends
- * this; it is defined here so the dialect owns the SQL text.
+ * A leading `select distinct` projection — the one lock-incompatible read shape
+ * the developer `find` API can produce today (`0226`: `select distinct t0.…`). The
+ * canonical SQL is always lowercase, but the match is case-insensitive so a future
+ * dialect's casing cannot slip an unlockable read past the guard.
  */
-export function readLockSuffix(alias: string): string {
-  return `for share of ${alias}`;
+const DISTINCT_PROJECTION = /^\s*select\s+distinct\b/i;
+
+/**
+ * **Apply** this dialect's in-transaction shared read lock to a compiled read (M8
+ * automatic read-lock correctness, owned by the M11 seam per delta `09` D3). The
+ * dialect owns the whole decision — whether, where, and how the lock attaches —
+ * not merely the suffix text:
+ *
+ *  - a lockable **object find** in `locking` mode gets the shared-row-lock form
+ *    appended after every other clause — Postgres `for share of t0` (alias-
+ *    qualified, lowercased);
+ *  - a **projection / aggregation** read (the `select distinct` shape) is returned
+ *    **unchanged**: its result rows have no identifiable base row to lock, and per
+ *    ADR 0024 return plain unmanaged data, so there is nothing to protect — it
+ *    proceeds unlocked rather than erroring (ADR 0030, the D2 reversal);
+ *  - any **non-`locking`** read (`optimistic` mode, or an out-of-transaction read)
+ *    is returned unchanged.
+ *
+ * MariaDB diverges (no `for share`; MDEV-17514): its shared lock is the unaliased
+ * `lock in share mode`, appended after every other clause. That form lands with the
+ * second concrete dialect (the `Dialect`-interface effort); it is not wired here.
+ */
+export function applyReadLock(sql: string, options: { readonly locking: boolean }): string {
+  if (!options.locking || DISTINCT_PROJECTION.test(sql)) {
+    return sql;
+  }
+  return `${sql} for share of ${READ_LOCK_ALIAS}`;
 }
 
 // --- neutral-type → Postgres column type (the M0 table) ---------------------

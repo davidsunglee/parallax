@@ -221,8 +221,11 @@ The temp-table variant for very large parent key sets is a **fast-follow**
 
 A `groupBy` node (M2 sub-area) lowers to a single aggregate `SELECT`. The
 projection is the **group-by key columns** followed by the **aggregate
-expressions**; the optional `having` filters groups. The canonical clause order
-(rule 5) places `group by` after `where` and `having` after `group by`:
+expressions**; the optional `having` filters groups. An aggregate SELECT never
+carries the in-transaction read-lock suffix (the read-lock is an object-find
+property — its rows have no base row to lock; see *Read-lock suffix* below and
+`M11`). The canonical clause order (rule 5) places `group by` after `where` and
+`having` after `group by`:
 
 ```text
 select <keys…>, <aggregates…> from <table> t0
@@ -424,8 +427,12 @@ and their canonical Postgres golden form is fixed here.
 
 ### Read-lock suffix
 
-An in-transaction read that intends to write appends the dialect's shared-row-
-lock suffix (`M8`, `M11`). For Postgres the suffix is `for share of t0` — `for
+An in-transaction **object find** that intends to write carries the dialect's
+shared-row-lock suffix (`M8`, `M11`). The read-lock is an **object-find property**:
+a projection / aggregation SELECT — a `distinct`, grouped, or aggregate result —
+**never** carries the suffix (it has no identifiable base row to lock), and the
+`M11` dialect **owns applying** the lock (whether and where to append it — see
+M11's *Read-lock application*). For Postgres the suffix is `for share of t0` — `for
 share` qualified by the root alias — appended **after** every other clause (it is
 the last thing in the statement, after any `where`):
 

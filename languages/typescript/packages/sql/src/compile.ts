@@ -23,8 +23,8 @@
  * The visitor imports no metamodel: it resolves a `Class.attr` reference (to its
  * table, quoted column, and M0 neutral type) and the entity's read projection
  * through an injected {@link SchemaResolver}, so `@parallax/sql` depends only on
- * `@parallax/operation` and `@parallax/dialect` (the DAG forbids `sql → metamodel`).
- * The runner builds the resolver from the M1 reader.
+ * `@parallax/operation` (the DAG forbids `sql → metamodel`). The runner builds the
+ * resolver from the M1 reader.
  */
 import { type Operation, operationTag } from "@parallax/operation";
 import { coerceBind } from "./bind.js";

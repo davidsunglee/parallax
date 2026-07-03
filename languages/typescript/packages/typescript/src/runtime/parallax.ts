@@ -20,10 +20,10 @@ import type { Metamodel } from "@parallax/metamodel";
 import { type EntityMetadata, Metamodel as MetamodelReader } from "@parallax/metamodel";
 import type { Operation } from "@parallax/operation";
 import { compile } from "@parallax/sql";
-import { appendReadLock } from "@parallax/transactions";
 import { buildFindOperation, type FindOptions, Predicate } from "../dsl/find.js";
 import { type DeepFetchGraph, executeDeepFetch, isDeepFetchOperation } from "./deep-fetch.js";
 import { rowMaterializer } from "./materialize.js";
+import { executeRead } from "./read.js";
 import { RuntimeSchema } from "./schema.js";
 import {
   type Assignment,
@@ -85,12 +85,13 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
      */
     private readonly beforeLoad?: () => Promise<void>,
     /**
-     * When true (a `locking`-mode in-transaction finder), append the M8 shared
-     * read-lock suffix (`for share of t0`) to a flat read so a concurrent
-     * transaction cannot mutate the row out from under a read-then-write (`0603`).
-     * `optimistic`-mode and root-handle reads take no lock.
+     * The M8 correctness mode of the enclosing unit of work, threaded to the shared
+     * in-transaction read executor: a `locking`-mode read takes the M8 shared row
+     * lock (`for share of t0`, `0603`) so a concurrent transaction cannot mutate the
+     * row out from under a read-then-write; an `optimistic`-mode read takes none.
+     * Absent on the root handle (an out-of-transaction read never locks).
      */
-    private readonly lockReads = false,
+    private readonly concurrency?: Concurrency,
     /**
      * A hook called with a fetched level's entity and its materialized rows, so the
      * unit of work can record the version it OBSERVED for each versioned row (the M10
@@ -183,13 +184,18 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     }
     const schema = new RuntimeSchema(this.metamodel, this.entity);
     const { sql, binds } = compile(operation, schema);
-    // In a locking-mode transaction the in-transaction read takes the automatic
-    // shared row lock (M8): the developer writes no locking SQL (`0603`).
-    const readSql = this.lockReads ? appendReadLock(sql) : sql;
     const materialize = rowMaterializer(this.entity);
     return new ParallaxList<T>(async () => {
       await this.beforeLoad?.();
-      const rows = await this.database.execute(readSql, binds as readonly unknown[]);
+      // The shared in-transaction read executor applies the M8 lock for this unit
+      // of work's mode (a `locking`-mode object find takes `for share of t0`, `0603`),
+      // then executes: the developer writes no locking SQL.
+      const rows = await executeRead(
+        this.database,
+        sql,
+        binds as readonly unknown[],
+        this.concurrency,
+      );
       const materialized = rows.map(materialize) as readonly T[];
       // Record the version this unit of work OBSERVED for each versioned row, so a
       // later keyed update gates on / advances from it (M10 framework-owned versions).
@@ -237,7 +243,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
    */
   private executeGraph(operation: Operation): Promise<DeepFetchGraph> {
     return executeDeepFetch(this.metamodel, operation, this.database, {
-      lockReads: this.lockReads,
+      concurrency: this.concurrency,
       onObserved: this.onObserved,
     });
   }
@@ -411,7 +417,7 @@ export class ParallaxTransaction {
         metadata,
         this.database,
         () => this.writer.flush(),
-        this.concurrency === "locking",
+        this.concurrency,
         // A flat read reports this finder's entity; a deep fetch reports each fetched
         // level's own entity (root + included children), so a versioned child read is
         // recorded under the CHILD entity, not the root.
