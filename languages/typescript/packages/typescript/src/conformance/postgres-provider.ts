@@ -6,7 +6,7 @@
  * Since Phase 10a the provider **delegates SQL execution to the shipped
  * `@parallax/db-postgres` adapter** (bound to the container URI) instead of
  * driving porsager itself. This keeps the harness on the exact production path:
- * the same adapter a real application imports is the one the whole 99-case slice
+ * the same adapter a real application imports is the one the whole 100-case slice
  * runs through. The provider owns only the two grader-side concerns the adapter
  * deliberately does not:
  *
@@ -158,6 +158,29 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
     const text = toPositionalPlaceholders(sql);
     const result = await this.sql.unsafe(text, asParams(binds));
     return result.count;
+  }
+
+  async execRolledBack(sql: string, binds: readonly unknown[]): Promise<number> {
+    // The M8 abort contract's execution seam (rollback scenario step): apply the
+    // DML inside a porsager transaction (acquiring its locks, capturing the
+    // affected count) then throw a sentinel to force the driver to ROLL BACK. The
+    // write never becomes durable, so a subsequent `query` observes the ORIGINAL
+    // rows. Binds go through the same `?`→`$n` seam + adapter serializers as `exec`.
+    const text = toPositionalPlaceholders(sql);
+    const rollbackSignal = Symbol("rollback");
+    let affected = 0;
+    try {
+      await this.sql.begin(async (tx) => {
+        const result = await tx.unsafe(text, asParams(binds));
+        affected = result.count;
+        throw rollbackSignal;
+      });
+    } catch (error) {
+      if (error !== rollbackSignal) {
+        throw error;
+      }
+    }
+    return affected;
   }
 
   async close(): Promise<void> {

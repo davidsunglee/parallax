@@ -197,9 +197,15 @@ golden SQL); a **write step** (`write`) **commits** golden DML between finds. Th
 write step is what makes **read-your-own-writes** and **query-cache
 invalidation** expressible: a dependent find after a committed write must observe
 it (and cannot be modeled as a cache hit, since reusing the stale pre-write rows
-would fail the post-write `expectRows`). The harness asserts per-step round-trip
-/ golden-SQL count consistency, executes each step, and checks `sameObjectAs`
-identity assertions; it never compiles an operation to SQL.
+would fail the post-write `expectRows`). A write step defaults to **committing**
+its DML; with **`rollback: true`** the harness applies the DML then **rolls it
+back** (through the provider's manual-commit session seam) — the observable form
+of the M8 **abort contract**: a later find MUST re-resolve and observe the
+ORIGINAL rows, never the aborted write. The rolled-back DML still executes, so it
+counts its statements as round trips exactly as a committed write does. The
+harness asserts per-step round-trip / golden-SQL count consistency, executes each
+step, and checks `sameObjectAs` identity assertions; it never compiles an
+operation to SQL.
 
 ### Coherence cases (M14 cross-process coherence)
 

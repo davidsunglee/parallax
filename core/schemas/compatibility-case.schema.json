@@ -112,7 +112,7 @@
             "required": ["find", "roundTrips"]
           },
           {
-            "description": "A write step: commits DML between finds so a later find observes it. Carries golden DML, not a find.",
+            "description": "A write step: applies golden DML between finds. Carries golden DML, not a find. By default the DML is COMMITTED so a later find observes it (read-your-own-writes / cache invalidation); with `rollback: true` the DML is applied and then ROLLED BACK, so a later find MUST observe the ORIGINAL rows (the M8 abort contract).",
             "required": ["write", "roundTrips", "goldenSql"]
           }
         ],
@@ -122,9 +122,13 @@
             "type": "object"
           },
           "write": {
-            "description": "Marks a WRITE step and labels the mutation it commits (e.g. `insert` / `update`). The step's golden DML is applied and COMMITTED on the unit of work's connection; the step captures no rows and asserts no expectRows. Interleaving a committed write between finds proves read-your-own-writes (the unit of work flushes pending writes before a dependent find, so the find observes the write) and query-cache invalidation (a find re-issued after a committed write MUST re-resolve — modeling it as a cache hit would reuse the stale pre-write rows and fail the post-write expectRows).",
+            "description": "Marks a WRITE step and labels the mutation it applies (e.g. `insert` / `update`). The step's golden DML is applied on the unit of work's connection and, by default, COMMITTED; the step captures no rows and asserts no expectRows. Interleaving a committed write between finds proves read-your-own-writes (the unit of work flushes pending writes before a dependent find, so the find observes the write) and query-cache invalidation (a find re-issued after a committed write MUST re-resolve — modeling it as a cache hit would reuse the stale pre-write rows and fail the post-write expectRows).",
             "type": "string",
             "minLength": 1
+          },
+          "rollback": {
+            "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the M8 abort contract. A later find MUST re-resolve (a cache miss) and observe the ORIGINAL rows, never the aborted write; the read-your-own-writes forced flush is safe only because it lands inside the atomic scope the abort discards. The rolled-back DML still executes, so the step's roundTrips count its statements exactly as a committed write does.",
+            "type": "boolean"
           },
           "roundTrips": {
             "description": "How many database round trips this step costs. A READ cache HIT (an operation equal to an earlier step's) costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's round trips equal the committed DML statements it lists. MUST equal the number of golden SQL statements this step lists for each dialect.",

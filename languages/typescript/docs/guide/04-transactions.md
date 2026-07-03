@@ -66,6 +66,17 @@ await accounts.create({ id: 7n, owner: "Newton", balance: dec("5.00"), version: 
 return accounts.find(Account.id.eq(7)).toArray();
 ```
 
+## 0608: an aborted transaction discards its writes (rollback)
+
+```ts
+f.px.transaction(async (tx) => {
+  const accounts = tx.entity("Account");
+  await accounts.update(Account.id.eq(1), { set: [Account.balance.set(dec("999.00"))] });
+  const midTx = await accounts.find(Account.id.eq(1)).toArray();
+const observed = await f.px.transaction(async (tx) =>
+tx.entity("Account").find(Account.id.eq(1)).toArray(),
+```
+
 ## 0612: a referenced parent is inserted before its child (FK ordering)
 
 ```ts

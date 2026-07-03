@@ -33,6 +33,12 @@ export interface ScenarioStep {
   readonly binds: readonly unknown[];
   /** The declared round-trip cost of the step (0 for a cache hit). */
   readonly roundTrips: number;
+  /**
+   * A write step's abort flag (M8 abort contract): when true its DML is applied
+   * then ROLLED BACK, so a later find observes the ORIGINAL rows. Absent / false
+   * for a committed write or a find step.
+   */
+  readonly rollback?: boolean;
   /** The rows a find step asserts (absent for a write or an unasserted find). */
   readonly expectRows?: readonly Record<string, unknown>[];
   /** A `sameObjectAs` reference to an earlier step (identity reuse), if declared. */
@@ -54,6 +60,7 @@ export function isScenario(loaded: LoadedCase): boolean {
 /** A raw scenario step as authored in the case YAML. */
 interface RawScenarioStep {
   readonly write?: string;
+  readonly rollback?: boolean;
   readonly find?: unknown;
   readonly goldenSql?: { readonly postgres?: string | readonly string[] };
   readonly binds?: readonly unknown[];
@@ -81,6 +88,7 @@ function normalizeStep(raw: RawScenarioStep, index: number): ScenarioStep {
     statements: stepStatements(raw),
     binds: (raw.binds ?? []) as readonly unknown[],
     roundTrips: raw.roundTrips ?? 0,
+    ...(raw.rollback === undefined ? {} : { rollback: raw.rollback }),
     ...(raw.expectRows === undefined ? {} : { expectRows: raw.expectRows }),
     ...(raw.sameObjectAs === undefined ? {} : { sameObjectAs: raw.sameObjectAs }),
   };

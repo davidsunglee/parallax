@@ -290,10 +290,11 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 # --- the profile gate over the real corpus -----------------------------------
 #
 # The real-corpus assertions: the family-selected cases are internally
-# consistent with the canonical claim, and exactly 99 cases carry the slice tag
+# consistent with the canonical claim, and exactly 100 cases carry the slice tag
 # (a drift tripwire — adding or losing a tagged case fails the count). The count
 # rose from 97 to 99 when the temporal deep-fetch cases 0335/0336 were added to
-# the corpus.
+# the corpus, and to 100 when the rollback scenario 0608 was added (the M8 abort
+# contract, COR-14).
 
 
 def test_real_corpus_profile_is_consistent() -> None:
@@ -311,6 +312,6 @@ def test_profile_slice_tag_count() -> None:
         tags = [t for t in doc.get("tags", []) if isinstance(t, str)]
         if _SLICE_TAG in tags:
             tagged.append(path.name)
-    assert len(tagged) == 99, (
-        f"expected exactly 99 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
+    assert len(tagged) == 100, (
+        f"expected exactly 100 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
     )
