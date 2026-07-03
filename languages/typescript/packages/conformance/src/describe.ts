@@ -19,7 +19,7 @@ import { SCHEMA_VERSION } from "@parallax/core";
 export const SLICE_MVP_1_CAPABILITIES: Capabilities = {
   modules: ["m0", "m1", "m2", "m3", "m4", "m5", "m7", "m8", "m10", "m11", "m12"],
   dialects: ["postgres"],
-  caseShapes: ["read", "writeSequence", "scenario", "conflict"],
+  caseShapes: ["read", "writeSequence", "scenario", "conflict", "boundary"],
   caseTags: { include: ["slice-mvp-1"] },
   commands: ["describe", "compile", "run"],
   provisioning: "self-managed",

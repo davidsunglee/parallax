@@ -286,7 +286,7 @@ def _case_shape(doc: dict) -> str | None:
     the ``is_*`` properties of ``Case``; there is no literal ``shape`` field. Order
     matters — the more specific shapes are checked before ``read``. Returns one of
     ``read`` / ``writeSequence`` / ``scenario`` / ``conflict`` / ``coherence`` /
-    ``error``, or ``None`` if the document matches no known shape.
+    ``error`` / ``boundary``, or ``None`` if the document matches no known shape.
     """
     if "errorClass" in doc:
         return "error"
@@ -298,6 +298,8 @@ def _case_shape(doc: dict) -> str | None:
         return "writeSequence"
     if "expectedAffectedRows" in doc or "attempts" in doc:
         return "conflict"
+    if "boundary" in doc:
+        return "boundary"
     if "operation" in doc:
         return "read"
     return None
@@ -414,7 +416,15 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
             if _MODULE_TAG_RE.match(tag) and tag not in claim_modules:
                 errors.append(f"{name}: carries module tag {tag!r} not in the slice claim")
 
-        if shape is not None and not _has_postgres_golden(doc, shape):
+        # An api-conformance-lane case (every boundary case, plus the read-lock
+        # matrix reads) is NOT executed by the M12 harness, so it need not carry a
+        # Postgres golden — its observable is proven by the language's API
+        # Conformance Suite. Harness-lane cases still must carry one.
+        if (
+            shape is not None
+            and doc.get("lane") != "api-conformance"
+            and not _has_postgres_golden(doc, shape)
+        ):
             errors.append(f"{name}: tagged case has no Postgres golden SQL")
 
         if claim_exclude:

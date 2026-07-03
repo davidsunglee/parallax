@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0065
+---
+
 # Optimistic lock conflicts are caller-driven
 
 TypeScript optimistic-lock conflicts surface as `ParallaxOptimisticLockError`. The runtime does not automatically retry the transaction or write. A conflict means another transaction committed a newer version first, so application code should re-read the current state, decide whether the intended change still makes sense, and then explicitly retry if appropriate.

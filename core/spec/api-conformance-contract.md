@@ -51,13 +51,26 @@ portable requirements; the mechanism that satisfies each is language-local.
 2. **Shipped adapter, real database.** The suite MUST run through the shipped
    database adapter against a real database of a claimed dialect (not a mock, an
    in-memory fake, or the conformance grader's provisioning path used as a
-   shortcut around the developer surface).
+   shortcut around the developer surface). **Carve-out for `api-conformance`-lane
+   fault injection.** A boundary case that declares an `inject` fault (a portable
+   transient / conflict a single-connection suite cannot provoke by real
+   contention) MAY be driven by a **thin fault-injecting decorator wrapped around
+   the shipped adapter** at the database-port seam — the decorator injects the
+   declared fault on a chosen attempt and delegates every other call to the
+   shipped adapter, so the real database work still runs the production path. This
+   is **not** a substitute adapter: it is the shipped adapter plus a seam-level
+   fault, the minimum needed to exercise a retry-loop branch deterministically.
 3. **Coverage partition over the claimed slice.** The suite MUST mechanically
    assert that the cases it exercises and the cases it explicitly skips partition
    the claimed slice exactly: exercised ∪ skipped equals the slice, the two sets
    are disjoint, no exercised or skipped id is stale (every id is a real in-slice
    case), and every skip records a non-empty reason. A silent gap — an in-slice
-   case that is neither exercised nor reasoned-skipped — MUST fail the build.
+   case that is neither exercised nor reasoned-skipped — MUST fail the build. The
+   partition covers **every** in-slice case regardless of lane: an
+   `api-conformance`-lane case (a boundary retry case, a read-lock-matrix read) is
+   satisfied here — by construction, since the M12 harness only schema-validates
+   it — so its id MUST be exercised or reasoned-skipped exactly like a harness-lane
+   case.
 4. **Expected results match the corpus oracles.** For every exercised case the
    suite MUST assert the developer surface produces the corpus's expected results
    (`expectedRows`, `expectedGraph`, `expectedTableState`, `expectedAffectedRows`,
@@ -102,7 +115,7 @@ mandate on other languages:
   idiomatic `px.*` / `px.transaction` surface over the shipped `@parallax/db-postgres`
   adapter against a Testcontainers `postgres:17`;
 - `coverage.test.ts` is the Docker-free partition assertion (exercised ∪ skipped ==
-  the 101-case `slice-mvp-1` slice, no strays, every skip reasoned), with the
+  the 114-case `slice-mvp-1` slice, no strays, every skip reasoned), with the
   exercised map in `covered.ts` and the reasoned skips in `skip-manifest.ts`;
 - the no-drift guard is `assertSameOperation` in `_harness.ts`;
 - the value-shape assertion is `assertManagedShape` in `_harness.ts`;

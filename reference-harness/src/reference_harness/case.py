@@ -147,6 +147,18 @@ class Case:
         return self.raw.get("tags", [])
 
     @property
+    def lane(self) -> str:
+        """Which executor satisfies this case (``harness`` default | ``api-conformance``).
+
+        A ``harness``-lane case executes as today; an ``api-conformance``-lane case
+        (every boundary case, plus the read-lock matrix reads ``0616``-``0619``) is
+        schema-validated by the M12 harness but NOT executed — each language's API
+        Conformance Suite satisfies it. :func:`case_runner.run_case` early-returns
+        for the api-conformance lane.
+        """
+        return self.raw.get("lane", "harness")
+
+    @property
     def uow(self) -> dict[str, Any]:
         """The declared unit-of-work config (M8 strategy selection), or empty.
 
@@ -250,6 +262,32 @@ class Case:
     @property
     def scenario(self) -> list[dict[str, Any]]:
         return self.raw.get("scenario", [])
+
+    @property
+    def is_boundary(self) -> bool:
+        """True for an M8/M10 bounded-automatic-retry boundary case (Phase 4).
+
+        A boundary case carries a ``boundary`` (the portable unit-of-work actions)
+        and an ``expect`` (the portable outcome) instead of an ``operation`` /
+        ``writeSequence`` / etc.; it is always ``lane: api-conformance`` (the M12
+        harness cannot provoke its injected-fault / retry-loop observable), so it is
+        schema-validated but not executed.
+        """
+        return "boundary" in self.raw
+
+    @property
+    def boundary(self) -> list[dict[str, Any]]:
+        return self.raw.get("boundary", [])
+
+    @property
+    def inject(self) -> str | None:
+        """The portable fault a boundary case injects at the DB-port seam, or None."""
+        return self.raw.get("inject")
+
+    @property
+    def expect(self) -> str | None:
+        """The portable outcome a boundary case asserts (``committed`` / error kind)."""
+        return self.raw.get("expect")
 
     @property
     def is_coherence(self) -> bool:

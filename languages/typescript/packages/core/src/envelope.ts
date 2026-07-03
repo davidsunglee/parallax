@@ -19,7 +19,13 @@ export type SchemaVersion = typeof SCHEMA_VERSION;
 export type Command = "describe" | "compile" | "run" | "benchmark";
 
 /** Case shapes the harness discriminates. */
-export type CaseShape = "read" | "writeSequence" | "scenario" | "conflict" | "coherence";
+export type CaseShape =
+  | "read"
+  | "writeSequence"
+  | "scenario"
+  | "conflict"
+  | "coherence"
+  | "boundary";
 
 /** A module tier tag, e.g. `"m0"`, `"m12"`. */
 export type ModuleTag = `m${number}`;

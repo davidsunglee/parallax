@@ -17,9 +17,35 @@
  * identically.
  */
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
-import { toPositionalPlaceholders } from "@parallax/dialect";
+import { ParallaxTransientError } from "@parallax/db";
+import {
+  classifyErrorCode,
+  isRetriableCategory,
+  toPositionalPlaceholders,
+} from "@parallax/dialect";
 import postgres, { type Options, type Sql } from "postgres";
 import { managedTypes } from "./oids.js";
+
+/**
+ * Classify a porsager driver error to the portable retriable surface. A driver
+ * error carrying a Postgres SQLSTATE `.code` that classifies to a transient
+ * category (`deadlock` — a true deadlock or serialization failure, retriable; or
+ * `lockWaitTimeout` — not retriable) is re-surfaced as a {@link ParallaxTransientError}
+ * so the unit-of-work retry loop above the port never inspects a driver `.code`.
+ * Everything else — including an already-wrapped transient, a `uniqueViolation`, or
+ * a non-database error thrown by the transaction body — passes through unchanged.
+ */
+function classifyDriverError(error: unknown): unknown {
+  if (error instanceof ParallaxTransientError) {
+    return error;
+  }
+  const code = (error as { code?: string | number } | null)?.code;
+  const category = classifyErrorCode(code);
+  if (category === "deadlock" || category === "lockWaitTimeout") {
+    return new ParallaxTransientError(category, isRetriableCategory(category), { cause: error });
+  }
+  return error;
+}
 
 /**
  * porsager types `unsafe`'s parameter array over the connection's custom-type
@@ -89,8 +115,15 @@ export class PostgresDatabase implements ParallaxDatabase {
    */
   async execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
     const text = toPositionalPlaceholders(sql);
-    const result = await this.sql.unsafe(text, asParams(binds));
-    return [...result].map((row) => ({ ...(row as ParallaxRow) }));
+    try {
+      const result = await this.sql.unsafe(text, asParams(binds));
+      return [...result].map((row) => ({ ...(row as ParallaxRow) }));
+    } catch (error) {
+      // Surface a transient DB failure (deadlock / serialization / lock-wait
+      // timeout) as the portable `ParallaxTransientError` so the retry loop above
+      // the port classifies without touching a driver `.code`.
+      throw classifyDriverError(error);
+    }
   }
 
   /**
@@ -100,9 +133,16 @@ export class PostgresDatabase implements ParallaxDatabase {
    * the transaction.
    */
   transaction<T>(body: (tx: ParallaxDatabase) => Promise<T>): Promise<T> {
-    return this.sql.begin((reserved) =>
-      body(new PostgresDatabase(reserved as unknown as Sql)),
-    ) as Promise<T>;
+    return (
+      this.sql.begin((reserved) =>
+        body(new PostgresDatabase(reserved as unknown as Sql)),
+      ) as Promise<T>
+    ).catch((error: unknown) => {
+      // A transient failure can surface at COMMIT (e.g. a SERIALIZABLE
+      // serialization failure), not only mid-statement — classify it here too so
+      // the retry loop sees the portable transient regardless of where it arose.
+      throw classifyDriverError(error);
+    });
   }
 
   /** Close the underlying pool (no-op for a wrapped, externally-owned pool caller). */

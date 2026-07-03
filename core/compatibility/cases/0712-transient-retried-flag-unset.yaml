@@ -1,0 +1,27 @@
+# Boundary case (M8): an injected TRANSIENT database failure is auto-retried —
+# `retryOptimisticConflicts` UNSET has no bearing on transients — `api-conformance`
+# lane.
+#
+# Transient database failures (serialization failure / deadlock — the M11
+# `deadlock` category) are retriable BY DEFAULT: no caller action, no opt-in
+# needed. This case injects a `serialization-failure` on the first attempt with the
+# conflict-retry flag UNSET; the boundary rolls back, invalidates stale state, and
+# re-executes the closure, which succeeds — the unit of work COMMITS. The flag
+# governs conflicts only; it never gates transients.
+#
+# `lane: api-conformance`: it needs an injected transient a single-connection
+# harness cannot provoke; the suite drives it through a fault-injecting decorator
+# around the shipped adapter.
+model: models/account.yaml
+tags: [m8, m10, optimistic-locking, retry, transient, slice-mvp-1]
+lane: api-conformance
+uow:
+  concurrency: optimistic
+  retryOptimisticConflicts: false
+inject: serialization-failure
+boundary:
+  - action: read
+    note: observe the versioned row
+  - action: update
+    note: the first write raises an injected serialization failure — auto-retried
+expect: committed
