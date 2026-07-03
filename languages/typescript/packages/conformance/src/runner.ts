@@ -11,11 +11,11 @@
  * load fixtures per the case lifecycle, execute the compiled SQL, assemble `rows`
  * observations with `observations.roundTrips`, and validate the `run` envelope.
  *
- * The provider is **injected** through the port — the runner imports no driver
- * and no dialect package (it reaches the dialect-owned DDL / quoting helpers
- * through the one allowed `M3 -> M11` facade re-exported by `@parallax/sql`, and
- * the M1 reader through the `M2 -> M1` facade re-exported by
- * `@parallax/operation`).
+ * The provider is **injected** through the port — the runner imports no driver.
+ * It is the harness's SQL-assembly orchestrator, so it imports the concrete
+ * dialect's pure *rules* (DDL / identifier quoting / read-lock application)
+ * directly from `@parallax/dialect` (M12 -> M11), and the M1 reader through the
+ * `M2 -> M1` facade re-exported by `@parallax/operation`.
  */
 import type {
   AdapterIdentity,
@@ -30,10 +30,10 @@ import type {
   Row,
   RunOk,
 } from "@parallax/core";
+import { applyReadLock, columnOrder, ddlForDescriptor, quoteIdentifier } from "@parallax/dialect";
 import { type EntityMetadata, Metamodel, parseOperation } from "@parallax/operation";
 import { deepFetch, type Exec, type Row as GraphRow } from "@parallax/relationships";
-import { columnOrder, compile, ddlForDescriptor, quoteIdentifier } from "@parallax/sql";
-import { appendReadLock } from "@parallax/transactions";
+import { compile } from "@parallax/sql";
 import { buildConflictPlan, isConflict } from "./conflict.js";
 import { buildDeepFetchPlan, type DeepFetchPlan, isDeepFetch } from "./deepfetch-plan.js";
 import { SLICE_MVP_1_CAPABILITIES } from "./describe.js";
@@ -46,10 +46,11 @@ import { schemaForReadCase } from "./schema-resolver.js";
 import { buildWriteSequencePlan, isWriteSequence } from "./write-sequence.js";
 
 /**
- * The `read-lock` tag marks an in-transaction read that must append the dialect's
- * shared-row-lock suffix (M8 automatic read-lock correctness). The signal is the
- * tag (not the operation AST — the operation is a plain `eq`), so the runner
- * detects it here and appends `for share of t0` after every other clause.
+ * The `read-lock` tag marks a locking-mode in-transaction object find that must
+ * carry the dialect's shared-row-lock suffix (M8 automatic read-lock correctness).
+ * The signal is the tag (not the operation AST — the operation is a plain `eq`), so
+ * the runner detects it here and hands the read to the dialect's `applyReadLock`,
+ * which appends `for share of t0` after every other clause.
  */
 function isReadLock(loaded: LoadedCase): boolean {
   return loaded.tags.includes("read-lock");
@@ -213,9 +214,10 @@ function compileRootStatement(loaded: LoadedCase): { sql: string; binds: readonl
   const operation = parseOperation(loaded.raw.operation);
   const schema = schemaForReadCase(loaded, operation);
   const { sql, binds } = compile(operation, schema);
-  // An in-transaction read (the `read-lock` tag) appends the dialect's shared-row-
-  // lock suffix after every other clause (M8 automatic read-lock correctness).
-  const locked = isReadLock(loaded) ? appendReadLock(sql) : sql;
+  // A `read-lock`-tagged case is a locking-mode object find: the dialect applies the
+  // shared-row-lock suffix after every other clause (M8 automatic read-lock
+  // correctness; the dialect owns the append — M11 `applyReadLock`).
+  const locked = isReadLock(loaded) ? applyReadLock(sql, { locking: true }) : sql;
   return { sql: locked, binds: binds as readonly BindValue[] };
 }
 
@@ -308,9 +310,9 @@ async function runFlatRead(
   const operation = parseOperation(loaded.raw.operation);
   const schema = schemaForReadCase(loaded, operation);
   const { sql, binds } = compile(operation, schema);
-  // An in-transaction read (`read-lock` tag) appends the shared-row-lock suffix
-  // after every other clause; the lock does not change the returned rows.
-  const executed = isReadLock(loaded) ? appendReadLock(sql) : sql;
+  // A `read-lock`-tagged case is a locking-mode object find; the dialect applies the
+  // shared-row-lock suffix after every other clause (the lock does not change rows).
+  const executed = isReadLock(loaded) ? applyReadLock(sql, { locking: true }) : sql;
 
   const rows = await provider.query(executed, binds as readonly unknown[]);
   return {

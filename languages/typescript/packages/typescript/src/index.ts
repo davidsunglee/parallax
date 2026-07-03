@@ -24,10 +24,6 @@ export {
   ParallaxNotFoundError,
   ParallaxTooManyResultsError,
 } from "@parallax/lists";
-// Raised when a locked in-transaction read carries a result shape a row lock cannot
-// apply to (a `distinct` projection) — surfaced through the facade like the other
-// transaction diagnostics.
-export { ParallaxUnlockableReadError } from "@parallax/transactions";
 // --- fluent query DSL (spec §2) ---------------------------------------------
 export {
   AttributeExpression,

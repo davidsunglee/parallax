@@ -30,9 +30,10 @@ import {
   deepFetch as runDeepFetch,
 } from "@parallax/relationships";
 import { type AxisPins, compile } from "@parallax/sql";
-import { appendReadLock } from "@parallax/transactions";
 import { rowMaterializer } from "./materialize.js";
+import { executeRead } from "./read.js";
 import { RuntimeSchema } from "./schema.js";
+import type { Concurrency } from "./writes.js";
 
 /** The assembled deep-fetch result for the developer runtime. */
 export interface DeepFetchGraph {
@@ -58,12 +59,13 @@ interface DeepFetchBody {
  */
 export interface DeepFetchReadContext {
   /**
-   * Append the M8 shared read lock to every fetched level (a `locking`-mode
-   * in-transaction read): the root read AND each child-level `in`-membership read.
-   * A deep-fetch child is an in-transaction read too, so a concurrent writer cannot
-   * mutate an included row out from under a later read-then-write.
+   * The M8 correctness mode of the enclosing unit of work, passed to the shared
+   * read executor for every fetched level (the root read AND each child-level
+   * `in`-membership read): a `locking`-mode read takes the shared lock, so a
+   * concurrent writer cannot mutate an included row out from under a later
+   * read-then-write. Absent on a root-handle / out-of-transaction read (no lock).
    */
-  readonly lockReads: boolean;
+  readonly concurrency: Concurrency | undefined;
   /**
    * Record the versions the materialized rows of a fetched level observed (the M10
    * observed-version map), identified by that level's entity. Called once per
@@ -74,7 +76,7 @@ export interface DeepFetchReadContext {
 }
 
 /** The default read context: no lock, no observed-version recording (out-of-transaction reads). */
-const NO_READ_CONTEXT: DeepFetchReadContext = { lockReads: false, onObserved: undefined };
+const NO_READ_CONTEXT: DeepFetchReadContext = { concurrency: undefined, onObserved: undefined };
 
 /** True when an operation is a deep fetch (`{ deepFetch: { operand, paths } }`). */
 export function isDeepFetchOperation(operation: Operation): boolean {
@@ -98,15 +100,18 @@ export async function executeDeepFetch(
   const { sql, binds } = compile(body.operand, rootSchema);
   const rootPins = collectRootPins(rootSchema, body.operand);
 
-  // In a locking-mode transaction the ROOT read takes the automatic M8 shared row
-  // lock, exactly like the flat-read path (`0603`): the developer writes no lock SQL.
-  const rootSql = readContext.lockReads ? appendReadLock(sql) : sql;
-  const rootRows = [...(await database.execute(rootSql, binds as readonly unknown[]))] as Row[];
-  // In a locking-mode transaction each CHILD level's `in`-membership read takes the
-  // same M8 shared lock (appended inside `compileLevel`); `lockReads` threads down.
-  const tree = buildTree(metamodel, body.paths, rootPins, readContext.lockReads);
+  // The ROOT read AND each CHILD level flow through the SAME shared read executor
+  // the flat-find path uses (`read.ts`): it applies the M8 shared lock for this unit
+  // of work's mode (`for share of t0` in `locking`, `0603`) — the developer writes no
+  // lock SQL — so child locking falls out structurally rather than being re-plumbed.
+  const rootRows = [
+    ...(await executeRead(database, sql, binds as readonly unknown[], readContext.concurrency)),
+  ] as Row[];
+  const tree = buildTree(metamodel, body.paths, rootPins);
   const result = await runDeepFetch(rootRows, tree, (levelSql, levelBinds) =>
-    database.execute(levelSql, levelBinds).then((rows) => [...rows] as Row[]),
+    executeRead(database, levelSql, levelBinds, readContext.concurrency).then(
+      (rows) => [...rows] as Row[],
+    ),
   );
 
   // Materialize the assembled graph to managed objects keyed by DSL name (10b),
@@ -255,7 +260,6 @@ function buildTree(
   metamodel: Metamodel,
   paths: readonly (readonly string[])[],
   rootPins: AxisPins,
-  lockReads: boolean,
 ): readonly DeepFetchNode[] {
   const roots: NodeBuilder[] = [];
   for (const path of paths) {
@@ -269,7 +273,7 @@ function buildTree(
       siblings = node.children;
     }
   }
-  return roots.map((node) => materialize(metamodel, node, rootPins, lockReads));
+  return roots.map((node) => materialize(metamodel, node, rootPins));
 }
 
 /** A mutable tree node accumulated while merging shared path prefixes. */
@@ -283,12 +287,15 @@ interface NodeBuilder {
  * correlation + cardinality from the metamodel, project the FULL child attribute
  * set, and bind a `compileLevel` closure that compiles `… where <childCol> in (?,
  * …) [order by …]` for a key set, seeding the root pins for temporal propagation.
+ *
+ * The level statement is the plain compiled read; the M8 shared lock is applied by
+ * the shared read executor when the level runs (`executeRead`), not here — so lock
+ * application lives in one place, off the tree-building path.
  */
 function materialize(
   metamodel: Metamodel,
   builder: NodeBuilder,
   rootPins: AxisPins,
-  lockReads: boolean,
 ): DeepFetchNode {
   const [className, relName] = splitRef(builder.relRef);
   const sourceEntity = metamodel.entity(className);
@@ -304,13 +311,7 @@ function materialize(
     const childSchema = new RuntimeSchema(metamodel, relatedEntity);
     const levelOp = childLevelOperation(relatedEntity, relatedAttr, keys, relationship);
     const compiled = compile(levelOp, childSchema, rootPins);
-    // In a locking-mode transaction the child level read takes the automatic M8
-    // shared row lock too, exactly like the root and the flat-read path (`0603`):
-    // the child statement roots the child table at `t0`, so `for share of t0`
-    // qualifies it. A child level is a plain `in`-membership read (never `distinct`),
-    // so the lock append is always legal here.
-    const levelSql = lockReads ? appendReadLock(compiled.sql) : compiled.sql;
-    return { sql: levelSql, binds: compiled.binds as readonly unknown[] };
+    return { sql: compiled.sql, binds: compiled.binds as readonly unknown[] };
   };
 
   return {
@@ -319,7 +320,7 @@ function materialize(
     parentColumn,
     childColumn,
     compileLevel,
-    children: builder.children.map((child) => materialize(metamodel, child, rootPins, lockReads)),
+    children: builder.children.map((child) => materialize(metamodel, child, rootPins)),
   };
 }
 

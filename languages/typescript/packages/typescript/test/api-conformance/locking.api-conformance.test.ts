@@ -81,6 +81,21 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
   );
 
   it(
+    "a distinct/projection read in a locking transaction proceeds unlocked and returns rows",
+    async () => {
+      const f = await provisionCase(provider, "0603-read-lock");
+      // A `distinct`/projection read cannot carry a row lock (no base row to lock),
+      // so inside a locking transaction it proceeds UNLOCKED — no `for share`, and it
+      // is never rejected (the D2 reversal; ADR 0030) — and returns its rows.
+      const rows = await f.px.transaction((tx) =>
+        tx.entity("Account").find(Account.id.eq(2), { distinct: true }).toArray(),
+      );
+      expect(rows.length).toBeGreaterThan(0);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
     "0609: a versioned update that changes no attribute issues no DML",
     async () => {
       const f = await provisionCase(provider, "0609-no-op-update-no-dml");

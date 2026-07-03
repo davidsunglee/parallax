@@ -29,7 +29,6 @@ import {
   ParallaxOptimisticLockError,
   ParallaxReadBeforeWriteError,
   type ParallaxRow,
-  ParallaxUnlockableReadError,
   Predicate,
 } from "../src/index.js";
 
@@ -481,20 +480,22 @@ describe("deep-fetch in-transaction read carries the M8/M10 read context", () =>
   });
 });
 
-describe("locked in-transaction read rejects an unlockable result shape", () => {
-  it("locking mode: a `distinct` read is rejected with a diagnostic, not illegal `for share` SQL", async () => {
+describe("in-transaction projection/aggregation read omits the lock (never throws)", () => {
+  it("locking mode: a `distinct` read proceeds UNLOCKED and returns rows (no throw, no `for share`)", async () => {
     const db = new StubDatabase([ACCOUNT_ROW]);
     const px = createParallax({ descriptor: ACCOUNT, database: db });
 
-    // `distinct` + a locking transaction would suffix `for share` onto a `select
-    // distinct`, which Postgres/MariaDB reject. The seam refuses it at the API surface.
-    await expect(
-      px.transaction(async (tx) =>
-        tx.entity("Account").find(accountPk(2), { distinct: true }).toArray(),
-      ),
-    ).rejects.toBeInstanceOf(ParallaxUnlockableReadError);
-    // No illegal SQL reached the database — the guard fired before any round trip.
-    expect(db.queries.some((q) => q.sql.includes("for share"))).toBe(false);
+    // A `distinct` projection has no base row to lock, so `for share` is illegal on
+    // it — the dialect OMITS the lock and the read proceeds (the D2 reversal; ADR
+    // 0030). It is never rejected, even in a locking transaction.
+    const rows = await px.transaction(async (tx) =>
+      tx.entity("Account").find(accountPk(2), { distinct: true }).toArray(),
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    const read = db.queries.find((q) => q.sql.includes("select distinct"));
+    expect(read).toBeDefined();
+    // No lock was appended (nothing to protect) — and no illegal SQL was emitted.
+    expect(read?.sql.includes("for share")).toBe(false);
   });
 
   it("optimistic mode: a `distinct` read is fine — no lock is appended", async () => {

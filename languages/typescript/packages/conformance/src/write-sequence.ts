@@ -22,9 +22,9 @@
  * path (a one-row multi-row insert).
  */
 import { auditWriteStatements, type MutationKind, type WriteTarget } from "@parallax/bitemporal";
+import { columnOrder, quoteIdentifier } from "@parallax/dialect";
 import { type VersionedTarget, versionAdvancingUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
-import { columnOrder, quoteIdentifier } from "@parallax/sql";
 import {
   type BatchTarget,
   combineWrites,

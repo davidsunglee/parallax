@@ -108,9 +108,19 @@ module.exports = {
     edge("dialect", "core"), //        M11 -> M0
     edge("operation", "metamodel"), // M2  -> M1
     edge("sql", "operation"), //       M3  -> M2
-    edge("sql", "dialect"), //         M3  -> M11
+    // Note: M3 -> M11 (sql -> dialect) is spec-normative (`dependency-graph.md`,
+    // `m11:99` — M3 depends on the dialect layer to emit compiled SQL) but omitted
+    // here — the `@parallax/sql` package injects schema knowledge via `SchemaResolver`
+    // and does not import `@parallax/dialect`, so per the "an edge exists only when
+    // there is an implementation behind it" policy above it is absent until the
+    // `Dialect`-interface work makes M3 import the dialect contract directly. The
+    // core DAG keeps M3 -> M11.
     edge("transactions", "operation"), // M8 -> M2
-    edge("transactions", "dialect"), //   M8 -> M11
+    // Note: M8 -> M11 (transactions -> dialect) is spec-legal but omitted here — the
+    // in-transaction read-lock application moved into `@parallax/dialect` (delta 09
+    // D3) and `@parallax/transactions` now imports nothing from it, so per the same
+    // policy the package edge is absent; the composition root applies the M8 lock via
+    // M11. The core DAG keeps M8 -> M11.
     edge("lists", "operation"), //     M5  -> M2
     edge("lists", "transactions"), //  M5  -> M8
     edge("relationships", "lists"), // M4  -> M5
@@ -124,9 +134,10 @@ module.exports = {
     // uses transactions. The core DAG keeps M10 -> M8.
     edge("conformance", "operation"), //      M12 -> M2
     edge("conformance", "sql"), //            M12 -> M3
+    edge("conformance", "dialect"), //        M12 -> M11 (harness applies dialect DDL / quoting / read-lock rules)
     edge("conformance", "relationships"), //  M12 -> M4
     edge("conformance", "bitemporal"), //     M12 -> M7
-    edge("conformance", "transactions"), //   M12 -> M8  (write-sequence / scenario / read-lock shapes)
+    edge("conformance", "transactions"), //   M12 -> M8  (write-sequence / scenario shapes)
     edge("conformance", "locking"), //        M12 -> M10
   ],
   allowedSeverity: "error",

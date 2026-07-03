@@ -71,6 +71,9 @@ importers:
       '@parallax/core':
         specifier: workspace:*
         version: link:../core
+      '@parallax/dialect':
+        specifier: workspace:*
+        version: link:../dialect
       '@parallax/locking':
         specifier: workspace:*
         version: link:../locking
@@ -202,18 +205,16 @@ importers:
       '@parallax/core':
         specifier: workspace:*
         version: link:../core
-      '@parallax/dialect':
-        specifier: workspace:*
-        version: link:../dialect
       '@parallax/operation':
         specifier: workspace:*
         version: link:../operation
-
-  languages/typescript/packages/transactions:
-    dependencies:
+    devDependencies:
       '@parallax/dialect':
         specifier: workspace:*
         version: link:../dialect
+
+  languages/typescript/packages/transactions:
+    dependencies:
       '@parallax/operation':
         specifier: workspace:*
         version: link:../operation
