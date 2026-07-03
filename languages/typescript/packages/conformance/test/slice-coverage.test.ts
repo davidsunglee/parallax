@@ -15,6 +15,7 @@ function loaded(id: string, shape: CaseShape, tags: readonly string[]): LoadedCa
     raw: {},
     shape,
     tags,
+    lane: "harness",
     descriptor: {},
     fixtures: {},
   };
@@ -72,10 +73,10 @@ describe("conformance slice coverage report", () => {
     const report = buildConformanceSliceCoverageReport(cases, SLICE_MVP_1_CAPABILITIES);
 
     expect(report.sliceTag).toBe("slice-mvp-1");
-    expect(report.claimedCases).toBe(101);
+    expect(report.claimedCases).toBe(114);
     expect(report.byCommand.map((c) => [c.command, c.claimedCases])).toEqual([
-      ["compile", 101],
-      ["run", 101],
+      ["compile", 114],
+      ["run", 114],
     ]);
     expect(renderConformanceSliceCoverageMarkdown(report)).toContain(
       "TypeScript Conformance Slice Coverage",

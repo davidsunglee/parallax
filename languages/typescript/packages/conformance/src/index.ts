@@ -36,6 +36,7 @@ export {
   TYPESCRIPT_ADAPTER,
 } from "./describe.js";
 export {
+  type CaseLane,
   detectShape,
   discoverCasePaths,
   type LoadedCase,

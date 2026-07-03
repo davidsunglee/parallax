@@ -214,6 +214,46 @@ supersedes-in-part ADR 0009). Optimistic locking — the *alternative* correctne
 strategy, where a read takes **no** lock and a version column is checked in the
 `UPDATE` — is `M10`.
 
+## Bounded automatic retry
+
+The unit-of-work boundary **MUST** offer **bounded automatic retry**. On a
+**retriable** failure of the closure the boundary **MUST**:
+
+1. **roll back** the failed attempt's atomic scope (the *Abort* contract erases
+   its writes — buffered, force-flushed, or cached);
+2. **invalidate stale cached state** so the re-execution observes fresh state
+   (the *Cache invalidation (freshness)* rule) — the retry re-reads, it does not
+   replay a stale in-memory shadow;
+3. **re-execute the closure** against that fresh state, inside a new atomic scope.
+
+The bound is **configurable** with a **default of 10** re-executions; a bound of
+**`0` disables** the loop, so even a retriable failure surfaces to the caller
+after the first attempt. A retry that **exhausts** the bound surfaces the failure
+to the caller (diagnosably — the surfaced error carries the attempt count). This
+mirrors Reladomo's `MithraManager.executeTransactionalCommand` retry loop
+(`TransactionStyle` default 10).
+
+Which failures are retriable:
+
+- **Transient database failures** — deadlock and serialization failure (the `M11`
+  `deadlock` category) — are retriable **by default**, no caller action needed.
+- **Optimistic-lock conflicts** (`M10`) are **not** retriable by default: a
+  conflict surfaces to the caller after one attempt, and joins the retriable set
+  **only** when the unit of work opts in (`retryOptimisticConflicts`, Reladomo's
+  `setRetryOnOptimisticLockFailure`, default off).
+- A **lock-wait timeout** (the `M11` `lockWaitTimeout` category) is **not**
+  retriable.
+
+Because each re-execution opens a fresh atomic scope and re-reads through the
+freshness rule, the retry re-observes the version(s) a subsequent `M10` gate binds
+— so an auto-retried conflict re-reads the current version and succeeds, with no
+caller-authored retry code. The observable loop-mechanics branches (a conflict
+surfacing without the opt-in, an injected transient auto-retried away, `retries:
+0`, bound exhaustion, the callback value withheld on abort) are authored as
+**boundary** cases on the `api-conformance` lane (they need injected faults a
+single-connection harness cannot provoke) and satisfied by each language's API
+Conformance Suite.
+
 ## What the suite pins down
 
 The compatibility suite expresses M8's observable rules as **scenario** cases —
@@ -227,6 +267,7 @@ cache assertions — and as plain read / write cases for the SQL fragments:
 | read-lock case | the `for share of t0` read is valid and result-correct |
 | batched-write case | a multi-row `INSERT` and a batched `UPDATE` produce the expected rows |
 | rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
+| retry boundary cases | bounded automatic retry: transients auto-retried, conflicts only on opt-in, `retries: 0` disables, bound exhaustion surfaces (`api-conformance` lane) |
 
 A scenario's declared round-trip counts **MUST** be internally consistent with
 the golden SQL it lists: each step's `roundTrips` equals the number of golden

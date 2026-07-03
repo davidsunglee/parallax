@@ -105,6 +105,10 @@ export function runCompile(
   if (gate) {
     return gate;
   }
+  const suiteSatisfied = laneSkipOrNonOk(loaded, "compile", adapter);
+  if (suiteSatisfied) {
+    return suiteSatisfied;
+  }
 
   // A write-sequence case emits one item per generated DML statement, in
   // execution order, with `roundTrips` equal to the statement count.
@@ -238,6 +242,10 @@ export async function runRun(
   const gate = gateOrNonOk(loaded, "run", dialect, adapter);
   if (gate) {
     return gate;
+  }
+  const suiteSatisfied = laneSkipOrNonOk(loaded, "run", adapter);
+  if (suiteSatisfied) {
+    return suiteSatisfied;
   }
 
   // A write-sequence case constructs its own milestone history from its ordered
@@ -662,6 +670,39 @@ function gateOrNonOk(
   const diagnostic: Diagnostic = {
     code: gate.code,
     message: gate.message,
+    casePointer: "",
+  };
+  return {
+    schemaVersion: "1",
+    command,
+    status: "unsupported",
+    adapter,
+    diagnostics: [diagnostic],
+  };
+}
+
+/**
+ * Route an `api-conformance`-lane case to a **suite-satisfied** `unsupported`
+ * envelope (in-claim by shape/tags/dialect, but not harness-run — the language's
+ * API Conformance Suite satisfies it). Applies to every `boundary`-shape case and
+ * to the `read`-shape read-lock matrix cases (`0616`-`0619`) that carry
+ * `lane: api-conformance`: their observable is a runtime-loop / injected-fault /
+ * emitted-lock property the single-connection harness cannot execute. The full-slice
+ * harness sweeps filter these out; this branch is the defensive route for the CLI /
+ * a direct `runCompile` / `runRun` call. The slice-coverage claim stays lane-agnostic
+ * (an api-conformance case is still *claimed*), so this changes routing, not claim.
+ */
+function laneSkipOrNonOk(
+  loaded: LoadedCase,
+  command: "compile" | "run",
+  adapter: AdapterIdentity,
+): NonOk | undefined {
+  if (loaded.lane !== "api-conformance") {
+    return undefined;
+  }
+  const diagnostic: Diagnostic = {
+    code: "suite-satisfied",
+    message: `case is api-conformance lane (${loaded.shape} shape); satisfied by the API Conformance Suite, not harness-run`,
     casePointer: "",
   };
   return {

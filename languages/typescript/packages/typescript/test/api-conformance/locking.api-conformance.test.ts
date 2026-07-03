@@ -20,8 +20,13 @@ import { execFileSync } from "node:child_process";
 import { ParallaxDecimal } from "@parallax/core";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import { PostgresProvider } from "../../src/conformance/postgres-provider.js";
-import { AttributeExpression, ParallaxOptimisticLockError, Predicate } from "../../src/index.js";
-import { assertRows, assertTableState, provisionCase } from "./_harness.js";
+import {
+  AttributeExpression,
+  NavigationPath,
+  ParallaxOptimisticLockError,
+  Predicate,
+} from "../../src/index.js";
+import { assertGraph, assertRows, assertTableState, provisionCase } from "./_harness.js";
 import { LOCKING } from "./covered.js";
 
 const attr = (ref: string): AttributeExpression => new AttributeExpression(ref);
@@ -29,6 +34,7 @@ const dec = (text: string): ParallaxDecimal => ParallaxDecimal.from(text);
 const Account = { id: attr("Account.id"), balance: attr("Account.balance") };
 const accountPk = (id: number): Predicate =>
   new Predicate({ eq: { attr: "Account.id", value: id } });
+const all = (): Predicate => new Predicate({ all: {} });
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */
 function dockerAvailable(): boolean {
@@ -47,6 +53,11 @@ it("the locking suite covers exactly the LOCKING family", () => {
     "0603-read-lock",
     "0609-no-op-update-no-dml",
     "0611-versioned-update-locking-mode",
+    // the read-lock matrix (0616-0619, api-conformance lane)
+    "0616-locking-txn-object-find-locks",
+    "0617-locking-txn-projection-omits-lock",
+    "0618-locking-txn-deep-fetch-locks-every-level",
+    "0619-optimistic-txn-reads-omit-lock",
     "0703-optimistic-lock-conflict",
     "0704-optimistic-lock-success",
     "0708-optimistic-lock-retry-after-conflict",
@@ -91,6 +102,73 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
         tx.entity("Account").find(Account.id.eq(2), { distinct: true }).toArray(),
       );
       expect(rows.length).toBeGreaterThan(0);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  // --- read-lock matrix (0616-0619, api-conformance lane) -------------------
+  // These register the Phase-3 read-lock behaviors against portable core case ids.
+  // Property 6 (golden SQL out of scope): the suite proves the developer-observable
+  // BEHAVIOR (the read returns rows / graph, unlocked reads are never rejected); the
+  // emitted lock/no-lock TEXT is pinned by the Docker-free StubDatabase unit tests
+  // (`packages/typescript/test/writes.test.ts`, `packages/dialect/test/read-lock.test.ts`).
+
+  it(
+    "0616: an object find inside a locking transaction returns the row (it takes the shared lock)",
+    async () => {
+      const f = await provisionCase(provider, "0616-locking-txn-object-find-locks");
+      const account = await f.px.transaction(
+        (tx) => tx.entity("Account").find(Account.id.eq(2)).single(),
+        { concurrency: "locking" },
+      );
+      assertRows([account], f.loaded, "Account", f.metamodel);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
+    "0617: a projection read inside a locking transaction proceeds unlocked and returns rows",
+    async () => {
+      const f = await provisionCase(provider, "0617-locking-txn-projection-omits-lock");
+      // A distinct/projection read cannot carry a row lock, so it proceeds UNLOCKED
+      // and is never rejected (the D2 reversal, ADR 0030) — it returns its rows.
+      const rows = await f.px.transaction(
+        (tx) => tx.entity("Account").find(all(), { distinct: true }).toArray(),
+        { concurrency: "locking" },
+      );
+      expect(rows.length).toBe(3);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
+    "0618: a deep fetch inside a locking transaction locks every level and returns the graph",
+    async () => {
+      const f = await provisionCase(provider, "0618-locking-txn-deep-fetch-locks-every-level");
+      // Root + each child level flow through the ONE shared in-transaction read path,
+      // so every level takes the shared lock; the developer-observable is the graph.
+      const rows = await f.px.transaction(
+        (tx) =>
+          tx
+            .entity("OrderItem")
+            .find(all(), { includes: [new NavigationPath(["OrderItem.order"])] })
+            .toArray(),
+        { concurrency: "locking" },
+      );
+      assertGraph(rows, f.loaded, "OrderItem", f.metamodel);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
+    "0619: reads inside an optimistic transaction take no lock and return rows",
+    async () => {
+      const f = await provisionCase(provider, "0619-optimistic-txn-reads-omit-lock");
+      const account = await f.px.transaction(
+        (tx) => tx.entity("Account").find(Account.id.eq(2)).single(),
+        { concurrency: "optimistic" },
+      );
+      assertRows([account], f.loaded, "Account", f.metamodel);
     },
     BOOT_TIMEOUT,
   );

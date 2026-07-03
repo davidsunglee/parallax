@@ -1,0 +1,27 @@
+# Boundary case (M10): with the opt-in SET, an optimistic-lock conflict is
+# AUTO-retried — the closure re-executes, re-reads, and succeeds — `api-conformance`
+# lane.
+#
+# The loop-mechanics complement to the harness-lane `0710`: `retryOptimisticConflicts:
+# true` joins conflicts to the retriable set, so an injected conflict on the first
+# attempt makes the boundary re-execute the WHOLE closure — the re-read observes the
+# now-current version and the re-applied gated UPDATE succeeds — and the unit of work
+# COMMITS, with NO caller retry code. This is the observable that a single-connection
+# harness cannot provoke (it needs an injected conflict and a re-executed closure),
+# so it is authored here beside `0710`'s golden-SQL proof.
+#
+# `lane: api-conformance`: injected conflict, re-executed closure; suite-driven via a
+# fault-injecting decorator around the shipped adapter.
+model: models/account.yaml
+tags: [m10, m8, optimistic-locking, conflict, retry, success, slice-mvp-1]
+lane: api-conformance
+uow:
+  concurrency: optimistic
+  retryOptimisticConflicts: true
+inject: optimistic-lock-conflict
+boundary:
+  - action: read
+    note: observe the versioned row (records the observed version)
+  - action: update
+    note: the gated UPDATE conflicts once, then the auto-retry re-reads and succeeds
+expect: committed

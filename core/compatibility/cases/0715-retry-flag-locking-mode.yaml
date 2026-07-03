@@ -1,0 +1,25 @@
+# Boundary case (M8/M10): `retryOptimisticConflicts` has NO effect in LOCKING mode —
+# there is no gate to conflict on — `api-conformance` lane.
+#
+# The conflict-retry opt-in only matters where a version gate can conflict — i.e.
+# optimistic mode. Under the default `locking` strategy a versioned keyed update is
+# the UNGATED version-advancing form (`0611`): the shared read lock, not a version
+# check, makes the write correct, so no conflict can arise. Setting
+# `retryOptimisticConflicts: true` on a locking unit of work is therefore a NO-OP —
+# the update commits normally, with no spurious retry and no conflict.
+#
+# `lane: api-conformance`: it proves a runtime configuration invariant (the flag is
+# inert in locking mode) that carries no golden-SQL observable; the suite runs a
+# locking-mode versioned update with the flag set and asserts a clean commit.
+model: models/account.yaml
+tags: [m8, m10, optimistic-locking, locking-mode, retry, slice-mvp-1]
+lane: api-conformance
+uow:
+  concurrency: locking
+  retryOptimisticConflicts: true
+boundary:
+  - action: read
+    note: observe the versioned row under the shared lock
+  - action: update
+    note: the ungated locking-mode UPDATE commits — the conflict flag is inert
+expect: committed

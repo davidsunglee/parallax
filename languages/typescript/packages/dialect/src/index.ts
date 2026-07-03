@@ -3,11 +3,17 @@
  *
  * The Postgres runtime DB seam: `?`→`$n` placeholder translation, the
  * neutral-type vocabulary, identifier quoting, in-transaction read-lock
- * application, the raw-string type parsers that normalize driver output at the
- * adapter boundary, and `CREATE TABLE` DDL derivation from a parsed descriptor.
+ * application, the SQLSTATE → neutral-category error classification, the
+ * raw-string type parsers that normalize driver output at the adapter boundary,
+ * and `CREATE TABLE` DDL derivation from a parsed descriptor.
  */
 
 export { columnOrder, ddlForDescriptor } from "./ddl.js";
+export {
+  classifyErrorCode,
+  type ErrorCategory,
+  isRetriableCategory,
+} from "./errors.js";
 export {
   applyReadLock,
   bytesFromDb,

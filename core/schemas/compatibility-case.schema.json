@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (M12)",
-  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of six shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind); a coherence case (Phase 11, cross-process cache coherence — carries a `coherence` two-node operation sequence run over two connections to one database, asserting node B observes node A's committed write rather than a stale cached copy); or an **error case** (carries `errorClass` + `expectedNativeCode`, M11 error-code classification — triggers a real DB error, single-connection for `uniqueViolation` or a two-connection `concurrency` choreography for `deadlock`/`lockWaitTimeout`, and asserts the neutral category the error classifies to plus the per-dialect native code).",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of seven shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind); a coherence case (Phase 11, cross-process cache coherence — carries a `coherence` two-node operation sequence run over two connections to one database, asserting node B observes node A's committed write rather than a stale cached copy); an **error case** (carries `errorClass` + `expectedNativeCode`, M11 error-code classification — triggers a real DB error, single-connection for `uniqueViolation` or a two-connection `concurrency` choreography for `deadlock`/`lockWaitTimeout`, and asserts the neutral category the error classifies to plus the per-dialect native code); or a **boundary case** (M8/M10 bounded automatic retry — carries `boundary` ordered actions + `expect` portable outcome, optionally an injected fault `inject`, declaring the unit-of-work loop mechanics the single-connection M12 harness cannot provoke). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags"],
@@ -41,6 +41,10 @@
         { "required": ["goldenSql"] },
         { "required": ["concurrency"] }
       ]
+    },
+    {
+      "description": "A boundary case (M8/M10 bounded automatic retry): a unit-of-work loop-mechanics case the single-connection M12 harness cannot provoke (injected transient failures, retry counting, error surfacing). It carries `lane: api-conformance` and is satisfied by each language's API Conformance Suite; the harness schema-validates it but does not execute it. It declares the portable unit-of-work body (`boundary` ordered actions), the portable expected outcome (`expect`: `committed` or a surfaced error kind), an OPTIONAL injected fault (`inject`), and its retry configuration under `uow` (`retries` / `retryOptimisticConflicts`). It carries no golden SQL — the concrete DML and error types stay per-language.",
+      "required": ["boundary", "expect"]
     }
   ],
   "properties": {
@@ -55,16 +59,70 @@
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 }
     },
+    "lane": {
+      "description": "Which executor satisfies this case (M12 lane routing). `harness` (the default) — the M12 compatibility harness executes it as today (golden-SQL / data observables). `api-conformance` — a runtime-loop or read-lock-matrix branch a single-connection harness cannot provoke (injected transient failures, retry counting, error surfacing, or the emitted read-lock proof): the harness schema-validates it but does NOT execute it, and each language's API Conformance Suite MUST satisfy it (coverage enforced the way `covered.ts` self-asserts). Every `boundary`-shape case is `api-conformance` by construction; the read-lock matrix reads (`0616`-`0619`) are `read`-shape `api-conformance` cases.",
+      "enum": ["harness", "api-conformance"],
+      "default": "harness"
+    },
     "uow": {
-      "description": "The unit-of-work configuration a case runs under (M8 strategy selection). Optional and descriptive: it declares the per-unit-of-work concurrency mode so a case's mode-dependent golden SQL is self-describing (`locking` — the default M8 implicit shared read lock, keyed updates advance the version with NO gate; `optimistic` — reads take no lock and every keyed update / temporal close GATES on the observed version). The harness executes the authored golden SQL either way; the block documents WHICH mode produced it. (Retry keys — `retries` / `retryOptimisticConflicts` — arrive with the boundary retry contract.)",
+      "description": "The unit-of-work configuration a case runs under (M8 strategy selection + M8/M10 bounded automatic retry). Optional and descriptive: it declares the per-unit-of-work concurrency mode (so a case's mode-dependent golden SQL is self-describing) and the retry configuration a boundary case exercises. `concurrency`: `locking` — the default M8 implicit shared read lock, keyed updates advance the version with NO gate; `optimistic` — reads take no lock and every keyed update / temporal close GATES on the observed version. The harness executes the authored golden SQL either way; the block documents WHICH mode produced it. The retry keys drive a boundary case's api-conformance loop.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "concurrency": {
           "description": "The correctness strategy this unit of work selects: `locking` (default — M8 implicit shared read lock; version advances but no gate is emitted) or `optimistic` (M10 — reads take no lock; keyed updates and temporal closes gate on the observed version).",
           "enum": ["locking", "optimistic"]
+        },
+        "retries": {
+          "description": "The bound on automatic re-executions of the unit-of-work body after a retriable failure (M8/M10 bounded automatic retry). Default 10; `0` disables the loop, so even a transient failure surfaces to the caller.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "retryOptimisticConflicts": {
+          "description": "Whether an optimistic-lock conflict joins the retriable set for this unit of work (M10). Default false — a conflict surfaces to the caller after one attempt. Transient database failures (deadlock / serialization failure) are always retriable regardless of this flag.",
+          "type": "boolean"
         }
       }
+    },
+    "boundary": {
+      "description": "boundary cases only (M8/M10 bounded automatic retry). An ordered list of the actions the unit-of-work body performs, portably described so the case is self-documenting without carrying golden SQL. The M12 harness never executes these (the case is `api-conformance`-lane); each language's suite realizes them through its idiomatic public API.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action"],
+        "properties": {
+          "action": {
+            "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language).",
+            "enum": ["read", "create", "update", "terminate", "delete"]
+          },
+          "note": {
+            "description": "Optional human-readable description of the action's role in the loop scenario.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "inject": {
+      "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the M11 `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `uow.retryOptimisticConflicts`). Absent when the case exercises only loop configuration (`retries: 0`, the callback-withheld-on-abort case).",
+      "enum": [
+        "serialization-failure",
+        "deadlock",
+        "lock-wait-timeout",
+        "optimistic-lock-conflict"
+      ]
+    },
+    "expect": {
+      "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value — the M8 abort contract / ADR 0008), or a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled). The concrete per-language error type (e.g. `ParallaxOptimisticLockError`) stays language-local; this is the neutral kind the suite asserts.",
+      "enum": [
+        "committed",
+        "aborted",
+        "optimistic-lock-conflict",
+        "deadlock",
+        "serialization-failure",
+        "lock-wait-timeout"
+      ]
     },
     "operation": {
       "description": "A canonical M2 algebra node (validated separately against operation.schema.json). Present on read cases; absent on writeSequence cases.",

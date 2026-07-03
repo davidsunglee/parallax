@@ -52,7 +52,7 @@
     },
     "caseShape": {
       "type": "string",
-      "enum": ["read", "writeSequence", "scenario", "conflict", "coherence"]
+      "enum": ["read", "writeSequence", "scenario", "conflict", "coherence", "boundary"]
     },
     "moduleTag": {
       "type": "string",

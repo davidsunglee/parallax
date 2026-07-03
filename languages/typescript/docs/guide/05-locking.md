@@ -4,6 +4,8 @@
 
 The correctness strategy is a per-unit-of-work mode: `px.transaction(body, { concurrency })`. In the default `locking` mode, in-transaction reads take a shared row lock **automatically** — you write no locking SQL — and a versioned `update` advances the version with no gate. In `optimistic` mode reads take no lock and a versioned `update` gates on the version the unit of work observed. Version values are **framework-owned**: you read the object, then `update` — never passing a raw version. A stale gate throws `ParallaxOptimisticLockError`, which you catch and retry after re-reading the fresh row; a no-op `update` (no changed attribute) issues no DML.
 
+The boundary also offers **bounded automatic retry**: `px.transaction(body, { retries, retryOptimisticConflicts })`. On a retriable failure it rolls back, discards the unit of work's observed state, and re-executes the body against fresh state — up to `retries` re-executions (default 10; `0` disables). Transient database failures (deadlock / serialization) are retried automatically; an optimistic-lock conflict is retried only with `retryOptimisticConflicts: true`, in which case the re-executed body re-reads the fresh version and succeeds with **no caller retry code**. The loop-mechanics cases live in `boundary.api-conformance.test.ts`.
+
 Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/locking.api-conformance.test.ts`).
 
 ## 0603: a transaction-scoped read takes the automatic shared lock and returns the row
@@ -18,6 +20,35 @@ tx.entity("Account").find(Account.id.eq(2)).single(),
 ```ts
 const rows = await f.px.transaction((tx) =>
 tx.entity("Account").find(Account.id.eq(2), { distinct: true }).toArray(),
+```
+
+## 0616: an object find inside a locking transaction returns the row (it takes the shared lock)
+
+```ts
+const account = await f.px.transaction(
+(tx) => tx.entity("Account").find(Account.id.eq(2)).single(),
+```
+
+## 0617: a projection read inside a locking transaction proceeds unlocked and returns rows
+
+```ts
+const rows = await f.px.transaction(
+(tx) => tx.entity("Account").find(all(), { distinct: true }).toArray(),
+```
+
+## 0618: a deep fetch inside a locking transaction locks every level and returns the graph
+
+```ts
+const rows = await f.px.transaction(
+    .find(all(), { includes: [new NavigationPath(["OrderItem.order"])] })
+    .toArray(),
+```
+
+## 0619: reads inside an optimistic transaction take no lock and return rows
+
+```ts
+const account = await f.px.transaction(
+(tx) => tx.entity("Account").find(Account.id.eq(2)).single(),
 ```
 
 ## 0609: a versioned update that changes no attribute issues no DML

@@ -174,6 +174,11 @@ def _assert_schema(case: Case) -> None:
                 f"{case.path.name}: error case declares no trigger — needs goldenSql "
                 f"(single-connection) or a non-empty concurrency choreography"
             )
+    elif case.is_boundary:
+        if not case.boundary:
+            raise CaseFailure(f"{case.path.name}: boundary case has no actions")
+        if not case.expect:
+            raise CaseFailure(f"{case.path.name}: boundary case missing expect")
     elif "operation" not in case.raw:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:
@@ -1651,6 +1656,22 @@ def _assert_coherence_identity(
 
 def run_case(case: Case, db: DatabaseProvider) -> None:
     """Run all available assertion layers for *case* against *db*."""
+    if case.lane == "api-conformance":
+        # The api-conformance lane is schema-validated by the M12 harness but NOT
+        # executed here — its observable (an injected transient, a retry-loop
+        # branch, the emitted read-lock proof) needs machinery the single-connection
+        # harness lacks. Each language's API Conformance Suite satisfies it. Run the
+        # dialect-agnostic structural checks so coverage is not silently skipped,
+        # then return BEFORE touching the database (no dialect / provisioning /
+        # execution — so this lane runs even with no provider bound).
+        _assert_schema(case)
+        if not case.is_boundary:
+            # A read-shape api-conformance case (the read-lock matrix `0616`-`0619`)
+            # still round-trips its operation + descriptor through the serde seam.
+            _assert_serde(case)
+            _assert_equivalent_encodings(case)
+        return
+
     dialect = db.dialect
 
     if case.is_scenario:

@@ -3,7 +3,7 @@
  * grouped by the family file that exercises it (Phase 10c).
  *
  * `coverage.test.ts` asserts the union of these ids plus the skip manifest equals
- * the whole 101-case slice — so a case that is neither exercised nor explicitly
+ * the whole 114-case slice — so a case that is neither exercised nor explicitly
  * skipped fails the build (no silent gaps). Each family file drives its `it.each`
  * off the matching list here, so the list and the tested cases stay in lockstep.
  *
@@ -16,8 +16,11 @@
  *    reads (05xx-read) and bitemporal reads (08xx);
  *  - **transactions** — audit-only writes (05xx-write) + batched / FK-ordered / per-key
  *    writes + read-your-own-writes (06xx);
- *  - **locking** — the automatic in-transaction read lock (06xx read) + optimistic
- *    locking happy + retry (07xx).
+ *  - **locking** — the automatic in-transaction read lock (06xx read) + the read-lock
+ *    matrix (`0616`-`0619`, `api-conformance` lane) + optimistic locking happy + retry (07xx);
+ *  - **boundary** — bounded automatic retry loop mechanics (`0710`-`0718`,
+ *    `api-conformance` lane): auto-retry, conflict surfacing, transient retry,
+ *    `retries: 0`, bound exhaustion, callback-withheld-on-abort.
  */
 
 /** Non-temporal single-entity + flat navigate/exists reads (`reads.api-conformance.test.ts`). */
@@ -134,16 +137,40 @@ export const TRANSACTIONS: readonly string[] = [
 
 /**
  * Locking: the automatic in-transaction read lock (`0603`), the no-op versioned
- * update (`0609`), the locking-mode version-advancing update (`0611`), and
+ * update (`0609`), the locking-mode version-advancing update (`0611`), the
+ * read-lock matrix (`0616`-`0619`, `api-conformance` lane — object find locks,
+ * projection omits, deep fetch locks every level, optimistic omits), and
  * optimistic-mode version-column locking (07xx).
  */
 export const LOCKING: readonly string[] = [
   "0603-read-lock",
   "0609-no-op-update-no-dml",
   "0611-versioned-update-locking-mode",
+  "0616-locking-txn-object-find-locks",
+  "0617-locking-txn-projection-omits-lock",
+  "0618-locking-txn-deep-fetch-locks-every-level",
+  "0619-optimistic-txn-reads-omit-lock",
   "0703-optimistic-lock-conflict",
   "0704-optimistic-lock-success",
   "0708-optimistic-lock-retry-after-conflict",
+];
+
+/**
+ * Boundary: the bounded automatic retry loop mechanics (`api-conformance` lane),
+ * driven by a fault-injecting decorator wrapped around the shipped adapter. `0710`
+ * is dual-covered — the harness runs its `attempts` golden AND the suite drives the
+ * auto-retry-via-flag path here.
+ */
+export const BOUNDARY: readonly string[] = [
+  "0710-optimistic-conflict-auto-retry",
+  "0711-conflict-surfaces-without-optin",
+  "0712-transient-retried-flag-unset",
+  "0713-transient-retried-flag-set",
+  "0714-conflict-auto-retry-loop",
+  "0715-retry-flag-locking-mode",
+  "0716-retries-zero-disables-loop",
+  "0717-retry-bound-exhausted",
+  "0718-callback-value-withheld-on-abort",
 ];
 
 /** Every exercised case stem across all families. */
@@ -153,6 +180,7 @@ export const EXERCISED: readonly string[] = [
   ...TEMPORAL,
   ...TRANSACTIONS,
   ...LOCKING,
+  ...BOUNDARY,
 ];
 
 /** The four-digit id of a case stem (`0002-eq` → `0002`). */
