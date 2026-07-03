@@ -32,6 +32,7 @@ const at = (iso: string): Temporal.Instant => Temporal.Instant.from(iso);
 
 const Balance = { id: attr("Balance.id"), value: attr("Balance.value") };
 const Account = { id: attr("Account.id"), balance: attr("Account.balance") };
+const Wallet = { id: attr("Wallet.id"), balance: attr("Wallet.balance") };
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */
 function dockerAvailable(): boolean {
@@ -160,12 +161,12 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
     async () => {
       const f = await provisionCase(provider, "0604-batched-write");
       await f.px.transaction(async (tx) => {
-        const accounts = tx.entity("Account");
-        await accounts.create({ id: 10n, owner: "Mira", balance: dec("100.00"), version: 1 });
-        await accounts.create({ id: 11n, owner: "Omar", balance: dec("20.00"), version: 1 });
-        await accounts.create({ id: 12n, owner: "Nell", balance: dec("30.00"), version: 1 });
-        await accounts.update(Account.id.eq(10), { set: [Account.balance.set(dec("500.00"))] });
-        await accounts.update(Account.id.eq(11), { set: [Account.balance.set(dec("500.00"))] });
+        const wallets = tx.entity("Wallet");
+        await wallets.create({ id: 10n, owner: "Mira", balance: dec("100.00") });
+        await wallets.create({ id: 11n, owner: "Omar", balance: dec("20.00") });
+        await wallets.create({ id: 12n, owner: "Nell", balance: dec("30.00") });
+        await wallets.update(Wallet.id.eq(10), { set: [Wallet.balance.set(dec("500.00"))] });
+        await wallets.update(Wallet.id.eq(11), { set: [Wallet.balance.set(dec("500.00"))] });
       });
       await assertTableState(f.db, f.loaded, f.metamodel);
     },
@@ -197,6 +198,8 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
       await expect(
         f.px.transaction(async (tx) => {
           const accounts = tx.entity("Account");
+          // Read account 1 first (records the observed version, M10), then update it.
+          await accounts.find(Account.id.eq(1)).single();
           await accounts.update(Account.id.eq(1), { set: [Account.balance.set(dec("999.00"))] });
           const midTx = await accounts.find(Account.id.eq(1)).toArray();
           expect(midTx).toHaveLength(1);
@@ -238,9 +241,9 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
     async () => {
       const f = await provisionCase(provider, "0613-batched-update-per-key");
       await f.px.transaction(async (tx) => {
-        const accounts = tx.entity("Account");
-        await accounts.update(Account.id.eq(1), { set: [Account.balance.set(dec("111.00"))] });
-        await accounts.update(Account.id.eq(2), { set: [Account.balance.set(dec("222.00"))] });
+        const wallets = tx.entity("Wallet");
+        await wallets.update(Wallet.id.eq(1), { set: [Wallet.balance.set(dec("111.00"))] });
+        await wallets.update(Wallet.id.eq(2), { set: [Wallet.balance.set(dec("222.00"))] });
       });
       await assertTableState(f.db, f.loaded, f.metamodel);
     },

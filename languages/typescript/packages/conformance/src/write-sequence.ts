@@ -22,6 +22,7 @@
  * path (a one-row multi-row insert).
  */
 import { auditWriteStatements, type MutationKind, type WriteTarget } from "@parallax/bitemporal";
+import { type VersionedTarget, versionAdvancingUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
 import { columnOrder, quoteIdentifier } from "@parallax/sql";
 import {
@@ -137,6 +138,13 @@ function batchStatementsForStep(
   const mutation = step.mutation === "insert" ? "insert" : "update";
   const count = step.statements ?? 1;
   const stepBinds = bindRows.slice(bindIndex, bindIndex + count);
+  // A VERSIONED entity's keyed update advances its framework-owned version (the
+  // locking-mode / `0611` shape) — the readless batched forms below apply only to a
+  // non-versioned entity (a versioned set-based update MUST materialize per object,
+  // M10 / ADR 0031). Generate it by construction and pin against the golden.
+  if (mutation === "update" && entity.versionAttribute() !== undefined) {
+    return versionedUpdateStatements(entity, stepBinds, golden.slice(bindIndex, bindIndex + count));
+  }
   const uowStep: UowStep = {
     mutation,
     target:
@@ -151,6 +159,66 @@ function batchStatementsForStep(
     sql: planned.sql,
     binds: planned.binds,
   }));
+}
+
+/**
+ * The generated locking-mode version-advancing `UPDATE`(s) for a VERSIONED entity
+ * (`0611`): each keyed update advances the framework-owned version WITHOUT a gate
+ * (the M8 shared read lock makes it correct — `@parallax/locking`
+ * `versionAdvancingUpdate`). The domain `set` columns are parsed from each golden
+ * (its authored intent, minus the trailing `version = ?`) and the generated text is
+ * pinned equal to the golden, so the runtime — not the case — owns the DML shape.
+ */
+function versionedUpdateStatements(
+  entity: EntityMetadata,
+  stepBinds: readonly (readonly unknown[])[],
+  golden: readonly string[],
+): readonly { sql: string; binds: readonly unknown[] }[] {
+  const target = versionedTargetFor(entity);
+  return stepBinds.map((binds, offset) => {
+    const goldenSql = golden[offset];
+    const sql = versionAdvancingUpdate(target, domainSetColumns(goldenSql, target));
+    if (sql !== goldenSql) {
+      throw new Error(
+        `generated version-advancing UPDATE != golden:\n  generated: ${sql}\n  golden:    ${goldenSql ?? "<absent>"}`,
+      );
+    }
+    return { sql, binds };
+  });
+}
+
+/** Resolve a versioned entity's {@link VersionedTarget} (table, pk, version column). */
+function versionedTargetFor(entity: EntityMetadata): VersionedTarget {
+  const pk = entity.primaryKey()[0];
+  if (pk === undefined) {
+    throw new Error(`entity '${entity.name}' has no primary key for a versioned update`);
+  }
+  const version = entity.versionAttribute();
+  if (version === undefined) {
+    throw new Error(`entity '${entity.name}' has no optimistic-locking version column`);
+  }
+  return {
+    table: quoteIdentifier(entity.table),
+    pkColumn: quoteIdentifier(pk.column),
+    versionColumn: quoteIdentifier(version.column),
+  };
+}
+
+/**
+ * The quoted DOMAIN `set` columns of a golden version-advancing UPDATE (the `set`
+ * list minus the trailing `version = ?`): `update account set balance = ?, version
+ * = ? where id = ?` → `["balance"]`. The columns are taken from the golden so the
+ * generated UPDATE reproduces it exactly.
+ */
+function domainSetColumns(golden: string | undefined, target: VersionedTarget): readonly string[] {
+  const match = golden ? /\bset\s+(.+?)\s+where\b/i.exec(golden) : null;
+  if (!match) {
+    throw new Error(`could not parse the set clause from golden UPDATE: ${golden ?? "<absent>"}`);
+  }
+  return (match[1] as string)
+    .split(",")
+    .map((piece) => piece.trim().split(/\s*=/)[0]?.trim() ?? "")
+    .filter((column) => column !== target.versionColumn);
 }
 
 /**

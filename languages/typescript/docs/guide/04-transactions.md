@@ -49,12 +49,12 @@ await tx.entity("Balance").terminate(Balance.id.eq(1));
 
 ```ts
 await f.px.transaction(async (tx) => {
-const accounts = tx.entity("Account");
-await accounts.create({ id: 10n, owner: "Mira", balance: dec("100.00"), version: 1 });
-await accounts.create({ id: 11n, owner: "Omar", balance: dec("20.00"), version: 1 });
-await accounts.create({ id: 12n, owner: "Nell", balance: dec("30.00"), version: 1 });
-await accounts.update(Account.id.eq(10), { set: [Account.balance.set(dec("500.00"))] });
-await accounts.update(Account.id.eq(11), { set: [Account.balance.set(dec("500.00"))] });
+const wallets = tx.entity("Wallet");
+await wallets.create({ id: 10n, owner: "Mira", balance: dec("100.00") });
+await wallets.create({ id: 11n, owner: "Omar", balance: dec("20.00") });
+await wallets.create({ id: 12n, owner: "Nell", balance: dec("30.00") });
+await wallets.update(Wallet.id.eq(10), { set: [Wallet.balance.set(dec("500.00"))] });
+await wallets.update(Wallet.id.eq(11), { set: [Wallet.balance.set(dec("500.00"))] });
 ```
 
 ## 0607: a dependent find observes the buffered insert (read-your-own-writes)
@@ -71,6 +71,7 @@ return accounts.find(Account.id.eq(7)).toArray();
 ```ts
 f.px.transaction(async (tx) => {
   const accounts = tx.entity("Account");
+  await accounts.find(Account.id.eq(1)).single();
   await accounts.update(Account.id.eq(1), { set: [Account.balance.set(dec("999.00"))] });
   const midTx = await accounts.find(Account.id.eq(1)).toArray();
 const observed = await f.px.transaction(async (tx) =>
@@ -89,7 +90,7 @@ await tx.entity("OrderItem").create({ id: 200n, orderId: 100n, sku: "X-1", quant
 
 ```ts
 await f.px.transaction(async (tx) => {
-const accounts = tx.entity("Account");
-await accounts.update(Account.id.eq(1), { set: [Account.balance.set(dec("111.00"))] });
-await accounts.update(Account.id.eq(2), { set: [Account.balance.set(dec("222.00"))] });
+const wallets = tx.entity("Wallet");
+await wallets.update(Wallet.id.eq(1), { set: [Wallet.balance.set(dec("111.00"))] });
+await wallets.update(Wallet.id.eq(2), { set: [Wallet.balance.set(dec("222.00"))] });
 ```

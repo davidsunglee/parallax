@@ -29,19 +29,19 @@ coherence:
         attr: Account.id
         value: 2
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
     binds: [2]
     note: seed read on node B — would cache Linus at balance 250.00
     observeRows:
-      - { id: 2, owner: Linus, balance: 250.00 }
+      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
   - node: A
     kind: write
     goldenSql:
-      postgres: update account set balance = ? where id = ?
-      mariadb: update account set balance = ? where id = ?
-    binds: [999.00, 2]
-    note: node A commits a new balance on a separate connection
+      postgres: update account set balance = ?, version = ? where id = ?
+      mariadb: update account set balance = ?, version = ? where id = ?
+    binds: [999.00, 2, 2]
+    note: node A commits a new balance (version advances 1 -> 2) on a separate connection
   - node: B
     kind: read
     find:
@@ -49,9 +49,9 @@ coherence:
         attr: Account.id
         value: 2
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
     binds: [2]
-    note: node B re-fetches and MUST observe A's committed 999.00 (not stale 250.00)
+    note: node B re-fetches and MUST observe A's committed 999.00 / version 2 (not stale 250.00 / version 1)
     observeRows:
-      - { id: 2, owner: Linus, balance: 999.00 }
+      - { id: 2, owner: Linus, balance: 999.00, version: 2 }

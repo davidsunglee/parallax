@@ -16,10 +16,13 @@ export {
   type ParallaxRow,
   ParallaxTransaction,
   TransactionEntity,
+  type TransactionOptions,
 } from "./parallax.js";
 export { RuntimeSchema } from "./schema.js";
 export {
+  type Concurrency,
   ParallaxOptimisticLockError,
+  ParallaxReadBeforeWriteError,
   TransactionWriter,
   type UpdateOptions,
   type WriteResult,

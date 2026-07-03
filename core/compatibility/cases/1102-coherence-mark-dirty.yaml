@@ -27,8 +27,8 @@ coherence:
         attr: Account.owner
         value: Mallory
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
     binds: [Mallory]
     note: seed read on node B — Mallory does not exist yet, so the result is empty
     observeRows: []
@@ -46,9 +46,9 @@ coherence:
         attr: Account.owner
         value: Mallory
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
     binds: [Mallory]
     note: node B re-resolves after mark-dirty and MUST observe A's committed insert
     observeRows:
-      - { id: 9, owner: Mallory, balance: 42.00 }
+      - { id: 9, owner: Mallory, balance: 42.00, version: 1 }

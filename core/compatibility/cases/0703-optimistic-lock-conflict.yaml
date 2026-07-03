@@ -17,6 +17,8 @@
 # never our stale-version balance.
 model: models/account.yaml
 tags: [m10, m3, optimistic-locking, conflict, optimistic-lock-conflict, slice-mvp-1]
+uow:
+  concurrency: optimistic
 precondition: update account set balance = 999.00, version = 2 where id = 2
 expectedAffectedRows: 0
 goldenSql:

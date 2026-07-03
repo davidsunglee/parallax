@@ -26,19 +26,19 @@ coherence:
         attr: Account.id
         value: 2
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
     binds: [2]
     note: seed read on node B — interns Linus (PK 2) at balance 250.00
     observeRows:
-      - { id: 2, owner: Linus, balance: 250.00 }
+      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
   - node: A
     kind: write
     goldenSql:
-      postgres: update account set balance = ? where id = ?
-      mariadb: update account set balance = ? where id = ?
-    binds: [777.00, 2]
-    note: node A commits an in-place update on a separate connection
+      postgres: update account set balance = ?, version = ? where id = ?
+      mariadb: update account set balance = ?, version = ? where id = ?
+    binds: [777.00, 2, 2]
+    note: node A commits an in-place update (version advances 1 -> 2) on a separate connection
   - node: B
     kind: read
     find:
@@ -46,11 +46,11 @@ coherence:
         attr: Account.id
         value: 2
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
     binds: [2]
     sameObjectAs: 0
     identityAttr: id
-    note: node B re-fetches PK 2 — observes 777.00 at the SAME identity (in place)
+    note: node B re-fetches PK 2 — observes 777.00 / version 2 at the SAME identity (in place)
     observeRows:
-      - { id: 2, owner: Linus, balance: 777.00 }
+      - { id: 2, owner: Linus, balance: 777.00, version: 2 }

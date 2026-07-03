@@ -5,7 +5,7 @@
  * contract boundary (the runner's `runCompile`, the same path the CLI drives):
  *
  *  - **Full compile sweep.** `test.each` over EVERY `slice-mvp-1`
- *    tagged case (99): each compiles to an `ok` envelope, and for a `read`-shaped
+ *    tagged case (101): each compiles to an `ok` envelope, and for a `read`-shaped
  *    case (whose golden is a single string) the emitted SQL + binds equal the
  *    golden by construction. Write / scenario / conflict goldens are multi-string
  *    / per-step and graded structurally in the run lane; here they must compile
@@ -57,10 +57,10 @@ function readGolden(loaded: LoadedCase): string | undefined {
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the whole slice-mvp-1 slice (100 cases)", () => {
+  it("discovers the whole slice-mvp-1 slice (101 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case.
-    expect(CASES.length).toBe(100);
+    expect(CASES.length).toBe(101);
   });
 
   it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
@@ -143,8 +143,8 @@ group("case-matrix report — the slice is green at a glance", () => {
     // The rendered report is the human-facing artifact; surface it on failure so
     // a regression names the exact residual case IDs.
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(100);
-    expect(report.counts.ok).toBe(100);
+    expect(report.total).toBe(101);
+    expect(report.counts.ok).toBe(101);
     expect(report.residuals).toEqual([]);
   });
 });

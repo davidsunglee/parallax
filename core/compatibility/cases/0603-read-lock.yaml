@@ -24,9 +24,9 @@ operation:
     attr: Account.id
     value: 2
 goldenSql:
-  postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? for share of t0
+  postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
 binds: [2]
-referenceSql: select id, owner, balance from account where id = 2
+referenceSql: select id, owner, balance, version from account where id = 2
 expectedRows:
-  - { id: 2, owner: Linus, balance: 250.00 }
+  - { id: 2, owner: Linus, balance: 250.00, version: 1 }
 roundTrips: 1
