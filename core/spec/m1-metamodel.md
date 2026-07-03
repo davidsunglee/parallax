@@ -84,12 +84,15 @@ Every entity **MUST** declare at least one `attribute` with `primaryKey: true`.
 The `readOnly` and `optimisticLocking` flags are the metamodel surface two
 fast-follow modules build on. `readOnly` marks an attribute that is immutable
 after insert (an implementation **MUST NOT** emit it in an `UPDATE` `set`).
-`optimisticLocking: true` marks the entity's **version attribute** (`M10`): at
-most one per entity, an integer that is checked in — and advanced by — every
-`UPDATE`, turning a stale-version write into a detectable conflict. The
-`optimisticLocking` flag is purely metamodel here; its conflict-detection
-semantics are `M10`, and the object-lifecycle states that decide *when* an
-attribute is written (in-memory vs. persisted vs. detached) are `M9`.
+`optimisticLocking: true` **names** the entity's **version attribute** (`M10`): at
+most one per entity, an integer that **every** issued `UPDATE` **advances**, and
+that a write **gates on** only when the unit of work runs in optimistic mode
+(`M8` strategy selection) — turning a stale-version write into a detectable
+conflict. The flag names the column; it does not by itself decide the strategy —
+that is the unit of work's per-transaction choice. The `optimisticLocking` flag is
+purely metamodel here; its conflict-detection semantics are `M10`, and the
+object-lifecycle states that decide *when* an attribute is written (in-memory vs.
+persisted vs. detached) are `M9`.
 
 ## `relationship` — a navigable association
 

@@ -20,13 +20,17 @@ import type { Metamodel } from "@parallax/metamodel";
 import { type EntityMetadata, Metamodel as MetamodelReader } from "@parallax/metamodel";
 import type { Operation } from "@parallax/operation";
 import { compile } from "@parallax/sql";
+import { appendReadLock } from "@parallax/transactions";
 import { buildFindOperation, type FindOptions, Predicate } from "../dsl/find.js";
 import { type DeepFetchGraph, executeDeepFetch, isDeepFetchOperation } from "./deep-fetch.js";
 import { rowMaterializer } from "./materialize.js";
 import { RuntimeSchema } from "./schema.js";
 import {
   type Assignment,
+  type Concurrency,
   isAuditOnly,
+  type ObservedVersions,
+  observedKey,
   TransactionWriter,
   type UpdateOptions,
   type WriteResult,
@@ -80,6 +84,20 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
      * when the list actually resolves, never eagerly. Absent on the root handle.
      */
     private readonly beforeLoad?: () => Promise<void>,
+    /**
+     * When true (a `locking`-mode in-transaction finder), append the M8 shared
+     * read-lock suffix (`for share of t0`) to a flat read so a concurrent
+     * transaction cannot mutate the row out from under a read-then-write (`0603`).
+     * `optimistic`-mode and root-handle reads take no lock.
+     */
+    private readonly lockReads = false,
+    /**
+     * A hook called with the materialized rows a flat read produced, so the unit
+     * of work can record the version it OBSERVED for each versioned row (the M10
+     * observed-version map a later gated / advancing update reads). Absent on the
+     * root handle.
+     */
+    private readonly onObserved?: (rows: readonly ParallaxRow[]) => void,
   ) {}
 
   /**
@@ -164,11 +182,18 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     }
     const schema = new RuntimeSchema(this.metamodel, this.entity);
     const { sql, binds } = compile(operation, schema);
+    // In a locking-mode transaction the in-transaction read takes the automatic
+    // shared row lock (M8): the developer writes no locking SQL (`0603`).
+    const readSql = this.lockReads ? appendReadLock(sql) : sql;
     const materialize = rowMaterializer(this.entity);
     return new ParallaxList<T>(async () => {
       await this.beforeLoad?.();
-      const rows = await this.database.execute(sql, binds as readonly unknown[]);
-      return rows.map(materialize) as readonly T[];
+      const rows = await this.database.execute(readSql, binds as readonly unknown[]);
+      const materialized = rows.map(materialize) as readonly T[];
+      // Record the version this unit of work OBSERVED for each versioned row, so a
+      // later keyed update gates on / advances from it (M10 framework-owned versions).
+      this.onObserved?.(materialized);
+      return materialized;
     }, identity);
   }
 
@@ -242,16 +267,24 @@ export class Parallax {
 
   /**
    * Closure-demarcated unit of work (spec §3): `await px.transaction(async tx =>
-   * { … })`. Returns the callback's resolved value after commit; a throw rolls
-   * back. Requires a `transaction`-capable database adapter. Reads through `tx`
-   * take the automatic in-transaction read lock (M8) at the adapter boundary.
+   * { … }, options)`. Returns the callback's resolved value after commit; a throw
+   * rolls back. Requires a `transaction`-capable database adapter.
+   *
+   * `options.concurrency` selects the M8 correctness strategy (default `locking`):
+   * in `locking` mode in-transaction reads take the automatic shared row lock
+   * (M8); in `optimistic` mode reads take no lock and versioned updates gate on the
+   * observed version (M10).
    */
-  async transaction<T>(body: (tx: ParallaxTransaction) => Promise<T>): Promise<T> {
+  async transaction<T>(
+    body: (tx: ParallaxTransaction) => Promise<T>,
+    options: TransactionOptions = {},
+  ): Promise<T> {
     if (this.database.transaction === undefined) {
       throw new Error("the configured ParallaxDatabase does not support transactions");
     }
+    const concurrency: Concurrency = options.concurrency ?? "locking";
     return this.database.transaction(async (boundDb) => {
-      const tx = new ParallaxTransaction(this.metamodel, boundDb, this.clock.now());
+      const tx = new ParallaxTransaction(this.metamodel, boundDb, this.clock.now(), concurrency);
       const result = await body(tx);
       // Flush any buffered writes at the unit-of-work boundary (spec §3: no public
       // flush; the runtime flushes at commit) before the transaction commits.
@@ -259,6 +292,18 @@ export class Parallax {
       return result;
     });
   }
+}
+
+/** Options for a unit of work (spec §3 / M8 strategy selection). */
+export interface TransactionOptions {
+  /**
+   * The correctness strategy for this unit of work. `locking` (the default) takes
+   * the M8 implicit shared read lock on in-transaction reads; `optimistic` (M10)
+   * takes no lock and gates versioned updates on the observed version. (Bounded
+   * automatic retry keys — `retries` / `retryOptimisticConflicts` — arrive with the
+   * boundary retry contract.)
+   */
+  readonly concurrency?: Concurrency;
 }
 
 /**
@@ -316,14 +361,22 @@ export class ParallaxTransaction {
   private readonly handles = new Map<string, TransactionEntity>();
   /** The shared unit-of-work writer (buffers inserts; chains audit milestones). */
   readonly writer: TransactionWriter;
+  /**
+   * The per-unit-of-work observed-version map (`entity#pk → version`), shared with
+   * the writer: a locking/optimistic keyed update reads the version a prior in-
+   * transaction find hydrated (M10 framework-owned versions).
+   */
+  private readonly observed: ObservedVersions = new Map();
 
   constructor(
     private readonly metamodel: Metamodel,
     private readonly database: ParallaxDatabase,
     /** The processing instant captured when the transaction opened (spec §3.1). */
     readonly processingInstant: string,
+    /** The M8 correctness strategy for this unit of work (default `locking`). */
+    readonly concurrency: Concurrency = "locking",
   ) {
-    this.writer = new TransactionWriter(database, processingInstant);
+    this.writer = new TransactionWriter(database, processingInstant, concurrency, this.observed);
   }
 
   /**
@@ -337,14 +390,42 @@ export class ParallaxTransaction {
       const metadata = this.metamodel.entity(name);
       // The in-transaction finder flushes the writer's buffered inserts before a
       // read executes (lazily, inside the list resolver), so a dependent find
-      // observes the just-buffered write (read-your-own-writes, `0607`).
-      const finder = new EntityFinder(this.metamodel, metadata, this.database, () =>
-        this.writer.flush(),
+      // observes the just-buffered write (read-your-own-writes, `0607`). In
+      // `locking` mode the read also takes the M8 shared lock (`0603`); either way
+      // it records the versions it observed so a later versioned update can gate
+      // on / advance from them (M10).
+      const finder = new EntityFinder(
+        this.metamodel,
+        metadata,
+        this.database,
+        () => this.writer.flush(),
+        this.concurrency === "locking",
+        (rows) => this.recordObserved(metadata, rows),
       );
       handle = new TransactionEntity(finder, metadata, this.writer);
       this.handles.set(name, handle);
     }
     return handle as TransactionEntity<T>;
+  }
+
+  /**
+   * Record the version this unit of work observed for each hydrated versioned row
+   * (`entity#pk → version`), so a subsequent keyed update gates on it (optimistic
+   * mode) or advances from it (both modes). A non-versioned entity records nothing.
+   */
+  private recordObserved(entity: EntityMetadata, rows: readonly ParallaxRow[]): void {
+    const version = entity.versionAttribute();
+    const pk = entity.primaryKey()[0];
+    if (version === undefined || pk === undefined) {
+      return;
+    }
+    for (const row of rows) {
+      const pkValue = row[pk.name];
+      const versionValue = row[version.name];
+      if (pkValue != null && versionValue != null) {
+        this.observed.set(observedKey(entity.name, pkValue), Number(versionValue));
+      }
+    }
   }
 
   /** True when the entity chains audit milestones (declares a processing axis). */

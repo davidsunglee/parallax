@@ -147,6 +147,27 @@ class Case:
         return self.raw.get("tags", [])
 
     @property
+    def uow(self) -> dict[str, Any]:
+        """The declared unit-of-work config (M8 strategy selection), or empty.
+
+        A case MAY carry a top-level ``uow`` block
+        (``{"concurrency": "locking" | "optimistic"}``) declaring the mode its
+        golden SQL runs under. The block is DESCRIPTIVE — the harness executes the
+        authored golden SQL either way — so this accessor exists for
+        self-description / tooling, not to change execution.
+        """
+        return self.raw.get("uow", {})
+
+    @property
+    def concurrency_mode(self) -> str:
+        """The declared unit-of-work concurrency mode (``locking`` default | ``optimistic``).
+
+        Named ``concurrency_mode`` to avoid clashing with :attr:`concurrency`
+        (the two-connection choreography of an error case).
+        """
+        return self.uow.get("concurrency", "locking")
+
+    @property
     def operation(self) -> dict[str, Any]:
         return self.raw["operation"]
 

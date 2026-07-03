@@ -1,0 +1,39 @@
+# Wallet: a plain NON-VERSIONED transactional entity for the M8 batched-write
+# cases (0604 / 0613).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Wallet is
+# Account (models/account.yaml) MINUS the optimistic-lock `version` column — the
+# readless set-based / batched UPDATE forms (a uniform `id in (?, ?)` update, one
+# keyed UPDATE per distinct key) are honest ONLY for a non-versioned entity: a
+# batched write cannot advance a per-row version without materializing to per-
+# object updates (M10, ADR 0031). So the batched-write cases live here, and the
+# versioned Account carries the version-advancing / gated update cases instead.
+#
+# Same ids/owners/balances as Account so the batched-write expectations port
+# verbatim (minus the version column). Row data lives in fixtures/wallet.yaml.
+entity:
+  name: Wallet
+  namespace: parallax.compatibility
+  table: wallet
+  mutability: transactional
+  temporal: non-temporal
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGenerator: none
+    - name: owner
+      type: string
+      column: owner
+      maxLength: 64
+    - name: balance
+      type: decimal(18,2)
+      column: balance
+  indices:
+    - name: wallet_pk
+      attributes: [id]
+      unique: true
+    - name: wallet_owner
+      attributes: [owner]
+      unique: false

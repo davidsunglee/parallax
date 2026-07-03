@@ -3,7 +3,7 @@
  * grouped by the family file that exercises it (Phase 10c).
  *
  * `coverage.test.ts` asserts the union of these ids plus the skip manifest equals
- * the whole 100-case slice — so a case that is neither exercised nor explicitly
+ * the whole 101-case slice — so a case that is neither exercised nor explicitly
  * skipped fails the build (no silent gaps). Each family file drives its `it.each`
  * off the matching list here, so the list and the tested cases stay in lockstep.
  *
@@ -132,12 +132,17 @@ export const TRANSACTIONS: readonly string[] = [
   "0613-batched-update-per-key",
 ];
 
-/** Locking: the automatic in-transaction read lock + optimistic locking (07xx). */
+/**
+ * Locking: the automatic in-transaction read lock (`0603`), the no-op versioned
+ * update (`0609`), the locking-mode version-advancing update (`0611`), and
+ * optimistic-mode version-column locking (07xx).
+ */
 export const LOCKING: readonly string[] = [
   "0603-read-lock",
+  "0609-no-op-update-no-dml",
+  "0611-versioned-update-locking-mode",
   "0703-optimistic-lock-conflict",
   "0704-optimistic-lock-success",
-  "0707-optimistic-lock-version-only-bump",
   "0708-optimistic-lock-retry-after-conflict",
 ];
 

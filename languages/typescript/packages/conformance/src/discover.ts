@@ -38,6 +38,12 @@ export interface LoadedCase {
   readonly shape: CaseShape;
   /** The module tags (e.g. `["m2", "m12"]`) the case declares. */
   readonly tags: readonly string[];
+  /**
+   * The declared unit-of-work config (M8 strategy selection), or `undefined`. A
+   * descriptive passthrough: `{ concurrency: "locking" | "optimistic" }` records
+   * which mode produced the authored golden SQL (the harness runs it either way).
+   */
+  readonly uow?: { readonly concurrency?: "locking" | "optimistic" };
   /** The parsed model descriptor (a metamodel document). */
   readonly descriptor: unknown;
   /** Fixture rows keyed by class name (empty when none authored). */
@@ -109,6 +115,9 @@ export function loadCase(path: string): LoadedCase {
     raw,
     shape: detectShape(raw),
     tags: (raw.tags as string[] | undefined) ?? [],
+    ...(raw.uow === undefined
+      ? {}
+      : { uow: raw.uow as { concurrency?: "locking" | "optimistic" } }),
     descriptor,
     fixtures,
   };

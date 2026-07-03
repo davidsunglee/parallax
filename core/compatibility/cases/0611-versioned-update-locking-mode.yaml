@@ -1,0 +1,44 @@
+# Versioned update, locking mode (M8 strategy selection + M10): a keyed update on
+# a versioned entity ADVANCES the version but emits NO gate.
+#
+# The version advances on every UPDATE against a versioned entity in BOTH modes;
+# what differs is the gate. Under the DEFAULT `locking` strategy the in-
+# transaction read already took a shared row lock (M8), so the write needs no
+# version check — it is the ungated version-advancing form (the 0702 / detached-
+# merge-back shape). Only OPTIMISTIC mode (0703 / 0704) adds `and version = ?`.
+#
+# Account 2 (Linus) is read at version 1 under the lock; the update sets balance
+# to 500.00 and advances the version to 2 with NO `and version = ?` gate:
+#   update account set balance = ?, version = ? where id = ?
+# Fixtures are loaded first; the resulting state proves the write landed and the
+# version advanced (id 2 → balance 500.00, version 2; ids 1 and 3 untouched).
+model: models/account.yaml
+tags: [m10, m8, m3, optimistic-locking, locking-mode, write-sequence, slice-mvp-1]
+uow:
+  concurrency: locking
+loadFixtures: true
+writeSequence:
+  - mutation: update
+    entity: Account
+    statements: 1
+    note: locking-mode keyed update advances the version with no gate
+goldenSql:
+  postgres:
+    - update account set balance = ?, version = ? where id = ?
+binds:
+  - [500.00, 2, 2]
+roundTrips: 1
+expectedTableState:
+  account:
+    - id: 1
+      owner: Ada
+      balance: 100.00
+      version: 1
+    - id: 2
+      owner: Linus
+      balance: 500.00
+      version: 2
+    - id: 3
+      owner: Grace
+      balance: 10.00
+      version: 1

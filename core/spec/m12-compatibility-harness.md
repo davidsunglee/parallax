@@ -201,11 +201,20 @@ would fail the post-write `expectRows`). A write step defaults to **committing**
 its DML; with **`rollback: true`** the harness applies the DML then **rolls it
 back** (through the provider's manual-commit session seam) — the observable form
 of the M8 **abort contract**: a later find MUST re-resolve and observe the
-ORIGINAL rows, never the aborted write. The rolled-back DML still executes, so it
-counts its statements as round trips exactly as a committed write does. The
-harness asserts per-step round-trip / golden-SQL count consistency, executes each
-step, and checks `sameObjectAs` identity assertions; it never compiles an
-operation to SQL.
+ORIGINAL rows, never the aborted write. A write step with **`roundTrips: 0`** and
+no golden SQL is a **no-op** write — a versioned `UPDATE` whose `set` changes no
+attribute issues no DML (`M10`) — and executes nothing, exactly like a cache-hit
+read step. The rolled-back DML still executes, so it counts its statements as
+round trips exactly as a committed write does. The harness asserts per-step
+round-trip / golden-SQL count consistency, executes each step, and checks
+`sameObjectAs` identity assertions; it never compiles an operation to SQL.
+
+A case MAY carry a top-level **`uow`** block (`{ concurrency: locking |
+optimistic }`) declaring the unit-of-work strategy its golden SQL runs under (`M8`
+strategy selection). The block is **descriptive**: the harness executes the
+authored golden SQL either way — the block records which mode produced it, so an
+optimistic conflict case's gated `UPDATE` and a locking-mode case's ungated
+version-advancing `UPDATE` are self-describing. Its default is `locking`.
 
 ### Coherence cases (M14 cross-process coherence)
 

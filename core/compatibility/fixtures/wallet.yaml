@@ -1,0 +1,18 @@
+# Fixture rows for the Wallet model (models/wallet.yaml) — the starting state the
+# per-key batched-update case (0613) mutates on top of.
+#
+# Same ids/owners/balances as fixtures/account.yaml, minus the version column, so
+# the batched-write expectations port verbatim:
+#   id 1 (Ada)   balance 100.00
+#   id 2 (Linus) balance 250.00
+#   id 3 (Grace) balance  10.00
+Wallet:
+  - id: 1
+    owner: Ada
+    balance: 100.00
+  - id: 2
+    owner: Linus
+    balance: 250.00
+  - id: 3
+    owner: Grace
+    balance: 10.00

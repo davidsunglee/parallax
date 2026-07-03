@@ -11,11 +11,14 @@
  *    inserts through the M8 `combineWrites` planner — same-entity inserts collapse
  *    to one multi-row `INSERT`, a referenced parent's inserts precede a child's
  *    (`0604` / `0612`);
- *  - **non-temporal `update`** with a caller-supplied `expectedVersion` issues the
- *    M10 versioned `UPDATE` (gate on the read version, advance it) and classifies
- *    the affected count (`0703` / `0704` / `0707` / `0708`); WITHOUT one it is a
- *    plain keyed `UPDATE` that neither gates on nor advances the version, one per
- *    selected key (`0604` / `0613`) — optimistic locking is caller-driven (spec §4);
+ *  - **non-temporal `update`** on a VERSIONED entity always advances the framework-
+ *    owned version (M10, ADR 0029): in `optimistic` mode it issues the gated M10
+ *    `UPDATE` (gate on the version the unit of work OBSERVED, advance it) and
+ *    classifies the affected count (`0703` / `0704` / `0708`); in the default
+ *    `locking` mode it issues the ungated version-advancing `UPDATE` (`0611`). Either
+ *    way an unobserved row read-before-writes and a no-op `set` issues no DML
+ *    (`0609`). On a NON-versioned entity it is a plain keyed `UPDATE`, one per
+ *    selected key (`0604` / `0613` on the non-versioned `Wallet`);
  *  - **audit-only (`unitemporal-processing`) writes** chain milestones through the
  *    M7 `auditWriteStatements` generator: `create` opens `[processingInstant,
  *    infinity)`, `update` closes the current row and chains a new one carrying the
@@ -39,8 +42,8 @@ import { INFINITY, ParallaxDecimal, Temporal, toWire } from "@parallax/core";
 import type { ParallaxDatabase } from "@parallax/db";
 import {
   classifyOutcome,
-  type OptimisticOutcome,
   type VersionedTarget,
+  versionAdvancingUpdate,
   versionedUpdate,
 } from "@parallax/locking";
 import type { EntityMetadata, NormalizedAttribute } from "@parallax/metamodel";
@@ -64,6 +67,41 @@ export class ParallaxOptimisticLockError extends Error {
   }
 }
 
+/**
+ * Thrown when a versioned entity's row is updated WITHOUT the unit of work having
+ * observed it first (M10 read-before-write). Optimistic-lock version values are
+ * framework-owned (ADR 0029): the gate binds — and the advance is computed from —
+ * the version a transaction-scoped read hydrated, so an update of an unobserved
+ * row has no version to gate on or advance from and MUST be a read-before-write.
+ */
+export class ParallaxReadBeforeWriteError extends Error {
+  constructor(entity: string) {
+    super(
+      `read-before-write updating '${entity}': a versioned update requires the unit of work ` +
+        `to have read the row first (its optimistic-lock version is framework-owned)`,
+    );
+    this.name = "ParallaxReadBeforeWriteError";
+    Object.setPrototypeOf(this, ParallaxReadBeforeWriteError.prototype);
+  }
+}
+
+/** The per-unit-of-work concurrency strategy (M8 strategy selection). */
+export type Concurrency = "locking" | "optimistic";
+
+/**
+ * The per-unit-of-work observed-state map: `entity#pk → observed version`,
+ * populated when a transaction-scoped find hydrates a versioned row. A versioned
+ * update reads the observed version from it (the gate bind in optimistic mode; the
+ * base for the framework-computed advance in both modes). Keyed dialect-free so a
+ * `bigint` pk and its numeric literal collide on the same normalized key.
+ */
+export type ObservedVersions = Map<string, number>;
+
+/** The observed-version map key for one row (`Entity#<pk>`). */
+export function observedKey(entityName: string, pk: unknown): string {
+  return `${entityName}#${String(pk)}`;
+}
+
 /** A named attribute assignment (`Balance.value.set(150)`), spec §4. */
 export interface Assignment {
   /** The attribute NAME (DSL property name) the assignment targets. */
@@ -75,14 +113,6 @@ export interface Assignment {
 /** Options accepted by `update` (spec §4): the explicit assignment array. */
 export interface UpdateOptions {
   readonly set: readonly Assignment[];
-  /**
-   * For an optimistically-locked entity, the version the caller READ off the
-   * managed object earlier — the value the versioned UPDATE gates on (spec §4:
-   * conflicts are caller-driven). When omitted, the current version is read at
-   * write time. A conflict (a concurrent writer advanced the row since the read)
-   * throws `ParallaxOptimisticLockError`.
-   */
-  readonly expectedVersion?: number;
 }
 
 /** True when an entity chains audit milestones (declares a processing as-of axis). */
@@ -110,6 +140,16 @@ export class TransactionWriter {
   constructor(
     private readonly database: ParallaxDatabase,
     private readonly processingInstant: string,
+    /** The unit-of-work concurrency strategy (default `locking`, M8). */
+    private readonly concurrency: Concurrency = "locking",
+    /**
+     * The per-unit-of-work observed-version map (`entity#pk → version`), shared
+     * with the transaction's finders so a versioned update gates on / advances the
+     * version a prior read hydrated. Defaults to a private map (a standalone
+     * writer with no finders observes nothing, so a versioned update read-before-
+     * writes).
+     */
+    private readonly observed: ObservedVersions = new Map(),
   ) {}
 
   /** The number of physical statements this writer has issued (round-trip proof). */
@@ -138,9 +178,10 @@ export class TransactionWriter {
   }
 
   /**
-   * `update`. An audit-only entity chains milestones (close + new current row); an
-   * optimistically-locked entity issues the M10 versioned UPDATE (throwing on a
-   * conflict, spec §4); a plain entity issues one keyed UPDATE.
+   * `update`. An audit-only entity chains milestones (close + new current row); a
+   * VERSIONED entity advances its framework-owned version (gated in optimistic
+   * mode, ungated in locking mode — throwing on a conflict / read-before-write,
+   * M10); a plain (non-versioned) entity issues one keyed UPDATE.
    */
   async update(
     entity: EntityMetadata,
@@ -151,74 +192,71 @@ export class TransactionWriter {
     if (isAuditOnly(entity)) {
       return this.auditUpdate(entity, predicate, options);
     }
-    // Optimistic locking is CALLER-DRIVEN (spec §4): a developer opts into a
-    // version-gated write by supplying the `expectedVersion` they read off the
-    // managed object. WITHOUT it, an `update` is a plain keyed UPDATE that neither
-    // gates on nor advances the version (`0604` / `0613`) — even on an entity that
-    // declares a version column. WITH it, the M10 versioned UPDATE gates + advances
-    // (`0703` / `0704` / `0707` / `0708`).
     const version = entity.versionAttribute();
-    if (version !== undefined && options.expectedVersion !== undefined) {
-      const outcome = await this.tryVersionedUpdate(
-        entity,
-        predicate,
-        options,
-        version,
-        options.expectedVersion,
-      );
-      if (outcome.result === "conflict") {
-        throw new ParallaxOptimisticLockError(entity.name);
-      }
-      return { affectedRows: outcome.affectedRows };
+    if (version !== undefined) {
+      return this.versionedEntityUpdate(entity, predicate, options, version);
     }
     return this.plainUpdate(entity, predicate, options);
   }
 
   /**
-   * Attempt a versioned UPDATE and return the classified outcome + affected count
-   * WITHOUT throwing — the API Conformance Suite's explicit retry path reads the conflict signal
-   * and re-applies on the fresh version (`0708`). `expectedVersion` pins the gate;
-   * when omitted, the current version is read first (the value the developer would
-   * have read off the managed object).
+   * A versioned-entity `update` (M10). The version is FRAMEWORK-OWNED (ADR 0029):
+   * the write advances it in BOTH modes, and in `optimistic` mode also gates on the
+   * version the unit of work OBSERVED for the row (a prior transaction-scoped find
+   * populated the observed map). Three rules:
+   *
+   *  - a `set` that changes NO domain attribute issues no DML (`0609`);
+   *  - an unobserved row is a read-before-write error (there is no observed version
+   *    to gate on or advance from);
+   *  - `optimistic` mode emits the gated form and throws `ParallaxOptimisticLockError`
+   *    on a 0-row conflict (`0703`); `locking` mode emits the ungated version-
+   *    advancing form (`0611`). The advanced version (`observed + 1`) is never
+   *    caller-supplied.
    */
-  async tryVersionedUpdate(
+  private async versionedEntityUpdate(
     entity: EntityMetadata,
     predicate: Predicate,
     options: UpdateOptions,
     version: NormalizedAttribute,
-    expectedVersion?: number,
-  ): Promise<{ result: OptimisticOutcome; affectedRows: number }> {
-    await this.flushInserts();
+  ): Promise<WriteResult> {
+    // The version column is framework-owned: drop any caller assignment to it.
+    const domain = options.set.filter((a) => a.attr !== version.name);
+    // A no-op update (no domain attribute changes) issues NO DML (M10).
+    if (domain.length === 0) {
+      return { affectedRows: 0 };
+    }
+    const pkLiteral = this.pkLiteralOf(entity, predicate);
+    const key = observedKey(entity.name, pkLiteral);
+    const observedVersion = this.observed.get(key);
+    if (observedVersion === undefined) {
+      throw new ParallaxReadBeforeWriteError(entity.name);
+    }
+    const newVersion = observedVersion + 1;
     const target: VersionedTarget = {
       table: quoteIdentifier(entity.table),
       pkColumn: quoteIdentifier(pkColumn(entity)),
       versionColumn: quoteIdentifier(version.column),
     };
-    const domain = options.set.filter((a) => a.attr !== version.name);
     const setColumns = domain.map((a) => quoteIdentifier(entity.attributeByName(a.attr).column));
-    const sql = versionedUpdate(target, setColumns);
-    const oldVersion = expectedVersion ?? (await this.currentVersion(entity, predicate));
-    const binds = [
-      ...domain.map((a) => bindValue(a.value)),
-      oldVersion + 1,
-      this.pkValue(entity, predicate),
-      oldVersion,
-    ];
-    const affectedRows = await this.exec(sql, binds);
-    return { result: classifyOutcome(affectedRows), affectedRows };
-  }
-
-  /** Read the current version an optimistic update must gate on. */
-  async currentVersion(entity: EntityMetadata, predicate: Predicate): Promise<number> {
-    const version = entity.versionAttribute();
-    if (version === undefined) {
-      throw new Error(`entity '${entity.name}' declares no optimistic-locking version column`);
+    const domainBinds = domain.map((a) => bindValue(a.value));
+    const pk = bindValue(pkLiteral);
+    if (this.concurrency === "optimistic") {
+      // Gate on the observed version; a concurrent writer that advanced it first
+      // makes the gate match 0 rows (the conflict signal).
+      const sql = versionedUpdate(target, setColumns);
+      const affectedRows = await this.exec(sql, [...domainBinds, newVersion, pk, observedVersion]);
+      if (classifyOutcome(affectedRows) === "conflict") {
+        throw new ParallaxOptimisticLockError(entity.name);
+      }
+      this.observed.set(key, newVersion);
+      return { affectedRows };
     }
-    const sql =
-      `select ${quoteIdentifier(version.column)} from ${quoteIdentifier(entity.table)} ` +
-      `where ${quoteIdentifier(pkColumn(entity))} = ?`;
-    const rows = await this.database.execute(sql, [this.pkValue(entity, predicate)]);
-    return Number(rows[0]?.[version.column]);
+    // Locking mode: the M8 shared read lock makes the write correct, so the version
+    // advances WITHOUT a gate (the `0702` / `0611` shape).
+    const sql = versionAdvancingUpdate(target, setColumns);
+    const affectedRows = await this.exec(sql, [...domainBinds, newVersion, pk]);
+    this.observed.set(key, newVersion);
+    return { affectedRows };
   }
 
   /** `terminate` (audit-only): close the current milestone, insert nothing. */
@@ -390,8 +428,8 @@ export class TransactionWriter {
     return { affectedRows };
   }
 
-  /** The single primary-key VALUE a pk-equality write predicate selects. */
-  private pkValue(entity: EntityMetadata, predicate: Predicate): unknown {
+  /** The raw primary-key LITERAL a pk-equality write predicate selects (pre-wire). */
+  private pkLiteralOf(entity: EntityMetadata, predicate: Predicate): unknown {
     const pkName = entity.primaryKey()[0]?.name;
     const literal = pkLiteral(predicate.toOperation(), pkName);
     if (literal === undefined) {
@@ -399,7 +437,12 @@ export class TransactionWriter {
         `a write on '${entity.name}' must select one row by its primary key equality`,
       );
     }
-    return bindValue(literal);
+    return literal;
+  }
+
+  /** The single primary-key VALUE (wire form) a pk-equality write predicate selects. */
+  private pkValue(entity: EntityMetadata, predicate: Predicate): unknown {
+    return bindValue(this.pkLiteralOf(entity, predicate));
   }
 
   /**

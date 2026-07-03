@@ -32,7 +32,7 @@ export interface ConflictAttempt {
   readonly casePointer: string;
   /** The canonical versioned-UPDATE text (generated, pinned against the golden). */
   readonly sql: string;
-  /** The authored binds `[…set values…, newVersion, pk, expectedVersion]`. */
+  /** The authored binds `[…set values…, newVersion, pk, observedVersion]`. */
   readonly binds: readonly unknown[];
   /** The expected affected-row count (`1` success, `0` conflict). */
   readonly expectedAffectedRows: number;

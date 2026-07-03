@@ -412,11 +412,18 @@ await tx.customers.update(Customer.customerId.eq(10), {
 Updates use explicit assignment arrays, not partial objects. Set-based writes
 return result objects with at least `affectedRows`.
 
-Managed-object writes that expect exactly one versioned row and affect zero rows
-throw `ParallaxOptimisticLockError`. Set-based writes return `{ affectedRows }`
-unless a later API adds explicit expected-count or conflict-policy options.
-Optimistic lock conflicts are caller-driven; the runtime does not automatically
-retry them.
+The correctness strategy is a per-unit-of-work mode selected on `px.transaction`
+(`{ concurrency: "locking" | "optimistic" }`, default `"locking"`). In `locking`
+mode in-transaction reads take the automatic shared row lock (M8) and a versioned
+`update` advances the version with no gate; in `optimistic` mode reads take no
+lock and a versioned `update` gates on the version the unit of work observed
+(M10). Optimistic-lock **version values are framework-owned** (ADR 0029): the
+developer reads the row — which records the observed version — then `update`s;
+no raw version number is passed. Updating a versioned row the unit of work never
+read is a `ParallaxReadBeforeWriteError`; a stale gate (zero rows affected) throws
+`ParallaxOptimisticLockError`; a versioned `update` whose assignment array changes
+no attribute issues no DML. Optimistic-lock conflict *handling* is caller-driven;
+the runtime does not automatically retry conflicts.
 
 ## 9. Entity Inputs And Snapshots
 
@@ -553,6 +560,7 @@ Initial public classes:
 - `ParallaxTooManyResultsError`
 - `ParallaxTransactionError`
 - `ParallaxOptimisticLockError`
+- `ParallaxReadBeforeWriteError`
 
 Errors expose stable machine-readable `code` strings. Messages are
 human-readable diagnostics and may evolve.

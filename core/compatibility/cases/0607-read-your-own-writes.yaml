@@ -27,7 +27,7 @@ scenario:
     roundTrips: 1
     note: a dependent find MUST observe the flushed write (read-your-own-writes)
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
     binds: [7]
     expectRows:
-      - { id: 7, owner: Newton, balance: 5.00 }
+      - { id: 7, owner: Newton, balance: 5.00, version: 1 }

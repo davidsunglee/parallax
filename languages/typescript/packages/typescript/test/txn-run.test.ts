@@ -9,17 +9,17 @@
  *
  *  - **read-lock** (`0603`): the locking read (`… for share of t0`) executes and
  *    returns the expected row (the lock does not change the result), `roundTrips 1`;
- *  - **write sequence** (`0604`/`0612`/`0613`): apply the generated batched DML,
- *    then grade the resulting `tableState` against `expectedTableState`, with the
- *    emissions pinned to the golden and `roundTrips` the statement count;
- *  - **scenario** (`0607`, read-your-own-writes; `0608`, rollback/abort): apply the
- *    write step (committed for `0607`, applied-then-ROLLED-BACK for `0608`), run the
- *    dependent find, and grade its observed rows against `expectRows` — for `0608`
- *    the ORIGINAL rows, proving the aborted write is discarded — `roundTrips` the
- *    declared case total;
- *  - **conflict** (`0703`/`0704`/`0707`/`0708`): load fixtures, apply the
- *    precondition, apply the versioned UPDATE(s), and grade `affectedRows`
- *    (terminal outcome) + the resulting `tableState`.
+ *  - **write sequence** (`0604`/`0612`/`0613` on the non-versioned `Wallet`; `0611`
+ *    locking-mode versioned update): apply the generated batched / version-advancing
+ *    DML, then grade the resulting `tableState` against `expectedTableState`, with
+ *    the emissions pinned to the golden and `roundTrips` the statement count;
+ *  - **scenario** (`0607`, read-your-own-writes; `0608`, rollback/abort; `0609`,
+ *    no-op-update-no-DML): apply the write step(s) (committed for `0607`, applied-
+ *    then-ROLLED-BACK for `0608`, no DML for `0609`), run the dependent find, and
+ *    grade its observed rows against `expectRows` — `roundTrips` the declared total;
+ *  - **conflict** (`0703`/`0704`/`0708`): load fixtures, apply the precondition,
+ *    apply the versioned UPDATE(s), and grade `affectedRows` (terminal outcome) +
+ *    the resulting `tableState`.
  *
  * Lives in the composition root because the concrete provider does — the runner
  * depends only on the injected port, so a `conformance/test` run lane would be a
@@ -63,17 +63,18 @@ function dockerAvailable(): boolean {
 const HAS_DOCKER = dockerAvailable();
 const CASES = txnCases();
 
-/** The EXACT in-scope id set (the ten tagged `06xx`/`07xx` Phase-7 + abort cases). */
+/** The EXACT in-scope id set (the tagged `06xx`/`07xx` Phase-7 + abort cases). */
 const EXPECTED_IDS: readonly string[] = [
   "0603",
   "0604",
   "0607",
   "0608",
+  "0609",
+  "0611",
   "0612",
   "0613",
   "0703",
   "0704",
-  "0707",
   "0708",
 ];
 

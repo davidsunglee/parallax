@@ -43,6 +43,7 @@ export {
 // --- runtime factory + handles (spec §2.2, §4) ------------------------------
 export {
   type Assignment,
+  type Concurrency,
   createParallax,
   type DeepFetchGraph,
   EntityFinder,
@@ -53,10 +54,12 @@ export {
   type ParallaxDatabase,
   ParallaxOptimisticLockError,
   type ParallaxOptions,
+  ParallaxReadBeforeWriteError,
   type ParallaxRow,
   ParallaxTransaction,
   RuntimeSchema,
   TransactionEntity,
+  type TransactionOptions,
   TransactionWriter,
   type UpdateOptions,
   type WriteResult,

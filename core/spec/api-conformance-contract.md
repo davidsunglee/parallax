@@ -102,7 +102,7 @@ mandate on other languages:
   idiomatic `px.*` / `px.transaction` surface over the shipped `@parallax/db-postgres`
   adapter against a Testcontainers `postgres:17`;
 - `coverage.test.ts` is the Docker-free partition assertion (exercised ∪ skipped ==
-  the 100-case `slice-mvp-1` slice, no strays, every skip reasoned), with the
+  the 101-case `slice-mvp-1` slice, no strays, every skip reasoned), with the
   exercised map in `covered.ts` and the reasoned skips in `skip-manifest.ts`;
 - the no-drift guard is `assertSameOperation` in `_harness.ts`;
 - the value-shape assertion is `assertManagedShape` in `_harness.ts`;

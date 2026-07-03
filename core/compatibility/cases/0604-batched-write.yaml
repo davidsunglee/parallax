@@ -2,49 +2,47 @@
 #
 # At the unit-of-work boundary the buffered writes are combined and flushed as
 # SET-BASED SQL, not one statement per row:
-#   step 1 insert : THREE buffered inserts of Account collapse into a SINGLE
+#   step 1 insert : THREE buffered inserts of Wallet collapse into a SINGLE
 #                   multi-row INSERT (one statement, three value tuples).
 #   step 2 update : a batched UPDATE sets the same column (balance) over two keys
 #                   in one statement via an `id in (?, ?)` predicate.
 #
 # This reuses the write-sequence machinery (apply the ordered golden DML to an
 # empty table, then assert the resulting table state) for the NON-temporal batched
-# case. Proving the batched forms by the rows they leave behind is the observable
-# contract: "buffered writes flush as set-based SQL" is verified against real data,
-# not merely asserted in prose.
+# case. The subject is the NON-VERSIONED Wallet (models/wallet.yaml): the readless
+# batched forms are honest only for a non-versioned entity — a versioned entity's
+# set-based update MUST materialize into per-object version-advancing updates
+# (M10 / ADR 0031), so the batched forms cannot apply to it.
 #
-# Resulting state: accounts 10/11/12 inserted; 10 and 11 then re-balanced to 500.00
+# Resulting state: wallets 10/11/12 inserted; 10 and 11 then re-balanced to 500.00
 # by the batched update; 12 unchanged at 30.00.
-model: models/account.yaml
+model: models/wallet.yaml
 tags: [m8, m3, batched-write, write-sequence, transactions cache, slice-mvp-1]
 writeSequence:
   - mutation: insert
-    entity: Account
+    entity: Wallet
     statements: 1
     note: three buffered inserts collapse into one multi-row INSERT
   - mutation: update
-    entity: Account
+    entity: Wallet
     statements: 1
     note: a batched UPDATE over two keys in a single statement
 goldenSql:
   postgres:
-    - insert into account(id, owner, balance, version) values (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)
-    - update account set balance = ? where id in (?, ?)
+    - insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
+    - update wallet set balance = ? where id in (?, ?)
 binds:
-  - [10, Mira, 100.00, 1, 11, Omar, 20.00, 1, 12, Nell, 30.00, 1]
+  - [10, Mira, 100.00, 11, Omar, 20.00, 12, Nell, 30.00]
   - [500.00, 10, 11]
 roundTrips: 2
 expectedTableState:
-  account:
+  wallet:
     - id: 10
       owner: Mira
       balance: 500.00
-      version: 1
     - id: 11
       owner: Omar
       balance: 500.00
-      version: 1
     - id: 12
       owner: Nell
       balance: 30.00
-      version: 1
