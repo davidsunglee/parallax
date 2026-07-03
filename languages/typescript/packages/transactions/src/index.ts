@@ -15,7 +15,7 @@ export {
   multiRowInsert,
   uniformUpdate,
 } from "./batch.js";
-export { appendReadLock } from "./read-lock.js";
+export { appendReadLock, ParallaxUnlockableReadError } from "./read-lock.js";
 export {
   type BatchMutation,
   combineWrites,

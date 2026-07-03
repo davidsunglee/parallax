@@ -17,11 +17,53 @@
 import { readLockSuffix } from "@parallax/dialect";
 
 /**
+ * Thrown when a read whose result shape cannot legally carry a row-level lock is
+ * asked to take the M8 shared read lock.
+ *
+ * A SQL `FOR SHARE` / `FOR UPDATE` row-locking clause locks the **base rows** a
+ * statement reads, so the SQL standard — and both Postgres and MariaDB — reject it
+ * on a result whose rows are not base rows: a `DISTINCT`, `GROUP BY`, or aggregate
+ * projection has no single base row to lock (Postgres errors with *"FOR SHARE is
+ * not allowed with DISTINCT clause"*). Rather than append the suffix and emit SQL
+ * the database rejects at execution time, the lock seam rejects it here with a
+ * clear diagnostic so the caller learns the boundary at the API surface.
+ */
+export class ParallaxUnlockableReadError extends Error {
+  constructor(reason: string) {
+    super(
+      `cannot take the in-transaction shared read lock on this read: ${reason}. A row lock ` +
+        `applies to base rows, so a locked in-transaction read cannot use 'distinct' (nor a ` +
+        `grouped / aggregate result). Read it outside the unit of work, or drop 'distinct'.`,
+    );
+    this.name = "ParallaxUnlockableReadError";
+    Object.setPrototypeOf(this, ParallaxUnlockableReadError.prototype);
+  }
+}
+
+/**
+ * A leading `select distinct` projection — the canonical distinct read shape the
+ * M3 compiler emits (`0226`: `select distinct t0.…`). The canonical SQL is always
+ * lowercase, but the match is case-insensitive so a future dialect's casing cannot
+ * slip an unlockable read past the guard.
+ */
+const DISTINCT_PROJECTION = /^\s*select\s+distinct\b/i;
+
+/**
  * Append the shared read-lock suffix to a compiled read, qualified by the root
  * alias (`t0`) and placed AFTER every other clause. The compiled `sql` is the
  * plain read (`select … where …`); the returned SQL is that read followed by the
  * dialect's lock suffix.
+ *
+ * A read whose result shape cannot carry a row lock (a `distinct` projection —
+ * the one lock-incompatible shape the developer `find` API can produce today) is
+ * rejected with {@link ParallaxUnlockableReadError} rather than suffixed into SQL
+ * the database would reject. Both `find(pred, { distinct: true })` inside a
+ * `locking` transaction (flat and deep-fetch root) funnel through here, so the
+ * guard covers every locked read path in one place.
  */
 export function appendReadLock(sql: string, alias = "t0"): string {
+  if (DISTINCT_PROJECTION.test(sql)) {
+    throw new ParallaxUnlockableReadError("the read projects 'distinct'");
+  }
   return `${sql} ${readLockSuffix(alias)}`;
 }
