@@ -3,14 +3,21 @@
  * batched-flush + read-lock SQL discipline, in isolation from the metamodel and a
  * database.
  *
- * Pins the exact canonical DML each batched form emits (the `0604` / `0612` /
- * `0613` goldens) and the `0603` read-lock suffix:
+ * Pins the exact canonical DML each batched form emits — the `0604` / `0613`
+ * wallet-shaped goldens (plus the single-row insert form) — and the `0603`
+ * read-lock suffix:
  *
  *  - buffered inserts collapse into ONE multi-row `INSERT` (row count from the
  *    tuple repetition);
  *  - a uniform batched update is one `set <col> = ? where pk in (?, …)`;
  *  - a non-uniform batched update is one keyed `UPDATE` per distinct key;
  *  - the shared read lock appends `for share of t0` after every other clause.
+ *
+ * The batched subject is the NON-VERSIONED `Wallet` (`id`/`owner`/`balance`),
+ * matching the corpus: the readless batched forms are honest only for a
+ * non-versioned entity — a versioned entity's set-based update MUST materialize
+ * into per-object version-advancing updates (M10 / ADR 0031), so the batched
+ * forms cannot apply to it.
  */
 import {
   appendReadLock,
@@ -23,40 +30,40 @@ import {
 } from "@parallax/transactions";
 import { describe, expect, it } from "vitest";
 
-/** The `account` batched-write target (id/owner/balance/version, pk id). */
-const ACCOUNT: BatchTarget = {
-  table: "account",
-  columns: ["id", "owner", "balance", "version"],
+/** The `wallet` batched-write target (id/owner/balance, pk id) — the corpus 0604/0613 shape. */
+const WALLET: BatchTarget = {
+  table: "wallet",
+  columns: ["id", "owner", "balance"],
   pkColumn: "id",
 };
 
 describe("batched insert (multi-row INSERT)", () => {
   it("collapses three buffered inserts into one 3-tuple INSERT (0604)", () => {
-    expect(multiRowInsert(ACCOUNT, 3)).toBe(
-      "insert into account(id, owner, balance, version) values (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)",
+    expect(multiRowInsert(WALLET, 3)).toBe(
+      "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)",
     );
   });
 
-  it("renders a single-row INSERT for one row (an FK-ordered insert, 0612)", () => {
-    expect(multiRowInsert(ACCOUNT, 1)).toBe(
-      "insert into account(id, owner, balance, version) values (?, ?, ?, ?)",
+  it("renders a single-row INSERT for one row (the single-tuple degenerate form)", () => {
+    expect(multiRowInsert(WALLET, 1)).toBe(
+      "insert into wallet(id, owner, balance) values (?, ?, ?)",
     );
   });
 
   it("rejects a non-positive row count", () => {
-    expect(() => multiRowInsert(ACCOUNT, 0)).toThrow(/at least one row/);
+    expect(() => multiRowInsert(WALLET, 0)).toThrow(/at least one row/);
   });
 });
 
 describe("batched update forms", () => {
   it("renders the uniform `pk in (…)` form over two keys (0604 step 2)", () => {
-    expect(uniformUpdate(ACCOUNT, "balance", 2)).toBe(
-      "update account set balance = ? where id in (?, ?)",
+    expect(uniformUpdate(WALLET, "balance", 2)).toBe(
+      "update wallet set balance = ? where id in (?, ?)",
     );
   });
 
   it("renders one keyed UPDATE for the per-key form (0613)", () => {
-    expect(keyedUpdate(ACCOUNT, "balance")).toBe("update account set balance = ? where id = ?");
+    expect(keyedUpdate(WALLET, "balance")).toBe("update wallet set balance = ? where id = ?");
   });
 });
 
@@ -65,13 +72,13 @@ describe("combineWrites — the unit-of-work planner", () => {
     const steps: WriteStep[] = [
       {
         mutation: "insert",
-        target: ACCOUNT,
+        target: WALLET,
         statements: 1,
-        binds: [[10, "Mira", "100.00", 1, 11, "Omar", "20.00", 1, 12, "Nell", "30.00", 1]],
+        binds: [[10, "Mira", "100.00", 11, "Omar", "20.00", 12, "Nell", "30.00"]],
       },
       {
         mutation: "update",
-        target: ACCOUNT,
+        target: WALLET,
         statements: 1,
         binds: [["500.00", 10, 11]],
         setColumn: "balance",
@@ -79,8 +86,8 @@ describe("combineWrites — the unit-of-work planner", () => {
     ];
     const planned = combineWrites(steps);
     expect(planned.map((p) => p.sql)).toEqual([
-      "insert into account(id, owner, balance, version) values (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)",
-      "update account set balance = ? where id in (?, ?)",
+      "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)",
+      "update wallet set balance = ? where id in (?, ?)",
     ]);
     expect(planned[1]?.binds).toEqual(["500.00", 10, 11]);
   });
@@ -88,7 +95,7 @@ describe("combineWrites — the unit-of-work planner", () => {
   it("plans 0613: one keyed UPDATE per distinct key (statements: 2)", () => {
     const step: WriteStep = {
       mutation: "update",
-      target: ACCOUNT,
+      target: WALLET,
       statements: 2,
       binds: [
         ["111.00", 1],
@@ -98,8 +105,8 @@ describe("combineWrites — the unit-of-work planner", () => {
     };
     const planned = combineWrites([step]);
     expect(planned.map((p) => p.sql)).toEqual([
-      "update account set balance = ? where id = ?",
-      "update account set balance = ? where id = ?",
+      "update wallet set balance = ? where id = ?",
+      "update wallet set balance = ? where id = ?",
     ]);
     expect(planned.map((p) => p.binds)).toEqual([
       ["111.00", 1],
@@ -110,9 +117,9 @@ describe("combineWrites — the unit-of-work planner", () => {
   it("rejects an insert whose bind arity is not a multiple of the columns", () => {
     const step: WriteStep = {
       mutation: "insert",
-      target: ACCOUNT,
+      target: WALLET,
       statements: 1,
-      binds: [[1, "Ada", "10.00"]], // 3 values, 4 columns
+      binds: [[1, "Ada"]], // 2 values, 3 columns
     };
     expect(() => combineWrites([step])).toThrow(/not a multiple/);
   });

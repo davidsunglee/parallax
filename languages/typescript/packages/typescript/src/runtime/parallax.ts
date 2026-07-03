@@ -225,9 +225,19 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     return [...pkNames, ...fromNames];
   }
 
-  /** Execute a deep-fetch operation, returning the decorated managed graph + round trips. */
+  /**
+   * Execute a deep-fetch operation, returning the decorated managed graph + round
+   * trips. In a transaction the ROOT read carries the SAME read context a flat read
+   * does — the M8 shared lock in `locking` mode and the M10 observed-version
+   * recording — so an included versioned root can be updated without a spurious
+   * `ParallaxReadBeforeWriteError`. On the root handle both are inert (no lock, no
+   * recording).
+   */
   private executeGraph(operation: Operation): Promise<DeepFetchGraph> {
-    return executeDeepFetch(this.metamodel, operation, this.database);
+    return executeDeepFetch(this.metamodel, operation, this.database, {
+      lockReads: this.lockReads,
+      onObserved: this.onObserved,
+    });
   }
 }
 

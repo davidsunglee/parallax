@@ -3,7 +3,7 @@
  * corpus (`06xx` + `07xx`), Docker-free.
  *
  * Drives the adapter's `runCompile` — the same path the CLI exercises — over the
- * ten `slice-mvp-1` `06xx`/`07xx` cases, asserting the emitted SQL +
+ * eleven `slice-mvp-1` `06xx`/`07xx` cases, asserting the emitted SQL +
  * binds equal the golden BY TEXT. The four shapes this slice exercises for the
  * first time:
  *

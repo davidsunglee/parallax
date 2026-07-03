@@ -68,6 +68,7 @@ function imports(model: CodegenModel): string {
       "  Predicate,\n" +
       "  ToManyRelationshipExpression,\n" +
       "  type FindOptions,\n" +
+      "  type TransactionOptions,\n" +
       '} from "@parallax/typescript";',
   );
   // The public runtime types the barrel re-exports for applications (spec §2.1).
@@ -196,8 +197,11 @@ function handleType(model: CodegenModel): string {
     "/** The configured, typed Parallax handle (`px`, spec §2.2). */",
     "export interface TypedParallax {",
     finders,
-    "  /** Closure-demarcated unit of work (spec §4). */",
-    "  transaction<T>(body: (tx: TypedParallaxTransaction) => Promise<T>): Promise<T>;",
+    "  /** Closure-demarcated unit of work (spec §4); `options` selects the M8 strategy. */",
+    "  transaction<T>(",
+    "    body: (tx: TypedParallaxTransaction) => Promise<T>,",
+    "    options?: TransactionOptions,",
+    "  ): Promise<T>;",
     "}",
     "",
     "/** The typed in-transaction handle (`tx`, spec §4). */",
@@ -236,13 +240,16 @@ function factory(model: CodegenModel, descriptorJson: string): string {
     "  const base: Parallax = createParallax({ ...options, descriptor: DESCRIPTOR });",
     "  return {",
     finderAssignments,
-    "    transaction<T>(body: (tx: TypedParallaxTransaction) => Promise<T>): Promise<T> {",
+    "    transaction<T>(",
+    "      body: (tx: TypedParallaxTransaction) => Promise<T>,",
+    "      options?: TransactionOptions,",
+    "    ): Promise<T> {",
     "      return base.transaction((tx: ParallaxTransaction) => {",
     "        const typed: TypedParallaxTransaction = {",
     txFinderAssignments,
     "        };",
     "        return body(typed);",
-    "      });",
+    "      }, options);",
     "    },",
     "  };",
     "}",
