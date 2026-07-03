@@ -105,6 +105,23 @@ export class EntityMetadata {
     return this.entity.attributes.find((attr) => attr.column === processing.fromColumn);
   }
 
+  /**
+   * The processing-axis `to` attribute (`out_z`), if this entity has a processing
+   * axis. This is the CURRENT-MILESTONE marker for a processing-axis temporal entity
+   * (M7/M10): the current row is the one whose processing-to value is `infinity` (the
+   * open upper bound). Recording the observed processing-from FILTERS on this so a
+   * multi-milestone as-of/history read does not overwrite the current observation
+   * with a closed milestone's `in_z`. `undefined` for a non-temporal or business-only
+   * entity.
+   */
+  processingToAttribute(): NormalizedAttribute | undefined {
+    const processing = this.entity.asOfAttributes.find((axis) => axis.axis === "processing");
+    if (processing === undefined) {
+      return undefined;
+    }
+    return this.entity.attributes.find((attr) => attr.column === processing.toColumn);
+  }
+
   /** The temporal dimensions (one for unitemporal, two for bitemporal). */
   asOfAttributes(): readonly NormalizedAsOfAttribute[] {
     return this.entity.asOfAttributes;
