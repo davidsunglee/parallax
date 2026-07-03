@@ -49,17 +49,28 @@ interface DeepFetchBody {
 }
 
 /**
- * The in-transaction read context threaded into a deep fetch, so the ROOT read
- * participates in the unit of work exactly like a flat read does (spec §3, M8/M10):
- * a `locking`-mode read takes the shared row lock, and the materialized root rows
- * record the versions the unit of work observed. The default (an out-of-transaction
- * read, or a root-handle read) takes no lock and records nothing.
+ * The in-transaction read context threaded into a deep fetch, so EVERY fetched
+ * level — the root AND each included child — participates in the unit of work
+ * exactly like a flat read does (spec §3, M8/M10): a `locking`-mode read takes the
+ * shared row lock, and the materialized rows record the versions the unit of work
+ * observed. The default (an out-of-transaction read, or a root-handle read) takes
+ * no lock and records nothing.
  */
 export interface DeepFetchReadContext {
-  /** Append the M8 shared read lock to the ROOT read (a `locking`-mode in-transaction read). */
+  /**
+   * Append the M8 shared read lock to every fetched level (a `locking`-mode
+   * in-transaction read): the root read AND each child-level `in`-membership read.
+   * A deep-fetch child is an in-transaction read too, so a concurrent writer cannot
+   * mutate an included row out from under a later read-then-write.
+   */
   readonly lockReads: boolean;
-  /** Record the versions the materialized ROOT rows observed (the M10 observed-version map). */
-  readonly onObserved: ((rows: readonly ParallaxRow[]) => void) | undefined;
+  /**
+   * Record the versions the materialized rows of a fetched level observed (the M10
+   * observed-version map), identified by that level's entity. Called once per
+   * fetched entity (root + each included level); a non-versioned entity records
+   * nothing. Absent on a root-handle / out-of-transaction read.
+   */
+  readonly onObserved: ((entity: EntityMetadata, rows: readonly ParallaxRow[]) => void) | undefined;
 }
 
 /** The default read context: no lock, no observed-version recording (out-of-transaction reads). */
@@ -91,20 +102,39 @@ export async function executeDeepFetch(
   // lock, exactly like the flat-read path (`0603`): the developer writes no lock SQL.
   const rootSql = readContext.lockReads ? appendReadLock(sql) : sql;
   const rootRows = [...(await database.execute(rootSql, binds as readonly unknown[]))] as Row[];
-  const tree = buildTree(metamodel, body.paths, rootPins);
+  // In a locking-mode transaction each CHILD level's `in`-membership read takes the
+  // same M8 shared lock (appended inside `compileLevel`); `lockReads` threads down.
+  const tree = buildTree(metamodel, body.paths, rootPins, readContext.lockReads);
   const result = await runDeepFetch(rootRows, tree, (levelSql, levelBinds) =>
     database.execute(levelSql, levelBinds).then((rows) => [...rows] as Row[]),
   );
 
   // Materialize the assembled graph to managed objects keyed by DSL name (10b),
-  // recursing into the attached relationship arrays / to-one peers.
-  const materialized = result.rows.map((row) => materializeNode(row, rootEntity, metamodel));
-  // Record the version this unit of work OBSERVED for each materialized root row, so
-  // a later keyed update of the versioned root gates on / advances from it (M10) and
-  // does not spuriously raise ParallaxReadBeforeWriteError — the flat path does the
-  // same via `onObserved`. (Only the root rows are recorded, mirroring a flat read.)
-  readContext.onObserved?.(materialized);
+  // recursing into the attached relationship arrays / to-one peers, and collect the
+  // materialized rows of EVERY fetched level grouped by entity (root + each included
+  // child) so the unit of work records the version each level observed (M10).
+  const observedLevels = new Map<string, ObservedLevel>();
+  const materialized = result.rows.map((row) =>
+    materializeNode(row, rootEntity, metamodel, observedLevels),
+  );
+  // Record the version this unit of work OBSERVED for each fetched versioned row, so
+  // a later keyed update of the versioned root OR of an included versioned child gates
+  // on / advances from it (M10) and does not spuriously raise ParallaxReadBeforeWriteError
+  // — every deep-fetch level participates in the read contract exactly like a flat read
+  // (the M8 lock above, the M10 observed-version recording here). A non-versioned level's
+  // rows are handed over too; the recorder no-ops for an entity with no version column.
+  if (readContext.onObserved) {
+    for (const level of observedLevels.values()) {
+      readContext.onObserved(level.entity, level.rows);
+    }
+  }
   return { rows: materialized, roundTrips: result.roundTrips };
+}
+
+/** The materialized rows of one fetched level, grouped by entity for observed-version recording. */
+interface ObservedLevel {
+  readonly entity: EntityMetadata;
+  readonly rows: ParallaxRow[];
 }
 
 /**
@@ -112,9 +142,19 @@ export async function executeDeepFetch(
  * into any attached relationship values (arrays for to-many, an object / `null`
  * for to-one). A relationship key is renamed to its DSL name (it already IS the
  * DSL relationship name, since the tree decorates by `node.name`).
+ *
+ * Each materialized row is also accumulated into `observed` under its entity, so
+ * the caller can record the version every fetched level observed (M10) — not only
+ * the root's.
  */
-function materializeNode(row: Row, entity: EntityMetadata, metamodel: Metamodel): ParallaxRow {
+function materializeNode(
+  row: Row,
+  entity: EntityMetadata,
+  metamodel: Metamodel,
+  observed: Map<string, ObservedLevel>,
+): ParallaxRow {
   const scalar = rowMaterializer(entity)(scalarColumns(row, entity));
+  recordObservedRow(observed, entity, scalar);
   for (const rel of entity.relationships()) {
     if (!(rel.name in row)) {
       continue;
@@ -122,14 +162,28 @@ function materializeNode(row: Row, entity: EntityMetadata, metamodel: Metamodel)
     const child = metamodel.entity(rel.relatedEntity);
     const value = row[rel.name];
     if (Array.isArray(value)) {
-      scalar[rel.name] = value.map((c) => materializeNode(c as Row, child, metamodel));
+      scalar[rel.name] = value.map((c) => materializeNode(c as Row, child, metamodel, observed));
     } else if (value && typeof value === "object") {
-      scalar[rel.name] = materializeNode(value as Row, child, metamodel);
+      scalar[rel.name] = materializeNode(value as Row, child, metamodel, observed);
     } else {
       scalar[rel.name] = value ?? null;
     }
   }
   return scalar;
+}
+
+/** Accumulate one materialized row under its entity for later observed-version recording. */
+function recordObservedRow(
+  observed: Map<string, ObservedLevel>,
+  entity: EntityMetadata,
+  row: ParallaxRow,
+): void {
+  const level = observed.get(entity.name);
+  if (level) {
+    level.rows.push(row);
+  } else {
+    observed.set(entity.name, { entity, rows: [row] });
+  }
 }
 
 /** The physical scalar columns of a decorated row (relationship keys stripped). */
@@ -201,6 +255,7 @@ function buildTree(
   metamodel: Metamodel,
   paths: readonly (readonly string[])[],
   rootPins: AxisPins,
+  lockReads: boolean,
 ): readonly DeepFetchNode[] {
   const roots: NodeBuilder[] = [];
   for (const path of paths) {
@@ -214,7 +269,7 @@ function buildTree(
       siblings = node.children;
     }
   }
-  return roots.map((node) => materialize(metamodel, node, rootPins));
+  return roots.map((node) => materialize(metamodel, node, rootPins, lockReads));
 }
 
 /** A mutable tree node accumulated while merging shared path prefixes. */
@@ -233,6 +288,7 @@ function materialize(
   metamodel: Metamodel,
   builder: NodeBuilder,
   rootPins: AxisPins,
+  lockReads: boolean,
 ): DeepFetchNode {
   const [className, relName] = splitRef(builder.relRef);
   const sourceEntity = metamodel.entity(className);
@@ -248,7 +304,13 @@ function materialize(
     const childSchema = new RuntimeSchema(metamodel, relatedEntity);
     const levelOp = childLevelOperation(relatedEntity, relatedAttr, keys, relationship);
     const compiled = compile(levelOp, childSchema, rootPins);
-    return { sql: compiled.sql, binds: compiled.binds as readonly unknown[] };
+    // In a locking-mode transaction the child level read takes the automatic M8
+    // shared row lock too, exactly like the root and the flat-read path (`0603`):
+    // the child statement roots the child table at `t0`, so `for share of t0`
+    // qualifies it. A child level is a plain `in`-membership read (never `distinct`),
+    // so the lock append is always legal here.
+    const levelSql = lockReads ? appendReadLock(compiled.sql) : compiled.sql;
+    return { sql: levelSql, binds: compiled.binds as readonly unknown[] };
   };
 
   return {
@@ -257,7 +319,7 @@ function materialize(
     parentColumn,
     childColumn,
     compileLevel,
-    children: builder.children.map((child) => materialize(metamodel, child, rootPins)),
+    children: builder.children.map((child) => materialize(metamodel, child, rootPins, lockReads)),
   };
 }
 

@@ -29,6 +29,7 @@ import {
   ParallaxOptimisticLockError,
   ParallaxReadBeforeWriteError,
   type ParallaxRow,
+  ParallaxUnlockableReadError,
   Predicate,
 } from "../src/index.js";
 
@@ -91,10 +92,13 @@ const ACCOUNT_ROW: ParallaxRow = { id: 2, owner: "Linus", balance: "250.00", ver
 
 /**
  * A synthetic VERSIONED root (`Vault`) that carries a to-many relationship
- * (`entries`), so a `find(pred, { includes: [Vault.entries] })` compiles to a
- * DEEP FETCH rooted at the versioned entity. The corpus versioned model (`Account`)
- * declares no relationship, so this is the only way to exercise a deep-fetch read of
- * a versioned root — the read-context wiring the flat path already has.
+ * (`entries`) to a VERSIONED child (`VaultEntry`), so a `find(pred, { includes:
+ * [Vault.entries] })` compiles to a DEEP FETCH whose root AND included child are
+ * both versioned. The corpus versioned model (`Account`) declares no relationship
+ * and is never a relationship target, so this synthetic model is the only way to
+ * exercise a deep-fetch read of a versioned root (and a versioned included child) —
+ * the M8 lock + M10 observed-version recording the flat path already has, applied to
+ * every fetched level.
  */
 const VAULT_DESCRIPTOR = {
   entities: [
@@ -133,6 +137,7 @@ const VAULT_DESCRIPTOR = {
         { name: "id", type: "int64", column: "id", primaryKey: true, pkGenerator: "none" },
         { name: "vaultId", type: "int64", column: "vault_id" },
         { name: "memo", type: "string", column: "memo", maxLength: 64 },
+        { name: "version", type: "int32", column: "version", optimisticLocking: true },
       ],
       relationships: [
         {
@@ -373,11 +378,12 @@ describe("deep-fetch in-transaction read carries the M8/M10 read context", () =>
       (q) => q.sql.startsWith("select") && q.sql.includes("from vault t0"),
     );
     expect(rootRead?.sql.endsWith("for share of t0")).toBe(true);
-    // (b) the child level read participates in the deep fetch but takes no lock
-    //     (only the root read is locked — the minimal, flat-consistent fix).
+    // (b) the CHILD level read is an in-transaction read too, so it takes the SAME M8
+    //     shared lock (a concurrent writer cannot mutate an included row out from
+    //     under a later read-then-write) — every fetched level participates.
     const childRead = db.queries.find((q) => q.sql.includes("from vault_entry"));
     expect(childRead).toBeDefined();
-    expect(childRead?.sql.includes("for share")).toBe(false);
+    expect(childRead?.sql.endsWith("for share of t0")).toBe(true);
     // (c) the versioned update advanced the OBSERVED version (1 -> 2), ungated, applied.
     const update = db.queries.find((q) => q.sql.includes("update vault "));
     expect(update?.sql).toContain("set balance = ?, version = ? where id = ?");
@@ -409,5 +415,98 @@ describe("deep-fetch in-transaction read carries the M8/M10 read context", () =>
     expect(update?.sql).toContain("set balance = ?, version = ? where id = ? and version = ?");
     expect(update?.binds).toEqual(["500.00", 2, 2, 1]);
     expect(result.affectedRows).toBe(1);
+  });
+
+  // A single stub row that serves as BOTH the Vault root row and the VaultEntry child
+  // row: its `vault_id` equals the root `id`, so the fetched child attaches to the root
+  // and is materialized (only attached children are recorded).
+  const NESTED_ROW: ParallaxRow = {
+    id: 2,
+    owner: "Vera",
+    balance: "250.00",
+    version: 1,
+    vault_id: 2,
+    memo: "note",
+  };
+  const vaultEntryPk = (id: number): Predicate =>
+    new Predicate({ eq: { attr: "VaultEntry.id", value: id } });
+
+  it("locking mode: records an included versioned CHILD's version, so a later child update advances it (no read-before-write)", async () => {
+    const db = new StubDatabase([{ ...NESTED_ROW }]);
+    const px = createParallax({ descriptor: VAULT_DESCRIPTOR, database: db });
+
+    // Deep-fetch the versioned root WITH its versioned child, THEN update the CHILD by
+    // its own PK. Before child-level observed recording, the child version was never
+    // observed, so this threw ParallaxReadBeforeWriteError.
+    const result = await px.transaction(async (tx) => {
+      await tx
+        .entity("Vault")
+        .find(vaultPk(2), { includes: [VAULT_ENTRIES] })
+        .toArray();
+      return tx.entity("VaultEntry").update(vaultEntryPk(2), {
+        set: [{ attr: "memo", value: "changed" }],
+      });
+    });
+
+    // The child update advanced the OBSERVED child version (1 -> 2), ungated (locking).
+    const update = db.queries.find((q) => q.sql.includes("update vault_entry"));
+    expect(update?.sql).toContain("set memo = ?, version = ? where id = ?");
+    expect(update?.sql).not.toContain("and version = ?");
+    expect(update?.binds).toEqual(["changed", 2, 2]);
+    expect(result.affectedRows).toBe(1);
+  });
+
+  it("optimistic mode: an included versioned CHILD's update GATES on the observed child version", async () => {
+    const db = new StubDatabase([{ ...NESTED_ROW }]);
+    const px = createParallax({ descriptor: VAULT_DESCRIPTOR, database: db });
+
+    const result = await px.transaction(
+      async (tx) => {
+        await tx
+          .entity("Vault")
+          .find(vaultPk(2), { includes: [VAULT_ENTRIES] })
+          .toArray();
+        return tx.entity("VaultEntry").update(vaultEntryPk(2), {
+          set: [{ attr: "memo", value: "changed" }],
+        });
+      },
+      { concurrency: "optimistic" },
+    );
+
+    // The gated child update binds the observed child version (1) the deep fetch recorded.
+    const update = db.queries.find((q) => q.sql.includes("update vault_entry"));
+    expect(update?.sql).toContain("set memo = ?, version = ? where id = ? and version = ?");
+    expect(update?.binds).toEqual(["changed", 2, 2, 1]);
+    expect(result.affectedRows).toBe(1);
+  });
+});
+
+describe("locked in-transaction read rejects an unlockable result shape", () => {
+  it("locking mode: a `distinct` read is rejected with a diagnostic, not illegal `for share` SQL", async () => {
+    const db = new StubDatabase([ACCOUNT_ROW]);
+    const px = createParallax({ descriptor: ACCOUNT, database: db });
+
+    // `distinct` + a locking transaction would suffix `for share` onto a `select
+    // distinct`, which Postgres/MariaDB reject. The seam refuses it at the API surface.
+    await expect(
+      px.transaction(async (tx) =>
+        tx.entity("Account").find(accountPk(2), { distinct: true }).toArray(),
+      ),
+    ).rejects.toBeInstanceOf(ParallaxUnlockableReadError);
+    // No illegal SQL reached the database — the guard fired before any round trip.
+    expect(db.queries.some((q) => q.sql.includes("for share"))).toBe(false);
+  });
+
+  it("optimistic mode: a `distinct` read is fine — no lock is appended", async () => {
+    const db = new StubDatabase([ACCOUNT_ROW]);
+    const px = createParallax({ descriptor: ACCOUNT, database: db });
+
+    await px.transaction(
+      async (tx) => tx.entity("Account").find(accountPk(2), { distinct: true }).toArray(),
+      { concurrency: "optimistic" },
+    );
+    const read = db.queries.find((q) => q.sql.includes("select distinct"));
+    expect(read).toBeDefined();
+    expect(read?.sql.includes("for share")).toBe(false);
   });
 });
