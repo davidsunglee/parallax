@@ -128,6 +128,18 @@ group("default surfacing", () => {
     expect(order.processingFromAttribute()).toBeUndefined();
   });
 
+  it("resolves the processing-to column (out_z), the current-milestone marker, M7/M10", () => {
+    const balance = Metamodel.fromDescriptor(loadDescriptor("balance.yaml")).entity("Balance");
+    // The current milestone is the row whose processing-to (out_z) is infinity; observed
+    // recording filters on it so a closed milestone cannot overwrite the current in_z.
+    const outZ = balance.processingToAttribute();
+    expect(outZ?.name).toBe("processingTo");
+    expect(outZ?.column).toBe("out_z");
+    // A non-temporal entity has no processing axis, so no to-attribute.
+    const order = Metamodel.fromDescriptor(loadDescriptor("orders.yaml")).entity("Order");
+    expect(order.processingToAttribute()).toBeUndefined();
+  });
+
   it("rejects optimisticLocking + asOfAttributes on one entity (invalid composition, M1/M7/M10)", () => {
     // A temporal entity DERIVES its optimistic key from the processing-from column, so
     // combining an explicit `optimisticLocking` attribute with `asOfAttributes` is invalid.
