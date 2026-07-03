@@ -12,5 +12,6 @@ export {
   classifyOutcome,
   type OptimisticOutcome,
   type VersionedTarget,
+  versionAdvancingUpdate,
   versionedUpdate,
 } from "./optimistic.js";

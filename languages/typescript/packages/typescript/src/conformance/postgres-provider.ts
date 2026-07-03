@@ -6,7 +6,7 @@
  * Since Phase 10a the provider **delegates SQL execution to the shipped
  * `@parallax/db-postgres` adapter** (bound to the container URI) instead of
  * driving porsager itself. This keeps the harness on the exact production path:
- * the same adapter a real application imports is the one the whole 100-case slice
+ * the same adapter a real application imports is the one the whole 101-case slice
  * runs through. The provider owns only the two grader-side concerns the adapter
  * deliberately does not:
  *
@@ -85,17 +85,38 @@ export function renderFixtureInsert(table: string, columns: readonly string[]): 
 export class PostgresProvider implements CompatibilityDatabaseProvider {
   readonly dialect = POSTGRES_DIALECT;
 
+  /** A lazily-opened SECOND adapter (independent connection) modeling a peer/concurrent writer. */
+  private peerDb: PostgresDatabase | undefined;
+
   private constructor(
     private readonly container: StartedPostgreSqlContainer,
     /** The shipped adapter the harness delegates execution to (Phase 10a). */
     private readonly db: PostgresDatabase,
+    /** The container connection URI (for opening an independent peer connection). */
+    private readonly connectionUri: string,
   ) {}
 
   /** Boot a pinned Postgres container and bind the shipped adapter to it. */
   static async start(): Promise<PostgresProvider> {
     const container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
-    const db = PostgresDatabase.fromConnectionString(container.getConnectionUri());
-    return new PostgresProvider(container, db);
+    const uri = container.getConnectionUri();
+    const db = PostgresDatabase.fromConnectionString(uri);
+    return new PostgresProvider(container, db, uri);
+  }
+
+  /**
+   * A SECOND adapter over an INDEPENDENT connection to the same container — a
+   * concurrent writer's connection. The shipped adapter's pool is single-connection
+   * (`max: 1`), so a write issued through {@link database} while a `px.transaction`
+   * holds its connection would deadlock; the optimistic-lock cases model the
+   * concurrent writer (the `precondition`) here instead, committing on its own
+   * connection between the unit of work's read and its gated write.
+   */
+  get peer(): PostgresDatabase {
+    if (this.peerDb === undefined) {
+      this.peerDb = PostgresDatabase.fromConnectionString(this.connectionUri);
+    }
+    return this.peerDb;
   }
 
   /** The adapter's porsager pool — used only for grader-side provisioning. */
@@ -184,6 +205,7 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
   }
 
   async close(): Promise<void> {
+    await this.peerDb?.close();
     await this.db.close();
     await this.container.stop();
   }

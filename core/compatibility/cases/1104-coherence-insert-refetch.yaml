@@ -23,8 +23,8 @@ coherence:
         attr: Account.owner
         value: Trent
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
     binds: [Trent]
     note: seed read on node B — Trent does not exist yet, so the result is empty
     observeRows: []
@@ -42,9 +42,9 @@ coherence:
         attr: Account.owner
         value: Trent
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.owner = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
     binds: [Trent]
     note: node B re-fetches after re-fetch invalidation and MUST observe A's committed insert
     observeRows:
-      - { id: 8, owner: Trent, balance: 64.00 }
+      - { id: 8, owner: Trent, balance: 64.00, version: 1 }

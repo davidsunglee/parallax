@@ -4,35 +4,37 @@
 # statement with an IN predicate when the new values are uniform." 0604 proves the
 # uniform `id in (?, ?)` form (one statement, one shared value). This pins the
 # complementary per-key form: when each key gets a DIFFERENT new value, the batch
-# flushes one keyed UPDATE per distinct key. Fixtures are loaded first; accounts 1
-# and 2 receive different balances, account 3 is untouched.
-model: models/account.yaml
+# flushes one keyed UPDATE per distinct key. Fixtures are loaded first; wallets 1
+# and 2 receive different balances, wallet 3 is untouched.
+#
+# The subject is the NON-VERSIONED Wallet (models/wallet.yaml): a readless batched
+# UPDATE per key is honest only for a non-versioned entity — a versioned entity's
+# set-based update MUST materialize into per-object version-advancing updates
+# (M10 / ADR 0031).
+model: models/wallet.yaml
 tags: [m8, m3, batched-write, write-sequence, per-key, transactions cache, slice-mvp-1]
 loadFixtures: true
 writeSequence:
   - mutation: update
-    entity: Account
+    entity: Wallet
     statements: 2
     note: two distinct keys take DIFFERENT new balances ⇒ one keyed UPDATE each
 goldenSql:
   postgres:
-    - update account set balance = ? where id = ?
-    - update account set balance = ? where id = ?
+    - update wallet set balance = ? where id = ?
+    - update wallet set balance = ? where id = ?
 binds:
   - [111.00, 1]
   - [222.00, 2]
 roundTrips: 2
 expectedTableState:
-  account:
+  wallet:
     - id: 1
       owner: Ada
       balance: 111.00
-      version: 1
     - id: 2
       owner: Linus
       balance: 222.00
-      version: 1
     - id: 3
       owner: Grace
       balance: 10.00
-      version: 1

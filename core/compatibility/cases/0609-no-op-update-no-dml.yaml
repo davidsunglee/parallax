@@ -1,0 +1,45 @@
+# No-op update issues no DML (M10): a versioned update that changes no attribute
+# emits NO statement — zero round trips.
+#
+# The old always-write rule (removed with case 0707) had a versioned UPDATE bump
+# the version even when no domain field changed. That rule is replaced: the
+# version advances on every UPDATE an implementation ISSUES, but an update whose
+# `set` changes NO attribute issues no DML at all. A no-domain-change write does
+# not need to bump the version — a concurrent editor advances it itself — so the
+# only effect the old rule had was overhead writes and spurious conflicts.
+#
+# The scenario proves the observable: a no-op write step costs ZERO round trips
+# and lists no golden SQL (mirroring a cache-hit read step). Because nothing was
+# written, the cache is not invalidated, so the follow-up find is a cache HIT that
+# reuses the first find's rows — the row is unchanged (balance 250.00, version 1).
+#   step 0 find  : cache MISS — read account 2 (Linus, 250.00, version 1), 1 round trip
+#   step 1 write : a versioned update whose set changes nothing ⇒ NO DML, 0 round trips
+#   step 2 find  : cache HIT (0 round trips) — the SAME row, unchanged
+# roundTrips = 1 (the single find; the no-op write and the hit cost nothing).
+model: models/account.yaml
+tags: [m10, m8, optimistic-locking, no-op, scenario, slice-mvp-1]
+roundTrips: 1
+scenario:
+  - find:
+      eq:
+        attr: Account.id
+        value: 2
+    roundTrips: 1
+    note: cache MISS — read account 2 (balance 250.00, version 1)
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+    binds: [2]
+    expectRows:
+      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+  - write: update
+    roundTrips: 0
+    note: a versioned update whose set changes no attribute issues NO DML (no golden SQL)
+  - find:
+      eq:
+        attr: Account.id
+        value: 2
+    roundTrips: 0
+    sameObjectAs: 0
+    note: cache HIT — the no-op did not invalidate the cache; the row is unchanged
+    expectRows:
+      - { id: 2, owner: Linus, balance: 250.00, version: 1 }

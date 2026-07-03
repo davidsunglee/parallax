@@ -4,7 +4,7 @@
  * database?" sweep.
  *
  * One container serves every case (the provider resets the schema per case). For
- * each of the 99 tagged cases the sweep runs the adapter's `runRun` (the same
+ * each of the 101 tagged cases the sweep runs the adapter's `runRun` (the same
  * orchestration the CLI drives) with the concrete composition-root provider
  * injected, and grades the observation the case SHAPE asserts, reusing the M12
  * comparison rules (exact decimal, boolean never `== 1`, µs timestamps,
@@ -68,8 +68,8 @@ const HAS_DOCKER = dockerAvailable();
 const CASES = taggedCases();
 
 // Discovery is Docker-free; assert the exact slice size unconditionally.
-it("discovers the whole slice-mvp-1 slice (100 cases)", () => {
-  expect(CASES.length).toBe(100);
+it("discovers the whole slice-mvp-1 slice (101 cases)", () => {
+  expect(CASES.length).toBe(101);
 });
 
 group.skipIf(!HAS_DOCKER)("full-slice run lane (Testcontainers postgres:17)", () => {
@@ -111,7 +111,7 @@ group.skipIf(!HAS_DOCKER)("full-slice run lane (Testcontainers postgres:17)", ()
   it("the case-matrix report is GREEN with no residuals", () => {
     const report = matrix.report();
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(100);
+    expect(report.total).toBe(101);
     expect(report.residuals).toEqual([]);
   });
 });

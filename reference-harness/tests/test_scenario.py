@@ -38,10 +38,18 @@ def test_scenario_cases_are_discovered_and_self_describe() -> None:
         for step in case.scenario:
             assert "roundTrips" in step
             # A step is EITHER a read step (carries `find`) or a write step
-            # (carries `write` + golden DML), never both.
+            # (carries `write`), never both.
             assert ("find" in step) ^ ("write" in step)
             if "write" in step:
-                assert step.get("goldenSql"), "a write step must list golden DML"
+                # A committed / rolled-back write lists golden DML; a NO-OP write
+                # (a versioned UPDATE that changes no attribute, M10) issues no DML,
+                # so it declares roundTrips 0 and lists none — like a cache hit.
+                if step["roundTrips"] == 0:
+                    assert not step.get("goldenSql"), "a no-op write step lists no golden DML"
+                else:
+                    assert step.get("goldenSql"), (
+                        "a write step with round trips must list golden DML"
+                    )
 
 
 def test_cache_hit_scenario_has_a_zero_round_trip_step() -> None:
@@ -69,6 +77,26 @@ def test_rollback_scenario_step_is_discovered_and_self_describes() -> None:
         assert step["roundTrips"] >= 1
     # The rolled-back step's statements are counted as round trips exactly like a
     # committed write, so the count-consistency check MUST still hold.
+    _assert_scenario_count_consistency(case, "postgres")
+
+
+def test_no_op_write_scenario_step_is_discovered_and_self_describes() -> None:
+    case = next(
+        (
+            c
+            for c in _scenario_cases()
+            if any("write" in step and step["roundTrips"] == 0 for step in c.scenario)
+        ),
+        None,
+    )
+    assert case is not None, "no no-op-write scenario case discovered (0609)"
+    no_op_steps = [s for s in case.scenario if "write" in s and s["roundTrips"] == 0]
+    for step in no_op_steps:
+        # A NO-OP write (a versioned UPDATE that changes no attribute, M10) issues
+        # NO DML: it lists no golden SQL and costs zero round trips, mirroring a
+        # cache-hit read step.
+        assert not step.get("goldenSql"), "a no-op write step must list no golden DML"
+    # The zero-round-trip write step keeps the count-consistency check green.
     _assert_scenario_count_consistency(case, "postgres")
 
 

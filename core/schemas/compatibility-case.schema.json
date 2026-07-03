@@ -55,6 +55,17 @@
       "minItems": 1,
       "items": { "type": "string", "minLength": 1 }
     },
+    "uow": {
+      "description": "The unit-of-work configuration a case runs under (M8 strategy selection). Optional and descriptive: it declares the per-unit-of-work concurrency mode so a case's mode-dependent golden SQL is self-describing (`locking` — the default M8 implicit shared read lock, keyed updates advance the version with NO gate; `optimistic` — reads take no lock and every keyed update / temporal close GATES on the observed version). The harness executes the authored golden SQL either way; the block documents WHICH mode produced it. (Retry keys — `retries` / `retryOptimisticConflicts` — arrive with the boundary retry contract.)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "concurrency": {
+          "description": "The correctness strategy this unit of work selects: `locking` (default — M8 implicit shared read lock; version advances but no gate is emitted) or `optimistic` (M10 — reads take no lock; keyed updates and temporal closes gate on the observed version).",
+          "enum": ["locking", "optimistic"]
+        }
+      }
+    },
     "operation": {
       "description": "A canonical M2 algebra node (validated separately against operation.schema.json). Present on read cases; absent on writeSequence cases.",
       "type": "object"
@@ -112,8 +123,8 @@
             "required": ["find", "roundTrips"]
           },
           {
-            "description": "A write step: applies golden DML between finds. Carries golden DML, not a find. By default the DML is COMMITTED so a later find observes it (read-your-own-writes / cache invalidation); with `rollback: true` the DML is applied and then ROLLED BACK, so a later find MUST observe the ORIGINAL rows (the M8 abort contract).",
-            "required": ["write", "roundTrips", "goldenSql"]
+            "description": "A write step: applies golden DML between finds. Carries golden DML, not a find. By default the DML is COMMITTED so a later find observes it (read-your-own-writes / cache invalidation); with `rollback: true` the DML is applied and then ROLLED BACK, so a later find MUST observe the ORIGINAL rows (the M8 abort contract). A no-op write (a versioned UPDATE whose `set` changes no attribute — M10) issues NO DML: it declares `roundTrips: 0` and lists no `goldenSql`, mirroring a cache-hit read step.",
+            "required": ["write", "roundTrips"]
           }
         ],
         "properties": {
@@ -131,7 +142,7 @@
             "type": "boolean"
           },
           "roundTrips": {
-            "description": "How many database round trips this step costs. A READ cache HIT (an operation equal to an earlier step's) costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's round trips equal the committed DML statements it lists. MUST equal the number of golden SQL statements this step lists for each dialect.",
+            "description": "How many database round trips this step costs. A READ cache HIT (an operation equal to an earlier step's) costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's round trips equal the committed DML statements it lists (a no-op M10 versioned update that issues no DML costs 0 and lists no goldenSql). MUST equal the number of golden SQL statements this step lists for each dialect.",
             "type": "integer",
             "minimum": 0
           },

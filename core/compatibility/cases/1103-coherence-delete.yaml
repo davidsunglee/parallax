@@ -11,12 +11,12 @@ coherence:
         attr: Account.id
         value: 3
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
     binds: [3]
     note: seed read on node B - would cache Grace before the delete
     observeRows:
-      - { id: 3, owner: Grace, balance: 10.00 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
   - node: A
     kind: write
     goldenSql:
@@ -31,8 +31,8 @@ coherence:
         attr: Account.id
         value: 3
     goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
     binds: [3]
     note: node B re-fetches and MUST observe that Grace is gone
     observeRows: []

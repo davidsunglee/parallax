@@ -484,30 +484,52 @@ behind, not merely asserted.
 ## Optimistic-lock UPDATE (M10)
 
 When an entity declares an `optimisticLocking` version attribute (`M1`), an
-`UPDATE` against it carries the **version it read earlier** in its `where`
-clause, so a concurrent write that changed the version makes the predicate match
-**zero** rows. The canonical Postgres golden form appends the version check to
-the primary-key predicate and **bumps the version in the `set`**:
+`UPDATE` against it always **bumps the version in the `set`**, and — in
+**optimistic mode** — also **gates** on the version the unit of work observed. The
+golden form is therefore **mode-dependent** (`M8` strategy selection).
+
+**Optimistic mode** appends the version check to the primary-key predicate:
 
 ```text
 update account set balance = ?, version = ? where id = ? and version = ?
-binds: [<new-balance>, <new-version>, <pk>, <expected-version>]
+binds: [<new-balance>, <new-version>, <pk>, <observed-version>]
 ```
 
 The `where id = ? and version = ?` predicate is the conflict gate: the
-**expected version** is the value the caller read before mutating. If a
-concurrent transaction committed first (incrementing the row's version), the
-gate matches no row and the `UPDATE` affects **zero** rows — the conflict signal
-`updatedRows != 1` (`M10`). On success exactly **one** row is affected and its
-version advances, so the next reader sees the new value.
+**observed version** is the value the unit of work read before mutating (never a
+caller-authored number, `M10`). If a concurrent transaction committed first
+(incrementing the row's version), the gate matches no row and the `UPDATE`
+affects **zero** rows — the conflict signal `updatedRows != 1` (`M10`). On
+success exactly **one** row is affected and its version advances.
 
-The `set` updates the version alongside the data so every successful write
-advances the gate; the new version is carried as a `?` bind like every other
-literal (`M3` rule 4). The harness proves both halves — conflict (0 rows) and
-success (1 row) — by **applying** the golden `UPDATE` to a loaded table (after an
-optional out-of-band version mutation) and asserting the **affected-row count**
-(`M12` conflict case), so optimistic-lock conflict detection is verified against
-real data, not merely asserted.
+**Locking mode** issues the same statement **without** the version gate — the
+`M8` shared read lock, not the version, makes it correct — but still advances the
+version (the `0702` / detached-merge-back shape):
+
+```text
+update account set balance = ?, version = ? where id = ?
+binds: [<new-balance>, <new-version>, <pk>]
+```
+
+In either mode the new version is carried as a `?` bind like every other literal
+(`M3` rule 4). A versioned `UPDATE` whose `set` changes **no** attribute issues
+**no DML** at all (`M10`). The harness proves the optimistic halves — conflict (0
+rows) and success (1 row) — by **applying** the golden `UPDATE` to a loaded table
+(after an optional out-of-band version mutation) and asserting the **affected-row
+count** (`M12` conflict case), and proves the locking-mode advance by applying
+the ungated golden and asserting the resulting table state (`M12` write-sequence
+case), so both are verified against real data.
+
+### Versioned-read projection
+
+A read of a versioned entity **projects the version column** alongside the row's
+other columns, so the reader observes the current version (the value a later
+optimistic gate binds). The canonical read golden lists the version column in its
+projection like any other:
+
+```text
+select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+```
 
 ## Metamodel-extension lowering — inheritance + valueObject (M1)
 

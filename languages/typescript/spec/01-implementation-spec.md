@@ -524,10 +524,15 @@ not any named library — is the normative requirement (TS-0057).
 transaction; reads may use `px`, writes are available only through `tx`.
 
 - **Demarcation construct.** A **closure**: `await px.transaction(async tx =>
-  { … })`. `transaction` returns the callback's resolved value after the unit of
-  work flushes and commits. If the callback throws, rejects, or commit fails, the
-  transaction rolls back and the returned promise rejects. A `ParallaxTransaction`
-  is invalid after its callback completes.
+  { … }, options?)`. `transaction` returns the callback's resolved value after the
+  unit of work flushes and commits. If the callback throws, rejects, or commit
+  fails, the transaction rolls back and the returned promise rejects. A
+  `ParallaxTransaction` is invalid after its callback completes.
+- **Strategy selection.** `TransactionOptions.concurrency` (`"locking" |
+  "optimistic"`, default `"locking"`) selects the M8 correctness strategy for the
+  unit of work: `locking` takes the implicit shared read lock on in-transaction
+  reads and advances a versioned entity's version with no gate; `optimistic` takes
+  no lock and gates a versioned update on the observed version (M10).
 
   ```ts
   await px.transaction(async tx => {
@@ -545,15 +550,20 @@ transaction; reads may use `px`, writes are available only through `tx`.
 - **Unit-of-work surfacing.** There is **no public `flush` API** in V1. The
   runtime flushes at commit and uses unit-of-work state for read-your-writes
   behavior.
-- **In-transaction reads.** Reads performed through `ParallaxTransaction` use the
-  core in-transaction read-lock behavior by default; V1 does not expose
-  `lock: false`.
+- **In-transaction reads.** Reads performed through `ParallaxTransaction` in the
+  default `locking` mode take the core shared row lock automatically (the runtime
+  appends the dialect read-lock suffix); `optimistic`-mode reads take no lock. A
+  versioned read records the observed version so a later update can gate on /
+  advance from it. V1 does not expose a per-read `lock: false`.
 - **Set-based writes.** `update` / `delete` accept either a predicate or an
   unresolved `ParallaxList` target, use explicit assignment arrays (not partial
-  objects), and return result objects carrying at least `affectedRows`. A
-  managed-object write that expects exactly one versioned row and affects zero
-  rows throws `ParallaxOptimisticLockError`; optimistic-lock conflicts are
-  caller-driven and not auto-retried.
+  objects), and return result objects carrying at least `affectedRows`. On a
+  versioned entity the framework-owned version (ADR 0029) advances in both modes
+  and gates in `optimistic` mode: updating a row the unit of work never observed
+  throws `ParallaxReadBeforeWriteError`, a stale gate (zero rows) throws
+  `ParallaxOptimisticLockError`, and an update whose assignment array changes no
+  attribute issues no DML. Optimistic-lock conflicts are caller-driven and not
+  auto-retried.
 
 ### 4.1 Temporal writes (`M7`)
 

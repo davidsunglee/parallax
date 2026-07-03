@@ -312,6 +312,6 @@ def test_profile_slice_tag_count() -> None:
         tags = [t for t in doc.get("tags", []) if isinstance(t, str)]
         if _SLICE_TAG in tags:
             tagged.append(path.name)
-    assert len(tagged) == 100, (
-        f"expected exactly 100 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
+    assert len(tagged) == 101, (
+        f"expected exactly 101 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
     )

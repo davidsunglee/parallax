@@ -153,13 +153,32 @@ batched writes against real data by **applying** the golden DML and asserting
 the resulting table state — exactly the write-sequence machinery (`M12`), reused
 for the non-temporal batched case.
 
-## Automatic read-lock correctness
+## Strategy selection — the per-unit-of-work participation mode
+
+A unit of work selects, per transaction, **how** its read-then-writes are made
+correct — mirroring Reladomo's `TxParticipationMode`. Two strategies:
+
+- **`locking`** (the **default**) — the automatic in-transaction shared read
+  lock, below. Reads take a row lock; writes need no version gate.
+- **`optimistic`** — the alternative (`M10`): reads take **no** lock (so readers
+  never block writers), and every keyed write gates on the version the unit of
+  work observed. Selected explicitly on the unit of work
+  (`concurrency: optimistic`).
+
+The mode is a property of the **unit of work**, not of the entity: the same
+versioned entity is written under the shared lock in one workflow and under the
+version gate in another. The metamodel only *names* the version column (`M1`);
+opting into optimistic mode is what drops the read locks and emits the gate. This
+section specifies the default `locking` strategy; `M10` specifies the optimistic
+one.
+
+### Automatic read-lock correctness
 
 Reads performed **inside a unit of work** that intends to write **MUST** be made
-correct without the caller writing locking SQL. The default in-transaction read
-acquires a **shared row lock**, so a concurrent transaction cannot mutate the row
-out from under the read-then-write. The **lock suffix is a dialect decision**
-owned by `M11`:
+correct without the caller writing locking SQL. The default (`locking`) in-
+transaction read acquires a **shared row lock**, so a concurrent transaction
+cannot mutate the row out from under the read-then-write. The **lock suffix is a
+dialect decision** owned by `M11`:
 
 | Dialect | Read-lock suffix |
 |---|---|

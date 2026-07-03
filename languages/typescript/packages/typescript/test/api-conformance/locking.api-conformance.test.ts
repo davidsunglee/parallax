@@ -1,22 +1,19 @@
 /**
- * API Conformance Suite — **locking** family (Phase 10c): the automatic in-transaction
- * read lock (`0603`) and version-column optimistic locking (`0703` / `0704` /
- * `0707` / `0708`), written as a developer would and run against `postgres:17`
- * through the SHIPPED `@parallax/db-postgres` adapter.
+ * API Conformance Suite — **locking** family (Phase 10c): the automatic in-
+ * transaction read lock (`0603`), the no-op versioned update (`0609`), the
+ * locking-mode version-advancing update (`0611`), and optimistic-mode version-
+ * column locking (`0703` / `0704` / `0708`), written as a developer would and run
+ * against `postgres:17` through the SHIPPED `@parallax/db-postgres` adapter.
  *
- * **Read lock (`0603`).** The default in-transaction read takes a shared row lock
- * AUTOMATICALLY (M8) — there is NO explicit developer lock call in V1. The suite
- * asserts the RETURNED ROW (what `0603` proves), demonstrating the "you write no
- * locking SQL" value prop; the `for share of t0` SQL-text assertion stays in the
- * conformance/compile lane (SQL text is not a developer-facing surface).
- *
- * **Optimistic locking.** A developer reads a managed object (capturing its
- * `version`), and a later `update` gates on THAT version (spec §4: conflicts are
- * caller-driven). A concurrent writer is modeled by the corpus `precondition` (raw
- * SQL) applied OUT OF BAND between the read and the write — harness-side, exactly
- * as the run lane does. `0703` conflicts (stale version → 0 rows →
- * `ParallaxOptimisticLockError`); `0704` succeeds; `0707` bumps the version with no
- * domain change; `0708` retries on the fresh version after the conflict.
+ * **Strategy is a per-unit-of-work mode (M8 / M10).** `px.transaction(body, {
+ * concurrency })` selects it: the default `locking` mode takes the shared read lock
+ * on in-transaction reads (no developer lock SQL) and advances a versioned entity's
+ * version WITHOUT a gate; `optimistic` mode takes no lock and GATES a versioned
+ * update on the version the unit of work observed. Version values are framework-
+ * owned (ADR 0029): the developer reads the row (which records the observed
+ * version), then `update`s — no raw version number is ever passed. A concurrent
+ * writer is modeled by the corpus `precondition` (raw SQL) applied out of band,
+ * AFTER the read and BEFORE the write, so the gate is genuinely stale.
  */
 
 import { execFileSync } from "node:child_process";
@@ -30,6 +27,8 @@ import { LOCKING } from "./covered.js";
 const attr = (ref: string): AttributeExpression => new AttributeExpression(ref);
 const dec = (text: string): ParallaxDecimal => ParallaxDecimal.from(text);
 const Account = { id: attr("Account.id"), balance: attr("Account.balance") };
+const accountPk = (id: number): Predicate =>
+  new Predicate({ eq: { attr: "Account.id", value: id } });
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */
 function dockerAvailable(): boolean {
@@ -46,9 +45,10 @@ const HAS_DOCKER = dockerAvailable();
 it("the locking suite covers exactly the LOCKING family", () => {
   const covered = [
     "0603-read-lock",
+    "0609-no-op-update-no-dml",
+    "0611-versioned-update-locking-mode",
     "0703-optimistic-lock-conflict",
     "0704-optimistic-lock-success",
-    "0707-optimistic-lock-version-only-bump",
     "0708-optimistic-lock-retry-after-conflict",
   ];
   expect(covered.sort()).toEqual([...LOCKING].sort());
@@ -81,24 +81,59 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
   );
 
   it(
+    "0609: a versioned update that changes no attribute issues no DML",
+    async () => {
+      const f = await provisionCase(provider, "0609-no-op-update-no-dml");
+      const observed = await f.px.transaction(async (tx) => {
+        const accounts = tx.entity("Account");
+        // Read account 2 (records the observed version).
+        await accounts.find(Account.id.eq(2)).single();
+        // An update whose `set` changes nothing issues no DML — zero rows affected.
+        const result = await accounts.update(accountPk(2), { set: [] });
+        expect(result.affectedRows).toBe(0);
+        // The row is unchanged (the no-op wrote nothing).
+        return accounts.find(Account.id.eq(2)).toArray();
+      });
+      assertRows(observed, f.loaded, "Account", f.metamodel);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
+    "0611: a locking-mode update advances the version with no gate",
+    async () => {
+      const f = await provisionCase(provider, "0611-versioned-update-locking-mode");
+      // Default `locking` mode: the read takes the shared lock and records version 1;
+      // the update advances the version to 2 with no `and version = ?` gate.
+      const result = await f.px.transaction(async (tx) => {
+        const accounts = tx.entity("Account");
+        await accounts.find(Account.id.eq(2)).single();
+        return accounts.update(accountPk(2), { set: [Account.balance.set(dec("500.00"))] });
+      });
+      expect(result.affectedRows).toBe(1);
+      await assertTableState(f.db, f.loaded, f.metamodel);
+    },
+    BOOT_TIMEOUT,
+  );
+
+  it(
     "0703: a stale-version update conflicts (affects 0 rows) — the row is unchanged",
     async () => {
       const f = await provisionCase(provider, "0703-optimistic-lock-conflict");
-      // The developer read account 2 at version 1 earlier.
-      const readVersion = 1;
-      // A concurrent transaction commits first (the precondition): balance 999, version 2.
-      await applyPrecondition(f);
-      // Our update gates on the version we read (1) — now stale ⇒ conflict.
       let conflicted = false;
       try {
-        await f.px.transaction(async (tx) => {
-          await tx
-            .entity("Account")
-            .update(new Predicate({ eq: { attr: "Account.id", value: 2 } }), {
-              set: [Account.balance.set(dec("250.00"))],
-              expectedVersion: readVersion,
-            });
-        });
+        await f.px.transaction(
+          async (tx) => {
+            const accounts = tx.entity("Account");
+            // Read account 2 at version 1 (optimistic mode takes no lock).
+            await accounts.find(Account.id.eq(2)).single();
+            // A concurrent transaction commits first (the precondition): balance 999, version 2.
+            await applyPrecondition(provider, f);
+            // Our update gates on the version we observed (1) — now stale ⇒ conflict.
+            await accounts.update(accountPk(2), { set: [Account.balance.set(dec("250.00"))] });
+          },
+          { concurrency: "optimistic" },
+        );
       } catch (error) {
         conflicted = error instanceof ParallaxOptimisticLockError;
       }
@@ -113,27 +148,14 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
     "0704: an update on the fresh version succeeds (affects 1 row)",
     async () => {
       const f = await provisionCase(provider, "0704-optimistic-lock-success");
-      const result = await f.px.transaction((tx) =>
-        tx.entity("Account").update(new Predicate({ eq: { attr: "Account.id", value: 2 } }), {
-          set: [Account.balance.set(dec("500.00"))],
-          expectedVersion: 1,
-        }),
-      );
-      expect(result.affectedRows).toBe(1);
-      await assertTableState(f.db, f.loaded, f.metamodel);
-    },
-    BOOT_TIMEOUT,
-  );
-
-  it(
-    "0707: a version-only bump advances the version with no domain change",
-    async () => {
-      const f = await provisionCase(provider, "0707-optimistic-lock-version-only-bump");
-      const result = await f.px.transaction((tx) =>
-        tx.entity("Account").update(new Predicate({ eq: { attr: "Account.id", value: 2 } }), {
-          set: [],
-          expectedVersion: 1,
-        }),
+      const result = await f.px.transaction(
+        async (tx) => {
+          const accounts = tx.entity("Account");
+          // Read account 2 at version 1, then update gating on that observed version.
+          await accounts.find(Account.id.eq(2)).single();
+          return accounts.update(accountPk(2), { set: [Account.balance.set(dec("500.00"))] });
+        },
+        { concurrency: "optimistic" },
       );
       expect(result.affectedRows).toBe(1);
       await assertTableState(f.db, f.loaded, f.metamodel);
@@ -145,30 +167,28 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
     "0708: a retry re-reads the fresh version after the conflict and succeeds",
     async () => {
       const f = await provisionCase(provider, "0708-optimistic-lock-retry-after-conflict");
-      // Concurrent writer commits (precondition): version 1 → 2.
-      await applyPrecondition(f);
-      const account = "Account";
-      const pred = new Predicate({ eq: { attr: "Account.id", value: 2 } });
-      // Attempt 1 (stale, gate on 1) conflicts; retry re-reads the fresh version (2)
-      // and re-applies — a caller-driven retry loop (spec §4).
-      const result = await f.px.transaction(async (tx) => {
-        try {
-          return await tx
-            .entity(account)
-            .update(pred, { set: [Account.balance.set(dec("250.00"))], expectedVersion: 1 });
-        } catch (error) {
-          if (!(error instanceof ParallaxOptimisticLockError)) {
-            throw error;
+      // Attempt 1 (gate on the observed version 1) conflicts; the retry re-reads the
+      // fresh version and re-applies — a caller-driven retry loop with NO raw version.
+      const result = await f.px.transaction(
+        async (tx) => {
+          const accounts = tx.entity("Account");
+          await accounts.find(Account.id.eq(2)).single(); // observes version 1
+          await applyPrecondition(provider, f); // concurrent writer commits: version 1 -> 2
+          try {
+            return await accounts.update(accountPk(2), {
+              set: [Account.balance.set(dec("250.00"))],
+            });
+          } catch (error) {
+            if (!(error instanceof ParallaxOptimisticLockError)) {
+              throw error;
+            }
+            // Re-read the fresh row (records the new observed version) and retry.
+            await accounts.find(Account.id.eq(2)).single();
+            return accounts.update(accountPk(2), { set: [Account.balance.set(dec("250.00"))] });
           }
-          // Re-read the fresh version off the row and retry.
-          const fresh = await tx.entity(account).find(pred).single();
-          const freshVersion = Number((fresh as { version: number }).version);
-          return tx.entity(account).update(pred, {
-            set: [Account.balance.set(dec("250.00"))],
-            expectedVersion: freshVersion,
-          });
-        }
-      });
+        },
+        { concurrency: "optimistic" },
+      );
       expect(result.affectedRows).toBe(1);
       await assertTableState(f.db, f.loaded, f.metamodel);
     },
@@ -177,15 +197,19 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
 });
 
 /**
- * Apply the case's `precondition` (raw concurrent-writer SQL) out of band through
- * the shipped adapter — exactly as the conformance run lane does. This models the
- * OTHER transaction; it is not developer-authored code (it is harness plumbing).
+ * Apply the case's `precondition` (raw concurrent-writer SQL) out of band on an
+ * INDEPENDENT connection (the provider's peer adapter). This models the OTHER
+ * transaction committing between our unit of work's read and its gated write; it
+ * is harness plumbing, not developer-authored code. It MUST run on the peer, not
+ * `fixture.db`: the shipped adapter is single-connection, so issuing it there while
+ * `px.transaction` holds the connection would deadlock.
  */
 async function applyPrecondition(
+  provider: PostgresProvider,
   fixture: Awaited<ReturnType<typeof provisionCase>>,
 ): Promise<void> {
   const precondition = fixture.loaded.raw.precondition as string | undefined;
   if (precondition !== undefined) {
-    await fixture.db.execute(precondition, []);
+    await provider.peer.execute(precondition, []);
   }
 }
