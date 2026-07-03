@@ -137,7 +137,7 @@ query-cache and identity-cache scenarios.
 The example above is intentionally minimal. For a worked, canonical
 **include-driven** first slice, see the
 [`slice-mvp-1`](scope-and-tiers.md#first-implementation-conformance-slice)
-Conformance Slice in `scope-and-tiers.md`: its `describe` claim selects 99
+Conformance Slice in `scope-and-tiers.md`: its `describe` claim selects 101
 Postgres-only cases by a single `caseTags.include: ["slice-mvp-1"]`
 tag rather than by a fragile list of exclusions, and a consistency gate keeps the
 tagged corpus aligned with that claim. A fresh implementer authoring a first build

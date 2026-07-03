@@ -30,6 +30,7 @@ import {
   deepFetch as runDeepFetch,
 } from "@parallax/relationships";
 import { type AxisPins, compile } from "@parallax/sql";
+import { appendReadLock } from "@parallax/transactions";
 import { rowMaterializer } from "./materialize.js";
 import { RuntimeSchema } from "./schema.js";
 
@@ -47,6 +48,23 @@ interface DeepFetchBody {
   readonly paths: readonly (readonly string[])[];
 }
 
+/**
+ * The in-transaction read context threaded into a deep fetch, so the ROOT read
+ * participates in the unit of work exactly like a flat read does (spec §3, M8/M10):
+ * a `locking`-mode read takes the shared row lock, and the materialized root rows
+ * record the versions the unit of work observed. The default (an out-of-transaction
+ * read, or a root-handle read) takes no lock and records nothing.
+ */
+export interface DeepFetchReadContext {
+  /** Append the M8 shared read lock to the ROOT read (a `locking`-mode in-transaction read). */
+  readonly lockReads: boolean;
+  /** Record the versions the materialized ROOT rows observed (the M10 observed-version map). */
+  readonly onObserved: ((rows: readonly ParallaxRow[]) => void) | undefined;
+}
+
+/** The default read context: no lock, no observed-version recording (out-of-transaction reads). */
+const NO_READ_CONTEXT: DeepFetchReadContext = { lockReads: false, onObserved: undefined };
+
 /** True when an operation is a deep fetch (`{ deepFetch: { operand, paths } }`). */
 export function isDeepFetchOperation(operation: Operation): boolean {
   return typeof operation === "object" && operation !== null && "deepFetch" in operation;
@@ -61,6 +79,7 @@ export async function executeDeepFetch(
   metamodel: Metamodel,
   operation: Operation,
   database: ParallaxDatabase,
+  readContext: DeepFetchReadContext = NO_READ_CONTEXT,
 ): Promise<DeepFetchGraph> {
   const body = (operation as { deepFetch: DeepFetchBody }).deepFetch;
   const rootEntity = deepFetchRootEntity(metamodel, body.paths, body.operand);
@@ -68,7 +87,10 @@ export async function executeDeepFetch(
   const { sql, binds } = compile(body.operand, rootSchema);
   const rootPins = collectRootPins(rootSchema, body.operand);
 
-  const rootRows = [...(await database.execute(sql, binds as readonly unknown[]))] as Row[];
+  // In a locking-mode transaction the ROOT read takes the automatic M8 shared row
+  // lock, exactly like the flat-read path (`0603`): the developer writes no lock SQL.
+  const rootSql = readContext.lockReads ? appendReadLock(sql) : sql;
+  const rootRows = [...(await database.execute(rootSql, binds as readonly unknown[]))] as Row[];
   const tree = buildTree(metamodel, body.paths, rootPins);
   const result = await runDeepFetch(rootRows, tree, (levelSql, levelBinds) =>
     database.execute(levelSql, levelBinds).then((rows) => [...rows] as Row[]),
@@ -77,6 +99,11 @@ export async function executeDeepFetch(
   // Materialize the assembled graph to managed objects keyed by DSL name (10b),
   // recursing into the attached relationship arrays / to-one peers.
   const materialized = result.rows.map((row) => materializeNode(row, rootEntity, metamodel));
+  // Record the version this unit of work OBSERVED for each materialized root row, so
+  // a later keyed update of the versioned root gates on / advances from it (M10) and
+  // does not spuriously raise ParallaxReadBeforeWriteError — the flat path does the
+  // same via `onObserved`. (Only the root rows are recorded, mirroring a flat read.)
+  readContext.onObserved?.(materialized);
   return { rows: materialized, roundTrips: result.roundTrips };
 }
 
