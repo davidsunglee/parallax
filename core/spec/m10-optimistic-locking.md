@@ -66,6 +66,31 @@ not need to bump the version — the concurrent editor that races it advances th
 version itself, so nothing slips through — and the removed always-write rule only
 produced overhead writes and spurious conflicts.
 
+### Set-based updates materialize
+
+A keyed `UPDATE` of one versioned row gates on (optimistic) and advances (both
+modes) the version the unit of work observed for that row. A **set-based** update
+— one that selects rows by a predicate rather than a single primary key — has
+**no** set-based versioned template: the gate binds a *per-row* observed version,
+so a single `where <predicate>` statement cannot carry it. Such an update
+**MUST** therefore **materialize** (ADR 0032): the implementation
+
+1. **resolves the predicate to rows** through a read — a real round trip that
+   records each matched row's observed version into the identity cache (and, in
+   `locking` mode, takes `M8`'s shared read lock on them); then
+2. issues **one keyed per-object `UPDATE` per resolved row** — the gated
+   optimistic form or the ungated locking form above, each binding *that row's*
+   observed version and advancing it.
+
+Round-trip accounting is therefore **`1` read + `N` per-object updates**. A
+per-object gate that matches zero rows is the same `updatedRows != 1` conflict
+and **MUST** surface (a mid-batch conflict aborts the unit of work like any
+other). This makes read-before-write **universal** for versioned entities: a
+keyed update *requires* a prior observe (above), and a set-based update
+*performs* it. For a **non-versioned** entity the readless batched forms stand
+(`M3`, ADR 0011) — materialization applies only where a framework-owned version
+must ride each write.
+
 ## Conflict detection
 
 In **optimistic mode** the version turns a lost update into a **detectable**
@@ -145,8 +170,14 @@ concurrent transaction mutating the row — and an **`expectedAffectedRows`** co
 
 A companion **scenario** case pins the no-op rule: a versioned update whose `set`
 changes no attribute declares `roundTrips: 0` and lists no golden DML (no
-statement issued). Optimistic corpus cases carry a `uow: { concurrency: optimistic }`
-block so their gated goldens are self-describing; the locking-mode case carries
+statement issued). A pair of **scenario** cases pins the set-based materialize (one
+per mode): a `find` step (the materialize read, `roundTrips: 1`), a `write` step
+listing the ordered **per-object** `UPDATE`s (`roundTrips: N`, its golden a list
+and its binds a list-of-lists — the gated form in optimistic mode, the ungated
+version-advancing form in locking mode), and a verify `find` re-resolving the
+mutated rows — the declared `roundTrips` (`1 + N + 1`) is the honest materialize
+cost. Optimistic corpus cases carry a `uow: { concurrency: optimistic }` block so
+their gated goldens are self-describing; the locking-mode cases carry
 `uow: { concurrency: locking }`.
 
 The harness loads the model's fixtures (the row exists with its current

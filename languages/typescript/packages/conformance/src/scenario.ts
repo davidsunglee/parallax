@@ -107,3 +107,18 @@ function stepStatements(raw: RawScenarioStep): readonly string[] {
 function sumRoundTrips(steps: readonly ScenarioStep[]): number {
   return steps.reduce((total, step) => total + step.roundTrips, 0);
 }
+
+/**
+ * The binds for statement `index` of a (possibly MULTI-statement) scenario step.
+ * A step with several golden statements (a versioned set-based materialize write —
+ * one per-object `UPDATE` per row, `0614` / `0615`) carries a LIST-OF-LISTS `binds`,
+ * one bind list per statement; a single-statement step carries a flat list. Mirrors
+ * the reference harness's `_binds_for_list`, so the TS runner slices per-statement
+ * exactly as the Python harness does. A flat list is the binds for statement 0.
+ */
+export function stepBindsAt(binds: readonly unknown[], index: number): readonly unknown[] {
+  if (binds.length > 0 && Array.isArray(binds[0])) {
+    return (binds[index] as readonly unknown[] | undefined) ?? [];
+  }
+  return index === 0 ? binds : [];
+}

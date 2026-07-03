@@ -3,7 +3,7 @@
  * grouped by the family file that exercises it (Phase 10c).
  *
  * `coverage.test.ts` asserts the union of these ids plus the skip manifest equals
- * the whole 114-case slice — so a case that is neither exercised nor explicitly
+ * the whole 116-case slice — so a case that is neither exercised nor explicitly
  * skipped fails the build (no silent gaps). Each family file drives its `it.each`
  * off the matching list here, so the list and the tested cases stay in lockstep.
  *
@@ -138,14 +138,19 @@ export const TRANSACTIONS: readonly string[] = [
 /**
  * Locking: the automatic in-transaction read lock (`0603`), the no-op versioned
  * update (`0609`), the locking-mode version-advancing update (`0611`), the
- * read-lock matrix (`0616`-`0619`, `api-conformance` lane — object find locks,
- * projection omits, deep fetch locks every level, optimistic omits), and
- * optimistic-mode version-column locking (07xx).
+ * versioned set-based materialize scenarios (`0614`/`0615` — a set-based update on
+ * a versioned entity resolves the predicate, then updates per object, gated in
+ * optimistic mode / ungated version-advancing in locking mode), the read-lock
+ * matrix (`0616`-`0619`, `api-conformance` lane — object find locks, projection
+ * omits, deep fetch locks every level, optimistic omits), and optimistic-mode
+ * version-column locking (07xx).
  */
 export const LOCKING: readonly string[] = [
   "0603-read-lock",
   "0609-no-op-update-no-dml",
   "0611-versioned-update-locking-mode",
+  "0614-versioned-set-based-materialize-optimistic",
+  "0615-versioned-set-based-materialize-locking",
   "0616-locking-txn-object-find-locks",
   "0617-locking-txn-projection-omits-lock",
   "0618-locking-txn-deep-fetch-locks-every-level",

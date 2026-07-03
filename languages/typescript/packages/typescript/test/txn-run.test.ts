@@ -69,7 +69,10 @@ function dockerAvailable(): boolean {
 const HAS_DOCKER = dockerAvailable();
 const CASES = txnCases();
 
-/** The EXACT in-scope harness-lane id set (tagged `06xx`/`07xx` Phase-7 + abort + `0710`). */
+/**
+ * The EXACT in-scope harness-lane id set (tagged `06xx`/`07xx` Phase-7 + abort +
+ * the versioned set-based materialize scenarios `0614`/`0615` + `0710`).
+ */
 const EXPECTED_IDS: readonly string[] = [
   "0603",
   "0604",
@@ -79,6 +82,8 @@ const EXPECTED_IDS: readonly string[] = [
   "0611",
   "0612",
   "0613",
+  "0614",
+  "0615",
   "0703",
   "0704",
   "0708",

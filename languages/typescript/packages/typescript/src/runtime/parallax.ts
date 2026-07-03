@@ -30,6 +30,7 @@ import {
   type Assignment,
   type Concurrency,
   isAuditOnly,
+  isPkEqualityPredicate,
   type ObservedVersions,
   observedKey,
   ParallaxOptimisticLockError,
@@ -424,8 +425,27 @@ export class TransactionEntity<T extends ParallaxRow = ParallaxRow> {
     await this.writer.create(this.entity, input);
   }
 
-  /** `update` the selected row (spec §3): explicit assignment array, not a partial. */
+  /**
+   * `update` the selected row(s) (spec §3): explicit assignment array, not a partial.
+   *
+   * A versioned entity whose predicate is NOT a single primary-key equality is a
+   * SET-BASED versioned update, which MATERIALIZES (M10, ADR 0032): resolve the
+   * predicate to rows through the OBSERVING finder — which records each row's
+   * observed version and, in `locking` mode, takes the M8 shared lock (satisfying
+   * read-before-write) — then emit one keyed per-object update per resolved row.
+   * A keyed (single-pk) versioned update and EVERY non-versioned update keep the
+   * direct write path (the latter's readless batched form is unchanged, ADR 0011).
+   */
   async update(predicate: Predicate, options: UpdateOptions): Promise<WriteResult> {
+    if (
+      this.entity.versionAttribute() !== undefined &&
+      !isPkEqualityPredicate(this.entity, predicate)
+    ) {
+      const pkName = this.entity.primaryKey()[0]?.name;
+      const rows = await this.finder.find(predicate).toArray();
+      const pks = rows.map((row) => (row as ParallaxRow)[pkName as string]);
+      return this.writer.versionedSetUpdate(this.entity, pks, options);
+    }
     return this.writer.update(this.entity, predicate, options);
   }
 
