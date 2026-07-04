@@ -15,7 +15,11 @@ from pathlib import Path
 import pytest
 
 from reference_harness.case import discover_cases, load_model
-from reference_harness.case_runner import CaseFailure, _assert_write_step_count
+from reference_harness.case_runner import (
+    CaseFailure,
+    _assert_write_input_columns,
+    _assert_write_step_count,
+)
 from reference_harness.ddl_builder import ddl_for
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -51,6 +55,40 @@ def test_write_step_count_mismatch_is_rejected() -> None:
     case.raw["writeSequence"][0]["statements"] += 1
     with pytest.raises(CaseFailure):
         _assert_write_step_count(case, "postgres")
+
+
+def _non_temporal_row_step(case) -> dict | None:
+    """The first non-temporal write step that carries a neutral write input (①)."""
+    for step in case.write_sequence:
+        if step.get("rows") and not case.model.entity(step["entity"]).is_temporal:
+            return step
+    return None
+
+
+def test_write_input_columns_hold_for_authored_cases() -> None:
+    for case in discover_cases(COMPATIBILITY_ROOT):
+        if case.is_write_sequence and "postgres" in case.golden_sql:
+            # Must not raise: every authored ① classifies against the model to the
+            # golden's INSERT/SET column list, and its values match the binds.
+            _assert_write_input_columns(case, "postgres")
+
+
+def test_write_input_column_corruption_is_rejected() -> None:
+    case = next(
+        c
+        for c in discover_cases(COMPATIBILITY_ROOT)
+        if c.is_write_sequence and _non_temporal_row_step(c) is not None
+    )
+    step = _non_temporal_row_step(case)
+    assert step is not None
+    # Rename an attribute key in the first ① row to a non-attribute: the neutral
+    # write input can no longer classify against the metamodel, so the ① ↔ ②
+    # consistency gate MUST fail (it is no longer resting on a golden parse).
+    row = step["rows"][0]
+    key = next(iter(row))
+    row["not_an_attribute"] = row.pop(key)
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
 
 
 def test_temporal_ddl_primary_key_spans_the_as_of_from_column() -> None:

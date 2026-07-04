@@ -951,6 +951,201 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
         )
 
 
+_INSERT_COLUMNS_RE = re.compile(r"insert\s+into\s+\S+\s*\(([^)]*)\)", re.IGNORECASE)
+_SET_CLAUSE_RE = re.compile(r"\bset\s+(.+?)\s+where\b", re.IGNORECASE)
+
+
+def _classify_write_row(
+    case: Case, entity: Entity, row: dict[str, Any]
+) -> tuple[dict[str, Any], Any, dict[str, Any], Any]:
+    """Classify a flat attribute-named ① row against *entity*'s metamodel.
+
+    Mirrors the fixture loader's attribute→column resolution. Every key is either
+    the reserved control key ``observedVersion`` or an ENTITY ATTRIBUTE name (a bad
+    key raises :class:`CaseFailure`, so the neutral input can't silently name a
+    non-attribute); the primary-key attribute's value is split into the pk, every
+    other attribute into the domain ``set`` — both keyed by physical column.
+    """
+    pk_columns = {a["column"] for a in entity.attributes if a.get("primaryKey")}
+    columns: dict[str, Any] = {}
+    set_columns: dict[str, Any] = {}
+    pk_value: Any = None
+    observed_version: Any = None
+    for key, value in row.items():
+        if key == "observedVersion":
+            observed_version = value
+            continue
+        try:
+            attribute = entity.attribute_by_name(key)
+        except KeyError as exc:
+            raise CaseFailure(
+                f"{case.path.name}: writeSequence row key {key!r} is not an attribute of "
+                f"{entity.name} — the neutral write input speaks ATTRIBUTE names, not columns."
+            ) from exc
+        column = attribute["column"]
+        columns[column] = value
+        if column in pk_columns:
+            pk_value = value
+        else:
+            set_columns[column] = value
+    return columns, pk_value, set_columns, observed_version
+
+
+def _write_value_equal(left: Any, right: Any) -> bool:
+    """Scalar equality for an ① value vs a golden bind, tolerant of date encoding.
+
+    A date/timestamp authored QUOTED in ① (a string) must match the golden bind
+    that PyYAML parsed from an UNQUOTED token into a ``date`` / ``datetime`` object;
+    compare their ISO string forms once the exact-Decimal comparison declines.
+    """
+    if _scalars_equal(left, right, None):
+        return True
+    return str(left) == str(right)
+
+
+def _assert_write_values(
+    case: Case, expected: list[Any], actual: list[Any], statement: str
+) -> None:
+    if len(expected) != len(actual):
+        raise CaseFailure(
+            f"{case.path.name}: the neutral write input supplies {len(expected)} write "
+            f"value(s) but the golden binds carry {len(actual)} for {statement!r}."
+        )
+    for want, got in zip(expected, actual):
+        if not _write_value_equal(want, got):
+            raise CaseFailure(
+                f"{case.path.name}: neutral write input value {want!r} != golden bind "
+                f"{got!r} for {statement!r}."
+            )
+
+
+def _parse_insert_columns(case: Case, statement: str) -> list[str]:
+    match = _INSERT_COLUMNS_RE.search(statement)
+    if not match:
+        raise CaseFailure(
+            f"{case.path.name}: could not parse the INSERT column list from golden "
+            f"{statement!r}."
+        )
+    return [column.strip() for column in match.group(1).split(",")]
+
+
+def _parse_set_columns(case: Case, statement: str) -> list[str]:
+    match = _SET_CLAUSE_RE.search(statement)
+    if not match:
+        raise CaseFailure(
+            f"{case.path.name}: could not parse the SET clause from golden {statement!r}."
+        )
+    return [piece.strip().split("=")[0].strip() for piece in match.group(1).split(",")]
+
+
+def _assert_write_input_columns(case: Case, dialect: str) -> None:
+    """Cross-check each non-temporal write step's neutral input (①) against golden (②).
+
+    The corpus is self-validating regardless of any adapter: a GENERATING adapter
+    derives the emitted column list from ① (``rows``) classified against the model,
+    so the harness asserts that same classification agrees with the authored golden.
+    Per non-temporal write step the columns ① resolves to — in ``columnOrder``
+    order, filtered to the present attributes — MUST equal the golden's INSERT / SET
+    column list, and ①'s values MUST equal the write-value prefix of the golden
+    binds. Comparing against the golden HERE is legitimate: the harness compares two
+    AUTHORED representations, never grading its own generation.
+
+    Transitional: a step without ``rows`` (temporal audit, versioned, pk-gen …) or
+    on a temporal entity is skipped; a later phase makes ① required per shape.
+    """
+    statements = case.golden_statements(dialect)
+    stmt_index = 0
+    for step in case.write_sequence:
+        count = step.get("statements", 1)
+        rows = step.get("rows")
+        entity = case.model.entity(step["entity"])
+        if rows is None or entity.is_temporal:
+            stmt_index += count
+            continue
+        classified = [_classify_write_row(case, entity, row) for row in rows]
+        step_statements = statements[stmt_index : stmt_index + count]
+        step_binds = [_binds_for_statement(case, stmt_index + offset) for offset in range(count)]
+        mutation = step["mutation"]
+        if mutation == "insert":
+            _assert_insert_input(case, entity, classified, step_statements, step_binds)
+        elif mutation in ("delete", "cascadeDelete"):
+            _assert_delete_input(case, classified, step_binds)
+        else:
+            _assert_update_input(case, entity, classified, step_statements, step_binds)
+        stmt_index += count
+
+
+def _assert_insert_input(
+    case: Case,
+    entity: Entity,
+    classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
+    step_statements: list[str],
+    step_binds: list[list[Any]],
+) -> None:
+    if not step_statements:
+        return
+    statement = step_statements[0]
+    golden_columns = _parse_insert_columns(case, statement)
+    present = [c for c in column_order(entity) if any(c in cols for cols, *_ in classified)]
+    if golden_columns != present:
+        raise CaseFailure(
+            f"{case.path.name}: the golden INSERT column list {golden_columns} != the "
+            f"columns the neutral write input resolves to {present} (columnOrder order, "
+            f"present attributes)."
+        )
+    expected = [cols[column] for cols, *_ in classified for column in present]
+    _assert_write_values(case, expected, step_binds[0] if step_binds else [], statement)
+
+
+def _assert_update_input(
+    case: Case,
+    entity: Entity,
+    classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
+    step_statements: list[str],
+    step_binds: list[list[Any]],
+) -> None:
+    set_present = [
+        c for c in column_order(entity) if any(c in set_cols for _, _, set_cols, _ in classified)
+    ]
+    for statement in step_statements:
+        golden_set = _parse_set_columns(case, statement)
+        if golden_set != set_present:
+            raise CaseFailure(
+                f"{case.path.name}: the golden SET column list {golden_set} != the domain "
+                f"columns the neutral write input resolves to {set_present}."
+            )
+    per_key = len(step_statements) == len(classified) and len(step_statements) > 1
+    width = len(set_present)
+    if per_key:
+        for (_, _, set_cols, _), binds, statement in zip(classified, step_binds, step_statements):
+            expected = [set_cols[column] for column in set_present]
+            _assert_write_values(case, expected, binds[:width], statement)
+        return
+    first_set = classified[0][2] if classified else {}
+    expected = [first_set[column] for column in set_present]
+    binds = step_binds[0] if step_binds else []
+    statement = step_statements[0] if step_statements else ""
+    _assert_write_values(case, expected, binds[:width], statement)
+
+
+def _assert_delete_input(
+    case: Case,
+    classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
+    step_binds: list[list[Any]],
+) -> None:
+    # A delete / cascadeDelete row carries only the pk (the `where` key — no written
+    # columns), so ① supplies no INSERT/SET column list to cross-check; assert the
+    # pk value appears in each statement's binds (each DELETE keys on it, or on a
+    # same-valued foreign key for the dependent cascade statements).
+    pk_values = [pk for _, pk, _, _ in classified]
+    for binds in step_binds:
+        if not any(_write_value_equal(pk, bind) for pk in pk_values for bind in binds):
+            raise CaseFailure(
+                f"{case.path.name}: the neutral write input pk value(s) {pk_values} appear "
+                f"in none of the DELETE binds {binds}."
+            )
+
+
 def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
     """Read the full state of *entity*'s table, projecting every column by name."""
     columns = list(column_order(entity))
@@ -1750,6 +1945,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
 
     if case.is_write_sequence:
         _assert_write_step_count(case, dialect)  # layer 5 (count)
+        _assert_write_input_columns(case, dialect)  # layer 5c (① ↔ ② column/value)
         _provision_empty(case, db)
         _assert_write_sequence(case, db)  # apply DML, assert table state
         _assert_pk_allocation(case, db)  # layer 5b: PK-generation oracle (sequence)

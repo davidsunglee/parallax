@@ -14,6 +14,8 @@ writeSequence:
     entity: Event
     statements: 1
     note: insert an instant authored at +05:30; it must store as UTC
+    rows:
+      - { id: 1, occurredAt: "2024-03-01T05:30:00+05:30" }
 goldenSql:
   postgres:
     - insert into event(id, occurred_at) values (?, ?)
