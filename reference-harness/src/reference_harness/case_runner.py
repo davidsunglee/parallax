@@ -1063,8 +1063,14 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
     binds. Comparing against the golden HERE is legitimate: the harness compares two
     AUTHORED representations, never grading its own generation.
 
-    Transitional: a step without ``rows`` (temporal audit, versioned, pk-gen …) or
-    on a temporal entity is skipped; a later phase makes ① required per shape.
+    A TEMPORAL (audit-only) step is Family B: it ALWAYS writes the entity's full
+    physical row, so the column list stays metamodel-sourced (``column_order``) and
+    ① carries only the domain values (``rows``) plus the transaction instant
+    (``at``) — the ``in_z = at`` / ``out_z = infinity`` bookkeeping is DERIVED, never
+    authored (:func:`_assert_temporal_input`).
+
+    Transitional: a step without ``rows`` (versioned insert, pk-gen, ``*Until`` …)
+    is skipped; a later phase makes ① required per shape.
     """
     statements = case.golden_statements(dialect)
     stmt_index = 0
@@ -1072,14 +1078,16 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         count = step.get("statements", 1)
         rows = step.get("rows")
         entity = case.model.entity(step["entity"])
-        if rows is None or entity.is_temporal:
+        if rows is None:
             stmt_index += count
             continue
         classified = [_classify_write_row(case, entity, row) for row in rows]
         step_statements = statements[stmt_index : stmt_index + count]
         step_binds = [_binds_for_statement(case, stmt_index + offset) for offset in range(count)]
         mutation = step["mutation"]
-        if mutation == "insert":
+        if entity.is_temporal:
+            _assert_temporal_input(case, entity, classified, step, step_statements, step_binds)
+        elif mutation == "insert":
             _assert_insert_input(case, entity, classified, step_statements, step_binds)
         elif mutation in ("delete", "cascadeDelete"):
             _assert_delete_input(case, classified, step_binds)
@@ -1212,6 +1220,72 @@ def _assert_delete_input(
                 f"{case.path.name}: the neutral write input pk value(s) {pk_values} appear "
                 f"in none of the DELETE binds {binds}."
             )
+
+
+def _assert_temporal_input(
+    case: Case,
+    entity: Entity,
+    classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
+    step: dict[str, Any],
+    step_statements: list[str],
+    step_binds: list[list[Any]],
+) -> None:
+    """Cross-check a TEMPORAL (audit-only) write step's ① against its golden (②).
+
+    A milestone-chaining write ALWAYS writes the entity's full physical row (DQ-B
+    Family B), so the emitted column list is metamodel-sourced (``column_order``) —
+    ① carries only the domain values (``rows``) plus the transaction instant
+    (``at``). The bookkeeping ``in_z = at`` and the open bound ``out_z = infinity``
+    are DERIVED, never authored in ① (the M7 milestone discipline stays under test).
+    The gate cross-checks, per statement: an ``insert`` (open a milestone) writes
+    the full physical row with ``in_z = at`` and ``out_z = infinity``; a close
+    (``update`` step 1 / ``terminate``) binds ``[at, pk, infinity]`` — sets
+    ``out_z = at`` keyed on the still-open current row (``pk and out_z = infinity``);
+    an ``update`` chains a second full-row insert carrying the row's columns.
+    """
+    axis = next(a for a in entity.as_of_attributes if a["axis"] == "processing")
+    in_z, out_z, infinity = axis["fromColumn"], axis["toColumn"], axis.get("infinity", "infinity")
+    full_columns = list(column_order(entity))
+    at = step.get("at")
+    if at is None:
+        raise CaseFailure(
+            f"{case.path.name}: a temporal write step's neutral write input (①) MUST carry "
+            f"`at` (the transaction instant → in_z), which is DERIVED into the milestone "
+            f"bookkeeping, never read from the golden."
+        )
+    columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
+
+    def assert_open(statement: str, binds: list[Any]) -> None:
+        golden_columns = _parse_insert_columns(case, statement)
+        if golden_columns != full_columns:
+            raise CaseFailure(
+                f"{case.path.name}: the golden temporal INSERT column list {golden_columns} != "
+                f"the entity's full physical row {full_columns} — a milestone always writes the "
+                f"whole row (metamodel-sourced, not derived from ①)."
+            )
+        expected = [
+            at if column == in_z else infinity if column == out_z else columns.get(column)
+            for column in full_columns
+        ]
+        _assert_write_values(case, expected, binds, statement)
+
+    def assert_close(statement: str, binds: list[Any]) -> None:
+        # A close sets `out_z = at` keyed on the still-open current row
+        # (`pk and out_z = infinity`) — no domain values, just the derived bounds.
+        _assert_write_values(case, [at, pk, infinity], binds, statement)
+
+    mutation = step["mutation"]
+    if mutation == "insert":
+        assert_open(step_statements[0], step_binds[0])
+    elif mutation == "update":
+        assert_close(step_statements[0], step_binds[0])
+        assert_open(step_statements[1], step_binds[1])
+    elif mutation == "terminate":
+        assert_close(step_statements[0], step_binds[0])
+    else:
+        raise CaseFailure(
+            f"{case.path.name}: unexpected temporal mutation {mutation!r} for a ① cross-check."
+        )
 
 
 def _conflict_versioned_entity(case: Case) -> Entity | None:
