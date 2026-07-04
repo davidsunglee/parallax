@@ -1063,7 +1063,7 @@ def _assert_write_values(
             f"{case.path.name}: the neutral write input supplies {len(expected)} write "
             f"value(s) but the golden binds carry {len(actual)} for {statement!r}."
         )
-    for want, got in zip(expected, actual):
+    for want, got in zip(expected, actual, strict=True):
         if not _write_value_equal(want, got):
             raise CaseFailure(
                 f"{case.path.name}: neutral write input value {want!r} != golden bind "
@@ -1112,8 +1112,10 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
     :func:`_assert_until_input`. pk-gen ``rows`` carry DB-computed markers
     (``computed`` / ``increment``) whose bind is derived by the strategy, not authored.
 
-    Transitional: a step without ``rows`` (versioned insert …) is skipped; a later
-    phase makes ① required per shape.
+    ① is REQUIRED on every writeSequence step (the permanent Family A + Family B
+    contract, enforced in the schema), so there is no presence-tolerance here: a step
+    without ``rows`` never reaches the gate. Family C — scenario write steps and
+    boundary cases — carries no writeSequence, so it is exempt by construction.
     """
     statements = case.golden_statements(dialect)
     stmt_index = 0
@@ -1122,8 +1124,10 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         rows = step.get("rows")
         entity = case.model.entity(step["entity"])
         if rows is None:
-            stmt_index += count
-            continue
+            raise CaseFailure(
+                f"{case.path.name}: writeSequence step on {step['entity']} carries no "
+                f"neutral write input (① `rows`) — required on every writeSequence step."
+            )
         classified = [_classify_write_row(case, entity, row) for row in rows]
         step_statements = statements[stmt_index : stmt_index + count]
         step_binds = [_binds_for_statement(case, stmt_index + offset) for offset in range(count)]
@@ -1159,7 +1163,7 @@ def _assert_insert_input(
     # (statements == rows); a set-based batched insert (0604) is one multi-row INSERT.
     per_row = len(step_statements) == len(classified) and len(step_statements) > 1
     if per_row:
-        for cls, statement, binds in zip(classified, step_statements, step_binds):
+        for cls, statement, binds in zip(classified, step_statements, step_binds, strict=True):
             _assert_insert_statement(case, entity, [cls], version_col, statement, binds)
         return
     _assert_insert_statement(
@@ -1231,7 +1235,7 @@ def _assert_versioned_update_input(
     """
     version_col = _version_column(entity)
     for (_, pk, set_cols, observed), statement, binds in zip(
-        classified, step_statements, step_binds
+        classified, step_statements, step_binds, strict=True
     ):
         golden_set = _parse_set_columns(case, statement)
         set_present = [c for c in column_order(entity) if c in set_cols]
@@ -1290,7 +1294,9 @@ def _assert_update_input(
     per_key = len(step_statements) == len(classified) and len(step_statements) > 1
     width = len(set_present)
     if per_key:
-        for (_, _, set_cols, _), binds, statement in zip(classified, step_binds, step_statements):
+        for (_, _, set_cols, _), binds, statement in zip(
+            classified, step_binds, step_statements, strict=True
+        ):
             expected = [_increment_or_value(set_cols[column]) for column in set_present]
             _assert_write_values(case, expected, binds[:width], statement)
         return
@@ -1449,7 +1455,7 @@ def _assert_until_input(
         )
 
     business_binds: list[Any] = []
-    for statement, binds in zip(step_statements, step_binds):
+    for statement, binds in zip(step_statements, step_binds, strict=True):
         if "insert into" in statement.lower():
             # A chained milestone opens at fresh processing time [at, infinity).
             _assert_write_values(case, [at], [binds[in_z_pos]], statement)
@@ -1545,7 +1551,10 @@ def _assert_versioned_conflict_write(
     pointer: str,
 ) -> None:
     if write is None:
-        return  # transitional: ① not authored yet (a later phase makes it required)
+        raise CaseFailure(
+            f"{case.path.name}: a versioned conflict ({pointer}) carries no neutral write "
+            f"input (① `write`) — required on every conflict sub-form."
+        )
     if len(statements) != 1:
         raise CaseFailure(
             f"{case.path.name}: a versioned conflict ({pointer}) has exactly one golden "
@@ -1639,7 +1648,10 @@ def _assert_temporal_conflict_close(
     ``[at, pk, infinity, …businessCoords, (observedInZ if gated)]``.
     """
     if write is None:
-        return  # transitional: ① not authored yet (a later phase makes it required)
+        raise CaseFailure(
+            f"{case.path.name}: a temporal conflict close ({pointer}) carries no neutral "
+            f"write input (① `write`) — required on every conflict sub-form."
+        )
     if len(statements) != 1:
         raise CaseFailure(
             f"{case.path.name}: a temporal conflict close ({pointer}) has exactly one "

@@ -28,6 +28,9 @@ writeSequence:
     entity: Position
     statements: 1
     note: open the original current rectangle [business inf, processing inf)
+    rows:
+      - { id: 1, acctNum: A, value: 100.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+    at: "2024-01-01T00:00:00+00:00"
   - mutation: terminateUntil
     entity: Position
     statements: 3

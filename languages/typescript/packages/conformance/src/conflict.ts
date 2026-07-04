@@ -19,10 +19,11 @@
  * against the metamodel: the domain `set` columns are `columnOrder(entity)`
  * filtered to the row's assigned attributes, the version advances
  * `observedVersion + 1`, and a conflict is intrinsically gated (`and version = ?`,
- * R4). The derived emission is cross-checked against the authored golden + binds,
- * so `emitted === golden` is a genuine INDEPENDENT check of column identity, not a
- * golden-parse tautology. The `precondition` is an out-of-band naive statement run
- * VERBATIM (it models a concurrent writer, not our runtime's output).
+ * R4). The derived emission is cross-checked against the authored golden + binds —
+ * two INDEPENDENT representations of the write — so `emitted === golden` is a
+ * genuine check of column identity: ① now carries the column intent the corpus once
+ * held only inside the golden string. The `precondition` is an out-of-band naive
+ * statement run VERBATIM (it models a concurrent writer, not our runtime's output).
  */
 import { auditWriteStatements } from "@parallax/bitemporal";
 import { quoteIdentifier } from "@parallax/dialect";
@@ -133,7 +134,7 @@ export function buildConflictPlan(loaded: LoadedCase): ConflictPlan {
  *    single SET column (`out_z`) stays metamodel-fixed, so ① never names it.
  *
  * Each is cross-checked against the authored golden + binds by `buildConflictPlan`,
- * so column identity is a genuine independent check, not a golden-parse tautology.
+ * so column identity is a genuine independent check between ① and the golden oracle.
  */
 function conflictSqlDeriver(
   entity: EntityMetadata,
@@ -150,7 +151,8 @@ function conflictSqlDeriver(
   if (processing === undefined) {
     throw new Error(`temporal conflict close on '${entity.name}' has no processing axis`);
   }
-  return (attempt) => temporalCloseStatement(entity, close as string, processing.infinity, gated, attempt);
+  return (attempt) =>
+    temporalCloseStatement(entity, close as string, processing.infinity, gated, attempt);
 }
 
 /**

@@ -24,9 +24,9 @@
       "required": ["scenario"]
     },
     {
-      "description": "A conflict case (M10): an optimistic-lock UPDATE asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `precondition` (e.g. a stale-version mutation by a concurrent transaction), then runs the golden UPDATE(s) and asserts the affected-row count. Two forms: a SINGLE attempt (`expectedAffectedRows` + `goldenSql`); or an ordered `attempts` retry sequence (each attempt carries its own goldenSql + expectedAffectedRows), which proves the M10 retry contract — a stale UPDATE affects 0 rows, then a retry that re-reads the fresh version affects 1.",
+      "description": "A conflict case (M10): an optimistic-lock UPDATE asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `precondition` (e.g. a stale-version mutation by a concurrent transaction), then runs the golden UPDATE(s) and asserts the affected-row count. Two forms: a SINGLE attempt (`expectedAffectedRows` + `goldenSql` + the neutral write input `write`); or an ordered `attempts` retry sequence (each attempt carries its own goldenSql + expectedAffectedRows + write), which proves the M10 retry contract — a stale UPDATE affects 0 rows, then a retry that re-reads the fresh version affects 1. Every conflict sub-form carries the neutral write input (① `write`) so the golden UPDATE is an INDEPENDENT oracle rather than the only home for column intent: a versioned conflict's `write` (with `observedVersion`) or a temporal / bitemporal close's `write` (+ `at`, and `observedInZ` under optimistic concurrency) is REQUIRED.",
       "anyOf": [
-        { "required": ["expectedAffectedRows", "goldenSql"] },
+        { "required": ["expectedAffectedRows", "goldenSql", "write"] },
         { "required": ["attempts"] }
       ]
     },
@@ -49,6 +49,21 @@
         "lane": { "const": "api-conformance" }
       },
       "not": { "required": ["goldenSql"] }
+    }
+  ],
+  "allOf": [
+    {
+      "description": "A TEMPORAL / bitemporal optimistic conflict CLOSE — a single-form conflict whose root `at` is the close instant (→ the new out_z) — run under OPTIMISTIC concurrency (`uow.concurrency: optimistic`) MUST carry `observedInZ`, the observed processing-from (in_z) the close gates on (`and in_z = ?`). A VERSIONED conflict carries no root `at`, so this never fires on it; a LOCKING-mode temporal close is ungated and omits `observedInZ`. (The retry form carries `at` / `observedInZ` per attempt; the reference-harness gate + generating adapter enforce the per-attempt token, which a subschema cannot condition on the root `uow`.)",
+      "if": {
+        "required": ["at", "uow"],
+        "properties": {
+          "uow": {
+            "required": ["concurrency"],
+            "properties": { "concurrency": { "const": "optimistic" } }
+          }
+        }
+      },
+      "then": { "required": ["observedInZ"] }
     }
   ],
   "properties": {
@@ -139,7 +154,27 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["mutation", "entity"],
+        "required": ["mutation", "entity", "rows"],
+        "allOf": [
+          {
+            "description": "A bitemporal `*Until` step (the rectangle split) bounds a mutation to a business valid-time window: it MUST carry both `at` (the transaction instant → in_z) and `until` (the business window end → thru_z), from which a GENERATING adapter derives the inactivating close + the head / (middle) / tail chain.",
+            "if": {
+              "required": ["mutation"],
+              "properties": {
+                "mutation": { "enum": ["insertUntil", "updateUntil", "terminateUntil"] }
+              }
+            },
+            "then": { "required": ["at", "until"] }
+          },
+          {
+            "description": "A milestone-close `terminate` step MUST carry its close instant — `at` (the processing axis → out_z) for an audit-only entity, or `businessAt` (the business axis → thru_z) for a business-only one — so the close bookkeeping is DERIVED, never authored in `rows`.",
+            "if": {
+              "required": ["mutation"],
+              "properties": { "mutation": { "const": "terminate" } }
+            },
+            "then": { "anyOf": [{ "required": ["at"] }, { "required": ["businessAt"] }] }
+          }
+        ],
         "properties": {
           "mutation": {
             "description": "The mutation kind. insert / update / terminate are the M7 audit-only mutation surface and also cover the M8 batched non-temporal writes; delete covers ordinary non-temporal delete / detached-delete merge-back; cascadeDelete is the minimal dependent-delete witness over M1 dependent relationships; insertUntil / updateUntil / terminateUntil are the full-bitemporal `*Until` trio (DQ11, Phase 8) that bound a mutation to a business window — updateUntil/terminateUntil drive the rectangle split (inactivate the original on the processing axis, chain head/middle/tail business rows at fresh processing time).",
@@ -166,13 +201,13 @@
             "default": 1
           },
           "rows": {
-            "description": "The neutral write input (①) for this step: the row(s) the mutation operates on, as flat attribute-named literals (`$defs/writeRow`). A GENERATING adapter classifies each field by metamodel role — the primary-key attribute is a written column (insert) or the `where` key (update / delete); every other attribute is an assigned domain column; `observedVersion` is the optimistic gate/advance token — and derives the emitted column list + ORDER from `columnOrder(entity)` (never JSON key order), plus the batched form, the SQL, and the binds. `goldenSql` + `binds` stay an independent oracle the derivation cross-checks against, so `emitted === golden` becomes a genuine check of column identity rather than a golden-parse tautology. Optional in the transitional phase; a later phase makes it required per shape / per mutation.",
+            "description": "The neutral write input (①) for this step: the row(s) the mutation operates on, as flat attribute-named literals (`$defs/writeRow`). A GENERATING adapter classifies each field by metamodel role — the primary-key attribute is a written column (insert) or the `where` key (update / delete); every other attribute is an assigned domain column; `observedVersion` is the optimistic gate/advance token — and derives the emitted column list + ORDER from `columnOrder(entity)` (never JSON key order), plus the batched form, the SQL, and the binds. `goldenSql` + `binds` stay an independent oracle the derivation cross-checks against, so `emitted === golden` becomes a genuine check of column identity rather than a golden-parse tautology. REQUIRED on every writeSequence step (the permanent Family A + Family B contract). Family C — scenario write steps and boundary cases — carries no writeSequence and so no `rows`.",
             "type": "array",
             "minItems": 1,
             "items": { "$ref": "#/$defs/writeRow" }
           },
           "at": {
-            "description": "The transaction / processing instant a TEMPORAL (audit-only) write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it: a new milestone opens `in_z = at` with the open bound `out_z = infinity`, and a close binds `out_z = at` keyed on the still-open current row (`pk and out_z = infinity`). So `in_z`/`out_z`/`infinity` are never authored in `rows` — the M7 milestone discipline stays under test. Present on a temporal step; absent on a non-temporal batched write. Optional in the transitional phase; a later phase makes it required for a temporal step.",
+            "description": "The transaction / processing instant a TEMPORAL (audit-only) write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it: a new milestone opens `in_z = at` with the open bound `out_z = infinity`, and a close binds `out_z = at` keyed on the still-open current row (`pk and out_z = infinity`). So `in_z`/`out_z`/`infinity` are never authored in `rows` — the M7 milestone discipline stays under test. Present on a processing-axis temporal step; absent on a non-temporal batched write (and replaced by `businessAt` on a business-only step). Required for a `*Until` step and for a `terminate` close (a `terminate` on a business-only entity carries `businessAt` instead); the schema cannot see an entity's temporality, so the required `at` on an audit-only `insert` / `update` is enforced by the reference-harness gate + the generating adapter.",
             "type": "string",
             "minLength": 1
           },
@@ -182,7 +217,7 @@
             "minLength": 1
           },
           "businessAt": {
-            "description": "The BUSINESS-axis instant a business-temporal (unitemporal-business) milestone-chaining write records — the milestone's `from_z` (and, on a close, the prior row's `thru_z`). The business analogue of `at`: a GENERATING adapter DERIVES the business bookkeeping from it — a new milestone opens `from_z = businessAt` with the open bound `thru_z = infinity`, and a close binds `thru_z = businessAt` keyed on the still-open current row (`pk and thru_z = infinity`). So `from_z`/`thru_z`/`infinity` are never authored in `rows`. Present on a business-only temporal step; a processing (audit-only) step carries `at` instead. Optional in the transitional phase; a later phase makes it required for a business-temporal step.",
+            "description": "The BUSINESS-axis instant a business-temporal (unitemporal-business) milestone-chaining write records — the milestone's `from_z` (and, on a close, the prior row's `thru_z`). The business analogue of `at`: a GENERATING adapter DERIVES the business bookkeeping from it — a new milestone opens `from_z = businessAt` with the open bound `thru_z = infinity`, and a close binds `thru_z = businessAt` keyed on the still-open current row (`pk and thru_z = infinity`). So `from_z`/`thru_z`/`infinity` are never authored in `rows`. Present on a business-only temporal step; a processing (audit-only) step carries `at` instead. Required for a business-only `terminate` close; the schema cannot see an entity's temporality, so the required `businessAt` on a business-only `insert` / `update` is enforced by the reference-harness gate + the generating adapter.",
             "type": "string",
             "minLength": 1
           },
@@ -388,7 +423,7 @@
       "minimum": 0
     },
     "write": {
-      "description": "conflict cases (M10), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns), and the reserved `observedVersion` control key (the version the unit of work read). A VERSIONED conflict derives the emitted set columns + ORDER from `columnOrder(entity)`, the version advance (`observedVersion + 1`), the intrinsic optimistic gate (`and version = ?`), and the binds. A TEMPORAL / bitemporal close carries only the milestone pk (→ the `where` key) plus, on a bitemporal entity, the business discriminator (e.g. `businessFrom`, classified to the `from_z = ?` gate whose VALUE the metamodel cannot know); its close instant and observed gate ride in `at` / `observedInZ`. Either way the golden UPDATE + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. Single-attempt form only; the retry (`attempts`) form carries a `write` per attempt. Optional in the transitional phase; a later phase makes it required per conflict sub-form.",
+      "description": "conflict cases (M10), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns), and the reserved `observedVersion` control key (the version the unit of work read). A VERSIONED conflict derives the emitted set columns + ORDER from `columnOrder(entity)`, the version advance (`observedVersion + 1`), the intrinsic optimistic gate (`and version = ?`), and the binds. A TEMPORAL / bitemporal close carries only the milestone pk (→ the `where` key) plus, on a bitemporal entity, the business discriminator (e.g. `businessFrom`, classified to the `from_z = ?` gate whose VALUE the metamodel cannot know); its close instant and observed gate ride in `at` / `observedInZ`. Either way the golden UPDATE + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. Single-attempt form only; the retry (`attempts`) form carries a `write` per attempt. REQUIRED on every single-attempt conflict sub-form (versioned or temporal / bitemporal close).",
       "$ref": "#/$defs/writeRow"
     },
     "at": {
@@ -408,7 +443,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["goldenSql", "expectedAffectedRows"],
+        "required": ["goldenSql", "expectedAffectedRows", "write"],
         "properties": {
           "goldenSql": {
             "description": "This attempt's golden UPDATE, keyed by dialect.",
@@ -423,7 +458,7 @@
             "items": {}
           },
           "write": {
-            "description": "This attempt's neutral write input (①): the flat attribute-named row (`$defs/writeRow`) the attempt operates on. For a VERSIONED conflict its reserved `observedVersion` is the version THIS attempt gates on — the stale attempt's observed version, then the retry's refreshed one — and the adapter derives the attempt's versioned UPDATE + binds from it (the intrinsic optimistic gate, the advance `observedVersion + 1`). For a TEMPORAL close it carries the milestone pk (+ a bitemporal business discriminator); the close instant and observed gate ride in this attempt's `at` / `observedInZ`. Optional in the transitional phase.",
+            "description": "This attempt's neutral write input (①): the flat attribute-named row (`$defs/writeRow`) the attempt operates on. For a VERSIONED conflict its reserved `observedVersion` is the version THIS attempt gates on — the stale attempt's observed version, then the retry's refreshed one — and the adapter derives the attempt's versioned UPDATE + binds from it (the intrinsic optimistic gate, the advance `observedVersion + 1`). For a TEMPORAL close it carries the milestone pk (+ a bitemporal business discriminator); the close instant and observed gate ride in this attempt's `at` / `observedInZ`. REQUIRED on every retry attempt.",
             "$ref": "#/$defs/writeRow"
           },
           "at": {
