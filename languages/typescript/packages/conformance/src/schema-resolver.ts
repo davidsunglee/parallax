@@ -25,7 +25,7 @@ import {
   type ResolvedAxis,
   type Axis as TemporalAxis,
 } from "@parallax/bitemporal";
-import { type Dialect, quoteIdentifier } from "@parallax/dialect";
+import type { Dialect } from "@parallax/dialect";
 import {
   type EntityMetadata,
   Metamodel,
@@ -197,13 +197,14 @@ export class MetamodelSchema implements SchemaResolver {
 export function readProjection(
   loaded: LoadedCase,
   rootEntity: EntityMetadata,
+  dialect: Dialect,
 ): readonly ProjectionColumn[] {
   const expectedRows = loaded.raw.expectedRows as readonly Record<string, unknown>[] | undefined;
   const firstRow = expectedRows?.[0];
   if (firstRow && Object.keys(firstRow).length > 0) {
-    return Object.keys(firstRow).map((output) => projectionForOutput(output, rootEntity));
+    return Object.keys(firstRow).map((output) => projectionForOutput(output, rootEntity, dialect));
   }
-  return defaultEntityProjection(rootEntity).map(attributeProjection);
+  return defaultEntityProjection(rootEntity).map((attr) => attributeProjection(attr, dialect));
 }
 
 /**
@@ -218,10 +219,14 @@ export function readProjection(
  *  3. otherwise a plain quoted column named by the output (a computed/derived
  *     output the model does not declare — the pre-0003 behavior).
  */
-function projectionForOutput(output: string, entity: EntityMetadata): ProjectionColumn {
+function projectionForOutput(
+  output: string,
+  entity: EntityMetadata,
+  dialect: Dialect,
+): ProjectionColumn {
   const direct = entity.attributes().find((attr) => attr.column === output);
   if (direct) {
-    return attributeProjection(direct);
+    return attributeProjection(direct, dialect);
   }
   if (output.endsWith("_hex")) {
     const physical = output.slice(0, -"_hex".length);
@@ -229,15 +234,19 @@ function projectionForOutput(output: string, entity: EntityMetadata): Projection
       .attributes()
       .find((attr) => attr.column === physical && attr.type === "bytes");
     if (bytesAttr) {
-      return { column: quoteIdentifier(bytesAttr.column), type: "bytes", outputName: output };
+      return {
+        column: dialect.quoteIdentifier(bytesAttr.column),
+        type: "bytes",
+        outputName: output,
+      };
     }
   }
-  return { column: quoteIdentifier(output) };
+  return { column: dialect.quoteIdentifier(output) };
 }
 
 /** A verbatim projection descriptor for an attribute (quoted column + M0 type). */
-function attributeProjection(attr: NormalizedAttribute): ProjectionColumn {
-  return { column: quoteIdentifier(attr.column), type: attr.type };
+function attributeProjection(attr: NormalizedAttribute, dialect: Dialect): ProjectionColumn {
+  return { column: dialect.quoteIdentifier(attr.column), type: attr.type };
 }
 
 /**
@@ -253,6 +262,7 @@ function attributeProjection(attr: NormalizedAttribute): ProjectionColumn {
 export function rootDeepFetchProjection(
   loaded: LoadedCase,
   paths: readonly (readonly string[])[],
+  dialect: Dialect,
 ): readonly ProjectionColumn[] {
   const graph = expectedGraph(loaded);
   const rootEntityName = Object.keys(graph)[0];
@@ -263,7 +273,7 @@ export function rootDeepFetchProjection(
   const rootClass = classOf(paths[0]?.[0]) ?? rootEntityName;
   const rootEntity = rootClass ? metamodel.entity(rootClass) : metamodel.entities()[0];
   if (witness && typeof witness === "object") {
-    return objectColumns(witness as Record<string, unknown>, topLevelRels, rootEntity);
+    return objectColumns(witness as Record<string, unknown>, topLevelRels, rootEntity, dialect);
   }
   // No witness (empty root): fall back to the metamodel default for the root
   // entity, named by the first hop of the first path (`Order` in `[Order.items,
@@ -271,7 +281,7 @@ export function rootDeepFetchProjection(
   if (!rootEntity) {
     return [];
   }
-  return defaultEntityProjection(rootEntity).map(attributeProjection);
+  return defaultEntityProjection(rootEntity).map((attr) => attributeProjection(attr, dialect));
 }
 
 /** The class part of a `Class.rel` reference, or `undefined` when absent. */
@@ -294,13 +304,14 @@ export function childProjection(
   loaded: LoadedCase,
   node: { relRef: string; children: readonly { relRef: string }[] },
   childEntity: EntityMetadata,
+  dialect: Dialect,
 ): readonly ProjectionColumn[] {
   const witness = findChildWitness(expectedGraph(loaded), node);
   const childRelNames = new Set(node.children.map((child) => relName(child.relRef)));
   if (witness) {
-    return objectColumns(witness, childRelNames, childEntity);
+    return objectColumns(witness, childRelNames, childEntity, dialect);
   }
-  return fallbackChildProjection(childEntity, node);
+  return fallbackChildProjection(childEntity, node, dialect);
 }
 
 /**
@@ -312,6 +323,7 @@ export function childProjection(
 function fallbackChildProjection(
   childEntity: EntityMetadata,
   node: { relRef: string },
+  dialect: Dialect,
 ): readonly ProjectionColumn[] {
   // The relationship name lives on the PARENT entity; the child entity does not
   // declare it, so the orderBy is unavailable here. The non-temporal corpus only
@@ -322,7 +334,7 @@ function fallbackChildProjection(
   return childEntity
     .attributes()
     .filter((attr) => !attr.nullable)
-    .map(attributeProjection);
+    .map((attr) => attributeProjection(attr, dialect));
 }
 
 /**
@@ -336,10 +348,13 @@ function objectColumns(
   object: Record<string, unknown>,
   excluded: ReadonlySet<string>,
   entity: EntityMetadata | undefined,
+  dialect: Dialect,
 ): readonly ProjectionColumn[] {
   return Object.keys(object)
     .filter((key) => !excluded.has(key))
-    .map((key) => (entity ? projectionForOutput(key, entity) : { column: quoteIdentifier(key) }));
+    .map((key) =>
+      entity ? projectionForOutput(key, entity, dialect) : { column: dialect.quoteIdentifier(key) },
+    );
 }
 
 /**
@@ -446,7 +461,7 @@ export function schemaForReadCase(
 ): MetamodelSchema {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const rootEntity = rootEntityFor(metamodel, operation);
-  const projection = readProjection(loaded, rootEntity);
+  const projection = readProjection(loaded, rootEntity, dialect);
   return new MetamodelSchema(metamodel, rootEntity, projection, dialect);
 }
 
