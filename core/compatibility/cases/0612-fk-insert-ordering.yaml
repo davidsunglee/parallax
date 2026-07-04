@@ -7,7 +7,9 @@
 # before the OrderItem that points at it — otherwise the child's foreign key would
 # dangle. The harness applies the ordered DML to an empty schema and asserts both
 # rows landed; authoring the child insert first would violate the FK against real
-# data.
+# data. The child's nullable `shipped_on` is absent from the write input, so the
+# INSERT omits that column (a 4-of-5 column insert) rather than binding an explicit
+# NULL.
 model: models/orders.yaml
 tags: [m8, m3, write-sequence, insert, fk-ordering, transactions cache, slice-mvp-1]
 writeSequence:
@@ -16,16 +18,12 @@ writeSequence:
     statements: 1
     note: insert the parent Order first (the referenced row)
     rows:
-      # Attribute names (`orderedOn`), not physical columns (`ordered_on`); the
-      # adapter resolves them to columns in columnOrder(Order) order.
       - { id: 100, name: Hopper, sku: X-1, qty: 1, price: 9.99, active: true, orderedOn: "2024-07-01" }
   - mutation: insert
     entity: OrderItem
     statements: 1
     note: then insert the child OrderItem whose order_id references it
     rows:
-      # `shippedOn` (nullable) is ABSENT ⇒ the INSERT omits `shipped_on` (a 4-of-5
-      # column insert), NOT an explicit NULL. `orderId` resolves to column `order_id`.
       - { id: 200, orderId: 100, sku: X-1, quantity: 3 }
 goldenSql:
   postgres:

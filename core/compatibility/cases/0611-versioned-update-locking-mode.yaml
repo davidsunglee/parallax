@@ -22,9 +22,6 @@ writeSequence:
     entity: Account
     statements: 1
     note: locking-mode keyed update advances the version with no gate
-    # ① the neutral write input: pk `id` -> where key, `balance` -> the domain
-    # set column, `observedVersion` -> the read version. The adapter derives the
-    # ungated advance (version 1 -> 2) and the binds; `version` is never authored.
     rows:
       - { id: 2, balance: 500.00, observedVersion: 1 }
 goldenSql:

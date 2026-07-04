@@ -32,8 +32,6 @@ writeSequence:
     statements: 1
     note: a batched UPDATE over two keys in a single statement
     rows:
-      # pk `id` classifies to the `where` key; `balance` to the `set` column.
-      # Uniform new value across keys ⇒ one `where id in (?, ?)` statement.
       - { id: 10, balance: 500.00 }
       - { id: 11, balance: 500.00 }
 goldenSql:

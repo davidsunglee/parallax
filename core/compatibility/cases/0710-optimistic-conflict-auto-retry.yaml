@@ -26,9 +26,6 @@ uow:
   retryOptimisticConflicts: true
 precondition: update account set balance = 999.00, version = 2 where id = 2
 attempts:
-  # ① rides per attempt: `observedVersion` is the version THAT attempt gates on —
-  # the stale 1, then the auto-retry's refreshed 2. The adapter derives each
-  # attempt's gated UPDATE (advance observedVersion -> observedVersion + 1) + binds.
   - note: stale-version UPDATE — gates on version 1, which no longer matches => 0 rows
     goldenSql:
       postgres: update account set balance = ?, version = ? where id = ? and version = ?
