@@ -182,7 +182,9 @@ export function scalarsEqual(observed: unknown, expected: unknown, columnType?: 
  * authored golden binds (②) — a genuine independent check, never a golden parse.
  */
 export function bindsEqual(left: readonly unknown[], right: readonly unknown[]): boolean {
-  return left.length === right.length && left.every((value, index) => scalarsEqual(value, right[index]));
+  return (
+    left.length === right.length && left.every((value, index) => scalarsEqual(value, right[index]))
+  );
 }
 
 // --- table-state comparison (write sequences) -------------------------------
