@@ -991,6 +991,20 @@ def _classify_write_row(
     return columns, pk_value, set_columns, observed_version
 
 
+def _version_column(entity: Entity) -> str | None:
+    """The physical column of an entity's explicit optimistic-lock version, or None.
+
+    A VERSIONED entity carries an attribute-level ``optimisticLocking: true`` version
+    (M10); the value advance (``initial 1`` / ``observed + 1``) and gate are DERIVED,
+    so the column never appears in the neutral write input (①). A temporal entity
+    locks via its processing ``in_z`` timestamp and declares no such attribute.
+    """
+    for attribute in entity.attributes:
+        if attribute.get("optimisticLocking"):
+            return attribute["column"]
+    return None
+
+
 def _write_value_equal(left: Any, right: Any) -> bool:
     """Scalar equality for an ① value vs a golden bind, tolerant of date encoding.
 
@@ -1023,8 +1037,7 @@ def _parse_insert_columns(case: Case, statement: str) -> list[str]:
     match = _INSERT_COLUMNS_RE.search(statement)
     if not match:
         raise CaseFailure(
-            f"{case.path.name}: could not parse the INSERT column list from golden "
-            f"{statement!r}."
+            f"{case.path.name}: could not parse the INSERT column list from golden {statement!r}."
         )
     return [column.strip() for column in match.group(1).split(",")]
 
@@ -1070,6 +1083,10 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             _assert_insert_input(case, entity, classified, step_statements, step_binds)
         elif mutation in ("delete", "cascadeDelete"):
             _assert_delete_input(case, classified, step_binds)
+        elif _version_column(entity) is not None:
+            _assert_versioned_update_input(
+                case, entity, case.concurrency_mode, classified, step_statements, step_binds
+            )
         else:
             _assert_update_input(case, entity, classified, step_statements, step_binds)
         stmt_index += count
@@ -1086,15 +1103,66 @@ def _assert_insert_input(
         return
     statement = step_statements[0]
     golden_columns = _parse_insert_columns(case, statement)
-    present = [c for c in column_order(entity) if any(c in cols for cols, *_ in classified)]
+    domain = [c for c in column_order(entity) if any(c in cols for cols, *_ in classified)]
+    # A VERSIONED insert appends the framework-owned version column with the DERIVED
+    # initial value `1` (never authored in ①, so it is not in the row's columns).
+    version_col = _version_column(entity)
+    present = [*domain, version_col] if version_col is not None else domain
     if golden_columns != present:
         raise CaseFailure(
             f"{case.path.name}: the golden INSERT column list {golden_columns} != the "
             f"columns the neutral write input resolves to {present} (columnOrder order, "
-            f"present attributes)."
+            f"present attributes"
+            f"{' + derived version' if version_col is not None else ''})."
         )
-    expected = [cols[column] for cols, *_ in classified for column in present]
+    expected: list[Any] = []
+    for cols, *_ in classified:
+        expected.extend(cols[column] for column in domain)
+        if version_col is not None:
+            expected.append(1)  # derived initial version (M10 baseline), never authored
     _assert_write_values(case, expected, step_binds[0] if step_binds else [], statement)
+
+
+def _assert_versioned_update_input(
+    case: Case,
+    entity: Entity,
+    mode: str,
+    classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
+    step_statements: list[str],
+    step_binds: list[list[Any]],
+) -> None:
+    """Cross-check a VERSIONED writeSequence update step's ① against its golden (②).
+
+    The golden SET clause is the domain set columns + the framework-owned ``version``
+    column (advanced ``observedVersion + 1``, DERIVED — never authored in ①). The
+    binds are ``[…set values…, newVersion, pk]`` in the default LOCKING mode
+    (``0611`` / ``0702`` — the M8 shared read lock makes the write correct, so no
+    ``and version = ?`` gate) or ``[…, newVersion, pk, observedVersion]`` in
+    optimistic mode. One golden statement per ① row.
+    """
+    version_col = _version_column(entity)
+    for (_, pk, set_cols, observed), statement, binds in zip(
+        classified, step_statements, step_binds
+    ):
+        golden_set = _parse_set_columns(case, statement)
+        set_present = [c for c in column_order(entity) if c in set_cols]
+        expected_cols = [*set_present, version_col]
+        if golden_set != expected_cols:
+            raise CaseFailure(
+                f"{case.path.name}: the golden versioned-UPDATE SET column list "
+                f"{golden_set} != the domain set columns + version {expected_cols} the "
+                f"neutral write input resolves to."
+            )
+        if observed is None:
+            raise CaseFailure(
+                f"{case.path.name}: a versioned update's neutral write input (①) MUST "
+                f"carry observedVersion — the version advance is derived from it."
+            )
+        set_values = [set_cols[column] for column in set_present]
+        expected = [*set_values, observed + 1, pk]
+        if mode == "optimistic":
+            expected.append(observed)  # the optimistic gate bind
+        _assert_write_values(case, expected, binds, statement)
 
 
 def _assert_update_input(
@@ -1144,6 +1212,96 @@ def _assert_delete_input(
                 f"{case.path.name}: the neutral write input pk value(s) {pk_values} appear "
                 f"in none of the DELETE binds {binds}."
             )
+
+
+def _conflict_versioned_entity(case: Case) -> Entity | None:
+    """The versioned entity a conflict case targets, or None (a temporal close).
+
+    A versioned conflict (``0703`` / ``0704`` / ``0708`` / ``0709`` / ``0710``)
+    gates on a version column; a temporal / bitemporal close (``0730``-``0733`` /
+    ``0813`` / ``0814``) has none and carries a different ① (gated in Phase 4).
+    """
+    for entity in case.model.entities:
+        if _version_column(entity) is not None:
+            return entity
+    return None
+
+
+def _assert_conflict_input(case: Case, dialect: str) -> None:
+    """Cross-check a conflict case's neutral input (① ``write``) against its golden.
+
+    A VERSIONED conflict is intrinsically optimistic (R4) — always gated: the golden
+    SET clause is the domain set columns + ``version`` (advanced ``observedVersion +
+    1``), and the binds are ``[…set values…, newVersion, pk, observedVersion]`` (the
+    trailing bind is the ``and version = ?`` gate). The single form reads a root
+    ``write``; the retry form reads a ``write`` per attempt. A temporal-close
+    conflict (no version column) carries a different ① and is gated in Phase 4, so
+    it is skipped here. Comparing against the golden is legitimate — two AUTHORED
+    representations, never grading generated output.
+    """
+    entity = _conflict_versioned_entity(case)
+    if entity is None:
+        return
+    version_col = _version_column(entity)
+    if case.attempts:
+        for index, attempt in enumerate(case.attempts):
+            _assert_versioned_conflict_write(
+                case,
+                entity,
+                version_col,
+                attempt.get("write"),
+                _attempt_statements(attempt, dialect),
+                attempt.get("binds", []),
+                f"attempts[{index}].write",
+            )
+        return
+    _assert_versioned_conflict_write(
+        case,
+        entity,
+        version_col,
+        case.raw.get("write"),
+        case.golden_statements(dialect),
+        case.binds,
+        "write",
+    )
+
+
+def _assert_versioned_conflict_write(
+    case: Case,
+    entity: Entity,
+    version_col: str | None,
+    write: dict[str, Any] | None,
+    statements: list[str],
+    binds: list[Any],
+    pointer: str,
+) -> None:
+    if write is None:
+        return  # transitional: ① not authored yet (a later phase makes it required)
+    if len(statements) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: a versioned conflict ({pointer}) has exactly one golden "
+            f"UPDATE, but {len(statements)} were listed."
+        )
+    statement = statements[0]
+    _, pk, set_cols, observed = _classify_write_row(case, entity, write)
+    golden_set = _parse_set_columns(case, statement)
+    set_present = [c for c in column_order(entity) if c in set_cols]
+    expected_cols = [*set_present, version_col]
+    if golden_set != expected_cols:
+        raise CaseFailure(
+            f"{case.path.name}: the golden conflict SET column list {golden_set} != the "
+            f"domain set columns + version {expected_cols} the neutral write input "
+            f"({pointer}) resolves to."
+        )
+    if observed is None:
+        raise CaseFailure(
+            f"{case.path.name}: a versioned conflict's neutral write input ({pointer}) MUST "
+            f"carry observedVersion — the advance + gate are derived from it."
+        )
+    set_values = [set_cols[column] for column in set_present]
+    # A conflict is intrinsically gated (R4): [...set, newVersion, pk, observedVersion].
+    expected = [*set_values, observed + 1, pk, observed]
+    _assert_write_values(case, expected, binds, statement)
 
 
 def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
@@ -1914,6 +2072,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_conflict_retry_normalization(case, dialect)  # layer 3
         _assert_serde(case)  # layer 4
         _assert_equivalent_encodings(case)  # layer 4c
+        _assert_conflict_input(case, dialect)  # layer 5c (① ↔ ② per attempt)
         _provision(case, db)  # fixtures loaded: the versioned row exists
         _assert_conflict_retry(case, db)  # precondition + ordered attempts
         return
@@ -1952,6 +2111,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         return
 
     if case.is_conflict:
+        _assert_conflict_input(case, dialect)  # layer 5c (① ↔ ② single form)
         _provision(case, db)  # fixtures loaded: the row to lock exists
         _assert_conflict(case, db)  # precondition + golden UPDATE, affected rows
         return

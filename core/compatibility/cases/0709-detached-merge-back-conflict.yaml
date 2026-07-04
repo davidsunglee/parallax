@@ -16,6 +16,11 @@
 model: models/account.yaml
 tags: [m10, m9, m3, optimistic-locking, conflict, detached, merge-back]
 precondition: update account set balance = 888.00, version = 2 where id = 1
+# ① the neutral write input: pk `id` -> where key, `balance` -> the domain set
+# column, `observedVersion` the version SNAPSHOTTED AT DETACHMENT (1). A conflict
+# is intrinsically optimistic (R4) — gated even with NO `uow` block — so the
+# adapter derives the gated UPDATE (advance 1 -> 2, gate on 1) and its binds.
+write: { id: 1, balance: 150.00, observedVersion: 1 }
 expectedAffectedRows: 0
 goldenSql:
   postgres: update account set balance = ?, version = ? where id = ? and version = ?

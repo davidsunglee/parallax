@@ -173,6 +173,18 @@ export function scalarsEqual(observed: unknown, expected: unknown, columnType?: 
   return String(observed) === String(expected);
 }
 
+/**
+ * Element-wise scalar equality over two ordered bind lists, under the same M12
+ * scalar rules ({@link scalarsEqual}, no column type — the genuine-numeric
+ * discriminator reconciles a decimal money value across representations). The
+ * write-sequence / conflict compile lanes use it to cross-check the binds a
+ * generating adapter DERIVES from the neutral write input (①) against the
+ * authored golden binds (②) — a genuine independent check, never a golden parse.
+ */
+export function bindsEqual(left: readonly unknown[], right: readonly unknown[]): boolean {
+  return left.length === right.length && left.every((value, index) => scalarsEqual(value, right[index]));
+}
+
 // --- table-state comparison (write sequences) -------------------------------
 
 /** An observed / expected table state: table name -> its full row set. */

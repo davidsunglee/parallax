@@ -14,7 +14,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from reference_harness.case import discover_cases
+from reference_harness.case_runner import CaseFailure, _assert_conflict_input
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -26,6 +29,15 @@ def _cases():
 
 def _conflict_cases():
     return [c for c in _cases() if c.is_conflict]
+
+
+def _versioned_conflict_cases():
+    """Conflict cases whose model carries an explicit optimistic-lock version."""
+    return [
+        c
+        for c in _conflict_cases()
+        if any(a.get("optimisticLocking") for e in c.model.entities for a in e.attributes)
+    ]
 
 
 def test_conflict_cases_are_discovered_and_self_describe() -> None:
@@ -74,6 +86,31 @@ def test_conflict_case_precondition_is_optional_but_present_for_the_conflict() -
     success = next(c for c in _conflict_cases() if c.expected_affected_rows == 1)
     # The success case has no concurrent writer.
     assert not success.precondition
+
+
+def test_conflict_input_holds_for_authored_versioned_cases() -> None:
+    cases = _versioned_conflict_cases()
+    assert cases, "no versioned conflict (M10) case discovered"
+    for case in cases:
+        # Must not raise: each authored ① `write` (single form) / per-attempt `write`
+        # (retry form) classifies against the model to the golden's SET column list
+        # (+ the derived version) and its binds (advance `observedVersion + 1`, pk,
+        # gate `observedVersion`) — a genuine ① ↔ ② cross-check, not a golden parse.
+        _assert_conflict_input(case, "postgres")
+
+
+def test_conflict_input_observed_version_corruption_is_rejected() -> None:
+    case = next(
+        c
+        for c in _versioned_conflict_cases()
+        if isinstance(c.raw.get("write"), dict) and "observedVersion" in c.raw["write"]
+    )
+    # Corrupt the observed version in ①: the derived advance (`observedVersion + 1`)
+    # AND the trailing gate bind no longer agree with the authored golden binds, so
+    # the ① ↔ ② consistency gate MUST fail (it no longer rests on a golden parse).
+    case.raw["write"]["observedVersion"] = case.raw["write"]["observedVersion"] + 5
+    with pytest.raises(CaseFailure):
+        _assert_conflict_input(case, "postgres")
 
 
 def test_detached_update_loads_fixtures() -> None:
