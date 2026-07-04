@@ -180,7 +180,12 @@ for (const spec of dialects) {
         expect(dialect.parsers.timestamp("infinity")).toBe(INFINITY);
         const instant = dialect.parsers.timestamp("2024-03-01 12:00:00+00");
         expect(instant).not.toBe(INFINITY);
-        expect(Temporal.Instant.compare(instant as Temporal.Instant, Temporal.Instant.from("2024-03-01T12:00:00Z"))).toBe(0);
+        expect(
+          Temporal.Instant.compare(
+            instant as Temporal.Instant,
+            Temporal.Instant.from("2024-03-01T12:00:00Z"),
+          ),
+        ).toBe(0);
       });
 
       it("bytes → Uint8Array from the hex rendering", () => {

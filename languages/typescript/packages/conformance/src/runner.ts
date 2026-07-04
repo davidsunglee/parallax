@@ -30,7 +30,13 @@ import type {
   Row,
   RunOk,
 } from "@parallax/core";
-import { applyReadLock, columnOrder, ddlForDescriptor, quoteIdentifier } from "@parallax/dialect";
+import {
+  columnOrder,
+  type Dialect,
+  ddlForDescriptor,
+  postgresDialect,
+  quoteIdentifier,
+} from "@parallax/dialect";
 import { type EntityMetadata, Metamodel, parseOperation } from "@parallax/operation";
 import { deepFetch, type Exec, type Row as GraphRow } from "@parallax/relationships";
 import { compile } from "@parallax/sql";
@@ -49,11 +55,25 @@ import { buildWriteSequencePlan, isWriteSequence } from "./write-sequence.js";
  * The `read-lock` tag marks a locking-mode in-transaction object find that must
  * carry the dialect's shared-row-lock suffix (M8 automatic read-lock correctness).
  * The signal is the tag (not the operation AST — the operation is a plain `eq`), so
- * the runner detects it here and hands the read to the dialect's `applyReadLock`,
- * which appends `for share of t0` after every other clause.
+ * the runner detects it here and compiles the read in `locking` mode; `compile()`
+ * then applies the dialect's read-lock in-line (`for share of t0` after every other
+ * clause), so the emitted SQL already carries the lock (no post-compile step).
  */
 function isReadLock(loaded: LoadedCase): boolean {
   return loaded.tags.includes("read-lock");
+}
+
+/**
+ * Select the concrete {@link Dialect} for a run key (the dialect id keying
+ * `goldenSql`). The runner is the M12 orchestrator, so it consults the concrete
+ * dialect's pure rules directly (M12 → M11). Only Postgres is implemented on the
+ * TypeScript side today; `mariadbDialect` joins this map with the second dialect.
+ */
+function dialectFor(key: string): Dialect {
+  if (key === postgresDialect.id) {
+    return postgresDialect;
+  }
+  throw new Error(`no dialect registered for run key '${key}'`);
 }
 
 /** The case's authored binds carried verbatim (a flat scalar list for a read). */
@@ -152,7 +172,7 @@ export function runCompile(
     });
   }
 
-  const { sql, binds } = compileRootStatement(loaded);
+  const { sql, binds } = compileRootStatement(loaded, dialectFor(dialect));
   const emission: Emission = {
     casePointer: READ_OPERATION_POINTER,
     sql,
@@ -213,19 +233,22 @@ function compileOk(
  * operand compiled with the deep-fetch root projection). Both reuse the M3
  * `compile` visitor via a `MetamodelSchema`.
  */
-function compileRootStatement(loaded: LoadedCase): { sql: string; binds: readonly BindValue[] } {
+function compileRootStatement(
+  loaded: LoadedCase,
+  dialect: Dialect,
+): { sql: string; binds: readonly BindValue[] } {
   if (isDeepFetch(loaded.raw.operation)) {
-    const plan = buildDeepFetchPlan(loaded);
+    const plan = buildDeepFetchPlan(loaded, dialect);
     return { sql: plan.root.sql, binds: plan.root.binds as readonly BindValue[] };
   }
   const operation = parseOperation(loaded.raw.operation);
-  const schema = schemaForReadCase(loaded, operation);
-  const { sql, binds } = compile(operation, schema);
-  // A `read-lock`-tagged case is a locking-mode object find: the dialect applies the
-  // shared-row-lock suffix after every other clause (M8 automatic read-lock
-  // correctness; the dialect owns the append — M11 `applyReadLock`).
-  const locked = isReadLock(loaded) ? applyReadLock(sql, { locking: true }) : sql;
-  return { sql: locked, binds: binds as readonly BindValue[] };
+  const schema = schemaForReadCase(loaded, operation, dialect);
+  // A `read-lock`-tagged case is a locking-mode object find: `compile()` applies the
+  // dialect's shared-row-lock in-line after every other clause (M8 automatic read-
+  // lock correctness; the dialect owns the append — M11), so the SQL is already
+  // locked with no post-compile step.
+  const { sql, binds } = compile(operation, schema, dialect, { locking: isReadLock(loaded) });
+  return { sql, binds: binds as readonly BindValue[] };
 }
 
 // --- run lane ---------------------------------------------------------------
@@ -276,9 +299,10 @@ export async function runRun(
   }
 
   await provision(loaded, provider);
+  const dialectImpl = dialectFor(dialect);
   const { emissions, observations } = isDeepFetch(loaded.raw.operation)
-    ? await runDeepFetch(loaded, provider)
-    : await runFlatRead(loaded, provider);
+    ? await runDeepFetch(loaded, provider, dialectImpl)
+    : await runFlatRead(loaded, provider, dialectImpl);
   return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
 }
 
@@ -317,19 +341,18 @@ interface RunResult {
 async function runFlatRead(
   loaded: LoadedCase,
   provider: CompatibilityDatabaseProvider,
+  dialect: Dialect,
 ): Promise<RunResult> {
   const operation = parseOperation(loaded.raw.operation);
-  const schema = schemaForReadCase(loaded, operation);
-  const { sql, binds } = compile(operation, schema);
-  // A `read-lock`-tagged case is a locking-mode object find; the dialect applies the
-  // shared-row-lock suffix after every other clause (the lock does not change rows).
-  const executed = isReadLock(loaded) ? applyReadLock(sql, { locking: true }) : sql;
+  const schema = schemaForReadCase(loaded, operation, dialect);
+  // A `read-lock`-tagged case is a locking-mode object find; `compile()` applies the
+  // dialect's shared-row-lock in-line after every other clause (the lock does not
+  // change rows), so the executed SQL is already locked.
+  const { sql, binds } = compile(operation, schema, dialect, { locking: isReadLock(loaded) });
 
-  const rows = await provider.query(executed, binds as readonly unknown[]);
+  const rows = await provider.query(sql, binds as readonly unknown[]);
   return {
-    emissions: [
-      { casePointer: READ_OPERATION_POINTER, sql: executed, binds: binds as readonly WireBind[] },
-    ],
+    emissions: [{ casePointer: READ_OPERATION_POINTER, sql, binds: binds as readonly WireBind[] }],
     observations: { roundTrips: 1, rows: rows as readonly Row[] },
   };
 }
@@ -345,8 +368,9 @@ async function runFlatRead(
 async function runDeepFetch(
   loaded: LoadedCase,
   provider: CompatibilityDatabaseProvider,
+  dialect: Dialect,
 ): Promise<RunResult> {
-  const plan: DeepFetchPlan = buildDeepFetchPlan(loaded);
+  const plan: DeepFetchPlan = buildDeepFetchPlan(loaded, dialect);
 
   const rootRows = await provider.query(plan.root.sql, plan.root.binds);
   const emissions: Emission[] = [

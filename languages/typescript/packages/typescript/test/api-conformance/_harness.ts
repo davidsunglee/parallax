@@ -37,7 +37,7 @@ import {
 } from "@parallax/conformance";
 import { bytesToHex, ParallaxDecimal, Temporal, timestampToWire } from "@parallax/core";
 import type { PostgresDatabase } from "@parallax/db-postgres";
-import { ddlForDescriptor } from "@parallax/dialect";
+import { ddlForDescriptor, postgresDialect } from "@parallax/dialect";
 import type { Metamodel } from "@parallax/metamodel";
 import { Metamodel as MetamodelReader } from "@parallax/metamodel";
 import { canonicallyEqual } from "@parallax/operation";
@@ -89,6 +89,7 @@ export async function provisionCase(
   const px = createParallax({
     database: db,
     descriptor: loaded.descriptor,
+    dialect: postgresDialect,
     ...(options.now ? { clock: { now: () => options.now as string } } : {}),
   });
   return { loaded, px, db, metamodel };

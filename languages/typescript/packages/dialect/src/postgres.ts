@@ -51,14 +51,6 @@ export function toPositionalPlaceholders(sql: string): string {
 const READ_LOCK_ALIAS = "t0";
 
 /**
- * A leading `select distinct` projection — the one lock-incompatible read shape
- * the developer `find` API can produce today (`0226`: `select distinct t0.…`). The
- * canonical SQL is always lowercase, but the match is case-insensitive so a future
- * dialect's casing cannot slip an unlockable read past the guard.
- */
-const DISTINCT_PROJECTION = /^\s*select\s+distinct\b/i;
-
-/**
  * **Apply** this dialect's in-transaction shared read lock to a compiled read (M8
  * automatic read-lock correctness, owned by the M11 seam per delta `09` D3). The
  * dialect owns the whole decision — whether, where, and how the lock attaches —
@@ -67,19 +59,28 @@ const DISTINCT_PROJECTION = /^\s*select\s+distinct\b/i;
  *  - a lockable **object find** in `locking` mode gets the shared-row-lock form
  *    appended after every other clause — Postgres `for share of t0` (alias-
  *    qualified, lowercased);
- *  - a **projection / aggregation** read (the `select distinct` shape) is returned
- *    **unchanged**: its result rows have no identifiable base row to lock, and per
- *    ADR 0024 return plain unmanaged data, so there is nothing to protect — it
- *    proceeds unlocked rather than erroring (ADR 0030, the D2 reversal);
+ *  - a **projection / aggregation** read (`projection: true` — a `select distinct` /
+ *    grouped / aggregate result) is returned **unchanged**: its result rows have no
+ *    identifiable base row to lock, and per ADR 0024 return plain unmanaged data, so
+ *    there is nothing to protect — it proceeds unlocked rather than erroring (ADR
+ *    0030, the D2 reversal);
  *  - any **non-`locking`** read (`optimistic` mode, or an out-of-transaction read)
  *    is returned unchanged.
+ *
+ * The lock-omission decision keys on the caller-supplied `projection` boolean — the
+ * authoritative contract flag `compile` derives from whether it emitted `distinct`
+ * (`m11:203-216`) — NOT a regex over the SQL text: the compiler already knows the
+ * read's shape, so the seam trusts the flag rather than re-deriving it from the SQL.
  *
  * MariaDB diverges (no `for share`; MDEV-17514): its shared lock is the unaliased
  * `lock in share mode`, appended after every other clause. That form lands with the
  * second concrete dialect (the `Dialect`-interface effort); it is not wired here.
  */
-export function applyReadLock(sql: string, options: { readonly locking: boolean }): string {
-  if (!options.locking || DISTINCT_PROJECTION.test(sql)) {
+export function applyReadLock(
+  sql: string,
+  options: { readonly locking: boolean; readonly projection: boolean },
+): string {
+  if (!options.locking || options.projection) {
     return sql;
   }
   return `${sql} for share of ${READ_LOCK_ALIAS}`;
@@ -96,6 +97,11 @@ export function applyReadLock(sql: string, options: { readonly locking: boolean 
  */
 export function orderByTerm(qualifiedColumn: string, direction: "asc" | "desc"): string {
   if (direction === "desc") {
+    // `desc nulls last` is spec-mandated — the m11 NULL-ordering table
+    // (`m11:153-167`) fixes Postgres descending as `order by <col> desc nulls last`.
+    // Bare `desc` would put NULLs FIRST, violating the M4 canonical rule that sorts
+    // NULLs LAST on every key, so the explicit `nulls last` is REQUIRED. Do NOT
+    // "simplify" this to bare `desc`.
     return `${qualifiedColumn} desc nulls last`;
   }
   return `${qualifiedColumn} asc`;
@@ -232,29 +238,13 @@ export function quoteIdentifier(name: string): string {
 
 // --- raw-string type coercion at the adapter boundary -----------------------
 
-/**
- * The Postgres OIDs whose driver-default parse would violate an M0 contract, so
- * the provider registers a raw-text parser for each and we materialize the value
- * here. The OIDs are the stable Postgres catalog numbers.
+/*
+ * The driver's raw-text type codes (Postgres OIDs) that must be parsed here now
+ * live in the adapter (`@parallax/db-postgres`, `oids.ts`), because *which codes are
+ * raw text* is a driver concern while *how to parse* is the dialect's (Q3-A). The
+ * parse functions below stay the single source of parse logic, surfaced through the
+ * `postgresDialect.parsers` record.
  */
-export const RAW_TEXT_OIDS = {
-  /** `int8` — `bigint`. JS `number` cannot hold the full int64 range. */
-  int8: 20,
-  /** `numeric` — exact decimal. The driver default is a lossy binary float. */
-  numeric: 1700,
-  /** `timestamptz` — UTC instant. The driver default is a ms-precision `Date`. */
-  timestamptz: 1184,
-  /** `timestamp` — same precision concern as `timestamptz`. */
-  timestamp: 1114,
-  /** `bytea` — `Uint8Array`, parsed from the `\x…` hex rendering. */
-  bytea: 17,
-  /** `date` — `Temporal.PlainDate` (calendar date, no time / offset). */
-  date: 1082,
-  /** `time` — `Temporal.PlainTime` (wall-clock time, no date / offset). */
-  time: 1083,
-  /** `uuid` — a canonical lowercase string (no managed carrier). */
-  uuid: 2950,
-} as const;
 
 /**
  * Materialize a raw `int8` string into a native `bigint`. The driver must be

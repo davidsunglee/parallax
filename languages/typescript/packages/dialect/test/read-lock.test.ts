@@ -19,7 +19,9 @@ import { describe, expect, it } from "vitest";
 describe("applyReadLock (M8 read-lock application, 0603)", () => {
   it("appends the Postgres shared-row-lock suffix to a locking object find", () => {
     const read = "select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?";
-    expect(applyReadLock(read, { locking: true })).toBe(`${read} for share of t0`);
+    expect(applyReadLock(read, { locking: true, projection: false })).toBe(
+      `${read} for share of t0`,
+    );
   });
 
   it("returns a distinct/projection read UNCHANGED — no suffix, no throw", () => {
@@ -27,20 +29,24 @@ describe("applyReadLock (M8 read-lock application, 0603)", () => {
     // DISTINCT result. The dialect OMITS the lock (it proceeds unlocked) rather than
     // erroring — the D2 reversal (ADR 0030), even in locking mode.
     const distinctRead = "select distinct t0.owner from account t0";
-    expect(applyReadLock(distinctRead, { locking: true })).toBe(distinctRead);
+    expect(applyReadLock(distinctRead, { locking: true, projection: true })).toBe(distinctRead);
   });
 
-  it("locks an ordinary read whose column name merely contains 'distinct'", () => {
-    // The omit branch keys on the `select distinct` projection shape, not a
-    // substring, so a plain read projecting a `distinct_flag` column still locks.
+  it("keys the omit decision on the `projection` flag, not the SQL text", () => {
+    // The omit branch trusts the caller-supplied `projection` boolean (the contract
+    // flag `compile` derives from whether it emitted `distinct`), NOT a regex over
+    // the SQL. So a non-projection read (`projection: false`) still locks even though
+    // its column name merely contains "distinct".
     const read = "select t0.distinct_flag from account t0 where t0.id = ?";
-    expect(applyReadLock(read, { locking: true })).toBe(`${read} for share of t0`);
+    expect(applyReadLock(read, { locking: true, projection: false })).toBe(
+      `${read} for share of t0`,
+    );
   });
 
   it("returns any read UNCHANGED when not locking (optimistic / out-of-transaction)", () => {
     const objectRead = "select t0.id from account t0 where t0.id = ?";
     const distinctRead = "select distinct t0.owner from account t0";
-    expect(applyReadLock(objectRead, { locking: false })).toBe(objectRead);
-    expect(applyReadLock(distinctRead, { locking: false })).toBe(distinctRead);
+    expect(applyReadLock(objectRead, { locking: false, projection: false })).toBe(objectRead);
+    expect(applyReadLock(distinctRead, { locking: false, projection: true })).toBe(distinctRead);
   });
 });

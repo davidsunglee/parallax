@@ -26,6 +26,7 @@
  * `@parallax/operation` (the DAG forbids `sql → metamodel`). The runner builds the
  * resolver from the M1 reader.
  */
+import type { Dialect } from "@parallax/dialect";
 import { type Operation, operationTag } from "@parallax/operation";
 import { coerceBind } from "./bind.js";
 
@@ -43,6 +44,14 @@ export interface ResolvedColumn {
   readonly column: string;
   /** The attribute's M0 neutral type (e.g. `int64`, `decimal(18,2)`, `string`). */
   readonly type: string;
+  /**
+   * Whether the column admits `NULL`. Consulted by ORDER BY assembly so a NULL-
+   * bearing key is placed through the dialect's NULL-placement rule
+   * (`dialect.orderByTerm`) while a NOT-NULL key — where NULL placement is moot —
+   * emits the bare `<col> asc|desc` form (byte-identical to the hand-authored
+   * goldens). Optional: a resolver that omits it defaults a column to NOT-NULL.
+   */
+  readonly nullable?: boolean;
 }
 
 /**
@@ -231,7 +240,33 @@ interface Directives {
 }
 
 /**
- * Compile an M2 operation into canonical Postgres SQL plus its ordered binds.
+ * The execution context `compile` consults for the dialect-divergent decisions it
+ * makes *during* assembly (the M3 → M11 inversion): whether this read takes the
+ * in-transaction shared read-lock, and (M4 propagation) the pre-seeded as-of pins.
+ */
+export interface CompileExec {
+  /**
+   * The enclosing unit of work is a `locking`-mode in-transaction read, so the
+   * dialect's shared read-lock is applied as the final in-compile step. Absent /
+   * false for an out-of-transaction or `optimistic`-mode read.
+   */
+  readonly locking?: boolean;
+  /**
+   * A projection / aggregation read (no base row to lock). Reserved for an explicit
+   * override; `compile` otherwise derives it from whether it emitted `distinct`.
+   */
+  readonly projection?: boolean;
+  /**
+   * Pre-seed the read's as-of pins before peeling — the M4 deep-fetch propagation
+   * path injects the root's pins (matched by axis) into a child level's temporal
+   * predicate, so the child reads as of the same instant(s).
+   */
+  readonly seedPins?: AxisPins;
+}
+
+/**
+ * Compile an M2 operation into **dialect-optimized** SQL plus its ordered binds,
+ * against the injected {@link Dialect} contract (the M3 → M11 edge).
  *
  * The result directives (`distinct`, `orderBy`, `limit`) wrap the predicate from
  * the outside; they are peeled first so they can lower into their fixed clause
@@ -241,21 +276,34 @@ interface Directives {
  * (or none for `all`). Binds are accumulated in the same traversal — the limit
  * bind appends after any predicate binds, matching placeholder order.
  *
- * `seedPins` pre-seeds the read's as-of pins before peeling — the M4 deep-fetch
+ * Every divergent fragment is routed through the `dialect`: ORDER BY NULL placement
+ * (`dialect.orderByTerm`, for NULL-bearing keys), the row-limit clause
+ * (`dialect.rowLimit`), and — the final in-compile step — the in-transaction shared
+ * read-lock (`dialect.applyReadLock`, gated on `exec.locking`; `compile` already
+ * knows whether it emitted `distinct`, so the projection flag needs no regex). The
+ * emitted SQL still carries canonical `?` placeholders; the adapter translates them
+ * to the driver's syntax at the boundary.
+ *
+ * `exec.seedPins` pre-seeds the read's as-of pins before peeling — the M4 deep-fetch
  * **propagation** path uses it to inject the root's pins (matched by axis) into a
  * child level's temporal predicate, so the child reads as of the same instant(s).
  * A single-entity read leaves it empty and collects its pins from its own
  * `asOf` / `asOfRange` / `history` wrappers.
  */
-export function compile(op: Operation, schema: SchemaResolver, seedPins?: AxisPins): CompileResult {
+export function compile(
+  op: Operation,
+  schema: SchemaResolver,
+  dialect: Dialect,
+  exec?: CompileExec,
+): CompileResult {
   const ctx = newCompileCtx(schema);
-  if (seedPins !== undefined) {
-    ctx.asOfPins = { ...seedPins };
+  if (exec?.seedPins !== undefined) {
+    ctx.asOfPins = { ...exec.seedPins };
   }
   const table = schema.rootTable();
   const alias = aliasFor(ctx, table);
 
-  const directives = peelDirectives(op, ctx);
+  const directives = peelDirectives(op, ctx, dialect);
   // Peel the temporal wrappers (`asOf` / `asOfRange` / `history`) off the
   // predicate, collecting per-axis pins into the context (so a temporal EXISTS
   // child can propagate them). What remains is the base user predicate.
@@ -289,9 +337,21 @@ export function compile(op: Operation, schema: SchemaResolver, seedPins?: AxisPi
   if (directives.orderBy !== undefined) {
     sql += ` order by ${directives.orderBy}`;
   }
+  // The row-limit clause goes THROUGH the dialect (a *wrappable* hook, not a bare
+  // suffix) so a future dialect that must rewrite the query shape can override it;
+  // today every dialect appends ` limit ?`, so this stays byte-identical.
   if (directives.limit !== undefined) {
-    sql += " limit ?";
+    sql = dialect.rowLimit(sql);
   }
+  // The in-transaction shared read-lock is the FINAL in-compile step (M8 automatic
+  // read-lock correctness, owned by M11): the dialect decides whether/where/how it
+  // attaches. `compile` knows authoritatively whether it emitted `distinct`, so the
+  // projection flag comes straight from the directives (no post-hoc regex). A non-
+  // locking read returns unchanged.
+  sql = dialect.applyReadLock(sql, {
+    locking: exec?.locking ?? false,
+    projection: directives.distinct,
+  });
   return { sql, binds: ctx.binds };
 }
 
@@ -416,7 +476,7 @@ function injectRootAsOf(ctx: CompileCtx, alias: string): AsOfFragment | undefine
  * nest predicate-inward (the corpus authors `limit { orderBy { <predicate> } }`);
  * the caller binds `limit` last so its `?` sits after any predicate binds.
  */
-function peelDirectives(op: Operation, ctx: CompileCtx): Directives {
+function peelDirectives(op: Operation, ctx: CompileCtx, dialect: Dialect): Directives {
   let current = op;
   let distinct = false;
   let orderBy: string | undefined;
@@ -441,9 +501,7 @@ function peelDirectives(op: Operation, ctx: CompileCtx): Directives {
           orderBy: { operand: Operation; keys: readonly { attr: string; direction?: string }[] };
         }
       ).orderBy;
-      orderBy = body.keys
-        .map((key) => `${qualify(ctx, key.attr)} ${key.direction ?? "asc"}`)
-        .join(", ");
+      orderBy = body.keys.map((key) => orderByTerm(ctx, dialect, key)).join(", ");
       current = body.operand;
       continue;
     }
@@ -798,6 +856,27 @@ function qualify(ctx: CompileCtx, ref: string): string {
   const resolved = ctx.schema.resolveAttribute(ref);
   const alias = aliasFor(ctx, resolved.table);
   return `${alias}.${resolved.column}`;
+}
+
+/**
+ * Render one ORDER BY term for a sort key, consulting the dialect's NULL placement
+ * (`dialect.orderByTerm`) **only** for a NULL-bearing column. The canonical
+ * ordered-relationship rule (M4) sorts NULLs last on every key, but the two
+ * dialects reach that order differently (Postgres `desc nulls last`; MariaDB a
+ * leading `is null,` term for `asc`) — so a nullable key must go through the
+ * dialect. A NOT-NULL key has no NULLs to place, so it emits the bare `<col>
+ * asc|desc` form, which is byte-identical to the hand-authored goldens (the corpus
+ * has no NULL-bearing `desc` key, so wiring the dialect in is a zero-diff change).
+ */
+function orderByTerm(
+  ctx: CompileCtx,
+  dialect: Dialect,
+  key: { readonly attr: string; readonly direction?: string },
+): string {
+  const resolved = ctx.schema.resolveAttribute(key.attr);
+  const column = `${aliasFor(ctx, resolved.table)}.${resolved.column}`;
+  const direction = key.direction === "desc" ? "desc" : "asc";
+  return resolved.nullable ? dialect.orderByTerm(column, direction) : `${column} ${direction}`;
 }
 
 /**

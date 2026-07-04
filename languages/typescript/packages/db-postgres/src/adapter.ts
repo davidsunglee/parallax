@@ -18,11 +18,7 @@
  */
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 import { ParallaxTransientError } from "@parallax/db";
-import {
-  classifyErrorCode,
-  isRetriableCategory,
-  toPositionalPlaceholders,
-} from "@parallax/dialect";
+import { postgresDialect } from "@parallax/dialect";
 import postgres, { type Options, type Sql } from "postgres";
 import { managedTypes } from "./oids.js";
 
@@ -40,9 +36,11 @@ function classifyDriverError(error: unknown): unknown {
     return error;
   }
   const code = (error as { code?: string | number } | null)?.code;
-  const category = classifyErrorCode(code);
+  const category = postgresDialect.classifyErrorCode(code);
   if (category === "deadlock" || category === "lockWaitTimeout") {
-    return new ParallaxTransientError(category, isRetriableCategory(category), { cause: error });
+    return new ParallaxTransientError(category, postgresDialect.isRetriable(category), {
+      cause: error,
+    });
   }
   return error;
 }
@@ -114,7 +112,7 @@ export class PostgresDatabase implements ParallaxDatabase {
    * row proxy.
    */
   async execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
-    const text = toPositionalPlaceholders(sql);
+    const text = postgresDialect.toPositionalPlaceholders(sql);
     try {
       const result = await this.sql.unsafe(text, asParams(binds));
       return [...result].map((row) => ({ ...(row as ParallaxRow) }));

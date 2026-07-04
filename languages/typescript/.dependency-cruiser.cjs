@@ -108,13 +108,7 @@ module.exports = {
     edge("dialect", "core"), //        M11 -> M0
     edge("operation", "metamodel"), // M2  -> M1
     edge("sql", "operation"), //       M3  -> M2
-    // Note: M3 -> M11 (sql -> dialect) is spec-normative (`dependency-graph.md`,
-    // `m11:99` — M3 depends on the dialect layer to emit compiled SQL) but omitted
-    // here — the `@parallax/sql` package injects schema knowledge via `SchemaResolver`
-    // and does not import `@parallax/dialect`, so per the "an edge exists only when
-    // there is an implementation behind it" policy above it is absent until the
-    // `Dialect`-interface work makes M3 import the dialect contract directly. The
-    // core DAG keeps M3 -> M11.
+    edge("sql", "dialect"), //         M3  -> M11 (compile() consults the Dialect contract — ORDER BY / NULL placement, row-limit, read-lock)
     edge("transactions", "operation"), // M8 -> M2
     // Note: M8 -> M11 (transactions -> dialect) is spec-legal but omitted here — the
     // in-transaction read-lock application moved into `@parallax/dialect` (delta 09

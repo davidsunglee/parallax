@@ -31,7 +31,13 @@
 import type { CompatibilityDatabaseProvider, ProviderRow } from "@parallax/conformance";
 import { toWire } from "@parallax/core";
 import { PostgresDatabase } from "@parallax/db-postgres";
-import { POSTGRES_DIALECT, quoteIdentifier, toPositionalPlaceholders } from "@parallax/dialect";
+import {
+  type Dialect,
+  POSTGRES_DIALECT,
+  postgresDialect,
+  quoteIdentifier,
+  toPositionalPlaceholders,
+} from "@parallax/dialect";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import type { Sql } from "postgres";
 
@@ -84,7 +90,16 @@ export function renderFixtureInsert(table: string, columns: readonly string[]): 
 
 /** A Testcontainers-backed Postgres provider for one suite run. */
 export class PostgresProvider implements CompatibilityDatabaseProvider {
+  /** The dialect id, keying `goldenSql` / `expectedNativeCode` (harness port). */
   readonly dialect = POSTGRES_DIALECT;
+
+  /**
+   * The concrete M11 {@link Dialect} the composition root injects into `createParallax`
+   * beside {@link database} — so the API Conformance Suite's `px` handle compiles and
+   * materializes against the same strategy the shipped adapter parses with. A MariaDB
+   * provider exposes `mariadbDialect` here identically.
+   */
+  readonly dialectImpl: Dialect = postgresDialect;
 
   /** A lazily-opened SECOND adapter (independent connection) modeling a peer/concurrent writer. */
   private peerDb: PostgresDatabase | undefined;

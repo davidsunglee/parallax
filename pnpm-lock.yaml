@@ -53,6 +53,9 @@ importers:
 
   languages/typescript/examples/orders-app:
     dependencies:
+      '@parallax/dialect':
+        specifier: workspace:*
+        version: link:../../packages/dialect
       '@parallax/typescript':
         specifier: workspace:*
         version: link:../../packages/typescript
@@ -205,13 +208,12 @@ importers:
       '@parallax/core':
         specifier: workspace:*
         version: link:../core
-      '@parallax/operation':
-        specifier: workspace:*
-        version: link:../operation
-    devDependencies:
       '@parallax/dialect':
         specifier: workspace:*
         version: link:../dialect
+      '@parallax/operation':
+        specifier: workspace:*
+        version: link:../operation
 
   languages/typescript/packages/transactions:
     dependencies:
