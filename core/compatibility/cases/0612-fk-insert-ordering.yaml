@@ -15,10 +15,18 @@ writeSequence:
     entity: Order
     statements: 1
     note: insert the parent Order first (the referenced row)
+    rows:
+      # Attribute names (`orderedOn`), not physical columns (`ordered_on`); the
+      # adapter resolves them to columns in columnOrder(Order) order.
+      - { id: 100, name: Hopper, sku: X-1, qty: 1, price: 9.99, active: true, orderedOn: "2024-07-01" }
   - mutation: insert
     entity: OrderItem
     statements: 1
     note: then insert the child OrderItem whose order_id references it
+    rows:
+      # `shippedOn` (nullable) is ABSENT ⇒ the INSERT omits `shipped_on` (a 4-of-5
+      # column insert), NOT an explicit NULL. `orderId` resolves to column `order_id`.
+      - { id: 200, orderId: 100, sku: X-1, quantity: 3 }
 goldenSql:
   postgres:
     - insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)

@@ -165,6 +165,12 @@
             "minimum": 1,
             "default": 1
           },
+          "rows": {
+            "description": "The neutral write input (①) for this step: the row(s) the mutation operates on, as flat attribute-named literals (`$defs/writeRow`). A GENERATING adapter classifies each field by metamodel role — the primary-key attribute is a written column (insert) or the `where` key (update / delete); every other attribute is an assigned domain column; `observedVersion` is the optimistic gate/advance token — and derives the emitted column list + ORDER from `columnOrder(entity)` (never JSON key order), plus the batched form, the SQL, and the binds. `goldenSql` + `binds` stay an independent oracle the derivation cross-checks against, so `emitted === golden` becomes a genuine check of column identity rather than a golden-parse tautology. Optional in the transitional phase; a later phase makes it required per shape / per mutation.",
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/writeRow" }
+          },
           "note": {
             "description": "Optional human-readable description of the milestone-chaining effect.",
             "type": "string"
@@ -445,6 +451,18 @@
     }
   },
   "$defs": {
+    "writeRow": {
+      "description": "A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name (a business/developer name like `id` / `orderedOn`, NOT a physical column like `ordered_on`), whose value is a scalar literal or an explicit `null` (an unset nullable attribute is simply absent, so the column is omitted from the DML). The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute keys via `additionalProperties`.",
+      "type": "object",
+      "properties": {
+        "observedVersion": {
+          "description": "The optimistic-lock version the unit of work read (M10). A reserved control key, NOT an attribute/column: it is the gate/advance token (the advance `observedVersion + 1` and the `and version = ?` gate are DERIVED, never authored). Present on a versioned update; absent on a versioned insert (which derives the initial `1`) and on a non-versioned write.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+    },
     "concurrencyStep": {
       "type": "object",
       "required": ["goldenSql"],
