@@ -40,6 +40,23 @@ def _versioned_conflict_cases():
     ]
 
 
+def _temporal_conflict_close_cases():
+    """Processing-only temporal conflict-close cases (no version, no business axis).
+
+    The audit-only optimistic / locking closes (`0730`-`0733`): they gate on the
+    observed processing-from (`in_z`), never a version column. The bitemporal closes
+    (`0813` / `0814`) carry a business axis too and are pinned in `test_bitemporal`.
+    """
+    cases = []
+    for case in _conflict_cases():
+        entities = case.model.entities
+        has_version = any(a.get("optimisticLocking") for e in entities for a in e.attributes)
+        axes = {dim.get("axis") for e in entities for dim in e.as_of_attributes}
+        if not has_version and "processing" in axes and "business" not in axes:
+            cases.append(case)
+    return cases
+
+
 def test_conflict_cases_are_discovered_and_self_describe() -> None:
     cases = _conflict_cases()
     assert cases, "no conflict (M10) cases discovered"
@@ -109,6 +126,37 @@ def test_conflict_input_observed_version_corruption_is_rejected() -> None:
     # AND the trailing gate bind no longer agree with the authored golden binds, so
     # the ① ↔ ② consistency gate MUST fail (it no longer rests on a golden parse).
     case.raw["write"]["observedVersion"] = case.raw["write"]["observedVersion"] + 5
+    with pytest.raises(CaseFailure):
+        _assert_conflict_input(case, "postgres")
+
+
+def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
+    cases = _temporal_conflict_close_cases()
+    # The Phase 4 processing-axis close family all carry ① (write + at [+ observedInZ]).
+    assert {case.path.stem[:4] for case in cases} >= {"0730", "0731", "0732", "0733"}
+    for case in cases:
+        # Must not raise: each close ① derives out_z = at (+ the in_z = observedInZ gate
+        # in optimistic mode) and cross-checks the derived binds against the golden
+        # binds — a binds-only ① ↔ ② check (the SET column out_z stays metamodel-fixed).
+        _assert_conflict_input(case, "postgres")
+
+
+def test_temporal_conflict_close_observed_in_z_corruption_is_rejected() -> None:
+    case = next(c for c in _temporal_conflict_close_cases() if c.path.stem.startswith("0730"))
+    # Corrupt the observed in_z gate token: the DERIVED `and in_z = ?` gate bind no
+    # longer matches the golden gate bind, so the ① ↔ ② temporal-close gate MUST fail
+    # (the gate value is derived from `observedInZ`, never read from the golden).
+    case.raw["observedInZ"] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_conflict_input(case, "postgres")
+
+
+def test_temporal_conflict_close_retry_gates_each_attempt() -> None:
+    case = next(c for c in _temporal_conflict_close_cases() if c.path.stem.startswith("0732"))
+    # The retry form carries a close ① per attempt; corrupting the retry attempt's
+    # observed in_z desyncs its derived gate bind from the golden, so the per-attempt
+    # ① ↔ ② gate MUST fail.
+    case.raw["attempts"][1]["observedInZ"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 

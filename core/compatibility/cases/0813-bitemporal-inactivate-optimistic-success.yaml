@@ -23,6 +23,9 @@ model: models/position.yaml
 tags: [m7, m10, m3, bitemporal, temporal, conflict, optimistic]
 uow:
   concurrency: optimistic
+write: { id: 1, businessFrom: "2024-06-01T00:00:00+00:00" }
+at: "2024-10-01T00:00:00+00:00"
+observedInZ: "2024-04-01T00:00:00+00:00"
 expectedAffectedRows: 1
 goldenSql:
   postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?

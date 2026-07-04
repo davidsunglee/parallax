@@ -20,6 +20,7 @@ import pytest
 from reference_harness.case import discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
+    _assert_conflict_input,
     _assert_write_input_columns,
     _assert_write_step_count,
 )
@@ -146,6 +147,74 @@ def test_temporal_write_input_at_corruption_is_rejected() -> None:
     step["at"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
+
+
+def _until_write_cases():
+    """Full-bitemporal `*Until` rectangle-split write-sequence cases (`0810`-`0812`)."""
+    return [
+        case
+        for case in _phase8_cases()
+        if case.is_write_sequence
+        and any(
+            step.get("mutation") in ("insertUntil", "updateUntil", "terminateUntil")
+            for step in case.write_sequence
+        )
+    ]
+
+
+def test_until_write_input_holds_for_authored_cases() -> None:
+    cases = _until_write_cases()
+    # The `*Until` trio all carry the valid-time window ① (rows + at + until).
+    assert {case.path.stem[:4] for case in cases} >= {"0810", "0811", "0812"}
+    for case in cases:
+        # Must not raise: the close binds [at, pk, infinity], every chained insert
+        # opens at fresh processing [at, infinity), and the business window bounds
+        # (businessFrom / until) appear among the chained inserts' business-axis binds.
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_until_write_input_window_corruption_is_rejected() -> None:
+    case = next(c for c in _until_write_cases() if c.path.stem.startswith("0810"))
+    step = next(s for s in case.write_sequence if s.get("until"))
+    # Corrupt the business valid-time window end: `until` no longer appears among the
+    # chained inserts' business-axis binds, so the `*Until` ① ↔ ② window gate MUST
+    # fail (the window bounds are DERIVED from `at`/`until`, never read from golden).
+    step["until"] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def _bitemporal_conflict_close_cases():
+    """Bitemporal conflict-close cases (`0813` / `0814`): a business + processing axis."""
+    return [
+        case
+        for case in discover_cases(COMPATIBILITY_ROOT)
+        if case.is_conflict
+        and any(
+            dim.get("axis") == "business"
+            for entity in case.model.entities
+            for dim in entity.as_of_attributes
+        )
+    ]
+
+
+def test_bitemporal_conflict_close_input_holds_for_authored_cases() -> None:
+    cases = _bitemporal_conflict_close_cases()
+    assert {case.path.stem[:4] for case in cases} >= {"0813", "0814"}
+    for case in cases:
+        # Must not raise: the close ① derives [at, pk, infinity, businessFrom,
+        # observedInZ] — the metamodel names the from_z discriminator column, ①
+        # supplies its VALUE (businessFrom), which the metamodel cannot know.
+        _assert_conflict_input(case, "postgres")
+
+
+def test_bitemporal_conflict_close_business_from_corruption_is_rejected() -> None:
+    case = next(c for c in _bitemporal_conflict_close_cases() if c.path.stem.startswith("0813"))
+    # Corrupt the business discriminator VALUE: the DERIVED from_z gate bind no longer
+    # matches the golden bind, so the bitemporal close ① ↔ ② gate MUST fail.
+    case.raw["write"]["businessFrom"] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_conflict_input(case, "postgres")
 
 
 def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:

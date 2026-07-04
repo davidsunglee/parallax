@@ -22,6 +22,8 @@ uow:
   concurrency: locking
 # A concurrent writer TERMINATED id 2: close the current row at 2024-09-01, chain nothing.
 precondition: update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'
+write: { id: 2 }
+at: "2024-10-01T00:00:00+00:00"
 expectedAffectedRows: 0
 goldenSql:
   postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
