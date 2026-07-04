@@ -8,10 +8,14 @@ writeSequence:
     entity: Attendee
     statements: 1
     note: allocate id 1
+    rows:
+      - { id: { computed: maxPlusOne }, name: Ada }
   - mutation: insert
     entity: Attendee
     statements: 1
     note: allocate id 2 (re-reads the new max)
+    rows:
+      - { id: { computed: maxPlusOne }, name: Ben }
 goldenSql:
   postgres:
     - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0

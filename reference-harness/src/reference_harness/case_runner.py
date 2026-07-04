@@ -959,6 +959,40 @@ _SET_CLAUSE_RE = re.compile(r"\bset\s+(.+?)\s+where\b", re.IGNORECASE)
 _UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
 
 
+def _is_computed_marker(value: Any) -> bool:
+    """Whether an ① value is a DB-COMPUTED pk-gen `max` marker.
+
+    ``{ computed: "maxPlusOne" }`` names a column the database derives as
+    ``coalesce(max(col), ?) + ?`` (its binds are the strategy's coalesce base +
+    increment), so the attribute carries no literal ① bind of its own — the
+    cross-check skips the bind at that position (DQ-D / R5).
+    """
+    return isinstance(value, dict) and "computed" in value
+
+
+def _increment_marker(value: Any) -> Any:
+    """The amount of a self-referential ``{ increment: <n> }`` marker, or None.
+
+    The column is emitted as ``col = col + ?`` (e.g. a sequence registry's
+    ``next_val``); the marker's integer is the value bound at that ``?``.
+    """
+    if isinstance(value, dict) and "increment" in value:
+        return value["increment"]
+    return None
+
+
+def _increment_or_value(value: Any) -> Any:
+    """The bind an ① set value implies: an ``increment`` marker binds its amount."""
+    increment = _increment_marker(value)
+    return increment if increment is not None else value
+
+
+def _is_self_increment(statement: str, column: str) -> bool:
+    """Whether *statement* assigns *column* as a self-referential ``col = col + ?``."""
+    pattern = rf"\b{re.escape(column)}\s*=\s*{re.escape(column)}\s*\+\s*\?"
+    return re.search(pattern, statement, re.IGNORECASE) is not None
+
+
 def _classify_write_row(
     case: Case, entity: Entity, row: dict[str, Any]
 ) -> tuple[dict[str, Any], Any, dict[str, Any], Any]:
@@ -1067,16 +1101,19 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
     binds. Comparing against the golden HERE is legitimate: the harness compares two
     AUTHORED representations, never grading its own generation.
 
-    A TEMPORAL (audit-only) step is Family B: it ALWAYS writes the entity's full
-    physical row, so the column list stays metamodel-sourced (``column_order``) and
-    ① carries only the domain values (``rows``) plus the transaction instant
-    (``at``) — the ``in_z = at`` / ``out_z = infinity`` bookkeeping is DERIVED, never
-    authored (:func:`_assert_temporal_input`). A full-bitemporal ``*Until`` step is
-    the rectangle-split analogue: its ① carries the valid-time window (``at`` /
-    ``until`` / ``businessFrom``), cross-checked by :func:`_assert_until_input`.
+    A TEMPORAL step is Family B: it ALWAYS writes the entity's full physical row, so
+    the column list stays metamodel-sourced (``column_order``) and ① carries only the
+    domain values (``rows``) plus the milestone instant — the transaction instant
+    ``at`` (→ ``in_z``) for an audit-only entity, or ``businessAt`` (→ ``from_z``) for
+    a business-only one — with the ``fromColumn = instant`` / ``toColumn = infinity``
+    bookkeeping DERIVED, never authored (:func:`_assert_temporal_input`). A
+    full-bitemporal ``*Until`` step is the rectangle-split analogue: its ① carries the
+    valid-time window (``at`` / ``until`` / ``businessFrom``), cross-checked by
+    :func:`_assert_until_input`. pk-gen ``rows`` carry DB-computed markers
+    (``computed`` / ``increment``) whose bind is derived by the strategy, not authored.
 
-    Transitional: a step without ``rows`` (versioned insert, pk-gen …) is skipped; a
-    later phase makes ① required per shape.
+    Transitional: a step without ``rows`` (versioned insert …) is skipped; a later
+    phase makes ① required per shape.
     """
     statements = case.golden_statements(dialect)
     stmt_index = 0
@@ -1117,12 +1154,36 @@ def _assert_insert_input(
 ) -> None:
     if not step_statements:
         return
-    statement = step_statements[0]
+    version_col = _version_column(entity)
+    # A pk-gen `sequence` insert step emits one single-row INSERT per allocated id
+    # (statements == rows); a set-based batched insert (0604) is one multi-row INSERT.
+    per_row = len(step_statements) == len(classified) and len(step_statements) > 1
+    if per_row:
+        for cls, statement, binds in zip(classified, step_statements, step_binds):
+            _assert_insert_statement(case, entity, [cls], version_col, statement, binds)
+        return
+    _assert_insert_statement(
+        case,
+        entity,
+        classified,
+        version_col,
+        step_statements[0],
+        step_binds[0] if step_binds else [],
+    )
+
+
+def _assert_insert_statement(
+    case: Case,
+    entity: Entity,
+    classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
+    version_col: str | None,
+    statement: str,
+    binds: list[Any],
+) -> None:
     golden_columns = _parse_insert_columns(case, statement)
     domain = [c for c in column_order(entity) if any(c in cols for cols, *_ in classified)]
     # A VERSIONED insert appends the framework-owned version column with the DERIVED
     # initial value `1` (never authored in ①, so it is not in the row's columns).
-    version_col = _version_column(entity)
     present = [*domain, version_col] if version_col is not None else domain
     if golden_columns != present:
         raise CaseFailure(
@@ -1131,12 +1192,24 @@ def _assert_insert_input(
             f"present attributes"
             f"{' + derived version' if version_col is not None else ''})."
         )
+    computed = [
+        c for c in domain if any(_is_computed_marker(cols.get(c)) for cols, *_ in classified)
+    ]
+    if computed:
+        # pk-gen `max`: a DB-COMPUTED column (`coalesce(max(id), ?) + ?`) contributes
+        # the strategy's binds (coalesce base + increment), NOT an ① literal — its bind
+        # is SKIPPED. The column still appears in the golden INSERT list (checked
+        # above); the remaining LITERAL columns' values are the trailing binds.
+        literal_columns = [c for c in domain if c not in computed]
+        expected = [cols[column] for cols, *_ in classified for column in literal_columns]
+        _assert_write_values(case, expected, binds[len(binds) - len(expected) :], statement)
+        return
     expected: list[Any] = []
     for cols, *_ in classified:
         expected.extend(cols[column] for column in domain)
         if version_col is not None:
             expected.append(1)  # derived initial version (M10 baseline), never authored
-    _assert_write_values(case, expected, step_binds[0] if step_binds else [], statement)
+    _assert_write_values(case, expected, binds, statement)
 
 
 def _assert_versioned_update_input(
@@ -1191,6 +1264,15 @@ def _assert_update_input(
     set_present = [
         c for c in column_order(entity) if any(c in set_cols for _, _, set_cols, _ in classified)
     ]
+    # Columns whose ① value is a self-referential `{ increment: <n> }` marker (a
+    # sequence registry's `next_val`): the golden assigns `col = col + ?` and the bind
+    # at that `?` is the increment amount, not a plain literal (DQ-D / R5).
+    increment_columns = {
+        column
+        for _, _, set_cols, _ in classified
+        for column in set_cols
+        if _increment_marker(set_cols[column]) is not None
+    }
     for statement in step_statements:
         golden_set = _parse_set_columns(case, statement)
         if golden_set != set_present:
@@ -1198,15 +1280,22 @@ def _assert_update_input(
                 f"{case.path.name}: the golden SET column list {golden_set} != the domain "
                 f"columns the neutral write input resolves to {set_present}."
             )
+        for column in increment_columns:
+            if not _is_self_increment(statement, column):
+                raise CaseFailure(
+                    f"{case.path.name}: an `increment` ① on {column!r} requires the golden's "
+                    f"self-referential `set {column} = {column} + ?` shape, not found in "
+                    f"{statement!r}."
+                )
     per_key = len(step_statements) == len(classified) and len(step_statements) > 1
     width = len(set_present)
     if per_key:
         for (_, _, set_cols, _), binds, statement in zip(classified, step_binds, step_statements):
-            expected = [set_cols[column] for column in set_present]
+            expected = [_increment_or_value(set_cols[column]) for column in set_present]
             _assert_write_values(case, expected, binds[:width], statement)
         return
     first_set = classified[0][2] if classified else {}
-    expected = [first_set[column] for column in set_present]
+    expected = [_increment_or_value(first_set[column]) for column in set_present]
     binds = step_binds[0] if step_binds else []
     statement = step_statements[0] if step_statements else ""
     _assert_write_values(case, expected, binds[:width], statement)
@@ -1238,28 +1327,38 @@ def _assert_temporal_input(
     step_statements: list[str],
     step_binds: list[list[Any]],
 ) -> None:
-    """Cross-check a TEMPORAL (audit-only) write step's ① against its golden (②).
+    """Cross-check a TEMPORAL (audit-only / business-only) write step's ① vs golden.
 
     A milestone-chaining write ALWAYS writes the entity's full physical row (DQ-B
     Family B), so the emitted column list is metamodel-sourced (``column_order``) —
-    ① carries only the domain values (``rows``) plus the transaction instant
-    (``at``). The bookkeeping ``in_z = at`` and the open bound ``out_z = infinity``
-    are DERIVED, never authored in ① (the M7 milestone discipline stays under test).
-    The gate cross-checks, per statement: an ``insert`` (open a milestone) writes
-    the full physical row with ``in_z = at`` and ``out_z = infinity``; a close
-    (``update`` step 1 / ``terminate``) binds ``[at, pk, infinity]`` — sets
-    ``out_z = at`` keyed on the still-open current row (``pk and out_z = infinity``);
-    an ``update`` chains a second full-row insert carrying the row's columns.
+    ① carries only the domain values (``rows``) plus the milestone instant. For an
+    AUDIT-ONLY (processing) entity that instant is ``at`` (→ ``in_z``); for a
+    BUSINESS-ONLY (unitemporal-business) entity it is ``businessAt`` (→ ``from_z``) —
+    the same close-and-chain shape driven by business date rather than transaction
+    instant. The bookkeeping ``fromColumn = instant`` and the open bound
+    ``toColumn = infinity`` are DERIVED, never authored in ① (the M7 milestone
+    discipline stays under test). The gate cross-checks, per statement: an ``insert``
+    (open a milestone) writes the full physical row with ``fromColumn = instant`` and
+    ``toColumn = infinity``; a close (``update`` step 1 / ``terminate``) binds
+    ``[instant, pk, infinity]`` — sets ``toColumn = instant`` keyed on the still-open
+    current row (``pk and toColumn = infinity``); an ``update`` chains a second
+    full-row insert carrying the row's columns.
     """
-    axis = next(a for a in entity.as_of_attributes if a["axis"] == "processing")
+    processing = next((a for a in entity.as_of_attributes if a["axis"] == "processing"), None)
+    if processing is not None:
+        axis, at, instant_key = processing, step.get("at"), "at"
+    else:
+        # A business-only (unitemporal-business) entity closes/chains on the BUSINESS
+        # axis, driven by `businessAt` (→ from_z/thru_z) — the analogue of `at`.
+        axis = next(a for a in entity.as_of_attributes if a["axis"] == "business")
+        at, instant_key = step.get("businessAt"), "businessAt"
     in_z, out_z, infinity = axis["fromColumn"], axis["toColumn"], axis.get("infinity", "infinity")
     full_columns = list(column_order(entity))
-    at = step.get("at")
     if at is None:
         raise CaseFailure(
             f"{case.path.name}: a temporal write step's neutral write input (①) MUST carry "
-            f"`at` (the transaction instant → in_z), which is DERIVED into the milestone "
-            f"bookkeeping, never read from the golden."
+            f"`{instant_key}` (the milestone instant → {in_z}), which is DERIVED into the "
+            f"milestone bookkeeping, never read from the golden."
         )
     columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
 

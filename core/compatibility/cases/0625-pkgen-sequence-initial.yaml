@@ -6,8 +6,18 @@ model: models/pk-sequence.yaml
 loadFixtures: true
 tags: [m1, m8, pk-generation, sequence, write-sequence]
 writeSequence:
-  - { mutation: update, entity: PkSequence, statements: 1, note: "reserve block (stride 5), base 1000" }
-  - { mutation: insert, entity: Ticket, statements: 1, note: hand out id 1000 }
+  - mutation: update
+    entity: PkSequence
+    statements: 1
+    note: "reserve block (stride 5), base 1000"
+    rows:
+      - { name: ticket_seq, nextVal: { increment: 5 } }
+  - mutation: insert
+    entity: Ticket
+    statements: 1
+    note: hand out id 1000
+    rows:
+      - { id: 1000, tier: gold }
 goldenSql:
   postgres:
     - update pk_sequence set next_val = next_val + ? where name = ?
