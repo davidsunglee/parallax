@@ -14,19 +14,23 @@
  *    rows, then a fresh-version retry affects 1 (`0708`).
  *
  * The golden `UPDATE` text is authored in the case (`update … set … , version = ?
- * where id = ? and version = ?`). This module generates it BY CONSTRUCTION from
- * the entity's physical shape via `@parallax/locking` (`versionedUpdate`) and pins
- * it against the authored golden, so the M10 versioned-UPDATE discipline (gate on
- * the read version, advance it in `set`) is owned by the runtime, not re-authored.
- * The `precondition` is an out-of-band naive statement run VERBATIM (it models a
- * concurrent writer, not our runtime's output).
+ * where id = ? and version = ?`). This module DERIVES it — text AND binds — from
+ * the neutral write input (① `write`, a flat attribute-named row) classified
+ * against the metamodel: the domain `set` columns are `columnOrder(entity)`
+ * filtered to the row's assigned attributes, the version advances
+ * `observedVersion + 1`, and a conflict is intrinsically gated (`and version = ?`,
+ * R4). The derived emission is cross-checked against the authored golden + binds,
+ * so `emitted === golden` is a genuine INDEPENDENT check of column identity, not a
+ * golden-parse tautology. The `precondition` is an out-of-band naive statement run
+ * VERBATIM (it models a concurrent writer, not our runtime's output).
  */
 import { auditWriteStatements } from "@parallax/bitemporal";
 import { quoteIdentifier } from "@parallax/dialect";
 import { type VersionedTarget, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
+import { bindsEqual } from "./compare.js";
 import type { LoadedCase } from "./discover.js";
-import { writeTargetFor } from "./write-sequence.js";
+import { classifyRow, orderedColumns, writeTargetFor } from "./write-sequence.js";
 
 /** One versioned-UPDATE attempt: its generated SQL, binds, expected affected count. */
 export interface ConflictAttempt {
@@ -62,38 +66,41 @@ interface RawSingleGolden {
   readonly postgres?: string;
 }
 
-/** A raw retry attempt (its own golden UPDATE + binds + expected count). */
+/** A raw retry attempt (its own golden UPDATE + binds + expected count + ① write). */
 interface RawAttempt {
   readonly goldenSql?: RawSingleGolden;
   readonly binds?: readonly unknown[];
   readonly expectedAffectedRows?: number;
+  /** The neutral write input (①) for this attempt (flat attribute-named row). */
+  readonly write?: Record<string, unknown>;
 }
 
 /**
  * Build the conflict plan: resolve the precondition statements (each paired with
  * its authored binds), then the ordered attempts — one for the single form, or
- * the declared list for the retry form. Each attempt's UPDATE is generated from
- * the entity's physical shape and its `set` columns are the case's authored intent
- * (parsed from the golden `set … , version = ?` clause), then pinned equal to the
- * golden by the compile lane.
+ * the declared list for the retry form. Each attempt's UPDATE + binds are DERIVED
+ * (a versioned conflict from its ① `write`; a temporal close from the metamodel),
+ * then cross-checked against the authored golden + binds — a genuine independent
+ * check, failing loudly if ① and the golden disagree.
  */
 export function buildConflictPlan(loaded: LoadedCase): ConflictPlan {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const entity = conflictEntity(metamodel);
-  const deriveSql = conflictSqlDeriver(entity, loaded);
+  const deriveStatement = conflictSqlDeriver(entity, loaded);
 
   const attempts = rawAttempts(loaded).map((attempt) => {
-    const golden = attempt.golden;
-    const sql = deriveSql(golden);
-    if (sql !== golden) {
+    const { sql, binds } = deriveStatement(attempt);
+    if (sql !== attempt.golden || !bindsEqual(binds, attempt.binds)) {
       throw new Error(
-        `generated conflict UPDATE != golden:\n  generated: ${sql}\n  golden:    ${golden}`,
+        "generated conflict UPDATE + binds != golden:\n" +
+          `  generated: ${sql}  ${JSON.stringify(binds)}\n` +
+          `  golden:    ${attempt.golden}  ${JSON.stringify(attempt.binds)}`,
       );
     }
     return {
       casePointer: attempt.casePointer,
       sql,
-      binds: attempt.binds,
+      binds,
       expectedAffectedRows: attempt.expectedAffectedRows,
     } satisfies ConflictAttempt;
   });
@@ -102,41 +109,79 @@ export function buildConflictPlan(loaded: LoadedCase): ConflictPlan {
 }
 
 /**
- * The generator that re-derives a conflict case's golden `UPDATE` from the entity's
- * physical shape, chosen by the entity kind:
+ * The generator that DERIVES a conflict attempt's `UPDATE` + binds, chosen by the
+ * entity kind:
  *
- *  - a VERSIONED entity → the M10 versioned `UPDATE` (`@parallax/locking`
- *    `versionedUpdate`, gate on the version column);
+ *  - a VERSIONED entity → the M10 versioned `UPDATE` derived from the attempt's
+ *    neutral write input (① `write`) classified against the metamodel: the domain
+ *    `set` columns are `columnOrder(entity)` filtered to the row's attributes, the
+ *    version advances `observedVersion + 1`, and the gate is intrinsic (`and
+ *    version = ?`, a conflict is always optimistic — R4). Binds:
+ *    `[…set values…, newVersion, pk, observedVersion]`;
  *  - a processing-axis TEMPORAL (audit-only) entity, which carries no version column
  *    → the M7 milestone CLOSE (`@parallax/bitemporal` `auditWriteStatements`,
  *    `"terminate"` yields the single close), GATED on the observed processing-from
  *    (`in_z`) in optimistic mode and ungated in locking mode (the mode the case's
- *    `uow` block declares). The observed `in_z` is the version analogue (M10),
- *    `0730`-`0733`.
+ *    `uow` block declares). Its ① binds are derived in Phase 4, so for now the
+ *    authored binds pass through and only the derived text is cross-checked.
  *
- * Each is pinned equal to the authored golden by `buildConflictPlan`'s no-drift
- * guard, so the runtime — not the case — owns the conflict DML shape.
+ * Each is cross-checked against the authored golden + binds by `buildConflictPlan`,
+ * so column identity is a genuine independent check, not a golden-parse tautology.
  */
 function conflictSqlDeriver(
   entity: EntityMetadata,
   loaded: LoadedCase,
-): (golden: string) => string {
+): (attempt: NormalizedAttempt) => { sql: string; binds: readonly unknown[] } {
   if (entity.versionAttribute() !== undefined) {
     const target = versionedTargetFor(entity);
-    return (golden) => versionedUpdate(target, setColumnsFromGolden(golden, target));
+    return (attempt) => versionedConflictStatement(entity, target, attempt);
   }
   const target = writeTargetFor(entity);
   const gated = loaded.uow?.concurrency === "optimistic";
   const [close] = auditWriteStatements("terminate", target, { gated });
-  return () => close as string;
+  return (attempt) => ({ sql: close as string, binds: attempt.binds });
 }
 
-/** A normalized attempt with its golden text resolved (single or retry form). */
+/**
+ * Derive a VERSIONED conflict attempt's `UPDATE` + binds from its neutral write
+ * input (① `write`). The primary-key attribute is the `where` key, every other
+ * attribute an assigned domain `set` column (in `columnOrder(entity)` order, never
+ * JSON key order), and `observedVersion` the optimistic gate/advance token. A
+ * conflict is intrinsically gated (R4), so the version advances `observedVersion +
+ * 1` and the binds are `[…set values…, newVersion, pk, observedVersion]`.
+ */
+function versionedConflictStatement(
+  entity: EntityMetadata,
+  target: VersionedTarget,
+  attempt: NormalizedAttempt,
+): { sql: string; binds: readonly unknown[] } {
+  const write = attempt.write;
+  if (write === undefined) {
+    throw new Error(
+      `versioned conflict attempt at ${attempt.casePointer} carries no neutral write input (①)`,
+    );
+  }
+  const { pk, set, observedVersion } = classifyRow(entity, write);
+  if (observedVersion === undefined) {
+    throw new Error(
+      `versioned conflict attempt at ${attempt.casePointer} requires an observedVersion in its write input (①)`,
+    );
+  }
+  const setColumns = orderedColumns(entity).filter((column) => set.has(column));
+  const sql = versionedUpdate(target, setColumns.map(quoteIdentifier));
+  const setValues = setColumns.map((column) => set.get(column));
+  const binds = [...setValues, observedVersion + 1, pk, observedVersion];
+  return { sql, binds };
+}
+
+/** A normalized attempt with its golden text + ① write resolved (single or retry). */
 interface NormalizedAttempt {
   readonly casePointer: string;
   readonly golden: string;
   readonly binds: readonly unknown[];
   readonly expectedAffectedRows: number;
+  /** The neutral write input (①) this attempt derives its UPDATE + binds from. */
+  readonly write?: Record<string, unknown>;
 }
 
 /** Normalize the case's attempt(s) into a common shape (single or retry form). */
@@ -148,8 +193,10 @@ function rawAttempts(loaded: LoadedCase): readonly NormalizedAttempt[] {
       golden: requirePostgres(attempt.goldenSql, `/attempts/${index}`),
       binds: (attempt.binds ?? []) as readonly unknown[],
       expectedAffectedRows: requireCount(attempt.expectedAffectedRows, `/attempts/${index}`),
+      ...(attempt.write === undefined ? {} : { write: attempt.write }),
     }));
   }
+  const write = loaded.raw.write as Record<string, unknown> | undefined;
   return [
     {
       casePointer: "/goldenSql/postgres",
@@ -159,6 +206,7 @@ function rawAttempts(loaded: LoadedCase): readonly NormalizedAttempt[] {
         loaded.raw.expectedAffectedRows as number | undefined,
         "/expectedAffectedRows",
       ),
+      ...(write === undefined ? {} : { write }),
     },
   ];
 }
@@ -221,24 +269,6 @@ function versionedTargetFor(entity: EntityMetadata): VersionedTarget {
     pkColumn: quoteIdentifier(pk.column),
     versionColumn: quoteIdentifier(version.column),
   };
-}
-
-/**
- * The quoted DOMAIN set columns a golden versioned UPDATE writes (the `set` list
- * minus the trailing `version = ?`). `update account set balance = ?, version = ?
- * …` → `["balance"]`; the version-only bump `update account set version = ? …` →
- * `[]`. The columns are taken from the golden (the case's authored intent) so the
- * generated UPDATE reproduces it exactly.
- */
-function setColumnsFromGolden(golden: string, target: VersionedTarget): readonly string[] {
-  const match = /\bset\s+(.+?)\s+where\b/i.exec(golden);
-  if (!match) {
-    throw new Error(`could not parse the set clause from golden UPDATE: ${golden}`);
-  }
-  const assignments = (match[1] as string).split(",").map((piece) => piece.trim());
-  const columns = assignments.map((assignment) => assignment.split(/\s*=/)[0]?.trim() ?? "");
-  // Drop the trailing version assignment; the generator re-appends it.
-  return columns.filter((column) => column !== target.versionColumn);
 }
 
 /** Require the Postgres golden for a conflict statement, or fail with the pointer. */

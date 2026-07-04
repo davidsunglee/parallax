@@ -26,6 +26,12 @@ writeSequence:
     entity: Account
     statements: 1
     note: merge-back of a mutated detached copy updates the original in place
+    # ① the neutral write input: `balance` -> the domain set column, pk `id` -> the
+    # where key, `observedVersion` the detachment-time version. A merge-back runs in
+    # the default LOCKING mode, so the adapter advances the version (1 -> 2) with NO
+    # `and version = ?` gate. Golden unchanged (DQ-E).
+    rows:
+      - { id: 1, balance: 175.00, observedVersion: 1 }
 goldenSql:
   postgres:
     - update account set balance = ?, version = ? where id = ?
