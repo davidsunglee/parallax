@@ -51,10 +51,12 @@ interface RawWriteStep {
   readonly statements?: number;
   /**
    * The neutral write input (①): the row(s) the step operates on, as flat
-   * attribute-named `{ attr: value }` literals. The non-temporal batched path
-   * derives the emitted column list + order + binds from these (classified
-   * against the metamodel), so column identity comes from case data, not the
-   * golden. Absent on the versioned (`0611`) path until Phase 2.
+   * attribute-named `{ attr: value }` literals. Every derivation path — non-temporal
+   * batched, versioned, temporal audit, `*Until` — derives its emitted column list +
+   * order + binds from these (classified against the metamodel), so column identity
+   * comes from case data, not the golden. REQUIRED on every writeSequence step (the
+   * permanent Family A + Family B contract); typed optional only because `loaded.raw`
+   * is untyped (there is no schema→types codegen).
    */
   readonly rows?: readonly Record<string, unknown>[];
   /**
