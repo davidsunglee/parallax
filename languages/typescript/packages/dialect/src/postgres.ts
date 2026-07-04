@@ -24,6 +24,8 @@ import {
   Temporal,
   timestampFromRaw,
 } from "@parallax/core";
+import type { Dialect } from "./dialect.js";
+import { classifyErrorCode } from "./errors.js";
 
 /** The dialect identifier this seam answers for. */
 export const POSTGRES_DIALECT = "postgres" as const;
@@ -81,6 +83,32 @@ export function applyReadLock(sql: string, options: { readonly locking: boolean 
     return sql;
   }
   return `${sql} for share of ${READ_LOCK_ALIAS}`;
+}
+
+/**
+ * One ORDER BY term with Postgres's NULL placement (the M4/M11 catalog table,
+ * `m11:153-167`). Postgres sorts NULLs last for `asc` and first for `desc` by
+ * default, so an ascending term is emitted **bare** (relying on the native
+ * default, byte-identical to today's `compile.ts` output) while a descending term
+ * gets an explicit `nulls last` to override the default and match the neutral
+ * "NULLs sort last" ordering. MariaDB expresses the same intent with a leading
+ * `is null,` term (its `mariadbDialect` sibling).
+ */
+export function orderByTerm(qualifiedColumn: string, direction: "asc" | "desc"): string {
+  if (direction === "desc") {
+    return `${qualifiedColumn} desc nulls last`;
+  }
+  return `${qualifiedColumn} asc`;
+}
+
+/**
+ * Apply the Postgres row-limit clause — append ` limit ?` (the bind carries the
+ * count). Modeled as a *wrappable* hook rather than a bare suffix so a future
+ * dialect that must rewrite the query shape (Oracle `ROWNUM`, SQL Server `TOP`)
+ * can override the whole assembly rather than only append.
+ */
+export function rowLimit(sql: string): string {
+  return `${sql} limit ?`;
 }
 
 // --- neutral-type → Postgres column type (the M0 table) ---------------------
@@ -293,3 +321,40 @@ export function timeFromDb(raw: string): Temporal.PlainTime {
 export function uuidFromDb(raw: string): string {
   return raw.trim();
 }
+
+// --- the reified Postgres dialect --------------------------------------------
+
+/**
+ * The concrete Postgres {@link Dialect} — the layer-1 authority for Postgres,
+ * reifying the loose functions above into the normative contract. Its methods
+ * delegate to those functions (all correct and tested); the `parsers` record maps
+ * each M0 neutral key to its `*FromRaw`/`*FromDb` parser, and `infinityBind`
+ * returns the native `'infinity'` sentinel Postgres binds directly.
+ *
+ * The three error predicates are category membership over the closed neutral
+ * vocabulary (`classifyErrorCode` yields the category; the predicates test it),
+ * mirroring Reladomo's predicate-per-call-site classification.
+ */
+export const postgresDialect: Dialect = {
+  id: POSTGRES_DIALECT,
+  quoteIdentifier,
+  orderByTerm,
+  rowLimit,
+  applyReadLock,
+  columnType: postgresColumnType,
+  toPositionalPlaceholders,
+  parsers: {
+    int8: int8FromRaw,
+    numeric: numericFromRaw,
+    timestamp: timestampFromDb,
+    bytes: bytesFromDb,
+    date: dateFromDb,
+    time: timeFromDb,
+    uuid: uuidFromDb,
+  },
+  infinityBind: () => INFINITY,
+  classifyErrorCode,
+  isRetriable: (category) => category === "deadlock",
+  violatesUniqueIndex: (category) => category === "uniqueViolation",
+  isTimedOut: (category) => category === "lockWaitTimeout",
+};
