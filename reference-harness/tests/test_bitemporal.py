@@ -15,8 +15,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from reference_harness.case import discover_cases, load_model
-from reference_harness.case_runner import _assert_write_step_count
+from reference_harness.case_runner import (
+    CaseFailure,
+    _assert_write_input_columns,
+    _assert_write_step_count,
+)
 from reference_harness.ddl_builder import ddl_for
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -105,6 +111,41 @@ def test_until_trio_write_step_counts_are_consistent() -> None:
         # Must not raise: per-step counts sum to the DML count and roundTrips,
         # including the 4-statement updateUntil and 3-statement terminateUntil.
         _assert_write_step_count(case, "postgres")
+
+
+def _temporal_write_input_cases():
+    """Audit-only write-sequence cases carrying a temporal neutral write input (①)."""
+    return [
+        case
+        for case in discover_cases(COMPATIBILITY_ROOT)
+        if case.is_write_sequence
+        and "postgres" in case.golden_sql
+        and any(
+            step.get("rows") and case.model.entity(step["entity"]).is_temporal
+            for step in case.write_sequence
+        )
+    ]
+
+
+def test_temporal_write_input_holds_for_authored_cases() -> None:
+    cases = _temporal_write_input_cases()
+    # The Phase 3 in-slice audit trio all carry ① (rows + at).
+    assert {case.path.stem[:4] for case in cases} >= {"0510", "0511", "0512"}
+    for case in cases:
+        # Must not raise: each audit-only ① derives in_z = at / out_z = infinity and
+        # the full-row binds that cross-check the authored golden binds.
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_temporal_write_input_at_corruption_is_rejected() -> None:
+    case = next(c for c in _temporal_write_input_cases() if c.path.stem.startswith("0510"))
+    step = next(s for s in case.write_sequence if s.get("rows"))
+    # Corrupt the transaction instant: the DERIVED in_z bind no longer matches the
+    # golden in_z bind, so the ① ↔ ② temporal gate MUST fail (in_z is derived from
+    # `at`, never read from the golden).
+    step["at"] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
 
 
 def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:

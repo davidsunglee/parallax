@@ -57,6 +57,14 @@ interface RawWriteStep {
    * golden. Absent on the versioned (`0611`) path until Phase 2.
    */
   readonly rows?: readonly Record<string, unknown>[];
+  /**
+   * The transaction / processing instant a TEMPORAL (audit-only) write records —
+   * the milestone's `in_z`. The bookkeeping is DERIVED from it (a new milestone
+   * opens `in_z = at`, `out_z = infinity`; a close binds `out_z = at`), never
+   * authored in `rows`, so the M7 milestone discipline stays under test. Absent on
+   * a non-temporal step.
+   */
+  readonly at?: string;
 }
 
 /**
@@ -141,7 +149,7 @@ export function buildWriteSequencePlan(loaded: LoadedCase): WriteSequencePlan {
   steps.forEach((step, stepIndex) => {
     const entity = metamodel.entity(step.entity);
     const generated = isTemporalEntity(entity)
-      ? auditStatementsForStep(step, entity, bindRows, bindIndex)
+      ? auditStatementsForStep(step, entity)
       : batchStatementsForStep(step, entity, bindRows, bindIndex, golden, concurrency);
     for (const { sql, binds } of generated) {
       statements.push({ casePointer: `/writeSequence/${stepIndex}`, sql, binds });
@@ -158,17 +166,62 @@ function isTemporalEntity(entity: EntityMetadata): boolean {
 
 /**
  * The generated milestone-chaining statements for one TEMPORAL step (audit-only),
- * each paired, in order, with the authored bind row (`insert` consumes one,
- * `update` two — close + chained insert, `terminate` one).
+ * each paired with its binds DERIVED from the classified ① row + the step-level
+ * transaction instant (`at`). A milestone ALWAYS writes the entity's full physical
+ * row (DQ-B Family B), so the emitted column list stays metamodel-sourced
+ * (`writeTargetFor`, `columnOrder(entity)`) — ① carries only the domain values
+ * (`rows`) and `at`, and the bookkeeping is DERIVED: a new milestone opens
+ * `in_z = at`, `out_z = infinity`, and a close binds `[at, pk, infinity]` (set
+ * `out_z = at` where the pk and the still-open `out_z = infinity`). So the M7
+ * discipline — bookkeeping is derived, never authored — is under test:
+ * `in_z`/`out_z`/`infinity` never appear in ①.
+ *
+ * `insert` consumes one statement (open); `update` two over the SAME row (close,
+ * then chain a new full-row milestone carrying the row's unchanged columns);
+ * `terminate` one (close only). The derived binds cross-check the authored golden
+ * binds in the compile lane — a genuine independent check, not a golden parse.
  */
 function auditStatementsForStep(
   step: RawWriteStep,
   entity: EntityMetadata,
-  bindRows: readonly (readonly unknown[])[],
-  bindIndex: number,
 ): readonly { sql: string; binds: readonly unknown[] }[] {
   const texts = auditWriteStatements(step.mutation, writeTargetFor(entity));
-  return texts.map((sql, offset) => ({ sql, binds: bindRows[bindIndex + offset] ?? [] }));
+  const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
+  if (processing === undefined) {
+    throw new Error(`temporal write on '${entity.name}' has no processing axis to derive in_z`);
+  }
+  const { at } = step;
+  if (at === undefined) {
+    throw new Error(
+      `temporal write on '${entity.name}' requires an 'at' (the transaction instant → in_z) in its neutral write input (①)`,
+    );
+  }
+  const [row] = (step.rows ?? []).map((r) => classifyRow(entity, r));
+  if (row === undefined) {
+    throw new Error(
+      `temporal write on '${entity.name}' requires a row in its neutral write input (①)`,
+    );
+  }
+  // A new milestone opens the full physical row with `in_z = at` and the open
+  // bound `out_z = infinity` (both DERIVED, never authored); every other column's
+  // value is pulled from the classified row by physical column, in columnOrder.
+  const openBinds: readonly unknown[] = orderedColumns(entity).map((column) =>
+    column === processing.fromColumn
+      ? at
+      : column === processing.toColumn
+        ? processing.infinity
+        : row.columns.get(column),
+  );
+  // The close sets `out_z = at`, keyed on the still-open current row
+  // (`pk and out_z = infinity`).
+  const closeBinds: readonly unknown[] = [at, row.pk, processing.infinity];
+  const binds =
+    step.mutation === "insert"
+      ? [openBinds]
+      : step.mutation === "update"
+        ? [closeBinds, openBinds]
+        : [closeBinds];
+  return texts.map((sql, offset) => ({ sql, binds: binds[offset] ?? [] }));
 }
 
 /**
