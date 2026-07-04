@@ -17,9 +17,6 @@ model: models/account.yaml
 tags: [m10, m3, optimistic-locking, success, optimistic-lock-success, slice-mvp-1]
 uow:
   concurrency: optimistic
-# ① the neutral write input: pk `id` -> where key, `balance` -> the domain set
-# column, `observedVersion` the fresh version read (1). The adapter derives the
-# gated UPDATE (advance 1 -> 2, gate on 1) and its binds from ①.
 write: { id: 2, balance: 500.00, observedVersion: 1 }
 expectedAffectedRows: 1
 goldenSql:

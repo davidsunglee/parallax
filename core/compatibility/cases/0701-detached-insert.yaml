@@ -20,9 +20,6 @@ writeSequence:
     entity: Account
     statements: 1
     note: merge-back of an unpersisted detached copy inserts a new row
-    # ① the neutral write input (flat attribute names). A versioned INSERT carries
-    # NO `observedVersion`: the adapter derives the initial version `1` and appends
-    # the `version` column, so the M10 baseline is derived, never authored.
     rows:
       - { id: 20, owner: Dijkstra, balance: 75.00 }
 goldenSql:

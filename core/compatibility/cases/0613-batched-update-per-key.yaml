@@ -20,7 +20,6 @@ writeSequence:
     statements: 2
     note: two distinct keys take DIFFERENT new balances ⇒ one keyed UPDATE each
     rows:
-      # Non-uniform new values across keys ⇒ one keyed `where id = ?` UPDATE each.
       - { id: 1, balance: 111.00 }
       - { id: 2, balance: 222.00 }
 goldenSql:
