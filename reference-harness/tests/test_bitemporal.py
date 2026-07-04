@@ -184,6 +184,41 @@ def test_until_write_input_window_corruption_is_rejected() -> None:
         _assert_write_input_columns(case, "postgres")
 
 
+def _business_write_cases():
+    """Business-temporal-only milestone-chaining write cases (`0822`-`0824`)."""
+    return [
+        case
+        for case in discover_cases(COMPATIBILITY_ROOT)
+        if case.is_write_sequence
+        and "postgres" in case.golden_sql
+        and any(step.get("businessAt") for step in case.write_sequence)
+    ]
+
+
+def test_business_write_input_holds_for_authored_cases() -> None:
+    cases = _business_write_cases()
+    # The business-only insert / update-chaining / terminate trio all carry ①
+    # (rows + businessAt).
+    assert {case.path.stem[:4] for case in cases} >= {"0822", "0823", "0824"}
+    for case in cases:
+        # Must not raise: each business-only ① derives from_z = businessAt /
+        # thru_z = infinity and the full-row binds that cross-check the golden binds
+        # (the same close-and-chain shape as the audit-only axis, driven by business
+        # date rather than transaction instant).
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_business_write_input_business_at_corruption_is_rejected() -> None:
+    case = next(c for c in _business_write_cases() if c.path.stem.startswith("0824"))
+    step = next(s for s in case.write_sequence if s.get("businessAt"))
+    # Corrupt the business instant: the DERIVED from_z bind no longer matches the
+    # golden from_z bind, so the business-temporal ① ↔ ② gate MUST fail (from_z is
+    # derived from `businessAt`, never read from the golden).
+    step["businessAt"] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
 def _bitemporal_conflict_close_cases():
     """Bitemporal conflict-close cases (`0813` / `0814`): a business + processing axis."""
     return [

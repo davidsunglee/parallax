@@ -12,10 +12,14 @@ writeSequence:
     entity: PkSequence
     statements: 1
     note: reserve a block of 1 (next_val += 1), base = 1
+    rows:
+      - { name: badge_seq, nextVal: { increment: 1 } }
   - mutation: insert
     entity: Badge
     statements: 1
     note: hand out the reserved id 1
+    rows:
+      - { id: 1, holder: Bo }
 goldenSql:
   postgres:
     - update pk_sequence set next_val = next_val + ? where name = ?

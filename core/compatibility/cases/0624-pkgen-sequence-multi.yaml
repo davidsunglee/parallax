@@ -5,12 +5,42 @@ model: models/pk-sequence.yaml
 loadFixtures: true
 tags: [m1, m8, pk-generation, sequence, write-sequence]
 writeSequence:
-  - { mutation: update, entity: PkSequence, statements: 1, note: "reserve block, base 1" }
-  - { mutation: insert, entity: Badge, statements: 1, note: id 1 }
-  - { mutation: update, entity: PkSequence, statements: 1, note: "reserve block, base 2" }
-  - { mutation: insert, entity: Badge, statements: 1, note: id 2 }
-  - { mutation: update, entity: PkSequence, statements: 1, note: "reserve block, base 3" }
-  - { mutation: insert, entity: Badge, statements: 1, note: id 3 }
+  - mutation: update
+    entity: PkSequence
+    statements: 1
+    note: "reserve block, base 1"
+    rows:
+      - { name: badge_seq, nextVal: { increment: 1 } }
+  - mutation: insert
+    entity: Badge
+    statements: 1
+    note: id 1
+    rows:
+      - { id: 1, holder: Bo }
+  - mutation: update
+    entity: PkSequence
+    statements: 1
+    note: "reserve block, base 2"
+    rows:
+      - { name: badge_seq, nextVal: { increment: 1 } }
+  - mutation: insert
+    entity: Badge
+    statements: 1
+    note: id 2
+    rows:
+      - { id: 2, holder: Cy }
+  - mutation: update
+    entity: PkSequence
+    statements: 1
+    note: "reserve block, base 3"
+    rows:
+      - { name: badge_seq, nextVal: { increment: 1 } }
+  - mutation: insert
+    entity: Badge
+    statements: 1
+    note: id 3
+    rows:
+      - { id: 3, holder: Di }
 goldenSql:
   postgres:
     - update pk_sequence set next_val = next_val + ? where name = ?

@@ -6,8 +6,19 @@ model: models/pk-sequence.yaml
 loadFixtures: true
 tags: [m1, m8, pk-generation, sequence, write-sequence]
 writeSequence:
-  - { mutation: update, entity: PkSequence, statements: 1, note: "reserve block (next_val += 20), base 100" }
-  - { mutation: insert, entity: Voucher, statements: 2, note: "hand out 100,110" }
+  - mutation: update
+    entity: PkSequence
+    statements: 1
+    note: "reserve block (next_val += 20), base 100"
+    rows:
+      - { name: voucher_seq, nextVal: { increment: 20 } }
+  - mutation: insert
+    entity: Voucher
+    statements: 2
+    note: "hand out 100,110"
+    rows:
+      - { id: 100, label: spring }
+      - { id: 110, label: summer }
 goldenSql:
   postgres:
     - update pk_sequence set next_val = next_val + ? where name = ?

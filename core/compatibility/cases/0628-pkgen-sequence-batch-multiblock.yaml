@@ -7,10 +7,32 @@ model: models/pk-sequence.yaml
 loadFixtures: true
 tags: [m1, m8, pk-generation, sequence, write-sequence]
 writeSequence:
-  - { mutation: update, entity: PkSequence, statements: 1, note: reserve block 1 (base 1) }
-  - { mutation: insert, entity: Pass, statements: 3, note: "hand out 1,2,3" }
-  - { mutation: update, entity: PkSequence, statements: 1, note: reserve block 2 (base 4) }
-  - { mutation: insert, entity: Pass, statements: 1, note: "hand out 4 (5,6 lost)" }
+  - mutation: update
+    entity: PkSequence
+    statements: 1
+    note: reserve block 1 (base 1)
+    rows:
+      - { name: pass_seq, nextVal: { increment: 3 } }
+  - mutation: insert
+    entity: Pass
+    statements: 3
+    note: "hand out 1,2,3"
+    rows:
+      - { id: 1, zone: north }
+      - { id: 2, zone: south }
+      - { id: 3, zone: east }
+  - mutation: update
+    entity: PkSequence
+    statements: 1
+    note: reserve block 2 (base 4)
+    rows:
+      - { name: pass_seq, nextVal: { increment: 3 } }
+  - mutation: insert
+    entity: Pass
+    statements: 1
+    note: "hand out 4 (5,6 lost)"
+    rows:
+      - { id: 4, zone: west }
 goldenSql:
   postgres:
     - update pk_sequence set next_val = next_val + ? where name = ?

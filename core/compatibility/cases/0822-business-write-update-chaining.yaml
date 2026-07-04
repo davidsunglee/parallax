@@ -25,10 +25,16 @@ writeSequence:
     entity: Reservation
     statements: 1
     note: open the original business milestone [2024-01-01, infinity)
+    rows:
+      - { id: 1, room: "101", guest: Ada }
+    businessAt: "2024-01-01T00:00:00+00:00"
   - mutation: update
     entity: Reservation
     statements: 2
     note: close the current business row, then chain a new milestone with the new guest
+    rows:
+      - { id: 1, room: "101", guest: Bob }
+    businessAt: "2024-03-01T00:00:00+00:00"
 goldenSql:
   postgres:
     - insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)

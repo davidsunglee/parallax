@@ -12,6 +12,9 @@ writeSequence:
     entity: Reservation
     statements: 1
     note: open a current business milestone [2024-01-01, infinity)
+    rows:
+      - { id: 1, room: "101", guest: Ada }
+    businessAt: "2024-01-01T00:00:00+00:00"
 goldenSql:
   postgres:
     - insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
