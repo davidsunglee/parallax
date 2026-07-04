@@ -16,6 +16,7 @@ export {
   aliasFor,
   type Bind,
   type CompileCtx,
+  type CompileExec,
   type CompileResult,
   compile,
   compilePredicate,

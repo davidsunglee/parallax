@@ -26,6 +26,8 @@ const PACKAGE_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..")
 const SAMPLE_APP = resolve(PACKAGE_ROOT, "../../examples/orders-app");
 /** The built dist that the generated barrel's `@parallax/typescript` import resolves to. */
 const DIST = resolve(PACKAGE_ROOT, "dist");
+/** The built `@parallax/dialect` dist the consumer's `postgresDialect` import resolves to. */
+const DIALECT_DIST = resolve(PACKAGE_ROOT, "../dialect/dist");
 
 let workDir: string;
 
@@ -89,8 +91,10 @@ describe("parallax generate", () => {
 const CONSUMER_SOURCE = [
   'import { parallax, Order } from "./index.js";',
   'import type { ParallaxDatabase } from "@parallax/typescript";',
+  'import { postgresDialect } from "@parallax/dialect";',
   "declare const db: ParallaxDatabase;",
-  "const px = parallax({ database: db });",
+  // The dialect is injected beside the database at the composition root (required).
+  "const px = parallax({ database: db, dialect: postgresDialect });",
   "px.orders.find(); // no-arg shorthand — MUST typecheck (MAJOR-2)",
   "px.orders.find(Order.all()); // explicit form still typechecks",
   "// the typed transaction MUST accept + forward TransactionOptions (M8 strategy).",
@@ -122,6 +126,7 @@ function typecheckConfig(barrelPath: string, consumerPath: string): unknown {
       paths: {
         "@parallax/typescript": [join(DIST, "index.d.ts")],
         "@parallax/typescript/config": [join(DIST, "config.d.ts")],
+        "@parallax/dialect": [join(DIALECT_DIST, "index.d.ts")],
       },
     },
     files: [barrelPath, consumerPath],

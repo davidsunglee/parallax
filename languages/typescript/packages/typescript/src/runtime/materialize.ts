@@ -32,7 +32,7 @@
 
 import { bytesFromHex, ParallaxDecimal, Temporal } from "@parallax/core";
 import type { ParallaxRow } from "@parallax/db";
-import { dateFromDb, timeFromDb, timestampFromDb } from "@parallax/dialect";
+import type { Dialect } from "@parallax/dialect";
 import type { EntityMetadata } from "@parallax/metamodel";
 
 /** Matches an M0 `decimal(p,s)` neutral type token. */
@@ -48,12 +48,15 @@ const DECIMAL_TYPE = /^decimal\(\d+,\d+\)$/;
  * row carries exactly those columns (the runtime projects the full attribute set,
  * spec §2.3), so there is no stray column to preserve.
  */
-export function rowMaterializer(entity: EntityMetadata): (row: ParallaxRow) => ParallaxRow {
+export function rowMaterializer(
+  entity: EntityMetadata,
+  dialect: Dialect,
+): (row: ParallaxRow) => ParallaxRow {
   const attributes = entity.attributes();
   return (row) => {
     const out: ParallaxRow = {};
     for (const attr of attributes) {
-      out[attr.name] = coerceScalar(row[attr.column], attr.type);
+      out[attr.name] = coerceScalar(row[attr.column], attr.type, dialect);
     }
     return out;
   };
@@ -65,7 +68,7 @@ export function rowMaterializer(entity: EntityMetadata): (row: ParallaxRow) => P
  * for `bytes`), a raw driver representation is parsed. `null` / `undefined` pass
  * through for every type (a nullable column stays null).
  */
-function coerceScalar(value: unknown, type: string): unknown {
+function coerceScalar(value: unknown, type: string, dialect: Dialect): unknown {
   if (value === null || value === undefined) {
     return value;
   }
@@ -87,11 +90,11 @@ function coerceScalar(value: unknown, type: string): unknown {
     case "bytes":
       return coerceBytes(value);
     case "date":
-      return coerceDate(value);
+      return coerceDate(value, dialect);
     case "time":
-      return coerceTime(value);
+      return coerceTime(value, dialect);
     case "timestamp":
-      return coerceTimestamp(value);
+      return coerceTimestamp(value, dialect);
     case "json":
       return coerceJson(value);
     default:
@@ -182,23 +185,23 @@ function coerceBytes(value: unknown): unknown {
 }
 
 /** `date` → `Temporal.PlainDate` (already one passes; a raw `YYYY-MM-DD` string is parsed). */
-function coerceDate(value: unknown): unknown {
+function coerceDate(value: unknown, dialect: Dialect): unknown {
   if (value instanceof Temporal.PlainDate) {
     return value;
   }
   if (typeof value === "string") {
-    return dateFromDb(value);
+    return dialect.parsers.date(value);
   }
   return value;
 }
 
 /** `time` → `Temporal.PlainTime` (already one passes; a raw `HH:MM:SS` string is parsed). */
-function coerceTime(value: unknown): unknown {
+function coerceTime(value: unknown, dialect: Dialect): unknown {
   if (value instanceof Temporal.PlainTime) {
     return value;
   }
   if (typeof value === "string") {
-    return timeFromDb(value);
+    return dialect.parsers.time(value);
   }
   return value;
 }
@@ -209,15 +212,15 @@ function coerceTime(value: unknown): unknown {
  * lifted through its ISO rendering). The dialect parser enforces the M0
  * microsecond-precision rule.
  */
-function coerceTimestamp(value: unknown): unknown {
+function coerceTimestamp(value: unknown, dialect: Dialect): unknown {
   if (value instanceof Temporal.Instant) {
     return value;
   }
   if (typeof value === "string") {
-    return timestampFromDb(value);
+    return dialect.parsers.timestamp(value);
   }
   if (value instanceof Date) {
-    return timestampFromDb(value.toISOString());
+    return dialect.parsers.timestamp(value.toISOString());
   }
   return value;
 }

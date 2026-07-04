@@ -17,6 +17,7 @@
 import { isInfinity, toWire } from "@parallax/core";
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 import { ParallaxTransientError } from "@parallax/db";
+import type { Dialect } from "@parallax/dialect";
 import { ParallaxList } from "@parallax/lists";
 import type { Metamodel } from "@parallax/metamodel";
 import { type EntityMetadata, Metamodel as MetamodelReader } from "@parallax/metamodel";
@@ -59,6 +60,13 @@ export interface ParallaxOptions {
   readonly database: ParallaxDatabase;
   /** The parsed canonical descriptor(s) the metamodel is read from. */
   readonly descriptor: unknown;
+  /**
+   * The bound M11 {@link Dialect} — the single authority for identifier quoting,
+   * ORDER BY / NULL placement, the row-limit clause, read-lock application, and the
+   * boundary value parsers. Injected so a MariaDB runtime swaps `mariadbDialect`
+   * with no code edit; always supplied by the composition root.
+   */
+  readonly dialect: Dialect;
   /** The clock strategy; defaults to the system UTC clock. */
   readonly clock?: ParallaxClock;
 }
@@ -81,6 +89,8 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     private readonly metamodel: Metamodel,
     private readonly entity: EntityMetadata,
     private readonly database: ParallaxDatabase,
+    /** The injected M11 dialect — threaded to `compile()` and the row materializer. */
+    private readonly dialect: Dialect,
     /**
      * A hook awaited INSIDE the lazy resolver, just before a read executes. In a
      * transaction this flushes the writer's buffered inserts so a dependent read
@@ -186,20 +196,17 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
         return (await this.executeGraph(operation)).rows as readonly T[];
       }, identity);
     }
-    const schema = new RuntimeSchema(this.metamodel, this.entity);
-    const { sql, binds } = compile(operation, schema);
-    const materialize = rowMaterializer(this.entity);
+    const schema = new RuntimeSchema(this.metamodel, this.entity, this.dialect);
+    // `compile()` applies the M8 shared read-lock in-line for a `locking`-mode object
+    // find (`for share of t0`, `0603`); the developer writes no locking SQL, so the
+    // executor below just runs the already-locked statement.
+    const { sql, binds } = compile(operation, schema, this.dialect, {
+      locking: this.concurrency === "locking",
+    });
+    const materialize = rowMaterializer(this.entity, this.dialect);
     return new ParallaxList<T>(async () => {
       await this.beforeLoad?.();
-      // The shared in-transaction read executor applies the M8 lock for this unit
-      // of work's mode (a `locking`-mode object find takes `for share of t0`, `0603`),
-      // then executes: the developer writes no locking SQL.
-      const rows = await executeRead(
-        this.database,
-        sql,
-        binds as readonly unknown[],
-        this.concurrency,
-      );
+      const rows = await executeRead(this.database, sql, binds as readonly unknown[]);
       const materialized = rows.map(materialize) as readonly T[];
       // Record the version this unit of work OBSERVED for each versioned row, so a
       // later keyed update gates on / advances from it (M10 framework-owned versions).
@@ -246,7 +253,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
    * both are inert (no lock, no recording).
    */
   private executeGraph(operation: Operation): Promise<DeepFetchGraph> {
-    return executeDeepFetch(this.metamodel, operation, this.database, {
+    return executeDeepFetch(this.metamodel, operation, this.database, this.dialect, {
       concurrency: this.concurrency,
       onObserved: this.onObserved,
     });
@@ -265,6 +272,8 @@ export class Parallax {
   constructor(
     private readonly metamodel: Metamodel,
     private readonly database: ParallaxDatabase,
+    /** The injected M11 dialect, threaded to every finder + unit of work. */
+    private readonly dialect: Dialect,
     private readonly clock: ParallaxClock,
   ) {}
 
@@ -281,7 +290,12 @@ export class Parallax {
   entity<T extends ParallaxRow = ParallaxRow>(name: string): EntityFinder<T> {
     let finder = this.finders.get(name);
     if (finder === undefined) {
-      finder = new EntityFinder(this.metamodel, this.metamodel.entity(name), this.database);
+      finder = new EntityFinder(
+        this.metamodel,
+        this.metamodel.entity(name),
+        this.database,
+        this.dialect,
+      );
       this.finders.set(name, finder);
     }
     return finder as EntityFinder<T>;
@@ -329,6 +343,7 @@ export class Parallax {
           const tx = new ParallaxTransaction(
             this.metamodel,
             boundDb,
+            this.dialect,
             this.clock.now(),
             concurrency,
           );
@@ -481,6 +496,8 @@ export class ParallaxTransaction {
   constructor(
     private readonly metamodel: Metamodel,
     private readonly database: ParallaxDatabase,
+    /** The injected M11 dialect, threaded to the in-transaction finders' reads. */
+    private readonly dialect: Dialect,
     /** The processing instant captured when the transaction opened (spec §3.1). */
     readonly processingInstant: string,
     /** The M8 correctness strategy for this unit of work (default `locking`). */
@@ -508,6 +525,7 @@ export class ParallaxTransaction {
         this.metamodel,
         metadata,
         this.database,
+        this.dialect,
         () => this.writer.flush(),
         this.concurrency,
         // A flat read reports this finder's entity; a deep fetch reports each fetched
@@ -598,5 +616,5 @@ export type { Assignment };
  */
 export function createParallax(options: ParallaxOptions): Parallax {
   const metamodel = MetamodelReader.fromDescriptor(options.descriptor);
-  return new Parallax(metamodel, options.database, options.clock ?? SYSTEM_CLOCK);
+  return new Parallax(metamodel, options.database, options.dialect, options.clock ?? SYSTEM_CLOCK);
 }

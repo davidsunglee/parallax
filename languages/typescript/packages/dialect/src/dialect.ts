@@ -70,7 +70,10 @@ export interface Dialect {
    * and how it attaches. `locking` is the concurrency mode; `projection` is true for a
    * `select distinct`/aggregation read (no base row to lock ⇒ returned unchanged).
    */
-  applyReadLock(sql: string, ctx: { readonly locking: boolean; readonly projection: boolean }): string;
+  applyReadLock(
+    sql: string,
+    ctx: { readonly locking: boolean; readonly projection: boolean },
+  ): string;
 
   // --- schema / DDL vocabulary ---
   /** Map an M0 neutral type (+ optional max length) to this dialect's column type. */

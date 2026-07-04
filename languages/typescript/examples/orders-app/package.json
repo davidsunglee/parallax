@@ -12,6 +12,7 @@
     "parallax:check": "parallax generate --check"
   },
   "dependencies": {
+    "@parallax/dialect": "workspace:*",
     "@parallax/typescript": "workspace:*"
   }
 }

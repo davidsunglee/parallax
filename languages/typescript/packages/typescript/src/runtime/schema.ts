@@ -20,7 +20,7 @@ import {
   type ResolvedAxis,
   type Axis as TemporalAxis,
 } from "@parallax/bitemporal";
-import { quoteIdentifier } from "@parallax/dialect";
+import type { Dialect } from "@parallax/dialect";
 import type { EntityMetadata, Metamodel } from "@parallax/metamodel";
 import type {
   AsOfFragment,
@@ -64,13 +64,20 @@ export class RuntimeSchema implements SchemaResolver {
   constructor(
     private readonly metamodel: Metamodel,
     private readonly rootEntity: EntityMetadata,
+    /** The injected M11 dialect — the single authority for identifier quoting. */
+    private readonly dialect: Dialect,
   ) {}
 
   resolveAttribute(ref: string): ResolvedColumn {
     const [className, attrName] = splitRef(ref);
     const entity = this.metamodel.entity(className);
     const attr = entity.attributeByName(attrName);
-    return { table: entity.table, column: quoteIdentifier(attr.column), type: attr.type };
+    return {
+      table: entity.table,
+      column: this.dialect.quoteIdentifier(attr.column),
+      type: attr.type,
+      nullable: attr.nullable,
+    };
   }
 
   resolveRelationship(ref: string): ResolvedRelationship {
@@ -81,8 +88,8 @@ export class RuntimeSchema implements SchemaResolver {
     const related = this.metamodel.entity(relationship.relatedEntity);
     return {
       childTable: related.table,
-      childColumn: quoteIdentifier(related.attributeByName(relatedAttr).column),
-      parentColumn: quoteIdentifier(source.attributeByName(thisAttr).column),
+      childColumn: this.dialect.quoteIdentifier(related.attributeByName(relatedAttr).column),
+      parentColumn: this.dialect.quoteIdentifier(source.attributeByName(thisAttr).column),
     };
   }
 
@@ -107,8 +114,8 @@ export class RuntimeSchema implements SchemaResolver {
       .attributes()
       .map((attr) =>
         attr.type === "bytes"
-          ? { column: quoteIdentifier(attr.column) }
-          : { column: quoteIdentifier(attr.column), type: attr.type },
+          ? { column: this.dialect.quoteIdentifier(attr.column) }
+          : { column: this.dialect.quoteIdentifier(attr.column), type: attr.type },
       );
   }
 
@@ -139,8 +146,8 @@ export class RuntimeSchema implements SchemaResolver {
       .asOfAttributes()
       .map((axis) => ({
         axis: axis.axis as TemporalAxis,
-        fromExpr: `${alias}.${quoteIdentifier(axis.fromColumn)}`,
-        toExpr: `${alias}.${quoteIdentifier(axis.toColumn)}`,
+        fromExpr: `${alias}.${this.dialect.quoteIdentifier(axis.fromColumn)}`,
+        toExpr: `${alias}.${this.dialect.quoteIdentifier(axis.toColumn)}`,
         toIsInclusive: axis.toIsInclusive,
         infinity: axis.infinity,
       }));

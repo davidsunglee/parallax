@@ -25,7 +25,7 @@ import {
   type ResolvedAxis,
   type Axis as TemporalAxis,
 } from "@parallax/bitemporal";
-import { quoteIdentifier } from "@parallax/dialect";
+import { type Dialect, quoteIdentifier } from "@parallax/dialect";
 import {
   type EntityMetadata,
   Metamodel,
@@ -74,21 +74,28 @@ export class MetamodelSchema implements SchemaResolver {
     private readonly metamodel: Metamodel,
     private readonly rootEntity: EntityMetadata,
     private readonly projection: readonly ProjectionColumn[],
+    /** The injected M11 dialect — the single authority for identifier quoting. */
+    private readonly dialect: Dialect,
   ) {}
 
   resolveAttribute(ref: string): ResolvedColumn {
     const [className, attrName] = splitRef(ref);
     const entity = this.metamodel.entity(className);
     const attr = entity.attributeByName(attrName);
-    return { table: entity.table, column: quoteIdentifier(attr.column), type: attr.type };
+    return {
+      table: entity.table,
+      column: this.dialect.quoteIdentifier(attr.column),
+      type: attr.type,
+      nullable: attr.nullable,
+    };
   }
 
   resolveRelationship(ref: string): ResolvedRelationship {
     const correlation = this.correlation(ref);
     return {
       childTable: correlation.childTable,
-      childColumn: quoteIdentifier(correlation.childColumn),
-      parentColumn: quoteIdentifier(correlation.parentColumn),
+      childColumn: this.dialect.quoteIdentifier(correlation.childColumn),
+      parentColumn: this.dialect.quoteIdentifier(correlation.parentColumn),
     };
   }
 
@@ -162,8 +169,8 @@ export class MetamodelSchema implements SchemaResolver {
     const metadata = this.metamodel.entity(entity);
     return metadata.asOfAttributes().map((axis) => ({
       axis: axis.axis as TemporalAxis,
-      fromExpr: `${alias}.${quoteIdentifier(axis.fromColumn)}`,
-      toExpr: `${alias}.${quoteIdentifier(axis.toColumn)}`,
+      fromExpr: `${alias}.${this.dialect.quoteIdentifier(axis.fromColumn)}`,
+      toExpr: `${alias}.${this.dialect.quoteIdentifier(axis.toColumn)}`,
       toIsInclusive: axis.toIsInclusive,
       infinity: axis.infinity,
     }));
@@ -413,10 +420,11 @@ export function schemaForRoot(
   loaded: LoadedCase,
   operation: Operation,
   projection: readonly ProjectionColumn[],
+  dialect: Dialect,
 ): MetamodelSchema {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const rootEntity = rootEntityFor(metamodel, operation);
-  return new MetamodelSchema(metamodel, rootEntity, projection);
+  return new MetamodelSchema(metamodel, rootEntity, projection, dialect);
 }
 
 /** Build a `MetamodelSchema` rooted explicitly at a named entity (child levels). */
@@ -424,17 +432,22 @@ export function schemaForEntity(
   loaded: LoadedCase,
   entityName: string,
   projection: readonly ProjectionColumn[],
+  dialect: Dialect,
 ): MetamodelSchema {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
-  return new MetamodelSchema(metamodel, metamodel.entity(entityName), projection);
+  return new MetamodelSchema(metamodel, metamodel.entity(entityName), projection, dialect);
 }
 
 /** Build a flat-read `MetamodelSchema` (projection driven by `expectedRows`). */
-export function schemaForReadCase(loaded: LoadedCase, operation: Operation): MetamodelSchema {
+export function schemaForReadCase(
+  loaded: LoadedCase,
+  operation: Operation,
+  dialect: Dialect,
+): MetamodelSchema {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const rootEntity = rootEntityFor(metamodel, operation);
   const projection = readProjection(loaded, rootEntity);
-  return new MetamodelSchema(metamodel, rootEntity, projection);
+  return new MetamodelSchema(metamodel, rootEntity, projection, dialect);
 }
 
 /**

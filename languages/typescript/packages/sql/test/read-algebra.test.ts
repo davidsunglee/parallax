@@ -13,7 +13,7 @@
  * type-aware bind coercion for precision-unsafe int64 / decimal literals.
  */
 
-import { quoteIdentifier } from "@parallax/dialect";
+import { postgresDialect, quoteIdentifier } from "@parallax/dialect";
 import { type Operation, parseOperation } from "@parallax/operation";
 import { describe, expect, it } from "vitest";
 import {
@@ -25,11 +25,15 @@ import {
   type SchemaResolver,
 } from "../src/index.js";
 
-/** The `orders` columns the 02xx read algebra ranges over (name → column + M0 type). */
-const ORDERS: Record<string, { column: string; type: string }> = {
+/**
+ * The `orders` columns the 02xx read algebra ranges over (name → column + M0 type
+ * + nullability). `sku` is the one NULL-bearing column (mirrors the corpus
+ * descriptor), so an ORDER BY on it exercises the dialect's NULL-placement branch.
+ */
+const ORDERS: Record<string, { column: string; type: string; nullable?: boolean }> = {
   id: { column: "id", type: "int64" },
   name: { column: "name", type: "string" },
-  sku: { column: "sku", type: "string" },
+  sku: { column: "sku", type: "string", nullable: true },
   qty: { column: "qty", type: "int32" },
   price: { column: "price", type: "decimal(18,2)" },
   active: { column: "active", type: "boolean" },
@@ -45,7 +49,12 @@ function ordersResolver(projection: readonly string[] = ["id", "name"]): SchemaR
       if (!attr) {
         throw new Error(`unknown orders attribute '${ref}'`);
       }
-      return { table: "orders", column: quoteIdentifier(attr.column), type: attr.type };
+      return {
+        table: "orders",
+        column: quoteIdentifier(attr.column),
+        type: attr.type,
+        nullable: attr.nullable,
+      };
     },
     resolveRelationship(ref: string): ResolvedRelationship {
       throw new Error(`the read-algebra unit tests do not navigate relationships: '${ref}'`);
@@ -61,7 +70,7 @@ function emit(
   projection?: readonly string[],
 ): { sql: string; binds: readonly Bind[] } {
   const operation = parseOperation(op) as Operation;
-  return compile(operation, ordersResolver(projection));
+  return compile(operation, ordersResolver(projection), postgresDialect);
 }
 
 /** Each row: a label, the operation, the golden Postgres SQL, the ordered binds. */
@@ -359,6 +368,22 @@ const CASES: ReadonlyArray<{
     binds: [],
     projection: ["active"],
   },
+  {
+    // Q8 — the first test of the `desc nulls last` branch. `sku` is NULL-bearing, so
+    // the descending order goes through the dialect's NULL-placement rule (Postgres
+    // sorts NULLs first on `desc` by default, so an explicit `nulls last` restores
+    // the canonical "NULLs last" order). The corpus has no NULL-bearing `desc` key,
+    // so this branch is untested there — hence the hand-authored golden here.
+    id: "Q8 orderBy desc nullable → nulls last",
+    op: {
+      orderBy: {
+        keys: [{ attr: "Order.sku", direction: "desc" }],
+        operand: { all: {} },
+      },
+    },
+    sql: "select t0.id, t0.name from orders t0 order by t0.sku desc nulls last",
+    binds: [],
+  },
 
   // --- 3VL null exclusion (same SQL as 0201, NULL-bearing column) ---
   {
@@ -385,6 +410,7 @@ describe("type-aware bind coercion (carry-forward task 1)", () => {
     const result = compile(
       parseOperation({ eq: { attr: "Order.id", value: big } }) as Operation,
       ordersResolver(),
+      postgresDialect,
     );
     expect(result.sql).toBe("select t0.id, t0.name from orders t0 where t0.id = ?");
     expect(result.binds).toEqual([big]);
@@ -394,6 +420,7 @@ describe("type-aware bind coercion (carry-forward task 1)", () => {
     const result = compile(
       parseOperation({ eq: { attr: "Order.id", value: 42 } }) as Operation,
       ordersResolver(),
+      postgresDialect,
     );
     expect(result.binds).toEqual([42]);
     expect(typeof result.binds[0]).toBe("number");
@@ -406,6 +433,7 @@ describe("type-aware bind coercion (carry-forward task 1)", () => {
     const result = compile(
       parseOperation({ eq: { attr: "Order.price", value: exact } }) as Operation,
       ordersResolver(),
+      postgresDialect,
     );
     expect(result.binds).toEqual(["1234567890123456.78"]);
   });
@@ -414,6 +442,7 @@ describe("type-aware bind coercion (carry-forward task 1)", () => {
     const result = compile(
       parseOperation({ between: { attr: "Order.price", lower: 20.0, upper: 50.75 } }) as Operation,
       ordersResolver(),
+      postgresDialect,
     );
     expect(result.binds).toEqual([20.0, 50.75]);
   });

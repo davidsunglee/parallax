@@ -18,9 +18,7 @@
   },
   "dependencies": {
     "@parallax/core": "workspace:*",
+    "@parallax/dialect": "workspace:*",
     "@parallax/operation": "workspace:*"
-  },
-  "devDependencies": {
-    "@parallax/dialect": "workspace:*"
   }
 }

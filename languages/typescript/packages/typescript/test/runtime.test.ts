@@ -19,6 +19,7 @@
  */
 import { loadCase } from "@parallax/conformance";
 import { ParallaxDecimal, Temporal } from "@parallax/core";
+import { postgresDialect } from "@parallax/dialect";
 import { describe, expect, it } from "vitest";
 import { createParallax, type ParallaxDatabase, type ParallaxRow } from "../src/index.js";
 
@@ -53,7 +54,7 @@ const SCALARS = loadCase("core/compatibility/cases/0003-scalar-types-roundtrip.y
 describe("EntityFinder no-arg find() shorthand (spec §2.3)", () => {
   it("compiles find() with no predicate to an `all` read (no where clause)", async () => {
     const db = new StubDatabase([]);
-    const px = createParallax({ descriptor: SCALARS, database: db });
+    const px = createParallax({ descriptor: SCALARS, database: db, dialect: postgresDialect });
 
     await px.entity("ScalarThing").find().toArray();
 
@@ -68,7 +69,7 @@ describe("EntityFinder bytes materialization (spec §3.2.1)", () => {
   it("projects bytes verbatim (no encode/_hex) and materializes a Node Buffer to a fresh Uint8Array", async () => {
     const payload = Buffer.from([1, 2, 3, 4]);
     const db = new StubDatabase([{ id: "1", payload }]);
-    const px = createParallax({ descriptor: SCALARS, database: db });
+    const px = createParallax({ descriptor: SCALARS, database: db, dialect: postgresDialect });
 
     const rows = await px.entity("ScalarThing").find().toArray();
 
@@ -88,7 +89,7 @@ describe("EntityFinder bytes materialization (spec §3.2.1)", () => {
 
   it("materializes a plain hex string to the same Uint8Array", async () => {
     const db = new StubDatabase([{ id: "1", payload: "01020304" }]);
-    const px = createParallax({ descriptor: SCALARS, database: db });
+    const px = createParallax({ descriptor: SCALARS, database: db, dialect: postgresDialect });
 
     const rows = await px.entity("ScalarThing").find().toArray();
 
@@ -99,7 +100,7 @@ describe("EntityFinder bytes materialization (spec §3.2.1)", () => {
 
   it("materializes a \\x-prefixed hex string to the same Uint8Array", async () => {
     const db = new StubDatabase([{ id: "1", payload: "\\x01020304" }]);
-    const px = createParallax({ descriptor: SCALARS, database: db });
+    const px = createParallax({ descriptor: SCALARS, database: db, dialect: postgresDialect });
 
     const rows = await px.entity("ScalarThing").find().toArray();
 
@@ -110,7 +111,7 @@ describe("EntityFinder bytes materialization (spec §3.2.1)", () => {
 
   it("leaves a nullable bytes value null", async () => {
     const db = new StubDatabase([{ id: "1", payload: null }]);
-    const px = createParallax({ descriptor: SCALARS, database: db });
+    const px = createParallax({ descriptor: SCALARS, database: db, dialect: postgresDialect });
 
     const rows = await px.entity("ScalarThing").find().toArray();
 
@@ -172,7 +173,7 @@ describe("EntityFinder managed-object materialization (spec §3.2.1)", () => {
         meta_json: '{"k":1}',
       },
     ]);
-    const px = createParallax({ descriptor: EVERY_SCALAR, database: db });
+    const px = createParallax({ descriptor: EVERY_SCALAR, database: db, dialect: postgresDialect });
 
     const rows = await px.entity("EveryScalar").find().toArray();
     const row = rows[0] as ParallaxRow;
@@ -256,7 +257,7 @@ describe("EntityFinder managed-object materialization (spec §3.2.1)", () => {
         meta_json: { k: 1 },
       },
     ]);
-    const px = createParallax({ descriptor: EVERY_SCALAR, database: db });
+    const px = createParallax({ descriptor: EVERY_SCALAR, database: db, dialect: postgresDialect });
 
     const row = (await px.entity("EveryScalar").find().toArray())[0] as ParallaxRow;
 
@@ -293,7 +294,7 @@ describe("EntityFinder managed-object materialization (spec §3.2.1)", () => {
         meta_json: null,
       },
     ]);
-    const px = createParallax({ descriptor: EVERY_SCALAR, database: db });
+    const px = createParallax({ descriptor: EVERY_SCALAR, database: db, dialect: postgresDialect });
 
     const row = (await px.entity("EveryScalar").find().toArray())[0] as ParallaxRow;
 
@@ -351,7 +352,7 @@ describe("EntityFinder managed-object materialization (spec §3.2.1)", () => {
         meta_json: null,
       },
     ]);
-    const px = createParallax({ descriptor: EVERY_SCALAR, database: db });
+    const px = createParallax({ descriptor: EVERY_SCALAR, database: db, dialect: postgresDialect });
 
     const rows = await px.entity("EveryScalar").find().toArray();
 
