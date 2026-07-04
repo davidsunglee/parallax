@@ -220,20 +220,31 @@ function batchStatementsForStep(
 
 /**
  * Plan a NON-temporal `insert` step from its classified ① rows: the emitted column
- * list is `columnOrder(entity)` filtered to the columns any row supplies (in model
- * order — an unset nullable attribute is absent, so its column is omitted, `0612`),
- * and the flat binds are each row's values pulled in that same column order. A
- * multi-row insert collapses every row into one statement (`combineWrites`).
+ * list is `columnOrder(entity)` filtered to the domain columns any row supplies (in
+ * model order — an unset nullable attribute is absent, so its column is omitted,
+ * `0612`), and the flat binds are each row's values pulled in that same column
+ * order. A multi-row insert collapses every row into one statement (`combineWrites`).
+ *
+ * A VERSIONED entity's insert appends the framework-owned version column with the
+ * DERIVED initial value `1` (the M10 optimistic-lock baseline, `0701`) — never
+ * authored in ① (`observedVersion` is absent on an insert), so it is neither in the
+ * row's columns nor its binds. This mirrors the reference harness's
+ * `_assert_insert_input` gate.
  */
 function insertStatements(
   entity: EntityMetadata,
   rows: readonly ClassifiedRow[],
 ): readonly PlannedStatement[] {
-  const present = orderedColumns(entity).filter((column) =>
-    rows.some((row) => row.columns.has(column)),
+  const versionColumn = entity.versionAttribute()?.column;
+  const domain = orderedColumns(entity).filter(
+    (column) => column !== versionColumn && rows.some((row) => row.columns.has(column)),
   );
+  const present = versionColumn === undefined ? domain : [...domain, versionColumn];
   const target: BatchTarget = { ...batchTargetFor(entity), columns: present.map(quoteIdentifier) };
-  const flat = rows.flatMap((row) => present.map((column) => row.columns.get(column)));
+  const flat = rows.flatMap((row) => [
+    ...domain.map((column) => row.columns.get(column)),
+    ...(versionColumn === undefined ? [] : [1]),
+  ]);
   return combineWrites([{ mutation: "insert", target, statements: 1, binds: [flat] }]);
 }
 
