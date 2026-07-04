@@ -77,7 +77,7 @@ export function buildDeepFetchPlan(loaded: LoadedCase, dialect: Dialect): DeepFe
   const body = deepFetchBody(loaded.raw.operation);
   const operand = parseOperation(body.operand);
   const rootEntity = deepFetchRootEntity(body.paths);
-  const projection = rootDeepFetchProjection(loaded, body.paths);
+  const projection = rootDeepFetchProjection(loaded, body.paths, dialect);
   const rootSchema =
     rootEntity === undefined
       ? schemaForRoot(loaded, operand, projection, dialect)
@@ -210,7 +210,7 @@ function materialize(
   const correlation = schema.correlation(builder.relRef);
   const childEntity = correlation.relatedEntity.name;
   const childAttr = childAttrName(correlation.relatedEntity, correlation.childColumn);
-  const projection = childProjection(loaded, builder, correlation.relatedEntity);
+  const projection = childProjection(loaded, builder, correlation.relatedEntity, dialect);
   const toOne =
     correlation.relationship.cardinality === "many-to-one" ||
     correlation.relationship.cardinality === "one-to-one";

@@ -2,8 +2,8 @@
  * `@parallax/dialect` — M11 database seam & portability.
  *
  * Layer-1 of the seam: the normative {@link Dialect} interface (the single
- * authority over the per-database decision catalog) plus `postgresDialect`, its
- * first conforming implementation. The catalog covers `?`→`$n` placeholder
+ * authority over the per-database decision catalog) plus its two conforming
+ * implementations, `postgresDialect` and `mariadbDialect`. The catalog covers `?`→`$n` placeholder
  * translation, the neutral-type vocabulary, identifier quoting, ORDER BY / NULL
  * placement, the row-limit clause, in-transaction read-lock application, the
  * SQLSTATE → neutral-category error classification, the raw-string type parsers
@@ -21,6 +21,7 @@ export {
   type ErrorCategory,
   isRetriableCategory,
 } from "./errors.js";
+export { MARIADB_DIALECT, MARIADB_INFINITY_SENTINEL, mariadbDialect } from "./mariadb.js";
 export {
   applyReadLock,
   bytesFromDb,
