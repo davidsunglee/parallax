@@ -23,9 +23,10 @@
  */
 import { auditWriteStatements, type MutationKind, type WriteTarget } from "@parallax/bitemporal";
 import { columnOrder, quoteIdentifier } from "@parallax/dialect";
-import { type VersionedTarget, versionAdvancingUpdate } from "@parallax/locking";
+import { type VersionedTarget, versionAdvancingUpdate, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
 import { type BatchTarget, combineWrites, type PlannedStatement } from "@parallax/transactions";
+import { bindsEqual } from "./compare.js";
 import type { LoadedCase } from "./discover.js";
 
 /** One generated DML statement paired with its authored binds + case pointer. */
@@ -66,7 +67,7 @@ interface RawWriteStep {
  * is the reserved optimistic control key (never a column). Roles come from the
  * metamodel, NEVER from JSON key order.
  */
-interface ClassifiedRow {
+export interface ClassifiedRow {
   readonly columns: ReadonlyMap<string, unknown>;
   readonly pk: unknown;
   readonly set: ReadonlyMap<string, unknown>;
@@ -81,7 +82,7 @@ interface ClassifiedRow {
  * typo surfaces loudly); the primary-key attribute's value is split into `pk`,
  * every other attribute into `set`, both keyed by physical column.
  */
-function classifyRow(entity: EntityMetadata, row: Record<string, unknown>): ClassifiedRow {
+export function classifyRow(entity: EntityMetadata, row: Record<string, unknown>): ClassifiedRow {
   const pkColumn = entity.primaryKey()[0]?.column;
   const columns = new Map<string, unknown>();
   const set = new Map<string, unknown>();
@@ -104,7 +105,7 @@ function classifyRow(entity: EntityMetadata, row: Record<string, unknown>): Clas
 }
 
 /** The entity's physical column list in descriptor order (attribute → column). */
-function orderedColumns(entity: EntityMetadata): readonly string[] {
+export function orderedColumns(entity: EntityMetadata): readonly string[] {
   return columnOrder({
     table: entity.table,
     attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
@@ -133,6 +134,7 @@ export function buildWriteSequencePlan(loaded: LoadedCase): WriteSequencePlan {
   const steps = (loaded.raw.writeSequence as readonly RawWriteStep[] | undefined) ?? [];
   const bindRows = (loaded.raw.binds as readonly (readonly unknown[])[] | undefined) ?? [];
   const golden = goldenStatements(loaded);
+  const concurrency = loaded.uow?.concurrency;
 
   const statements: WriteStatementPlan[] = [];
   let bindIndex = 0;
@@ -140,7 +142,7 @@ export function buildWriteSequencePlan(loaded: LoadedCase): WriteSequencePlan {
     const entity = metamodel.entity(step.entity);
     const generated = isTemporalEntity(entity)
       ? auditStatementsForStep(step, entity, bindRows, bindIndex)
-      : batchStatementsForStep(step, entity, bindRows, bindIndex, golden);
+      : batchStatementsForStep(step, entity, bindRows, bindIndex, golden, concurrency);
     for (const { sql, binds } of generated) {
       statements.push({ casePointer: `/writeSequence/${stepIndex}`, sql, binds });
       bindIndex += 1;
@@ -188,19 +190,26 @@ function batchStatementsForStep(
   bindRows: readonly (readonly unknown[])[],
   bindIndex: number,
   golden: readonly string[],
+  concurrency: string | undefined,
 ): readonly { sql: string; binds: readonly unknown[] }[] {
   const mutation = step.mutation === "insert" ? "insert" : "update";
   const count = step.statements ?? 1;
-  // A VERSIONED entity's keyed update advances its framework-owned version (the
-  // locking-mode / `0611` shape) — the readless batched forms below apply only to a
-  // non-versioned entity (a versioned set-based update MUST materialize per object,
-  // M10 / ADR 0031). Generate it by construction and pin against the golden. (This
-  // is the last golden-parsing path in this file; Phase 2 derives it from ① too.)
-  if (mutation === "update" && entity.versionAttribute() !== undefined) {
-    const stepBinds = bindRows.slice(bindIndex, bindIndex + count);
-    return versionedUpdateStatements(entity, stepBinds, golden.slice(bindIndex, bindIndex + count));
-  }
   const rows = (step.rows ?? []).map((row) => classifyRow(entity, row));
+  // A VERSIONED entity's keyed update advances its framework-owned version — the
+  // readless batched forms below apply only to a non-versioned entity (a versioned
+  // set-based update MUST materialize per object, M10 / ADR 0031). Columns, the
+  // advance, and the binds are DERIVED from the neutral write input (①) and routed
+  // by `(versionAttribute, uow.concurrency)`: locking mode ⇒ ungated advance
+  // (`0611`), optimistic ⇒ gated advance — mirroring the runtime's own routing.
+  if (mutation === "update" && entity.versionAttribute() !== undefined) {
+    return versionedUpdateStatements(
+      entity,
+      rows,
+      concurrency,
+      golden.slice(bindIndex, bindIndex + count),
+      bindRows.slice(bindIndex, bindIndex + count),
+    );
+  }
   const planned =
     mutation === "insert" ? insertStatements(entity, rows) : updateStatements(entity, rows);
   return planned.map((statement: PlannedStatement) => ({
@@ -263,25 +272,52 @@ function tuplesEqual(left: readonly unknown[], right: readonly unknown[]): boole
 }
 
 /**
- * The generated locking-mode version-advancing `UPDATE`(s) for a VERSIONED entity
- * (`0611`): each keyed update advances the framework-owned version WITHOUT a gate
- * (the M8 shared read lock makes it correct — `@parallax/locking`
- * `versionAdvancingUpdate`). The domain `set` columns are parsed from each golden
- * (its authored intent, minus the trailing `version = ?`) and the generated text is
- * pinned equal to the golden, so the runtime — not the case — owns the DML shape.
+ * The generated versioned `UPDATE`(s) for a VERSIONED entity, DERIVED from the
+ * neutral write input (①) classified against the metamodel — one per ① row:
+ *
+ *  - the domain `set` columns are `columnOrder(entity)` filtered to the row's
+ *    assigned attributes (model order, never JSON key order);
+ *  - the framework-owned version advances `observedVersion + 1` (derived, never
+ *    authored), appended to the `set`;
+ *  - the mode routes the gate: `locking` ⇒ an ungated advance
+ *    (`versionAdvancingUpdate`, the M8 shared-read-lock `0611` / `0702` shape),
+ *    `optimistic` ⇒ a gated advance (`versionedUpdate`, `... and version = ?`);
+ *  - the binds are `[…set values…, newVersion, pk]` (locking) or
+ *    `[…set values…, newVersion, pk, observedVersion]` (optimistic).
+ *
+ * The generated text AND binds are cross-checked against the authored golden (②) —
+ * a genuine INDEPENDENT check now the columns come from ①, not a golden parse — so
+ * a case whose ① and golden disagree fails loudly here.
  */
 function versionedUpdateStatements(
   entity: EntityMetadata,
-  stepBinds: readonly (readonly unknown[])[],
+  rows: readonly ClassifiedRow[],
+  concurrency: string | undefined,
   golden: readonly string[],
+  goldenBinds: readonly (readonly unknown[])[],
 ): readonly { sql: string; binds: readonly unknown[] }[] {
   const target = versionedTargetFor(entity);
-  return stepBinds.map((binds, offset) => {
-    const goldenSql = golden[offset];
-    const sql = versionAdvancingUpdate(target, domainSetColumns(goldenSql, target));
-    if (sql !== goldenSql) {
+  const gated = concurrency === "optimistic";
+  return rows.map((row, offset) => {
+    if (row.observedVersion === undefined) {
       throw new Error(
-        `generated version-advancing UPDATE != golden:\n  generated: ${sql}\n  golden:    ${goldenSql ?? "<absent>"}`,
+        `versioned update on '${entity.name}' requires an observedVersion in its neutral write input (①)`,
+      );
+    }
+    const setColumns = orderedColumns(entity).filter((column) => row.set.has(column));
+    const quoted = setColumns.map(quoteIdentifier);
+    const sql = gated ? versionedUpdate(target, quoted) : versionAdvancingUpdate(target, quoted);
+    const setValues = setColumns.map((column) => row.set.get(column));
+    const newVersion = row.observedVersion + 1;
+    const binds = gated
+      ? [...setValues, newVersion, row.pk, row.observedVersion]
+      : [...setValues, newVersion, row.pk];
+    const goldenSql = golden[offset];
+    if (sql !== goldenSql || !bindsEqual(binds, goldenBinds[offset] ?? [])) {
+      throw new Error(
+        "generated versioned UPDATE + binds != golden:\n" +
+          `  generated: ${sql}  ${JSON.stringify(binds)}\n` +
+          `  golden:    ${goldenSql ?? "<absent>"}  ${JSON.stringify(goldenBinds[offset] ?? [])}`,
       );
     }
     return { sql, binds };
@@ -303,23 +339,6 @@ function versionedTargetFor(entity: EntityMetadata): VersionedTarget {
     pkColumn: quoteIdentifier(pk.column),
     versionColumn: quoteIdentifier(version.column),
   };
-}
-
-/**
- * The quoted DOMAIN `set` columns of a golden version-advancing UPDATE (the `set`
- * list minus the trailing `version = ?`): `update account set balance = ?, version
- * = ? where id = ?` → `["balance"]`. The columns are taken from the golden so the
- * generated UPDATE reproduces it exactly.
- */
-function domainSetColumns(golden: string | undefined, target: VersionedTarget): readonly string[] {
-  const match = golden ? /\bset\s+(.+?)\s+where\b/i.exec(golden) : null;
-  if (!match) {
-    throw new Error(`could not parse the set clause from golden UPDATE: ${golden ?? "<absent>"}`);
-  }
-  return (match[1] as string)
-    .split(",")
-    .map((piece) => piece.trim().split(/\s*=/)[0]?.trim() ?? "")
-    .filter((column) => column !== target.versionColumn);
 }
 
 /** The ordered `goldenSql.postgres` statements a write-sequence case declares. */

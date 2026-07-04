@@ -110,7 +110,19 @@
         "optimisticLocking": { "type": "boolean", "default": false },
         "pkGenerator": { "$ref": "#/$defs/pkGenerator" },
         "default": {}
-      }
+      },
+      "allOf": [
+        {
+          "$comment": "Explicit optimistic-lock version (M10 / DQ8b): an attribute-level `optimisticLocking: true` version is derived — initialized to `1` on insert and advanced to `observed + 1` on every update, gated in optimistic mode with `and <col> = ?` — so it MUST be an integral type (`int32`/`int64`). A TEMPORAL (as-of) entity locks via its processing `in_z` TIMESTAMP instead and declares no explicit version attribute (the entity-level composition rule above forbids the combination), so this restriction never lands on a timestamp column.",
+          "if": {
+            "required": ["optimisticLocking"],
+            "properties": { "optimisticLocking": { "const": true } }
+          },
+          "then": {
+            "properties": { "type": { "enum": ["int32", "int64"] } }
+          }
+        }
+      ]
     },
     "relationship": {
       "description": "A navigable association. Joins are auto-derived from the navigation predicate, so a query never writes ON-conditions by hand.",

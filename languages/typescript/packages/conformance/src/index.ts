@@ -9,6 +9,7 @@
  */
 
 export {
+  bindsEqual,
   type ColumnTypes,
   compareGraph,
   compareRowSet,
