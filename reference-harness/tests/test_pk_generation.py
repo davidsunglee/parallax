@@ -13,10 +13,11 @@ from typing import Any
 
 import pytest
 
-from reference_harness.case import load_model
+from reference_harness.case import discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_pk_allocation,
+    _assert_write_input_columns,
     _expected_sequence_counter,
     _expected_sequence_ids,
     _pk_sequence_counter_column,
@@ -166,3 +167,57 @@ def test_counter_column_raises_for_zero_int64_non_pk_columns() -> None:
     )
     with pytest.raises(CaseFailure, match="exactly one"):
         _pk_sequence_counter_column(reg)
+
+
+# --- ① write-input gate over the pk-gen corpus (DQ-D markers) ------------------
+
+
+def _pkgen_write_input_cases() -> list:
+    """pk-gen write-sequence cases carrying a neutral write input (① ``rows``)."""
+    return [
+        case
+        for case in discover_cases(COMPATIBILITY_ROOT)
+        if case.is_write_sequence
+        and "postgres" in case.golden_sql
+        and "pk-generation" in case.tags
+        and any(step.get("rows") for step in case.write_sequence)
+    ]
+
+
+def _pkgen_case(stem_prefix: str):
+    return next(
+        c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith(stem_prefix)
+    )
+
+
+def test_pkgen_write_input_holds_for_authored_cases() -> None:
+    cases = _pkgen_write_input_cases()
+    # The `max` (computed) and `sequence` (increment) families both carry ①.
+    assert {case.path.stem[:4] for case in cases} >= {"0620", "0623"}
+    for case in cases:
+        # Must not raise: a `computed` pk column appears in the golden INSERT list
+        # (its DB-derived bind skipped), an `increment` registry advance matches the
+        # golden's `col = col + ?` shape plus its amount bind, and every allocated
+        # insert's literal columns match their golden binds.
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_pkgen_max_computed_literal_corruption_is_rejected() -> None:
+    # `0620` is a pk-gen `max` insert: `{ id: { computed: maxPlusOne }, name: Ada }`.
+    # The DB-computed `id` bind is skipped, but the LITERAL `name` is still cross-
+    # checked — corrupt it so its ① value no longer matches the golden bind.
+    case = _pkgen_case("0620")
+    step = next(s for s in case.write_sequence if s.get("rows"))
+    step["rows"][0]["name"] = "NotAda"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_pkgen_sequence_increment_amount_corruption_is_rejected() -> None:
+    # `0623` step 1 advances the registry via `next_val = next_val + ?` by 1. Corrupt
+    # the `{ increment: <n> }` amount so the DERIVED bind no longer matches the golden.
+    case = _pkgen_case("0623")
+    step = next(s for s in case.write_sequence if s["entity"] == "PkSequence")
+    step["rows"][0]["nextVal"] = {"increment": 99}
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")

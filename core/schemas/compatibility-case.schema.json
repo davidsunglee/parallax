@@ -181,6 +181,11 @@
             "type": "string",
             "minLength": 1
           },
+          "businessAt": {
+            "description": "The BUSINESS-axis instant a business-temporal (unitemporal-business) milestone-chaining write records — the milestone's `from_z` (and, on a close, the prior row's `thru_z`). The business analogue of `at`: a GENERATING adapter DERIVES the business bookkeeping from it — a new milestone opens `from_z = businessAt` with the open bound `thru_z = infinity`, and a close binds `thru_z = businessAt` keyed on the still-open current row (`pk and thru_z = infinity`). So `from_z`/`thru_z`/`infinity` are never authored in `rows`. Present on a business-only temporal step; a processing (audit-only) step carries `at` instead. Optional in the transitional phase; a later phase makes it required for a business-temporal step.",
+            "type": "string",
+            "minLength": 1
+          },
           "note": {
             "description": "Optional human-readable description of the milestone-chaining effect.",
             "type": "string"
@@ -490,7 +495,7 @@
   },
   "$defs": {
     "writeRow": {
-      "description": "A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name (a business/developer name like `id` / `orderedOn`, NOT a physical column like `ordered_on`), whose value is a scalar literal or an explicit `null` (an unset nullable attribute is simply absent, so the column is omitted from the DML). The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute keys via `additionalProperties`.",
+      "description": "A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name (a business/developer name like `id` / `orderedOn`, NOT a physical column like `ordered_on`). An attribute's value is a scalar literal, an explicit `null` (an unset nullable attribute is simply absent, so the column is omitted from the DML), OR a one-key DB-COMPUTED marker object — `{ computed: \"maxPlusOne\" }` (a pk-gen `max` column the DB derives as `coalesce(max(id), ?) + ?`, so it carries no literal bind of its own) or `{ increment: <n> }` (a self-referential advance `col = col + ?`, e.g. a sequence registry's `next_val`). The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute keys via `additionalProperties`.",
       "type": "object",
       "properties": {
         "observedVersion": {
@@ -499,7 +504,28 @@
           "minimum": 0
         }
       },
-      "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+      "additionalProperties": {
+        "oneOf": [
+          { "type": ["string", "number", "boolean", "null"] },
+          {
+            "description": "A one-key DB-COMPUTED marker: the attribute's value is derived by the database rather than authored as a literal bind, so the adapter emits the strategy's SQL fragment and the harness cross-check skips the literal bind at this position.",
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "maxProperties": 1,
+            "properties": {
+              "computed": {
+                "description": "The pk-gen `max` strategy: the column is emitted as `coalesce(max(col), ?) + ?` (its binds are the strategy's coalesce base + increment, NOT an ① literal).",
+                "enum": ["maxPlusOne"]
+              },
+              "increment": {
+                "description": "A self-referential advance emitted as `col = col + ?` (e.g. a sequence registry's `next_val`); the integer is the amount added.",
+                "type": "integer"
+              }
+            }
+          }
+        ]
+      }
     },
     "concurrencyStep": {
       "type": "object",

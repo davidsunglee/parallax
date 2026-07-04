@@ -9,10 +9,14 @@ writeSequence:
     entity: Attendee
     statements: 1
     note: application-assigned id 100
+    rows:
+      - { id: 100, name: Pat }
   - mutation: insert
     entity: Attendee
     statements: 1
     note: allocate max(id)+1 = 101
+    rows:
+      - { id: { computed: maxPlusOne }, name: Ada }
 goldenSql:
   postgres:
     - insert into attendee(id, name) values (?, ?)
