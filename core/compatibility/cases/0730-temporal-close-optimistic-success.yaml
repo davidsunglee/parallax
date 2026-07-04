@@ -23,6 +23,9 @@ model: models/balance.yaml
 tags: [m7, m10, m3, temporal, conflict, optimistic, slice-mvp-1]
 uow:
   concurrency: optimistic
+write: { id: 2 }
+at: "2024-10-01T00:00:00+00:00"
+observedInZ: "2024-02-01T00:00:00+00:00"
 expectedAffectedRows: 1
 goldenSql:
   postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?

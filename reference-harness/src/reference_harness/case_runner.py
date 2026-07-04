@@ -954,6 +954,10 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
 _INSERT_COLUMNS_RE = re.compile(r"insert\s+into\s+\S+\s*\(([^)]*)\)", re.IGNORECASE)
 _SET_CLAUSE_RE = re.compile(r"\bset\s+(.+?)\s+where\b", re.IGNORECASE)
 
+# The full-bitemporal `*Until` rectangle-split mutations (DQ11): a business-bounded
+# write whose ① carries the valid-time window (`at`/`until`/`businessFrom`).
+_UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
+
 
 def _classify_write_row(
     case: Case, entity: Entity, row: dict[str, Any]
@@ -1067,10 +1071,12 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
     physical row, so the column list stays metamodel-sourced (``column_order``) and
     ① carries only the domain values (``rows``) plus the transaction instant
     (``at``) — the ``in_z = at`` / ``out_z = infinity`` bookkeeping is DERIVED, never
-    authored (:func:`_assert_temporal_input`).
+    authored (:func:`_assert_temporal_input`). A full-bitemporal ``*Until`` step is
+    the rectangle-split analogue: its ① carries the valid-time window (``at`` /
+    ``until`` / ``businessFrom``), cross-checked by :func:`_assert_until_input`.
 
-    Transitional: a step without ``rows`` (versioned insert, pk-gen, ``*Until`` …)
-    is skipped; a later phase makes ① required per shape.
+    Transitional: a step without ``rows`` (versioned insert, pk-gen …) is skipped; a
+    later phase makes ① required per shape.
     """
     statements = case.golden_statements(dialect)
     stmt_index = 0
@@ -1085,7 +1091,9 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         step_statements = statements[stmt_index : stmt_index + count]
         step_binds = [_binds_for_statement(case, stmt_index + offset) for offset in range(count)]
         mutation = step["mutation"]
-        if entity.is_temporal:
+        if mutation in _UNTIL_MUTATIONS:
+            _assert_until_input(case, entity, classified, step, step_statements, step_binds)
+        elif entity.is_temporal:
             _assert_temporal_input(case, entity, classified, step, step_statements, step_binds)
         elif mutation == "insert":
             _assert_insert_input(case, entity, classified, step_statements, step_binds)
@@ -1288,15 +1296,102 @@ def _assert_temporal_input(
         )
 
 
+def _assert_until_input(
+    case: Case,
+    entity: Entity,
+    classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
+    step: dict[str, Any],
+    step_statements: list[str],
+    step_binds: list[list[Any]],
+) -> None:
+    """Cross-check a full-bitemporal ``*Until`` step's ① against its golden (②).
+
+    An ``*Until`` write bounds a mutation to a business valid-time window: it
+    inactivates the original on the PROCESSING axis at the transaction instant and
+    chains head / (middle) / tail rows at fresh processing time ``[at, infinity)``,
+    partitioned on the BUSINESS axis around the window ``[businessFrom, until)``. Like
+    the audit-only close it is Family B (full physical row, metamodel-sourced column
+    list), so the cross-check is BINDS-only on the DERIVED coordinates ① supplies:
+
+      * the inactivating close (the ``update … set out_z = ? where …`` statement)
+        binds ``[at, pk, infinity]`` — closes the original at the transaction instant;
+      * every chained INSERT opens a fresh processing milestone, so its ``in_z`` bind
+        equals ``at`` and its ``out_z`` bind equals ``infinity``;
+      * the business window bounds — ``businessFrom`` (the window start, an ① row
+        attribute) and ``until`` (the window end, step-level) — both appear among the
+        chained inserts' business-axis (``from_z`` / ``thru_z``) binds.
+
+    The domain values (carried, not derived) and the head/tail residual windows are
+    graded observably by ``expectedTableState`` in the run, not restated in ①.
+    """
+    business = next(a for a in entity.as_of_attributes if a["axis"] == "business")
+    processing = next(a for a in entity.as_of_attributes if a["axis"] == "processing")
+    from_z, thru_z = business["fromColumn"], business["toColumn"]
+    in_z, out_z = processing["fromColumn"], processing["toColumn"]
+    infinity = processing.get("infinity", "infinity")
+    full_columns = list(column_order(entity))
+    in_z_pos, out_z_pos = full_columns.index(in_z), full_columns.index(out_z)
+    from_z_pos, thru_z_pos = full_columns.index(from_z), full_columns.index(thru_z)
+
+    at = step.get("at")
+    until = step.get("until")
+    if at is None or until is None:
+        raise CaseFailure(
+            f"{case.path.name}: a `*Until` step's neutral write input (①) MUST carry "
+            f"both `at` (the transaction instant → in_z) and `until` (the business "
+            f"window end → thru_z), which are DERIVED, never read from the golden."
+        )
+    columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
+    business_from = columns.get(from_z)
+    if business_from is None:
+        raise CaseFailure(
+            f"{case.path.name}: a `*Until` step's ① row MUST carry the business window "
+            f"start (`businessFrom` → {from_z}), which discriminates the chained rows."
+        )
+
+    business_binds: list[Any] = []
+    for statement, binds in zip(step_statements, step_binds):
+        if "insert into" in statement.lower():
+            # A chained milestone opens at fresh processing time [at, infinity).
+            _assert_write_values(case, [at], [binds[in_z_pos]], statement)
+            _assert_write_values(case, [infinity], [binds[out_z_pos]], statement)
+            business_binds.extend([binds[from_z_pos], binds[thru_z_pos]])
+        else:
+            # The inactivating close: out_z = at, keyed on the current-on-processing row.
+            _assert_write_values(case, [at, pk, infinity], binds, statement)
+
+    for bound, label in ((business_from, "businessFrom"), (until, "until")):
+        if not any(_write_value_equal(bound, value) for value in business_binds):
+            raise CaseFailure(
+                f"{case.path.name}: the `*Until` business window bound {label}={bound!r} "
+                f"appears in none of the chained inserts' business-axis binds "
+                f"{business_binds!r}."
+            )
+
+
 def _conflict_versioned_entity(case: Case) -> Entity | None:
     """The versioned entity a conflict case targets, or None (a temporal close).
 
     A versioned conflict (``0703`` / ``0704`` / ``0708`` / ``0709`` / ``0710``)
     gates on a version column; a temporal / bitemporal close (``0730``-``0733`` /
-    ``0813`` / ``0814``) has none and carries a different ① (gated in Phase 4).
+    ``0813`` / ``0814``) has none and carries a different ① (see
+    :func:`_assert_temporal_conflict_input`).
     """
     for entity in case.model.entities:
         if _version_column(entity) is not None:
+            return entity
+    return None
+
+
+def _conflict_temporal_entity(case: Case) -> Entity | None:
+    """The processing-axis TEMPORAL entity a conflict-close case targets, or None.
+
+    A temporal / bitemporal conflict close (``0730``-``0733`` / ``0813`` / ``0814``)
+    carries no version column; it locks via the observed processing-from (``in_z``),
+    so the target is the first entity with a processing as-of axis.
+    """
+    for entity in case.model.entities:
+        if any(a["axis"] == "processing" for a in entity.as_of_attributes):
             return entity
     return None
 
@@ -1309,12 +1404,13 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
     1``), and the binds are ``[…set values…, newVersion, pk, observedVersion]`` (the
     trailing bind is the ``and version = ?`` gate). The single form reads a root
     ``write``; the retry form reads a ``write`` per attempt. A temporal-close
-    conflict (no version column) carries a different ① and is gated in Phase 4, so
-    it is skipped here. Comparing against the golden is legitimate — two AUTHORED
-    representations, never grading generated output.
+    conflict (no version column) carries a close-shaped ① instead, cross-checked by
+    :func:`_assert_temporal_conflict_input`. Comparing against the golden is
+    legitimate — two AUTHORED representations, never grading generated output.
     """
     entity = _conflict_versioned_entity(case)
     if entity is None:
+        _assert_temporal_conflict_input(case, dialect)
         return
     version_col = _version_column(entity)
     if case.attempts:
@@ -1376,6 +1472,102 @@ def _assert_versioned_conflict_write(
     # A conflict is intrinsically gated (R4): [...set, newVersion, pk, observedVersion].
     expected = [*set_values, observed + 1, pk, observed]
     _assert_write_values(case, expected, binds, statement)
+
+
+def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
+    """Cross-check a TEMPORAL / bitemporal conflict CLOSE's ① against its golden (②).
+
+    A processing-axis temporal entity carries no version column, so the close gates
+    on the observed processing-from (``in_z``) — the version analogue (DQ-C). The
+    close is Family B: it always writes the single metamodel-fixed SET column
+    (``out_z``), so the cross-check is BINDS-only (OQ3 → Option A). ① carries the
+    milestone pk (→ the ``where`` key), the close instant ``at`` (→ the new
+    ``out_z``), and — in optimistic mode — ``observedInZ`` (the ``and in_z = ?``
+    gate); a BITEMPORAL close additionally carries the business discriminator (e.g.
+    ``businessFrom`` → the ``from_z = ?`` gate whose VALUE the metamodel cannot know).
+    The single form reads root ``write`` / ``at`` / ``observedInZ``; the retry form
+    reads them per attempt.
+    """
+    entity = _conflict_temporal_entity(case)
+    if entity is None:
+        return
+    gated = case.concurrency_mode == "optimistic"
+    if case.attempts:
+        for index, attempt in enumerate(case.attempts):
+            _assert_temporal_conflict_close(
+                case,
+                entity,
+                attempt.get("write"),
+                attempt.get("at"),
+                attempt.get("observedInZ"),
+                gated,
+                _attempt_statements(attempt, dialect),
+                attempt.get("binds", []),
+                f"attempts[{index}]",
+            )
+        return
+    _assert_temporal_conflict_close(
+        case,
+        entity,
+        case.raw.get("write"),
+        case.raw.get("at"),
+        case.raw.get("observedInZ"),
+        gated,
+        case.golden_statements(dialect),
+        case.binds,
+        "write",
+    )
+
+
+def _assert_temporal_conflict_close(
+    case: Case,
+    entity: Entity,
+    write: dict[str, Any] | None,
+    at: Any,
+    observed_in_z: Any,
+    gated: bool,
+    statements: list[str],
+    binds: list[Any],
+    pointer: str,
+) -> None:
+    """Cross-check one temporal-close attempt's ① binds against the golden UPDATE.
+
+    A close sets ``out_z = at`` keyed on the still-open current row
+    (``pk and out_z = infinity``); an optimistic close adds the ``and in_z = ?`` gate
+    bound to ``observedInZ``. A bitemporal close inserts the business discriminator's
+    VALUE (the classified ``set`` coordinate, e.g. ``from_z``) between ``out_z`` and
+    ``in_z`` in model column order, so the derived binds are
+    ``[at, pk, infinity, …businessCoords, (observedInZ if gated)]``.
+    """
+    if write is None:
+        return  # transitional: ① not authored yet (a later phase makes it required)
+    if len(statements) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: a temporal conflict close ({pointer}) has exactly one "
+            f"golden UPDATE, but {len(statements)} were listed."
+        )
+    if at is None:
+        raise CaseFailure(
+            f"{case.path.name}: a temporal conflict close's neutral write input "
+            f"({pointer}) MUST carry `at` (the close instant → out_z), which is DERIVED "
+            f"into the close binds, never read from the golden."
+        )
+    axis = next(a for a in entity.as_of_attributes if a["axis"] == "processing")
+    infinity = axis.get("infinity", "infinity")
+    _, pk, set_cols, _ = _classify_write_row(case, entity, write)
+    # A bitemporal close's business discriminator (e.g. from_z) slots between out_z
+    # and in_z in model column order; a processing-only close has none.
+    business_coords = [set_cols[column] for column in column_order(entity) if column in set_cols]
+    expected = [at, pk, infinity, *business_coords]
+    if gated:
+        if observed_in_z is None:
+            raise CaseFailure(
+                f"{case.path.name}: an optimistic temporal conflict close's neutral write "
+                f"input ({pointer}) MUST carry observedInZ — the `and in_z = ?` gate is "
+                f"derived from it."
+            )
+        expected.append(observed_in_z)  # the optimistic in_z gate bind
+    _assert_write_values(case, expected, binds, statements[0])
 
 
 def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:

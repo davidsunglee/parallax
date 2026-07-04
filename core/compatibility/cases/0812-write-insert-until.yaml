@@ -20,6 +20,10 @@ writeSequence:
     entity: Position
     statements: 1
     note: open a single business-bounded rectangle [2024-03-01, 2024-09-01)
+    rows:
+      - { id: 1, acctNum: A, value: 100.00, businessFrom: "2024-03-01T00:00:00+00:00" }
+    at: "2024-01-01T00:00:00+00:00"
+    until: "2024-09-01T00:00:00+00:00"
 goldenSql:
   postgres:
     - insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
