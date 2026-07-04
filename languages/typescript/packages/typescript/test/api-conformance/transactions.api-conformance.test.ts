@@ -20,6 +20,7 @@
 
 import { execFileSync } from "node:child_process";
 import { ParallaxDecimal, Temporal } from "@parallax/core";
+import { postgresDialect } from "@parallax/dialect";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import { PostgresProvider } from "../../src/conformance/postgres-provider.js";
 import { AttributeExpression } from "../../src/index.js";
@@ -260,6 +261,7 @@ async function withClock(
   return createParallax({
     database: fixture.db,
     descriptor: fixture.loaded.descriptor,
+    dialect: postgresDialect,
     clock: { now: () => now },
   });
 }

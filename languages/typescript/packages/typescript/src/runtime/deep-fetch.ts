@@ -20,6 +20,7 @@
  */
 
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
+import type { Dialect } from "@parallax/dialect";
 import type { EntityMetadata, Metamodel } from "@parallax/metamodel";
 import type { Operation } from "@parallax/operation";
 import {
@@ -92,26 +93,24 @@ export async function executeDeepFetch(
   metamodel: Metamodel,
   operation: Operation,
   database: ParallaxDatabase,
+  dialect: Dialect,
   readContext: DeepFetchReadContext = NO_READ_CONTEXT,
 ): Promise<DeepFetchGraph> {
   const body = (operation as { deepFetch: DeepFetchBody }).deepFetch;
   const rootEntity = deepFetchRootEntity(metamodel, body.paths, body.operand);
-  const rootSchema = new RuntimeSchema(metamodel, rootEntity);
-  const { sql, binds } = compile(body.operand, rootSchema);
+  const rootSchema = new RuntimeSchema(metamodel, rootEntity, dialect);
+  // The ROOT read AND each CHILD level are compiled against the injected dialect with
+  // the unit of work's `locking` mode, so `compile()` applies the M8 shared read-lock
+  // in-line (`for share of t0` in `locking`, `0603`) — the developer writes no lock
+  // SQL — and child locking falls out structurally rather than being re-plumbed.
+  const locking = readContext.concurrency === "locking";
+  const { sql, binds } = compile(body.operand, rootSchema, dialect, { locking });
   const rootPins = collectRootPins(rootSchema, body.operand);
 
-  // The ROOT read AND each CHILD level flow through the SAME shared read executor
-  // the flat-find path uses (`read.ts`): it applies the M8 shared lock for this unit
-  // of work's mode (`for share of t0` in `locking`, `0603`) — the developer writes no
-  // lock SQL — so child locking falls out structurally rather than being re-plumbed.
-  const rootRows = [
-    ...(await executeRead(database, sql, binds as readonly unknown[], readContext.concurrency)),
-  ] as Row[];
-  const tree = buildTree(metamodel, body.paths, rootPins);
+  const rootRows = [...(await executeRead(database, sql, binds as readonly unknown[]))] as Row[];
+  const tree = buildTree(metamodel, body.paths, rootPins, dialect, locking);
   const result = await runDeepFetch(rootRows, tree, (levelSql, levelBinds) =>
-    executeRead(database, levelSql, levelBinds, readContext.concurrency).then(
-      (rows) => [...rows] as Row[],
-    ),
+    executeRead(database, levelSql, levelBinds).then((rows) => [...rows] as Row[]),
   );
 
   // Materialize the assembled graph to managed objects keyed by DSL name (10b),
@@ -120,7 +119,7 @@ export async function executeDeepFetch(
   // child) so the unit of work records the version each level observed (M10).
   const observedLevels = new Map<string, ObservedLevel>();
   const materialized = result.rows.map((row) =>
-    materializeNode(row, rootEntity, metamodel, observedLevels),
+    materializeNode(row, rootEntity, metamodel, observedLevels, dialect),
   );
   // Record the version this unit of work OBSERVED for each fetched versioned row, so
   // a later keyed update of the versioned root OR of an included versioned child gates
@@ -157,8 +156,9 @@ function materializeNode(
   entity: EntityMetadata,
   metamodel: Metamodel,
   observed: Map<string, ObservedLevel>,
+  dialect: Dialect,
 ): ParallaxRow {
-  const scalar = rowMaterializer(entity)(scalarColumns(row, entity));
+  const scalar = rowMaterializer(entity, dialect)(scalarColumns(row, entity));
   recordObservedRow(observed, entity, scalar);
   for (const rel of entity.relationships()) {
     if (!(rel.name in row)) {
@@ -167,9 +167,11 @@ function materializeNode(
     const child = metamodel.entity(rel.relatedEntity);
     const value = row[rel.name];
     if (Array.isArray(value)) {
-      scalar[rel.name] = value.map((c) => materializeNode(c as Row, child, metamodel, observed));
+      scalar[rel.name] = value.map((c) =>
+        materializeNode(c as Row, child, metamodel, observed, dialect),
+      );
     } else if (value && typeof value === "object") {
-      scalar[rel.name] = materializeNode(value as Row, child, metamodel, observed);
+      scalar[rel.name] = materializeNode(value as Row, child, metamodel, observed, dialect);
     } else {
       scalar[rel.name] = value ?? null;
     }
@@ -260,6 +262,8 @@ function buildTree(
   metamodel: Metamodel,
   paths: readonly (readonly string[])[],
   rootPins: AxisPins,
+  dialect: Dialect,
+  locking: boolean,
 ): readonly DeepFetchNode[] {
   const roots: NodeBuilder[] = [];
   for (const path of paths) {
@@ -273,7 +277,7 @@ function buildTree(
       siblings = node.children;
     }
   }
-  return roots.map((node) => materialize(metamodel, node, rootPins));
+  return roots.map((node) => materialize(metamodel, node, rootPins, dialect, locking));
 }
 
 /** A mutable tree node accumulated while merging shared path prefixes. */
@@ -288,14 +292,16 @@ interface NodeBuilder {
  * set, and bind a `compileLevel` closure that compiles `… where <childCol> in (?,
  * …) [order by …]` for a key set, seeding the root pins for temporal propagation.
  *
- * The level statement is the plain compiled read; the M8 shared lock is applied by
- * the shared read executor when the level runs (`executeRead`), not here — so lock
- * application lives in one place, off the tree-building path.
+ * The level statement is compiled against the injected dialect with the unit of
+ * work's `locking` mode, so `compile()` applies the M8 shared lock in-line for a
+ * `locking` deep-fetch level exactly as it does for the root and a flat read.
  */
 function materialize(
   metamodel: Metamodel,
   builder: NodeBuilder,
   rootPins: AxisPins,
+  dialect: Dialect,
+  locking: boolean,
 ): DeepFetchNode {
   const [className, relName] = splitRef(builder.relRef);
   const sourceEntity = metamodel.entity(className);
@@ -308,9 +314,9 @@ function materialize(
     relationship.cardinality === "many-to-one" || relationship.cardinality === "one-to-one";
 
   const compileLevel = (keys: readonly Key[]): LevelQuery => {
-    const childSchema = new RuntimeSchema(metamodel, relatedEntity);
+    const childSchema = new RuntimeSchema(metamodel, relatedEntity, dialect);
     const levelOp = childLevelOperation(relatedEntity, relatedAttr, keys, relationship);
-    const compiled = compile(levelOp, childSchema, rootPins);
+    const compiled = compile(levelOp, childSchema, dialect, { locking, seedPins: rootPins });
     return { sql: compiled.sql, binds: compiled.binds as readonly unknown[] };
   };
 
@@ -320,7 +326,9 @@ function materialize(
     parentColumn,
     childColumn,
     compileLevel,
-    children: builder.children.map((child) => materialize(metamodel, child, rootPins)),
+    children: builder.children.map((child) =>
+      materialize(metamodel, child, rootPins, dialect, locking),
+    ),
   };
 }
 

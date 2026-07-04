@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 import { ParallaxDecimal } from "@parallax/core";
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 import { ParallaxTransientError } from "@parallax/db";
+import { postgresDialect } from "@parallax/dialect";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import { PostgresProvider } from "../../src/conformance/postgres-provider.js";
 import {
@@ -135,7 +136,11 @@ function pxOver(
   fixture: Awaited<ReturnType<typeof provisionCase>>,
   db: ParallaxDatabase,
 ): Parallax {
-  return createParallax({ database: db, descriptor: fixture.loaded.descriptor });
+  return createParallax({
+    database: db,
+    descriptor: fixture.loaded.descriptor,
+    dialect: postgresDialect,
+  });
 }
 
 /** Drive the versioned find-then-update unit of work every boundary case uses. */

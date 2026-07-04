@@ -20,6 +20,7 @@
  */
 import { loadCase } from "@parallax/conformance";
 import { ParallaxTransientError } from "@parallax/db";
+import { postgresDialect } from "@parallax/dialect";
 import { describe, expect, it } from "vitest";
 import {
   createParallax,
@@ -97,7 +98,7 @@ async function findThenUpdate(
   db: ControlledDatabase,
   options: TransactionOptions,
 ): Promise<{ affectedRows: number }> {
-  const px = createParallax({ descriptor: ACCOUNT, database: db });
+  const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
   return px.transaction(async (tx) => {
     const accounts = tx.entity("Account");
     await accounts.find(accountPk(2)).single(); // observe the version
@@ -175,7 +176,7 @@ describe("bounded automatic retry (M8/M10)", () => {
 
   it("0718: a body that throws aborts — px.transaction rejects and yields no value", async () => {
     const db = new ControlledDatabase(() => ({ affected: 1 }));
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
     const sentinel = new Error("domain rule violated");
     await expect(
       px.transaction(async (tx) => {

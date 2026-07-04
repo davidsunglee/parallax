@@ -21,6 +21,7 @@
  * stub), so the write path is exercised end to end the way the barrel drives it.
  */
 import { loadCase } from "@parallax/conformance";
+import { postgresDialect } from "@parallax/dialect";
 import { describe, expect, it } from "vitest";
 import {
   createParallax,
@@ -216,7 +217,7 @@ function indexOf(queries: readonly RecordedQuery[], needle: string): number {
 describe("TransactionWriter FK-safe insert ordering (spec §4, 0612)", () => {
   it("orders a parent INSERT before a child even when the child was created first", async () => {
     const db = new StubDatabase([]);
-    const px = createParallax({ descriptor: ORDERS, database: db });
+    const px = createParallax({ descriptor: ORDERS, database: db, dialect: postgresDialect });
 
     await px.transaction(async (tx) => {
       // Author the CHILD before the PARENT — the failing order the bug preserves.
@@ -242,7 +243,7 @@ describe("TransactionWriter FK-safe insert ordering (spec §4, 0612)", () => {
 
   it("keeps a parent-first author order unchanged (parent before child)", async () => {
     const db = new StubDatabase([]);
-    const px = createParallax({ descriptor: ORDERS, database: db });
+    const px = createParallax({ descriptor: ORDERS, database: db, dialect: postgresDialect });
 
     await px.transaction(async (tx) => {
       await tx.entity("Order").create({
@@ -268,7 +269,7 @@ describe("TransactionWriter FK-safe insert ordering (spec §4, 0612)", () => {
 describe("TransactionWriter plain update applies every assignment (spec §4)", () => {
   it("sets ALL columns in a multi-assignment plain update and binds values then pk", async () => {
     const db = new StubDatabase([]);
-    const px = createParallax({ descriptor: WALLET, database: db });
+    const px = createParallax({ descriptor: WALLET, database: db, dialect: postgresDialect });
 
     // A plain (non-versioned Wallet) update of TWO columns.
     await px.transaction(async (tx) => {
@@ -292,7 +293,7 @@ describe("TransactionWriter plain update applies every assignment (spec §4)", (
 
   it("is a no-op for an empty assignment set", async () => {
     const db = new StubDatabase([]);
-    const px = createParallax({ descriptor: WALLET, database: db });
+    const px = createParallax({ descriptor: WALLET, database: db, dialect: postgresDialect });
 
     let result: { affectedRows: number } | undefined;
     await px.transaction(async (tx) => {
@@ -309,7 +310,7 @@ describe("TransactionWriter plain update applies every assignment (spec §4)", (
 describe("TransactionWriter versioned update (M10 framework-owned versions)", () => {
   it("locking mode: an observed row advances the version WITHOUT a gate, and the read locks", async () => {
     const db = new StubDatabase([ACCOUNT_ROW]);
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     const result = await px.transaction(async (tx) => {
       const accounts = tx.entity("Account");
@@ -331,7 +332,7 @@ describe("TransactionWriter versioned update (M10 framework-owned versions)", ()
 
   it("optimistic mode: the read takes NO lock and the update GATES on the observed version", async () => {
     const db = new StubDatabase([ACCOUNT_ROW]);
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     const result = await px.transaction(
       async (tx) => {
@@ -353,7 +354,7 @@ describe("TransactionWriter versioned update (M10 framework-owned versions)", ()
 
   it("read-before-write: updating an UNOBSERVED versioned row throws", async () => {
     const db = new StubDatabase([ACCOUNT_ROW]);
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     await expect(
       px.transaction(async (tx) => {
@@ -369,7 +370,7 @@ describe("TransactionWriter versioned update (M10 framework-owned versions)", ()
 
   it("no-op: a versioned update whose set changes no attribute issues no DML", async () => {
     const db = new StubDatabase([ACCOUNT_ROW]);
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     let result: { affectedRows: number } | undefined;
     await px.transaction(async (tx) => {
@@ -385,7 +386,7 @@ describe("TransactionWriter versioned update (M10 framework-owned versions)", ()
   it("optimistic conflict: a 0-row gated update throws ParallaxOptimisticLockError", async () => {
     const db = new StubDatabase([ACCOUNT_ROW]);
     db.setUpdateAffected(0); // the gate matches no row — a concurrent writer advanced it
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     await expect(
       px.transaction(
@@ -415,7 +416,7 @@ describe("TransactionWriter versioned SET-BASED update materializes (M10, ADR 00
   it("locking mode: resolves the predicate, then updates per object (ungated, version-advancing)", async () => {
     const db = new StubDatabase([ACCOUNT_1, ACCOUNT_3]);
     db.setUpdateAffected(1); // each per-object keyed update affects exactly one row
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     // No explicit prior find: the set-based update MATERIALIZES — it reads the
     // matching rows itself (recording their versions), then updates per object.
@@ -443,7 +444,7 @@ describe("TransactionWriter versioned SET-BASED update materializes (M10, ADR 00
   it("optimistic mode: each per-object update GATES on that row's observed version", async () => {
     const db = new StubDatabase([ACCOUNT_1, ACCOUNT_3]);
     db.setUpdateAffected(1);
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     const result = await px.transaction(
       async (tx) =>
@@ -471,7 +472,7 @@ describe("TransactionWriter versioned SET-BASED update materializes (M10, ADR 00
     const db = new StubDatabase([ACCOUNT_1, ACCOUNT_3]);
     // The first per-object update succeeds (1); the second conflicts (0 rows).
     db.setUpdateAffectedSequence([1, 0]);
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     await expect(
       px.transaction(
@@ -488,7 +489,7 @@ describe("TransactionWriter versioned SET-BASED update materializes (M10, ADR 00
 
   it("a NON-versioned entity does NOT materialize (its keyed path is unchanged)", async () => {
     const db = new StubDatabase([]);
-    const px = createParallax({ descriptor: WALLET, database: db });
+    const px = createParallax({ descriptor: WALLET, database: db, dialect: postgresDialect });
 
     // A non-versioned entity has no framework-owned version, so a non-pk predicate
     // does NOT take the materialize branch — it stays on the unchanged plain keyed-
@@ -510,7 +511,11 @@ describe("TransactionWriter versioned SET-BASED update materializes (M10, ADR 00
 describe("deep-fetch in-transaction read carries the M8/M10 read context", () => {
   it("locking mode: a deep-fetch root read locks and records the observed version (no read-before-write)", async () => {
     const db = new StubDatabase([{ ...VAULT_ROW }]);
-    const px = createParallax({ descriptor: VAULT_DESCRIPTOR, database: db });
+    const px = createParallax({
+      descriptor: VAULT_DESCRIPTOR,
+      database: db,
+      dialect: postgresDialect,
+    });
 
     // A deep-fetch find of the versioned root, THEN an update of that same root.
     // Before the read-context wiring, the deep-fetch read populated no observed
@@ -542,7 +547,11 @@ describe("deep-fetch in-transaction read carries the M8/M10 read context", () =>
 
   it("optimistic mode: a deep-fetch root read records the observed version the gate binds, and takes no lock", async () => {
     const db = new StubDatabase([{ ...VAULT_ROW }]);
-    const px = createParallax({ descriptor: VAULT_DESCRIPTOR, database: db });
+    const px = createParallax({
+      descriptor: VAULT_DESCRIPTOR,
+      database: db,
+      dialect: postgresDialect,
+    });
 
     const result = await px.transaction(
       async (tx) => {
@@ -581,7 +590,11 @@ describe("deep-fetch in-transaction read carries the M8/M10 read context", () =>
 
   it("locking mode: records an included versioned CHILD's version, so a later child update advances it (no read-before-write)", async () => {
     const db = new StubDatabase([{ ...NESTED_ROW }]);
-    const px = createParallax({ descriptor: VAULT_DESCRIPTOR, database: db });
+    const px = createParallax({
+      descriptor: VAULT_DESCRIPTOR,
+      database: db,
+      dialect: postgresDialect,
+    });
 
     // Deep-fetch the versioned root WITH its versioned child, THEN update the CHILD by
     // its own PK. Before child-level observed recording, the child version was never
@@ -606,7 +619,11 @@ describe("deep-fetch in-transaction read carries the M8/M10 read context", () =>
 
   it("optimistic mode: an included versioned CHILD's update GATES on the observed child version", async () => {
     const db = new StubDatabase([{ ...NESTED_ROW }]);
-    const px = createParallax({ descriptor: VAULT_DESCRIPTOR, database: db });
+    const px = createParallax({
+      descriptor: VAULT_DESCRIPTOR,
+      database: db,
+      dialect: postgresDialect,
+    });
 
     const result = await px.transaction(
       async (tx) => {
@@ -632,7 +649,7 @@ describe("deep-fetch in-transaction read carries the M8/M10 read context", () =>
 describe("in-transaction projection/aggregation read omits the lock (never throws)", () => {
   it("locking mode: a `distinct` read proceeds UNLOCKED and returns rows (no throw, no `for share`)", async () => {
     const db = new StubDatabase([ACCOUNT_ROW]);
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     // A `distinct` projection has no base row to lock, so `for share` is illegal on
     // it — the dialect OMITS the lock and the read proceeds (the D2 reversal; ADR
@@ -649,7 +666,7 @@ describe("in-transaction projection/aggregation read omits the lock (never throw
 
   it("optimistic mode: a `distinct` read is fine — no lock is appended", async () => {
     const db = new StubDatabase([ACCOUNT_ROW]);
-    const px = createParallax({ descriptor: ACCOUNT, database: db });
+    const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     await px.transaction(
       async (tx) => tx.entity("Account").find(accountPk(2), { distinct: true }).toArray(),
@@ -668,7 +685,7 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
 
   it("optimistic mode: an observed close GATES on the observed in_z (the version analogue)", async () => {
     const db = new StubDatabase([BALANCE_ROW]);
-    const px = createParallax({ descriptor: BALANCE, database: db });
+    const px = createParallax({ descriptor: BALANCE, database: db, dialect: postgresDialect });
 
     const result = await px.transaction(
       async (tx) => {
@@ -716,7 +733,7 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
     // A real close affects exactly ONE current milestone (the stub otherwise reports
     // its two-row select count for the `returning 1` write).
     db.setUpdateAffected(1);
-    const px = createParallax({ descriptor: BALANCE, database: db });
+    const px = createParallax({ descriptor: BALANCE, database: db, dialect: postgresDialect });
 
     const result = await px.transaction(
       async (tx) => {
@@ -740,7 +757,7 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
   it("optimistic mode: a zero-row gated close throws ParallaxOptimisticLockError", async () => {
     const db = new StubDatabase([BALANCE_ROW]);
     db.setUpdateAffected(0); // the gate matches no current milestone — a concurrent supersede
-    const px = createParallax({ descriptor: BALANCE, database: db });
+    const px = createParallax({ descriptor: BALANCE, database: db, dialect: postgresDialect });
 
     await expect(
       px.transaction(
@@ -756,7 +773,7 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
 
   it("optimistic mode: closing an UNOBSERVED milestone is a read-before-write error", async () => {
     const db = new StubDatabase([BALANCE_ROW]);
-    const px = createParallax({ descriptor: BALANCE, database: db });
+    const px = createParallax({ descriptor: BALANCE, database: db, dialect: postgresDialect });
 
     await expect(
       // No prior find — the current in_z was never observed, so a gated close has no
@@ -772,7 +789,7 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
   it("locking mode: the close is UNGATED, but a zero-row close still raises (never silent)", async () => {
     const db = new StubDatabase([BALANCE_ROW]);
     db.setUpdateAffected(0); // no current row to close (concurrently terminated)
-    const px = createParallax({ descriptor: BALANCE, database: db });
+    const px = createParallax({ descriptor: BALANCE, database: db, dialect: postgresDialect });
 
     let raised = false;
     try {
@@ -794,7 +811,7 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
 
   it("business-temporal-only x optimistic is rejected at the write boundary", async () => {
     const db = new StubDatabase([]);
-    const px = createParallax({ descriptor: RESERVATION, database: db });
+    const px = createParallax({ descriptor: RESERVATION, database: db, dialect: postgresDialect });
 
     // A business-only entity has no processing axis to derive an optimistic key from,
     // so writing it under `optimistic` mode is invalid (M1/M7/M10).
@@ -808,7 +825,11 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
     // In the default locking mode the same entity is NOT rejected on the mode check
     // (the guard is optimistic-only) — proving the rejection is mode-scoped.
     expect(() =>
-      createParallax({ descriptor: RESERVATION, database: new StubDatabase([]) }),
+      createParallax({
+        descriptor: RESERVATION,
+        database: new StubDatabase([]),
+        dialect: postgresDialect,
+      }),
     ).not.toThrow();
   });
 });

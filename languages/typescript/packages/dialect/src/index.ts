@@ -32,7 +32,6 @@ export {
   postgresColumnType,
   postgresDialect,
   quoteIdentifier,
-  RAW_TEXT_OIDS,
   timeFromDb,
   timestampFromDb,
   toPositionalPlaceholders,

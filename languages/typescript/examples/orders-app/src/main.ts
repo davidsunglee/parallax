@@ -11,6 +11,7 @@
  * `database` is any `ParallaxDatabase` — an application supplies its own pool; a
  * trivial in-memory stub is used here so the example runs with no container.
  */
+import { postgresDialect } from "@parallax/dialect";
 import { Order, parallax, type ParallaxDatabase, type ParallaxRow } from "#parallax";
 
 /** A trivial in-memory `ParallaxDatabase` for the smoke example (no real driver). */
@@ -31,6 +32,10 @@ async function main(): Promise<void> {
     database: stubDatabase([
       { id: 42n, name: "Grace", sku: null, qty: 3, price: "19.99", active: true },
     ]),
+    // The M11 dialect is injected beside the database (a MariaDB runtime swaps
+    // `mariadbDialect` here with no other change); `postgresDialect` is the shipped
+    // adapter's matching strategy.
+    dialect: postgresDialect,
   });
 
   // Typed finder + generated entity symbol → canonical operation → compiled SQL.

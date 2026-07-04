@@ -22,6 +22,7 @@
  * non-nullable columns plus any nullable `orderBy` keys (the documented
  * empty-intermediate path, exercised only by `0318`).
  */
+import type { Dialect } from "@parallax/dialect";
 import { type Operation, parseOperation } from "@parallax/operation";
 import type { DeepFetchNode, Key, LevelQuery } from "@parallax/relationships";
 import { type AxisPins, type Bind, compile } from "@parallax/sql";
@@ -72,22 +73,22 @@ function deepFetchBody(rawOperation: unknown): DeepFetchBody {
  * (`0310`/`0314` root at `OrderItem`, not `Order`), so rooting the schema at the
  * path class is what makes the root SELECT hit the right table.
  */
-export function buildDeepFetchPlan(loaded: LoadedCase): DeepFetchPlan {
+export function buildDeepFetchPlan(loaded: LoadedCase, dialect: Dialect): DeepFetchPlan {
   const body = deepFetchBody(loaded.raw.operation);
   const operand = parseOperation(body.operand);
   const rootEntity = deepFetchRootEntity(body.paths);
   const projection = rootDeepFetchProjection(loaded, body.paths);
   const rootSchema =
     rootEntity === undefined
-      ? schemaForRoot(loaded, operand, projection)
-      : schemaForEntity(loaded, rootEntity, projection);
+      ? schemaForRoot(loaded, operand, projection, dialect)
+      : schemaForEntity(loaded, rootEntity, projection, dialect);
   // The root statement compiles the (possibly temporal) operand directly — the M3
   // visitor injects the root's own as-of predicate. The pins collected off the
   // operand also PROPAGATE per-hop into every temporal child level (M4 as-of
   // propagation), so gather them once here and seed each level's compile.
-  const compiled = compile(operand, rootSchema);
+  const compiled = compile(operand, rootSchema, dialect);
   const rootPins = collectRootPins(rootSchema, operand);
-  const tree = buildTree(loaded, body.paths, rootPins);
+  const tree = buildTree(loaded, body.paths, rootPins, dialect);
   return {
     rootEntity: rootSchema.rootEntityName(),
     root: { sql: compiled.sql, binds: compiled.binds as readonly unknown[] },
@@ -167,6 +168,7 @@ function buildTree(
   loaded: LoadedCase,
   paths: readonly (readonly string[])[],
   rootPins: AxisPins,
+  dialect: Dialect,
 ): readonly DeepFetchNode[] {
   const roots: NodeBuilder[] = [];
   for (const path of paths) {
@@ -180,7 +182,7 @@ function buildTree(
       siblings = node.children;
     }
   }
-  return roots.map((node) => materialize(loaded, node, rootPins));
+  return roots.map((node) => materialize(loaded, node, rootPins, dialect));
 }
 
 /** A mutable tree node accumulated while merging shared path prefixes. */
@@ -197,9 +199,14 @@ interface NodeBuilder {
  * carries the propagated as-of predicate (matched by axis, defaulted to `now`)
  * appended after its IN list — the M4 as-of-propagation rule.
  */
-function materialize(loaded: LoadedCase, builder: NodeBuilder, rootPins: AxisPins): DeepFetchNode {
+function materialize(
+  loaded: LoadedCase,
+  builder: NodeBuilder,
+  rootPins: AxisPins,
+  dialect: Dialect,
+): DeepFetchNode {
   const [, relName] = splitRelRef(builder.relRef);
-  const schema = schemaForRoot(loaded, parseOperation({ all: {} }), []);
+  const schema = schemaForRoot(loaded, parseOperation({ all: {} }), [], dialect);
   const correlation = schema.correlation(builder.relRef);
   const childEntity = correlation.relatedEntity.name;
   const childAttr = childAttrName(correlation.relatedEntity, correlation.childColumn);
@@ -209,9 +216,9 @@ function materialize(loaded: LoadedCase, builder: NodeBuilder, rootPins: AxisPin
     correlation.relationship.cardinality === "one-to-one";
 
   const compileLevel = (keys: readonly Key[]): LevelQuery => {
-    const childSchema = schemaForEntity(loaded, childEntity, projection);
+    const childSchema = schemaForEntity(loaded, childEntity, projection, dialect);
     const levelOp = childLevelOperation(childEntity, childAttr, keys, correlation.relationship);
-    const compiled = compile(levelOp, childSchema, rootPins);
+    const compiled = compile(levelOp, childSchema, dialect, { seedPins: rootPins });
     return { sql: compiled.sql, binds: compiled.binds as readonly unknown[] };
   };
 
@@ -221,7 +228,7 @@ function materialize(loaded: LoadedCase, builder: NodeBuilder, rootPins: AxisPin
     parentColumn: correlation.parentColumn,
     childColumn: correlation.childColumn,
     compileLevel,
-    children: builder.children.map((child) => materialize(loaded, child, rootPins)),
+    children: builder.children.map((child) => materialize(loaded, child, rootPins, dialect)),
   };
 }
 
