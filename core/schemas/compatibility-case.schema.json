@@ -171,6 +171,16 @@
             "minItems": 1,
             "items": { "$ref": "#/$defs/writeRow" }
           },
+          "at": {
+            "description": "The transaction / processing instant a TEMPORAL (audit-only) write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it: a new milestone opens `in_z = at` with the open bound `out_z = infinity`, and a close binds `out_z = at` keyed on the still-open current row (`pk and out_z = infinity`). So `in_z`/`out_z`/`infinity` are never authored in `rows` — the M7 milestone discipline stays under test. Present on a temporal step; absent on a non-temporal batched write. Optional in the transitional phase; a later phase makes it required for a temporal step.",
+            "type": "string",
+            "minLength": 1
+          },
+          "until": {
+            "description": "The bitemporal valid-time end bound a `*Until` write closes the business window at (consumed by the full-bitemporal rectangle-split cases) — the business analogue of `at`. Absent on an audit-only step.",
+            "type": "string",
+            "minLength": 1
+          },
           "note": {
             "description": "Optional human-readable description of the milestone-chaining effect.",
             "type": "string"

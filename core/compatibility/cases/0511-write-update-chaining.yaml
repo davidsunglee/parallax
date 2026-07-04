@@ -21,10 +21,16 @@ writeSequence:
     entity: Balance
     statements: 1
     note: open the original current milestone [2024-01-01, infinity)
+    rows:
+      - { id: 1, acctNum: A, value: 100.00 }
+    at: "2024-01-01T00:00:00+00:00"
   - mutation: update
     entity: Balance
     statements: 2
     note: close the current row, then chain a new current milestone with the new value
+    rows:
+      - { id: 1, acctNum: A, value: 150.00 }
+    at: "2024-06-01T00:00:00+00:00"
 goldenSql:
   postgres:
     - insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
