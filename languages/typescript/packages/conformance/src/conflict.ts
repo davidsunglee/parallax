@@ -73,6 +73,10 @@ interface RawAttempt {
   readonly expectedAffectedRows?: number;
   /** The neutral write input (①) for this attempt (flat attribute-named row). */
   readonly write?: Record<string, unknown>;
+  /** A temporal-close attempt's close instant (→ new `out_z`). */
+  readonly at?: string;
+  /** A temporal-close attempt's observed processing-from (`in_z`) optimistic gate. */
+  readonly observedInZ?: string;
 }
 
 /**
@@ -122,8 +126,11 @@ export function buildConflictPlan(loaded: LoadedCase): ConflictPlan {
  *    → the M7 milestone CLOSE (`@parallax/bitemporal` `auditWriteStatements`,
  *    `"terminate"` yields the single close), GATED on the observed processing-from
  *    (`in_z`) in optimistic mode and ungated in locking mode (the mode the case's
- *    `uow` block declares). Its ① binds are derived in Phase 4, so for now the
- *    authored binds pass through and only the derived text is cross-checked.
+ *    `uow` block declares). The close text is metamodel-derived (DQ-B Family B), and
+ *    its binds are DERIVED from the neutral write input (①): `out_z = at` (the close
+ *    instant), the still-open bound `infinity`, and — in optimistic mode — the
+ *    `and in_z = ?` gate bound to `observedInZ` (the observed processing-from). The
+ *    single SET column (`out_z`) stays metamodel-fixed, so ① never names it.
  *
  * Each is cross-checked against the authored golden + binds by `buildConflictPlan`,
  * so column identity is a genuine independent check, not a golden-parse tautology.
@@ -139,7 +146,54 @@ function conflictSqlDeriver(
   const target = writeTargetFor(entity);
   const gated = loaded.uow?.concurrency === "optimistic";
   const [close] = auditWriteStatements("terminate", target, { gated });
-  return (attempt) => ({ sql: close as string, binds: attempt.binds });
+  const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
+  if (processing === undefined) {
+    throw new Error(`temporal conflict close on '${entity.name}' has no processing axis`);
+  }
+  return (attempt) => temporalCloseStatement(entity, close as string, processing.infinity, gated, attempt);
+}
+
+/**
+ * Derive a TEMPORAL / bitemporal conflict close's binds from its neutral write
+ * input (①). A close writes no domain columns — it sets `out_z = at` keyed on the
+ * still-open current row (`pk and out_z = infinity`), gated in optimistic mode on
+ * the observed processing-from (`and in_z = observedInZ`). The primary-key
+ * attribute is the `where` key; a bitemporal entity's business discriminator (e.g.
+ * `businessFrom` → `from_z`, classified into `set`) is the extra `where` coordinate
+ * the metamodel cannot value — its value slots between `out_z` and `in_z` in model
+ * column order. Binds: `[at, pk, infinity, …businessCoords, (observedInZ if gated)]`.
+ */
+function temporalCloseStatement(
+  entity: EntityMetadata,
+  sql: string,
+  infinity: unknown,
+  gated: boolean,
+  attempt: NormalizedAttempt,
+): { sql: string; binds: readonly unknown[] } {
+  const write = attempt.write;
+  if (write === undefined) {
+    throw new Error(
+      `temporal conflict close at ${attempt.casePointer} carries no neutral write input (①)`,
+    );
+  }
+  const { at, observedInZ } = attempt;
+  if (at === undefined) {
+    throw new Error(
+      `temporal conflict close at ${attempt.casePointer} requires an 'at' (the close instant → out_z) in its neutral write input (①)`,
+    );
+  }
+  if (gated && observedInZ === undefined) {
+    throw new Error(
+      `optimistic temporal conflict close at ${attempt.casePointer} requires an observedInZ (the observed in_z gate token) in its neutral write input (①)`,
+    );
+  }
+  const { pk, set } = classifyRow(entity, write);
+  const businessCoords = orderedColumns(entity)
+    .filter((column) => set.has(column))
+    .map((column) => set.get(column));
+  const gateBinds = gated ? [observedInZ] : [];
+  const binds = [at, pk, infinity, ...businessCoords, ...gateBinds];
+  return { sql, binds };
 }
 
 /**
@@ -182,6 +236,10 @@ interface NormalizedAttempt {
   readonly expectedAffectedRows: number;
   /** The neutral write input (①) this attempt derives its UPDATE + binds from. */
   readonly write?: Record<string, unknown>;
+  /** A temporal-close attempt's close instant (→ new `out_z`). */
+  readonly at?: string;
+  /** A temporal-close attempt's observed processing-from (`in_z`) optimistic gate. */
+  readonly observedInZ?: string;
 }
 
 /** Normalize the case's attempt(s) into a common shape (single or retry form). */
@@ -194,9 +252,13 @@ function rawAttempts(loaded: LoadedCase): readonly NormalizedAttempt[] {
       binds: (attempt.binds ?? []) as readonly unknown[],
       expectedAffectedRows: requireCount(attempt.expectedAffectedRows, `/attempts/${index}`),
       ...(attempt.write === undefined ? {} : { write: attempt.write }),
+      ...(attempt.at === undefined ? {} : { at: attempt.at }),
+      ...(attempt.observedInZ === undefined ? {} : { observedInZ: attempt.observedInZ }),
     }));
   }
   const write = loaded.raw.write as Record<string, unknown> | undefined;
+  const at = loaded.raw.at as string | undefined;
+  const observedInZ = loaded.raw.observedInZ as string | undefined;
   return [
     {
       casePointer: "/goldenSql/postgres",
@@ -207,6 +269,8 @@ function rawAttempts(loaded: LoadedCase): readonly NormalizedAttempt[] {
         "/expectedAffectedRows",
       ),
       ...(write === undefined ? {} : { write }),
+      ...(at === undefined ? {} : { at }),
+      ...(observedInZ === undefined ? {} : { observedInZ }),
     },
   ];
 }

@@ -25,6 +25,9 @@ uow:
 precondition:
   - update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'
   - insert into balance(bal_id, acct_num, val, in_z, out_z) values (2, 'B', 999.00, '2024-09-01T00:00:00+00:00', 'infinity')
+write: { id: 2 }
+at: "2024-10-01T00:00:00+00:00"
+observedInZ: "2024-02-01T00:00:00+00:00"
 expectedAffectedRows: 0
 goldenSql:
   postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?

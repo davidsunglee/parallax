@@ -383,8 +383,18 @@
       "minimum": 0
     },
     "write": {
-      "description": "conflict cases (M10), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE, as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns), and the reserved `observedVersion` control key (the version the unit of work read). A GENERATING adapter derives the emitted set columns + ORDER from `columnOrder(entity)`, the version advance (`observedVersion + 1`), the intrinsic optimistic gate (`and version = ?`), and the binds — so the golden UPDATE + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. Single-attempt form only; the retry (`attempts`) form carries a `write` per attempt. Optional in the transitional phase; a later phase makes it required per conflict sub-form.",
+      "description": "conflict cases (M10), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns), and the reserved `observedVersion` control key (the version the unit of work read). A VERSIONED conflict derives the emitted set columns + ORDER from `columnOrder(entity)`, the version advance (`observedVersion + 1`), the intrinsic optimistic gate (`and version = ?`), and the binds. A TEMPORAL / bitemporal close carries only the milestone pk (→ the `where` key) plus, on a bitemporal entity, the business discriminator (e.g. `businessFrom`, classified to the `from_z = ?` gate whose VALUE the metamodel cannot know); its close instant and observed gate ride in `at` / `observedInZ`. Either way the golden UPDATE + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. Single-attempt form only; the retry (`attempts`) form carries a `write` per attempt. Optional in the transitional phase; a later phase makes it required per conflict sub-form.",
       "$ref": "#/$defs/writeRow"
+    },
+    "at": {
+      "description": "conflict cases (M10), temporal-close form. The close instant a TEMPORAL / bitemporal optimistic conflict close records — the new `out_z` the milestone-closing UPDATE sets, keyed on the still-open current row (`pk and out_z = infinity`). A GENERATING adapter DERIVES the close binds from it (`out_z = at`, the open bound `infinity`), so `out_z` / `infinity` are never authored in ①; the metamodel fixes the single SET column (`out_z`), so it is NOT named in ① — the cross-check is binds-only. Single-attempt form only; the retry (`attempts`) form carries an `at` per attempt. Present on a temporal-conflict close; absent on a versioned conflict.",
+      "type": "string",
+      "minLength": 1
+    },
+    "observedInZ": {
+      "description": "conflict cases (M10), temporal-close form. The processing-from (`in_z`) the unit of work observed — the optimistic-lock version analogue a TEMPORAL / bitemporal entity gates on, since it carries no version column (Reladomo's IN_Z rule). In optimistic mode the close gains the `and in_z = ?` gate bound to this value, so a concurrent writer that superseded the milestone matches 0 rows (the conflict signal); ABSENT in locking mode (the ungated close, `0733`). It is the temporal analogue of a versioned write's `observedVersion`. Single-attempt form only; the retry (`attempts`) form carries an `observedInZ` per attempt.",
+      "type": "string",
+      "minLength": 1
     },
     "attempts": {
       "description": "conflict cases (M10), retry form. An ordered list of optimistic-lock UPDATE attempts applied (after any `precondition`) in sequence, each asserting its own affected-row count — proving the M10 retry contract end-to-end: the first (stale-version) attempt affects 0 rows (the conflict signal), then a retry that re-reads the now-fresh version and re-applies affects 1. When present, the top-level single-attempt `goldenSql` / `expectedAffectedRows` are absent and `expectedTableState` (when authored) asserts the retried write landed.",
@@ -408,8 +418,18 @@
             "items": {}
           },
           "write": {
-            "description": "This attempt's neutral write input (①): the flat attribute-named row (`$defs/writeRow`) the attempt operates on, whose reserved `observedVersion` is the version THIS attempt gates on — the stale attempt's observed version, then the retry's refreshed one. A generating adapter derives this attempt's versioned UPDATE + binds from it (the intrinsic optimistic gate, the advance `observedVersion + 1`). Optional in the transitional phase.",
+            "description": "This attempt's neutral write input (①): the flat attribute-named row (`$defs/writeRow`) the attempt operates on. For a VERSIONED conflict its reserved `observedVersion` is the version THIS attempt gates on — the stale attempt's observed version, then the retry's refreshed one — and the adapter derives the attempt's versioned UPDATE + binds from it (the intrinsic optimistic gate, the advance `observedVersion + 1`). For a TEMPORAL close it carries the milestone pk (+ a bitemporal business discriminator); the close instant and observed gate ride in this attempt's `at` / `observedInZ`. Optional in the transitional phase.",
             "$ref": "#/$defs/writeRow"
+          },
+          "at": {
+            "description": "conflict RETRY cases (M10), temporal-close form. THIS attempt's close instant (→ the new `out_z` the milestone-closing UPDATE sets). A GENERATING adapter derives the close binds from it (`out_z = at`, keyed on the still-open current row); the single SET column (`out_z`) stays metamodel-fixed, so it is never named in ①.",
+            "type": "string",
+            "minLength": 1
+          },
+          "observedInZ": {
+            "description": "conflict RETRY cases (M10), temporal-close form. THIS attempt's observed processing-from (`in_z`) — the optimistic gate the attempt binds (`and in_z = ?`): the stale attempt's observed in_z, then the retry's refreshed one. Absent in locking mode.",
+            "type": "string",
+            "minLength": 1
           },
           "expectedAffectedRows": {
             "description": "The rows this attempt's UPDATE must affect: 0 for the stale-version attempt (conflict), 1 for the fresh-version retry (success).",
