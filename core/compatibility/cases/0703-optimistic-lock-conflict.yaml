@@ -20,10 +20,6 @@ tags: [m10, m3, optimistic-locking, conflict, optimistic-lock-conflict, slice-mv
 uow:
   concurrency: optimistic
 precondition: update account set balance = 999.00, version = 2 where id = 2
-# ① the neutral write input: pk `id` -> where key, `balance` -> the domain set
-# column, `observedVersion` the version the unit of work read (1). The adapter
-# derives the gated UPDATE (advance 1 -> 2, gate on 1) and its binds — so this
-# 0-row case's column choice is now graded by ①, not resting on the 0704 sibling.
 write: { id: 2, balance: 250.00, observedVersion: 1 }
 expectedAffectedRows: 0
 goldenSql:

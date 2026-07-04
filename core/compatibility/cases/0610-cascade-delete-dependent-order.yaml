@@ -13,8 +13,6 @@ writeSequence:
     statements: 3
     note: delete dependent statuses, dependent items, then the root order
     rows:
-      # pk only: the root Order `id` the cascade keys on (dependent deletes bind
-      # the same value as `order_id`).
       - { id: 1 }
 goldenSql:
   postgres:
