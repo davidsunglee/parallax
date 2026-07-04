@@ -12,6 +12,9 @@ writeSequence:
     entity: Account
     statements: 1
     note: merge-back of a deleted detached copy deletes the original row
+    rows:
+      # pk only: `id` classifies to the `where` key of the DELETE (no set columns).
+      - { id: 1 }
 goldenSql:
   postgres:
     - delete from account where id = ?
