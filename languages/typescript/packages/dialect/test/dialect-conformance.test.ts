@@ -1,8 +1,10 @@
 /**
  * `@parallax/dialect` conformance suite (Docker-free, pure) — the shared battery
  * of assertions every concrete {@link Dialect} must satisfy, run over the
- * `dialects` table. Phase 1 parametrizes it over `postgresDialect` alone; Phase 3
- * adds `mariadbDialect` to the same table with its own expectations.
+ * `dialects` table — now parametrized over BOTH `postgresDialect` and
+ * `mariadbDialect`, each with its own expectations (the quote character, NULL
+ * placement, read-lock spelling, column-type map, errno-vs-SQLSTATE classification,
+ * infinity representation, and the per-dialect raw value-parse wire forms).
  *
  * This is where the reified interface earns its first *direct* unit tests: today
  * `quoteIdentifier` / `columnType` / the value parsers are only exercised
@@ -11,7 +13,12 @@
  * proven.
  */
 import { INFINITY, ParallaxDecimal, Temporal } from "@parallax/core";
-import { type Dialect, postgresDialect } from "@parallax/dialect";
+import {
+  type Dialect,
+  MARIADB_INFINITY_SENTINEL,
+  mariadbDialect,
+  postgresDialect,
+} from "@parallax/dialect";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -35,6 +42,21 @@ interface DialectSpec {
   readonly infinityBind: unknown;
   /** `toPositionalPlaceholders("… ? … ?")`. */
   readonly placeholders: string;
+  /** The native error codes this dialect classifies (SQLSTATE string vs vendor errno). */
+  readonly errorCodes: {
+    readonly uniqueViolation: string | number;
+    readonly deadlock: string | number;
+    readonly lockWaitTimeout: string | number;
+  };
+  /** The raw wire forms the value parsers consume (they diverge per dialect). */
+  readonly rawValues: {
+    /** The raw `timestamp` text that materializes to the `infinity` sentinel. */
+    readonly infinityTimestamp: string;
+    /** A finite raw `timestamp` text that materializes to `2024-03-01T12:00:00Z`. */
+    readonly finiteTimestamp: string;
+    /** A raw `bytes` hex rendering that materializes to `[0xde,0xad,0xbe,0xef]`. */
+    readonly bytesHex: string;
+  };
 }
 
 const OBJECT_READ = "select t0.id, t0.owner from account t0 where t0.id = ?";
@@ -49,7 +71,10 @@ const dialects: readonly DialectSpec[] = [
     orderDesc: "t0.shipped_on desc nulls last",
     readLockSuffix: " for share of t0",
     columnTypes: {
+      boolean: "boolean",
       int64: "bigint",
+      float32: "real",
+      float64: "double precision",
       "decimal(18,2)": "numeric(18,2)",
       timestamp: "timestamptz",
       bytes: "bytea",
@@ -57,6 +82,49 @@ const dialects: readonly DialectSpec[] = [
     },
     infinityBind: INFINITY,
     placeholders: "select t0.a from t0 where t0.a = $1 and t0.b = $2",
+    errorCodes: { uniqueViolation: "23505", deadlock: "40P01", lockWaitTimeout: "55P03" },
+    rawValues: {
+      infinityTimestamp: "infinity",
+      finiteTimestamp: "2024-03-01 12:00:00+00",
+      bytesHex: "\\xdeadbeef",
+    },
+  },
+  {
+    dialect: mariadbDialect,
+    id: "mariadb",
+    // The one genuine cross-dialect divergence in the quote CHARACTER: backticks.
+    quotedReserved: "`order`",
+    // MariaDB has no `NULLS LAST` syntax: `asc` forces NULLs last with a leading
+    // `is null,` term; `desc` is bare (its native default already trails NULLs).
+    orderAsc: "t0.shipped_on is null, t0.shipped_on asc",
+    orderDesc: "t0.shipped_on desc",
+    // MariaDB has no `for share` (MDEV-17514); the shared lock is unaliased.
+    readLockSuffix: " lock in share mode",
+    columnTypes: {
+      boolean: "tinyint(1)",
+      int64: "bigint",
+      float32: "float",
+      float64: "double",
+      "decimal(18,2)": "decimal(18,2)",
+      timestamp: "datetime(6)",
+      bytes: "longblob",
+      uuid: "char(36)",
+    },
+    // MariaDB's `DATETIME` has no native infinity; the open upper bound binds the
+    // documented max-sentinel datetime.
+    infinityBind: MARIADB_INFINITY_SENTINEL,
+    // The MariaDB driver takes native `?`, so the placeholder rewrite is identity.
+    placeholders: "select t0.a from t0 where t0.a = ? and t0.b = ?",
+    // MariaDB keys on the vendor errno (an int), not a SQLSTATE string.
+    errorCodes: { uniqueViolation: 1062, deadlock: 1213, lockWaitTimeout: 1205 },
+    rawValues: {
+      // The max-sentinel round-trips back to the `infinity` sentinel.
+      infinityTimestamp: MARIADB_INFINITY_SENTINEL,
+      // A MariaDB `DATETIME` carries no offset (treated as UTC).
+      finiteTimestamp: "2024-03-01 12:00:00",
+      // MariaDB `hex(...)` yields bare hex (no `\x` prefix).
+      bytesHex: "deadbeef",
+    },
   },
 ];
 
@@ -133,7 +201,7 @@ for (const spec of dialects) {
 
     describe("error classification + predicates", () => {
       it("classifies a unique violation and answers violatesUniqueIndex", () => {
-        const category = dialect.classifyErrorCode(spec.id === "postgres" ? "23505" : 1062);
+        const category = dialect.classifyErrorCode(spec.errorCodes.uniqueViolation);
         expect(category).toBe("uniqueViolation");
         expect(dialect.violatesUniqueIndex(category)).toBe(true);
         expect(dialect.isRetriable(category)).toBe(false);
@@ -141,14 +209,14 @@ for (const spec of dialects) {
       });
 
       it("classifies a deadlock and answers isRetriable", () => {
-        const category = dialect.classifyErrorCode(spec.id === "postgres" ? "40P01" : 1213);
+        const category = dialect.classifyErrorCode(spec.errorCodes.deadlock);
         expect(category).toBe("deadlock");
         expect(dialect.isRetriable(category)).toBe(true);
         expect(dialect.violatesUniqueIndex(category)).toBe(false);
       });
 
       it("classifies a lock-wait timeout and answers isTimedOut (not retriable)", () => {
-        const category = dialect.classifyErrorCode(spec.id === "postgres" ? "55P03" : 1205);
+        const category = dialect.classifyErrorCode(spec.errorCodes.lockWaitTimeout);
         expect(category).toBe("lockWaitTimeout");
         expect(dialect.isTimedOut(category)).toBe(true);
         expect(dialect.isRetriable(category)).toBe(false);
@@ -176,9 +244,9 @@ for (const spec of dialects) {
         expect(parsed.equals(ParallaxDecimal.from("19.99"))).toBe(true);
       });
 
-      it("timestamp → Temporal.Instant, passing the infinity sentinel through", () => {
-        expect(dialect.parsers.timestamp("infinity")).toBe(INFINITY);
-        const instant = dialect.parsers.timestamp("2024-03-01 12:00:00+00");
+      it("timestamp → Temporal.Instant, mapping this dialect's infinity form through", () => {
+        expect(dialect.parsers.timestamp(spec.rawValues.infinityTimestamp)).toBe(INFINITY);
+        const instant = dialect.parsers.timestamp(spec.rawValues.finiteTimestamp);
         expect(instant).not.toBe(INFINITY);
         expect(
           Temporal.Instant.compare(
@@ -189,7 +257,9 @@ for (const spec of dialects) {
       });
 
       it("bytes → Uint8Array from the hex rendering", () => {
-        expect(Array.from(dialect.parsers.bytes("\\xdeadbeef"))).toEqual([0xde, 0xad, 0xbe, 0xef]);
+        expect(Array.from(dialect.parsers.bytes(spec.rawValues.bytesHex))).toEqual([
+          0xde, 0xad, 0xbe, 0xef,
+        ]);
       });
 
       it("date → Temporal.PlainDate", () => {

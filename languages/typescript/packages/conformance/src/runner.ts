@@ -34,8 +34,8 @@ import {
   columnOrder,
   type Dialect,
   ddlForDescriptor,
+  mariadbDialect,
   postgresDialect,
-  quoteIdentifier,
 } from "@parallax/dialect";
 import { type EntityMetadata, Metamodel, parseOperation } from "@parallax/operation";
 import { deepFetch, type Exec, type Row as GraphRow } from "@parallax/relationships";
@@ -66,12 +66,16 @@ function isReadLock(loaded: LoadedCase): boolean {
 /**
  * Select the concrete {@link Dialect} for a run key (the dialect id keying
  * `goldenSql`). The runner is the M12 orchestrator, so it consults the concrete
- * dialect's pure rules directly (M12 → M11). Only Postgres is implemented on the
- * TypeScript side today; `mariadbDialect` joins this map with the second dialect.
+ * dialect's pure rules directly (M12 → M11). Both conforming dialects are
+ * registered: Postgres (the claimed run dialect) and MariaDB (the second
+ * implementer, driven Docker-free by the compile-golden lane).
  */
 function dialectFor(key: string): Dialect {
   if (key === postgresDialect.id) {
     return postgresDialect;
+  }
+  if (key === mariadbDialect.id) {
+    return mariadbDialect;
   }
   throw new Error(`no dialect registered for run key '${key}'`);
 }
@@ -274,11 +278,13 @@ export async function runRun(
     return suiteSatisfied;
   }
 
+  const dialectImpl = dialectFor(dialect);
+
   // A write-sequence case constructs its own milestone history from its ordered
   // DML, so it provisions an EMPTY table (no fixtures) and asserts the resulting
   // `tableState` — the observable form of the milestone-chaining write contract.
   if (isWriteSequence(loaded)) {
-    const { emissions, observations } = await runWriteSequence(loaded, provider);
+    const { emissions, observations } = await runWriteSequence(loaded, provider, dialectImpl);
     return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
   }
 
@@ -286,7 +292,7 @@ export async function runRun(
   // concurrent writer), then the versioned UPDATE(s), and reports the affected-row
   // count + resulting `tableState` (the observable optimistic-lock contract).
   if (isConflict(loaded)) {
-    const { emissions, observations } = await runConflict(loaded, provider);
+    const { emissions, observations } = await runConflict(loaded, provider, dialectImpl);
     return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
   }
 
@@ -299,7 +305,6 @@ export async function runRun(
   }
 
   await provision(loaded, provider);
-  const dialectImpl = dialectFor(dialect);
   const { emissions, observations } = isDeepFetch(loaded.raw.operation)
     ? await runDeepFetch(loaded, provider, dialectImpl)
     : await runFlatRead(loaded, provider, dialectImpl);
@@ -414,6 +419,7 @@ async function runDeepFetch(
 async function runWriteSequence(
   loaded: LoadedCase,
   provider: CompatibilityDatabaseProvider,
+  dialect: Dialect,
 ): Promise<RunResult> {
   await provisionEmpty(loaded, provider);
   const plan = buildWriteSequencePlan(loaded);
@@ -428,7 +434,7 @@ async function runWriteSequence(
     await provider.exec(statement.sql, statement.binds);
   }
 
-  const tableState = await readTableState(loaded, provider);
+  const tableState = await readTableState(loaded, provider, dialect);
   return {
     emissions,
     observations: { roundTrips: emissions.length, tableState },
@@ -451,6 +457,7 @@ async function runWriteSequence(
 async function runConflict(
   loaded: LoadedCase,
   provider: CompatibilityDatabaseProvider,
+  dialect: Dialect,
 ): Promise<RunResult> {
   await provision(loaded, provider);
   const plan = buildConflictPlan(loaded);
@@ -477,7 +484,7 @@ async function runConflict(
     lastAffected = affected;
   }
 
-  const tableState = await readTableState(loaded, provider);
+  const tableState = await readTableState(loaded, provider, dialect);
   return {
     emissions,
     observations: { roundTrips: emissions.length, affectedRows: lastAffected, tableState },
@@ -592,6 +599,7 @@ function sameIdentity(left: readonly Row[], right: readonly Row[], pkColumn: str
 async function readTableState(
   loaded: LoadedCase,
   provider: CompatibilityDatabaseProvider,
+  dialect: Dialect,
 ): Promise<Record<string, readonly Row[]>> {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const byTable = new Map<string, EntityMetadata>();
@@ -607,19 +615,24 @@ async function readTableState(
     if (entity === undefined) {
       throw new Error(`expectedTableState names table '${table}' not in the model`);
     }
-    state[table] = (await provider.query(readTableSql(entity), [])) as readonly Row[];
+    state[table] = (await provider.query(readTableSql(entity, dialect), [])) as readonly Row[];
   }
   return state;
 }
 
-/** `select t0.<col>, … from <table> t0` — the full table state, column-ordered. */
-function readTableSql(entity: EntityMetadata): string {
+/**
+ * `select t0.<col>, … from <table> t0` — the full table state, column-ordered.
+ * Identifiers are quoted through the injected dialect so a reserved-word column /
+ * table (e.g. `order`) reads back correctly on MariaDB (backticks) as well as
+ * Postgres (double-quotes).
+ */
+function readTableSql(entity: EntityMetadata, dialect: Dialect): string {
   const columns = columnOrder({
     table: entity.table,
     attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
   });
-  const projection = columns.map((column) => `t0.${quoteIdentifier(column)}`).join(", ");
-  return `select ${projection} from ${quoteIdentifier(entity.table)} t0`;
+  const projection = columns.map((column) => `t0.${dialect.quoteIdentifier(column)}`).join(", ");
+  return `select ${projection} from ${dialect.quoteIdentifier(entity.table)} t0`;
 }
 
 /** Provision a clean DB: reset, derive + apply DDL, load fixtures. */

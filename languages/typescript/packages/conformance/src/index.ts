@@ -75,7 +75,7 @@ export {
   type ValidationResult,
   validateEnvelope,
 } from "./schema.js";
-export { columnTypesForCase } from "./schema-resolver.js";
+export { columnTypesForCase, schemaForReadCase } from "./schema-resolver.js";
 export {
   buildConformanceSliceCoverageReport,
   type CommandSliceCoverage,
