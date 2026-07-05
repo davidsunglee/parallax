@@ -179,11 +179,25 @@ export const MATRIX_PROFILES: readonly MatrixProfile[] = [
   MARIADB_CURATED_PROFILE,
 ];
 
+/**
+ * Every discovered corpus case, discovered + parsed **once per process** and then
+ * memoized. `caseById` / `casesForProfile` / `exclusionsForProfile` each fan out
+ * over the full corpus, so without the cache a single test that resolves many ids
+ * (e.g. the curated-profile coverage assertion, which touches 25) re-reads and
+ * re-parses all ~200 case + model + fixture YAMLs *per id* — enough synchronous
+ * I/O to blow the default 5s test timeout on a contended runner. The M12 corpus is
+ * static within a run, so caching the loaded set is safe.
+ */
+let cachedProfileCases: readonly MatrixProfileCase[] | undefined;
+
 export function allProfileCases(): readonly MatrixProfileCase[] {
-  return discoverCasePaths().map((path) => ({
-    id: caseId(path),
-    loaded: loadCase(path),
-  }));
+  if (cachedProfileCases === undefined) {
+    cachedProfileCases = discoverCasePaths().map((path) => ({
+      id: caseId(path),
+      loaded: loadCase(path),
+    }));
+  }
+  return cachedProfileCases;
 }
 
 export function casesForProfile(
