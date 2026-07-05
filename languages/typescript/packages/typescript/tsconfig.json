@@ -12,6 +12,7 @@
     { "path": "../dialect" },
     { "path": "../db" },
     { "path": "../db-postgres" },
+    { "path": "../db-mariadb" },
     { "path": "../sql" },
     { "path": "../transactions" },
     { "path": "../lists" },

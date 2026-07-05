@@ -75,6 +75,19 @@ export interface Dialect {
     ctx: { readonly locking: boolean; readonly projection: boolean },
   ): string;
 
+  /**
+   * Lower a `bytes` column to this dialect's stable hex-text projection (a byte
+   * column has no stable text rendering across drivers, so the SELECT projects it
+   * to hex): Postgres `encode(<col>, ?) <out>` carrying a `'hex'` format bind;
+   * MariaDB the argument-less `hex(<col>) <out>` carrying no bind. Returns the SQL
+   * fragment plus any binds it introduces (spliced in projection order). This is
+   * the one genuinely dialect-divergent projection shape (`0003`/`1005`).
+   */
+  bytesProjection(
+    qualifiedColumn: string,
+    outputName: string,
+  ): { readonly sql: string; readonly binds: readonly unknown[] };
+
   // --- schema / DDL vocabulary ---
   /** Map an M0 neutral type (+ optional max length) to this dialect's column type. */
   columnType(neutralType: string, maxLength?: number): string;

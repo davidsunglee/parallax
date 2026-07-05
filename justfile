@@ -119,8 +119,19 @@ ts-conformance-run:
     pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/typescript
 
+# Docker-backed MariaDB run lane: the 25-case set (14 in-slice + 11 marquee) end-to-end over mariadb:11.4.
+ts-conformance-run-mariadb:
+    pnpm run ts:typecheck
+    pnpm exec vitest run --root languages/typescript packages/typescript/test/mariadb-run.test.ts
+
 # Docker-backed API Conformance Suite + Usage Guide drift check over postgres:17.
 ts-api-conformance:
     pnpm run ts:typecheck
     node languages/typescript/scripts/render-guide.mjs --check
     pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
+
+# Docker-backed API Conformance Suite over mariadb:11.4 (reads run on MariaDB; the
+# developer-write cases are guarded off it — see test/api-conformance/_providers.ts).
+ts-api-conformance-mariadb:
+    pnpm run ts:typecheck
+    PARALLAX_DATABASES=mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
