@@ -14,17 +14,19 @@
  * Phase-9 `dsl.test.ts` (`0222-group-precedence-grouped`), and its ungrouped
  * sibling `0223` is exercised in `reads.api-conformance.test.ts`.
  *
- * `0728` (read-lock-blocks-writer) is also skipped here: it is a HARNESS-lane
- * two-connection concurrency case (a held `for share` read excludes a concurrent
- * writer, which times out). Its behavioral proof is discharged by the reference
- * harness AND the TypeScript conformance runner's run lane (`slice-run.test.ts` /
- * `mariadb-run.test.ts` drive `@parallax/conformance`'s two-session `runRun`), not
- * the developer-surface API Conformance Suite — a developer never authors the
- * barrier + lowered-lock-budget choreography. (The read lock's developer-observable
- * behavior — a locking find returns the row — IS exercised here by `0603`/`0616`.)
+ * The COR-12 behavioral read-lock concurrency cases `0728` (blocks-writer), `0729`
+ * (shared-compatible), and `0734` (projection-omits-lock-admits-writer) are all
+ * skipped here: each is a HARNESS-lane two-connection concurrency case (a held
+ * `for share` read excludes / admits a peer, or an unlocked projection admits a
+ * writer). Their behavioral proof is discharged by the reference harness AND the
+ * TypeScript conformance runner's run lane (`slice-run.test.ts` / `mariadb-run.test.ts`
+ * drive `@parallax/conformance`'s two-session `runRun`), not the developer-surface API
+ * Conformance Suite — a developer never authors the barrier + lowered-lock-budget
+ * choreography. (The read lock's developer-observable behavior — a locking find
+ * returns the row — IS exercised here by `0603`/`0616`.)
  *
  * The other two constructs the phase note calls out are NOT case-level skips in the
- * 121-case slice:
+ * 123-case slice:
  *  - the conflict `precondition` / `preconditionBinds` (out-of-band SQL simulating a
  *    concurrent writer) is a SUB-STEP of the exercised locking cases (`0703` /
  *    `0708`), applied harness-side — those cases ARE exercised;
@@ -69,6 +71,25 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "run lane (slice-run/mariadb-run drive @parallax/conformance's runRun), not the " +
       "developer-surface suite — a developer never authors the barrier + lowered-lock-budget " +
       "choreography. The read lock's developer-observable behavior is exercised by 0603/0616.",
+  },
+  {
+    id: "0729",
+    reason:
+      "read-lock-shared-compatible: a HARNESS-lane two-connection concurrency-success case (A " +
+      "and B BOTH take `for share` on the same row and both succeed — the lock is shared, not " +
+      "exclusive). Like 0728, its behavioral proof is discharged by the reference harness and " +
+      "the conformance runner's two-session runRun (slice-run/mariadb-run), not the developer " +
+      "surface — a developer never authors the barrier + two held sessions. The read lock's " +
+      "developer-observable behavior is exercised by 0603/0616.",
+  },
+  {
+    id: "0734",
+    reason:
+      "projection-omits-lock-admits-writer: a HARNESS-lane two-connection concurrency-success " +
+      "case (A holds an unlocked `distinct` projection, B's concurrent UPDATE is admitted — no " +
+      "lock to block it). Like 0728/0729, its behavioral proof is discharged by the reference " +
+      "harness and the conformance runner's two-session runRun (slice-run/mariadb-run), not the " +
+      "developer surface. The projection-omits-lock EMISSION is exercised by 0617.",
   },
 ];
 

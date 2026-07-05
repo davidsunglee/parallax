@@ -276,7 +276,7 @@ export type MariaDbDatabaseOptions = Partial<PoolOptions>;
 
 /**
  * A manual-commit MariaDB connection with a lowered lock-wait budget, for the
- * two-connection lock-contention proofs (`0723`-`0726`). Each `execute` runs
+ * two-connection lock-contention proofs (`0723`-`0729`, `0734`). Each `execute` runs
  * inside the session's open transaction (no auto-commit) so locks are held until
  * {@link commit} / {@link rollback}; a blocked lock raises errno `1205` within the
  * 1-second budget, and InnoDB victimizes a deadlock immediately (errno `1213`).
@@ -289,6 +289,22 @@ export class MariaDbSession {
   async execute(sql: string, binds: readonly unknown[] = []): Promise<void> {
     try {
       await this.connection.query(sql, toMariaBinds(binds));
+    } catch (error) {
+      throw classifyDriverError(error);
+    }
+  }
+
+  /**
+   * Fetch rows INSIDE the session's held transaction — the concurrency-success seam
+   * (`0729` / `0734`): a `lock in share mode` SELECT both takes its shared lock AND
+   * returns its rows, and an unlocked projection reads under the open unit of work.
+   * Returns **managed** scalars (§3.2.1) via the registered `typeCast`, exactly like
+   * {@link MariaDbDatabase.execute}.
+   */
+  async query(sql: string, binds: readonly unknown[] = []): Promise<readonly ParallaxRow[]> {
+    try {
+      const [rows] = await this.connection.query(sql, toMariaBinds(binds));
+      return toRows(rows);
     } catch (error) {
       throw classifyDriverError(error);
     }

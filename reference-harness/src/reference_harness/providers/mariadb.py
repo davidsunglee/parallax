@@ -283,6 +283,27 @@ class _MariaTxSession:
             else:
                 cur.execute(_to_pymysql(sql))
 
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        """Fetch rows INSIDE the held transaction (concurrency-success `expectRows`).
+
+        Mirrors the provider's ``query`` but runs on the HELD session connection so a
+        locking SELECT (``lock in share mode``) both takes the shared lock and returns
+        its rows, and an unlocked projection reads under the open unit of work.
+        """
+        with self._conn.cursor() as cur:
+            if binds:
+                cur.execute(
+                    _to_pymysql(sql, escape_percent=True),
+                    tuple(_to_db_bind(value) for value in binds),
+                )
+            else:
+                cur.execute(_to_pymysql(sql))
+            column_names = [desc[0] for desc in cur.description]
+            return [
+                {name: _from_db_value(value) for name, value in zip(column_names, row, strict=True)}
+                for row in cur.fetchall()
+            ]
+
     def commit(self) -> None:
         self._conn.commit()
 

@@ -64,7 +64,7 @@ export type PostgresDatabaseOptions = Options<Record<string, never>>;
 /**
  * A manual-commit Postgres session on a **fresh, independent** non-autocommit
  * connection with a lowered lock-wait budget, for the two-connection lock-
- * contention proofs (`0723`-`0728`). The Postgres sibling of {@link MariaDbSession}
+ * contention proofs (`0723`-`0729`, `0734`). The Postgres sibling of {@link MariaDbSession}
  * — Postgres has no auto-detected lock-wait deadline, so the session lowers BOTH
  * `lock_timeout` (bounding a plain wait) and `deadlock_timeout` (shortening the
  * cycle-detector delay), mirroring the Python reference provider. Each `execute`
@@ -85,6 +85,23 @@ export class PostgresSession {
     const text = postgresDialect.toPositionalPlaceholders(sql);
     try {
       await this.sql.unsafe(text, asParams(binds));
+    } catch (error) {
+      throw classifyDriverError(error);
+    }
+  }
+
+  /**
+   * Fetch rows INSIDE the session's held transaction — the concurrency-success seam
+   * (`0729` / `0734`): a `for share of t0` SELECT both takes its shared lock AND
+   * returns its rows, and an unlocked projection reads under the open unit of work.
+   * Returns **managed** scalars (§3.2.1), copied into plain objects, exactly like
+   * {@link PostgresDatabase.execute}.
+   */
+  async query(sql: string, binds: readonly unknown[] = []): Promise<readonly ParallaxRow[]> {
+    const text = postgresDialect.toPositionalPlaceholders(sql);
+    try {
+      const result = await this.sql.unsafe(text, asParams(binds));
+      return [...result].map((row) => ({ ...(row as ParallaxRow) }));
     } catch (error) {
       throw classifyDriverError(error);
     }
