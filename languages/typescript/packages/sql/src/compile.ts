@@ -70,7 +70,12 @@ export interface ResolvedColumn {
  * key columns and which entity owns each.
  */
 export interface ResolvedRelationship {
-  /** The related (child) entity's physical table name. */
+  /**
+   * The related (child) entity's UNQUOTED physical table name. The alias map is
+   * keyed by this unquoted name (`registerAlias`/`aliasFor`), so the resolver must
+   * NOT quote it; the EXISTS `from` emission site quotes it through
+   * `ctx.dialect.quoteIdentifier` right before splicing it into SQL.
+   */
   readonly childTable: string;
   /** The dialect-quoted child-side correlation column (the related-attr column). */
   readonly childColumn: string;
@@ -117,8 +122,10 @@ export interface SchemaResolver {
    */
   resolveRelationship(ref: string): ResolvedRelationship;
   /**
-   * The root entity's table name (the `from` target) and its read projection —
-   * the ordered quoted columns the canonical SELECT projects.
+   * The root entity's UNQUOTED physical table name (the `from` target). The alias
+   * map is keyed by this unquoted name (`aliasFor`), so the resolver must NOT quote
+   * it; `compile` quotes it through `dialect.quoteIdentifier` right before splicing
+   * it into the `from` clause.
    */
   rootTable(): string;
   /**
@@ -190,6 +197,13 @@ export interface ProjectionColumn {
  */
 export interface CompileCtx {
   readonly schema: SchemaResolver;
+  /**
+   * The injected {@link Dialect}, carried on the context so a deeply-nested
+   * emission site (the EXISTS semi-join's child `from`, `existsSemiJoin`) can
+   * route a table name through `dialect.quoteIdentifier` without threading a
+   * separate parameter through the whole `compilePredicate` recursion.
+   */
+  readonly dialect: Dialect;
   /** table name → assigned alias (`t0`, `t1`, …), in first-appearance order. */
   readonly aliases: Map<string, string>;
   /** The binds accumulator, appended to in placeholder order. */
@@ -199,8 +213,8 @@ export interface CompileCtx {
 }
 
 /** Build a fresh compile context for a single operation. */
-export function newCompileCtx(schema: SchemaResolver): CompileCtx {
-  return { schema, aliases: new Map(), binds: [], asOfPins: {} };
+export function newCompileCtx(schema: SchemaResolver, dialect: Dialect): CompileCtx {
+  return { schema, dialect, aliases: new Map(), binds: [], asOfPins: {} };
 }
 
 /**
@@ -273,13 +287,15 @@ export interface CompileExec {
  * (or none for `all`). Binds are accumulated in the same traversal — the limit
  * bind appends after any predicate binds, matching placeholder order.
  *
- * Every divergent fragment is routed through the `dialect`: ORDER BY NULL placement
- * (`dialect.orderByTerm`, for NULL-bearing keys), the row-limit clause
- * (`dialect.rowLimit`), and — the final in-compile step — the in-transaction shared
- * read-lock (`dialect.applyReadLock`, gated on `exec.locking`; `compile` already
- * knows whether it emitted `distinct`, so the projection flag needs no regex). The
- * emitted SQL still carries canonical `?` placeholders; the adapter translates them
- * to the driver's syntax at the boundary.
+ * Every divergent fragment is routed through the `dialect`: the root/EXISTS-child
+ * `from` table (`dialect.quoteIdentifier`, so a reserved physical table name like
+ * MariaDB's `position` is quoted — the same identifier contract already applied to
+ * every column), ORDER BY NULL placement (`dialect.orderByTerm`, for NULL-bearing
+ * keys), the row-limit clause (`dialect.rowLimit`), and — the final in-compile step
+ * — the in-transaction shared read-lock (`dialect.applyReadLock`, gated on
+ * `exec.locking`; `compile` already knows whether it emitted `distinct`, so the
+ * projection flag needs no regex). The emitted SQL still carries canonical `?`
+ * placeholders; the adapter translates them to the driver's syntax at the boundary.
  *
  * `exec.seedPins` pre-seeds the read's as-of pins before peeling — the M4 deep-fetch
  * **propagation** path uses it to inject the root's pins (matched by axis) into a
@@ -293,7 +309,7 @@ export function compile(
   dialect: Dialect,
   exec?: CompileExec,
 ): CompileResult {
-  const ctx = newCompileCtx(schema);
+  const ctx = newCompileCtx(schema, dialect);
   if (exec?.seedPins !== undefined) {
     ctx.asOfPins = { ...exec.seedPins };
   }
@@ -327,7 +343,11 @@ export function compile(
     ctx.binds.push(directives.limit);
   }
 
-  let sql = `${select} from ${table} ${alias}`;
+  // The root table name routes through the dialect's identifier quoting (the M3 →
+  // M11 identifier contract already applied to every column) so a reserved word
+  // (MariaDB's `position`) is quoted; Postgres's reserved set excludes every
+  // corpus table, so this is byte-identical there.
+  let sql = `${select} from ${dialect.quoteIdentifier(table)} ${alias}`;
   if (where !== undefined) {
     sql += ` where ${where}`;
   }
@@ -796,7 +816,11 @@ function existsSemiJoin(
     inner += ` and ${childAsOf.sql}`;
     ctx.binds.push(...childAsOf.binds);
   }
-  const exists = `exists (select 1 from ${rel.childTable} ${childAlias} where ${inner})`;
+  // The child table name routes through the dialect too (`ctx.dialect`, since this
+  // emission site sits deep inside the recursive `compilePredicate` chain, which
+  // carries no separate `dialect` parameter) — the same identifier contract as the
+  // root `from` above.
+  const exists = `exists (select 1 from ${ctx.dialect.quoteIdentifier(rel.childTable)} ${childAlias} where ${inner})`;
   return negated ? `not ${exists}` : exists;
 }
 

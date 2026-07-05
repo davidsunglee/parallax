@@ -165,9 +165,9 @@ it("the reads suite covers exactly the READS family", () => {
 });
 
 // Reads are dialect-agnostic (the M3 compiler is behind the M11 seam), so the suite fans
-// out over every database `PARALLAX_DATABASES` selects (default Postgres). A tiny set of
-// cases hits a MariaDB-specific dialect gap (raw bytes read) and is guarded off MariaDB
-// with a documented reason (`_providers.ts`).
+// out over every database `PARALLAX_DATABASES` selects (default Postgres). `MARIADB_GUARDED_
+// READS` (`_providers.ts`) is currently empty — the raw `bytes` read case (`0003`) used to be
+// guarded off MariaDB, now fixed — but the guard mechanism stays wired for a future gap.
 group.skipIf(!HAS_DOCKER).each(selectedProviders())("reads suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
   let provider: ApiConformanceProvider;

@@ -20,11 +20,10 @@
  * `ANSI_QUOTES`) and a trailing `returning 1` (MariaDB `UPDATE` has no `RETURNING`,
  * and the rows-only `ParallaxDatabase` port cannot surface an `UPDATE`'s affected
  * count on MariaDB any other way). Making writes dialect-aware needs a port/dialect
- * affected-count seam — a separate phase. So the write-DRIVING cases (see
- * {@link WRITE_SURFACE_POSTGRES_ONLY}) run only on Postgres here; the MariaDB WRITE
- * path is already proven end-to-end by `test/mariadb-run.test.ts` against
- * `goldenSql.mariadb`. READ cases (which go through the dialect-aware M3 compiler)
- * run on both databases.
+ * affected-count seam — a separate phase. So the write-DRIVING suites fan out only
+ * over {@link writeProviders} (Postgres here); the MariaDB WRITE path is already
+ * proven end-to-end by `test/mariadb-run.test.ts` against `goldenSql.mariadb`. READ
+ * cases (which go through the dialect-aware M3 compiler) run on both databases.
  */
 import { execFileSync } from "node:child_process";
 import { MARIADB_DIALECT, POSTGRES_DIALECT } from "@parallax/dialect";
@@ -60,7 +59,11 @@ const REGISTRY: Readonly<Record<string, SelectedProvider>> = {
  * The providers this run exercises, from `PARALLAX_DATABASES` (comma-separated),
  * defaulting to `["postgres"]` when unset/empty — so the DEFAULT run is Postgres
  * exactly as before (no regression). An unknown key throws (a typo never silently
- * drops coverage).
+ * drops coverage), and so does a NON-empty value that resolves to zero keys — e.g.
+ * `","` or `" , "`, which split/trim/filter down to `[]`. Without that guard a
+ * comma-only value would silently select no databases (zero coverage, no error);
+ * it must fail loudly, same spirit as the unknown-key throw. (A value that is empty
+ * OR pure whitespace trims to `""` and takes the unchanged `[postgres]` default.)
  */
 export function selectedProviders(): readonly SelectedProvider[] {
   const requested = (process.env.PARALLAX_DATABASES ?? "").trim();
@@ -71,6 +74,13 @@ export function selectedProviders(): readonly SelectedProvider[] {
           .split(",")
           .map((key) => key.trim())
           .filter((key) => key !== "");
+  if (requested !== "" && keys.length === 0) {
+    throw new Error(
+      `PARALLAX_DATABASES='${process.env.PARALLAX_DATABASES}' selects no databases ` +
+        `(comma/whitespace only); set a comma-separated list of known keys ` +
+        `(${Object.keys(REGISTRY).join(", ")}) or leave it unset for the ${POSTGRES_DIALECT} default`,
+    );
+  }
   return keys.map((key) => {
     const provider = REGISTRY[key];
     if (provider === undefined) {
@@ -102,54 +112,28 @@ export function writeProviders(): readonly SelectedProvider[] {
 }
 
 /**
- * The reason string a guarded write-driving case documents (surfaced in this
- * agent's report; the developer write surface is not yet behind the M11 dialect
- * seam — see the module note).
- */
-export const WRITE_SURFACE_POSTGRES_ONLY =
-  "developer write surface (px.create/update/terminate) is Postgres-only today: the " +
-  "M7/M8/M10 write generators are not yet behind the M11 dialect seam (ANSI double-quote " +
-  "quoting + `returning 1`, unsupported on MariaDB UPDATE). MariaDB writes are proven by " +
-  "mariadb-run.test.ts.";
-
-/**
  * READ/temporal cases guarded OFF MariaDB, each for a SPECIFIC dialect/runtime gap
- * (developer-WRITE cases guard separately via {@link supportsDeveloperWrites}):
+ * (developer-WRITE cases guard separately via {@link supportsDeveloperWrites}).
  *
- *  - `0003` — a RAW `bytes` read: the runtime `find` projects a `bytes` column
- *    VERBATIM (`RuntimeSchema.rootProjection`), but the shipped MariaDB adapter's
- *    `bytes` parser assumes the `hex(col)` projection the conformance runner uses
- *    (`hexToBytes`), so a raw blob read fails at the adapter. The MariaDB hex path
- *    itself is proven by `mariadb-run.test.ts` (`1005`).
- *  - `0801`-`0805` — the `Position` table is a MariaDB reserved word (`POSITION()`).
- *    Neither the DDL derivation's curated reserved-word set nor the M3 compiler's
- *    root-table `from` clause (which is emitted UNQUOTED — Postgres tolerates
- *    `position`, MariaDB rejects it) quote it. Quoting the compiler root table is a
- *    dialect/compiler concern outside this harness.
+ * Currently EMPTY — the two gaps that used to live here are both fixed:
+ *  - `0003` (a RAW `bytes` read) — the shipped MariaDB adapter's `typeCast` now
+ *    reads a raw (un-wrapped) `bytes` column via the driver's raw `Buffer`
+ *    (`field.buffer()`) instead of parsing `field.string()` through the hex-text
+ *    parser, so the runtime `find`'s VERBATIM `bytes` projection
+ *    (`RuntimeSchema.rootProjection`) materializes correctly. It is told apart
+ *    from the dialect's `hex(col)` projection by the codebase-owned `_hex`
+ *    output-alias convention (`mysql2`'s `Field.name`; see `adapter.ts`'s
+ *    `typeCast` doc) — that hex path is unaffected (still proven by
+ *    `mariadb-run.test.ts`'s `1005`).
+ *  - `0801`-`0805` (the `Position` table, a MariaDB reserved word `POSITION()`) —
+ *    both the DDL derivation's reserved-word set AND the M3 compiler's root/
+ *    EXISTS-child `from` clause (now routed through `dialect.quoteIdentifier`,
+ *    same as every column) quote it.
+ *
+ * Kept as an (empty) `ReadonlyMap` + {@link readCaseGuarded} helper — a
+ * ready-made guard point for a future dialect/runtime gap.
  */
-export const MARIADB_GUARDED_READS: ReadonlyMap<string, string> = new Map([
-  [
-    "0003-scalar-types-roundtrip",
-    "raw `bytes` read: the shipped MariaDB adapter's bytes parser assumes the hex(col) " +
-      "projection (hexToBytes), not the verbatim blob the runtime find projects",
-  ],
-  ...(
-    [
-      "0801-bitemporal-as-of-now-both-axes",
-      "0802-bitemporal-business-past-processing-now",
-      "0803-bitemporal-both-axes-past",
-      "0804-bitemporal-history",
-      "0805-bitemporal-omitted-processing-default",
-    ] as const
-  ).map(
-    (stem) =>
-      [
-        stem,
-        "the `Position` table is a MariaDB reserved word neither the DDL reserved-word set " +
-          "nor the M3 compiler's UNQUOTED root-table FROM clause quotes",
-      ] as const,
-  ),
-]);
+export const MARIADB_GUARDED_READS: ReadonlyMap<string, string> = new Map();
 
 /** Whether a READ/temporal case is guarded off `provider` (a MariaDB-specific dialect gap). */
 export function readCaseGuarded(provider: SelectedProvider, stem: string): boolean {

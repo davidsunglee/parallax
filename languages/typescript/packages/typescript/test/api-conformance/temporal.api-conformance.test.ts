@@ -206,9 +206,10 @@ it("the temporal suite covers exactly the TEMPORAL family", () => {
 });
 
 // Temporal reads are dialect-agnostic (the M7 axis wrapping lowers through the M11 seam),
-// so the suite fans out over every database `PARALLAX_DATABASES` selects. The bitemporal
-// `Position` cases (0801-0805) hit a MariaDB reserved-word gap and are guarded off MariaDB
-// with a documented reason (`_providers.ts`).
+// so the suite fans out over every database `PARALLAX_DATABASES` selects. `MARIADB_GUARDED_
+// READS` (`_providers.ts`) is currently empty — the bitemporal `Position` cases (0801-0805)
+// used to be guarded off MariaDB (a reserved-word gap), now fixed — but the guard mechanism
+// stays wired for a future dialect-specific gap.
 group.skipIf(!HAS_DOCKER).each(selectedProviders())("temporal reads suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
   let provider: ApiConformanceProvider;

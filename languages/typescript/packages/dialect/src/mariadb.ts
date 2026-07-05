@@ -183,6 +183,13 @@ const SIMPLE_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
  * emit (e.g. `order`) — enough to keep generated SQL byte-identical to the
  * hand-authored goldens. A non-simple name (uppercase / special) is caught by the
  * regex regardless.
+ *
+ * `position` is a MariaDB-only addition (`POSITION()` is a reserved SQL function
+ * name here but not on Postgres, and the corpus's `Position` table would otherwise
+ * emit unquoted on MariaDB — both in this DDL derivation and in the M3 compiler's
+ * `from` clause, which now also routes through `quoteIdentifier`). Postgres's
+ * reserved set intentionally omits it (`position t0` stays unquoted there,
+ * byte-identical to the hand-authored golden).
  */
 const RESERVED_WORDS: ReadonlySet<string> = new Set([
   "all",
@@ -222,6 +229,7 @@ const RESERVED_WORDS: ReadonlySet<string> = new Set([
   "on",
   "or",
   "order",
+  "position",
   "primary",
   "references",
   "select",
