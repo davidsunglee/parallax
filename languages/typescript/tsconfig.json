@@ -9,6 +9,7 @@
     { "path": "./packages/dialect" },
     { "path": "./packages/db" },
     { "path": "./packages/db-postgres" },
+    { "path": "./packages/db-mariadb" },
     { "path": "./packages/sql" },
     { "path": "./packages/transactions" },
     { "path": "./packages/lists" },

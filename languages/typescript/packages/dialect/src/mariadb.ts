@@ -111,6 +111,19 @@ function rowLimit(sql: string): string {
   return `${sql} limit ?`;
 }
 
+/**
+ * Lower a `bytes` column to MariaDB's hex-text projection — the argument-less
+ * `hex(<col>) <out>` — carrying NO bind (contrast Postgres's `encode(<col>, ?)`
+ * with a `'hex'` format bind). MariaDB's `hex(...)` takes no format argument, so
+ * the projection is bind-free (`1005`).
+ */
+function bytesProjection(
+  qualifiedColumn: string,
+  outputName: string,
+): { readonly sql: string; readonly binds: readonly unknown[] } {
+  return { sql: `hex(${qualifiedColumn}) ${outputName}`, binds: [] };
+}
+
 // --- neutral-type → MariaDB column type (the M0 table) ----------------------
 
 /**
@@ -339,6 +352,7 @@ export const mariadbDialect: Dialect = {
   quoteIdentifier,
   orderByTerm,
   rowLimit,
+  bytesProjection,
   applyReadLock,
   columnType: mariadbColumnType,
   toPositionalPlaceholders,

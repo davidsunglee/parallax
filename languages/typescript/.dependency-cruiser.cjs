@@ -89,6 +89,8 @@ module.exports = {
     // so `dependency-graph.md` is unchanged.
     edge("db-postgres", "db"), //      adapter -> port
     edge("db-postgres", "dialect"), // adapter -> pure dialect layer
+    edge("db-mariadb", "db"), //       adapter -> port (MariaDB, the second concrete adapter)
+    edge("db-mariadb", "dialect"), //  adapter -> pure dialect layer (its matching strategy, mariadbDialect)
 
     // --- Non-numbered composition package edges (@parallax/typescript) ---
     // The composition root may import any scaffolded package. lifecycle /
@@ -99,7 +101,7 @@ module.exports = {
     {
       from: { path: `${PKG}typescript/` },
       to: {
-        path: `${PKG}(?:core|metamodel|operation|sql|relationships|lists|bitemporal|transactions|locking|dialect|db|db-postgres|conformance|serde)/`,
+        path: `${PKG}(?:core|metamodel|operation|sql|relationships|lists|bitemporal|transactions|locking|dialect|db|db-postgres|db-mariadb|conformance|serde)/`,
       },
     },
 

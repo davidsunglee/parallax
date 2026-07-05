@@ -117,6 +117,22 @@ export function rowLimit(sql: string): string {
   return `${sql} limit ?`;
 }
 
+/** The Postgres `encode(...)` format for a `bytes`-column hex projection. */
+const HEX_ENCODE_FORMAT = "hex";
+
+/**
+ * Lower a `bytes` column to Postgres's hex-text projection — `encode(<col>, ?)
+ * <out>` — carrying the `'hex'` format as a bind (not an inline literal), spliced
+ * in projection order. Byte-identical to the form `compile.ts` emitted before the
+ * projection moved behind the dialect (`0003`).
+ */
+export function bytesProjection(
+  qualifiedColumn: string,
+  outputName: string,
+): { readonly sql: string; readonly binds: readonly unknown[] } {
+  return { sql: `encode(${qualifiedColumn}, ?) ${outputName}`, binds: [HEX_ENCODE_FORMAT] };
+}
+
 // --- neutral-type → Postgres column type (the M0 table) ---------------------
 
 /** M0 neutral base type → Postgres column type (non-parametric types). */
@@ -330,6 +346,7 @@ export const postgresDialect: Dialect = {
   quoteIdentifier,
   orderByTerm,
   rowLimit,
+  bytesProjection,
   applyReadLock,
   columnType: postgresColumnType,
   toPositionalPlaceholders,
