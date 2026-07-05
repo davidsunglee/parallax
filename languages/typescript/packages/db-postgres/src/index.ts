@@ -6,5 +6,5 @@
  * for writes. No Testcontainers, no `@parallax/typescript` dependency, no wire /
  * grading logic.
  */
-export { PostgresDatabase, type PostgresDatabaseOptions } from "./adapter.js";
+export { PostgresDatabase, type PostgresDatabaseOptions, PostgresSession } from "./adapter.js";
 export { managedTypes, serializeBytea } from "./oids.js";

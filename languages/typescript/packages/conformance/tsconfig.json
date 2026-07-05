@@ -10,6 +10,7 @@
     { "path": "../operation" },
     { "path": "../sql" },
     { "path": "../dialect" },
+    { "path": "../db" },
     { "path": "../relationships" },
     { "path": "../bitemporal" },
     { "path": "../transactions" },

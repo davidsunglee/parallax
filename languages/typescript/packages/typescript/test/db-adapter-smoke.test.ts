@@ -245,44 +245,41 @@ async function waitForReady(db: ParallaxDatabase, attempts = 40, delayMs = 1000)
 
 async function provePostgresLockTimeout(
   db: ParallaxDatabase,
-  peer: ParallaxDatabase,
+  _peer: ParallaxDatabase,
 ): Promise<void> {
+  // Symmetric to `proveMariaDbLockTimeout`: two held `PostgresSession`s prove the
+  // M8 shared read lock has locking EFFECT. Session A holds a `for share` read on
+  // row 1; session B's UPDATE of the same row blocks and — with the session's
+  // lowered `lock_timeout` — raises `55P03`, surfaced as `lockWaitTimeout`. This is
+  // the exact behavior the harness-lane `0728` case grades through `runRun`.
+  if (!(db instanceof PostgresDatabase)) {
+    throw new Error("expected PostgresDatabase");
+  }
   await db.execute("drop table if exists adapter_lock", []);
   await db.execute("create table adapter_lock (id int primary key, note text)", []);
   await db.executeWrite("insert into adapter_lock (id, note) values (?, ?)", [1, "one"]);
-  await peer.execute("set lock_timeout = '100ms'", []);
 
-  let release!: () => void;
-  let locked!: () => void;
-  const releasePromise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const lockedPromise = new Promise<void>((resolve) => {
-    locked = resolve;
-  });
-  const blocker = db.transaction?.(async (tx) => {
-    await tx.execute("select id from adapter_lock where id = ? for update", [1]);
-    locked();
-    await releasePromise;
-  });
-  if (blocker === undefined) {
-    throw new Error("Postgres adapter did not expose transaction()");
-  }
-
-  await lockedPromise;
-  let raised: unknown;
+  const a = await db.openSession();
+  const b = await db.openSession();
   try {
-    await peer.executeWrite("update adapter_lock set note = ? where id = ?", ["blocked", 1]);
-  } catch (error) {
-    raised = error;
+    // A takes the shared read lock and HOLDS it (no commit).
+    await a.execute("select id from adapter_lock where id = ? for share", [1]);
+    let raised: unknown;
+    try {
+      // B's write contends for the row A read-locked → blocks → 55P03 within budget.
+      await b.execute("update adapter_lock set note = ? where id = ?", ["blocked", 1]);
+    } catch (error) {
+      raised = error;
+    }
+    expect(raised).toBeInstanceOf(ParallaxTransientError);
+    expect((raised as ParallaxTransientError).kind).toBe("lockWaitTimeout");
+    expect((raised as ParallaxTransientError).retriable).toBe(false);
   } finally {
-    release();
-    await blocker;
-    await peer.execute("set lock_timeout = default", []);
+    await a.rollback().catch(() => {});
+    await b.rollback().catch(() => {});
+    await a.close();
+    await b.close();
   }
-  expect(raised).toBeInstanceOf(ParallaxTransientError);
-  expect((raised as ParallaxTransientError).kind).toBe("lockWaitTimeout");
-  expect((raised as ParallaxTransientError).retriable).toBe(false);
 }
 
 async function proveMariaDbLockTimeout(

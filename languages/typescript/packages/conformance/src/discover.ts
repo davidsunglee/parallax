@@ -69,6 +69,12 @@ export function detectShape(raw: Record<string, unknown>): CaseShape {
   if ("scenario" in raw) {
     return "scenario";
   }
+  // An error-classification case (`errorClass` + `expectedNativeCode`), single- or
+  // two-connection (`concurrency`). Checked before `conflict`/`read` so `0728`'s
+  // read-lock-blocks-writer concurrency shape resolves to `error`, not `read`.
+  if ("errorClass" in raw) {
+    return "error";
+  }
   if ("expectedAffectedRows" in raw || "attempts" in raw) {
     return "conflict";
   }

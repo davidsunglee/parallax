@@ -74,6 +74,9 @@ importers:
       '@parallax/core':
         specifier: workspace:*
         version: link:../core
+      '@parallax/db':
+        specifier: workspace:*
+        version: link:../db
       '@parallax/dialect':
         specifier: workspace:*
         version: link:../dialect

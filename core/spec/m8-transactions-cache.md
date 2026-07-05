@@ -265,6 +265,7 @@ cache assertions — and as plain read / write cases for the SQL fragments:
 | cache-hit scenario | two identical finds ⇒ **one** round trip (the query cache eliminates the second) |
 | identity scenario | two finds for the same primary key ⇒ the **same logical object** |
 | read-lock case | the `for share of t0` read is valid and result-correct |
+| read-lock-blocks-writer case | the shared read lock has **locking effect** — A holds `for share`, B's concurrent UPDATE blocks and times out (`error`/`concurrency` shape, two held sessions) |
 | batched-write case | a multi-row `INSERT` and a batched `UPDATE` produce the expected rows |
 | rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
 | retry boundary cases | bounded automatic retry: transients auto-retried, conflicts only on opt-in, `retries: 0` disables, bound exhaustion surfaces (`api-conformance` lane) |

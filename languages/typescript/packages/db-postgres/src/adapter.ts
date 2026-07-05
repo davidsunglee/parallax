@@ -62,6 +62,56 @@ function asParams(binds: readonly unknown[]): DriverParams {
 export type PostgresDatabaseOptions = Options<Record<string, never>>;
 
 /**
+ * A manual-commit Postgres session on a **fresh, independent** non-autocommit
+ * connection with a lowered lock-wait budget, for the two-connection lock-
+ * contention proofs (`0723`-`0728`). The Postgres sibling of {@link MariaDbSession}
+ * — Postgres has no auto-detected lock-wait deadline, so the session lowers BOTH
+ * `lock_timeout` (bounding a plain wait) and `deadlock_timeout` (shortening the
+ * cycle-detector delay), mirroring the Python reference provider. Each `execute`
+ * runs inside the session's open transaction (no auto-commit) so locks are HELD
+ * until {@link commit} / {@link rollback}; a blocked lock raises SQLSTATE `55P03`
+ * within the budget, re-surfaced as a portable {@link ParallaxTransientError}
+ * (`kind === "lockWaitTimeout"`) through the shared {@link classifyDriverError}.
+ *
+ * The session owns its OWN dedicated single-connection porsager pool (the shipped
+ * adapter's pool is `max: 1`, so a second held connection needs its own), which
+ * {@link close} ends.
+ */
+export class PostgresSession {
+  constructor(private readonly sql: Sql) {}
+
+  /** Run one statement inside the session's transaction (classifying transient errors). */
+  async execute(sql: string, binds: readonly unknown[] = []): Promise<void> {
+    const text = postgresDialect.toPositionalPlaceholders(sql);
+    try {
+      await this.sql.unsafe(text, asParams(binds));
+    } catch (error) {
+      throw classifyDriverError(error);
+    }
+  }
+
+  /** Commit the session's transaction. */
+  async commit(): Promise<void> {
+    await this.sql.unsafe("commit");
+  }
+
+  /** Roll back the session's transaction (best-effort; the connection may be broken). */
+  async rollback(): Promise<void> {
+    try {
+      await this.sql.unsafe("rollback");
+    } catch {
+      // The held connection may already be broken (a timed-out / aborted transaction);
+      // the pool is ended in `close` regardless.
+    }
+  }
+
+  /** End the session's dedicated pool, returning its held connection to the server. */
+  async close(): Promise<void> {
+    await this.sql.end({ timeout: 5 });
+  }
+}
+
+/**
  * A concrete `ParallaxDatabase` over Postgres. Construct it from a connection
  * string with {@link PostgresDatabase.fromConnectionString} (the common path for
  * an application) or wrap an existing porsager pool with
@@ -69,7 +119,17 @@ export type PostgresDatabaseOptions = Options<Record<string, never>>;
  * container-bound one).
  */
 export class PostgresDatabase implements ParallaxDatabase {
-  private constructor(private readonly sql: Sql) {}
+  private constructor(
+    private readonly sql: Sql,
+    /**
+     * The connection string, retained ONLY when the adapter was built from one
+     * ({@link fromConnectionString}) — {@link openSession} uses it to open a
+     * fresh, independent session connection beside the adapter's `max: 1` pool.
+     * `undefined` for a wrapped external pool ({@link fromPool}), where
+     * `openSession` cannot manufacture a peer connection.
+     */
+    private readonly connectionString?: string,
+  ) {}
 
   /**
    * Build an adapter over a fresh porsager pool for `connectionString`, with the
@@ -88,7 +148,7 @@ export class PostgresDatabase implements ParallaxDatabase {
       onnotice: () => {},
       ...options,
     });
-    return new PostgresDatabase(sql);
+    return new PostgresDatabase(sql, connectionString);
   }
 
   /**
@@ -160,6 +220,46 @@ export class PostgresDatabase implements ParallaxDatabase {
       // the retry loop sees the portable transient regardless of where it arose.
       throw classifyDriverError(error);
     });
+  }
+
+  /**
+   * Open a manual-commit {@link PostgresSession} on a FRESH, independent
+   * single-connection pool over this adapter's connection string, with the
+   * lock-wait budget lowered (`lock_timeout = '250ms'`, `deadlock_timeout =
+   * '100ms'`) and a transaction opened, so the session holds any lock it takes
+   * across a barrier while a peer session contends. The Postgres sibling of
+   * {@link MariaDbSession} via `MariaDbDatabase.openSession`.
+   *
+   * The adapter's own pool is `max: 1`, so a second held connection cannot come
+   * from it — the session gets its own dedicated pool (mirroring the composition-
+   * root `peer`), which the returned session's {@link PostgresSession.close} ends.
+   * The lowered budget + `begin` setup is guarded: if any step throws, the fresh
+   * pool is ended before the (classified) error propagates, so a failed open never
+   * leaks a connection.
+   */
+  async openSession(): Promise<PostgresSession> {
+    if (this.connectionString === undefined) {
+      throw new Error(
+        "openSession requires a connection string; build the adapter with fromConnectionString",
+      );
+    }
+    const sessionSql = postgres(this.connectionString, {
+      // biome-ignore lint/suspicious/noExplicitAny: porsager's custom-type map is loosely typed.
+      types: managedTypes() as any,
+      max: 1,
+      onnotice: () => {},
+    });
+    try {
+      // Session-level SETs (auto-committed on the single connection, so they persist)
+      // then BEGIN the holding transaction; every later `execute` runs inside it.
+      await sessionSql.unsafe("set lock_timeout = '250ms'");
+      await sessionSql.unsafe("set deadlock_timeout = '100ms'");
+      await sessionSql.unsafe("begin");
+    } catch (error) {
+      await sessionSql.end({ timeout: 5 });
+      throw classifyDriverError(error);
+    }
+    return new PostgresSession(sessionSql);
   }
 
   /** Close the underlying pool (no-op for a wrapped, externally-owned pool caller). */
