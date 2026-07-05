@@ -18,9 +18,7 @@
  * additive proof the developer surface + shipped adapter produce the corpus rows.
  */
 
-import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
-import { PostgresProvider } from "../../src/conformance/postgres-provider.js";
 import {
   AttributeExpression,
   buildFindOperation,
@@ -28,12 +26,14 @@ import {
   ToManyRelationshipExpression,
 } from "../../src/index.js";
 import {
+  type ApiConformanceProvider,
   assertManagedShape,
   assertRows,
   assertSameOperation,
   type CaseFixture,
   provisionCase,
 } from "./_harness.js";
+import { HAS_DOCKER, readCaseGuarded, selectedProviders } from "./_providers.js";
 import { READS } from "./covered.js";
 
 // --- entity symbols (as codegen emits them) ---------------------------------
@@ -160,35 +160,29 @@ const CASES: readonly Row[] = [
   ),
 ];
 
-/** True when a Docker daemon is reachable (gates the Testcontainers lane). */
-function dockerAvailable(): boolean {
-  try {
-    execFileSync("docker", ["info"], { stdio: "ignore", timeout: 10_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const HAS_DOCKER = dockerAvailable();
-
 it("the reads suite covers exactly the READS family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...READS].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("reads suite (Testcontainers postgres:17)", () => {
+// Reads are dialect-agnostic (the M3 compiler is behind the M11 seam), so the suite fans
+// out over every database `PARALLAX_DATABASES` selects (default Postgres). A tiny set of
+// cases hits a MariaDB-specific dialect gap (raw bytes read) and is guarded off MariaDB
+// with a documented reason (`_providers.ts`).
+group.skipIf(!HAS_DOCKER).each(selectedProviders())("reads suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
-  let provider: PostgresProvider;
+  let provider: ApiConformanceProvider;
+  const runnable = CASES.filter((c) => !readCaseGuarded(dbp, c.stem));
+  const guarded = CASES.filter((c) => readCaseGuarded(dbp, c.stem));
 
   beforeAll(async () => {
-    provider = await PostgresProvider.start();
+    provider = await dbp.start();
   }, BOOT_TIMEOUT);
 
   afterAll(async () => {
     await provider?.close();
   });
 
-  it.each(CASES)(
+  it.each(runnable)(
     "$stem: a developer read returns the corpus rows as managed objects",
     async (row) => {
       const fixture: CaseFixture = await provisionCase(provider, row.stem);
@@ -212,4 +206,10 @@ group.skipIf(!HAS_DOCKER)("reads suite (Testcontainers postgres:17)", () => {
     },
     BOOT_TIMEOUT,
   );
+
+  if (guarded.length > 0) {
+    it.skip.each(
+      guarded,
+    )("$stem: guarded on MariaDB — dialect-specific gap (see _providers.ts)", () => {});
+  }
 });

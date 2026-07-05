@@ -18,13 +18,16 @@
  *  - a non-temporal timestamp insert stores UTC / µs precision (`0004` / `0005`).
  */
 
-import { execFileSync } from "node:child_process";
 import { ParallaxDecimal, Temporal } from "@parallax/core";
-import { postgresDialect } from "@parallax/dialect";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
-import { PostgresProvider } from "../../src/conformance/postgres-provider.js";
 import { AttributeExpression } from "../../src/index.js";
-import { assertRows, assertTableState, provisionCase } from "./_harness.js";
+import {
+  type ApiConformanceProvider,
+  assertRows,
+  assertTableState,
+  provisionCase,
+} from "./_harness.js";
+import { HAS_DOCKER, writeProviders } from "./_providers.js";
 import { TRANSACTIONS } from "./covered.js";
 
 const attr = (ref: string): AttributeExpression => new AttributeExpression(ref);
@@ -34,18 +37,6 @@ const at = (iso: string): Temporal.Instant => Temporal.Instant.from(iso);
 const Balance = { id: attr("Balance.id"), value: attr("Balance.value") };
 const Account = { id: attr("Account.id"), balance: attr("Account.balance") };
 const Wallet = { id: attr("Wallet.id"), balance: attr("Wallet.balance") };
-
-/** True when a Docker daemon is reachable (gates the Testcontainers lane). */
-function dockerAvailable(): boolean {
-  try {
-    execFileSync("docker", ["info"], { stdio: "ignore", timeout: 10_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const HAS_DOCKER = dockerAvailable();
 
 it("the transactions suite covers exactly the TRANSACTIONS family", () => {
   const covered = [
@@ -63,12 +54,16 @@ it("the transactions suite covers exactly the TRANSACTIONS family", () => {
   expect(covered.sort()).toEqual([...TRANSACTIONS].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () => {
+// Every transactions case drives the developer WRITE surface (create/update/terminate),
+// which is Postgres-only today (see `_providers.ts` — the M7/M8/M10 write generators are
+// not yet behind the M11 dialect seam), so the family runs only on write-capable providers
+// (MariaDB is filtered out). The MariaDB WRITE path is proven by `mariadb-run.test.ts`.
+group.skipIf(!HAS_DOCKER).each(writeProviders())("transactions suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
-  let provider: PostgresProvider;
+  let provider: ApiConformanceProvider;
 
   beforeAll(async () => {
-    provider = await PostgresProvider.start();
+    provider = await dbp.start();
   }, BOOT_TIMEOUT);
 
   afterAll(async () => {
@@ -82,7 +77,7 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
       await f.px.transaction(async (tx) => {
         await tx.entity("Event").create({ id: 1n, occurredAt: at("2024-03-01T05:30:00+05:30") });
       });
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
@@ -96,7 +91,7 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
           .entity("Event")
           .create({ id: 1n, occurredAt: at("2024-03-01T12:00:00.123456+00:00") });
       });
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
@@ -110,7 +105,7 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
       await f.px.transaction(async (tx) => {
         await tx.entity("Balance").create({ id: 1n, acctNum: "A", value: dec("100.00") });
       });
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
@@ -134,7 +129,7 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
           .entity("Balance")
           .update(Balance.id.eq(1), { set: [Balance.value.set(dec("150.00"))] });
       });
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
@@ -152,7 +147,7 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
       await later.transaction(async (tx) => {
         await tx.entity("Balance").terminate(Balance.id.eq(1));
       });
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
@@ -169,7 +164,7 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
         await wallets.update(Wallet.id.eq(10), { set: [Wallet.balance.set(dec("500.00"))] });
         await wallets.update(Wallet.id.eq(11), { set: [Wallet.balance.set(dec("500.00"))] });
       });
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
@@ -232,7 +227,7 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
         });
         await tx.entity("OrderItem").create({ id: 200n, orderId: 100n, sku: "X-1", quantity: 3 });
       });
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
@@ -246,7 +241,7 @@ group.skipIf(!HAS_DOCKER)("transactions suite (Testcontainers postgres:17)", () 
         await wallets.update(Wallet.id.eq(1), { set: [Wallet.balance.set(dec("111.00"))] });
         await wallets.update(Wallet.id.eq(2), { set: [Wallet.balance.set(dec("222.00"))] });
       });
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
@@ -261,7 +256,7 @@ async function withClock(
   return createParallax({
     database: fixture.db,
     descriptor: fixture.loaded.descriptor,
-    dialect: postgresDialect,
+    dialect: fixture.dialect,
     clock: { now: () => now },
   });
 }

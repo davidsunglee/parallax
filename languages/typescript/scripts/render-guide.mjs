@@ -201,8 +201,11 @@ function dedentBlock(text) {
 /** Parse a family test file into `{ title, snippet }` entries in source order. */
 function parseFamily(source) {
   const entries = [];
-  // Match `it("title", ...)` / `it.each(CASES)("title", ...)`.
-  const itRe = /\bit(?:\.each\([^)]*\))?\(\s*(?:"([^"]+)"|`([^`]+)`)/g;
+  // Match `it("title", ...)` / `it.each(CASES)("title", ...)`, plus `writeCase(...)`
+  // — the suites alias `it` to `it`/`it.skip` per dialect for write-driving cases
+  // (`writeCase = supportsDeveloperWrites(dbp) ? it : it.skip`), so those cases carry
+  // the same developer snippet and belong in the guide identically.
+  const itRe = /\b(?:it|writeCase)(?:\.each\([^)]*\))?\(\s*(?:"([^"]+)"|`([^`]+)`)/g;
   let match;
   const indices = [];
   while ((match = itRe.exec(source)) !== null) {
