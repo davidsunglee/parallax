@@ -30,7 +30,7 @@
  * the wire domain and never runs this materializer.)
  */
 
-import { bytesFromHex, ParallaxDecimal, Temporal } from "@parallax/core";
+import { bytesFromHex, isInfinity, ParallaxDecimal, Temporal } from "@parallax/core";
 import type { ParallaxRow } from "@parallax/db";
 import type { Dialect } from "@parallax/dialect";
 import type { EntityMetadata } from "@parallax/metamodel";
@@ -211,9 +211,20 @@ function coerceTime(value: unknown, dialect: Dialect): unknown {
  * passes; a raw Postgres/ISO string is parsed via the dialect; a driver `Date` is
  * lifted through its ISO rendering). The dialect parser enforces the M0
  * microsecond-precision rule.
+ *
+ * The already-managed `infinity` sentinel (the string `"infinity"`) is passed
+ * through BEFORE the string branch: it is not a raw DB rendering to re-parse, and
+ * the dialect `timestamp` parser expects the DB's OWN infinity form (Postgres's
+ * `'infinity'` literal, MariaDB's max-sentinel `DATETIME`), not this neutral
+ * sentinel — the core contract states callers must branch on {@link isInfinity}
+ * first (`scalars.ts`). Re-parsing it worked on Postgres only by coincidence (its
+ * parser re-detects `"infinity"`); MariaDB's parser rejects it.
  */
 function coerceTimestamp(value: unknown, dialect: Dialect): unknown {
   if (value instanceof Temporal.Instant) {
+    return value;
+  }
+  if (isInfinity(value)) {
     return value;
   }
   if (typeof value === "string") {

@@ -17,11 +17,9 @@
  * to the graded runtime (same M3 compiler + M4 strategy).
  */
 
-import { execFileSync } from "node:child_process";
 import { Temporal } from "@parallax/core";
 import type { Operation } from "@parallax/operation";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
-import { PostgresProvider } from "../../src/conformance/postgres-provider.js";
 import {
   AttributeExpression,
   type AxisRefs,
@@ -29,7 +27,14 @@ import {
   NavigationPath,
   Predicate,
 } from "../../src/index.js";
-import { assertGraph, assertManagedShape, assertSameOperation, provisionCase } from "./_harness.js";
+import {
+  type ApiConformanceProvider,
+  assertGraph,
+  assertManagedShape,
+  assertSameOperation,
+  provisionCase,
+} from "./_harness.js";
+import { HAS_DOCKER, selectedProviders } from "./_providers.js";
 import { DEEP_FETCH } from "./covered.js";
 
 const all = (): Predicate => new Predicate({ all: {} });
@@ -251,28 +256,18 @@ const CASES: readonly Row[] = [
   },
 ];
 
-/** True when a Docker daemon is reachable (gates the Testcontainers lane). */
-function dockerAvailable(): boolean {
-  try {
-    execFileSync("docker", ["info"], { stdio: "ignore", timeout: 10_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const HAS_DOCKER = dockerAvailable();
-
 it("the deep-fetch suite covers exactly the DEEP_FETCH family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...DEEP_FETCH].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("deep-fetch suite (Testcontainers postgres:17)", () => {
+// Deep fetch is read-only (the dialect-aware M3 compiler + M4 assembly), so the suite
+// fans out over every database `PARALLAX_DATABASES` selects (default Postgres).
+group.skipIf(!HAS_DOCKER).each(selectedProviders())("deep-fetch suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
-  let provider: PostgresProvider;
+  let provider: ApiConformanceProvider;
 
   beforeAll(async () => {
-    provider = await PostgresProvider.start();
+    provider = await dbp.start();
   }, BOOT_TIMEOUT);
 
   afterAll(async () => {

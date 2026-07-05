@@ -11,11 +11,9 @@
  * the compiler); an explicit `now` still emits an `asOf … now` wrapper (`0502`).
  */
 
-import { execFileSync } from "node:child_process";
 import { Temporal } from "@parallax/core";
 import type { Operation } from "@parallax/operation";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
-import { PostgresProvider } from "../../src/conformance/postgres-provider.js";
 import {
   AttributeExpression,
   type AxisRefs,
@@ -23,7 +21,14 @@ import {
   Predicate,
   ToManyRelationshipExpression,
 } from "../../src/index.js";
-import { assertManagedShape, assertRows, assertSameOperation, provisionCase } from "./_harness.js";
+import {
+  type ApiConformanceProvider,
+  assertManagedShape,
+  assertRows,
+  assertSameOperation,
+  provisionCase,
+} from "./_harness.js";
+import { HAS_DOCKER, readCaseGuarded, selectedProviders } from "./_providers.js";
 import { TEMPORAL } from "./covered.js";
 
 const attr = (ref: string): AttributeExpression => new AttributeExpression(ref);
@@ -196,35 +201,29 @@ const CASES: readonly Row[] = [
   },
 ];
 
-/** True when a Docker daemon is reachable (gates the Testcontainers lane). */
-function dockerAvailable(): boolean {
-  try {
-    execFileSync("docker", ["info"], { stdio: "ignore", timeout: 10_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const HAS_DOCKER = dockerAvailable();
-
 it("the temporal suite covers exactly the TEMPORAL family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...TEMPORAL].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("temporal reads suite (Testcontainers postgres:17)", () => {
+// Temporal reads are dialect-agnostic (the M7 axis wrapping lowers through the M11 seam),
+// so the suite fans out over every database `PARALLAX_DATABASES` selects. The bitemporal
+// `Position` cases (0801-0805) hit a MariaDB reserved-word gap and are guarded off MariaDB
+// with a documented reason (`_providers.ts`).
+group.skipIf(!HAS_DOCKER).each(selectedProviders())("temporal reads suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
-  let provider: PostgresProvider;
+  let provider: ApiConformanceProvider;
+  const runnable = CASES.filter((c) => !readCaseGuarded(dbp, c.stem));
+  const guarded = CASES.filter((c) => readCaseGuarded(dbp, c.stem));
 
   beforeAll(async () => {
-    provider = await PostgresProvider.start();
+    provider = await dbp.start();
   }, BOOT_TIMEOUT);
 
   afterAll(async () => {
     await provider?.close();
   });
 
-  it.each(CASES)(
+  it.each(runnable)(
     "$stem: a developer temporal read returns the corpus rows as managed objects",
     async (row) => {
       const fixture = await provisionCase(provider, row.stem);
@@ -243,4 +242,10 @@ group.skipIf(!HAS_DOCKER)("temporal reads suite (Testcontainers postgres:17)", (
     },
     BOOT_TIMEOUT,
   );
+
+  if (guarded.length > 0) {
+    it.skip.each(
+      guarded,
+    )("$stem: guarded on MariaDB — reserved-word table not quoted (see _providers.ts)", () => {});
+  }
 });
