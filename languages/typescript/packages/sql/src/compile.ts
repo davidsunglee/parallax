@@ -181,9 +181,6 @@ export interface ProjectionColumn {
   readonly outputName?: string;
 }
 
-/** The Postgres `encode(...)` format for a `bytes`-column hex projection. */
-const HEX_ENCODE_FORMAT = "hex";
-
 /**
  * The mutable compile context threaded through one traversal: the schema
  * resolver, a first-appearance alias allocator, and the binds accumulator. The
@@ -313,7 +310,7 @@ export function compile(
   // hex format) precedes the predicate / as-of / limit binds — the projection sits
   // before the `where` in the statement, so its `?` is left-most (M3 placeholder
   // order). A plain column emits no bind; a `bytes` column emits `'hex'` here.
-  const projection = renderProjection(schema.rootProjection(), alias, ctx);
+  const projection = renderProjection(schema.rootProjection(), alias, ctx, dialect);
   const select = directives.distinct ? `select distinct ${projection}` : `select ${projection}`;
 
   // Compile the user predicate FIRST so its binds precede the injected as-of binds
@@ -366,20 +363,31 @@ function renderProjection(
   columns: readonly ProjectionColumn[],
   alias: string,
   ctx: CompileCtx,
+  dialect: Dialect,
 ): string {
-  return columns.map((column) => renderProjectionColumn(column, alias, ctx)).join(", ");
+  return columns.map((column) => renderProjectionColumn(column, alias, ctx, dialect)).join(", ");
 }
 
-/** Render one projection column (verbatim, or the `bytes` `encode(…)` hex form). */
-function renderProjectionColumn(column: ProjectionColumn, alias: string, ctx: CompileCtx): string {
+/** Render one projection column (verbatim, or the dialect's `bytes` hex form). */
+function renderProjectionColumn(
+  column: ProjectionColumn,
+  alias: string,
+  ctx: CompileCtx,
+  dialect: Dialect,
+): string {
   const qualified = `${alias}.${column.column}`;
   if (column.type === "bytes") {
     // A byte column has no stable text rendering across drivers/dialects, so the
-    // canonical projection encodes it to hex: `encode(t0.payload, ?) payload_hex`,
-    // with the `'hex'` format carried as a bind (not an inline literal).
-    ctx.binds.push(HEX_ENCODE_FORMAT);
+    // projection is lowered to the dialect's hex form (Postgres `encode(t0.payload,
+    // ?) payload_hex` with a `'hex'` bind; MariaDB the bind-free `hex(t0.payload)
+    // payload_hex`). The dialect owns both the SQL and any bind it introduces, which
+    // is spliced here in projection order (before the `where` binds).
     const output = column.outputName ?? `${column.column}_hex`;
-    return `encode(${qualified}, ?) ${output}`;
+    const projected = dialect.bytesProjection(qualified, output);
+    for (const bind of projected.binds) {
+      ctx.binds.push(bind as Bind);
+    }
+    return projected.sql;
   }
   return qualified;
 }

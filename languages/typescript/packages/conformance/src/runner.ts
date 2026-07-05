@@ -137,14 +137,14 @@ export function runCompile(
   // A write-sequence case emits one item per generated DML statement, in
   // execution order, with `roundTrips` equal to the statement count.
   if (isWriteSequence(loaded)) {
-    const plan = buildWriteSequencePlan(loaded);
+    const plan = buildWriteSequencePlan(loaded, dialectFor(dialect));
     return compileOk(loaded, dialect, adapter, toEmissions(plan.statements));
   }
 
   // A conflict case emits its generated versioned `UPDATE`(s) (one per attempt),
   // keyed by their case pointer; `roundTrips` is the attempt count.
   if (isConflict(loaded)) {
-    const plan = buildConflictPlan(loaded);
+    const plan = buildConflictPlan(loaded, dialectFor(dialect));
     return compileOk(loaded, dialect, adapter, toEmissions(plan.attempts));
   }
 
@@ -422,7 +422,7 @@ async function runWriteSequence(
   dialect: Dialect,
 ): Promise<RunResult> {
   await provisionEmpty(loaded, provider);
-  const plan = buildWriteSequencePlan(loaded);
+  const plan = buildWriteSequencePlan(loaded, dialect);
 
   const emissions: Emission[] = [];
   for (const statement of plan.statements) {
@@ -460,7 +460,7 @@ async function runConflict(
   dialect: Dialect,
 ): Promise<RunResult> {
   await provision(loaded, provider);
-  const plan = buildConflictPlan(loaded);
+  const plan = buildConflictPlan(loaded, dialect);
 
   for (const statement of plan.precondition) {
     await provider.exec(statement.sql, statement.binds);

@@ -38,6 +38,8 @@ interface DialectSpec {
   readonly readLockSuffix: string;
   /** The neutral→column-type expectations. */
   readonly columnTypes: Readonly<Record<string, string>>;
+  /** `bytesProjection("t0.payload", "payload_hex")` — the dialect's hex projection + binds. */
+  readonly bytesProjection: { readonly sql: string; readonly binds: readonly unknown[] };
   /** `infinityBind()`. */
   readonly infinityBind: unknown;
   /** `toPositionalPlaceholders("… ? … ?")`. */
@@ -80,6 +82,8 @@ const dialects: readonly DialectSpec[] = [
       bytes: "bytea",
       uuid: "uuid",
     },
+    // Postgres encodes bytes to hex with the `'hex'` format carried as a bind.
+    bytesProjection: { sql: "encode(t0.payload, ?) payload_hex", binds: ["hex"] },
     infinityBind: INFINITY,
     placeholders: "select t0.a from t0 where t0.a = $1 and t0.b = $2",
     errorCodes: { uniqueViolation: "23505", deadlock: "40P01", lockWaitTimeout: "55P03" },
@@ -110,6 +114,8 @@ const dialects: readonly DialectSpec[] = [
       bytes: "longblob",
       uuid: "char(36)",
     },
+    // MariaDB's `hex(...)` takes no format argument, so the projection is bind-free.
+    bytesProjection: { sql: "hex(t0.payload) payload_hex", binds: [] },
     // MariaDB's `DATETIME` has no native infinity; the open upper bound binds the
     // documented max-sentinel datetime.
     infinityBind: MARIADB_INFINITY_SENTINEL,
@@ -182,6 +188,12 @@ for (const spec of dialects) {
         expect(dialect.applyReadLock(OBJECT_READ, { locking: false, projection: false })).toBe(
           OBJECT_READ,
         );
+      });
+    });
+
+    describe("bytesProjection", () => {
+      it("lowers a bytes column to this dialect's hex projection + binds", () => {
+        expect(dialect.bytesProjection("t0.payload", "payload_hex")).toEqual(spec.bytesProjection);
       });
     });
 

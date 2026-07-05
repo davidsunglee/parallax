@@ -15,6 +15,7 @@
  */
 import {
   assertValidEnvelope,
+  type CompatibilityDatabaseProvider,
   describe,
   loadCase,
   runCompile,
@@ -23,7 +24,20 @@ import {
 } from "@parallax/conformance";
 import type { Command, Diagnostic, Envelope, NonOk } from "@parallax/core";
 import { ExitCode } from "@parallax/core";
+import { MARIADB_DIALECT } from "@parallax/dialect";
+import { MariaDbProvider } from "../conformance/mariadb-provider.js";
 import { PostgresProvider } from "../conformance/postgres-provider.js";
+
+/**
+ * Select and boot the concrete provider for a run key — the composition root is the
+ * only place allowed to construct a concrete adapter. `mariadb` boots the shipped
+ * `@parallax/db-mariadb` corner; every other key defaults to Postgres. (A `mariadb`
+ * run is gated out by the slice claim before this is reached, but the wiring lets
+ * `PARALLAX_DATABASES=mariadb` select the second dialect once it is claimed.)
+ */
+function startProvider(dialect: string): Promise<CompatibilityDatabaseProvider> {
+  return dialect === MARIADB_DIALECT ? MariaDbProvider.start() : PostgresProvider.start();
+}
 
 /** A resolved command result: the JSON document to emit and its exit code. */
 interface Outcome {
@@ -154,9 +168,9 @@ async function handleRun(rest: readonly string[]): Promise<Outcome> {
 
   // In claim: provision a clean container, run, and always close the provider.
   let envelope: Envelope;
-  let provider: PostgresProvider | undefined;
+  let provider: CompatibilityDatabaseProvider | undefined;
   try {
-    provider = await PostgresProvider.start();
+    provider = await startProvider(dialect);
     envelope = await runRun(loaded, dialect, TYPESCRIPT_ADAPTER, provider);
   } catch (error) {
     envelope = asError("run", error);

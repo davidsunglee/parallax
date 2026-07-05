@@ -22,7 +22,7 @@
  * path (a one-row multi-row insert).
  */
 import { auditWriteStatements, type MutationKind, type WriteTarget } from "@parallax/bitemporal";
-import { columnOrder, quoteIdentifier } from "@parallax/dialect";
+import { columnOrder, type Dialect } from "@parallax/dialect";
 import { type VersionedTarget, versionAdvancingUpdate, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
 import { type BatchTarget, combineWrites, type PlannedStatement } from "@parallax/transactions";
@@ -139,11 +139,11 @@ export function isWriteSequence(loaded: LoadedCase): boolean {
  * entity flushes the M8 set-based batched forms (`@parallax/transactions`'s
  * unit-of-work planner). The two never mix within a step.
  */
-export function buildWriteSequencePlan(loaded: LoadedCase): WriteSequencePlan {
+export function buildWriteSequencePlan(loaded: LoadedCase, dialect: Dialect): WriteSequencePlan {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const steps = (loaded.raw.writeSequence as readonly RawWriteStep[] | undefined) ?? [];
   const bindRows = (loaded.raw.binds as readonly (readonly unknown[])[] | undefined) ?? [];
-  const golden = goldenStatements(loaded);
+  const golden = goldenStatements(loaded, dialect);
   const concurrency = loaded.uow?.concurrency;
 
   const statements: WriteStatementPlan[] = [];
@@ -151,8 +151,8 @@ export function buildWriteSequencePlan(loaded: LoadedCase): WriteSequencePlan {
   steps.forEach((step, stepIndex) => {
     const entity = metamodel.entity(step.entity);
     const generated = isTemporalEntity(entity)
-      ? auditStatementsForStep(step, entity)
-      : batchStatementsForStep(step, entity, bindRows, bindIndex, golden, concurrency);
+      ? auditStatementsForStep(step, entity, dialect)
+      : batchStatementsForStep(step, entity, bindRows, bindIndex, golden, concurrency, dialect);
     for (const { sql, binds } of generated) {
       statements.push({ casePointer: `/writeSequence/${stepIndex}`, sql, binds });
       bindIndex += 1;
@@ -186,8 +186,9 @@ function isTemporalEntity(entity: EntityMetadata): boolean {
 function auditStatementsForStep(
   step: RawWriteStep,
   entity: EntityMetadata,
+  dialect: Dialect,
 ): readonly { sql: string; binds: readonly unknown[] }[] {
-  const texts = auditWriteStatements(step.mutation, writeTargetFor(entity));
+  const texts = auditWriteStatements(step.mutation, writeTargetFor(entity, dialect));
   const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
   if (processing === undefined) {
     throw new Error(`temporal write on '${entity.name}' has no processing axis to derive in_z`);
@@ -246,6 +247,7 @@ function batchStatementsForStep(
   bindIndex: number,
   golden: readonly string[],
   concurrency: string | undefined,
+  dialect: Dialect,
 ): readonly { sql: string; binds: readonly unknown[] }[] {
   const mutation = step.mutation === "insert" ? "insert" : "update";
   const count = step.statements ?? 1;
@@ -263,10 +265,13 @@ function batchStatementsForStep(
       concurrency,
       golden.slice(bindIndex, bindIndex + count),
       bindRows.slice(bindIndex, bindIndex + count),
+      dialect,
     );
   }
   const planned =
-    mutation === "insert" ? insertStatements(entity, rows) : updateStatements(entity, rows);
+    mutation === "insert"
+      ? insertStatements(entity, rows, dialect)
+      : updateStatements(entity, rows, dialect);
   return planned.map((statement: PlannedStatement) => ({
     sql: statement.sql,
     binds: statement.binds,
@@ -289,13 +294,17 @@ function batchStatementsForStep(
 function insertStatements(
   entity: EntityMetadata,
   rows: readonly ClassifiedRow[],
+  dialect: Dialect,
 ): readonly PlannedStatement[] {
   const versionColumn = entity.versionAttribute()?.column;
   const domain = orderedColumns(entity).filter(
     (column) => column !== versionColumn && rows.some((row) => row.columns.has(column)),
   );
   const present = versionColumn === undefined ? domain : [...domain, versionColumn];
-  const target: BatchTarget = { ...batchTargetFor(entity), columns: present.map(quoteIdentifier) };
+  const target: BatchTarget = {
+    ...batchTargetFor(entity, dialect),
+    columns: present.map((column) => dialect.quoteIdentifier(column)),
+  };
   const flat = rows.flatMap((row) => [
     ...domain.map((column) => row.columns.get(column)),
     ...(versionColumn === undefined ? [] : [1]),
@@ -314,12 +323,13 @@ function insertStatements(
 function updateStatements(
   entity: EntityMetadata,
   rows: readonly ClassifiedRow[],
+  dialect: Dialect,
 ): readonly PlannedStatement[] {
   const setColumns = orderedColumns(entity).filter((column) =>
     rows.some((row) => row.set.has(column)),
   );
-  const setColumn = setColumns.map(quoteIdentifier).join(", ");
-  const target = batchTargetFor(entity);
+  const setColumn = setColumns.map((column) => dialect.quoteIdentifier(column)).join(", ");
+  const target = batchTargetFor(entity, dialect);
   const setValues = rows.map((row) => setColumns.map((column) => row.set.get(column)));
   const uniform = setValues.every((values) => tuplesEqual(values, setValues[0] ?? []));
   if (uniform) {
@@ -361,8 +371,9 @@ function versionedUpdateStatements(
   concurrency: string | undefined,
   golden: readonly string[],
   goldenBinds: readonly (readonly unknown[])[],
+  dialect: Dialect,
 ): readonly { sql: string; binds: readonly unknown[] }[] {
-  const target = versionedTargetFor(entity);
+  const target = versionedTargetFor(entity, dialect);
   const gated = concurrency === "optimistic";
   return rows.map((row, offset) => {
     if (row.observedVersion === undefined) {
@@ -371,7 +382,7 @@ function versionedUpdateStatements(
       );
     }
     const setColumns = orderedColumns(entity).filter((column) => row.set.has(column));
-    const quoted = setColumns.map(quoteIdentifier);
+    const quoted = setColumns.map((column) => dialect.quoteIdentifier(column));
     const sql = gated ? versionedUpdate(target, quoted) : versionAdvancingUpdate(target, quoted);
     const setValues = setColumns.map((column) => row.set.get(column));
     const newVersion = row.observedVersion + 1;
@@ -391,7 +402,7 @@ function versionedUpdateStatements(
 }
 
 /** Resolve a versioned entity's {@link VersionedTarget} (table, pk, version column). */
-function versionedTargetFor(entity: EntityMetadata): VersionedTarget {
+function versionedTargetFor(entity: EntityMetadata, dialect: Dialect): VersionedTarget {
   const pk = entity.primaryKey()[0];
   if (pk === undefined) {
     throw new Error(`entity '${entity.name}' has no primary key for a versioned update`);
@@ -401,15 +412,21 @@ function versionedTargetFor(entity: EntityMetadata): VersionedTarget {
     throw new Error(`entity '${entity.name}' has no optimistic-locking version column`);
   }
   return {
-    table: quoteIdentifier(entity.table),
-    pkColumn: quoteIdentifier(pk.column),
-    versionColumn: quoteIdentifier(version.column),
+    table: dialect.quoteIdentifier(entity.table),
+    pkColumn: dialect.quoteIdentifier(pk.column),
+    versionColumn: dialect.quoteIdentifier(version.column),
   };
 }
 
-/** The ordered `goldenSql.postgres` statements a write-sequence case declares. */
-function goldenStatements(loaded: LoadedCase): readonly string[] {
-  const golden = (loaded.raw.goldenSql as { postgres?: string | string[] } | undefined)?.postgres;
+/**
+ * The ordered golden statements a write-sequence case declares for the compiling
+ * dialect (`goldenSql[dialect.id]`), so a MariaDB compile cross-checks against
+ * `goldenSql.mariadb` and Postgres against `goldenSql.postgres`.
+ */
+function goldenStatements(loaded: LoadedCase, dialect: Dialect): readonly string[] {
+  const golden = (loaded.raw.goldenSql as Record<string, string | string[]> | undefined)?.[
+    dialect.id
+  ];
   if (golden === undefined) {
     return [];
   }
@@ -417,16 +434,20 @@ function goldenStatements(loaded: LoadedCase): readonly string[] {
 }
 
 /** Resolve an entity's physical {@link BatchTarget} (table, quoted columns, pk). */
-function batchTargetFor(entity: EntityMetadata): BatchTarget {
+function batchTargetFor(entity: EntityMetadata, dialect: Dialect): BatchTarget {
   const columns = columnOrder({
     table: entity.table,
     attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
-  }).map(quoteIdentifier);
+  }).map((column) => dialect.quoteIdentifier(column));
   const pk = entity.primaryKey()[0];
   if (pk === undefined) {
     throw new Error(`entity '${entity.name}' has no primary key for a batched write`);
   }
-  return { table: quoteIdentifier(entity.table), columns, pkColumn: quoteIdentifier(pk.column) };
+  return {
+    table: dialect.quoteIdentifier(entity.table),
+    columns,
+    pkColumn: dialect.quoteIdentifier(pk.column),
+  };
 }
 
 /**
@@ -436,11 +457,11 @@ function batchTargetFor(entity: EntityMetadata): BatchTarget {
  * from ONE resolver (no drift). `fromColumn` (`in_z`) is the derived optimistic gate
  * an OPTIMISTIC-mode close binds the observed value on (M10).
  */
-export function writeTargetFor(entity: EntityMetadata): WriteTarget {
+export function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteTarget {
   const columns = columnOrder({
     table: entity.table,
     attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
-  }).map(quoteIdentifier);
+  }).map((column) => dialect.quoteIdentifier(column));
   const pk = entity.primaryKey()[0];
   if (pk === undefined) {
     throw new Error(`entity '${entity.name}' has no primary key for a write sequence`);
@@ -450,14 +471,14 @@ export function writeTargetFor(entity: EntityMetadata): WriteTarget {
   // (only `insert` is legal there).
   const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
   return {
-    table: quoteIdentifier(entity.table),
+    table: dialect.quoteIdentifier(entity.table),
     columns,
-    pkColumn: quoteIdentifier(pk.column),
+    pkColumn: dialect.quoteIdentifier(pk.column),
     ...(processing === undefined
       ? {}
       : {
-          toColumn: quoteIdentifier(processing.toColumn),
-          fromColumn: quoteIdentifier(processing.fromColumn),
+          toColumn: dialect.quoteIdentifier(processing.toColumn),
+          fromColumn: dialect.quoteIdentifier(processing.fromColumn),
         }),
   };
 }

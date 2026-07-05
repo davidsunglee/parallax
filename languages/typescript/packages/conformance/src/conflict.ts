@@ -26,7 +26,7 @@
  * statement run VERBATIM (it models a concurrent writer, not our runtime's output).
  */
 import { auditWriteStatements } from "@parallax/bitemporal";
-import { quoteIdentifier } from "@parallax/dialect";
+import type { Dialect } from "@parallax/dialect";
 import { type VersionedTarget, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
 import { bindsEqual } from "./compare.js";
@@ -62,10 +62,8 @@ export function isConflict(loaded: LoadedCase): boolean {
   return loaded.shape === "conflict";
 }
 
-/** A raw single-form conflict case's golden. */
-interface RawSingleGolden {
-  readonly postgres?: string;
-}
+/** A raw single-form conflict case's golden, keyed per dialect id. */
+type RawSingleGolden = Record<string, string | undefined>;
 
 /** A raw retry attempt (its own golden UPDATE + binds + expected count + ① write). */
 interface RawAttempt {
@@ -88,12 +86,12 @@ interface RawAttempt {
  * then cross-checked against the authored golden + binds — a genuine independent
  * check, failing loudly if ① and the golden disagree.
  */
-export function buildConflictPlan(loaded: LoadedCase): ConflictPlan {
+export function buildConflictPlan(loaded: LoadedCase, dialect: Dialect): ConflictPlan {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const entity = conflictEntity(metamodel);
-  const deriveStatement = conflictSqlDeriver(entity, loaded);
+  const deriveStatement = conflictSqlDeriver(entity, loaded, dialect);
 
-  const attempts = rawAttempts(loaded).map((attempt) => {
+  const attempts = rawAttempts(loaded, dialect).map((attempt) => {
     const { sql, binds } = deriveStatement(attempt);
     if (sql !== attempt.golden || !bindsEqual(binds, attempt.binds)) {
       throw new Error(
@@ -139,12 +137,13 @@ export function buildConflictPlan(loaded: LoadedCase): ConflictPlan {
 function conflictSqlDeriver(
   entity: EntityMetadata,
   loaded: LoadedCase,
+  dialect: Dialect,
 ): (attempt: NormalizedAttempt) => { sql: string; binds: readonly unknown[] } {
   if (entity.versionAttribute() !== undefined) {
-    const target = versionedTargetFor(entity);
-    return (attempt) => versionedConflictStatement(entity, target, attempt);
+    const target = versionedTargetFor(entity, dialect);
+    return (attempt) => versionedConflictStatement(entity, target, attempt, dialect);
   }
-  const target = writeTargetFor(entity);
+  const target = writeTargetFor(entity, dialect);
   const gated = loaded.uow?.concurrency === "optimistic";
   const [close] = auditWriteStatements("terminate", target, { gated });
   const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
@@ -210,6 +209,7 @@ function versionedConflictStatement(
   entity: EntityMetadata,
   target: VersionedTarget,
   attempt: NormalizedAttempt,
+  dialect: Dialect,
 ): { sql: string; binds: readonly unknown[] } {
   const write = attempt.write;
   if (write === undefined) {
@@ -224,7 +224,10 @@ function versionedConflictStatement(
     );
   }
   const setColumns = orderedColumns(entity).filter((column) => set.has(column));
-  const sql = versionedUpdate(target, setColumns.map(quoteIdentifier));
+  const sql = versionedUpdate(
+    target,
+    setColumns.map((column) => dialect.quoteIdentifier(column)),
+  );
   const setValues = setColumns.map((column) => set.get(column));
   const binds = [...setValues, observedVersion + 1, pk, observedVersion];
   return { sql, binds };
@@ -245,12 +248,12 @@ interface NormalizedAttempt {
 }
 
 /** Normalize the case's attempt(s) into a common shape (single or retry form). */
-function rawAttempts(loaded: LoadedCase): readonly NormalizedAttempt[] {
+function rawAttempts(loaded: LoadedCase, dialect: Dialect): readonly NormalizedAttempt[] {
   const attempts = loaded.raw.attempts as readonly RawAttempt[] | undefined;
   if (attempts && attempts.length > 0) {
     return attempts.map((attempt, index) => ({
       casePointer: `/attempts/${index}`,
-      golden: requirePostgres(attempt.goldenSql, `/attempts/${index}`),
+      golden: requireGolden(attempt.goldenSql, `/attempts/${index}`, dialect),
       binds: (attempt.binds ?? []) as readonly unknown[],
       expectedAffectedRows: requireCount(attempt.expectedAffectedRows, `/attempts/${index}`),
       ...(attempt.write === undefined ? {} : { write: attempt.write }),
@@ -263,8 +266,12 @@ function rawAttempts(loaded: LoadedCase): readonly NormalizedAttempt[] {
   const observedInZ = loaded.raw.observedInZ as string | undefined;
   return [
     {
-      casePointer: "/goldenSql/postgres",
-      golden: requirePostgres(loaded.raw.goldenSql as RawSingleGolden | undefined, "/goldenSql"),
+      casePointer: `/goldenSql/${dialect.id}`,
+      golden: requireGolden(
+        loaded.raw.goldenSql as RawSingleGolden | undefined,
+        "/goldenSql",
+        dialect,
+      ),
       binds: (loaded.raw.binds as readonly unknown[] | undefined) ?? [],
       expectedAffectedRows: requireCount(
         loaded.raw.expectedAffectedRows as number | undefined,
@@ -321,7 +328,7 @@ function conflictEntity(metamodel: Metamodel): EntityMetadata {
 }
 
 /** Resolve the entity's {@link VersionedTarget} (table, pk, version column). */
-function versionedTargetFor(entity: EntityMetadata): VersionedTarget {
+function versionedTargetFor(entity: EntityMetadata, dialect: Dialect): VersionedTarget {
   const pk = entity.primaryKey()[0];
   if (pk === undefined) {
     throw new Error(`entity '${entity.name}' has no primary key for a versioned update`);
@@ -331,17 +338,21 @@ function versionedTargetFor(entity: EntityMetadata): VersionedTarget {
     throw new Error(`entity '${entity.name}' has no optimistic-locking version column`);
   }
   return {
-    table: quoteIdentifier(entity.table),
-    pkColumn: quoteIdentifier(pk.column),
-    versionColumn: quoteIdentifier(version.column),
+    table: dialect.quoteIdentifier(entity.table),
+    pkColumn: dialect.quoteIdentifier(pk.column),
+    versionColumn: dialect.quoteIdentifier(version.column),
   };
 }
 
-/** Require the Postgres golden for a conflict statement, or fail with the pointer. */
-function requirePostgres(golden: RawSingleGolden | undefined, pointer: string): string {
-  const sql = golden?.postgres;
+/** Require the compiling dialect's golden for a conflict statement, or fail with the pointer. */
+function requireGolden(
+  golden: RawSingleGolden | undefined,
+  pointer: string,
+  dialect: Dialect,
+): string {
+  const sql = golden?.[dialect.id];
   if (sql === undefined) {
-    throw new Error(`conflict case is missing goldenSql.postgres at ${pointer}`);
+    throw new Error(`conflict case is missing goldenSql.${dialect.id} at ${pointer}`);
   }
   return sql;
 }
