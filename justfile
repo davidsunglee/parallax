@@ -24,7 +24,7 @@ default:
 # ===========================================================================
 
 # Full merge gate: repo lint + core gates + primary TS lanes + the harness suite (Docker).
-verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-lint ts-package-check ts-db-fast ts-db-adapter-smoke ts-db-provider-contract ts-conformance-compile ts-m12-postgres-full ts-api-conformance oracle-test
+verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-db oracle-test
 
 # Every static check that needs no database: harness ruff, markdown, core schema/SQL.
 lint: oracle-lint lint-md core-schemas
@@ -109,7 +109,7 @@ ts-conformance-coverage:
 ts-package-check:
     pnpm run ts:package-check
 
-# --- TypeScript database testing: fast Docker-free ---------------------------
+# --- TypeScript database testing --------------------------------------------
 
 # Docker-free DB contracts: dialect table, provider selection parsing, matrix profile declarations.
 ts-db-fast:
@@ -121,48 +121,15 @@ ts-conformance-compile:
     pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/conformance
 
-# --- TypeScript database testing: adapter smoke ------------------------------
-
-# Docker-backed adapter smoke over the shipped Postgres and MariaDB adapters.
-ts-db-adapter-smoke:
-    pnpm run ts:typecheck
+# Primary Docker-backed DB gate: shared adapter/provider contracts, Postgres M12, and Postgres API conformance.
+ts-db: ts-db-fast
     pnpm exec vitest run --root languages/typescript packages/typescript/test/db-adapter-smoke.test.ts
-
-# --- TypeScript database testing: provider contract --------------------------
-
-# Docker-backed provider contract over Postgres and MariaDB composition-root providers.
-ts-db-provider-contract:
-    pnpm run ts:typecheck
     PARALLAX_DATABASES=postgres,mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/db-provider-contract.test.ts
-
-# --- TypeScript database testing: M12 full/partial matrix --------------------
-
-# Docker-backed M12 full profile: slice-mvp-1 harness-lane cases over postgres:17.
-ts-m12-postgres-full:
-    pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/typescript/test/slice-run.test.ts
-
-# Back-compat alias for the canonical Postgres M12 full profile.
-ts-conformance-run: ts-m12-postgres-full
-
-# Docker-backed M12 partial profile: declared mariadb-curated-25 over mariadb:11.4.
-ts-m12-mariadb-curated:
-    pnpm run ts:typecheck
-    pnpm exec vitest run --root languages/typescript packages/typescript/test/mariadb-run.test.ts
-
-# Back-compat alias for the declared MariaDB M12 partial profile.
-ts-conformance-run-mariadb: ts-m12-mariadb-curated
-
-# --- TypeScript database testing: API conformance ----------------------------
-
-# Docker-backed API Conformance Suite + Usage Guide drift check over postgres:17.
-ts-api-conformance:
-    pnpm run ts:typecheck
     node languages/typescript/scripts/render-guide.mjs --check
     pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
 
-# Docker-backed API Conformance Suite over mariadb:11.4 (reads and developer writes
-# run through the MariaDB dialect/adapter seam selected by PARALLAX_DATABASES).
-ts-api-conformance-mariadb:
-    pnpm run ts:typecheck
+# Exhaustive Docker-backed DB sweep: primary gate plus MariaDB API and curated M12 profile.
+ts-db-all: ts-db
     PARALLAX_DATABASES=mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
+    pnpm exec vitest run --root languages/typescript packages/typescript/test/mariadb-run.test.ts

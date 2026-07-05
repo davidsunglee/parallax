@@ -826,11 +826,11 @@ the official adapter grade for `slice-mvp-1`. TypeScript nevertheless ships two
 database implementations behind the M11 seam:
 
 - **Postgres full M12 profile** (`postgres-full-slice-mvp-1`): the 108
-  harness-lane `slice-mvp-1` cases over `postgres:17`, run by
-  `just ts-m12-postgres-full` (alias: `just ts-conformance-run`).
+  harness-lane `slice-mvp-1` cases over `postgres:17`, included in
+  `just ts-db`.
 - **MariaDB curated M12 profile** (`mariadb-curated-25`): a first-class partial
-  profile over `mariadb:11.4`, run by `just ts-m12-mariadb-curated` (alias:
-  `just ts-conformance-run-mariadb`). It preserves the 25-case set: 14
+  profile over `mariadb:11.4`, included in `just ts-db-all`. It preserves the
+  25-case set: 14
   harness-lane slice cases with `goldenSql.mariadb` plus 11 marquee MariaDB
   dialect/error-classification proofs (`1001`, `1002`, `1005`, `0720`-`0727`).
 
@@ -863,12 +863,12 @@ TypeScript implements the portable database-provider test contract in
   subsets as named profiles, and the MariaDB curated partial profile. The
   Docker-free `m12-profiles.test.ts` guards profile membership and explicit
   MariaDB exclusions.
-- **Commands:** `just ts-db-fast`, `just ts-db-adapter-smoke`,
-  `just ts-db-provider-contract`, `just ts-api-conformance`,
-  `just ts-api-conformance-mariadb`, `just ts-m12-postgres-full`, and
-  `just ts-m12-mariadb-curated` are the concrete lanes. Docker-backed suites use
-  a `docker info` gate and report skipped database checks when Docker is
-  unavailable.
+- **Commands:** `just ts-db-fast` runs the Docker-free dialect/provider/profile
+  checks; `just ts-db` is the primary Docker-backed DB gate, covering adapter
+  smoke, the provider contract, the Postgres full M12 profile, and default
+  Postgres API conformance; `just ts-db-all` adds the MariaDB API Conformance
+  Suite and curated M12 profile. Docker-backed suites use a `docker info` gate
+  and report skipped database checks when Docker is unavailable.
 
 ## 6. API Conformance Suite & Usage Guide
 
@@ -878,7 +878,7 @@ TypeScript implements the portable database-provider test contract in
 [§5](#5-test-double-integration-m12-dq15), TypeScript proves that the idiomatic
 developer surface of [§2](#2-api-surface-non-normative--dq3) reproduces the
 claimed slice against a real Postgres through the shipped `@parallax/db-postgres`
-adapter by default, with a MariaDB fan-out lane (`PARALLAX_DATABASES=mariadb`)
+adapter by default (`just ts-db`), with a MariaDB fan-out lane (`just ts-db-all`)
 that runs the same developer reads and writes through `@parallax/db-mariadb`.
 It also renders a Usage Guide from that same suite source. Both are the
 worked example of the language-neutral
@@ -889,9 +889,9 @@ grader.
 ### 6.1 Suite framework and location
 
 The API Conformance Suite is a **vitest** suite at
-`packages/typescript/test/api-conformance/`, run by the `just ts-api-conformance`
-lane against a Testcontainers `postgres:17` container — the same image
-[§5.3](#53-provisioning-seam) pins. Each family
+`packages/typescript/test/api-conformance/`, run by `just ts-db` against a
+Testcontainers `postgres:17` container and by `just ts-db-all` for the MariaDB
+fan-out — the same images [§5.3](#53-provisioning-seam) pins. Each family
 (`reads` / `deep-fetch` / `temporal` / `transactions` / `locking`) is a
 `*.api-conformance.test.ts` file that provisions the case's model, writes the
 **idiomatic `px.*` / `px.transaction` developer code** an application would write,
