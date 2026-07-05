@@ -46,6 +46,11 @@ class StubDatabase implements ParallaxDatabase {
     this.queries.push({ sql, binds });
     return Promise.resolve(this.rows);
   }
+
+  executeWrite(sql: string, binds: readonly unknown[]): Promise<number> {
+    this.queries.push({ sql, binds });
+    return Promise.resolve(0);
+  }
 }
 
 /** The scalars descriptor (`ScalarThing`, the only in-corpus `bytes`-bearing model). */

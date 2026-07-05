@@ -617,8 +617,42 @@ async function readTableState(
     // Quote through the injected M11 seam — double quotes on Postgres, backticks on
     // MariaDB — so the read-back never diverges from the dialect the DDL created.
     const quoted = columns.map((c) => dialect.quoteIdentifier(c)).join(", ");
+    const typeByColumn = new Map(entity?.attributes().map((attr) => [attr.column, attr.type]));
     const rows = await db.execute(`select ${quoted} from ${dialect.quoteIdentifier(table)}`, []);
-    out[table] = rows.map((row) => renderManaged(row));
+    out[table] = rows.map((row) => renderTableStateRow(row, typeByColumn));
   }
   return out;
+}
+
+/** Render a physical table-state row to wire, with M0 type context for booleans. */
+function renderTableStateRow(
+  row: ParallaxRow,
+  typeByColumn: ReadonlyMap<string, string>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[key] = renderTableStateScalar(value, typeByColumn.get(key));
+  }
+  return out;
+}
+
+/** Render one physical table-state scalar; MariaDB booleans read as tinyint(1). */
+function renderTableStateScalar(value: unknown, type: string | undefined): unknown {
+  if (type === "boolean") {
+    if (typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "number") {
+      return value !== 0;
+    }
+    if (typeof value === "string") {
+      if (value === "1" || value.toLowerCase() === "true") {
+        return true;
+      }
+      if (value === "0" || value.toLowerCase() === "false") {
+        return false;
+      }
+    }
+  }
+  return renderScalar(value);
 }

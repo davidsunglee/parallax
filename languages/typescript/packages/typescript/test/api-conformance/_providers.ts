@@ -11,19 +11,10 @@
  * Docker gating lives here too ({@link HAS_DOCKER}): the Testcontainers lane is
  * skipped — reported, never silently passed — when no Docker daemon is reachable.
  *
- * ## Why the developer WRITE surface is guarded off MariaDB
- *
- * The developer write surface (`px.create` / `px.update` / `px.terminate`, spec
- * §4.1) is Postgres-only TODAY: the M7 / M8 / M10 write generators the runtime
- * lowers to (`runtime/writes.ts`) are not yet behind the M11 dialect seam. They emit
- * ANSI double-quote identifier quoting (MariaDB uses backticks and does not enable
- * `ANSI_QUOTES`) and a trailing `returning 1` (MariaDB `UPDATE` has no `RETURNING`,
- * and the rows-only `ParallaxDatabase` port cannot surface an `UPDATE`'s affected
- * count on MariaDB any other way). Making writes dialect-aware needs a port/dialect
- * affected-count seam — a separate phase. So the write-DRIVING suites fan out only
- * over {@link writeProviders} (Postgres here); the MariaDB WRITE path is already
- * proven end-to-end by `test/mariadb-run.test.ts` against `goldenSql.mariadb`. READ
- * cases (which go through the dialect-aware M3 compiler) run on both databases.
+ * Developer writes run through the same selected provider set as reads. The runtime
+ * writer receives the injected M11 dialect for identifier quoting and reports
+ * affected rows through `ParallaxDatabase.executeWrite`, so Postgres and MariaDB
+ * both exercise the developer write surface when selected.
  */
 import { execFileSync } from "node:child_process";
 import { MARIADB_DIALECT, POSTGRES_DIALECT } from "@parallax/dialect";
@@ -93,19 +84,18 @@ export function selectedProviders(): readonly SelectedProvider[] {
 }
 
 /**
- * Whether the developer WRITE surface runs against `provider` — Postgres only,
- * today (see the module note). A write-driving suite case guards on this; a read
- * case ignores it (reads are dialect-aware and run on both databases).
+ * Whether the developer WRITE surface runs against `provider`. All registered
+ * providers support it; this helper remains so mixed read/write suites can keep a
+ * single guard point for future provider-specific gaps.
  */
 export function supportsDeveloperWrites(provider: SelectedProvider): boolean {
-  return provider.dialect !== MARIADB_DIALECT;
+  void provider;
+  return true;
 }
 
 /**
  * The selected providers a WRITE-only suite (transactions / boundary) fans out over
- * — {@link selectedProviders} restricted to those that support developer writes. On
- * a MariaDB-only run this is empty, so the suite registers no group (the developer
- * write surface is Postgres-only today; see the module note).
+ * — {@link selectedProviders} restricted to those that support developer writes.
  */
 export function writeProviders(): readonly SelectedProvider[] {
   return selectedProviders().filter(supportsDeveloperWrites);

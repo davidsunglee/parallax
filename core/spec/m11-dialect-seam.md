@@ -19,7 +19,8 @@ rather than aspirational:
 1. **A pure dialect / portability layer** — the `Dialect` authority detailed in
    the next section: SQL-fragment production (SELECT shape, identifier quoting,
    row-limit clause, read-lock application, temp-table DDL), the neutral-type →
-   column-type mapping, and the **type-parse functions** that turn a driver's raw
+   column-type mapping, the **typed-bind normalization rules** that prepare
+   managed runtime values for the adapter boundary, and the **type-parse functions** that turn a driver's raw
    column value into a core **managed value** (`int8` → the language's big-integer
    type, `numeric` → its exact-decimal type, `timestamp` → a UTC instant at core
    microsecond precision, `bytes` → a byte array). This layer performs **no I/O**:
@@ -29,7 +30,11 @@ rather than aspirational:
 2. **An abstract runtime database port** — the execution interface the layers
    above the seam (transactions `M8`, and the composition root) call to run
    compiled SQL and demarcate transactions. The port names an
-   `execute(sql, binds) → rows` / `transaction(body)` contract and nothing more.
+   `execute(sql, binds) → rows` /
+   `executeWrite(sql, binds) → affected-row count` / `transaction(body)`
+   contract and nothing more. `execute` is row/result oriented; DML that needs
+   write outcome classification uses `executeWrite` and MUST NOT append
+   dialect-specific row-returning clauses merely to infer an affected count.
    It **depends on nothing application-specific** (beyond the neutral `M0` types
    its contract names) — no driver, no concrete database, no harness — so any
    layer may hold the port without acquiring a database dependency. The port
@@ -37,7 +42,8 @@ rather than aspirational:
    rows whose scalars are already **managed values** (produced by the dialect
    layer's parse functions), never raw driver representations. Nothing above the
    seam ever sees a driver's `Date`, a binary-float `numeric`, or a raw byte
-   buffer.
+   buffer. `executeWrite` returns the concrete driver's native affected-row count
+   and no rows.
 3. **N concrete adapter modules — one per database type.** Each adapter
    implements the port over exactly one driver. An adapter depends **only on the
    port and the pure dialect layer**: it owns driver setup and registration (which
@@ -118,6 +124,7 @@ choices at each point; both are normative for their dialect (M3). The catalog
 | row-limit clause | `limit ?` | `limit ?` |
 | **read-lock application** (M8) | object find: `for share of t0`; projection/aggregation: omitted | object find: **`lock in share mode`** (no `for share`; MDEV-17514); projection/aggregation: omitted |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
+| typed bind normalization | managed values render to canonical M0 wire values | timestamp binds remain typed `Instant`/`infinity` so the adapter can render `datetime(6)`/max-sentinel; other values render to canonical M0 wire values |
 | **infinity representation** (M7) | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
 | error-code classification | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062` duplicate, `1213` deadlock, `1205` lock timeout |
 
@@ -176,6 +183,15 @@ both forms yield the identical observable order (case `0323`).
   types MUST reject or explicitly normalize non-zero sub-microsecond values
   before binding; dialects with lower-resolution storage cannot satisfy the core
   `timestamp` type without an additional adapter or degraded optional profile.
+- **Typed bind normalization.** Above-seam runtime code supplies the dialect with
+  the target M0 neutral type when binding a managed value. The dialect MUST return
+  the value shape expected by its concrete adapter without changing the emitted
+  SQL. Postgres renders managed scalars to canonical M0 wire values because the
+  driver can coerce those directly; MariaDB keeps `timestamp` values as typed
+  instants (and the neutral `infinity` sentinel) so its adapter can bind
+  `datetime(6)` and the max-sentinel without guessing whether an arbitrary string
+  is text or time. Non-timestamp values render to canonical M0 wire values unless
+  a future dialect documents a different typed carrier.
 - **SELECT shape.** The canonical SELECT projects explicit, table-aliased columns
   (`t0.id, t0.name`) from a single aliased table (`from orders t0`). The alias
   scheme is `t0, t1, …` (see M3 normalization). No `SELECT *`.

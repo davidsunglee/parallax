@@ -503,7 +503,13 @@ export class ParallaxTransaction {
     /** The M8 correctness strategy for this unit of work (default `locking`). */
     readonly concurrency: Concurrency = "locking",
   ) {
-    this.writer = new TransactionWriter(database, processingInstant, concurrency, this.observed);
+    this.writer = new TransactionWriter(
+      database,
+      this.dialect,
+      processingInstant,
+      concurrency,
+      this.observed,
+    );
   }
 
   /**

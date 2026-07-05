@@ -20,6 +20,7 @@
 import { execFileSync } from "node:child_process";
 import { ParallaxDecimal, Temporal } from "@parallax/core";
 import { PostgresDatabase } from "@parallax/db-postgres";
+import { postgresDialect } from "@parallax/dialect";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 
@@ -114,5 +115,24 @@ group.skipIf(!HAS_DOCKER)("@parallax/db-postgres adapter (Testcontainers postgre
       return (rows[0] as Record<string, unknown>).big;
     });
     expect(seen).toBe(9007199254740993n);
+  });
+
+  it("round-trips a `bytes` value written through the dialect bind seam", async () => {
+    // The runtime write path binds a `bytes` value via `postgresDialect.bindValue`,
+    // then hands it to `executeWrite`. The `Uint8Array` must reach porsager as its
+    // raw carrier (inferred `bytea`), NOT `toWire`'s hex TEXT — a hex string would be
+    // coerced through the `bytea` ESCAPE format and store the ASCII characters, so
+    // the round-trip guards the finding-#1 fix end-to-end against a real Postgres.
+    await db.execute("drop table if exists bytes_rt", []);
+    await db.execute("create table bytes_rt (id int primary key, payload bytea)", []);
+    const payload = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+    await db.executeWrite("insert into bytes_rt (id, payload) values (?, ?)", [
+      1,
+      postgresDialect.bindValue("bytes", payload),
+    ]);
+
+    const [row] = await db.execute("select payload from bytes_rt where id = ?", [1]);
+    expect((row as { payload: unknown }).payload).toBeInstanceOf(Uint8Array);
+    expect(Array.from((row as { payload: Uint8Array }).payload)).toEqual([0xde, 0xad, 0xbe, 0xef]);
   });
 });

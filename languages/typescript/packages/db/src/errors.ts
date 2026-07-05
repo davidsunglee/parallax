@@ -5,10 +5,10 @@
  * The port carries no dialect and no driver, but the unit-of-work retry loop above
  * it (in `@parallax/typescript`) needs a **portable, driver-neutral signal** for a
  * transient database failure so it can decide whether to re-execute the closure.
- * A concrete adapter (`@parallax/db-postgres`) classifies its driver's native code
- * through the dialect's SQLSTATE map (`@parallax/dialect` `classifyErrorCode`) and
- * surfaces the result as this error — so nothing above the seam ever inspects a
- * driver-specific `.code`.
+ * A concrete adapter (`@parallax/db-postgres`, `@parallax/db-mariadb`) classifies
+ * its driver's native code through the dialect's error map (`@parallax/dialect`
+ * `classifyErrorCode`) and surfaces the result as this error — so nothing above
+ * the seam ever inspects a driver-specific `.code` / `.errno`.
  *
  * This is the first error-kind surface on the port; before the retry contract the
  * port had none.

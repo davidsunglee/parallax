@@ -1,8 +1,8 @@
 /**
  * API Conformance Suite — **transactions + audit writes** family (Phase 10c): the
  * write surface (`px.transaction(async tx => tx.<entity>.create / update /
- * terminate)`, spec §4.1) written as a developer would, run against `postgres:17`
- * through the SHIPPED `@parallax/db-postgres` adapter, asserting the corpus's
+ * terminate)`, spec §4.1) written as a developer would, run against each selected
+ * provider through its shipped `@parallax/db-*` adapter, asserting the corpus's
  * `expectedTableState` (write sequences) or `expectRows` (read-your-own-writes).
  *
  * Writes are NOT read-shaped, so the `assertSameOperation` no-drift guard does not
@@ -55,9 +55,7 @@ it("the transactions suite covers exactly the TRANSACTIONS family", () => {
 });
 
 // Every transactions case drives the developer WRITE surface (create/update/terminate),
-// which is Postgres-only today (see `_providers.ts` — the M7/M8/M10 write generators are
-// not yet behind the M11 dialect seam), so the family runs only on write-capable providers
-// (MariaDB is filtered out). The MariaDB WRITE path is proven by `mariadb-run.test.ts`.
+// so the family runs on every selected write-capable provider.
 group.skipIf(!HAS_DOCKER).each(writeProviders())("transactions suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
   let provider: ApiConformanceProvider;

@@ -6,9 +6,9 @@
  * (`0710`-`0718`) declare, without a real database: each `px.transaction` attempt
  * opens a fresh `transaction(body)` on the stub, and the stub is configured to
  * inject a per-attempt fault (a `ParallaxTransientError`) or a per-attempt
- * affected-row count (to steer the optimistic gate to conflict / success). The
- * fault-injection-at-the-port shape mirrors the decorator the real API Conformance
- * Suite wraps around the shipped adapter.
+ * affected-row count (to steer the optimistic gate to conflict / success) through
+ * `executeWrite`. The fault-injection-at-the-port shape mirrors the decorator the
+ * real API Conformance Suite wraps around the shipped adapter.
  *
  *  - a transient (`ParallaxTransientError.retriable`) is auto-retried by default,
  *    with or without `retryOptimisticConflicts` — the flag has no bearing on it;
@@ -54,7 +54,7 @@ interface AttemptPlan {
  * A controlled port stub: `transaction(body)` opens a fresh bound attempt (counting
  * attempts), and each attempt applies its own `AttemptPlan` (a per-attempt injected
  * fault + affected-row count). A SELECT always returns the account row; a write
- * (`returning 1`) throws the attempt's fault once, else reports its affected count.
+ * throws the attempt's fault once, else reports its affected count.
  */
 class ControlledDatabase implements ParallaxDatabase {
   attempts = 0;
@@ -63,6 +63,10 @@ class ControlledDatabase implements ParallaxDatabase {
 
   execute(_sql: string, _binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
     return Promise.resolve([ACCOUNT_ROW]);
+  }
+
+  executeWrite(_sql: string, _binds: readonly unknown[]): Promise<number> {
+    return Promise.resolve(1);
   }
 
   transaction<T>(body: (tx: ParallaxDatabase) => Promise<T>): Promise<T> {
@@ -78,15 +82,16 @@ class BoundAttempt implements ParallaxDatabase {
   constructor(private readonly plan: AttemptPlan) {}
 
   execute(sql: string, _binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
-    if (/returning 1$/.test(sql)) {
-      if (this.plan.fault && !this.threwFault) {
-        this.threwFault = true;
-        return Promise.reject(this.plan.fault);
-      }
-      const count = this.plan.affected ?? 1;
-      return Promise.resolve(Array.from({ length: count }, () => ({}) as ParallaxRow));
-    }
+    void sql;
     return Promise.resolve([ACCOUNT_ROW]);
+  }
+
+  executeWrite(_sql: string, _binds: readonly unknown[]): Promise<number> {
+    if (this.plan.fault && !this.threwFault) {
+      this.threwFault = true;
+      return Promise.reject(this.plan.fault);
+    }
+    return Promise.resolve(this.plan.affected ?? 1);
   }
 }
 

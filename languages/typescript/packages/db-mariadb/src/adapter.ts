@@ -4,8 +4,9 @@
  * sibling of `@parallax/db-postgres`.
  *
  * It implements the abstract `@parallax/db` port: `execute` runs a compiled
- * `?`-placeholder statement (MariaDB takes native `?`, so the dialect's
- * `toPositionalPlaceholders` is the identity), and every returned scalar is a
+ * `?`-placeholder row-returning statement (MariaDB takes native `?`, so the
+ * dialect's `toPositionalPlaceholders` is the identity), `executeWrite` reports a
+ * DML statement's native affected-row count, and every returned scalar is a
  * **managed** value (`bigint` / `ParallaxDecimal` / `Temporal.*` / `Uint8Array` /
  * string) normalized at the boundary (§3.2.1). It depends only on the **port**
  * (`@parallax/db`), the **pure dialect layer** (`@parallax/dialect`, its matching
@@ -147,7 +148,7 @@ function typeCast(field: TypeCastField, next: () => unknown): unknown {
  * is timezone-naive; every instant the suite binds is UTC, so the offset is dropped
  * after normalizing (µs precision preserved).
  */
-function instantToMariaDatetime(instant: Temporal.Instant): string {
+export function instantToMariaDatetime(instant: Temporal.Instant): string {
   return instant.toString({ smallestUnit: "microsecond" }).replace("T", " ").replace(/Z$/, "");
 }
 
@@ -240,6 +241,17 @@ function toRows(rows: unknown): readonly ParallaxRow[] {
   return (rows as RowDataPacket[]).map((row) => ({ ...(row as object) }) as ParallaxRow);
 }
 
+/**
+ * Start the runtime transaction at READ COMMITTED. MariaDB defaults to
+ * REPEATABLE READ, which would keep an optimistic retry's second read on the
+ * stale snapshot; the cross-dialect M8/M10 contract requires a re-read after a
+ * conflict to observe the peer commit, matching Postgres's default behavior.
+ */
+async function beginRuntimeTransaction(connection: PoolConnection): Promise<void> {
+  await connection.query("set transaction isolation level read committed");
+  await connection.beginTransaction();
+}
+
 /** Parse a `mysql://user:pass@host:port/db` connection URI into `mysql2` options. */
 function parseConnectionString(uri: string): PoolOptions {
   const url = new URL(uri);
@@ -313,6 +325,11 @@ export class MariaDbDatabase implements ParallaxDatabase {
     connectionString: string,
     options: MariaDbDatabaseOptions = {},
   ): MariaDbDatabase {
+    // `mysql2`'s default client flags include `CLIENT_FOUND_ROWS` (`getDefaultFlags`),
+    // so an UPDATE's `affectedRows` reports rows MATCHED, not rows CHANGED — the
+    // matched-row count `executeWrite` returns then agrees with Postgres's `count`
+    // (e.g. a no-op keyed update reports 1 on both). Do NOT pass `flags: '-FOUND_ROWS'`:
+    // that would silently diverge the two dialects' affected-row semantics.
     const pool = createPool({
       ...parseConnectionString(connectionString),
       connectionLimit: 4,
@@ -374,7 +391,7 @@ export class MariaDbDatabase implements ParallaxDatabase {
     }
   }
 
-  /** Run `body` inside a MariaDB transaction, committing on resolve, rolling back on throw. */
+  /** Run `body` inside a MariaDB READ COMMITTED transaction, committing on resolve. */
   async transaction<T>(body: (tx: ParallaxDatabase) => Promise<T>): Promise<T> {
     const connection = await this.db.getConnection();
     const tx: ParallaxDatabase = {
@@ -386,9 +403,17 @@ export class MariaDbDatabase implements ParallaxDatabase {
           throw classifyDriverError(error);
         }
       },
+      executeWrite: async (sql, binds) => {
+        try {
+          const [result] = await connection.query(sql, toMariaBinds(binds));
+          return (result as ResultSetHeader).affectedRows ?? 0;
+        } catch (error) {
+          throw classifyDriverError(error);
+        }
+      },
     };
     try {
-      await connection.beginTransaction();
+      await beginRuntimeTransaction(connection);
       const result = await body(tx);
       await connection.commit();
       return result;

@@ -130,8 +130,8 @@ ts-api-conformance:
     node languages/typescript/scripts/render-guide.mjs --check
     pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
 
-# Docker-backed API Conformance Suite over mariadb:11.4 (reads run on MariaDB; the
-# developer-write cases are guarded off it — see test/api-conformance/_providers.ts).
+# Docker-backed API Conformance Suite over mariadb:11.4 (reads and developer writes
+# run through the MariaDB dialect/adapter seam selected by PARALLAX_DATABASES).
 ts-api-conformance-mariadb:
     pnpm run ts:typecheck
     PARALLAX_DATABASES=mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance

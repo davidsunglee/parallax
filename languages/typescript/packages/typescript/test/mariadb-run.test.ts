@@ -267,6 +267,36 @@ group.skipIf(!HAS_DOCKER)("MariaDB run lane (Testcontainers mariadb:11.4)", () =
     );
   });
 
+  // --- bytes write round-trip (dialect bind seam) ---------------------------
+
+  group("bytes write round-trip (dialect bind seam)", () => {
+    it(
+      "stores a `bytes` value as raw bytes, not hex TEXT",
+      async () => {
+        // The runtime write path binds a `bytes` value via `mariadbDialect.bindValue`,
+        // then hands it to the shipped adapter's `executeWrite`. The `Uint8Array` must
+        // survive as raw bytes (the adapter wraps a `Buffer` for the mysql2 blob bind),
+        // NOT `toWire`'s hex TEXT — a hex string would be stored as its ASCII characters
+        // in the `LONGBLOB`. Guards the finding-#1 fix end-to-end against a real MariaDB.
+        const adapter = provider.database;
+        await adapter.pool.query("drop table if exists bytes_rt");
+        await adapter.pool.query("create table bytes_rt (id int primary key, payload longblob)");
+        const payload = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+        await adapter.executeWrite("insert into bytes_rt (id, payload) values (?, ?)", [
+          1,
+          mariadbDialect.bindValue("bytes", payload),
+        ]);
+
+        const [row] = await adapter.execute("select payload from bytes_rt where id = ?", [1]);
+        expect((row as { payload: unknown }).payload).toBeInstanceOf(Uint8Array);
+        expect(Array.from((row as { payload: Uint8Array }).payload)).toEqual([
+          0xde, 0xad, 0xbe, 0xef,
+        ]);
+      },
+      BOOT_TIMEOUT,
+    );
+  });
+
   // --- errno: unique violations (single connection) -------------------------
 
   group("errno — uniqueViolation", () => {
