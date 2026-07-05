@@ -23,8 +23,9 @@
  *    optimistic × temporal close): one emission per attempt's generated versioned
  *    `UPDATE` / gated milestone close, keyed by its case pointer.
  *
- * The Docker-gated run lane (`@parallax/typescript`'s `txn-run.test.ts`) proves
- * the SQL leaves the right rows / table state / affected-row counts.
+ * The Docker-gated Postgres full M12 profile (`@parallax/typescript`'s
+ * `slice-run.test.ts`) proves the SQL leaves the right rows / table state /
+ * affected-row counts.
  */
 import { describe, expect, it } from "vitest";
 import { isConflict } from "../src/conflict.js";

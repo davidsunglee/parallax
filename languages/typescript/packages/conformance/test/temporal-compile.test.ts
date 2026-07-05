@@ -6,9 +6,9 @@
  * as-of + `0335` defaulted root), and the
  * audit-only milestone-chaining writes (`insert` / `update` / `terminate`). Each
  * pins a precise canonical `goldenSql.postgres`, so this lane asserts the emitted
- * SQL + binds equal the golden BY TEXT, complementing the Docker-gated run lane
- * (`@parallax/typescript`'s `temporal-run.test.ts`) that proves the SQL returns
- * the right rows / table state.
+ * SQL + binds equal the golden BY TEXT, complementing the Docker-gated Postgres
+ * full M12 profile (`@parallax/typescript`'s `slice-run.test.ts`) that proves the
+ * SQL returns the right rows / table state.
  *
  * Split by golden shape:
  *  - a **single-statement read** (`05xx` reads, `08xx` reads, the temporal EXISTS

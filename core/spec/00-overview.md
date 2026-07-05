@@ -103,6 +103,11 @@ Concrete language implementations prove themselves through the
 small `describe` / `compile` / `run` / `benchmark` interface that accepts corpus
 files and emits JSON validated by
 [`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json).
+Database support is tested in three reusable layers — pure dialect contract,
+real-adapter smoke, and M12 provider/matrix profiles — recorded in
+[`database-provider-test-contract.md`](database-provider-test-contract.md). That
+document is placement guidance for implementation test suites; it does not
+change the case format or the conformance-adapter wire contract.
 
 > **Self-consistency proves correctness, not quality.** The harness can prove a
 > case is internally consistent and that its golden SQL returns the right rows.

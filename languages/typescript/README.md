@@ -26,11 +26,16 @@ M12, on the Postgres dialect, for the `read`, `writeSequence`, `scenario`, and
 
 Capabilities the core defines but this first slice does not yet claim —
 aggregation and projection, the M8 identity/query caches, value objects,
-inheritance, bounded business-window and bitemporal writes, MariaDB, M13
-benchmarks, and M14 coherence, among others — are documented as future
-TypeScript surface but are not claimed until their compatibility slice passes.
+inheritance, bounded business-window and bitemporal writes, M13 benchmarks, and
+M14 coherence, among others — are documented as future TypeScript surface but
+are not claimed until their compatibility slice passes.
 The full deferral list is in
 [`spec/00-overview.md`](spec/00-overview.md) §16.
+
+MariaDB is different: it is not part of the V1 `describe` claim, but TypeScript
+does ship it as the second concrete M11 dialect/adapter/provider. It is covered
+by Docker-free dialect tests, shared adapter/provider contract tests, a selectable
+API Conformance lane, and the declared `mariadb-curated-25` partial M12 profile.
 
 The adapter's machine-readable form is a `describe` envelope whose `capabilities`
 are byte-equal to the canonical slice, differing only in adapter identity. An
@@ -51,7 +56,8 @@ in the root README:
   through the shipped `@parallax/db-postgres` adapter against a real Postgres,
   reproducing the corpus results (contract:
   [`../../core/spec/api-conformance-contract.md`](../../core/spec/api-conformance-contract.md)).
-  The suite lives in `packages/typescript/test/api-conformance/`, and the
+  The suite lives in `packages/typescript/test/api-conformance/`, defaults to
+  Postgres, and can select MariaDB with `PARALLAX_DATABASES=mariadb`. The
   developer [Usage Guide](docs/guide/index.md) is rendered from that suite's
   source, so it can never drift from tested code.
 
@@ -131,18 +137,23 @@ full package map is in
 The workspace uses pnpm and is driven from the repository root through `just`:
 
 ```bash
-just ts-typecheck            # tsc -b across project references
-just ts-lint                 # Biome + the dependency-cruiser DAG gate
-just ts-test                 # vitest unit / adapter tests
-just ts-conformance-compile  # full-slice compile sweep + honesty gate (Docker-free)
-just ts-conformance-run      # the slice end-to-end over postgres:17 (Docker)
-just ts-api-conformance      # API Conformance Suite + Usage Guide drift check (Docker)
+just ts-typecheck              # tsc -b across project references
+just ts-lint                   # Biome + the dependency-cruiser DAG gate
+just ts-test                   # vitest unit / adapter tests
+just ts-db-fast                # Docker-free dialect, provider-selection, profile checks
+just ts-db-adapter-smoke       # shared adapter smoke over Postgres + MariaDB (Docker)
+just ts-db-provider-contract   # shared provider contract over Postgres + MariaDB (Docker)
+just ts-conformance-compile    # full-slice compile sweep + honesty gate (Docker-free)
+just ts-m12-postgres-full      # full M12 profile over postgres:17 (Docker)
+just ts-m12-mariadb-curated    # curated 25-case M12 profile over mariadb:11.4 (Docker)
+just ts-api-conformance        # API Conformance Suite + guide drift check over Postgres
+just ts-api-conformance-mariadb # API Conformance Suite over MariaDB
 ```
 
-`just verify` from the repository root runs the whole merge gate: both
-conformance lanes, the API Conformance Suite lane, the static checks (typecheck,
-Biome, dependency-cruiser, package-export health), and the Python suite. The
-Docker-backed lanes provision Postgres through Testcontainers.
+`just verify` from the repository root runs the primary merge gate: static checks,
+Docker-free conformance, shared DB adapter/provider contracts, the Postgres full
+M12 profile, the Postgres API Conformance Suite lane, and the Python suite. The
+MariaDB M12 and API lanes are available as explicit partial/profile checks.
 
 ## Learn More
 
