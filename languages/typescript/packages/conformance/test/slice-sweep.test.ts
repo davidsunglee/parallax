@@ -5,7 +5,7 @@
  * contract boundary (the runner's `runCompile`, the same path the CLI drives):
  *
  *  - **Full compile sweep.** `test.each` over every harness-lane `slice-mvp-1`
- *    tagged case (109): each compiles to an `ok` envelope, and for a `read`-shaped
+ *    tagged case (111): each compiles to an `ok` envelope, and for a `read`-shaped
  *    case (whose golden is a single string) the emitted SQL + binds equal the
  *    golden by construction. Write / scenario / conflict goldens are multi-string
  *    / per-step and graded structurally in the run lane; here they must compile
@@ -43,11 +43,12 @@ import {
  * The full `slice-mvp-1` tagged slice the HARNESS executes, in discovery order.
  * `api-conformance`-lane cases (boundary retry cases + the read-lock matrix reads)
  * are excluded: they have no harness-executable golden — their observable is proven
- * by the API Conformance Suite — so this sweep covers the 109 harness-lane cases
+ * by the API Conformance Suite — so this sweep covers the 111 harness-lane cases
  * (101 pre-Phase-4 cases + the harness-lane auto-retry case `0710` + the two
  * Phase-5 versioned set-based materialize scenarios `0614`/`0615` + the four
  * Phase-6 optimistic × temporal close cases `0730`-`0733` + the COR-12 behavioral
- * read-lock-blocks-writer case `0728`).
+ * read-lock cases `0728` (blocks-writer), `0729` (shared-compatible), and `0734`
+ * (projection-omits-lock-admits-writer)).
  */
 function taggedCases(): readonly { id: string; loaded: LoadedCase }[] {
   return discoverCasePaths()
@@ -67,11 +68,11 @@ function readGolden(loaded: LoadedCase): string | undefined {
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the harness-lane slice-mvp-1 slice (109 cases)", () => {
+  it("discovers the harness-lane slice-mvp-1 slice (111 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case. This is the
     // harness-executable subset (api-conformance-lane cases are filtered out).
-    expect(CASES.length).toBe(109);
+    expect(CASES.length).toBe(111);
   });
 
   it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
@@ -154,8 +155,8 @@ group("case-matrix report — the slice is green at a glance", () => {
     // The rendered report is the human-facing artifact; surface it on failure so
     // a regression names the exact residual case IDs.
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(109);
-    expect(report.counts.ok).toBe(109);
+    expect(report.total).toBe(111);
+    expect(report.counts.ok).toBe(111);
     expect(report.residuals).toEqual([]);
   });
 });

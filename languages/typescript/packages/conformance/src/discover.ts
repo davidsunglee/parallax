@@ -75,6 +75,13 @@ export function detectShape(raw: Record<string, unknown>): CaseShape {
   if ("errorClass" in raw) {
     return "error";
   }
+  // A `concurrency` choreography with NO `errorClass` is the concurrency-success
+  // shape (M8 behavioral read-lock: `0729`/`0734`). Checked AFTER `errorClass` so an
+  // error/concurrency case (`0728`) resolves to `error`, and before `read` so it does
+  // not fall through to `read` and throw at `compileRootStatement`.
+  if ("concurrency" in raw) {
+    return "concurrencySuccess";
+  }
   if ("expectedAffectedRows" in raw || "attempts" in raw) {
     return "conflict";
   }

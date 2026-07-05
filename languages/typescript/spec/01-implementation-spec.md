@@ -59,7 +59,7 @@ declared in [`scope-and-tiers.md`](../../../core/spec/scope-and-tiers.md#first-i
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
 the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
-so V1 claims precisely the 121 cases tagged for the slice and returns
+so V1 claims precisely the 123 cases tagged for the slice and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads** + audit-only
 processing-temporal), and optimistic-locking surfaces but defers aggregation,
@@ -93,7 +93,7 @@ capabilities in this shape:
       "m12"
     ],
     "dialects": ["postgres"],
-    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error"],
+    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess"],
     "caseTags": {
       "include": ["slice-mvp-1"]
     },
@@ -825,7 +825,7 @@ The V1 `parallax-conformance describe` claim remains **Postgres-only**. That is
 the official adapter grade for `slice-mvp-1`. TypeScript nevertheless ships two
 database implementations behind the M11 seam:
 
-- **Postgres full M12 profile** (`postgres-full-slice-mvp-1`): the 109
+- **Postgres full M12 profile** (`postgres-full-slice-mvp-1`): the 111
   harness-lane `slice-mvp-1` cases over `postgres:17`, included in
   `just ts-db`.
 - **MariaDB curated M12 profile** (`mariadb-curated-25`): a first-class partial
@@ -902,7 +902,7 @@ partition below.
 ### 6.2 Coverage partition and no-drift guard
 
 - **Coverage partition.** `coverage.test.ts` (Docker-free) discovers exactly the
-  121 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
+  123 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
   with no stale ids: every in-slice case is either exercised by a family suite
   (`covered.ts`) or listed in the reasoned skip manifest (`skip-manifest.ts`),
   and every skip carries a non-empty reason — a silent gap fails the build.
@@ -918,7 +918,7 @@ partition below.
 
 ### 6.3 Reasoned skips
 
-Three of the 121 cases are reason-skipped because what they prove is serde/harness
+Five of the 123 cases are reason-skipped because what they prove is serde/harness
 machinery a developer never authors, not a developer-facing surface:
 
 - **`0222`** — an `equivalentEncodings` serde-canonicalization check (two surface
@@ -936,6 +936,14 @@ machinery a developer never authors, not a developer-facing surface:
   `@parallax/conformance`'s `runRun`), not the developer surface — a developer
   never authors the barrier + lowered-lock-budget choreography (the read lock's
   developer-observable behavior is exercised by `0603`/`0616`).
+- **`0729`** — read-lock-shared-compatible, a HARNESS-lane two-connection
+  concurrency-success case (A and B both take `for share` and both succeed — the
+  lock is shared, not exclusive). Like `0728`, discharged by the reference harness
+  and the conformance runner's two-session `runRun`, not the developer surface.
+- **`0734`** — projection-omits-lock-admits-writer, a HARNESS-lane two-connection
+  concurrency-success case (A holds an unlocked `distinct` projection, B's UPDATE is
+  admitted). Discharged by the same two-session `runRun`; the projection-omits-lock
+  emission is exercised by `0617`.
 
 ### 6.4 Usage Guide rendering and drift check
 

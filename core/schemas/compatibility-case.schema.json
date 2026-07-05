@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (M12)",
-  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of seven shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind); a coherence case (Phase 11, cross-process cache coherence — carries a `coherence` two-node operation sequence run over two connections to one database, asserting node B observes node A's committed write rather than a stale cached copy); an **error case** (carries `errorClass` + `expectedNativeCode`, M11 error-code classification — triggers a real DB error, single-connection for `uniqueViolation` or a two-connection `concurrency` choreography for `deadlock`/`lockWaitTimeout`, and asserts the neutral category the error classifies to plus the per-dialect native code); or a **boundary case** (M8/M10 bounded automatic retry — carries `boundary` ordered actions + `expect` portable outcome, optionally an injected fault `inject`, declaring the unit-of-work loop mechanics the single-connection M12 harness cannot provoke). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of eight shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind); a coherence case (Phase 11, cross-process cache coherence — carries a `coherence` two-node operation sequence run over two connections to one database, asserting node B observes node A's committed write rather than a stale cached copy); an **error case** (carries `errorClass` + `expectedNativeCode`, M11 error-code classification — triggers a real DB error, single-connection for `uniqueViolation` or a two-connection `concurrency` choreography for `deadlock`/`lockWaitTimeout`, and asserts the neutral category the error classifies to plus the per-dialect native code); a **concurrency-success case** (M8 behavioral read-lock — carries a `concurrency` choreography with NO `errorClass`, running barrier-separated rounds on two held non-autocommit sessions that assert no error is raised; each present step declares an explicit `kind` (a `read` step carries `expectRows` observed on its HELD session, a `write` step omits it and asserts only that it did not block/raise); proves the shared read lock is COMPATIBLE with a second reader (`0729`) and that an unlocked projection ADMITS a writer (`0734`)); or a **boundary case** (M8/M10 bounded automatic retry — carries `boundary` ordered actions + `expect` portable outcome, optionally an injected fault `inject`, declaring the unit-of-work loop mechanics the single-connection M12 harness cannot provoke). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags"],
@@ -41,6 +41,25 @@
         { "required": ["goldenSql"] },
         { "required": ["concurrency"] }
       ]
+    },
+    {
+      "description": "A concurrency-success case (M8 behavioral read-lock): barrier-separated `concurrency` rounds on two held non-autocommit sessions asserting NO error is raised. Every PRESENT step declares an explicit `kind`: a read step (`kind: read`) carries `expectRows` (the rows it MUST return on its HELD session); a write step (`kind: write`) omits `expectRows` and asserts only that it did not block/raise. Proves lock COMPATIBILITY (`0729` — a second shared reader is admitted) and lock ABSENCE (`0734` — an unlocked projection admits a writer), the non-error counterpart to the error branch's lock CONTENTION (`0728`). The `not: errorClass` guard keeps the root oneOf mutually exclusive: an error/concurrency case carries `errorClass` and matches ONLY the error branch (and carries no `kind`). The nested `rounds.items.properties.{A,B}.required: [kind]` forces a PRESENT success step to declare its kind structurally, without forcing A/B to exist.",
+      "required": ["concurrency"],
+      "not": { "required": ["errorClass"] },
+      "properties": {
+        "concurrency": {
+          "properties": {
+            "rounds": {
+              "items": {
+                "properties": {
+                  "A": { "required": ["kind"] },
+                  "B": { "required": ["kind"] }
+                }
+              }
+            }
+          }
+        }
+      }
     },
     {
       "description": "A boundary case (M8/M10 bounded automatic retry): a unit-of-work loop-mechanics case the single-connection M12 harness cannot provoke (injected transient failures, retry counting, error surfacing). It carries `lane: api-conformance` and is satisfied by each language's API Conformance Suite; the harness schema-validates it but does not execute it. It declares the portable unit-of-work body (`boundary` ordered actions), the portable expected outcome (`expect`: `committed` or a surfaced error kind), an OPTIONAL injected fault (`inject`), and its retry configuration under `uow` (`retries` / `retryOptimisticConflicts`). It carries no golden SQL — the concrete DML and error types stay per-language. Both invariants are enforced here: `lane` is REQUIRED and pinned to `api-conformance` (a boundary case cannot silently default to the `harness` lane and fall into compile/run paths not shaped for it), and `goldenSql` is disallowed.",
@@ -573,8 +592,35 @@
           "additionalProperties": { "type": "string" },
           "minProperties": 1
         },
-        "binds": { "type": "array" }
-      }
+        "binds": { "type": "array" },
+        "kind": {
+          "description": "concurrency-success form only: the EXPLICIT read-vs-write discriminator the runners branch on (replacing the brittle SQL-verb sniffing). `read` — the step is fetched on its HELD session (`session.query`) and its rows graded against `expectRows` (a shared-lock SELECT, or an unlocked projection); `write` — the step is executed (`session.execute`) and asserts only that it did not block/raise (an admitted INSERT/UPDATE/DELETE). Structural: a `read` step MUST carry `expectRows`, a `write` step MUST omit it (the if/then below). Optional in this base def so the error/concurrency shape — whose only assertion is the classified error — carries no `kind`; the concurrency-SUCCESS root branch requires it on every present step.",
+          "enum": ["read", "write"]
+        },
+        "expectRows": {
+          "description": "concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read` — a shared-lock SELECT, or an unlocked projection) MUST declare it; a write step (`kind: write` — INSERT/UPDATE/DELETE) omits it and asserts only that it did not block/raise. This presence rule is now STRUCTURAL — the `kind` if/then below requires `expectRows` when `kind: read` and forbids it when `kind: write` — rather than inferred from the statement verb. Absent on the error/concurrency shape, whose only assertion is the classified error.",
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      },
+      "allOf": [
+        {
+          "description": "A read step (`kind: read`) MUST carry the rows it observes on its held session (`expectRows`), which the runner grades.",
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "read" } }
+          },
+          "then": { "required": ["expectRows"] }
+        },
+        {
+          "description": "A write step (`kind: write`) MUST NOT carry `expectRows` — it asserts only that it did not block/raise, so there are no rows to grade.",
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "write" } }
+          },
+          "then": { "not": { "required": ["expectRows"] } }
+        }
+      ]
     },
     "dialectSql": {
       "oneOf": [

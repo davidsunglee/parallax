@@ -312,7 +312,14 @@ def test_schema_accepts_read_lock_concurrency_error_case() -> None:
                 },
             ]
         },
-        "tags": ["m8", "m11", "read-lock", "concurrency", "error-classification", "lockWaitTimeout"],
+        "tags": [
+            "m8",
+            "m11",
+            "read-lock",
+            "concurrency",
+            "error-classification",
+            "lockWaitTimeout",
+        ],
     }
     assert list(_case_validator().iter_errors(case)) == []
 

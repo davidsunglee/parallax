@@ -290,7 +290,7 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 # --- the profile gate over the real corpus -----------------------------------
 #
 # The real-corpus assertions: the family-selected cases are internally
-# consistent with the canonical claim, and exactly 121 cases carry the slice tag
+# consistent with the canonical claim, and exactly 123 cases carry the slice tag
 # (a drift tripwire — adding or losing a tagged case fails the count). The count
 # rose from 97 to 99 when the temporal deep-fetch cases 0335/0336 were added to
 # the corpus, to 100 when the rollback scenario 0608 was added (the M8 abort
@@ -299,9 +299,11 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 # boundary cases (0710-0718) and read-lock matrix reads (0616-0619) were added,
 # to 116 when the Phase-5 versioned set-based materialize scenarios (0614/0615)
 # were added, to 120 when the Phase-6 optimistic × temporal close cases
-# (0730-0733) were added (clarify transaction semantics, COR-14), and to 121 when
+# (0730-0733) were added (clarify transaction semantics, COR-14), to 121 when
 # the behavioral read-lock-blocks-writer case (0728) drew the error/concurrency
-# shape into the slice for the first time (COR-12).
+# shape into the slice for the first time (COR-12), and to 123 when the behavioral
+# read-lock-shared-compatible (0729) and projection-omits-lock-admits-writer (0734)
+# cases drew the concurrencySuccess shape into the slice (COR-12).
 
 
 def test_real_corpus_profile_is_consistent() -> None:
@@ -319,6 +321,6 @@ def test_profile_slice_tag_count() -> None:
         tags = [t for t in doc.get("tags", []) if isinstance(t, str)]
         if _SLICE_TAG in tags:
             tagged.append(path.name)
-    assert len(tagged) == 121, (
-        f"expected exactly 121 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
+    assert len(tagged) == 123, (
+        f"expected exactly 123 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
     )

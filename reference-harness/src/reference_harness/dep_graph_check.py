@@ -286,10 +286,16 @@ def _case_shape(doc: dict) -> str | None:
     the ``is_*`` properties of ``Case``; there is no literal ``shape`` field. Order
     matters — the more specific shapes are checked before ``read``. Returns one of
     ``read`` / ``writeSequence`` / ``scenario`` / ``conflict`` / ``coherence`` /
-    ``error`` / ``boundary``, or ``None`` if the document matches no known shape.
+    ``error`` / ``concurrencySuccess`` / ``boundary``, or ``None`` if the document
+    matches no known shape.
     """
     if "errorClass" in doc:
         return "error"
+    # A concurrency choreography with NO `errorClass` is the concurrency-success shape
+    # (M8 behavioral read-lock: 0729/0734). Checked AFTER `errorClass` so an
+    # error/concurrency case (0728) still resolves to `error`.
+    if "concurrency" in doc:
+        return "concurrencySuccess"
     if "coherence" in doc:
         return "coherence"
     if "scenario" in doc:

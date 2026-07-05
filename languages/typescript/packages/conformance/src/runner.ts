@@ -30,7 +30,8 @@ import type {
   Row,
   RunOk,
 } from "@parallax/core";
-import { ParallaxTransientError } from "@parallax/db";
+import { toWire } from "@parallax/core";
+import { type ParallaxRow, ParallaxTransientError } from "@parallax/db";
 import {
   columnOrder,
   type Dialect,
@@ -41,6 +42,7 @@ import {
 import { type EntityMetadata, Metamodel, parseOperation } from "@parallax/operation";
 import { deepFetch, type Exec, type Row as GraphRow } from "@parallax/relationships";
 import { compile } from "@parallax/sql";
+import { compareRowSet } from "./compare.js";
 import { buildConflictPlan, isConflict } from "./conflict.js";
 import { buildDeepFetchPlan, type DeepFetchPlan, isDeepFetch } from "./deepfetch-plan.js";
 import { SLICE_MVP_1_CAPABILITIES } from "./describe.js";
@@ -49,7 +51,7 @@ import { inClaim } from "./gate.js";
 import type { CompatibilityDatabaseProvider, CompatibilitySession } from "./provider.js";
 import { buildScenarioPlan, isScenario, stepBindsAt } from "./scenario.js";
 import { assertValidEnvelope } from "./schema.js";
-import { schemaForReadCase } from "./schema-resolver.js";
+import { columnTypesForCase, schemaForReadCase } from "./schema-resolver.js";
 import { buildWriteSequencePlan, isWriteSequence } from "./write-sequence.js";
 
 /**
@@ -68,6 +70,23 @@ function isReadLock(loaded: LoadedCase): boolean {
 interface ConcurrencyStep {
   readonly goldenSql: Readonly<Record<string, string>>;
   readonly binds?: readonly unknown[];
+  /**
+   * concurrency-SUCCESS form only: the EXPLICIT read-vs-write discriminator the runner
+   * branches on (replacing the old SQL-verb sniffing). `read` → the step is fetched on
+   * its HELD session and its rows graded against {@link ConcurrencyStep.expectRows};
+   * `write` → the step is executed and asserts only that it did not block/raise. Absent
+   * on the error/concurrency shape; a success step missing a valid `kind` fails fast
+   * (see {@link concurrencySuccessStepProblems}).
+   */
+  readonly kind?: "read" | "write";
+  /**
+   * concurrency-SUCCESS form only: the rows a `kind: read` step MUST return on its HELD
+   * session (`0729` / `0734`). Required for a read and forbidden on a write — enforced
+   * structurally by the schema's `kind` if/then AND re-checked pre-flight by
+   * {@link concurrencySuccessStepProblems}; a write step omits it and asserts only that
+   * it did not block/raise.
+   */
+  readonly expectRows?: readonly Record<string, unknown>[];
 }
 
 /** A `concurrency.rounds` step: the `A` and/or `B` statement issued that round. */
@@ -90,6 +109,60 @@ function concurrencyRounds(loaded: LoadedCase): readonly ConcurrencyRound[] {
     | { rounds?: readonly ConcurrencyRound[] }
     | undefined;
   return concurrency?.rounds ?? [];
+}
+
+/** One malformed concurrency-success step: its case pointer + the specific reason. */
+interface ConcurrencyStepProblem {
+  /** The `/concurrency/rounds/{i}/{node}` pointer of the offending step. */
+  readonly pointer: string;
+  /** Why the step is malformed (missing/invalid `kind`, or a `read` without `expectRows`). */
+  readonly reason: string;
+}
+
+/**
+ * Pre-flight structural validator for a concurrency-SUCCESS case: every PRESENT round
+ * step MUST declare a valid `kind` (`"read"` or `"write"`), the EXPLICIT discriminator
+ * {@link runConcurrencySuccess} branches on (a `read` is fetched + its rows compared; a
+ * `write` only asserts it did not raise), AND a `kind: "read"` step MUST carry
+ * `expectRows` (its rows are graded on the held session — without it the read would
+ * silently grade against nothing). This replaces the old SQL-verb sniffing — a brittle
+ * prefix match that could misclassify a write CTE or a novel read form.
+ *
+ * The schema already enforces both rules structurally (the concurrency-SUCCESS root
+ * branch requires `kind`; the `kind` if/then requires `expectRows` on a read); this
+ * re-checks them (pure, DB-free, timing-independent) as defense-in-depth mirroring the
+ * Python harness's `_assert_concurrency_success_step_kinds`, so a malformed case fails
+ * fast — before any session opens — with a clear pointer + reason rather than
+ * mis-dispatching. Returns one {@link ConcurrencyStepProblem} per offending step (empty
+ * when every present step declares a valid kind and every read carries `expectRows`).
+ */
+export function concurrencySuccessStepProblems(
+  rounds: readonly ConcurrencyRound[],
+): readonly ConcurrencyStepProblem[] {
+  const problems: ConcurrencyStepProblem[] = [];
+  rounds.forEach((round, index) => {
+    for (const node of CONCURRENCY_NODES) {
+      const step = round[node];
+      if (step === undefined) {
+        continue;
+      }
+      const pointer = `/concurrency/rounds/${index}/${node}`;
+      if (step.kind !== "read" && step.kind !== "write") {
+        problems.push({
+          pointer,
+          reason: `must declare kind: "read" | "write" (the explicit read-vs-write discriminator the runner branches on)`,
+        });
+        continue;
+      }
+      if (step.kind === "read" && step.expectRows === undefined) {
+        problems.push({
+          pointer,
+          reason: `a kind: "read" step must declare expectRows (its rows are graded on the held session)`,
+        });
+      }
+    }
+  });
+  return problems;
 }
 
 /** One `(casePointer, sql, binds)` per present node of every round, in round/A/B order. */
@@ -225,13 +298,13 @@ export function runCompile(
     });
   }
 
-  // An error/concurrency case (`0728`) is NOT compiled to SQL — its golden lives
-  // per round inside `concurrency.rounds` and is authored, not derived. Surface
-  // those per-round statements as emissions (like a scenario) so the compile gate
-  // classifies it in-claim `ok` instead of throwing at `compileRootStatement`
-  // (`parseOperation(undefined)`); the real two-connection behavior is graded by
-  // the run lane.
-  if (loaded.shape === "error") {
+  // A concurrency case — error (`0728`) or concurrency-success (`0729`/`0734`) — is
+  // NOT compiled to SQL: its golden lives per round inside `concurrency.rounds` and is
+  // authored, not derived. Surface those per-round statements as emissions (like a
+  // scenario) so the compile gate classifies it in-claim `ok` instead of throwing at
+  // `compileRootStatement` (`parseOperation(undefined)`); the real two-connection
+  // behavior is graded by the run lane.
+  if (loaded.shape === "error" || loaded.shape === "concurrencySuccess") {
     return compileOk(loaded, dialect, adapter, concurrencyEmissions(loaded, dialectFor(dialect)));
   }
 
@@ -370,6 +443,16 @@ export async function runRun(
   // cases (`0603`/`1001`) cannot make.
   if (loaded.shape === "error") {
     const { emissions, observations } = await runErrorConcurrency(loaded, provider, dialectImpl);
+    return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
+  }
+
+  // A concurrency-success case (`0729`/`0734`) opens two held non-autocommit sessions
+  // and runs the barrier-separated rounds asserting NO error is raised — the read
+  // lock is SHARED (`0729`, a second reader is admitted) or ABSENT (`0734`, an
+  // unlocked projection admits a writer) — and checks each read step's `expectRows` on
+  // its HELD session. The behavioral control 0728 (blocks a writer) cannot make.
+  if (loaded.shape === "concurrencySuccess") {
+    const { emissions, observations } = await runConcurrencySuccess(loaded, provider, dialectImpl);
     return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
   }
 
@@ -759,6 +842,138 @@ async function runErrorConcurrency(
   if (expected !== undefined && String(nativeCode) !== String(expected)) {
     throw new Error(
       `${loaded.casePath}: raised native code '${String(nativeCode)}', expected '${String(expected)}'`,
+    );
+  }
+
+  return { emissions, observations: { roundTrips: emissions.length } };
+}
+
+/** Render one **managed** row (§3.2.1) to its neutral wire form for row grading. */
+function renderManagedRowToWire(row: ParallaxRow): Row {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[key] = toWire(value);
+  }
+  return out as Row;
+}
+
+/**
+ * Execute a concurrency-SUCCESS case (`0729` read-lock-shared-compatible, `0734`
+ * projection-omits-lock-admits-writer): provision + load fixtures, open TWO held
+ * non-autocommit sessions, and run the barrier-separated rounds asserting NO error is
+ * raised on either node. A round runs its single node awaited (round 0 holds, round 1
+ * proceeds), so round 0's lock/read is held before round 1 — the ordering the Python
+ * harness's `threading.Barrier` gives, here from awaiting rounds in order over two
+ * INDEPENDENT held connections. A `kind: read` step fetches on its HELD session
+ * (`session.query` — a `for share` SELECT both takes its shared lock and returns its
+ * rows) and the observed rows are graded (rendered to wire, compared as an
+ * order-insensitive multiset under the M12 type-aware rules); a `kind: write` step
+ * asserts only that it did not block/raise (`0734`'s admitted UPDATE).
+ *
+ * Success is exactly "NO node raised AND every `expectRows` matched": a buggy adapter
+ * whose read took an EXCLUSIVE lock (`for update` not `for share`) — or that wrongly
+ * locked the projection — blocks the peer, whose contention times out and raises here.
+ * Sessions are always rolled back + closed (releasing any lock a held read took).
+ */
+async function runConcurrencySuccess(
+  loaded: LoadedCase,
+  provider: CompatibilityDatabaseProvider,
+  dialect: Dialect,
+): Promise<RunResult> {
+  const rounds = concurrencyRounds(loaded);
+  // Pre-flight structural guard (DB-free, timing-independent): every success step must
+  // declare an explicit `kind` (`read` | `write`), the discriminator this runner
+  // dispatches on, and every `kind: read` step must carry `expectRows` (graded on its
+  // held session — else the read would silently grade against nothing). Fail fast BEFORE
+  // provisioning / opening any session so a mis-declared step surfaces a deterministic
+  // diagnostic and never races the lock choreography (mirrors the Python harness).
+  const problems = concurrencySuccessStepProblems(rounds);
+  if (problems.length > 0) {
+    throw new Error(
+      `${loaded.casePath}: malformed concurrency-success step(s) — ` +
+        problems.map((problem) => `${problem.pointer}: ${problem.reason}`).join("; "),
+    );
+  }
+  await provision(loaded, provider);
+  const columnTypes = columnTypesForCase(loaded);
+
+  const emissions: Emission[] = [];
+  const raised: unknown[] = [];
+  const rowFailures: string[] = [];
+  // The two held sessions, opened lazily INSIDE the `try` and tracked here so `finally`
+  // rolls back + closes whichever actually opened (a failed open of B must not orphan A).
+  const sessions: Partial<Record<ConcurrencyNode, CompatibilitySession>> = {};
+
+  const runStep = async (node: ConcurrencyNode, round: ConcurrencyRound, index: number) => {
+    const step = round[node];
+    const sql = step?.goldenSql?.[dialect.id];
+    const session = sessions[node];
+    if (typeof sql !== "string" || session === undefined) {
+      return;
+    }
+    const binds = (step?.binds ?? []) as readonly unknown[];
+    emissions.push({
+      casePointer: `/concurrency/rounds/${index}/${node}`,
+      sql,
+      binds: binds as readonly WireBind[],
+    });
+    try {
+      if (step?.kind === "read") {
+        // A read step: fetch on the HELD session (a shared-lock SELECT takes its lock
+        // here), render the managed rows to wire, and grade against `expectRows`. The
+        // pre-flight `concurrencySuccessStepProblems` guard guarantees a `kind: read`
+        // step carries `expectRows`, so read it directly — a defensive `?? []` fallback
+        // here can never trigger and would only silently grade a malformed read (a
+        // missing `expectRows`) against an empty expectation instead of failing loudly.
+        const observed = (await session.query(sql, binds)).map(renderManagedRowToWire);
+        const expect = step.expectRows as readonly Row[];
+        const comparison = compareRowSet(observed, expect, columnTypes);
+        if (!comparison.equal) {
+          rowFailures.push(`/concurrency/rounds/${index}/${node}: ${comparison.reason}`);
+        }
+      } else {
+        // A write step (`0734`'s round-1 UPDATE): succeeds iff no lock blocks it.
+        await session.execute(sql, binds);
+      }
+    } catch (error) {
+      raised.push(error);
+    }
+  };
+
+  try {
+    sessions.A = await provider.openSession();
+    sessions.B = await provider.openSession();
+    for (const [index, round] of rounds.entries()) {
+      const active = CONCURRENCY_NODES.filter((node) => round[node] !== undefined);
+      if (active.length > 1) {
+        await Promise.all(active.map((node) => runStep(node, round, index)));
+      } else {
+        for (const node of active) {
+          await runStep(node, round, index);
+        }
+      }
+    }
+  } finally {
+    for (const node of CONCURRENCY_NODES) {
+      await sessions[node]?.rollback().catch(() => {});
+    }
+    for (const node of CONCURRENCY_NODES) {
+      await sessions[node]?.close().catch(() => {});
+    }
+  }
+
+  // No node may raise (the lock is shared / absent), and every declared `expectRows`
+  // must match — either failure surfaces here (the run envelope stays `ok`; the
+  // behavioral proof lives inside this function, like the error path's classification).
+  if (raised.length > 0) {
+    throw new Error(
+      `${loaded.casePath}: expected NO error (the shared read lock is compatible / absent), ` +
+        `but a node raised: ${raised.map(String).join("; ")}`,
+    );
+  }
+  if (rowFailures.length > 0) {
+    throw new Error(
+      `${loaded.casePath}: held-session rows != expectRows — ${rowFailures.join("; ")}`,
     );
   }
 

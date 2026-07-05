@@ -3,8 +3,8 @@
  * corpus (`06xx` + `07xx`), Docker-free.
  *
  * Drives the adapter's `runCompile` — the same path the CLI exercises — over the
- * nineteen `slice-mvp-1` `06xx`/`07xx` harness-lane cases, asserting the emitted
- * SQL + binds equal the golden BY TEXT. The five shapes this slice exercises for
+ * twenty-one `slice-mvp-1` `06xx`/`07xx` harness-lane cases, asserting the emitted
+ * SQL + binds equal the golden BY TEXT. The six shapes this slice exercises for
  * the first time:
  *
  *  - **read-lock** (`0603`, `read` shape + `read-lock` tag): the single emission is
@@ -24,7 +24,11 @@
  *    `UPDATE` / gated milestone close, keyed by its case pointer;
  *  - **error** (`0728`, read-lock-blocks-writer): NOT compiled to SQL — its golden
  *    lives per round in `concurrency.rounds`, surfaced as one emission per node so
- *    the gate classifies it in-claim (the two-connection behavior is run-lane only).
+ *    the gate classifies it in-claim (the two-connection behavior is run-lane only);
+ *  - **concurrencySuccess** (`0729`, read-lock-shared-compatible; `0734`,
+ *    projection-omits-lock-admits-writer): like `error`, NOT compiled to SQL — the
+ *    per-round `concurrency.rounds` golden is surfaced as one emission per node (the
+ *    two-connection "no error + expectRows on the held session" proof is run-lane only).
  *
  * The Docker-gated Postgres full M12 profile (`@parallax/typescript`'s
  * `slice-run.test.ts`) proves the SQL leaves the right rows / table state /
@@ -59,9 +63,10 @@ function txnCases(): readonly { id: string; path: string }[] {
  * batched writes `0604`/`0612`/`0613`, read-your-own-writes `0607`, rollback/abort
  * `0608`, no-op update `0609`, locking-mode versioned update `0611`, the
  * optimistic-lock conflict/retry `0703`/`0704`/`0708`, the harness-lane auto-retry
- * `0710`, the read-lock-blocks-writer concurrency case `0728`, and the optimistic ×
- * temporal close cases `0730`-`0733`. Asserting the exact set fails loudly on a
- * discovery regression
+ * `0710`, the read-lock-blocks-writer concurrency case `0728`, the read-lock-shared-
+ * compatible `0729` and projection-omits-lock-admits-writer `0734` concurrency-success
+ * cases, and the optimistic × temporal close cases `0730`-`0733`. Asserting the exact
+ * set fails loudly on a discovery regression
  * (the untagged pkgen / cache / cascade / detached-merge / error-class `06xx`/`07xx`
  * cases, and the api-conformance-lane read-lock / boundary cases, must NOT leak in).
  */
@@ -81,10 +86,12 @@ const EXPECTED_IDS: readonly string[] = [
   "0708",
   "0710",
   "0728",
+  "0729",
   "0730",
   "0731",
   "0732",
   "0733",
+  "0734",
 ];
 
 const CASES = txnCases();
@@ -116,9 +123,10 @@ function rounds(loaded: ReturnType<typeof loadCase>): readonly Round[] {
 
 /** The ordered golden `postgres` statements a case declares, per its shape. */
 function goldenStatements(loaded: ReturnType<typeof loadCase>): readonly string[] {
-  if (loaded.shape === "error") {
-    // The golden lives per round inside `concurrency.rounds[].{A,B}.goldenSql`, not
-    // at the top level — flatten it in round/A/B order (the emission order).
+  if (loaded.shape === "error" || loaded.shape === "concurrencySuccess") {
+    // A concurrency case (error `0728`, or concurrency-success `0729`/`0734`) keeps its
+    // golden per round inside `concurrency.rounds[].{A,B}.goldenSql`, not at the top
+    // level — flatten it in round/A/B order (the emission order).
     return rounds(loaded).flatMap((round) =>
       (["A", "B"] as const).flatMap((node) => {
         const golden = round[node]?.goldenSql?.postgres;
@@ -154,7 +162,7 @@ function goldenStatements(loaded: ReturnType<typeof loadCase>): readonly string[
 
 /** The authored binds a case declares (flat for a single read, list-of-lists otherwise). */
 function goldenBinds(loaded: ReturnType<typeof loadCase>): readonly (readonly unknown[])[] {
-  if (loaded.shape === "error") {
+  if (loaded.shape === "error" || loaded.shape === "concurrencySuccess") {
     // One bind row per present node, in the same round/A/B order as the statements.
     return rounds(loaded).flatMap((round) =>
       (["A", "B"] as const).flatMap((node) => {

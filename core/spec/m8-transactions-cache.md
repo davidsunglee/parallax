@@ -209,7 +209,13 @@ The suite proves the read-lock golden SQL is **valid SQL that executes and
 returns the expected rows** against real Postgres (the lock itself is a
 concurrency property; the suite asserts the locking read is well-formed and
 result-correct, which is the observable contract a single-connection harness can
-verify). The object-find-vs-aggregation split is recorded in ADR 0030 (which
+verify). The **behavioral** counterpart — that the emitted lock actually *behaves
+as a lock* — is proven by the two-connection concurrency cases: it **excludes a
+writer** (`0728`, `error`/`concurrency`), is **shared, not exclusive** (`0729`, a
+second reader is admitted), and an **unlocked projection admits a writer** (`0734`,
+the behavioral counterpart to the projection-omits-lock emission case) — the last
+two carrying the `concurrencySuccess` shape (two held sessions, no error raised).
+The object-find-vs-aggregation split is recorded in ADR 0030 (which
 supersedes-in-part ADR 0009). Optimistic locking — the *alternative* correctness
 strategy, where a read takes **no** lock and a version column is checked in the
 `UPDATE` — is `M10`.
@@ -266,6 +272,8 @@ cache assertions — and as plain read / write cases for the SQL fragments:
 | identity scenario | two finds for the same primary key ⇒ the **same logical object** |
 | read-lock case | the `for share of t0` read is valid and result-correct |
 | read-lock-blocks-writer case | the shared read lock has **locking effect** — A holds `for share`, B's concurrent UPDATE blocks and times out (`error`/`concurrency` shape, two held sessions) |
+| read-lock-shared-compatible case | the shared read lock is **shared, not exclusive** — A and B both take `for share` on the same row and **both succeed** (`concurrencySuccess` shape; pins `for share`, not `for update`) |
+| projection-omits-lock-admits-writer case | an **unlocked projection admits a writer** — A holds a `distinct` projection (no lock), B's concurrent UPDATE succeeds without blocking (the behavioral counterpart to the projection-omits-lock emission case) |
 | batched-write case | a multi-row `INSERT` and a batched `UPDATE` produce the expected rows |
 | rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
 | retry boundary cases | bounded automatic retry: transients auto-retried, conflicts only on opt-in, `retries: 0` disables, bound exhaustion surfaces (`api-conformance` lane) |
