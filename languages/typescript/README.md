@@ -141,19 +141,15 @@ just ts-typecheck              # tsc -b across project references
 just ts-lint                   # Biome + the dependency-cruiser DAG gate
 just ts-test                   # vitest unit / adapter tests
 just ts-db-fast                # Docker-free dialect, provider-selection, profile checks
-just ts-db-adapter-smoke       # shared adapter smoke over Postgres + MariaDB (Docker)
-just ts-db-provider-contract   # shared provider contract over Postgres + MariaDB (Docker)
 just ts-conformance-compile    # full-slice compile sweep + honesty gate (Docker-free)
-just ts-m12-postgres-full      # full M12 profile over postgres:17 (Docker)
-just ts-m12-mariadb-curated    # curated 25-case M12 profile over mariadb:11.4 (Docker)
-just ts-api-conformance        # API Conformance Suite + guide drift check over Postgres
-just ts-api-conformance-mariadb # API Conformance Suite over MariaDB
+just ts-db                     # primary DB gate: adapter/provider, Postgres M12/API (Docker)
+just ts-db-all                 # exhaustive DB sweep: primary gate + MariaDB M12/API (Docker)
 ```
 
 `just verify` from the repository root runs the primary merge gate: static checks,
-Docker-free conformance, shared DB adapter/provider contracts, the Postgres full
-M12 profile, the Postgres API Conformance Suite lane, and the Python suite. The
-MariaDB M12 and API lanes are available as explicit partial/profile checks.
+Docker-free conformance, the primary TypeScript DB gate, and the Python suite.
+`just ts-db-all` adds the MariaDB API Conformance Suite and the curated
+`mariadb-curated-25` M12 profile.
 
 ## Learn More
 
