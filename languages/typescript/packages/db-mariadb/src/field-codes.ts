@@ -49,7 +49,14 @@ export const MARIADB_FIELD_TYPES: Readonly<Record<string, NeutralParserKey>> = {
   /** A wall-clock time (no date / offset). */
   TIME: "time",
   TIME2: "time",
-  /** A byte string (`longblob` and its siblings). */
+  /**
+   * A byte string (`longblob` and its siblings). All four names route to the same
+   * neutral `bytes` key; `adapter.ts`'s `typeCast` then distinguishes a RAW
+   * un-wrapped column (read via `field.buffer()`) from the dialect's `HEX(...)`
+   * projection (hex-decoded from `field.string()`) by the codebase-owned `_hex`
+   * output-alias convention (`field.name`), not the driver's field-type name — see
+   * its doc comment for why that split is needed.
+   */
   TINY_BLOB: "bytes",
   MEDIUM_BLOB: "bytes",
   LONG_BLOB: "bytes",

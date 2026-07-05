@@ -462,3 +462,76 @@ describe("type-aware bind coercion (carry-forward task 1)", () => {
     expect(typeof coerceBind(42, "int64")).toBe("number");
   });
 });
+
+describe("root/child `from` table quoting routes through the dialect (Gap 2)", () => {
+  /**
+   * A resolver whose root table is the reserved word `order` (unquoted, per the
+   * `SchemaResolver.rootTable` contract — the alias map is keyed by the unquoted
+   * name), proving `compile` — not the resolver — quotes it via
+   * `dialect.quoteIdentifier` right before splicing it into the `from` clause.
+   */
+  function reservedRootResolver(): SchemaResolver {
+    return {
+      resolveAttribute(ref: string): ResolvedColumn {
+        const attrName = ref.slice(ref.indexOf(".") + 1);
+        const attr = ORDERS[attrName];
+        if (!attr) {
+          throw new Error(`unknown orders attribute '${ref}'`);
+        }
+        return { table: "order", column: quoteIdentifier(attr.column), type: attr.type };
+      },
+      resolveRelationship(ref: string): ResolvedRelationship {
+        throw new Error(`not exercised by this test: '${ref}'`);
+      },
+      rootTable: () => "order",
+      rootProjection: () => [{ column: quoteIdentifier("id") }],
+    };
+  }
+
+  it('quotes a reserved-word root table (Postgres double-quoted `from "order" t0`)', () => {
+    const result = compile(
+      parseOperation({ all: {} }) as Operation,
+      reservedRootResolver(),
+      postgresDialect,
+    );
+    expect(result.sql).toBe('select t0.id from "order" t0');
+  });
+
+  /**
+   * A resolver whose EXISTS-child table is the reserved word `order`, proving the
+   * semi-join's `from` (deep inside `compilePredicate`, which carries no separate
+   * `dialect` parameter) also routes through the dialect via `ctx.dialect`.
+   */
+  function reservedChildResolver(): SchemaResolver {
+    return {
+      resolveAttribute(ref: string): ResolvedColumn {
+        const attrName = ref.slice(ref.indexOf(".") + 1);
+        const attr = ORDERS[attrName];
+        if (!attr) {
+          throw new Error(`unknown orders attribute '${ref}'`);
+        }
+        return { table: "orders", column: quoteIdentifier(attr.column), type: attr.type };
+      },
+      resolveRelationship(_ref: string): ResolvedRelationship {
+        return {
+          childTable: "order",
+          childColumn: quoteIdentifier("id"),
+          parentColumn: quoteIdentifier("id"),
+        };
+      },
+      rootTable: () => "orders",
+      rootProjection: () => [{ column: quoteIdentifier("id") }],
+    };
+  }
+
+  it('quotes a reserved-word EXISTS-child table (Postgres double-quoted `from "order" t1`)', () => {
+    const result = compile(
+      parseOperation({ exists: { rel: "Order.items" } }) as Operation,
+      reservedChildResolver(),
+      postgresDialect,
+    );
+    expect(result.sql).toBe(
+      'select t0.id from orders t0 where exists (select 1 from "order" t1 where t1.id = t0.id)',
+    );
+  });
+});
