@@ -3,8 +3,8 @@
  * corpus (`06xx` + `07xx`), Docker-free.
  *
  * Drives the adapter's `runCompile` — the same path the CLI exercises — over the
- * eighteen `slice-mvp-1` `06xx`/`07xx` harness-lane cases, asserting the emitted
- * SQL + binds equal the golden BY TEXT. The four shapes this slice exercises for
+ * nineteen `slice-mvp-1` `06xx`/`07xx` harness-lane cases, asserting the emitted
+ * SQL + binds equal the golden BY TEXT. The five shapes this slice exercises for
  * the first time:
  *
  *  - **read-lock** (`0603`, `read` shape + `read-lock` tag): the single emission is
@@ -21,7 +21,10 @@
  *    in-claim, `roundTrips` the declared case total;
  *  - **conflict** (`0703`/`0704`/`0708`, optimistic locking; `0730`-`0733`,
  *    optimistic × temporal close): one emission per attempt's generated versioned
- *    `UPDATE` / gated milestone close, keyed by its case pointer.
+ *    `UPDATE` / gated milestone close, keyed by its case pointer;
+ *  - **error** (`0728`, read-lock-blocks-writer): NOT compiled to SQL — its golden
+ *    lives per round in `concurrency.rounds`, surfaced as one emission per node so
+ *    the gate classifies it in-claim (the two-connection behavior is run-lane only).
  *
  * The Docker-gated Postgres full M12 profile (`@parallax/typescript`'s
  * `slice-run.test.ts`) proves the SQL leaves the right rows / table state /
@@ -56,8 +59,9 @@ function txnCases(): readonly { id: string; path: string }[] {
  * batched writes `0604`/`0612`/`0613`, read-your-own-writes `0607`, rollback/abort
  * `0608`, no-op update `0609`, locking-mode versioned update `0611`, the
  * optimistic-lock conflict/retry `0703`/`0704`/`0708`, the harness-lane auto-retry
- * `0710`, and the optimistic × temporal close cases `0730`-`0733`. Asserting the
- * exact set fails loudly on a discovery regression
+ * `0710`, the read-lock-blocks-writer concurrency case `0728`, and the optimistic ×
+ * temporal close cases `0730`-`0733`. Asserting the exact set fails loudly on a
+ * discovery regression
  * (the untagged pkgen / cache / cascade / detached-merge / error-class `06xx`/`07xx`
  * cases, and the api-conformance-lane read-lock / boundary cases, must NOT leak in).
  */
@@ -76,6 +80,7 @@ const EXPECTED_IDS: readonly string[] = [
   "0704",
   "0708",
   "0710",
+  "0728",
   "0730",
   "0731",
   "0732",
@@ -92,8 +97,35 @@ function stepBinds(binds: readonly unknown[], index: number): readonly unknown[]
   return index === 0 ? binds : [];
 }
 
+/** One `A`/`B` side of a concurrency round: its dialect-keyed golden + binds. */
+interface RoundEntry {
+  readonly goldenSql?: { readonly postgres?: string };
+  readonly binds?: readonly unknown[];
+}
+
+/** A `concurrency.rounds` step (the `A` and/or `B` statement issued that round). */
+interface Round {
+  readonly A?: RoundEntry;
+  readonly B?: RoundEntry;
+}
+
+/** The declared concurrency rounds of an `error`/concurrency case (else empty). */
+function rounds(loaded: ReturnType<typeof loadCase>): readonly Round[] {
+  return (loaded.raw.concurrency as { rounds?: readonly Round[] } | undefined)?.rounds ?? [];
+}
+
 /** The ordered golden `postgres` statements a case declares, per its shape. */
 function goldenStatements(loaded: ReturnType<typeof loadCase>): readonly string[] {
+  if (loaded.shape === "error") {
+    // The golden lives per round inside `concurrency.rounds[].{A,B}.goldenSql`, not
+    // at the top level — flatten it in round/A/B order (the emission order).
+    return rounds(loaded).flatMap((round) =>
+      (["A", "B"] as const).flatMap((node) => {
+        const golden = round[node]?.goldenSql?.postgres;
+        return golden === undefined ? [] : [golden];
+      }),
+    );
+  }
   if (isScenario(loaded)) {
     const steps = (loaded.raw.scenario as { goldenSql?: { postgres?: string | string[] } }[]) ?? [];
     // A step may list SEVERAL golden statements (a versioned set-based materialize
@@ -122,6 +154,15 @@ function goldenStatements(loaded: ReturnType<typeof loadCase>): readonly string[
 
 /** The authored binds a case declares (flat for a single read, list-of-lists otherwise). */
 function goldenBinds(loaded: ReturnType<typeof loadCase>): readonly (readonly unknown[])[] {
+  if (loaded.shape === "error") {
+    // One bind row per present node, in the same round/A/B order as the statements.
+    return rounds(loaded).flatMap((round) =>
+      (["A", "B"] as const).flatMap((node) => {
+        const step = round[node];
+        return step?.goldenSql?.postgres === undefined ? [] : [step.binds ?? []];
+      }),
+    );
+  }
   if (isScenario(loaded)) {
     const steps =
       (loaded.raw.scenario as {

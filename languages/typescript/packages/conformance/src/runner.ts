@@ -30,6 +30,7 @@ import type {
   Row,
   RunOk,
 } from "@parallax/core";
+import { ParallaxTransientError } from "@parallax/db";
 import {
   columnOrder,
   type Dialect,
@@ -45,7 +46,7 @@ import { buildDeepFetchPlan, type DeepFetchPlan, isDeepFetch } from "./deepfetch
 import { SLICE_MVP_1_CAPABILITIES } from "./describe.js";
 import type { LoadedCase } from "./discover.js";
 import { inClaim } from "./gate.js";
-import type { CompatibilityDatabaseProvider } from "./provider.js";
+import type { CompatibilityDatabaseProvider, CompatibilitySession } from "./provider.js";
 import { buildScenarioPlan, isScenario, stepBindsAt } from "./scenario.js";
 import { assertValidEnvelope } from "./schema.js";
 import { schemaForReadCase } from "./schema-resolver.js";
@@ -61,6 +62,54 @@ import { buildWriteSequencePlan, isWriteSequence } from "./write-sequence.js";
  */
 function isReadLock(loaded: LoadedCase): boolean {
   return loaded.tags.includes("read-lock");
+}
+
+/** One side (`A`/`B`) of a `concurrency.rounds` step: a dialect-keyed golden + binds. */
+interface ConcurrencyStep {
+  readonly goldenSql: Readonly<Record<string, string>>;
+  readonly binds?: readonly unknown[];
+}
+
+/** A `concurrency.rounds` step: the `A` and/or `B` statement issued that round. */
+interface ConcurrencyRound {
+  readonly A?: ConcurrencyStep;
+  readonly B?: ConcurrencyStep;
+}
+
+/** The two barrier-synchronized nodes of the concurrency choreography. */
+const CONCURRENCY_NODES = ["A", "B"] as const;
+type ConcurrencyNode = (typeof CONCURRENCY_NODES)[number];
+
+/**
+ * The `error`/concurrency case's barrier-separated rounds (`0728` + the M11
+ * deadlock/lock-wait family). Each round names the `A` and/or `B` golden a held
+ * non-autocommit session runs that round; a node absent from a round is idle.
+ */
+function concurrencyRounds(loaded: LoadedCase): readonly ConcurrencyRound[] {
+  const concurrency = loaded.raw.concurrency as
+    | { rounds?: readonly ConcurrencyRound[] }
+    | undefined;
+  return concurrency?.rounds ?? [];
+}
+
+/** One `(casePointer, sql, binds)` per present node of every round, in round/A/B order. */
+function concurrencyEmissions(loaded: LoadedCase, dialect: Dialect): Emission[] {
+  const emissions: Emission[] = [];
+  concurrencyRounds(loaded).forEach((round, roundIndex) => {
+    for (const node of CONCURRENCY_NODES) {
+      const step = round[node];
+      const sql = step?.goldenSql?.[dialect.id];
+      if (typeof sql !== "string") {
+        continue;
+      }
+      emissions.push({
+        casePointer: `/concurrency/rounds/${roundIndex}/${node}`,
+        sql,
+        binds: (step?.binds ?? []) as readonly WireBind[],
+      });
+    }
+  });
+  return emissions;
 }
 
 /**
@@ -174,6 +223,16 @@ export function runCompile(
       emissions,
       roundTrips: plan.roundTrips,
     });
+  }
+
+  // An error/concurrency case (`0728`) is NOT compiled to SQL — its golden lives
+  // per round inside `concurrency.rounds` and is authored, not derived. Surface
+  // those per-round statements as emissions (like a scenario) so the compile gate
+  // classifies it in-claim `ok` instead of throwing at `compileRootStatement`
+  // (`parseOperation(undefined)`); the real two-connection behavior is graded by
+  // the run lane.
+  if (loaded.shape === "error") {
+    return compileOk(loaded, dialect, adapter, concurrencyEmissions(loaded, dialectFor(dialect)));
   }
 
   const { sql, binds } = compileRootStatement(loaded, dialectFor(dialect));
@@ -301,6 +360,16 @@ export async function runRun(
   // own-writes / cache / identity).
   if (isScenario(loaded)) {
     const { emissions, observations } = await runScenario(loaded, provider);
+    return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
+  }
+
+  // An error/concurrency case (`0728`) opens two held non-autocommit sessions,
+  // runs the barrier-separated rounds, and asserts the contention round raises the
+  // declared `errorClass` (a held `for share` read excludes B's UPDATE → a
+  // lockWaitTimeout). This is the behavioral proof the single-connection read-lock
+  // cases (`0603`/`1001`) cannot make.
+  if (loaded.shape === "error") {
+    const { emissions, observations } = await runErrorConcurrency(loaded, provider, dialectImpl);
     return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
   }
 
@@ -573,6 +642,127 @@ async function runScenario(
     ...(identityChecks.length > 0 ? { identityChecks } : {}),
   };
   return { emissions, observations };
+}
+
+/**
+ * Execute an error/concurrency case (`0728`, the M11 deadlock/lock-wait family):
+ * provision + load fixtures, open TWO held non-autocommit sessions (each on its
+ * own independent connection with a lowered lock-wait budget via the provider's
+ * `openSession` seam), then run the barrier-separated rounds. A round with a
+ * single node runs awaited (the holder acquires + keeps its lock); a round with
+ * BOTH nodes runs them concurrently (the crossing that provokes a deadlock). The
+ * contention round MUST raise a portable {@link ParallaxTransientError}; we assert
+ * its `kind` equals the case's declared `errorClass` AND its driver-native code
+ * equals the declared `expectedNativeCode[dialect]`, and that NOTHING unexpected was
+ * raised elsewhere. Sessions are always rolled back + closed (whichever opened). No
+ * rows are observed — the case's whole assertion is "the lock
+ * held, so the writer was excluded / classified", proven inside this function
+ * (a buggy adapter whose lock has no effect raises nothing and fails here).
+ */
+async function runErrorConcurrency(
+  loaded: LoadedCase,
+  provider: CompatibilityDatabaseProvider,
+  dialect: Dialect,
+): Promise<RunResult> {
+  await provision(loaded, provider);
+  const rounds = concurrencyRounds(loaded);
+  const errorClass = String(loaded.raw.errorClass);
+
+  const emissions: Emission[] = [];
+  const raised: unknown[] = [];
+  // The two held sessions, opened lazily INSIDE the `try` (below) and tracked here
+  // so `finally` rolls back + closes whichever actually opened — a failure opening B
+  // must never orphan an already-open A.
+  const sessions: Partial<Record<ConcurrencyNode, CompatibilitySession>> = {};
+
+  const runStep = async (node: ConcurrencyNode, round: ConcurrencyRound, index: number) => {
+    const step = round[node];
+    const sql = step?.goldenSql?.[dialect.id];
+    const session = sessions[node];
+    if (typeof sql !== "string" || session === undefined) {
+      return;
+    }
+    const binds = (step?.binds ?? []) as readonly unknown[];
+    emissions.push({
+      casePointer: `/concurrency/rounds/${index}/${node}`,
+      sql,
+      binds: binds as readonly WireBind[],
+    });
+    try {
+      await session.execute(sql, binds);
+    } catch (error) {
+      raised.push(error);
+    }
+  };
+
+  try {
+    // Open both held sessions here (not in a pre-`try` initializer): if B's
+    // `openSession` throws, A is already tracked in `sessions` and rolled back below.
+    sessions.A = await provider.openSession();
+    sessions.B = await provider.openSession();
+    for (const [index, round] of rounds.entries()) {
+      const active = CONCURRENCY_NODES.filter((node) => round[node] !== undefined);
+      if (active.length > 1) {
+        // Both nodes act this round — run them concurrently (the deadlock crossing).
+        await Promise.all(active.map((node) => runStep(node, round, index)));
+      } else {
+        // A single node holds (round 0) or contends (round 1) — run it awaited.
+        for (const node of active) {
+          await runStep(node, round, index);
+        }
+      }
+    }
+  } finally {
+    // Roll back BOTH sessions, then close BOTH — each step independent + guarded so
+    // one session's rejecting rollback/close never skips the other's cleanup (a
+    // leaked held connection). An unopened session (`?.`) is a no-op.
+    for (const node of CONCURRENCY_NODES) {
+      await sessions[node]?.rollback().catch(() => {});
+    }
+    for (const node of CONCURRENCY_NODES) {
+      await sessions[node]?.close().catch(() => {});
+    }
+  }
+
+  // Success is exactly "the declared transient was raised and NOTHING else": any
+  // recorded error that is non-transient, or a transient of the wrong `kind`, fails
+  // here rather than being masked by a matching sibling error (an unexpected failure
+  // in one step must not pass silently because another produced the expected one).
+  const unexpected = raised.find(
+    (error) => !(error instanceof ParallaxTransientError) || error.kind !== errorClass,
+  );
+  if (unexpected !== undefined) {
+    throw new Error(
+      `${loaded.casePath}: expected only a ${errorClass} transient, but also raised: ${String(unexpected)}`,
+    );
+  }
+  const transient = raised.find(
+    (error): error is ParallaxTransientError => error instanceof ParallaxTransientError,
+  );
+  if (transient === undefined) {
+    throw new Error(
+      `${loaded.casePath}: expected the contention round to raise a ${errorClass}, ` +
+        `but no ParallaxTransientError was raised (the lock had no effect?)`,
+    );
+  }
+  // Assert the case's declared native code too (not just the neutral `kind`): the
+  // portable transient preserves the driver's native error as `cause`, where
+  // Postgres carries the SQLSTATE string on `.code` ("55P03") and MariaDB the vendor
+  // errno on `.errno` (1205). Prefer `.errno` so MariaDB's numeric code wins over its
+  // symbolic `.code` name; compare via string coercion so a numeric errno and a
+  // string SQLSTATE each match their declared value.
+  const cause = transient.cause as { code?: string | number; errno?: number } | null | undefined;
+  const nativeCode = cause?.errno ?? cause?.code;
+  const expected = (loaded.raw.expectedNativeCode as Record<string, unknown> | undefined)?.[
+    dialect.id
+  ];
+  if (expected !== undefined && String(nativeCode) !== String(expected)) {
+    throw new Error(
+      `${loaded.casePath}: raised native code '${String(nativeCode)}', expected '${String(expected)}'`,
+    );
+  }
+
+  return { emissions, observations: { roundTrips: emissions.length } };
 }
 
 /** The root entity's primary-key column name (the scenario identity column). */

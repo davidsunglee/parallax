@@ -226,6 +226,97 @@ def test_schema_accepts_two_connection_error_case() -> None:
     assert list(_case_validator().iter_errors(case)) == []
 
 
+def test_case_recognizes_read_lock_concurrency_error_shape() -> None:
+    # 0728: a behavioral read-lock case whose round-1 A step is a locking SELECT
+    # (not a write) that HOLDS the shared lock while B's round-2 UPDATE blocks and
+    # times out. The runner runs A's round-1 statement verbatim and is agnostic
+    # about statement kind, so a round-1 read is a first-class concurrency step.
+    # This pins that assumption against a future regression that treats round-1
+    # statements as writes.
+    case = _error_case(
+        {
+            "errorClass": "lockWaitTimeout",
+            "expectedNativeCode": {"postgres": "55P03", "mariadb": 1205},
+            "concurrency": {
+                "rounds": [
+                    {
+                        "A": {
+                            "goldenSql": {
+                                "postgres": (
+                                    "select t0.id, t0.owner, t0.balance, t0.version "
+                                    "from account t0 where t0.id = ? for share of t0"
+                                ),
+                                "mariadb": (
+                                    "select t0.id, t0.owner, t0.balance, t0.version "
+                                    "from account t0 where t0.id = ? lock in share mode"
+                                ),
+                            },
+                            "binds": [2],
+                        }
+                    },
+                    {
+                        "B": {
+                            "goldenSql": {
+                                "postgres": "update account set balance = ? where id = ?",
+                                "mariadb": "update account set balance = ? where id = ?",
+                            },
+                            "binds": [999.00, 2],
+                        }
+                    },
+                ]
+            },
+        }
+    )
+    assert case.is_error
+    assert case.error_class == "lockWaitTimeout"
+    assert case.concurrency is not None
+    rounds = case.concurrency["rounds"]
+    # Round 1 is a locking read on A; round 2 is a write on B.
+    assert "for share of t0" in rounds[0]["A"]["goldenSql"]["postgres"]
+    assert rounds[1]["B"]["goldenSql"]["postgres"].startswith("update account")
+
+
+def test_schema_accepts_read_lock_concurrency_error_case() -> None:
+    # The 0728 shape validates against the existing error + concurrency branch as-is:
+    # a round-1 A locking SELECT plus a round-2 B UPDATE needs no schema change.
+    case = {
+        "model": "models/account.yaml",
+        "loadFixtures": True,
+        "errorClass": "lockWaitTimeout",
+        "expectedNativeCode": {"postgres": "55P03", "mariadb": 1205},
+        "concurrency": {
+            "rounds": [
+                {
+                    "A": {
+                        "goldenSql": {
+                            "postgres": (
+                                "select t0.id, t0.owner, t0.balance, t0.version "
+                                "from account t0 where t0.id = ? for share of t0"
+                            ),
+                            "mariadb": (
+                                "select t0.id, t0.owner, t0.balance, t0.version "
+                                "from account t0 where t0.id = ? lock in share mode"
+                            ),
+                        },
+                        "binds": [2],
+                    }
+                },
+                {
+                    "B": {
+                        "goldenSql": {
+                            "postgres": "update account set balance = ? where id = ?",
+                            "mariadb": "update account set balance = ? where id = ?",
+                        },
+                        "binds": [999.00, 2],
+                    }
+                },
+            ]
+        },
+        "tags": ["m8", "m11", "read-lock", "concurrency", "error-classification", "lockWaitTimeout"],
+    }
+    assert list(_case_validator().iter_errors(case)) == []
+
+
 def test_schema_rejects_error_case_without_native_code() -> None:
     case = {"model": "m.yaml", "errorClass": "uniqueViolation", "goldenSql": {"postgres": ["x"]}}
     assert list(_case_validator().iter_errors(case)) != []

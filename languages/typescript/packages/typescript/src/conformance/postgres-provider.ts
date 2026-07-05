@@ -7,7 +7,7 @@
  * `@parallax/db-postgres` adapter** (bound to the container URI) instead of
  * driving porsager itself. This keeps the harness on the exact production path:
  * the same adapter a real application imports is the one the whole harness-lane
- * slice (108 cases; api-conformance-lane cases run in the API Conformance Suite)
+ * slice (109 cases; api-conformance-lane cases run in the API Conformance Suite)
  * runs through. The provider owns only the two grader-side concerns the adapter
  * deliberately does not:
  *
@@ -30,7 +30,7 @@
  */
 import type { CompatibilityDatabaseProvider, ProviderRow } from "@parallax/conformance";
 import { toWire } from "@parallax/core";
-import { PostgresDatabase } from "@parallax/db-postgres";
+import { PostgresDatabase, type PostgresSession } from "@parallax/db-postgres";
 import {
   type Dialect,
   POSTGRES_DIALECT,
@@ -148,6 +148,16 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
    */
   get database(): PostgresDatabase {
     return this.db;
+  }
+
+  /**
+   * Open a manual-commit {@link PostgresSession} on a fresh, independent connection
+   * with a lowered lock-wait budget — the two-connection choreography seam the
+   * `error` / concurrency runner opens two sessions on (`0728`). Delegates to the
+   * shipped adapter, the MariaDB-provider `openSession` sibling.
+   */
+  openSession(): Promise<PostgresSession> {
+    return this.db.openSession();
   }
 
   async reset(): Promise<void> {

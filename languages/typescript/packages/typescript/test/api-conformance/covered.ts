@@ -3,7 +3,7 @@
  * grouped by the family file that exercises it (Phase 10c).
  *
  * `coverage.test.ts` asserts the union of these ids plus the skip manifest equals
- * the whole 120-case slice — so a case that is neither exercised nor explicitly
+ * the whole 121-case slice — so a case that is neither exercised nor explicitly
  * skipped fails the build (no silent gaps). Each family file drives its `it.each`
  * off the matching list here, so the list and the tested cases stay in lockstep.
  *

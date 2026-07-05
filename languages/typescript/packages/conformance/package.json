@@ -21,6 +21,7 @@
     "@parallax/operation": "workspace:*",
     "@parallax/sql": "workspace:*",
     "@parallax/dialect": "workspace:*",
+    "@parallax/db": "workspace:*",
     "@parallax/relationships": "workspace:*",
     "@parallax/bitemporal": "workspace:*",
     "@parallax/transactions": "workspace:*",
