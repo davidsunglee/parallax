@@ -203,12 +203,6 @@ export function exclusionsForProfile(
   });
 }
 
-export function profileCaseIds(profile: MatrixProfile): readonly string[] {
-  return casesForProfile(profile)
-    .map(({ id }) => id)
-    .sort();
-}
-
 export function caseById(id: string): MatrixProfileCase {
   const found = allProfileCases().find((item) => item.id === id);
   if (found === undefined) {
