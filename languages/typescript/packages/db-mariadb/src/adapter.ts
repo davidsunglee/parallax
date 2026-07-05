@@ -75,6 +75,11 @@ import { MARIADB_FIELD_TYPES } from "./field-codes.js";
 interface TypeCastField {
   readonly type: string;
   /**
+   * Driver-reported maximum byte length for the returned column. `mysql2` exposes
+   * this in both query and prepared-statement type casts.
+   */
+  readonly length: number;
+  /**
    * The output column's NAME (the projected alias, e.g. `payload_hex` for
    * `hex(t0.payload) payload_hex`, or the bare column name `payload` for a raw
    * `t0.payload`). `mysql2` surfaces the MySQL/MariaDB column-definition label —
@@ -107,23 +112,21 @@ interface TypeCastField {
  *     parsers.bytes` (`bytesFromHex`); reading the raw buffer here would yield the
  *     hex text's OWN byte encoding, not the decoded payload.
  *
- * `mysql2` cannot tell these apart by SQL shape, so the split keys on a signal the
- * CODEBASE OWNS rather than driver internals: the M3 compiler ALWAYS aliases a
- * `bytes` hex projection to `<col>_hex` (`compile.ts` `renderProjectionColumn`,
- * `column.outputName ?? '<col>_hex'`; the conformance `schema-resolver` only ever
- * routes a `bytes` output through that lowering under a `_hex`-suffixed alias),
- * whereas a RAW `bytes` projection is a BARE column (`RuntimeSchema.rootProjection`
- * emits `t0.<col>` with no alias). `mysql2`'s `Field.name` carries that output
- * alias, so a hex result reports a `<col>_hex` name and a raw result reports the
- * bare column name. The raw-buffer path is therefore gated on the field NAME NOT
- * ending in `_hex`; every `_hex`-aliased blob (case `1005`, and the DDL/table-state
- * reads `readTableState` / `reset`) stays on the hex-decode path. This is strictly
- * more robust than keying on `mysql2`'s empirical field-type NAME (a raw `longblob`
- * reporting bare `'BLOB'` vs `HEX(...)` widening to `'TINY_BLOB'`/`'MEDIUM_BLOB'`/
- * `'LONG_BLOB'`): the `_hex` alias is the compiler's invariant, not an undocumented
- * driver behavior that a `mysql2`/MariaDB upgrade could shift. (The convention
- * assumes no RAW `bytes` column is itself named `*_hex`; the M0 `bytes` column is
- * `payload`, and any `_hex`-named model column would be a self-inflicted collision.)
+ * `mysql2` cannot tell these apart by SQL shape alone, and it reports text-family
+ * columns (`TEXT`) through the broad blob type family too. The split therefore
+ * uses two signals:
+ *
+ *  - the codebase-owned `_hex` output-alias convention for dialect bytes
+ *    projections, which must stay on the hex-decode path;
+ *  - the driver-reported maximum byte length for raw columns. The MariaDB dialect
+ *    emits `longblob` for neutral `bytes`, and mysql2 reports that as
+ *    `4294967295`; a `text` column with the same broad field type reports the
+ *    utf8mb4 text length (`262140`) and falls through to mysql2's default string
+ *    cast.
+ *
+ * The convention assumes no RAW `bytes` column is itself named `*_hex`; the M0
+ * `bytes` column is `payload`, and any `_hex`-named model column would be a
+ * self-inflicted collision.
  */
 function typeCast(field: TypeCastField, next: () => unknown): unknown {
   const key = MARIADB_FIELD_TYPES[field.type];
@@ -131,6 +134,9 @@ function typeCast(field: TypeCastField, next: () => unknown): unknown {
     return next();
   }
   if (key === "bytes" && !field.name.endsWith("_hex")) {
+    if (field.length !== 4_294_967_295) {
+      return next();
+    }
     const buf = field.buffer();
     return buf === null ? null : new Uint8Array(buf);
   }

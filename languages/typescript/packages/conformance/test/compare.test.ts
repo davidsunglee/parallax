@@ -2,8 +2,8 @@
  * M12 adapter-boundary comparison unit tests (Docker-free).
  *
  * Pins the `scalarsEqual` + `compareRowSet` contract directly, in isolation from
- * the Docker-gated run lane (`@parallax/typescript`'s `read-run.test.ts`), which
- * is the only place the comparator was previously exercised. The central
+ * the Docker-gated Postgres full M12 profile (`@parallax/typescript`'s
+ * `slice-run.test.ts`). The central
  * invariant locked in here is the **genuine-numeric discriminator**: a numeric
  * wire STRING reconciles against a genuine `number` / `bigint` in decimal space
  * (the §3.2.1 int64 / decimal wire form vs an authored JS number), but two

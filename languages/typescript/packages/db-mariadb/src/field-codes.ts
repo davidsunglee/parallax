@@ -52,10 +52,10 @@ export const MARIADB_FIELD_TYPES: Readonly<Record<string, NeutralParserKey>> = {
   /**
    * A byte string (`longblob` and its siblings). All four names route to the same
    * neutral `bytes` key; `adapter.ts`'s `typeCast` then distinguishes a RAW
-   * un-wrapped column (read via `field.buffer()`) from the dialect's `HEX(...)`
-   * projection (hex-decoded from `field.string()`) by the codebase-owned `_hex`
-   * output-alias convention (`field.name`), not the driver's field-type name — see
-   * its doc comment for why that split is needed.
+   * neutral `bytes` column (read via `field.buffer()`), the dialect's `HEX(...)`
+   * projection (hex-decoded from `field.string()`), and broad-family text columns
+   * by the codebase-owned `_hex` output-alias convention plus mysql2's reported
+   * column length — see its doc comment for why that split is needed.
    */
   TINY_BLOB: "bytes",
   MEDIUM_BLOB: "bytes",

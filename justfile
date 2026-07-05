@@ -23,8 +23,8 @@ default:
 # Repo-wide: the top-level gates and reports that span every module.
 # ===========================================================================
 
-# Full merge gate: repo lint + core gates + all TS lanes + the harness suite (Docker).
-verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-conformance-run ts-api-conformance oracle-test
+# Full merge gate: repo lint + core gates + primary TS lanes + the harness suite (Docker).
+verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-lint ts-package-check ts-db-fast ts-db-adapter-smoke ts-db-provider-contract ts-conformance-compile ts-m12-postgres-full ts-api-conformance oracle-test
 
 # Every static check that needs no database: harness ruff, markdown, core schema/SQL.
 lint: oracle-lint lint-md core-schemas
@@ -109,20 +109,51 @@ ts-conformance-coverage:
 ts-package-check:
     pnpm run ts:package-check
 
+# --- TypeScript database testing: fast Docker-free ---------------------------
+
+# Docker-free DB contracts: dialect table, provider selection parsing, matrix profile declarations.
+ts-db-fast:
+    pnpm run ts:typecheck
+    pnpm exec vitest run --root languages/typescript packages/dialect/test/dialect-conformance.test.ts packages/typescript/test/api-conformance/provider-selection.test.ts packages/typescript/test/m12-profiles.test.ts
+
 # Docker-free conformance lane: full-slice compile sweep + honesty gate + matrix report.
 ts-conformance-compile:
     pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/conformance
 
-# Docker-backed conformance run lane: the full slice-mvp-1 slice end-to-end over postgres:17.
-ts-conformance-run:
-    pnpm run ts:typecheck
-    pnpm exec vitest run --root languages/typescript packages/typescript
+# --- TypeScript database testing: adapter smoke ------------------------------
 
-# Docker-backed MariaDB run lane: the 25-case set (14 in-slice + 11 marquee) end-to-end over mariadb:11.4.
-ts-conformance-run-mariadb:
+# Docker-backed adapter smoke over the shipped Postgres and MariaDB adapters.
+ts-db-adapter-smoke:
+    pnpm run ts:typecheck
+    pnpm exec vitest run --root languages/typescript packages/typescript/test/db-adapter-smoke.test.ts
+
+# --- TypeScript database testing: provider contract --------------------------
+
+# Docker-backed provider contract over Postgres and MariaDB composition-root providers.
+ts-db-provider-contract:
+    pnpm run ts:typecheck
+    PARALLAX_DATABASES=postgres,mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/db-provider-contract.test.ts
+
+# --- TypeScript database testing: M12 full/partial matrix --------------------
+
+# Docker-backed M12 full profile: slice-mvp-1 harness-lane cases over postgres:17.
+ts-m12-postgres-full:
+    pnpm run ts:typecheck
+    pnpm exec vitest run --root languages/typescript packages/typescript/test/slice-run.test.ts
+
+# Back-compat alias for the canonical Postgres M12 full profile.
+ts-conformance-run: ts-m12-postgres-full
+
+# Docker-backed M12 partial profile: declared mariadb-curated-25 over mariadb:11.4.
+ts-m12-mariadb-curated:
     pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/typescript/test/mariadb-run.test.ts
+
+# Back-compat alias for the declared MariaDB M12 partial profile.
+ts-conformance-run-mariadb: ts-m12-mariadb-curated
+
+# --- TypeScript database testing: API conformance ----------------------------
 
 # Docker-backed API Conformance Suite + Usage Guide drift check over postgres:17.
 ts-api-conformance:

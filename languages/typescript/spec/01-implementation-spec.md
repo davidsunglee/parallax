@@ -133,8 +133,11 @@ important V1 rule is the slice boundary:
   binds to the shared M13 methodology and report shape (§11), but the first build
   does not *claim* benchmark execution in its conformance slice — the benchmark
   surface lands after the first slice.
-- MariaDB cases are outside the V1 claim because `dialects` contains only
-  `postgres`.
+- MariaDB cases remain outside the V1 **conformance adapter claim** because
+  `dialects` contains only `postgres`. Separately, TypeScript ships MariaDB as
+  the second concrete M11 dialect/adapter/provider and proves it through
+  first-class partial M12 and selectable API-conformance profiles described in
+  [§5](#5-test-double-integration-m12-dq15) and [§6](#6-api-conformance-suite--usage-guide).
 
 For a case outside the claim, the adapter SHOULD return `status: "unsupported"`
 with a diagnostic such as `unsupported-case-tag` or `unsupported-dialect`.
@@ -770,29 +773,30 @@ defers part of a module.
 
 ### 5.3 Provisioning seam
 
-Provisioning is **Testcontainers for Node** — `@testcontainers/postgresql` — behind
-the same database-provider seam the `parallax-conformance run` adapter consumes
-(TS-0060). The image is pinned to **`postgres:17`**, the exact image the reference
-harness pins (`reference-harness/src/reference_harness/providers/postgres.py`,
-`POSTGRES_IMAGE = "postgres:17"`); the two are already aligned, so no harness change
-or downgrade is required, and the TypeScript pin bumps only when the harness bumps
-its major.
+Provisioning is **Testcontainers for Node** behind the same database-provider seam
+the `parallax-conformance run` adapter consumes. Postgres uses
+`@testcontainers/postgresql` pinned to **`postgres:17`**. MariaDB uses
+`@testcontainers/mysql`'s `MySqlContainer` pinned to **`mariadb:11.4`**. The pins
+move only when the corresponding compatibility provider pin moves.
 
-The container is booted once per dialect (session-scoped, as the Python harness
-does), but database state is reset **through the provider seam**, not through a
-test-runner call to a container-specific API. The TypeScript provider MUST expose
-a reset lifecycle equivalent to the reference `DatabaseProvider` seam:
+The container is booted once per dialect/profile (session-scoped), but database
+state is reset **through the provider seam**, not through a test-runner call to a
+container-specific API. The TypeScript provider MUST expose this reset and
+execution lifecycle:
 
 ```ts
 interface CompatibilityDatabaseProvider {
-  readonly dialect: "postgres";
+  readonly dialect: "postgres" | "mariadb";
   reset(): Promise<void>;                 // clean, empty database/schema
   applyDdl(statements: readonly string[]): Promise<void>;
-  load(
+  loadFixtures(
     table: string,
     columns: readonly string[],
     rows: readonly (readonly unknown[])[],
   ): Promise<void>;
+  query(sql: string, binds: readonly unknown[]): Promise<readonly ProviderRow[]>;
+  exec(sql: string, binds: readonly unknown[]): Promise<number>;
+  execRolledBack(sql: string, binds: readonly unknown[]): Promise<number>;
 }
 ```
 
@@ -801,35 +805,70 @@ For every database-backed `run` case, the conformance adapter calls
 fixture rows according to the core case lifecycle (`writeSequence` cases start
 empty unless the case sets `loadFixtures`; read/scenario/conflict cases load the
 model fixtures). This yields the same clean / migrated / isolated state as the
-Python harness without coupling the suite to Testcontainers internals.
+Python harness without coupling the suite to Testcontainers internals. The
+composition-root providers also expose the shipped `database` adapter,
+`dialectImpl`, and an independent `peer` connection for the API Conformance Suite
+and provider contract tests; those additions stay at the composition root and do
+not change the generic M12 runner port.
 
-The normative Postgres reset is drop-and-recreate of the active schema, matching
-the reference provider's `drop schema if exists public cascade; create schema
-public` behavior. An implementation MAY optimize this behind
-`CompatibilityDatabaseProvider.reset()` with a documented snapshot mechanism
-provided by a concrete dependency and version (for example a Postgres-module
-snapshot API), but that optimization must be invisible to the test runner and
-MUST have a drop/recreate fallback. The spec does not require a portable
-Testcontainers snapshot API.
+The normative Postgres reset is drop-and-recreate of the active schema:
+`drop schema if exists public cascade; create schema public`. The MariaDB reset
+drops every base table in the working schema. An implementation MAY optimize
+`reset()` with a documented snapshot mechanism provided by a concrete dependency
+and version, but that optimization must be invisible to the test runner and MUST
+have the documented drop/recreate (or drop-table) fallback. The spec does not
+require a portable Testcontainers snapshot API.
 
 ### 5.4 CI dialect set and per-dialect golden-SQL selection
 
-For V1, TypeScript runs **Postgres only** in CI (TS-0060) — the round-1 normative
-target (`m11-dialect-seam.md`). Per-dialect golden SQL is selected by the provider's
-own `dialect` identifier, which is the `goldenSql` key on the case:
+The V1 `parallax-conformance describe` claim remains **Postgres-only**. That is
+the official adapter grade for `slice-mvp-1`. TypeScript nevertheless ships two
+database implementations behind the M11 seam:
 
-- When the active dialect **has** a `goldenSql` entry, the full set of layers runs,
-  including database execution against the container.
-- When the active dialect has **no** `goldenSql` entry, **database execution is
-  skipped** and the dialect-agnostic checks still run (schema conformance,
-  normalization determinism, serde round-trip, equivalent encodings, round-trip
-  count) — the same skip behavior the Python harness applies.
+- **Postgres full M12 profile** (`postgres-full-slice-mvp-1`): the 108
+  harness-lane `slice-mvp-1` cases over `postgres:17`, run by
+  `just ts-m12-postgres-full` (alias: `just ts-conformance-run`).
+- **MariaDB curated M12 profile** (`mariadb-curated-25`): a first-class partial
+  profile over `mariadb:11.4`, run by `just ts-m12-mariadb-curated` (alias:
+  `just ts-conformance-run-mariadb`). It preserves the 25-case set: 14
+  harness-lane slice cases with `goldenSql.mariadb` plus 11 marquee MariaDB
+  dialect/error-classification proofs (`1001`, `1002`, `1005`, `0720`-`0727`).
 
-**MariaDB is deferred-but-additive**, not removed: adding it later is a new provider
-behind the same seam plus a `goldenSql.mariadb` key on the affected cases — never a
-runner redesign. The dialect seam is already proven beyond Postgres by the Python
-oracle, so a second CI database buys no additional V1 conformance and is omitted from
-V1 in keeping with the thin-slice posture (cf. TS-0054).
+Per-dialect golden SQL is selected by the provider's own `dialect` identifier,
+which is the `goldenSql` key on the case. The MariaDB profile does not silently
+skip cases. Every Postgres full-profile case without `goldenSql.mariadb` is
+classified as an explicit MariaDB profile exclusion with the reason
+`no goldenSql.mariadb in this partial MariaDB profile`.
+
+### 5.5 Database provider support and matrix profiles
+
+TypeScript implements the portable database-provider test contract in
+[`../../../core/spec/database-provider-test-contract.md`](../../../core/spec/database-provider-test-contract.md):
+
+- **Docker-free dialect contract:** `packages/dialect/test/dialect-conformance.test.ts`
+  is a shared table with one row per dialect. It proves quoting, null ordering,
+  read locks, column types, bytes projection, infinity, placeholders, parsers,
+  bind behavior, and error classification for Postgres and MariaDB.
+- **Real-adapter smoke:** `packages/typescript/test/db-adapter-smoke.test.ts`
+  runs both shipped adapters, `@parallax/db-postgres` and
+  `@parallax/db-mariadb`, through connection construction, managed scalar reads,
+  transaction callback behavior, bytes write round trip, affected-row semantics,
+  and feasible lock-timeout classification.
+- **Provider contract:** `packages/typescript/test/db-provider-contract.test.ts`
+  selects providers from the same registry as API conformance
+  (`PARALLAX_DATABASES`) and proves `reset`, `applyDdl`, `loadFixtures`, `query`,
+  `exec`, `execRolledBack`, and peer visibility.
+- **Matrix profiles:** `packages/typescript/test/m12-profiles.ts` declares the
+  canonical Postgres full profile, the historical Postgres read/graph/txn/temporal
+  subsets as named profiles, and the MariaDB curated partial profile. The
+  Docker-free `m12-profiles.test.ts` guards profile membership and explicit
+  MariaDB exclusions.
+- **Commands:** `just ts-db-fast`, `just ts-db-adapter-smoke`,
+  `just ts-db-provider-contract`, `just ts-api-conformance`,
+  `just ts-api-conformance-mariadb`, `just ts-m12-postgres-full`, and
+  `just ts-m12-mariadb-curated` are the concrete lanes. Docker-backed suites use
+  a `docker info` gate and report skipped database checks when Docker is
+  unavailable.
 
 ## 6. API Conformance Suite & Usage Guide
 

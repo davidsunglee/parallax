@@ -107,6 +107,12 @@ layer to emit compiled SQL, so co-locating dialect strings with a driver would p
 that driver into modules that MUST stay database-free — defeating the driver-free
 compile/golden path.
 
+The corresponding test obligation is split the same way: the pure dialect layer
+is proved by a Docker-free, one-row-per-database contract suite, while each
+concrete adapter is proved by a small real-database smoke suite. The portable
+checklist lives in
+[`database-provider-test-contract.md`](database-provider-test-contract.md).
+
 ## The `Dialect` interface
 
 A `Dialect` is the abstract authority for every dialect-specific decision. With

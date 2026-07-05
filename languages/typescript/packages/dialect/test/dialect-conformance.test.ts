@@ -6,11 +6,11 @@
  * placement, read-lock spelling, column-type map, errno-vs-SQLSTATE classification,
  * infinity representation, and the per-dialect raw value-parse wire forms).
  *
- * This is where the reified interface earns its first *direct* unit tests: today
- * `quoteIdentifier` / `columnType` / the value parsers are only exercised
- * indirectly downstream. Each catalog method is asserted through the `Dialect`
- * object (not the underlying free functions), so the object wiring itself is
- * proven.
+ * This is the TypeScript realization of
+ * `core/spec/database-provider-test-contract.md`'s Docker-free dialect contract:
+ * adding a database means adding one row to `dialects` below. Each catalog method
+ * is asserted through the `Dialect` object (not the underlying free functions),
+ * so the object wiring itself is proven.
  */
 import { INFINITY, ParallaxDecimal, Temporal } from "@parallax/core";
 import {

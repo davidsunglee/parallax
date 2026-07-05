@@ -184,6 +184,12 @@ is valid and SHOULD include a diagnostic naming the first failed filter, such as
   and fallback reset path.
 
 The target language spec records which mode the implementation uses.
+The reusable provider-test obligations for `reset`, `applyDdl`, fixture loading,
+query/write execution, rollback execution, peer connections, and declared
+full/partial database matrix profiles are recorded in
+[`database-provider-test-contract.md`](database-provider-test-contract.md). That
+document guides implementation suites; this adapter contract remains the
+normative wire surface.
 
 ## `compile`
 

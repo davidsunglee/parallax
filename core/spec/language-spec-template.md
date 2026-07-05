@@ -150,6 +150,31 @@ test runner wires to the **database provider**.
   [§1](#1-conformance-slice-declaration), including the `unsupported` discipline
   for out-of-slice case commands.
 
+### 5.5 Database provider support and matrix profiles
+
+Every language that supports a database must declare its concrete proof of
+[`database-provider-test-contract.md`](database-provider-test-contract.md):
+
+- **(decide and record)** The Docker-free dialect contract suite location and the
+  one-row-per-database table it uses. Adding a database should add one row for
+  quoting, null ordering, read locks, column types, bytes, infinity, placeholders,
+  parse/bind behavior, and error classification.
+- **(decide and record)** The real-database adapter smoke suite location and the
+  adapters it runs, including connection construction, managed scalar reads,
+  transaction callback behavior, bytes write round trip, affected-row semantics,
+  and feasible transient classification.
+- **(decide and record)** The M12 provider contract suite location and the
+  provider operations it proves: `reset`, `applyDdl`, `loadFixtures`, `query`,
+  `exec`, `execRolledBack`, and any independent `peer` connection the composition
+  root exposes.
+- **(decide and record)** The named database matrix profiles, marking each as
+  full or partial. A partial profile MUST list explicit exclusions with reasons;
+  missing `goldenSql.<dialect>` entries are exclusions, not silent skips.
+- **(decide and record)** The commands that run the fast Docker-free checks,
+  adapter smoke checks, provider contract checks, API conformance lanes, and full
+  or partial M12 matrix profiles. Record how skipped database-backed checks are
+  reported when Docker or the equivalent database substrate is unavailable.
+
 ## 6. API Conformance Suite & Usage Guide
 
 The **API Conformance Suite** proves that the idiomatic developer surface of

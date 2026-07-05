@@ -11,7 +11,8 @@
  * order-insensitive multisets):
  *
  *  - **read** (flat): observed `rows` vs `expectedRows`;
- *  - **read** (deep fetch, `expectedGraph`): the assembled `graph` structurally;
+ *  - **read** (deep fetch, `expectedGraph`): the assembled `graph` structurally,
+ *    plus runtime-generated per-level SQL and binds against the array golden;
  *  - **writeSequence**: the resulting `tableState` vs `expectedTableState`;
  *  - **scenario**: the terminal find's `rows` (read-your-own-writes);
  *  - **conflict**: the terminal `affectedRows` + the resulting `tableState`.
@@ -32,19 +33,18 @@ import {
   compareGraph,
   compareRowSet,
   compareTableState,
-  discoverCasePaths,
   type Graph,
   type LoadedCase,
-  loadCase,
   type MatrixStatus,
   renderMatrixReport,
   runRun,
   type TableState,
   TYPESCRIPT_ADAPTER,
 } from "@parallax/conformance";
-import type { Envelope } from "@parallax/core";
+import type { BindValue, Envelope } from "@parallax/core";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import { PostgresProvider } from "../src/conformance/postgres-provider.js";
+import { casesForProfile, POSTGRES_FULL_PROFILE } from "./m12-profiles.js";
 
 /**
  * The full `slice-mvp-1` tagged slice the HARNESS runs, in discovery order.
@@ -55,14 +55,6 @@ import { PostgresProvider } from "../src/conformance/postgres-provider.js";
  * set-based materialize scenarios `0614`/`0615` + the four Phase-6 optimistic ×
  * temporal close cases `0730`-`0733`).
  */
-function taggedCases(): readonly { id: string; loaded: LoadedCase }[] {
-  return discoverCasePaths()
-    .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
-    .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
-    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"))
-    .filter(({ loaded }) => loaded.lane !== "api-conformance");
-}
-
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */
 function dockerAvailable(): boolean {
   try {
@@ -74,56 +66,59 @@ function dockerAvailable(): boolean {
 }
 
 const HAS_DOCKER = dockerAvailable();
-const CASES = taggedCases();
+const CASES = casesForProfile(POSTGRES_FULL_PROFILE);
 
 // Discovery is Docker-free; assert the exact slice size unconditionally.
 it("discovers the harness-lane slice-mvp-1 slice (108 cases)", () => {
   expect(CASES.length).toBe(108);
 });
 
-group.skipIf(!HAS_DOCKER)("full-slice run lane (Testcontainers postgres:17)", () => {
-  const BOOT_TIMEOUT = 600_000;
-  let provider: PostgresProvider;
-  const matrix = new CaseMatrix();
+group.skipIf(!HAS_DOCKER)(
+  `${POSTGRES_FULL_PROFILE.name} run lane (Testcontainers postgres:17)`,
+  () => {
+    const BOOT_TIMEOUT = 600_000;
+    let provider: PostgresProvider;
+    const matrix = new CaseMatrix();
 
-  beforeAll(async () => {
-    provider = await PostgresProvider.start();
-  }, BOOT_TIMEOUT);
+    beforeAll(async () => {
+      provider = await PostgresProvider.start();
+    }, BOOT_TIMEOUT);
 
-  afterAll(async () => {
-    await provider?.close();
-    // The full sweep either passed (every case green) or a case above already
-    // failed; either way surface the folded report so a run summary is legible.
-    // eslint-disable-next-line no-console
-    console.log(renderMatrixReport(matrix.report()));
-  });
+    afterAll(async () => {
+      await provider?.close();
+      // The full sweep either passed (every case green) or a case above already
+      // failed; either way surface the folded report so a run summary is legible.
+      // eslint-disable-next-line no-console
+      console.log(renderMatrixReport(matrix.report()));
+    });
 
-  it.each(CASES)(
-    "$id runs green (graded per shape + roundTrips)",
-    async ({ loaded }) => {
-      const envelope = await runRun(loaded, "postgres", TYPESCRIPT_ADAPTER, provider);
-      matrix.record({
-        casePath: loaded.casePath,
-        command: "run",
-        status: gradeStatus(envelope, loaded),
-      });
-      expect(envelope.status, `${loaded.casePath}: ${JSON.stringify(envelope)}`).toBe("ok");
-      if (envelope.status !== "ok" || envelope.command !== "run") {
-        throw new Error("expected an ok run envelope");
-      }
-      gradeObservation(envelope, loaded);
-      assertRoundTrips(envelope, loaded);
-    },
-    BOOT_TIMEOUT,
-  );
+    it.each(CASES)(
+      "$id runs green (graded per shape + roundTrips)",
+      async ({ loaded }) => {
+        const envelope = await runRun(loaded, "postgres", TYPESCRIPT_ADAPTER, provider);
+        matrix.record({
+          casePath: loaded.casePath,
+          command: "run",
+          status: gradeStatus(envelope, loaded),
+        });
+        expect(envelope.status, `${loaded.casePath}: ${JSON.stringify(envelope)}`).toBe("ok");
+        if (envelope.status !== "ok" || envelope.command !== "run") {
+          throw new Error("expected an ok run envelope");
+        }
+        gradeObservation(envelope, loaded);
+        assertRoundTrips(envelope, loaded);
+      },
+      BOOT_TIMEOUT,
+    );
 
-  it("the case-matrix report is GREEN with no residuals", () => {
-    const report = matrix.report();
-    expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(108);
-    expect(report.residuals).toEqual([]);
-  });
-});
+    it("the case-matrix report is GREEN with no residuals", () => {
+      const report = matrix.report();
+      expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
+      expect(report.total).toBe(108);
+      expect(report.residuals).toEqual([]);
+    });
+  },
+);
 
 /**
  * Grade an observation against the case's shape assertion, throwing on a mismatch.
@@ -153,6 +148,7 @@ function gradeObservation(envelope: Envelope, loaded: LoadedCase): void {
     return;
   }
   if (loaded.raw.expectedGraph) {
+    assertDeepFetchEmissions(envelope, loaded);
     const observed = (observations.graph ?? {}) as Graph;
     const comparison = compareGraph(observed, loaded.raw.expectedGraph as Graph, columnTypes);
     expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
@@ -162,6 +158,62 @@ function gradeObservation(envelope: Envelope, loaded: LoadedCase): void {
   const observed = observations.rows ?? [];
   const comparison = compareRowSet(observed, expectedRows(loaded), columnTypes);
   expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
+}
+
+/**
+ * Deep-fetch child statements are generated at runtime from the gathered parent
+ * keys, so the Postgres full M12 profile must pin the executed statement list
+ * here. Docker-free compile tests only see the root statement.
+ */
+function assertDeepFetchEmissions(envelope: Envelope, loaded: LoadedCase): void {
+  if (envelope.status !== "ok" || envelope.command !== "run" || !loaded.raw.expectedGraph) {
+    return;
+  }
+
+  const golden = (loaded.raw.goldenSql as { postgres?: string | readonly string[] } | undefined)
+    ?.postgres;
+  if (!Array.isArray(golden)) {
+    return;
+  }
+
+  expect(envelope.emissions.map((emission) => emission.sql)).toEqual(golden);
+  assertDeepFetchBinds(
+    envelope.emissions.map((emission) => emission.binds),
+    loaded,
+  );
+}
+
+/**
+ * Compare each deep-fetch level's binds against the authored golden. The child
+ * IN-list key order is non-normative, so compare that leading numeric slice as a
+ * set; any temporal/as-of suffix is ordered and must match exactly.
+ */
+function assertDeepFetchBinds(
+  observed: readonly (readonly BindValue[])[],
+  loaded: LoadedCase,
+): void {
+  const golden = loaded.raw.binds;
+  if (!Array.isArray(golden) || !golden.every(Array.isArray)) {
+    return;
+  }
+
+  expect(observed.length).toBe(golden.length);
+  expect(observed[0]).toEqual(golden[0]);
+
+  for (let level = 1; level < golden.length; level += 1) {
+    const goldenLevel = golden[level] as readonly unknown[];
+    const observedLevel = observed[level] ?? [];
+    const inCount = goldenLevel.filter((bind) => typeof bind === "number").length;
+
+    const goldenIn = numericSet(goldenLevel.slice(0, inCount));
+    const observedIn = numericSet(observedLevel.slice(0, inCount));
+    expect(observedIn).toEqual(goldenIn);
+    expect(observedLevel.slice(inCount)).toEqual(goldenLevel.slice(inCount));
+  }
+}
+
+function numericSet(values: readonly unknown[]): readonly number[] {
+  return values.map(Number).sort((a, b) => a - b);
 }
 
 /** Assert the observed `roundTrips` equals the case's declared count when present. */
