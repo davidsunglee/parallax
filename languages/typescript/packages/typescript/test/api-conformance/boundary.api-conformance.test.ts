@@ -17,13 +17,10 @@
  * conflict genuine.
  */
 
-import { execFileSync } from "node:child_process";
 import { ParallaxDecimal } from "@parallax/core";
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 import { ParallaxTransientError } from "@parallax/db";
-import { postgresDialect } from "@parallax/dialect";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
-import { PostgresProvider } from "../../src/conformance/postgres-provider.js";
 import {
   AttributeExpression,
   createParallax,
@@ -32,7 +29,8 @@ import {
   Predicate,
   type TransactionOptions,
 } from "../../src/index.js";
-import { provisionCase } from "./_harness.js";
+import { type ApiConformanceProvider, provisionCase } from "./_harness.js";
+import { HAS_DOCKER, writeProviders } from "./_providers.js";
 import { BOUNDARY } from "./covered.js";
 
 const attr = (ref: string): AttributeExpression => new AttributeExpression(ref);
@@ -43,18 +41,6 @@ const accountPk = (id: number): Predicate =>
 
 /** The out-of-band concurrent write that makes an optimistic conflict genuine (0703 shape). */
 const CONCURRENT_WRITE = "update account set balance = 999.00, version = 2 where id = 2";
-
-/** True when a Docker daemon is reachable (gates the Testcontainers lane). */
-function dockerAvailable(): boolean {
-  try {
-    execFileSync("docker", ["info"], { stdio: "ignore", timeout: 10_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const HAS_DOCKER = dockerAvailable();
 
 it("the boundary suite covers exactly the BOUNDARY family", () => {
   const covered = [
@@ -139,7 +125,7 @@ function pxOver(
   return createParallax({
     database: db,
     descriptor: fixture.loaded.descriptor,
-    dialect: postgresDialect,
+    dialect: fixture.dialect,
   });
 }
 
@@ -155,12 +141,16 @@ function findThenUpdate(
   }, options);
 }
 
-group.skipIf(!HAS_DOCKER)("boundary suite (Testcontainers postgres:17)", () => {
+// Every boundary case drives the developer WRITE surface (the versioned find-then-update
+// unit of work), Postgres-only today (see `_providers.ts`), so the family runs only on
+// write-capable providers (MariaDB is filtered out). The provider `peer` IS wired for
+// MariaDB, but the gated `px.update` itself cannot run there yet.
+group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
-  let provider: PostgresProvider;
+  let provider: ApiConformanceProvider;
 
   beforeAll(async () => {
-    provider = await PostgresProvider.start();
+    provider = await dbp.start();
   }, BOOT_TIMEOUT);
 
   afterAll(async () => {

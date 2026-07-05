@@ -2,18 +2,24 @@
  * The real-DB API Conformance Suite harness (Phase 10c).
  *
  * Every suite case runs the SAME developer code an application would write —
- * `px.*` / `px.transaction` over the SHIPPED `@parallax/db-postgres` adapter — and
+ * `px.*` / `px.transaction` over the SHIPPED adapter for the SELECTED dialect — and
  * asserts the corpus's expected results AND the managed shapes (10b). It does NOT
  * touch the grader: the official conformance grade stays contract-driven over the
  * generic runtime (ADR-0010). This harness is additive proof that the shipped
  * adapter + the developer surface produce the corpus's results.
  *
+ * The harness is DIALECT-AGNOSTIC: it names no concrete provider, dialect, or
+ * adapter. It drives an injected {@link ApiConformanceProvider} and reads the
+ * dialect from `provider.dialectImpl`, so a suite runs identically against Postgres
+ * or MariaDB — the concrete provider is selected by `PARALLAX_DATABASES` in
+ * `_providers.ts`.
+ *
  * Per case it:
- *  1. provisions the case's schema on ONE shared Testcontainers `postgres:17` via
- *     the **Phase 3 provider** (`PostgresProvider` — `reset` / `applyDdl` /
- *     `loadFixtures`, the grader-side provisioning half), and
- *  2. builds a `px` / `tx` handle bound to a **`@parallax/db-postgres`** instance on
- *     that same container (NOT a bespoke provider) — the production path.
+ *  1. provisions the case's schema on ONE shared Testcontainers database via the
+ *     composition-root provider ({@link ApiConformanceProvider} — `reset` /
+ *     `applyDdl` / `loadFixtures`, the grader-side provisioning half), and
+ *  2. builds a `px` / `tx` handle bound to the SHIPPED adapter on that same
+ *     container (NOT a bespoke provider) — the production path.
  *
  * Three assertion helpers:
  *  - `assertSameOperation(dsl, case)` — the DSL builds the corpus's canonical
@@ -27,6 +33,7 @@
 
 import {
   type ColumnTypes,
+  type CompatibilityDatabaseProvider,
   compareGraph,
   compareRowSet,
   compareTableState,
@@ -36,14 +43,41 @@ import {
   type TableState,
 } from "@parallax/conformance";
 import { bytesToHex, ParallaxDecimal, Temporal, timestampToWire } from "@parallax/core";
-import type { PostgresDatabase } from "@parallax/db-postgres";
-import { ddlForDescriptor, postgresDialect } from "@parallax/dialect";
+import type { ParallaxDatabase } from "@parallax/db";
+import { type Dialect, ddlForDescriptor } from "@parallax/dialect";
 import type { Metamodel } from "@parallax/metamodel";
 import { Metamodel as MetamodelReader } from "@parallax/metamodel";
 import { canonicallyEqual } from "@parallax/operation";
 import { expect } from "vitest";
-import type { PostgresProvider } from "../../src/conformance/postgres-provider.js";
 import { createParallax, type Parallax, type ParallaxRow } from "../../src/index.js";
+
+/**
+ * The provider surface the API Conformance Suite drives — the grader-side
+ * provisioning port ({@link CompatibilityDatabaseProvider}: `reset` / `applyDdl` /
+ * `loadFixtures`) PLUS the three composition-root additions the developer-surface
+ * suite needs, which the runner-facing port deliberately omits:
+ *
+ *  - `dialectImpl` — the concrete M11 {@link Dialect} injected into `createParallax`
+ *    (and `ddlForDescriptor`), so the `px` handle compiles + materializes against the
+ *    SAME strategy the shipped adapter parses with;
+ *  - `database` — the shipped `ParallaxDatabase` adapter bound to the provisioned
+ *    container (the developer `px` binds to it — the production execution path);
+ *  - `peer` — an INDEPENDENT second connection modeling a concurrent writer (an
+ *    optimistic-lock `precondition`), since the shipped adapter's own connection is
+ *    held by an open `px.transaction`.
+ *
+ * Both `PostgresProvider` and `MariaDbProvider` satisfy it, so the suites never name
+ * a concrete class — the provider is selected at the composition root (`_providers.ts`,
+ * keyed by `PARALLAX_DATABASES`).
+ */
+export interface ApiConformanceProvider extends CompatibilityDatabaseProvider {
+  /** The concrete M11 dialect injected into `createParallax` + `ddlForDescriptor`. */
+  readonly dialectImpl: Dialect;
+  /** The shipped adapter bound to the provisioned container (the developer `px` path). */
+  readonly database: ParallaxDatabase;
+  /** An independent second connection modeling a concurrent/peer writer. */
+  readonly peer: ParallaxDatabase;
+}
 
 /** Resolve a case stem to its repo-relative path. */
 export function casePath(stem: string): string {
@@ -61,26 +95,30 @@ export interface CaseFixture {
   readonly loaded: LoadedCase;
   /** The typed developer handle over the shipped adapter (`px`). */
   readonly px: Parallax;
-  /** The bound `@parallax/db-postgres` adapter (the production path). */
-  readonly db: PostgresDatabase;
+  /** The bound shipped adapter (the production path). */
+  readonly db: ParallaxDatabase;
   /** The case's metamodel (for DSL entity symbols + managed-shape assertions). */
   readonly metamodel: Metamodel;
+  /** The injected M11 dialect (so assertions quote identifiers for the right database). */
+  readonly dialect: Dialect;
 }
 
 /**
- * Provision a case's schema on the shared container (via the Phase 3 provider) and
- * build a `px` handle bound to a `@parallax/db-postgres` instance on that same
- * container. The clock is fixed so audit-write processing instants are
- * deterministic across a run.
+ * Provision a case's schema on the shared container (via the injected provider) and
+ * build a `px` handle bound to the shipped adapter on that same container. The DDL
+ * and the `px` handle both use the provider's injected dialect, so the case runs
+ * against Postgres or MariaDB identically. The clock is fixed so audit-write
+ * processing instants are deterministic across a run.
  */
 export async function provisionCase(
-  provider: PostgresProvider,
+  provider: ApiConformanceProvider,
   stem: string,
   options: { readonly loadFixtures?: boolean; readonly now?: string } = {},
 ): Promise<CaseFixture> {
   const loaded = suiteCase(stem);
+  const dialect = provider.dialectImpl;
   await provider.reset();
-  await provider.applyDdl(ddlForDescriptor(loaded.descriptor));
+  await provider.applyDdl(ddlForDescriptor(loaded.descriptor, dialect));
   if (options.loadFixtures ?? shouldLoadFixtures(loaded)) {
     await loadCaseFixtures(provider, loaded);
   }
@@ -89,10 +127,10 @@ export async function provisionCase(
   const px = createParallax({
     database: db,
     descriptor: loaded.descriptor,
-    dialect: postgresDialect,
+    dialect,
     ...(options.now ? { clock: { now: () => options.now as string } } : {}),
   });
-  return { loaded, px, db, metamodel };
+  return { loaded, px, db, metamodel, dialect };
 }
 
 /**
@@ -109,7 +147,10 @@ function shouldLoadFixtures(loaded: LoadedCase): boolean {
 }
 
 /** Load a case's fixtures through the provider (physical table + columns + rows). */
-async function loadCaseFixtures(provider: PostgresProvider, loaded: LoadedCase): Promise<void> {
+async function loadCaseFixtures(
+  provider: ApiConformanceProvider,
+  loaded: LoadedCase,
+): Promise<void> {
   const metamodel = MetamodelReader.fromDescriptor(loaded.descriptor);
   for (const entity of metamodel.entities()) {
     const rows = loaded.fixtures[entity.name] ?? [];
@@ -300,13 +341,10 @@ function firstPopulated(siblings: readonly Record<string, unknown>[], key: strin
  * by physical column, so no name translation is needed — but the OBSERVED managed
  * values are rendered to wire form for the shared comparator.
  */
-export async function assertTableState(
-  db: PostgresDatabase,
-  loaded: LoadedCase,
-  metamodel: Metamodel,
-): Promise<void> {
+export async function assertTableState(fixture: CaseFixture): Promise<void> {
+  const { db, loaded, metamodel, dialect } = fixture;
   const expected = (loaded.raw.expectedTableState ?? {}) as TableState;
-  const observed = await readTableState(db, expected, metamodel);
+  const observed = await readTableState(db, expected, metamodel, dialect);
   const columnTypes = physicalColumnTypes(metamodel);
   const comparison = compareTableState(observed, expected, columnTypes);
   expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
@@ -564,9 +602,10 @@ function physicalColumnTypes(metamodel: Metamodel): ColumnTypes {
 
 /** Read the expected tables' full state off the physical tables (wire-rendered). */
 async function readTableState(
-  db: PostgresDatabase,
+  db: ParallaxDatabase,
   expected: TableState,
   metamodel: Metamodel,
+  dialect: Dialect,
 ): Promise<TableState> {
   const tableToEntity = new Map(metamodel.entities().map((e) => [e.table, e]));
   const out: Record<string, readonly Record<string, unknown>[]> = {};
@@ -575,8 +614,10 @@ async function readTableState(
     const columns = entity
       ? entity.attributes().map((attr) => attr.column)
       : Object.keys(expected[table]?.[0] ?? {});
-    const quoted = columns.map((c) => `"${c}"`).join(", ");
-    const rows = await db.execute(`select ${quoted} from "${table}"`, []);
+    // Quote through the injected M11 seam — double quotes on Postgres, backticks on
+    // MariaDB — so the read-back never diverges from the dialect the DDL created.
+    const quoted = columns.map((c) => dialect.quoteIdentifier(c)).join(", ");
+    const rows = await db.execute(`select ${quoted} from ${dialect.quoteIdentifier(table)}`, []);
     out[table] = rows.map((row) => renderManaged(row));
   }
   return out;

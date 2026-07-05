@@ -18,10 +18,8 @@
  * AFTER the read and BEFORE the write, so the gate is genuinely stale.
  */
 
-import { execFileSync } from "node:child_process";
 import { ParallaxDecimal } from "@parallax/core";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
-import { PostgresProvider } from "../../src/conformance/postgres-provider.js";
 import {
   AttributeExpression,
   NavigationPath,
@@ -29,7 +27,14 @@ import {
   ParallaxTemporalCloseError,
   Predicate,
 } from "../../src/index.js";
-import { assertGraph, assertRows, assertTableState, provisionCase } from "./_harness.js";
+import {
+  type ApiConformanceProvider,
+  assertGraph,
+  assertRows,
+  assertTableState,
+  provisionCase,
+} from "./_harness.js";
+import { HAS_DOCKER, selectedProviders, supportsDeveloperWrites } from "./_providers.js";
 import { LOCKING } from "./covered.js";
 
 const attr = (ref: string): AttributeExpression => new AttributeExpression(ref);
@@ -45,18 +50,6 @@ const all = (): Predicate => new Predicate({ all: {} });
 const Balance = { id: attr("Balance.id"), value: attr("Balance.value") };
 const balancePk = (id: number): Predicate =>
   new Predicate({ eq: { attr: "Balance.id", value: id } });
-
-/** True when a Docker daemon is reachable (gates the Testcontainers lane). */
-function dockerAvailable(): boolean {
-  try {
-    execFileSync("docker", ["info"], { stdio: "ignore", timeout: 10_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const HAS_DOCKER = dockerAvailable();
 
 it("the locking suite covers exactly the LOCKING family", () => {
   const covered = [
@@ -83,12 +76,18 @@ it("the locking suite covers exactly the LOCKING family", () => {
   expect(covered.sort()).toEqual([...LOCKING].sort());
 });
 
-group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
+// The locking suite is MIXED: the read-lock cases (0603 / 0616-0619) and the no-op update
+// (0609 — it issues no DML) are dialect-agnostic and run on both databases; the DML-emitting
+// cases drive the developer WRITE surface (Postgres-only today, see `_providers.ts`), so they
+// are guarded off MariaDB via `writeCase`.
+group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
-  let provider: PostgresProvider;
+  let provider: ApiConformanceProvider;
+  // Reads run on every selected database; write-driving cases run on Postgres only.
+  const writeCase = supportsDeveloperWrites(dbp) ? it : it.skip;
 
   beforeAll(async () => {
-    provider = await PostgresProvider.start();
+    provider = await dbp.start();
   }, BOOT_TIMEOUT);
 
   afterAll(async () => {
@@ -210,7 +209,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
     BOOT_TIMEOUT,
   );
 
-  it(
+  writeCase(
     "0611: a locking-mode update advances the version with no gate",
     async () => {
       const f = await provisionCase(provider, "0611-versioned-update-locking-mode");
@@ -222,12 +221,12 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
         return accounts.update(accountPk(2), { set: [Account.balance.set(dec("500.00"))] });
       });
       expect(result.affectedRows).toBe(1);
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
 
-  it(
+  writeCase(
     "0615: a versioned set-based update materializes into per-object version-advancing updates",
     async () => {
       const f = await provisionCase(provider, "0615-versioned-set-based-materialize-locking");
@@ -252,7 +251,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
     BOOT_TIMEOUT,
   );
 
-  it(
+  writeCase(
     "0614: a versioned set-based update materializes into per-object GATED updates",
     async () => {
       const f = await provisionCase(provider, "0614-versioned-set-based-materialize-optimistic");
@@ -274,7 +273,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
     BOOT_TIMEOUT,
   );
 
-  it(
+  writeCase(
     "0703: a stale-version update conflicts (affects 0 rows) — the row is unchanged",
     async () => {
       const f = await provisionCase(provider, "0703-optimistic-lock-conflict");
@@ -297,12 +296,12 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
       }
       expect(conflicted, "expected a ParallaxOptimisticLockError").toBe(true);
       // The row still carries the concurrent writer's values (our write did NOT apply).
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
 
-  it(
+  writeCase(
     "0704: an update on the fresh version succeeds (affects 1 row)",
     async () => {
       const f = await provisionCase(provider, "0704-optimistic-lock-success");
@@ -316,12 +315,12 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
         { concurrency: "optimistic" },
       );
       expect(result.affectedRows).toBe(1);
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
 
-  it(
+  writeCase(
     "0708: a retry re-reads the fresh version after the conflict and succeeds",
     async () => {
       const f = await provisionCase(provider, "0708-optimistic-lock-retry-after-conflict");
@@ -348,7 +347,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
         { concurrency: "optimistic" },
       );
       expect(result.affectedRows).toBe(1);
-      await assertTableState(f.db, f.loaded, f.metamodel);
+      await assertTableState(f);
     },
     BOOT_TIMEOUT,
   );
@@ -362,7 +361,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
   // the corpus's authored txInstant, so the observable is the affected count / the
   // thrown conflict (the golden close text is pinned by the harness compile lane).
 
-  it(
+  writeCase(
     "0730: an optimistic close on a fresh observed in_z closes exactly the current milestone",
     async () => {
       const f = await provisionCase(provider, "0730-temporal-close-optimistic-success");
@@ -382,7 +381,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
     BOOT_TIMEOUT,
   );
 
-  it(
+  writeCase(
     "0731: an optimistic close on a STALE observed in_z conflicts (a current row still exists)",
     async () => {
       const f = await provisionCase(provider, "0731-temporal-close-optimistic-conflict");
@@ -409,7 +408,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
     BOOT_TIMEOUT,
   );
 
-  it(
+  writeCase(
     "0732: a retry re-reads the fresh current in_z after the temporal conflict and succeeds",
     async () => {
       const f = await provisionCase(provider, "0732-temporal-close-retry-after-conflict");
@@ -438,7 +437,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
     BOOT_TIMEOUT,
   );
 
-  it(
+  writeCase(
     "0733: a locking-mode close that finds no current row raises (never silent)",
     async () => {
       const f = await provisionCase(provider, "0733-temporal-close-zero-rows-error");
@@ -470,7 +469,7 @@ group.skipIf(!HAS_DOCKER)("locking suite (Testcontainers postgres:17)", () => {
  * `px.transaction` holds the connection would deadlock.
  */
 async function applyPrecondition(
-  provider: PostgresProvider,
+  provider: ApiConformanceProvider,
   fixture: Awaited<ReturnType<typeof provisionCase>>,
 ): Promise<void> {
   const precondition = fixture.loaded.raw.precondition as string | readonly string[] | undefined;
