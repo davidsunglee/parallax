@@ -11,10 +11,17 @@
  * adapter deliberately does not:
  *
  *  - **Provisioning** — booting a clean container, dropping every base table per
- *    `reset`, applying the derived MariaDB DDL, and loading fixtures. Fixture binds
- *    go through the adapter's `toMariaBinds` (the `infinity` → max-sentinel and
- *    ISO-instant → naive-UTC normalization), so a fixture authored once against
- *    native-infinity Postgres loads correctly here.
+ *    `reset`, applying the derived MariaDB DDL, and loading fixtures. Every UNTYPED
+ *    corpus value the provider hands the adapter (fixture rows, `query` / `exec` /
+ *    `execRolledBack` binds) is first materialized to a MANAGED scalar by
+ *    {@link toManagedBind}: an ISO-8601 instant STRING → a `Temporal.Instant` (the
+ *    typed carrier the adapter binds as a naive-UTC `DATETIME(6)`), while the
+ *    `"infinity"` sentinel and every other value are left for the adapter's own
+ *    `isInfinity` / passthrough handling. This is the grader-side seam that OWNS the
+ *    untyped→managed coercion (mirroring the Python reference's `_to_db_bind`, which
+ *    runs in the provider, not the driver — mariadb.py:53-72); the shipped adapter
+ *    itself never rewrites a plain string. So a fixture authored once against
+ *    native-infinity Postgres still loads correctly here.
  *  - **Wire rendering** — the adapter returns **managed** scalars; the runner
  *    grades in the wire domain, so the provider renders each returned scalar to its
  *    canonical neutral wire form with the core serializer (`toWire`). *Managed at
@@ -24,7 +31,7 @@
  * composition root, the only place allowed to depend on a concrete adapter.
  */
 import type { CompatibilityDatabaseProvider, ProviderRow } from "@parallax/conformance";
-import { toWire } from "@parallax/core";
+import { parseTimestamp, toWire } from "@parallax/core";
 import { MariaDbDatabase, type MariaDbSession } from "@parallax/db-mariadb";
 import { type Dialect, MARIADB_DIALECT, mariadbDialect } from "@parallax/dialect";
 import { MySqlContainer, type StartedMySqlContainer } from "@testcontainers/mysql";
@@ -83,6 +90,52 @@ export function renderFixtureInsert(table: string, columns: readonly string[]): 
   const colList = columns.map((column) => mariadbDialect.quoteIdentifier(column)).join(", ");
   const placeholders = columns.map(() => "?").join(", ");
   return `insert into ${target} (${colList}) values (${placeholders})`;
+}
+
+/**
+ * Materialize one UNTYPED corpus value into a MANAGED scalar for the shipped
+ * adapter — the grader-side coercion the adapter deliberately no longer performs.
+ *
+ * The compatibility corpus authors binds as plain YAML scalars with no column-type
+ * context: a timestamp instant is an ISO-8601 STRING (`2024-03-01T00:00:00+00:00`),
+ * and the open temporal upper bound is the `"infinity"` STRING. The shipped adapter
+ * (`@parallax/db-mariadb` `toMariaBind`) binds a TYPED `Temporal.Instant` as a
+ * naive-UTC `DATETIME(6)` but passes a plain string through verbatim (it must not
+ * heuristically rewrite text). So the provider — which OWNS the untyped→managed
+ * boundary, exactly as the Python reference's `_to_db_bind` does in the provider and
+ * not the driver (mariadb.py:53-72) — lifts an ISO-instant string to a
+ * `Temporal.Instant` here, before the value reaches the adapter.
+ *
+ * The gate mirrors the reference's `_parse_iso_instant` (mariadb.py:75-91): only a
+ * string carrying a `T` separator is a candidate, and it is materialized ONLY if it
+ * parses as a full instant (an explicit UTC offset / `Z`). Everything else is left
+ * untouched for the adapter's existing handling:
+ *  - `"infinity"` (no `T`) stays a string → the adapter's `isInfinity` branch maps
+ *    it to the max-sentinel `DATETIME` (`mariadbDialect.infinityBind()`);
+ *  - a `T`-carrying non-instant (the corpus name `"Trent"`) fails to parse and
+ *    stays text (`parseTimestamp` throws → returned unchanged);
+ *  - a plain `date` / `time` / uuid / business string, a number, a `bigint`, and an
+ *    ALREADY-TYPED `Temporal.Instant` (from a developer-shaped bind) all pass through
+ *    unchanged — this helper only ever lifts a string.
+ *
+ * The bind VALUE the adapter finally sends MariaDB is therefore byte-for-byte what
+ * it was when the adapter itself did the coercion; the only thing that moved is
+ * WHERE the untyped ISO string becomes an instant.
+ */
+export function toManagedBind(value: unknown): unknown {
+  if (typeof value !== "string" || !value.includes("T")) {
+    return value;
+  }
+  try {
+    return parseTimestamp(value);
+  } catch {
+    return value;
+  }
+}
+
+/** Materialize an ordered bind list of untyped corpus values (per-value {@link toManagedBind}). */
+function toManagedBinds(binds: readonly unknown[]): unknown[] {
+  return binds.map(toManagedBind);
 }
 
 /** A Testcontainers-backed MariaDB provider for one suite run. */
@@ -175,21 +228,21 @@ export class MariaDbProvider implements CompatibilityDatabaseProvider {
     }
     const insert = renderFixtureInsert(table, columns);
     for (const row of rows) {
-      await this.db.executeWrite(insert, row);
+      await this.db.executeWrite(insert, toManagedBinds(row));
     }
   }
 
   async query(sql: string, binds: readonly unknown[]): Promise<readonly ProviderRow[]> {
-    const rows = await this.db.execute(sql, binds);
+    const rows = await this.db.execute(sql, toManagedBinds(binds));
     return rows.map((row) => renderRowToWire(row));
   }
 
   async exec(sql: string, binds: readonly unknown[]): Promise<number> {
-    return this.db.executeWrite(sql, binds);
+    return this.db.executeWrite(sql, toManagedBinds(binds));
   }
 
   async execRolledBack(sql: string, binds: readonly unknown[]): Promise<number> {
-    return this.db.executeRolledBack(sql, binds);
+    return this.db.executeRolledBack(sql, toManagedBinds(binds));
   }
 
   async close(): Promise<void> {
