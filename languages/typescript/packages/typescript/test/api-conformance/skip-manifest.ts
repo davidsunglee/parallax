@@ -14,8 +14,17 @@
  * Phase-9 `dsl.test.ts` (`0222-group-precedence-grouped`), and its ungrouped
  * sibling `0223` is exercised in `reads.api-conformance.test.ts`.
  *
+ * `0728` (read-lock-blocks-writer) is also skipped here: it is a HARNESS-lane
+ * two-connection concurrency case (a held `for share` read excludes a concurrent
+ * writer, which times out). Its behavioral proof is discharged by the reference
+ * harness AND the TypeScript conformance runner's run lane (`slice-run.test.ts` /
+ * `mariadb-run.test.ts` drive `@parallax/conformance`'s two-session `runRun`), not
+ * the developer-surface API Conformance Suite — a developer never authors the
+ * barrier + lowered-lock-budget choreography. (The read lock's developer-observable
+ * behavior — a locking find returns the row — IS exercised here by `0603`/`0616`.)
+ *
  * The other two constructs the phase note calls out are NOT case-level skips in the
- * 120-case slice:
+ * 121-case slice:
  *  - the conflict `precondition` / `preconditionBinds` (out-of-band SQL simulating a
  *    concurrent writer) is a SUB-STEP of the exercised locking cases (`0703` /
  *    `0708`), applied harness-side — those cases ARE exercised;
@@ -50,6 +59,16 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "different result (6 distinct orders). Projecting one column needs the out-of-V1 " +
       "aggregation/projection surface (04xx). Its DSL/operation fidelity is still proven by " +
       "dsl.test.ts (0226-distinct); only the projected-result assertion is out of the V1 surface.",
+  },
+  {
+    id: "0728",
+    reason:
+      "read-lock-blocks-writer: a HARNESS-lane two-connection concurrency case (a held `for " +
+      "share` read excludes a concurrent writer → lockWaitTimeout). Its behavioral proof is " +
+      "discharged by the reference harness and the TypeScript conformance runner's two-session " +
+      "run lane (slice-run/mariadb-run drive @parallax/conformance's runRun), not the " +
+      "developer-surface suite — a developer never authors the barrier + lowered-lock-budget " +
+      "choreography. The read lock's developer-observable behavior is exercised by 0603/0616.",
   },
 ];
 

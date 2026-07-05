@@ -1,0 +1,32 @@
+# Behavioral counterpart to 0603/0616 (M8/M11). Round 1: transaction A issues the
+# M8 in-transaction shared read lock (`for share of t0` / `lock in share mode`) on
+# account 2 and HOLDS (no commit). Round 2: transaction B attempts to UPDATE account
+# 2 and, with the session's lowered lock-wait budget (lock_timeout /
+# innodb_lock_wait_timeout), blocks on A's shared lock and raises lockWaitTimeout.
+#
+# This proves the emitted read-lock SQL has real locking EFFECT: a concurrent writer
+# cannot mutate the row while a read-then-write holds the shared lock. The single-
+# connection cases 0603/1001 prove the locking read is well-formed and result-correct;
+# this proves it behaves as a lock. Neutral category lockWaitTimeout; native PG 55P03 /
+# MariaDB 1205. Mirrors 0725 with A's blocking statement swapped from an UPDATE to the
+# read-lock SELECT -- the runner runs A's round-1 statement verbatim, so a round-1 read
+# holds a lock exactly like a round-1 write.
+model: models/account.yaml
+tags: [m8, m11, read-lock, concurrency, error-classification, lockWaitTimeout, slice-mvp-1]
+loadFixtures: true
+errorClass: lockWaitTimeout
+expectedNativeCode:
+  postgres: "55P03"
+  mariadb: 1205
+concurrency:
+  rounds:
+    - A:
+        goldenSql:
+          postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
+        binds: [2]
+    - B:
+        goldenSql:
+          postgres: update account set balance = ? where id = ?
+          mariadb: update account set balance = ? where id = ?
+        binds: [999.00, 2]

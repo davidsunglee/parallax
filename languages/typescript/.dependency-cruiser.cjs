@@ -131,6 +131,7 @@ module.exports = {
     edge("conformance", "operation"), //      M12 -> M2
     edge("conformance", "sql"), //            M12 -> M3
     edge("conformance", "dialect"), //        M12 -> M11 (harness applies dialect DDL / quoting / read-lock rules)
+    edge("conformance", "db"), //             M12 -> M11 port (the `error`/concurrency runner consumes the portable ParallaxTransientError surface)
     edge("conformance", "relationships"), //  M12 -> M4
     edge("conformance", "bitemporal"), //     M12 -> M7
     edge("conformance", "transactions"), //   M12 -> M8  (write-sequence / scenario shapes)

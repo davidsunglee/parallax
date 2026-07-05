@@ -61,7 +61,11 @@ export {
   renderMatrixReport,
   summarizeMatrix,
 } from "./matrix.js";
-export type { CompatibilityDatabaseProvider, ProviderRow } from "./provider.js";
+export type {
+  CompatibilityDatabaseProvider,
+  CompatibilitySession,
+  ProviderRow,
+} from "./provider.js";
 export { readProjection, runCompile, runRun } from "./runner.js";
 export {
   buildScenarioPlan,

@@ -25,6 +25,7 @@ export type CaseShape =
   | "scenario"
   | "conflict"
   | "coherence"
+  | "error"
   | "boundary";
 
 /** A module tier tag, e.g. `"m0"`, `"m12"`. */

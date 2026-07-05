@@ -315,6 +315,15 @@ def _has_postgres_golden(doc: dict, shape: str) -> bool:
     """
     if isinstance(doc.get("goldenSql"), dict) and "postgres" in doc["goldenSql"]:
         return True
+    if isinstance(doc.get("concurrency"), dict):
+        for rnd in doc["concurrency"].get("rounds", []):
+            if not isinstance(rnd, dict):
+                continue
+            for node in ("A", "B"):
+                step = rnd.get(node)
+                golden = step.get("goldenSql") if isinstance(step, dict) else None
+                if isinstance(golden, dict) and "postgres" in golden:
+                    return True
     if shape == "scenario":
         steps = doc.get("scenario", [])
     elif shape == "conflict":
