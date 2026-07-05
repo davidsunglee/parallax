@@ -26,15 +26,22 @@ A case is a YAML document under `core/compatibility/cases/`, validated against
 [`core/schemas/compatibility-case.schema.json`](../schemas/compatibility-case.schema.json).
 Its fields:
 
-A case is one of seven shapes: a **read case** (carries an `operation`), a
+A case is one of eight shapes: a **read case** (carries an `operation`), a
 **writeSequence case** (carries a `writeSequence`, Phase 5 / M7), a **scenario
 case** (carries a `scenario` of ordered read *and* committed-write steps, Phase
 6 / M8), a **conflict case** (carries `expectedAffectedRows` for a single
 attempt, or an `attempts` retry sequence, Phase 7 / M10), a **coherence
 case** (carries a `coherence` two-node sequence, Phase 11 / cross-process
 coherence), an **error case** (carries `errorClass` and
-`expectedNativeCode`, Phase 12 / M11 error-code classification), or a **boundary
-case** (carries `boundary` + `expect`, M8/M10 bounded automatic retry — an
+`expectedNativeCode`, Phase 12 / M11 error-code classification — including the
+two-connection `concurrency` deadlock / lock-wait choreography), a
+**concurrency-success case** (carries a `concurrency` choreography with **no**
+`errorClass`, M8 behavioral read-lock — barrier-separated rounds on two held
+sessions that assert no error is raised; every present step declares an explicit
+`kind` (a `read` step's `expectRows` is observed on its held session, a `write`
+step omits it and asserts only that it did not block/raise); proves the shared
+read lock is compatible with a second reader and that an unlocked projection
+admits a writer), or a **boundary case** (carries `boundary` + `expect`, M8/M10 bounded automatic retry — an
 `api-conformance`-lane case the harness schema-validates but does not execute).
 The fields:
 

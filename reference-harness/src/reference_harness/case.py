@@ -331,10 +331,27 @@ class Case:
         """The two-connection choreography for deadlock / timeout cases (else None).
 
         ``{"rounds": [ {"A": step, "B": step}, ... ]}`` where each ``step`` is
-        ``{"goldenSql": {dialect: stmt}, "binds": [...]}``. Rounds are barrier-
-        separated; a node absent from a round does nothing that round.
+        ``{"goldenSql": {dialect: stmt}, "binds": [...], "expectRows": [...]}``.
+        Rounds are barrier-separated; a node absent from a round does nothing that
+        round. Shared by the error/concurrency shape (``deadlock`` / ``lockWaitTimeout``)
+        and the concurrency-success shape (:attr:`is_concurrency_success`).
         """
         return self.raw.get("concurrency")
+
+    @property
+    def is_concurrency_success(self) -> bool:
+        """True for an M8 behavioral read-lock concurrency-SUCCESS case.
+
+        A concurrency-success case carries a ``concurrency`` choreography with NO
+        ``errorClass`` (the discriminator that keeps it distinct from an
+        error/concurrency case). It runs the barrier-separated rounds on two held
+        non-autocommit sessions and asserts that NO error is raised — each read
+        step's optional ``expectRows`` observed on its HELD session. Proves the
+        shared read lock is COMPATIBLE with a second reader (``0729``) and that an
+        unlocked projection ADMITS a writer (``0734``), the non-error counterpart to
+        the error branch's lock CONTENTION (``0728``).
+        """
+        return self.concurrency is not None and "errorClass" not in self.raw
 
     @property
     def equivalent_encodings(self) -> list[dict[str, Any]]:

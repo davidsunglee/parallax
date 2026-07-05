@@ -15,6 +15,8 @@
  * neutral wire form so the runner compares against goldens directly.
  */
 
+import type { ParallaxRow } from "@parallax/db";
+
 /** A materialized row keyed by projected column name. Values are wire-normalized. */
 export type ProviderRow = Record<string, unknown>;
 
@@ -32,6 +34,15 @@ export type ProviderRow = Record<string, unknown>;
 export interface CompatibilitySession {
   /** Run one statement inside the session's held transaction (classifying transient errors). */
   execute(sql: string, binds?: readonly unknown[]): Promise<void>;
+  /**
+   * Fetch rows INSIDE the session's held transaction — the concurrency-SUCCESS seam
+   * (`0729` / `0734`): a shared-lock SELECT both takes its lock and returns its rows,
+   * and an unlocked projection reads under the open unit of work, so `expectRows` is
+   * observed on the HELD session (not the provider's autocommit connection). Returns
+   * **managed** scalars (§3.2.1, like the adapter's `execute`); the runner renders
+   * them to the neutral wire form when it grades `expectRows`.
+   */
+  query(sql: string, binds?: readonly unknown[]): Promise<readonly ParallaxRow[]>;
   /** Commit the session's transaction. */
   commit(): Promise<void>;
   /** Roll back the session's transaction (releasing its locks). */

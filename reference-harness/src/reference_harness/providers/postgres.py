@@ -230,6 +230,26 @@ class _PgTxSession:
             else:
                 cur.execute(_trusted_query(sql))
 
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        """Fetch rows INSIDE the held transaction (concurrency-success `expectRows`).
+
+        Mirrors the provider's ``query`` but runs on the HELD session connection so a
+        locking SELECT (``for share of t0``) both acquires the shared lock and returns
+        its rows, and an unlocked projection reads under the open unit of work. The
+        provider's ``_query_rows`` runs on the AUTOCOMMIT connection and so cannot read
+        inside the session's open transaction — this method can.
+        """
+        with self._conn.cursor() as cur:
+            if binds:
+                cur.execute(_trusted_query(sql.replace("?", "%s")), tuple(binds))
+            else:
+                cur.execute(_trusted_query(sql))
+            description = cur.description
+            if description is None:
+                raise RuntimeError("query produced no result columns")
+            column_names = [desc.name for desc in description]
+            return [dict(zip(column_names, row, strict=True)) for row in cur.fetchall()]
+
     def commit(self) -> None:
         self._conn.commit()
 

@@ -49,10 +49,12 @@ export const POSTGRES_TXN_PROFILE_IDS: readonly string[] = [
   "0708",
   "0710",
   "0728",
+  "0729",
   "0730",
   "0731",
   "0732",
   "0733",
+  "0734",
 ];
 
 export const POSTGRES_TEMPORAL_PROFILE_IDS: readonly string[] = [

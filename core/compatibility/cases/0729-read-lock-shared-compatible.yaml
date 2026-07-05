@@ -1,0 +1,33 @@
+# Read-lock is SHARED, not exclusive (M8 / M11). Round 1: transaction A takes the
+# in-transaction shared read lock (`for share of t0` / `lock in share mode`) on
+# account 2 and HOLDS (no commit). Round 2: transaction B takes the SAME shared read
+# lock on account 2 -- and, because a shared lock is compatible with another shared
+# lock, B is ADMITTED and succeeds without blocking. Both reads observe Linus /
+# 250.00 / version 1 on their own held session.
+#
+# This is the negative control for 0728: 0728 alone cannot tell a SHARED lock from an
+# EXCLUSIVE one (`for update` would also block a writer and pass it). 0729 pins the
+# lock as shared -- an adapter that emitted `for update` instead of `for share` fails
+# here, because B would then block on A and time out. No error is raised; the
+# concurrency-success shape asserts NO node blocked/raised and each read's expectRows.
+model: models/account.yaml
+tags: [m8, m11, read-lock, concurrency, shared-lock-compatible, slice-mvp-1]
+loadFixtures: true
+concurrency:
+  rounds:
+    - A:
+        kind: read
+        goldenSql:
+          postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
+        binds: [2]
+        expectRows:
+          - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+    - B:
+        kind: read
+        goldenSql:
+          postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
+        binds: [2]
+        expectRows:
+          - { id: 2, owner: Linus, balance: 250.00, version: 1 }

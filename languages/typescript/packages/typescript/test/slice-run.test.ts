@@ -4,7 +4,7 @@
  * database?" sweep.
  *
  * One container serves every case (the provider resets the schema per case). For
- * each of the 109 harness-lane tagged cases the sweep runs the adapter's `runRun` (the same
+ * each of the 111 harness-lane tagged cases the sweep runs the adapter's `runRun` (the same
  * orchestration the CLI drives) with the concrete composition-root provider
  * injected, and grades the observation the case SHAPE asserts, reusing the M12
  * comparison rules (exact decimal, boolean never `== 1`, µs timestamps,
@@ -50,11 +50,12 @@ import { casesForProfile, POSTGRES_FULL_PROFILE } from "./m12-profiles.js";
  * The full `slice-mvp-1` tagged slice the HARNESS runs, in discovery order.
  * `api-conformance`-lane cases (boundary retry cases + the read-lock matrix reads)
  * are excluded — they have no harness-executable golden (the API Conformance Suite
- * proves them) — so the run sweep covers the 109 harness-lane cases (101 pre-Phase-4
+ * proves them) — so the run sweep covers the 111 harness-lane cases (101 pre-Phase-4
  * cases + the harness-lane auto-retry case `0710` + the two Phase-5 versioned
  * set-based materialize scenarios `0614`/`0615` + the four Phase-6 optimistic ×
- * temporal close cases `0730`-`0733` + the COR-12 behavioral read-lock-blocks-writer
- * case `0728`).
+ * temporal close cases `0730`-`0733` + the COR-12 behavioral read-lock cases `0728`
+ * (blocks-writer), `0729` (shared-compatible), and `0734` (projection-omits-lock-
+ * admits-writer)).
  */
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */
 function dockerAvailable(): boolean {
@@ -70,8 +71,8 @@ const HAS_DOCKER = dockerAvailable();
 const CASES = casesForProfile(POSTGRES_FULL_PROFILE);
 
 // Discovery is Docker-free; assert the exact slice size unconditionally.
-it("discovers the harness-lane slice-mvp-1 slice (109 cases)", () => {
-  expect(CASES.length).toBe(109);
+it("discovers the harness-lane slice-mvp-1 slice (111 cases)", () => {
+  expect(CASES.length).toBe(111);
 });
 
 group.skipIf(!HAS_DOCKER)(
@@ -115,7 +116,7 @@ group.skipIf(!HAS_DOCKER)(
     it("the case-matrix report is GREEN with no residuals", () => {
       const report = matrix.report();
       expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-      expect(report.total).toBe(109);
+      expect(report.total).toBe(111);
       expect(report.residuals).toEqual([]);
     });
   },

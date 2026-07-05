@@ -174,6 +174,19 @@ def _assert_schema(case: Case) -> None:
                 f"{case.path.name}: error case declares no trigger — needs goldenSql "
                 f"(single-connection) or a non-empty concurrency choreography"
             )
+    elif case.is_concurrency_success:
+        if not (
+            _concurrency_has_golden(case, "postgres") or _concurrency_has_golden(case, "mariadb")
+        ):
+            raise CaseFailure(
+                f"{case.path.name}: concurrency-success case has an empty concurrency "
+                f"choreography (no round declares a golden statement)"
+            )
+        # Fail fast (DB-free, timing-independent) if a success step omits its `kind` or a
+        # `read` forgot expectRows: the runner branches read-vs-write on the EXPLICIT kind
+        # (no SQL-verb sniffing), so a mis-declared step would mis-dispatch. Redundant with
+        # the schema (which requires kind + the read/write expectRows rule), as defense.
+        _assert_concurrency_success_step_kinds(case)
     elif case.is_boundary:
         if not case.boundary:
             raise CaseFailure(f"{case.path.name}: boundary case has no actions")
@@ -215,7 +228,12 @@ def _assert_serde(case: Case) -> None:
         for step in case.coherence:
             if "find" in step:
                 serde.assert_roundtrip(step["find"])
-    elif not case.is_write_sequence and not case.is_conflict and not case.is_error:
+    elif (
+        not case.is_write_sequence
+        and not case.is_conflict
+        and not case.is_error
+        and not case.is_concurrency_success
+    ):
         serde.assert_roundtrip(case.operation)
     serde.assert_roundtrip(case.model.descriptor)
 
@@ -235,10 +253,12 @@ def _assert_equivalent_encodings(case: Case) -> None:
         or case.is_conflict
         or case.is_coherence
         or case.is_error
+        or case.is_concurrency_success
     ):
         # A write-sequence and a conflict case have no operation; a scenario and a
-        # coherence case carry their operations per step. An error case has no
-        # operation either. Equivalent-encodings is a single-operation check.
+        # coherence case carry their operations per step. An error case and a
+        # concurrency-success case have no operation either. Equivalent-encodings is a
+        # single-operation check.
         return
     canonical_operation = serde.canonical(case.operation)
     for index, encoding in enumerate(case.equivalent_encodings):
@@ -2231,6 +2251,154 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     _assert_classified(case, db, next(iter(raised.values())))
 
 
+# --- concurrency-success cases (M8 behavioral read-lock) ---------------------
+
+
+def _concurrency_statements(case: Case, dialect: str) -> list[str]:
+    """Every golden statement a concurrency case lists for *dialect*, in round/A/B
+    order (shared by the error/concurrency and concurrency-success shapes)."""
+    statements: list[str] = []
+    concurrency = case.concurrency or {}
+    for rnd in concurrency.get("rounds", []):
+        for node in ("A", "B"):
+            step = rnd.get(node)
+            if step and dialect in step["goldenSql"]:
+                statements.append(step["goldenSql"][dialect])
+    return statements
+
+
+def _concurrency_has_golden(case: Case, dialect: str) -> bool:
+    return bool(_concurrency_statements(case, dialect))
+
+
+def _assert_concurrency_success_step_kinds(case: Case) -> None:
+    """Guard: every present step of a concurrency-success case MUST declare a valid
+    ``kind`` (``"read"`` or ``"write"``), and a ``read`` step MUST carry ``expectRows``.
+
+    ``kind`` is the EXPLICIT read-vs-write discriminator :func:`_assert_concurrency_success`
+    branches on -- replacing the brittle SQL-verb sniffing that could misclassify a write
+    CTE or a novel read form. Database-free and timing-independent, run pre-flight before
+    any round executes: a step missing/with an unknown kind would mis-dispatch (a read
+    graded as an execute-only write, its rows never proven), so the runner fails fast,
+    naming the offending ``/concurrency/rounds/{i}/{node}`` pointer. The schema enforces
+    both rules structurally (the success branch requires ``kind``; the ``kind`` if/then
+    requires ``expectRows`` on a read); this re-check is defense-in-depth.
+    """
+    concurrency = case.concurrency or {}
+    for index, rnd in enumerate(concurrency.get("rounds", [])):
+        for node in ("A", "B"):
+            step = rnd.get(node)
+            if step is None:
+                continue
+            kind = step.get("kind")
+            if kind not in ("read", "write"):
+                raise CaseFailure(
+                    f"{case.path.name}: /concurrency/rounds/{index}/{node}: a concurrency-"
+                    f"success step must declare kind: 'read' | 'write' (the explicit read-"
+                    f"vs-write discriminator); got {kind!r}"
+                )
+            if kind == "read" and step.get("expectRows") is None:
+                raise CaseFailure(
+                    f"{case.path.name}: /concurrency/rounds/{index}/{node}: a kind: read "
+                    f"step must declare expectRows (its rows are graded on the held session)"
+                )
+
+
+def _assert_concurrency_normalization(case: Case, dialect: str) -> None:
+    for statement in _concurrency_statements(case, dialect):
+        canonical = normalize(statement, dialect)
+        if canonical != statement:
+            raise CaseFailure(
+                f"{case.path.name}: concurrency goldenSql.{dialect} is not canonical.\n"
+                f"  stored:     {statement!r}\n"
+                f"  normalized: {canonical!r}"
+            )
+
+
+def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
+    """Two-node, barrier-synchronized rounds that assert NO error and each read's rows.
+
+    The non-error counterpart of :func:`_assert_error_concurrency`, reusing the same
+    barrier + two ``open_session`` plumbing: ``0729`` (both readers take the shared
+    lock and BOTH succeed -- shared, not exclusive) and ``0734`` (A holds an UNLOCKED
+    projection, B's UPDATE is admitted -- no lock to block it). Each node runs its
+    round steps on its own held non-autocommit session; a ``kind: read`` step is
+    fetched on that HELD session (``session.query`` -- inside the open transaction, so
+    a locking SELECT both takes the lock and returns its rows) and its ``expectRows``
+    compared via the order-insensitive :func:`_rows_equal`, while a ``kind: write``
+    step asserts only that it did not block/raise. Success is exactly "NO node raised
+    and every ``expectRows`` matched". Sessions are rolled back + closed in a finally
+    (releasing any lock a held read took).
+    """
+    dialect = db.dialect
+    tolerance = case.tolerance
+    concurrency = case.concurrency
+    if concurrency is None:
+        raise CaseFailure(f"{case.path.name}: concurrency-success case missing concurrency")
+    rounds = concurrency["rounds"]
+    nodes = ("A", "B")
+    barrier = threading.Barrier(len(nodes))
+    raised: dict[str, Exception] = {}
+    row_failures: list[str] = []
+
+    _provision(case, db)  # loadFixtures seeds the Account rows the reads observe
+
+    def run_node(node: str, session: Any) -> None:
+        for rnd in rounds:
+            step = rnd.get(node)
+            if step is not None and dialect in step["goldenSql"]:
+                sql = step["goldenSql"][dialect]
+                binds = step.get("binds", [])
+                try:
+                    if step.get("kind") == "read":
+                        # A read step: fetch on the HELD session (a shared-lock SELECT
+                        # takes its lock here) and compare the observed rows.
+                        rows = session.query(sql, binds)
+                        expect = step.get("expectRows") or []
+                        if not _rows_equal(rows, expect, tolerance):
+                            row_failures.append(
+                                f"node {node} observed rows != expectRows.\n"
+                                f"  observed: {rows!r}\n"
+                                f"  expected: {expect!r}"
+                            )
+                    else:
+                        # A write step (kind: write): succeeds iff no lock blocks it
+                        # (0734's admitted UPDATE); it holds until the finally rolls it back.
+                        session.execute(sql, binds)
+                except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
+                    raised[node] = exc
+                    with contextlib.suppress(Exception):
+                        session.rollback()  # release any lock so the peer can proceed
+            try:
+                barrier.wait(timeout=30)
+            except threading.BrokenBarrierError:
+                return
+
+    with contextlib.ExitStack() as stack:
+        sessions = {node: stack.enter_context(db.open_session()) for node in nodes}
+        threads = [
+            threading.Thread(target=run_node, args=(node, sessions[node]), daemon=True)
+            for node in nodes
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        # Roll back both held sessions (releasing any shared read lock / uncommitted
+        # write) before the ExitStack closes them.
+        for session in sessions.values():
+            with contextlib.suppress(Exception):
+                session.rollback()
+
+    if raised:
+        raise CaseFailure(
+            f"{case.path.name}: expected NO error on {dialect} (the lock is shared / "
+            f"absent), but node(s) {sorted(raised)} raised: {raised}"
+        )
+    if row_failures:
+        raise CaseFailure(f"{case.path.name}: " + "\n".join(row_failures))
+
+
 # --- coherence cases (Phase 11, cross-process cache coherence) ---------------
 
 
@@ -2464,6 +2632,19 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
             return  # no golden for this dialect: dialect-agnostic checks only
         _assert_error_normalization(case, dialect)  # layer 3
         _assert_error_classification(case, db)
+        return
+
+    if case.is_concurrency_success:
+        # A concurrency-success case (M8 behavioral read-lock: 0729/0734) also carries
+        # its golden per round inside `concurrency.rounds` (no top-level goldenSql), so
+        # branch before the goldenSql access below, as a sibling of `is_error`.
+        _assert_schema(case)
+        _assert_serde(case)  # descriptor serde only (no operation)
+        _assert_equivalent_encodings(case)
+        if not _concurrency_has_golden(case, dialect):
+            return  # no golden for this dialect: dialect-agnostic checks only
+        _assert_concurrency_normalization(case, dialect)  # layer 3
+        _assert_concurrency_success(case, db)  # layer 2 (two held sessions, no error)
         return
 
     if dialect not in case.golden_sql:
