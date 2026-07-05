@@ -29,9 +29,12 @@ import {
   bytesFromHex,
   INFINITY,
   type Infinity as InfinitySentinel,
+  isInfinity,
   ParallaxDecimal,
+  parseTimestamp,
   Temporal,
   timestampFromRaw,
+  toWire,
 } from "@parallax/core";
 import type { Dialect } from "./dialect.js";
 import type { ErrorCategory } from "./errors.js";
@@ -55,6 +58,46 @@ export const MARIADB_INFINITY_SENTINEL = "9999-12-31 23:59:59.999999" as const;
  */
 function toPositionalPlaceholders(sql: string): string {
   return sql;
+}
+
+/**
+ * Normalize a managed runtime bind before it reaches the MariaDB adapter. Two
+ * carriers are kept as-is rather than flattened to the neutral wire form so the
+ * adapter can bind them losslessly:
+ *
+ *  - a `Uint8Array` (`bytes`) stays raw — `toWire` would hex-encode it to TEXT,
+ *    which the mysql2 blob bind would store as ASCII hex (see the guard below);
+ *  - a `timestamp` value: MariaDB cannot bind the neutral ISO timestamp wire
+ *    strings the way Postgres can (its adapter deliberately only maps the typed
+ *    `Temporal.Instant` carrier and the `infinity` sentinel to `DATETIME(6)`), so
+ *    with column-type context available here a timestamp-looking wire string is
+ *    lifted back to `Temporal.Instant` without corrupting ordinary text columns.
+ */
+function bindValue(neutralType: string, value: unknown): unknown {
+  if (value instanceof Uint8Array) {
+    // A `bytes` value binds as its raw carrier: the adapter's `toMariaBind` wraps it
+    // in a `Buffer` for the mysql2 blob bind. Flattening it through `toWire` (which
+    // renders a `Uint8Array` to lowercase hex TEXT) would store the ASCII hex string
+    // into the `LONGBLOB`, silently corrupting the value on the way in.
+    return value;
+  }
+  if (neutralType !== "timestamp") {
+    return toWire(value);
+  }
+  if (value === null || value === undefined || isInfinity(value)) {
+    return value;
+  }
+  if (value instanceof Temporal.Instant) {
+    return value;
+  }
+  if (typeof value === "string") {
+    try {
+      return parseTimestamp(value);
+    } catch {
+      return value;
+    }
+  }
+  return toWire(value);
 }
 
 /**
@@ -363,6 +406,7 @@ export const mariadbDialect: Dialect = {
   bytesProjection,
   applyReadLock,
   columnType: mariadbColumnType,
+  bindValue,
   toPositionalPlaceholders,
   parsers: {
     int8: int8FromRaw,

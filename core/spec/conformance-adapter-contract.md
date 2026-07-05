@@ -242,6 +242,14 @@ public behavior, and reporting observations. A runner may compare those
 observations to `expectedRows`, `expectedGraph`, `expectedTableState`,
 `expectedAffectedRows`, cache/identity expectations, and `roundTrips`.
 
+When a language implementation routes case execution through its M11 runtime
+database port, read/result statements and DML outcome statements remain separate:
+row-returning reads use the port's row execution method, while write-sequence and
+conflict affected counts come from the port's affected-row write method
+(`executeWrite` in the TypeScript port). An adapter MUST NOT weaken the emitted
+SQL by adding dialect-specific row-returning clauses solely to compute affected
+rows.
+
 Example:
 
 ```json

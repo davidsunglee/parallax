@@ -2,8 +2,9 @@
  * `@parallax/db-postgres` — the shippable Postgres adapter (M11 decomposition,
  * layer 3): a concrete `ParallaxDatabase` over the `postgres` (porsager) driver,
  * from a connection string / pool, returning managed scalars via the
- * `@parallax/dialect` parse functions. No Testcontainers, no `@parallax/typescript`
- * dependency, no wire / grading logic.
+ * `@parallax/dialect` parse functions for reads and native affected-row counts
+ * for writes. No Testcontainers, no `@parallax/typescript` dependency, no wire /
+ * grading logic.
  */
 export { PostgresDatabase, type PostgresDatabaseOptions } from "./adapter.js";
 export { managedTypes, serializeBytea } from "./oids.js";

@@ -1,12 +1,14 @@
 /**
  * `@parallax/db-mariadb` — the shippable MariaDB adapter (M11 decomposition,
  * layer 3): a concrete `ParallaxDatabase` over the `mysql2` driver, returning
- * managed scalars via the `@parallax/dialect` `mariadbDialect` parsers. The MariaDB
- * sibling of `@parallax/db-postgres`. No Testcontainers, no `@parallax/typescript`
+ * managed scalars via the `@parallax/dialect` `mariadbDialect` parsers for reads
+ * and native affected-row counts for writes. The MariaDB sibling of
+ * `@parallax/db-postgres`. No Testcontainers, no `@parallax/typescript`
  * dependency, no wire / grading logic.
  */
 export {
   classifyMariaError,
+  instantToMariaDatetime,
   MariaDbDatabase,
   type MariaDbDatabaseOptions,
   MariaDbSession,

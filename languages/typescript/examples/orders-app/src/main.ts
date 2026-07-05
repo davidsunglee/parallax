@@ -24,6 +24,11 @@ function stubDatabase(rows: readonly ParallaxRow[]): ParallaxDatabase {
       void binds;
       return rows;
     },
+    async executeWrite(sql: string, binds: readonly unknown[]): Promise<number> {
+      void sql;
+      void binds;
+      return 0;
+    },
   };
 }
 

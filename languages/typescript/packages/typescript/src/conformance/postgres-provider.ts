@@ -187,14 +187,9 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
   }
 
   async exec(sql: string, binds: readonly unknown[]): Promise<number> {
-    // A DML statement (writeSequence / conflict) needs the affected-row COUNT,
-    // which the adapter's `execute` (rows-only) does not surface — so run it on the
-    // adapter's pool directly, translating `?`→`$n` through the same M11 dialect
-    // seam. Binds serialize through the adapter's registered types (incl. the
-    // `bytea` serializer), so a write's byte payload renders correctly.
-    const text = toPositionalPlaceholders(sql);
-    const result = await this.sql.unsafe(text, asParams(binds));
-    return result.count;
+    // Delegate affected-row DML to the shipped adapter's write port. The adapter
+    // owns `?`→`$n` translation and returns Postgres's native affected-row count.
+    return this.db.executeWrite(sql, binds);
   }
 
   async execRolledBack(sql: string, binds: readonly unknown[]): Promise<number> {

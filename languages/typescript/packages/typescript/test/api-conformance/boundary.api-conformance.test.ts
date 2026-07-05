@@ -1,8 +1,8 @@
 /**
  * API Conformance Suite — **boundary** family (Phase 4): the bounded automatic
  * retry loop mechanics (M8/M10, ADR 0031 / TS ADR 0065), driven the way a developer
- * would (`px.transaction(body, { retries, retryOptimisticConflicts })`) over the
- * SHIPPED `@parallax/db-postgres` adapter against `postgres:17`.
+ * would (`px.transaction(body, { retries, retryOptimisticConflicts })`) over each
+ * selected shipped `@parallax/db-*` adapter.
  *
  * These cases (`0710`-`0718`, `api-conformance` lane) prove loop branches a single-
  * connection harness cannot provoke — an injected transient auto-retried away, a
@@ -80,6 +80,10 @@ class FaultInjectingDatabase implements ParallaxDatabase {
     return this.base.execute(sql, binds);
   }
 
+  executeWrite(sql: string, binds: readonly unknown[]): Promise<number> {
+    return this.base.executeWrite(sql, binds);
+  }
+
   transaction<T>(body: (tx: ParallaxDatabase) => Promise<T>): Promise<T> {
     if (this.base.transaction === undefined) {
       throw new Error("the base adapter does not support transactions");
@@ -102,9 +106,12 @@ class BoundInjector implements ParallaxDatabase {
     },
   ) {}
 
-  async execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
-    const isWrite = /returning 1$/.test(sql);
-    if (isWrite && !this.handledWrite) {
+  execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
+    return this.base.execute(sql, binds);
+  }
+
+  async executeWrite(sql: string, binds: readonly unknown[]): Promise<number> {
+    if (!this.handledWrite) {
       this.handledWrite = true;
       await this.opts.beforeWriteOnAttempt?.(this.attempt);
       if (this.opts.transientOnAttempts?.includes(this.attempt)) {
@@ -113,7 +120,7 @@ class BoundInjector implements ParallaxDatabase {
         throw new ParallaxTransientError("deadlock", true);
       }
     }
-    return this.base.execute(sql, binds);
+    return this.base.executeWrite(sql, binds);
   }
 }
 
@@ -142,9 +149,7 @@ function findThenUpdate(
 }
 
 // Every boundary case drives the developer WRITE surface (the versioned find-then-update
-// unit of work), Postgres-only today (see `_providers.ts`), so the family runs only on
-// write-capable providers (MariaDB is filtered out). The provider `peer` IS wired for
-// MariaDB, but the gated `px.update` itself cannot run there yet.
+// unit of work), so the family runs on every selected write-capable provider.
 group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
   let provider: ApiConformanceProvider;
@@ -167,7 +172,7 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
       const db = new FaultInjectingDatabase(f.db, {
         beforeWriteOnAttempt: async (attempt) => {
           if (attempt === 0) {
-            await provider.peer.execute(CONCURRENT_WRITE, []);
+            await provider.peer.executeWrite(CONCURRENT_WRITE, []);
           }
         },
       });
@@ -189,7 +194,7 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
       const db = new FaultInjectingDatabase(f.db, {
         beforeWriteOnAttempt: async (attempt) => {
           if (attempt === 0) {
-            await provider.peer.execute(CONCURRENT_WRITE, []);
+            await provider.peer.executeWrite(CONCURRENT_WRITE, []);
           }
         },
       });

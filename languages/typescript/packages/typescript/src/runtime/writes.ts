@@ -26,21 +26,19 @@
  *    (`0510` / `0511` / `0512`).
  *
  * Named inputs map to canonical `columnOrder` binds via the entity metamodel, and
- * scalar values render to the neutral WIRE form the driver binds (the same
- * `toWire` the adapter uses). Processing instants come ONLY from the transaction
- * clock (spec §4.1) — never a per-operation option — so production code cannot
- * rewrite audit history.
+ * scalar values normalize through the injected dialect with the target M0 type
+ * available. Processing instants come ONLY from the transaction clock (spec §4.1)
+ * — never a per-operation option — so production code cannot rewrite audit history.
  *
- * The `@parallax/db` port returns rows, not an affected-row count, so a set-based
- * write runs with a trailing `returning 1`; `rows.length` is then the affected
- * count (spec §4 `WriteResult.affectedRows`). This is the idiomatic way an ORM
- * reads the affected count through a rows-only port and stays driver-agnostic.
+ * The `@parallax/db` port exposes `executeWrite(sql, binds)`, so set-based writes
+ * read the native affected-row count from the active adapter without appending a
+ * dialect-specific row-returning clause (spec §4 `WriteResult.affectedRows`).
  */
 
 import { auditWriteStatements, type WriteTarget } from "@parallax/bitemporal";
-import { INFINITY, ParallaxDecimal, Temporal, toWire } from "@parallax/core";
+import { INFINITY, ParallaxDecimal, Temporal } from "@parallax/core";
 import type { ParallaxDatabase } from "@parallax/db";
-import { columnOrder, quoteIdentifier } from "@parallax/dialect";
+import { columnOrder, type Dialect } from "@parallax/dialect";
 import {
   classifyOutcome,
   type VersionedTarget,
@@ -195,6 +193,7 @@ export class TransactionWriter {
 
   constructor(
     private readonly database: ParallaxDatabase,
+    private readonly dialect: Dialect,
     private readonly processingInstant: string,
     /** The unit-of-work concurrency strategy (default `locking`, M8). */
     private readonly concurrency: Concurrency = "locking",
@@ -220,9 +219,9 @@ export class TransactionWriter {
    */
   async create(entity: EntityMetadata, input: Record<string, unknown>): Promise<void> {
     this.assertOptimisticParticipation(entity);
-    const binds = insertBinds(entity, input, this.processingInstant);
+    const binds = this.insertBinds(entity, input);
     if (isAuditOnly(entity)) {
-      const [sql] = auditWriteStatements("insert", writeTargetFor(entity));
+      const [sql] = auditWriteStatements("insert", this.writeTargetFor(entity));
       await this.exec(sql as string, binds);
       return;
     }
@@ -342,12 +341,18 @@ export class TransactionWriter {
       return undefined;
     }
     const target: VersionedTarget = {
-      table: quoteIdentifier(entity.table),
-      pkColumn: quoteIdentifier(pkColumn(entity)),
-      versionColumn: quoteIdentifier(version.column),
+      table: this.quote(entity.table),
+      pkColumn: this.quote(pkColumn(entity)),
+      versionColumn: this.quote(version.column),
     };
-    const setColumns = domain.map((a) => quoteIdentifier(entity.attributeByName(a.attr).column));
-    const domainBinds = domain.map((a) => bindValue(a.value));
+    const resolved = domain.map((assignment) => ({
+      assignment,
+      attr: entity.attributeByName(assignment.attr),
+    }));
+    const setColumns = resolved.map(({ attr }) => this.quote(attr.column));
+    const domainBinds = resolved.map(({ assignment, attr }) =>
+      this.bindAttribute(attr, assignment.value),
+    );
     return { target, setColumns, domainBinds };
   }
 
@@ -378,7 +383,7 @@ export class TransactionWriter {
     }
     const observedVersion = observed;
     const newVersion = observedVersion + 1;
-    const pk = bindValue(pkLiteral);
+    const pk = this.bindPkLiteral(entity, pkLiteral);
     if (this.concurrency === "optimistic") {
       // Gate on the observed version; a concurrent writer that advanced it first
       // makes the gate match 0 rows (the conflict signal).
@@ -411,7 +416,7 @@ export class TransactionWriter {
       throw new Error(`'terminate' is a temporal removal; '${entity.name}' is non-temporal`);
     }
     const gated = this.concurrency === "optimistic";
-    const [closeSql] = auditWriteStatements("terminate", writeTargetFor(entity), { gated });
+    const [closeSql] = auditWriteStatements("terminate", this.writeTargetFor(entity), { gated });
     const affectedRows = await this.closeMilestone(
       entity,
       closeSql as string,
@@ -431,8 +436,7 @@ export class TransactionWriter {
       );
     }
     const sql =
-      `delete from ${quoteIdentifier(entity.table)} ` +
-      `where ${quoteIdentifier(pkColumn(entity))} = ?`;
+      `delete from ${this.quote(entity.table)} ` + `where ${this.quote(pkColumn(entity))} = ?`;
     const affectedRows = await this.exec(sql, [this.pkValue(entity, predicate)]);
     return { affectedRows };
   }
@@ -468,9 +472,9 @@ export class TransactionWriter {
     const steps: WriteStep[] = sorted.map((entity) => ({
       mutation: "insert",
       target: {
-        table: quoteIdentifier(entity.table),
-        columns: quotedColumnOrder(entity),
-        pkColumn: quoteIdentifier(pkColumn(entity)),
+        table: this.quote(entity.table),
+        columns: this.quotedColumnOrder(entity),
+        pkColumn: this.quote(pkColumn(entity)),
       },
       statements: 1,
       binds: [(rowsByEntity.get(entity.name) ?? []).flat()],
@@ -492,7 +496,9 @@ export class TransactionWriter {
     options: UpdateOptions,
   ): Promise<WriteResult> {
     const gated = this.concurrency === "optimistic";
-    const [closeSql, insertSql] = auditWriteStatements("update", writeTargetFor(entity), { gated });
+    const [closeSql, insertSql] = auditWriteStatements("update", this.writeTargetFor(entity), {
+      gated,
+    });
     const pkLiteral = this.pkLiteralOf(entity, predicate);
     // Read the row being superseded so unchanged business columns carry forward.
     const current = await this.currentRow(entity, predicate);
@@ -521,16 +527,20 @@ export class TransactionWriter {
     pkLiteral: unknown,
     gated: boolean,
   ): Promise<number> {
-    const pk = bindValue(pkLiteral);
+    const processingFrom = requireProcessingFrom(entity);
+    const processingTo = requireProcessingTo(entity);
+    const pk = this.bindPkLiteral(entity, pkLiteral);
+    const closeAt = this.bindAttribute(processingTo, this.processingInstant);
+    const openUpper = this.bindAttribute(processingTo, INFINITY);
     let binds: readonly unknown[];
     if (gated) {
       const observedInZ = this.observed.get(observedKey(entity.name, pkLiteral));
       if (observedInZ === undefined) {
         throw new ParallaxReadBeforeWriteError(entity.name);
       }
-      binds = [this.processingInstant, pk, INFINITY, observedInZ];
+      binds = [closeAt, pk, openUpper, this.bindAttribute(processingFrom, observedInZ)];
     } else {
-      binds = [this.processingInstant, pk, INFINITY];
+      binds = [closeAt, pk, openUpper];
     }
     const affectedRows = await this.exec(closeSql, binds);
     if (affectedRows === 0) {
@@ -564,14 +574,14 @@ export class TransactionWriter {
     const toCol = processing?.toColumn;
     const cols = entity
       .attributes()
-      .map((a) => quoteIdentifier(a.column))
+      .map((a) => this.quote(a.column))
       .join(", ");
     const sql =
-      `select ${cols} from ${quoteIdentifier(entity.table)} ` +
-      `where ${quoteIdentifier(pkColumn(entity))} = ?` +
-      (toCol ? ` and ${quoteIdentifier(toCol)} = ?` : "");
+      `select ${cols} from ${this.quote(entity.table)} ` +
+      `where ${this.quote(pkColumn(entity))} = ?` +
+      (toCol ? ` and ${this.quote(toCol)} = ?` : "");
     const binds = toCol
-      ? [this.pkValue(entity, predicate), INFINITY]
+      ? [this.pkValue(entity, predicate), this.bindAttribute(requireProcessingTo(entity), INFINITY)]
       : [this.pkValue(entity, predicate)];
     const rows = await this.database.execute(sql, binds);
     this.roundTripCount += 1; // the carry-forward read is a real round trip
@@ -592,16 +602,16 @@ export class TransactionWriter {
     const assignments = new Map(options.set.map((a) => [a.attr, a.value]));
     return entity.attributes().map((attr) => {
       if (assignments.has(attr.name)) {
-        return bindValue(assignments.get(attr.name));
+        return this.bindAttribute(attr, assignments.get(attr.name));
       }
       if (processing !== undefined && attr.column === processing.fromColumn) {
-        return this.processingInstant;
+        return this.bindAttribute(attr, this.processingInstant);
       }
       if (processing !== undefined && attr.column === processing.toColumn) {
-        return INFINITY;
+        return this.bindAttribute(attr, INFINITY);
       }
-      // Carry the superseded row's value forward (already in wire form off the port).
-      return bindValue(current[attr.column]);
+      // Carry the superseded row's value forward (already managed by the port).
+      return this.bindAttribute(attr, current[attr.column]);
     });
   }
 
@@ -619,14 +629,16 @@ export class TransactionWriter {
     if (options.set.length === 0) {
       return { affectedRows: 0 };
     }
-    const setClause = options.set
-      .map((a) => `${quoteIdentifier(entity.attributeByName(a.attr).column)} = ?`)
-      .join(", ");
+    const resolved = options.set.map((assignment) => ({
+      assignment,
+      attr: entity.attributeByName(assignment.attr),
+    }));
+    const setClause = resolved.map(({ attr }) => `${this.quote(attr.column)} = ?`).join(", ");
     const sql =
-      `update ${quoteIdentifier(entity.table)} set ${setClause} ` +
-      `where ${quoteIdentifier(pkColumn(entity))} = ?`;
+      `update ${this.quote(entity.table)} set ${setClause} ` +
+      `where ${this.quote(pkColumn(entity))} = ?`;
     const affectedRows = await this.exec(sql, [
-      ...options.set.map((a) => bindValue(a.value)),
+      ...resolved.map(({ assignment, attr }) => this.bindAttribute(attr, assignment.value)),
       this.pkValue(entity, predicate),
     ]);
     return { affectedRows };
@@ -644,26 +656,71 @@ export class TransactionWriter {
     return literal;
   }
 
-  /** The single primary-key VALUE (wire form) a pk-equality write predicate selects. */
+  /** The single primary-key VALUE a pk-equality write predicate selects, normalized for the driver. */
   private pkValue(entity: EntityMetadata, predicate: Predicate): unknown {
-    return bindValue(this.pkLiteralOf(entity, predicate));
+    return this.bindPkLiteral(entity, this.pkLiteralOf(entity, predicate));
   }
 
   /**
    * Execute a set-based DML statement and return its affected-row count. The port
-   * returns rows, not a count, so a trailing `returning 1` makes `rows.length` the
-   * affected count (spec §4). Every issued statement increments the round-trip count.
+   * reports the native count through `executeWrite`, keeping emitted DML dialect
+   * neutral. Every issued statement increments the round-trip count.
    */
   private async exec(sql: string, binds: readonly unknown[]): Promise<number> {
-    const rows = await this.database.execute(`${sql} returning 1`, binds);
+    const affectedRows = await this.database.executeWrite(sql, binds);
     this.roundTripCount += 1;
-    return rows.length;
+    return affectedRows;
   }
-}
 
-/** Render one named input value to the neutral WIRE form the driver binds. */
-function bindValue(value: unknown): unknown {
-  return toWire(value);
+  /**
+   * The ordered positional insert binds for a named input, in descriptor attribute
+   * order. A missing attribute binds `null`; an audit entity's interval columns
+   * default to `[processingInstant, infinity)` when the caller does not supply them.
+   */
+  private insertBinds(entity: EntityMetadata, input: Record<string, unknown>): readonly unknown[] {
+    const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
+    return entity.attributes().map((attr) => {
+      if (attr.name in input) {
+        return this.bindAttribute(attr, input[attr.name]);
+      }
+      if (processing !== undefined && attr.column === processing.fromColumn) {
+        return this.bindAttribute(attr, this.processingInstant);
+      }
+      if (processing !== undefined && attr.column === processing.toColumn) {
+        return this.bindAttribute(attr, INFINITY);
+      }
+      return this.bindAttribute(attr, null);
+    });
+  }
+
+  /** Normalize one attribute value for the injected dialect's driver boundary. */
+  private bindAttribute(attr: NormalizedAttribute, value: unknown): unknown {
+    return this.dialect.bindValue(attr.type, value);
+  }
+
+  /** Normalize one primary-key literal for the injected dialect's driver boundary. */
+  private bindPkLiteral(entity: EntityMetadata, pkLiteral: unknown): unknown {
+    const pk = entity.primaryKey()[0];
+    if (pk === undefined) {
+      throw new Error(`entity '${entity.name}' has no primary key for a write`);
+    }
+    return this.bindAttribute(pk, pkLiteral);
+  }
+
+  /** Quote one physical identifier through the injected M11 dialect. */
+  private quote(name: string): string {
+    return this.dialect.quoteIdentifier(name);
+  }
+
+  /** The quoted columns of an entity in descriptor `columnOrder`, via the injected dialect. */
+  private quotedColumnOrder(entity: EntityMetadata): readonly string[] {
+    return quotedColumnOrder(entity, this.dialect);
+  }
+
+  /** Resolve this entity's audit write target using the injected dialect. */
+  private writeTargetFor(entity: EntityMetadata): WriteTarget {
+    return writeTargetFor(entity, this.dialect);
+  }
 }
 
 /**
@@ -715,12 +772,18 @@ function fkSortInsertOrder(order: readonly EntityMetadata[]): readonly EntityMet
   return result;
 }
 
-/** The quoted columns of an entity in `columnOrder` (descriptor order). */
-function quotedColumnOrder(entity: EntityMetadata): readonly string[] {
+/**
+ * The quoted physical columns of an entity in descriptor `columnOrder`, quoted
+ * through the injected dialect. The single source of the insert / audit-milestone
+ * column list — both the insert-flush path (`quotedColumnOrder` method) and the
+ * audit path ({@link writeTargetFor}) route through here, so a change to how insert
+ * columns are ordered or quoted lands in one place.
+ */
+function quotedColumnOrder(entity: EntityMetadata, dialect: Dialect): readonly string[] {
   return columnOrder({
     table: entity.table,
     attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
-  }).map(quoteIdentifier);
+  }).map((column) => dialect.quoteIdentifier(column));
 }
 
 /** The single primary-key physical column name of an entity. */
@@ -732,49 +795,42 @@ function pkColumn(entity: EntityMetadata): string {
   return pk.column;
 }
 
+/** The processing-from attribute (`in_z`) required by audit-only writes. */
+function requireProcessingFrom(entity: EntityMetadata): NormalizedAttribute {
+  const attr = entity.processingFromAttribute();
+  if (attr === undefined) {
+    throw new Error(`entity '${entity.name}' has no processing-from attribute for an audit write`);
+  }
+  return attr;
+}
+
+/** The processing-to attribute (`out_z`) required by audit-only writes. */
+function requireProcessingTo(entity: EntityMetadata): NormalizedAttribute {
+  const attr = entity.processingToAttribute();
+  if (attr === undefined) {
+    throw new Error(`entity '${entity.name}' has no processing-to attribute for an audit write`);
+  }
+  return attr;
+}
+
 /**
  * Resolve an entity's audit {@link WriteTarget} (table, columns, pk, out_z, in_z).
  * `fromColumn` (`in_z`) is the optimistic gate an OPTIMISTIC-mode close binds the
  * observed value on (M10); `toColumn` (`out_z`) is set + keyed by every close.
  */
-function writeTargetFor(entity: EntityMetadata): WriteTarget {
+function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteTarget {
   const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
   return {
-    table: quoteIdentifier(entity.table),
-    columns: quotedColumnOrder(entity),
-    pkColumn: quoteIdentifier(pkColumn(entity)),
+    table: dialect.quoteIdentifier(entity.table),
+    columns: quotedColumnOrder(entity, dialect),
+    pkColumn: dialect.quoteIdentifier(pkColumn(entity)),
     ...(processing === undefined
       ? {}
       : {
-          toColumn: quoteIdentifier(processing.toColumn),
-          fromColumn: quoteIdentifier(processing.fromColumn),
+          toColumn: dialect.quoteIdentifier(processing.toColumn),
+          fromColumn: dialect.quoteIdentifier(processing.fromColumn),
         }),
   };
-}
-
-/**
- * The ordered positional insert binds for a named input, in `columnOrder`. A
- * missing attribute binds `null`; an audit entity's interval columns default to
- * `[processingInstant, infinity)` when the caller does not supply them.
- */
-function insertBinds(
-  entity: EntityMetadata,
-  input: Record<string, unknown>,
-  processingInstant: string,
-): readonly unknown[] {
-  const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
-  return entity.attributes().map((attr) => {
-    if (attr.name in input) {
-      return bindValue(input[attr.name]);
-    }
-    if (processing !== undefined && attr.column === processing.fromColumn) {
-      return processingInstant;
-    }
-    if (processing !== undefined && attr.column === processing.toColumn) {
-      return INFINITY;
-    }
-    return null;
-  });
 }
 
 /**

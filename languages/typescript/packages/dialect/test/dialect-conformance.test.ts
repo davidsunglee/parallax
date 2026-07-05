@@ -295,6 +295,40 @@ for (const spec of dialects) {
       });
     });
 
+    describe("bindValue", () => {
+      it("normalizes ordinary scalar binds to wire values", () => {
+        expect(dialect.bindValue("decimal(18,2)", ParallaxDecimal.from("19.99"))).toBe("19.99");
+        expect(dialect.bindValue("int64", 9223372036854775807n)).toBe("9223372036854775807");
+      });
+
+      it("normalizes timestamp binds for this dialect's adapter boundary", () => {
+        const instant = Temporal.Instant.from("2024-03-01T12:00:00Z");
+        const boundInstant = dialect.bindValue("timestamp", instant);
+        const boundWireString = dialect.bindValue("timestamp", "2024-03-01T12:00:00+00:00");
+
+        if (spec.id === "mariadb") {
+          expect(boundInstant).toBe(instant);
+          expect(boundWireString).toBeInstanceOf(Temporal.Instant);
+          expect(Temporal.Instant.compare(boundWireString as Temporal.Instant, instant)).toBe(0);
+        } else {
+          expect(boundInstant).toBe("2024-03-01T12:00:00+00:00");
+          expect(boundWireString).toBe("2024-03-01T12:00:00+00:00");
+        }
+      });
+
+      it("preserves the neutral infinity sentinel as a timestamp bind", () => {
+        expect(dialect.bindValue("timestamp", INFINITY)).toBe(INFINITY);
+      });
+
+      it("keeps a `bytes` value as its raw carrier (never hex TEXT)", () => {
+        // A `Uint8Array` must reach the adapter as raw bytes, not `toWire`'s hex
+        // rendering: porsager infers `bytea` and mysql2 wraps a `Buffer`, whereas a
+        // hex string would be stored as its ASCII characters on both drivers.
+        const payload = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+        expect(dialect.bindValue("bytes", payload)).toBe(payload);
+      });
+    });
+
     describe("toPositionalPlaceholders", () => {
       it("rewrites `?` placeholders to this dialect's driver syntax", () => {
         expect(

@@ -5,8 +5,9 @@
  * This is the first thing a real application imports for Postgres connectivity.
  * It takes a **connection string** (or an already-configured porsager pool) and
  * implements the abstract `@parallax/db` port: `execute` runs a compiled
- * `?`-placeholder statement, `transaction` demarcates a unit of work, and every
- * returned scalar is a **managed** value (`bigint` / `ParallaxDecimal` /
+ * `?`-placeholder row-returning statement, `executeWrite` reports a DML
+ * statement's native affected-row count, `transaction` demarcates a unit of work,
+ * and every returned scalar is a **managed** value (`bigint` / `ParallaxDecimal` /
  * `Temporal.*` / `Uint8Array` / string) normalized at the boundary (§3.2.1).
  *
  * It depends only on the **port** (`@parallax/db`) and the **pure dialect layer**
@@ -120,6 +121,24 @@ export class PostgresDatabase implements ParallaxDatabase {
       // Surface a transient DB failure (deadlock / serialization / lock-wait
       // timeout) as the portable `ParallaxTransientError` so the retry loop above
       // the port classifies without touching a driver `.code`.
+      throw classifyDriverError(error);
+    }
+  }
+
+  /**
+   * Execute a DML statement and return Postgres's native affected-row count
+   * (porsager `Result.count`). The runtime write path deliberately does not append
+   * a Postgres-only `returning` clause.
+   */
+  async executeWrite(sql: string, binds: readonly unknown[]): Promise<number> {
+    const text = postgresDialect.toPositionalPlaceholders(sql);
+    try {
+      const result = await this.sql.unsafe(text, asParams(binds));
+      // Guard a non-numeric `count` (mirrors the MariaDB sibling's `?? 0`): the
+      // optimistic gate's `classifyOutcome` must see a real affected-row number, not
+      // `undefined`, so a versioned update never misclassifies its conflict outcome.
+      return result.count ?? 0;
+    } catch (error) {
       throw classifyDriverError(error);
     }
   }

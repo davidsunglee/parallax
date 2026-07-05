@@ -5,7 +5,7 @@
  * materialize scenarios (`0614` / `0615` — a set-based update on a versioned entity
  * resolves the predicate, then updates per object), and optimistic-mode version-
  * column locking (`0703` / `0704` / `0708`), written as a developer would and run
- * against `postgres:17` through the SHIPPED `@parallax/db-postgres` adapter.
+ * against each selected shipped `@parallax/db-*` adapter.
  *
  * **Strategy is a per-unit-of-work mode (M8 / M10).** `px.transaction(body, {
  * concurrency })` selects it: the default `locking` mode takes the shared read lock
@@ -18,7 +18,8 @@
  * AFTER the read and BEFORE the write, so the gate is genuinely stale.
  */
 
-import { ParallaxDecimal } from "@parallax/core";
+import { ParallaxDecimal, parseTimestamp } from "@parallax/core";
+import { instantToMariaDatetime } from "@parallax/db-mariadb";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import {
   AttributeExpression,
@@ -77,13 +78,12 @@ it("the locking suite covers exactly the LOCKING family", () => {
 });
 
 // The locking suite is MIXED: the read-lock cases (0603 / 0616-0619) and the no-op update
-// (0609 — it issues no DML) are dialect-agnostic and run on both databases; the DML-emitting
-// cases drive the developer WRITE surface (Postgres-only today, see `_providers.ts`), so they
-// are guarded off MariaDB via `writeCase`.
+// (0609 — it issues no DML) are dialect-agnostic; DML-emitting cases run when the selected
+// provider supports the developer write surface.
 group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
   let provider: ApiConformanceProvider;
-  // Reads run on every selected database; write-driving cases run on Postgres only.
+  // Reads run on every selected database; write-driving cases use the shared guard.
   const writeCase = supportsDeveloperWrites(dbp) ? it : it.skip;
 
   beforeAll(async () => {
@@ -481,6 +481,42 @@ async function applyPrecondition(
   // (close the old milestone, then insert a fresh one). Apply each in order.
   const statements = Array.isArray(precondition) ? precondition : [precondition as string];
   for (const statement of statements) {
-    await provider.peer.execute(statement, []);
+    await provider.peer.executeWrite(preconditionSqlForDialect(statement, provider), []);
   }
+}
+
+/**
+ * The conflict corpus preconditions are raw out-of-band SQL snippets authored in
+ * the neutral/Postgres literal vocabulary. The API harness applies them through a
+ * shipped peer adapter, so MariaDB needs its temporal literals rendered the same
+ * way the MariaDB bind seam would render them.
+ */
+function preconditionSqlForDialect(statement: string, provider: ApiConformanceProvider): string {
+  if (provider.dialectImpl.id !== "mariadb") {
+    return statement;
+  }
+  return statement
+    .replace(/'infinity'/g, sqlStringLiteral(String(provider.dialectImpl.infinityBind())))
+    .replace(/'(\d{4}-\d{2}-\d{2}T[^']+)'/g, (_match, iso: string) => {
+      try {
+        return sqlStringLiteral(mariaDbTimestampLiteral(iso));
+      } catch {
+        return sqlStringLiteral(iso);
+      }
+    });
+}
+
+/**
+ * MariaDB `DATETIME(6)` literal for a UTC instant string, rendered through the
+ * shipped adapter seam ({@link instantToMariaDatetime}) so a precondition row this
+ * harness writes out-of-band matches the exact bind form the runtime writes — if
+ * the adapter's rendering rule changes, this renderer follows it automatically.
+ */
+function mariaDbTimestampLiteral(iso: string): string {
+  return instantToMariaDatetime(parseTimestamp(iso));
+}
+
+/** Quote a SQL string literal for harness-owned raw precondition snippets. */
+function sqlStringLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }

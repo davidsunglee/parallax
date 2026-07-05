@@ -466,7 +466,7 @@ ParallaxJsonValue }`.
 | `bytes` | `Uint8Array` | `Uint8Array \| ArrayBuffer` | `Uint8Array` | Copy input bytes before persistence; materialize a fresh `Uint8Array`; adapters may convert to client-specific binary values internally. |
 | `date` | `Temporal.PlainDate` | `Temporal.PlainDate \| string` | ISO `YYYY-MM-DD` string | Parse strings as timezone-naive calendar dates; reject offsets and time components. |
 | `time` | `Temporal.PlainTime` | `Temporal.PlainTime \| string` | ISO wall-clock time string | Parse strings as timezone-naive times of day; reject dates and timezone offsets. |
-| `timestamp` | `Temporal.Instant` | `Temporal.Instant \| string` | UTC ISO instant string with microsecond precision | Parse strings as absolute instants; reject non-zero sub-microsecond precision; materialize UTC instants as `Temporal.Instant`. |
+| `timestamp` | `Temporal.Instant` | `Temporal.Instant \| string` | Dialect-normalized timestamp bind | Parse strings as absolute instants; reject non-zero sub-microsecond precision; materialize UTC instants as `Temporal.Instant`. Postgres binds canonical UTC ISO wire strings; MariaDB keeps typed `Temporal.Instant` / `infinity` values until the adapter renders `datetime(6)` / the max-sentinel. |
 | `uuid` | `string` | `string` | Canonical lowercase UUID string | Validate RFC 4122 shape and normalize to lowercase canonical text. |
 | `json` | `ParallaxJsonValue` | `ParallaxJsonValue` | `ParallaxJsonValue` | Preserve JSON-compatible structure only; reject `undefined`, functions, symbols, bigint, dates, and cyclic objects; adapters lower to dialect-native structured-document columns. |
 
@@ -839,7 +839,9 @@ V1 in keeping with the thin-slice posture (cf. TS-0054).
 [§5](#5-test-double-integration-m12-dq15), TypeScript proves that the idiomatic
 developer surface of [§2](#2-api-surface-non-normative--dq3) reproduces the
 claimed slice against a real Postgres through the shipped `@parallax/db-postgres`
-adapter, and renders a Usage Guide from that same suite source. Both are the
+adapter by default, with a MariaDB fan-out lane (`PARALLAX_DATABASES=mariadb`)
+that runs the same developer reads and writes through `@parallax/db-mariadb`.
+It also renders a Usage Guide from that same suite source. Both are the
 worked example of the language-neutral
 [`api-conformance-contract.md`](../../../core/spec/api-conformance-contract.md):
 they are additive proof beside the conformance-adapter grade and never touch the
@@ -1024,7 +1026,13 @@ module.exports = {
 
     // Non-numbered composition package edges. Numbered packages MUST NOT import
     // from @parallax/typescript; it is the CLI/generator/application facade.
-    { from: { path: "^languages/typescript/packages/typescript/" },    to: { path: "^languages/typescript/packages/(core|metamodel|operation|sql|relationships|lists|bitemporal|transactions|lifecycle|locking|dialect|conformance|benchmark|coherence|serde)/" } },
+    { from: { path: "^languages/typescript/packages/typescript/" },    to: { path: "^languages/typescript/packages/(core|metamodel|operation|sql|relationships|lists|bitemporal|transactions|lifecycle|locking|dialect|db|db-postgres|db-mariadb|conformance|benchmark|coherence|serde)/" } },
+
+    // M11 port/adapter support edges.
+    { from: { path: "^languages/typescript/packages/db-postgres/" },   to: { path: "^languages/typescript/packages/db/" } },
+    { from: { path: "^languages/typescript/packages/db-postgres/" },   to: { path: "^languages/typescript/packages/dialect/" } },
+    { from: { path: "^languages/typescript/packages/db-mariadb/" },    to: { path: "^languages/typescript/packages/db/" } },
+    { from: { path: "^languages/typescript/packages/db-mariadb/" },    to: { path: "^languages/typescript/packages/dialect/" } },
 
     // Numbered module edges from core/spec/dependency-graph.md.
     { from: { path: "^languages/typescript/packages/metamodel/" },     to: { path: "^languages/typescript/packages/core/" } },
@@ -1080,9 +1088,10 @@ while `languages/typescript/packages/*` contains implementation source.
 | M8 | Transactions, UoW & identity/query cache | `@parallax/transactions` | M8 |
 | M9 | Object lifecycle & detach | `@parallax/lifecycle` | M9 |
 | M10 | Optimistic locking | `@parallax/locking` | M10 |
-| M11 (portability) | Pure dialect / portability layer (SQL strings + type-parse fns; no I/O) | `@parallax/dialect` | M11 |
-| M11 (port) | Abstract runtime database port (`execute`/`transaction`; normalize-at-boundary) | `@parallax/db` | M11 |
+| M11 (portability) | Pure dialect / portability layer (SQL strings + typed-bind/type-parse fns; no I/O) | `@parallax/dialect` | M11 |
+| M11 (port) | Abstract runtime database port (`execute`/`executeWrite`/`transaction`; normalize-at-boundary) | `@parallax/db` | M11 |
 | M11 (adapter) | Concrete Postgres adapter over the `postgres` driver (one per DB type) | `@parallax/db-postgres` | M11 |
+| M11 (adapter) | Concrete MariaDB adapter over the `mysql2` driver (one per DB type) | `@parallax/db-mariadb` | M11 |
 | M12 | Compatibility harness | `@parallax/conformance` | M12 |
 | M13 | Performance & benchmark harness | `@parallax/benchmark` | M13 |
 | M14 | Cross-process cache coherence | `@parallax/coherence` | M14 |
@@ -1112,29 +1121,33 @@ below the facade.
 [`language-spec-template.md`](../../../core/spec/language-spec-template.md) §9 rule
 and [`m11-dialect-seam.md`](../../../core/spec/m11-dialect-seam.md) →
 *M11 decomposition*): the database seam is normatively decomposed into a **pure
-dialect / portability** module (`@parallax/dialect` — SQL strings + type-parse
-functions to managed values; no I/O, no driver), an **abstract runtime database
-port** (`@parallax/db` — the `execute(sql, binds)` / `transaction(body)` contract
-plus the normalize-at-boundary rule so an adapter returns managed scalars), and
-**N concrete adapters** (`@parallax/db-postgres`, and a future
-`@parallax/db-mysql`), one per database type, each depending **only** on the port
+dialect / portability** module (`@parallax/dialect` — SQL strings +
+typed-bind normalization and type-parse functions to managed values; no I/O, no
+driver), an **abstract runtime database port** (`@parallax/db` — the `execute(sql, binds)` /
+`executeWrite(sql, binds)` / `transaction(body)` contract plus the
+normalize-at-boundary rule so an adapter returns managed scalars for reads and
+native affected-row counts for writes), and **N concrete adapters**
+(`@parallax/db-postgres` and `@parallax/db-mariadb`), one per database type, each
+depending **only** on the port
 and the pure dialect layer. All three share the single `M11 --> M0` numbered edge
 — the decomposition is a rule *within* the module, not new DAG nodes, so
 [`dependency-graph.md`](../../../core/spec/dependency-graph.md) is unchanged and
-`@parallax/db` / `@parallax/db-postgres` are **language-impl support edges** (like
+`@parallax/db` / `@parallax/db-postgres` / `@parallax/db-mariadb` are
+**language-impl support edges** (like
 the `@parallax/serde` edges), documented in §9.3 but absent from the numbered-edge
 block. `@parallax/db` is a leaf (it reaches only `@parallax/core`), and
 `@parallax/db-postgres` carries the `postgres` driver + porsager OID registration
-but **no** wire/grading logic (*managed at the boundary, wire at the grader*). The
-two structural rules the core spec mandates hold: **only the composition root
-(`@parallax/typescript`) may depend on a concrete adapter** (`@parallax/db-postgres`
-appears nowhere in the numbered packages), and **the port depends on nothing
-application-specific**. The composition-root conformance provider retains
-provisioning (Testcontainers + `reset`/`applyDdl`/`loadFixtures`) but delegates
-SQL execution to a `@parallax/db-postgres` instance, then renders its managed
-scalars to the canonical wire form for the run envelope — so there is **no
-`M12 → M11` edge** and the 120-case slice is continuous proof the shipped adapter
-works.
+and `@parallax/db-mariadb` carries the `mysql2` driver + MariaDB type-cast
+registration, but neither contains wire/grading logic (*managed at the boundary,
+wire at the grader*). The two structural rules the core spec mandates hold:
+**only the composition root (`@parallax/typescript`) may depend on a concrete
+adapter** (concrete adapters appear nowhere in the numbered packages), and **the
+port depends on nothing application-specific**. The composition-root conformance
+providers retain provisioning (Testcontainers + `reset`/`applyDdl`/`loadFixtures`)
+but delegate SQL execution to concrete `@parallax/db-*` instances, then render
+managed scalars to the canonical wire form for the run envelope — so there is **no
+`M12 → M11` edge** and the claimed slice is continuous proof the shipped adapters
+work.
 
 ### 9.3 Legal-edge contract
 
@@ -1151,17 +1164,19 @@ Beyond the numbered edges, the M11 decomposition (§9.2) contributes two
 **support edges** that are *not* new numbered-DAG edges (the whole seam shares the
 one `M11 --> M0` edge above) but are enforced by the allowlist:
 
-- `@parallax/db-postgres --> @parallax/db` — a concrete adapter depends on the
+- `@parallax/db-postgres --> @parallax/db` and
+  `@parallax/db-mariadb --> @parallax/db` — concrete adapters depend on the
   abstract port.
-- `@parallax/db-postgres --> @parallax/dialect` — the adapter delegates every
+- `@parallax/db-postgres --> @parallax/dialect` and
+  `@parallax/db-mariadb --> @parallax/dialect` — each adapter delegates every
   parse decision to the pure dialect layer (the single source of parse logic), so
   parse rules are never duplicated across adapters.
 
 `@parallax/db` (the port) depends only on `@parallax/core` (the universal leaf
-allowance), and `@parallax/db` + `@parallax/db-postgres` are added to the
+allowance), and `@parallax/db` + the concrete adapters are added to the
 composition-root `@parallax/typescript --> (…)` `to` set — the composition root is
-the only layer permitted to depend on the concrete adapter. No numbered package
-depends on `@parallax/db-postgres`, and no above-seam module reaches a driver.
+the only layer permitted to depend on a concrete adapter. No numbered package
+depends on a concrete adapter, and no above-seam module reaches a driver.
 
 ```dependency-graph
 M1 --> M0

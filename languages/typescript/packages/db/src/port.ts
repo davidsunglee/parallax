@@ -3,8 +3,9 @@
  * core spec `m11-dialect-seam.md` → *M11 decomposition*, layer 2).
  *
  * This is the execution interface every layer above the seam calls to run
- * compiled SQL and demarcate transactions: `execute(sql, binds) → rows` and an
- * optional `transaction(body)`. It **depends on nothing application-specific** —
+ * compiled SQL and demarcate transactions: `execute(sql, binds) → rows`,
+ * `executeWrite(sql, binds) → affectedRows`, and an optional
+ * `transaction(body)`. It **depends on nothing application-specific** —
  * no driver, no concrete database, no dialect, no harness — beyond the neutral
  * `@parallax/core` types its contract names, so any layer may hold the port
  * without acquiring a database dependency.
@@ -33,8 +34,9 @@ export type ParallaxRow = Record<string, unknown>;
  * The database port the runtime executes through. A concrete adapter (the
  * shippable `@parallax/db-postgres` over a connection string / pool, or an
  * application's own driver) implements it; the runtime imports no driver.
- * `execute` runs a compiled statement; `transaction` runs a callback with a
- * bound connection.
+ * `execute` runs a compiled row-returning statement, `executeWrite` runs a DML
+ * statement and returns the native affected-row count, and `transaction` runs a
+ * callback with a bound connection.
  */
 export interface ParallaxDatabase {
   /**
@@ -43,6 +45,13 @@ export interface ParallaxDatabase {
    * adapter boundary (§3.2.1), not raw driver output.
    */
   execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]>;
+  /**
+   * Execute a compiled write statement (`?`-placeholder SQL + ordered binds) and
+   * return the database driver's affected-row count. Write SQL is emitted without
+   * dialect-specific row-returning clauses; concrete adapters surface their
+   * native count through this method.
+   */
+  executeWrite(sql: string, binds: readonly unknown[]): Promise<number>;
   /**
    * Run `body` inside a database transaction, committing on resolve and rolling
    * back on throw. A connection-bound `ParallaxDatabase` is passed to `body`.

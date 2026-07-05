@@ -5,8 +5,8 @@
  * (`core/spec/m11-dialect-seam.md`): identifier quoting, ORDER BY / NULL
  * placement, the row-limit clause, in-transaction read-lock application, the
  * neutral-type → column-type vocabulary, driver-boundary placeholder syntax,
- * the normalize-at-boundary value parsers, the infinity representation, and
- * error-code classification. A concrete database (`postgresDialect`,
+ * the typed-bind normalization rules, the normalize-at-boundary value parsers,
+ * the infinity representation, and error-code classification. A concrete database (`postgresDialect`,
  * `mariadbDialect`) is *an implementation of* this contract; nothing above the
  * seam imports a concrete dialect — M3 (`@parallax/sql`) compiles against this
  * **type**, and the composition roots inject the concrete instance.
@@ -91,6 +91,14 @@ export interface Dialect {
   // --- schema / DDL vocabulary ---
   /** Map an M0 neutral type (+ optional max length) to this dialect's column type. */
   columnType(neutralType: string, maxLength?: number): string;
+
+  /**
+   * Normalize one managed runtime value for this dialect's driver boundary, with
+   * the logical M0 neutral type available. Most values render to the neutral wire
+   * form; dialects without native temporal infinity may keep timestamp values in
+   * their managed carrier so the concrete adapter can bind them losslessly.
+   */
+  bindValue(neutralType: string, value: unknown): unknown;
 
   // --- driver-boundary binding syntax (applied by the ADAPTER, not compile) ---
   /** Rewrite canonical `?` placeholders to the driver's syntax (`?`→`$n` on Postgres; identity on MariaDB). */

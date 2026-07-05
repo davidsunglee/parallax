@@ -23,6 +23,7 @@ import {
   ParallaxDecimal,
   Temporal,
   timestampFromRaw,
+  toWire,
 } from "@parallax/core";
 import type { Dialect } from "./dialect.js";
 import { classifyErrorCode } from "./errors.js";
@@ -328,6 +329,21 @@ export function uuidFromDb(raw: string): string {
   return raw.trim();
 }
 
+/**
+ * Normalize one managed runtime value for the porsager driver boundary. Most
+ * values render to the neutral wire form (`toWire`); a `bytes` value is kept as
+ * its raw `Uint8Array` carrier so porsager infers the `bytea` type (OID 17) and
+ * serializes it as `\xDEADBEEF`. Flattening it through `toWire` would hand
+ * porsager a hex STRING, which Postgres coerces via the `bytea` *escape* format —
+ * storing the ASCII hex characters, not the intended bytes.
+ */
+function bindValue(_neutralType: string, value: unknown): unknown {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  return toWire(value);
+}
+
 // --- the reified Postgres dialect --------------------------------------------
 
 /**
@@ -349,6 +365,7 @@ export const postgresDialect: Dialect = {
   bytesProjection,
   applyReadLock,
   columnType: postgresColumnType,
+  bindValue,
   toPositionalPlaceholders,
   parsers: {
     int8: int8FromRaw,

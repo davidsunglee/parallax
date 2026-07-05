@@ -21,7 +21,7 @@
  * stub), so the write path is exercised end to end the way the barrel drives it.
  */
 import { loadCase } from "@parallax/conformance";
-import { postgresDialect } from "@parallax/dialect";
+import { mariadbDialect, postgresDialect } from "@parallax/dialect";
 import { describe, expect, it } from "vitest";
 import {
   createParallax,
@@ -43,11 +43,11 @@ interface RecordedQuery {
 
 /**
  * A stub database port that records every executed statement. A SELECT returns the
- * canned `selectRows`; a write (a statement ending `returning 1`) returns an array
- * whose length is the affected-row count (`updateAffected`, defaulting to the
- * select-row count) so a versioned update can be steered to success (1) or conflict
- * (0). It implements the optional `transaction(body)` port by running the body
- * against the same recording stub (commit == the body resolving).
+ * canned `selectRows`; a write returns an affected-row count (`updateAffected`,
+ * defaulting to the select-row count) so a versioned update can be steered to
+ * success (1) or conflict (0). It implements the optional `transaction(body)` port
+ * by running the body against the same recording stub (commit == the body
+ * resolving).
  */
 class StubDatabase implements ParallaxDatabase {
   readonly queries: RecordedQuery[] = [];
@@ -76,14 +76,16 @@ class StubDatabase implements ParallaxDatabase {
 
   execute(sql: string, binds: readonly unknown[]): Promise<readonly ParallaxRow[]> {
     this.queries.push({ sql, binds });
-    if (/returning 1$/.test(sql)) {
-      const count =
-        this.updateAffectedQueue !== undefined && this.updateAffectedQueue.length > 0
-          ? (this.updateAffectedQueue.shift() as number)
-          : (this.updateAffected ?? this.rows.length);
-      return Promise.resolve(Array.from({ length: count }, () => ({}) as ParallaxRow));
-    }
     return Promise.resolve(this.rows);
+  }
+
+  executeWrite(sql: string, binds: readonly unknown[]): Promise<number> {
+    this.queries.push({ sql, binds });
+    const count =
+      this.updateAffectedQueue !== undefined && this.updateAffectedQueue.length > 0
+        ? (this.updateAffectedQueue.shift() as number)
+        : (this.updateAffected ?? this.rows.length);
+    return Promise.resolve(count);
   }
 
   transaction<T>(body: (tx: ParallaxDatabase) => Promise<T>): Promise<T> {
@@ -96,6 +98,9 @@ const ORDERS = loadCase("core/compatibility/cases/0612-fk-insert-ordering.yaml")
 
 /** The non-versioned `Wallet` descriptor (two updatable plain columns owner/balance). */
 const WALLET = loadCase("core/compatibility/cases/0604-batched-write.yaml").descriptor;
+
+/** The reserved-column `Grade` descriptor (ordinal maps to physical column `order`). */
+const GRADE = loadCase("core/compatibility/cases/0006-quoted-reserved-identifier.yaml").descriptor;
 
 /** The versioned `Account` descriptor (carries the optimistic-lock `version` column). */
 const ACCOUNT = loadCase(
@@ -287,8 +292,28 @@ describe("TransactionWriter plain update applies every assignment (spec §4)", (
     // BOTH columns are set (the bug drops everything after the first assignment).
     expect(sql).toContain("set owner = ?, balance = ?");
     expect(sql).toContain("where id = ?");
+    expect(sql).not.toContain("returning 1");
     // Bind order: each assignment value (wire form) in declaration order, then the pk.
     expect(binds).toEqual(["Mira", 500, 10]);
+  });
+
+  it("quotes reserved write identifiers through the injected MariaDB dialect", async () => {
+    const db = new StubDatabase([]);
+    db.setUpdateAffected(1);
+    const px = createParallax({ descriptor: GRADE, database: db, dialect: mariadbDialect });
+
+    const result = await px.transaction((tx) =>
+      tx.entity("Grade").update(new Predicate({ eq: { attr: "Grade.id", value: 2 } }), {
+        set: [{ attr: "ordinal", value: 4 }],
+      }),
+    );
+
+    const update = db.queries.find((q) => q.sql.includes("update grade"));
+    expect(update).toBeDefined();
+    expect(update?.sql).toBe("update grade set `order` = ? where id = ?");
+    expect(update?.sql).not.toContain('"order"');
+    expect(update?.sql).not.toContain("returning 1");
+    expect(result.affectedRows).toBe(1);
   });
 
   it("is a no-op for an empty assignment set", async () => {
@@ -731,7 +756,7 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
     // Order the CLOSED (stale) row LAST: under the bug it wins the recording loop.
     const db = new StubDatabase([current, closed]);
     // A real close affects exactly ONE current milestone (the stub otherwise reports
-    // its two-row select count for the `returning 1` write).
+    // its two-row select count for the write).
     db.setUpdateAffected(1);
     const px = createParallax({ descriptor: BALANCE, database: db, dialect: postgresDialect });
 
