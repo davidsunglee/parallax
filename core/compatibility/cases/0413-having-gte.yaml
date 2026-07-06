@@ -4,7 +4,7 @@
 # OrderItem by order and keep groups whose summed quantity is at least 4:
 #   order 1 -> 3 (dropped), order 2 -> 4 (kept), order 42 -> 8 (kept).
 model: models/orders.yaml
-tags: [m2, m3, aggregate, sum, groupBy, having, gte]
+tags: [m-agg, m-sql-agg, sum, groupBy, having, gte]
 operation:
   groupBy:
     operand:

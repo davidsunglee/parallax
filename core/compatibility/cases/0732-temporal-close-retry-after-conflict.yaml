@@ -17,7 +17,7 @@
 # It does NOT run any replacement INSERT, so expectedTableState is the fixtures + the
 # precondition + the retry's close of the fresh current row.
 model: models/balance.yaml
-tags: [m7, m10, m3, temporal, conflict, retry, optimistic, slice-mvp-1]
+tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1]
 uow:
   concurrency: optimistic
 precondition:

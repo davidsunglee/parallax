@@ -20,7 +20,7 @@
 #
 # Harness-only (bitemporal writes are outside slice-mvp-1: no TS *Until runtime exists).
 model: models/position.yaml
-tags: [m7, m10, m3, bitemporal, temporal, conflict, optimistic]
+tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict]
 uow:
   concurrency: optimistic
 write: { id: 1, businessFrom: "2024-06-01T00:00:00+00:00" }

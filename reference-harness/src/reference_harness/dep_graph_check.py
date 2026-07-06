@@ -2,40 +2,39 @@
 
 Three modes:
 
-* **DAG check** (default) — validate the graph in ``dependency-graph.md``::
+* **DAG check** (default) — validate the graph in ``modules.md``::
 
-      uv run python -m reference_harness.dep_graph_check core/spec/dependency-graph.md
+      uv run python -m reference_harness.dep_graph_check core/spec/modules.md
 
 * **Coverage gate** (``--coverage``) — the DAG check **plus** assert every
-  in-scope module (MVP / fast-follow / definitely-do) has at least one
-  compatibility fixture tagged to it::
+  ``active`` module whose coverage source is ``cases`` has at least one
+  compatibility fixture tagged to it, **plus** assert no active module depends on
+  a deferred one::
 
       uv run python -m reference_harness.dep_graph_check --coverage core/spec core/compatibility
 
-* **Profile gate** (``--profile``) — assert the ``slice-mvp-1``
-  Conformance Slice's tagged cases are consistent with its canonical ``describe``
-  claim embedded in ``scope-and-tiers.md`` (every claimed module covered, no stray
-  module tag, every shape in claim, every tagged case Postgres-golden)::
+* **Profile gate** (``--profile``) — assert the ``slice-mvp-1`` Conformance
+  Slice's tagged cases are consistent with its canonical ``describe`` claim
+  embedded in ``slices.md``::
 
       uv run python -m reference_harness.dep_graph_check --profile core/spec core/compatibility
 
 The machine-readable source of truth for the graph is the fenced
-```` ```dependency-graph ```` block in ``dependency-graph.md``. Each line is an
-edge ``A --> B`` meaning "A depends on B". The DAG check asserts:
+```` ```dependency-graph ```` block in ``modules.md``. Each line is an edge
+``A --> B`` meaning "A depends on B". Module identifiers are canonical
+``m-<slug>`` tokens (grammar ``^m-[a-z0-9]+(-[a-z0-9]+)*$``); the same token form
+appears in fixture ``tags``. The DAG check asserts:
 
-* every edge names two recognized modules (``M0`` and up; ``M6`` is intentionally absent);
+* every edge names two well-formed module slugs;
 * the graph is a **directed acyclic graph** (no cycles);
 * edge direction is **legal** — an edge must not point "upward" against the
-  layering. We derive a topological level per module from the declared edges and
-  require every edge to go from a higher level to a strictly lower one, which is
-  exactly the acyclicity property surfaced as a direction error.
+  layering (surfaced as the acyclicity property).
 
-The **coverage gate** (Phase 12) reads the in-scope tiers from
-``scope-and-tiers.md`` and asserts each in-scope module has fixture coverage,
-measured against the ``tags`` of every fixture under ``core/compatibility/``
-(cases *and* benchmarks). The might-do / won't-do tiers — including the RFC-2119
-MAY temporal mutations — are excluded from the gate by construction (they are not
-listed under the in-scope tier headings).
+The **coverage gate** reads the module catalog table from ``modules.md`` and
+asserts each ``active`` / ``cases`` module has fixture coverage, measured against
+the ``tags`` of every fixture under ``core/compatibility/`` (cases *and*
+benchmarks). ``deferred`` modules and the one ``contract``-covered module
+(``m-db-port``) are excluded from the gate by construction.
 """
 
 from __future__ import annotations
@@ -48,24 +47,22 @@ from pathlib import Path
 import yaml
 
 _FENCE_RE = re.compile(r"```dependency-graph\n(.*?)```", re.DOTALL)
-_EDGE_RE = re.compile(r"^\s*(M\d+)\s*-->\s*(M\d+)\s*$")
-_MODULE_RE = re.compile(r"^M\d+$")
-_MODULE_TOKEN_RE = re.compile(r"\bM\d+\b")
-_MODULE_TAG_RE = re.compile(r"^m\d+$")
+_SLUG = r"m-[a-z0-9]+(?:-[a-z0-9]+)*"
+_EDGE_RE = re.compile(rf"^\s*({_SLUG})\s*-->\s*({_SLUG})\s*$")
+_MODULE_RE = re.compile(rf"^{_SLUG}$")  # doubles as the fixture-tag pattern
 
-# The three in-scope tier headings in scope-and-tiers.md, normalized to lower case.
-# Any module mentioned under one of these (until the next "### " heading) is
-# treated as in-scope for the coverage gate.
-_IN_SCOPE_TIERS = ("mvp", "fast-follow", "definitely-do")
+# The heading under which the module catalog table lives in modules.md, normalized
+# to lower case. The coverage gate parses that table (module | summary | status |
+# coverage) instead of a separate config file.
+_CATALOG_HEADING = "the module catalog"
 
 # The named conformance slice the profile gate enforces. The slice is selected by
-# this single tag on each included case (see scope-and-tiers.md); the canonical
-# describe claim that declares its boundaries lives in the same file.
+# this single tag on each included case; the canonical describe claim that declares
+# its boundaries lives in slices.md.
 _SLICE_TAG = "slice-mvp-1"
 
-# The heading under which the canonical slice claim is embedded in
-# scope-and-tiers.md, normalized to lower case (the json fence right after it is the
-# single source of truth for the claim).
+# The heading under which the canonical slice claim is embedded in slices.md,
+# normalized to lower case (the json fence right after it is the source of truth).
 _SLICE_HEADING = "first-implementation conformance slice"
 
 
@@ -150,44 +147,68 @@ def check(markdown: str) -> list[str]:
     return errors
 
 
-# --- coverage gate ---------------------------------------------------------
+# --- catalog + coverage gate ------------------------------------------------
 
 
-def parse_in_scope_modules(scope_markdown: str) -> set[str]:
-    """Return the set of in-scope module tokens (``M0`` and up), read from the
-    three in-scope tier sections of ``scope-and-tiers.md``.
+def parse_catalog(modules_markdown: str) -> dict[str, dict[str, str]]:
+    """Return ``{module: {"status", "coverage"}}`` from the catalog table.
 
-    A module is in scope iff it is mentioned under an ``MVP`` / ``Fast-follow`` /
-    ``Definitely-do`` ``### `` heading (until the next ``### `` heading).
-    Cross-process cache coherence is ``M14`` and is picked up by the normal
-    ``M\\d+`` token scan.
+    The catalog is a markdown table (``module | summary | status | coverage``)
+    under the ``## The module catalog`` heading of ``modules.md``. ``status`` is
+    ``active`` or ``deferred``; ``coverage`` is ``cases`` or ``contract``.
     """
-    in_scope: set[str] = set()
-    current_in_scope = False
-    for line in scope_markdown.splitlines():
-        heading = re.match(r"^###\s+(.*?)\s*$", line)
+    header: list[str] | None = None
+    in_section = False
+    catalog: dict[str, dict[str, str]] = {}
+    for line in modules_markdown.splitlines():
+        heading = re.match(r"^##\s+(.*?)\s*$", line)
         if heading:
-            title = heading.group(1).strip().lower()
-            current_in_scope = title in _IN_SCOPE_TIERS
+            if header is not None:
+                break  # the table's own section has ended
+            in_section = heading.group(1).strip().lower() == _CATALOG_HEADING
             continue
-        if not current_in_scope:
+        if not in_section:
             continue
-        for token in _MODULE_TOKEN_RE.findall(line):
-            in_scope.add(token)
-    if not in_scope:
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            if header is not None:
+                break  # a non-table line after the table ends it
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if header is None:
+            header = [cell.lower() for cell in cells]
+            continue
+        if all(set(cell) <= set("-: ") for cell in cells):
+            continue  # separator row
+        row = dict(zip(header, cells, strict=False))
+        module = row.get("module", "").strip("` ")
+        if not _MODULE_RE.match(module):
+            continue
+        catalog[module] = {
+            "status": row.get("status", "").strip("` ").lower(),
+            "coverage": row.get("coverage", "").strip("` ").lower(),
+        }
+    if not catalog:
         raise DepGraphFailure(
-            "no in-scope modules found under the MVP / fast-follow / definitely-do "
-            "headings of scope-and-tiers.md"
+            f"no module catalog table found under the '## {_CATALOG_HEADING}' heading of modules.md"
         )
-    return in_scope
+    return catalog
+
+
+def gated_modules(catalog: dict[str, dict[str, str]]) -> list[str]:
+    """The modules the coverage gate enforces: ``active`` with ``cases`` coverage."""
+    return sorted(
+        module
+        for module, meta in catalog.items()
+        if meta["status"] == "active" and meta["coverage"] == "cases"
+    )
 
 
 def _fixture_tags(compatibility_root: Path) -> set[str]:
     """Collect the lower-cased ``tags`` of every fixture under compatibility/.
 
-    Scans both ``cases/`` and ``benchmarks/`` (M13 fixtures cover M13). A fixture
-    that does not parse to a mapping, or that carries no ``tags``, contributes
-    nothing.
+    Scans both ``cases/`` and ``benchmarks/``. A fixture that does not parse to a
+    mapping, or that carries no ``tags``, contributes nothing.
     """
     tags: set[str] = set()
     for subdir in ("cases", "benchmarks"):
@@ -207,13 +228,10 @@ def _fixture_tags(compatibility_root: Path) -> set[str]:
     return tags
 
 
-def coverage_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
-    """Assert every in-scope module has >=1 fixture tagged to it.
-
-    Returns a list of error strings (empty == fully covered).
-    """
+def coverage_errors(modules_markdown: str, compatibility_root: Path) -> list[str]:
+    """Assert every ``active`` / ``cases`` module has >=1 fixture tagged to it."""
     try:
-        in_scope = parse_in_scope_modules(scope_markdown)
+        catalog = parse_catalog(modules_markdown)
     except DepGraphFailure as exc:
         return [str(exc)]
 
@@ -221,28 +239,42 @@ def coverage_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
     if not fixture_tags:
         return [f"no fixture tags discovered under {compatibility_root}"]
 
-    uncovered = sorted(module for module in in_scope if module.lower() not in fixture_tags)
+    uncovered = [m for m in gated_modules(catalog) if m.lower() not in fixture_tags]
     return [
-        f"in-scope module {module} has no fixture tagged to it "
-        f"(expected at least one fixture with tag {module.lower()!r})"
+        f"active module {module} (coverage: cases) has no fixture tagged to it "
+        f"(expected at least one fixture with tag {module!r})"
         for module in uncovered
+    ]
+
+
+def active_deferred_edge_errors(modules_markdown: str) -> list[str]:
+    """Assert no ``active`` module depends on a ``deferred`` one (a design rule)."""
+    try:
+        catalog = parse_catalog(modules_markdown)
+        edges = parse_edges(modules_markdown)
+    except DepGraphFailure as exc:
+        return [str(exc)]
+
+    status = {module: meta["status"] for module, meta in catalog.items()}
+    return [
+        f"active module {src} depends on deferred module {dst} ({src} --> {dst})"
+        for src, dst in edges
+        if status.get(src) == "active" and status.get(dst) == "deferred"
     ]
 
 
 # --- profile (conformance-slice) consistency gate --------------------------
 
 
-def parse_profile_claim(scope_markdown: str) -> dict:
+def parse_profile_claim(claim_markdown: str) -> dict:
     """Return the ``capabilities`` of the canonical slice ``describe`` claim.
 
-    The claim is the single source of truth for the ``slice-mvp-1``
-    Conformance Slice: a fenced ```` ```json ```` block embedded under the
-    ``## First-implementation Conformance Slice`` heading of ``scope-and-tiers.md``
-    (no new file, no schema change). This parses the first such fenced block,
-    ``json.loads`` it, and returns its ``capabilities`` object
-    (``modules`` / ``dialects`` / ``caseShapes`` / ``caseTags``).
+    The claim is the single source of truth for the ``slice-mvp-1`` Conformance
+    Slice: a fenced ```` ```json ```` block under the ``## First-implementation
+    Conformance Slice`` heading of ``slices.md``. This parses the first such
+    block, ``json.loads`` it, and returns its ``capabilities`` object.
     """
-    lines = scope_markdown.splitlines()
+    lines = claim_markdown.splitlines()
     in_section = False
     fence_lines: list[str] | None = None
     block: str | None = None
@@ -250,7 +282,7 @@ def parse_profile_claim(scope_markdown: str) -> dict:
         heading = re.match(r"^##\s+(.*?)\s*$", line)
         if heading:
             # Any "## " heading ends the slice section (the json fence sits
-            # directly under the slice heading, not under a tier ### heading).
+            # directly under the slice heading, not under a deeper heading).
             in_section = heading.group(1).strip().lower() == _SLICE_HEADING
             continue
         if not in_section:
@@ -267,7 +299,7 @@ def parse_profile_claim(scope_markdown: str) -> dict:
     if block is None:
         raise DepGraphFailure(
             "no ```json slice claim found under the "
-            "'## First-implementation Conformance Slice' heading of scope-and-tiers.md"
+            "'## First-implementation Conformance Slice' heading of slices.md"
         )
     try:
         claim = json.loads(block)
@@ -292,7 +324,7 @@ def _case_shape(doc: dict) -> str | None:
     if "errorClass" in doc:
         return "error"
     # A concurrency choreography with NO `errorClass` is the concurrency-success shape
-    # (M8 behavioral read-lock: 0729/0734). Checked AFTER `errorClass` so an
+    # (behavioral read-lock: 0729/0734). Checked AFTER `errorClass` so an
     # error/concurrency case (0728) still resolves to `error`.
     if "concurrency" in doc:
         return "concurrencySuccess"
@@ -368,23 +400,22 @@ def _slice_cases(compatibility_root: Path) -> list[tuple[Path, dict]]:
     return tagged
 
 
-def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
+def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
     """Assert the tagged slice cases are consistent with the canonical claim.
 
-    Mirrors ``coverage_errors``: parse a declared set, scan ``cases/``, diff, and
-    return one error per inconsistency (empty == consistent). First, the canonical
-    claim must select exactly ``caseTags.include: ["slice-mvp-1"]``;
-    then the gate checks both directions:
+    Parse the declared claim, scan ``cases/``, diff, and return one error per
+    inconsistency (empty == consistent). First, the claim must select exactly
+    ``caseTags.include: ["slice-mvp-1"]``; then the gate checks both directions:
 
     * **forward (completeness)** — every module the claim lists has at least one
       tagged case carrying that module tag;
     * **reverse (no drift), per tagged case** — its shape is in the claim's
-      ``caseShapes``; every ``m\\d+`` tag on it is in the claim's ``modules``; it
+      ``caseShapes``; every module slug tag on it is in the claim's ``modules``; it
       carries a Postgres golden (shape-aware); and if the claim lists
       ``caseTags.exclude``, the case carries none of those tags.
     """
     try:
-        capabilities = parse_profile_claim(scope_markdown)
+        capabilities = parse_profile_claim(claim_markdown)
     except DepGraphFailure as exc:
         return [str(exc)]
 
@@ -408,7 +439,7 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
     covered_modules: set[str] = set()
     for _path, doc in tagged:
         for tag in doc.get("tags", []):
-            if isinstance(tag, str) and _MODULE_TAG_RE.match(tag):
+            if isinstance(tag, str) and _MODULE_RE.match(tag):
                 covered_modules.add(tag)
     for module in sorted(claim_modules):
         if module not in covered_modules:
@@ -428,11 +459,11 @@ def profile_errors(scope_markdown: str, compatibility_root: Path) -> list[str]:
 
         case_tags_list = [t for t in doc.get("tags", []) if isinstance(t, str)]
         for tag in case_tags_list:
-            if _MODULE_TAG_RE.match(tag) and tag not in claim_modules:
+            if _MODULE_RE.match(tag) and tag not in claim_modules:
                 errors.append(f"{name}: carries module tag {tag!r} not in the slice claim")
 
         # An api-conformance-lane case (every boundary case, plus the read-lock
-        # matrix reads) is NOT executed by the M12 harness, so it need not carry a
+        # matrix reads) is NOT executed by the harness, so it need not carry a
         # Postgres golden — its observable is proven by the language's API
         # Conformance Suite. Harness-lane cases still must carry one.
         if (
@@ -472,12 +503,10 @@ def run_dag_check(spec_path: Path) -> int:
 
 
 def run_coverage(spec_dir: Path, compatibility_root: Path) -> int:
-    graph_path = spec_dir / "dependency-graph.md"
-    scope_path = spec_dir / "scope-and-tiers.md"
-    for required in (graph_path, scope_path):
-        if not required.is_file():
-            print(f"not a file: {required}", file=sys.stderr)
-            return 2
+    graph_path = spec_dir / "modules.md"
+    if not graph_path.is_file():
+        print(f"not a file: {graph_path}", file=sys.stderr)
+        return 2
     if not compatibility_root.is_dir():
         print(f"not a directory: {compatibility_root}", file=sys.stderr)
         return 2
@@ -485,36 +514,39 @@ def run_coverage(spec_dir: Path, compatibility_root: Path) -> int:
     # The coverage gate runs ON TOP OF the DAG check.
     dag_rc = run_dag_check(graph_path)
 
-    scope_markdown = scope_path.read_text(encoding="utf-8")
-    errors = coverage_errors(scope_markdown, compatibility_root)
+    modules_markdown = graph_path.read_text(encoding="utf-8")
+    errors = coverage_errors(modules_markdown, compatibility_root)
+    errors += active_deferred_edge_errors(modules_markdown)
     if errors:
         print(
-            f"coverage gate FAILED ({len(errors)} uncovered module(s)):",
+            f"coverage gate FAILED ({len(errors)} problem(s)):",
             file=sys.stderr,
         )
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1 if dag_rc == 0 else dag_rc
 
-    in_scope = parse_in_scope_modules(scope_markdown)
+    catalog = parse_catalog(modules_markdown)
+    gated = gated_modules(catalog)
     print(
-        f"coverage gate OK: every in-scope module is covered "
-        f"({len(in_scope)} module(s) across MVP / fast-follow / definitely-do)"
+        f"coverage gate OK: every active/cases module is covered "
+        f"({len(gated)} of {len(catalog)} catalog module(s)); "
+        f"no active module depends on a deferred one"
     )
     return dag_rc
 
 
 def run_profile(spec_dir: Path, compatibility_root: Path) -> int:
-    scope_path = spec_dir / "scope-and-tiers.md"
-    if not scope_path.is_file():
-        print(f"not a file: {scope_path}", file=sys.stderr)
+    claim_path = spec_dir / "slices.md"
+    if not claim_path.is_file():
+        print(f"not a file: {claim_path}", file=sys.stderr)
         return 2
     if not compatibility_root.is_dir():
         print(f"not a directory: {compatibility_root}", file=sys.stderr)
         return 2
 
-    scope_markdown = scope_path.read_text(encoding="utf-8")
-    errors = profile_errors(scope_markdown, compatibility_root)
+    claim_markdown = claim_path.read_text(encoding="utf-8")
+    errors = profile_errors(claim_markdown, compatibility_root)
     if errors:
         print(
             f"profile gate FAILED ({len(errors)} inconsistency(ies) for {_SLICE_TAG!r}):",
@@ -558,7 +590,7 @@ def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(
             "usage: python -m reference_harness.dep_graph_check "
-            "<dependency-graph.md>\n"
+            "<modules.md>\n"
             "   or: python -m reference_harness.dep_graph_check --coverage "
             "<spec-dir> <compatibility-dir>\n"
             "   or: python -m reference_harness.dep_graph_check --profile "

@@ -39,10 +39,11 @@ matrix:
 
 # ===========================================================================
 # Core spec: validation of the core specification and compatibility corpus.
-#   dep-graph: DAG legality; the coverage gate (every in-scope module from
-#   scope-and-tiers.md has a tagged fixture); the slice-mvp-1 profile gate (the
-#   tagged slice matches its canonical describe claim). schemas: meta-schema +
-#   fixture validation + sqlglot parse of all golden/reference SQL.
+#   dep-graph: DAG legality; the coverage gate (every active/cases module from
+#   the modules.md catalog has a tagged fixture) + the active->deferred rule; the
+#   slice-mvp-1 profile gate (the tagged slice matches its canonical describe
+#   claim in slices.md). schemas: meta-schema + fixture validation + sqlglot parse
+#   of all golden/reference SQL.
 # ===========================================================================
 
 # Core module DAG + coverage gate + the slice-mvp-1 profile gate.

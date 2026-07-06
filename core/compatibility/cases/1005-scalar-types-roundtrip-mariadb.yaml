@@ -9,7 +9,7 @@
 # reads MariaDB's TIME (a driver timedelta) and CHAR(36) uuid back as stable
 # text, so the expected row matches the Postgres witness value-for-value.
 model: models/scalars.yaml
-tags: [m0, m1, m3, m11, scalar, mariadb, dialect]
+tags: [m-core, m-descriptor, m-sql, m-dialect, scalar, mariadb]
 operation:
   all: {}
 goldenSql:

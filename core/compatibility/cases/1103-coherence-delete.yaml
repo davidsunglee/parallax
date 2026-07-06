@@ -2,7 +2,7 @@
 # commits a delete on a separate connection, and node B's re-fetch must observe
 # the row as gone rather than serving the stale cached object.
 model: models/account.yaml
-tags: [coherence, cross-process, m14, delete]
+tags: [m-coherence, delete]
 coherence:
   - node: B
     kind: read

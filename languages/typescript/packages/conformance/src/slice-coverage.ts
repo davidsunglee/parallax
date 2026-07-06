@@ -149,7 +149,7 @@ function countModules(cases: readonly LoadedCase[]): Record<string, number> {
 }
 
 function isModuleTag(tag: string): tag is ModuleTag {
-  return /^m\d+$/.test(tag);
+  return /^m-[a-z0-9]+(-[a-z0-9]+)*$/.test(tag);
 }
 
 function sortedEntries<T extends Record<string, number> | Partial<Record<string, number>>>(

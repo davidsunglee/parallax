@@ -57,8 +57,8 @@ def _first_json_fence_under_heading(markdown: str, heading_prefix: str, heading_
 
 def _slice_claim_block() -> str:
     """Extract the canonical slice describe JSON fenced under the slice heading."""
-    scope = (_SPEC_DIR / "scope-and-tiers.md").read_text(encoding="utf-8")
-    return _first_json_fence_under_heading(scope, "## ", "First-implementation Conformance Slice")
+    slices = (_SPEC_DIR / "slices.md").read_text(encoding="utf-8")
+    return _first_json_fence_under_heading(slices, "## ", "First-implementation Conformance Slice")
 
 
 def _ts_v1_claim_block() -> str:
@@ -78,7 +78,15 @@ def _valid_describe() -> dict:
             "version": "0.1.0",
         },
         "capabilities": {
-            "modules": ["m0", "m1", "m2", "m3", "m8", "m11", "m12"],
+            "modules": [
+                "m-core",
+                "m-descriptor",
+                "m-op-algebra",
+                "m-sql",
+                "m-unit-work",
+                "m-dialect",
+                "m-conformance-adapter",
+            ],
             "dialects": ["postgres"],
             "caseShapes": ["read", "writeSequence"],
             "caseTags": {"exclude": ["aggregate", "identity cache", "query cache"]},
@@ -157,20 +165,20 @@ def test_describe_still_allows_omitting_case_tags_for_all_or_nothing_claims() ->
     assert errors == []
 
 
-def test_describe_accepts_m14_coherence_module_claim() -> None:
+def test_describe_accepts_coherence_module_claim() -> None:
     describe = copy.deepcopy(_valid_describe())
-    describe["capabilities"]["modules"] = ["m0", "m8", "m14"]
+    describe["capabilities"]["modules"] = ["m-core", "m-unit-work", "m-coherence"]
 
     errors = list(_validator().iter_errors(describe))
     assert errors == []
 
 
-def test_describe_rejects_retired_coherence_module_claim() -> None:
-    # Cross-process coherence is module m14 now; the un-numbered "coherence"
-    # module claim is retired (it survives only as an ordinary case tag, not a
-    # module-like capability claim), so an adapter MUST claim m14 instead.
+def test_describe_rejects_bare_coherence_module_claim() -> None:
+    # Cross-process coherence is module `m-coherence`; a bare, un-prefixed
+    # "coherence" claim does not match the `m-<slug>` module grammar, so an
+    # adapter MUST claim `m-coherence` instead.
     describe = copy.deepcopy(_valid_describe())
-    describe["capabilities"]["modules"] = ["m0", "coherence"]
+    describe["capabilities"]["modules"] = ["m-core", "coherence"]
 
     assert list(_validator().iter_errors(describe))
 
@@ -207,7 +215,7 @@ def test_benchmark_rejects_legacy_metrics_shape() -> None:
 
 
 def test_canonical_slice_claim_is_schema_valid() -> None:
-    # The embedded slice describe claim in scope-and-tiers.md is the single source
+    # The embedded slice describe claim in slices.md is the single source
     # of truth; it must be a legal describe document.
     claim = json.loads(_slice_claim_block())
     errors = list(_validator().iter_errors(claim))

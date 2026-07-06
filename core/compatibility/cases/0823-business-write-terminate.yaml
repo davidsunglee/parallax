@@ -14,7 +14,7 @@
 # Resulting state: one CLOSED business milestone (thru_z finite) and crucially no
 # thru_z = infinity row — the observable signature of a business termination.
 model: models/reservation.yaml
-tags: [m7, m3, business_temporal, temporal, write-sequence, terminate, business-only]
+tags: [m-business-only, m-sql, business_temporal, temporal, write-sequence, terminate, business-only]
 writeSequence:
   - mutation: insert
     entity: Reservation

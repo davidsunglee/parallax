@@ -16,7 +16,7 @@
 # expected) <= 1e-9 (count stays effectively exact — an off-by-one is ~1e9x the
 # tolerance). Every other aggregate value in the suite compares exactly.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, stdDev, stdDevSample, twoColumn]
+tags: [m-agg, m-sql-agg, stdDev, stdDevSample, twoColumn]
 operation:
   groupBy:
     operand:

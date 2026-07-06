@@ -6,7 +6,7 @@
 # normalizer renders the negation as a leading `not`, mirroring
 # `isNotNull`/`notIn`). Only Grace (Boston) does NOT live in Oslo.
 model: models/customer.yaml
-tags: [m1, m3, nested, value-object, json]
+tags: [m-value-object, m-sql, nested, json]
 operation:
   nestedNotEq: { path: Customer.address.city, value: Oslo }
 goldenSql:

@@ -14,7 +14,7 @@
 # Together with 0703 this proves `updatedRows != 1` is the conflict signal — a
 # fresh version provably touches one row, a stale version provably touches zero.
 model: models/account.yaml
-tags: [m10, m3, optimistic-locking, success, optimistic-lock-success, slice-mvp-1]
+tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-mvp-1]
 uow:
   concurrency: optimistic
 write: { id: 2, balance: 500.00, observedVersion: 1 }

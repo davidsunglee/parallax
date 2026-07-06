@@ -19,7 +19,7 @@
 # does not change the result). This is the first real compatibility-matrix row
 # where the two dialects emit DIFFERENT optimized SQL for the same operation.
 model: models/account.yaml
-tags: [m8, m11, m3, read-lock, transactions cache, dialect]
+tags: [m-read-lock, m-dialect]
 operation:
   eq:
     attr: Account.id

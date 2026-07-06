@@ -22,7 +22,7 @@ function loaded(id: string, shape: CaseShape, tags: readonly string[]): LoadedCa
 }
 
 const SYNTHETIC_CAPABILITIES: Capabilities = {
-  modules: ["m1", "m2"],
+  modules: ["m-core", "m-op-algebra"],
   dialects: ["postgres"],
   caseShapes: ["read", "writeSequence"],
   caseTags: { include: ["slice"] },
@@ -34,11 +34,11 @@ describe("conformance slice coverage report", () => {
   it("counts claimed cases and out-of-claim reasons by command", () => {
     const report = buildConformanceSliceCoverageReport(
       [
-        loaded("0001", "read", ["m1", "slice"]),
-        loaded("0002", "writeSequence", ["m2", "slice"]),
-        loaded("0003", "read", ["m3", "slice"]),
-        loaded("0004", "read", ["m1"]),
-        loaded("0005", "coherence", ["m1", "slice"]),
+        loaded("0001", "read", ["m-core", "slice"]),
+        loaded("0002", "writeSequence", ["m-op-algebra", "slice"]),
+        loaded("0003", "read", ["m-sql", "slice"]),
+        loaded("0004", "read", ["m-core"]),
+        loaded("0005", "coherence", ["m-core", "slice"]),
       ],
       SYNTHETIC_CAPABILITIES,
     );
@@ -48,7 +48,7 @@ describe("conformance slice coverage report", () => {
     expect(report.claimedCases).toBe(2);
     expect(report.claimedCaseIds).toEqual(["0001", "0002"]);
     expect(report.byShape).toEqual({ read: 1, writeSequence: 1 });
-    expect(report.byModule).toEqual({ m1: 1, m2: 1 });
+    expect(report.byModule).toEqual({ "m-core": 1, "m-op-algebra": 1 });
 
     for (const command of report.byCommand) {
       expect(command.claimedCases).toBe(2);
@@ -60,7 +60,7 @@ describe("conformance slice coverage report", () => {
 
   it("renders a GitHub-summary friendly markdown table", () => {
     const report = buildConformanceSliceCoverageReport(
-      [loaded("0001", "read", ["m1", "slice"])],
+      [loaded("0001", "read", ["m-core", "slice"])],
       SYNTHETIC_CAPABILITIES,
     );
 

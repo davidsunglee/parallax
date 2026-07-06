@@ -6,7 +6,7 @@
 # update-chaining sequence (0822); this pins it as a standalone, asserted write.
 # The lone current business row carries thru_z = infinity.
 model: models/reservation.yaml
-tags: [m7, m3, business_temporal, temporal, write-sequence, insert, business-only]
+tags: [m-business-only, m-sql, business_temporal, temporal, write-sequence, insert, business-only]
 writeSequence:
   - mutation: insert
     entity: Reservation

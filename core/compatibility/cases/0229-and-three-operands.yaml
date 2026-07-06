@@ -6,7 +6,7 @@
 # order. active=true AND qty>5 AND qty<30 keeps orders 2 (qty 10) and 4 (qty 20);
 # order 42 (qty 30) fails qty<30 and the inactive rows fail active=true.
 model: models/orders.yaml
-tags: [m2, and, boolean, n-ary, slice-mvp-1]
+tags: [m-op-algebra, and, boolean, n-ary, slice-mvp-1]
 operation:
   and:
     operands:

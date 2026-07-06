@@ -15,7 +15,7 @@
 # state confirms our stale write never applied: id 1 still carries the concurrent
 # writer's values (888.00, version 2).
 model: models/account.yaml
-tags: [m10, m9, m3, optimistic-locking, conflict, detached, merge-back]
+tags: [m-opt-lock, m-detach, m-sql, conflict, merge-back]
 precondition: update account set balance = 888.00, version = 2 where id = 1
 write: { id: 1, balance: 150.00, observedVersion: 1 }
 expectedAffectedRows: 0

@@ -10,7 +10,7 @@
 # (business [2024-03-01, infinity)). The superseded Ada row (thru_z finite) is
 # excluded.
 model: models/reservation.yaml
-tags: [m7, m3, business_temporal, temporal, as-of, business-only, defaulted]
+tags: [m-temporal-read, m-sql, business_temporal, temporal, as-of, business-only, defaulted]
 operation:
   all: {}
 goldenSql:

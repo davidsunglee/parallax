@@ -10,7 +10,7 @@
 # Non-trivial (discriminator) case => referenceSql is the independent oracle
 # (inline `kind = 'card'`).
 model: models/payment.yaml
-tags: [m1, m3, inheritance, table-per-hierarchy, discriminator]
+tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator]
 operation:
   all: {}
 goldenSql:

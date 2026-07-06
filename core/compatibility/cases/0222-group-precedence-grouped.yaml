@@ -7,7 +7,7 @@
 # the result is {1, 5, 42}. The `group` node is what makes that difference
 # unambiguous through the canonical serde.
 model: models/orders.yaml
-tags: [m2, group, boolean, precedence, slice-mvp-1]
+tags: [m-op-algebra, group, boolean, precedence, slice-mvp-1]
 operation:
   and:
     operands:

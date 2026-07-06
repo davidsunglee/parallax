@@ -8,7 +8,7 @@
 #
 # referenceSql spells the same path with native operators (`-> 'geo' ->> 'country'`).
 model: models/customer.yaml
-tags: [m1, m3, nested, value-object, json]
+tags: [m-value-object, m-sql, nested, json]
 operation:
   nestedEq: { path: Customer.address.geo.country, value: US }
 goldenSql:

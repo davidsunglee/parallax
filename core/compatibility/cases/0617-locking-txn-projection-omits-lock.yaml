@@ -14,7 +14,7 @@
 # throwing) is a runtime property the language's API Conformance Suite proves; the
 # M12 harness schema-validates the case.
 model: models/account.yaml
-tags: [m8, m11, m3, read-lock, locking-mode, slice-mvp-1]
+tags: [m-read-lock, m-dialect, m-api-conformance, locking-mode, slice-mvp-1]
 lane: api-conformance
 uow:
   concurrency: locking

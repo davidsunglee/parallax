@@ -20,10 +20,10 @@ function repoPath(relative: string): string {
 
 /**
  * Extract the embedded canonical `describe` JSON block from
- * `core/spec/scope-and-tiers.md` — the single source of truth for the slice.
+ * `core/spec/slices.md` — the single source of truth for the slice.
  */
 function canonicalSliceCapabilities(): unknown {
-  const md = readFileSync(repoPath("core/spec/scope-and-tiers.md"), "utf8");
+  const md = readFileSync(repoPath("core/spec/slices.md"), "utf8");
   const start = md.indexOf("First-implementation Conformance Slice");
   expect(start, "slice heading present in scope-and-tiers.md").toBeGreaterThan(-1);
   const fenceOpen = md.indexOf("```json", start);

@@ -12,7 +12,7 @@
 # `lane: api-conformance`: injected transient; suite-driven via a fault-injecting
 # decorator around the shipped adapter.
 model: models/account.yaml
-tags: [m8, m10, optimistic-locking, retry, transient, slice-mvp-1]
+tags: [m-auto-retry, m-opt-lock, m-api-conformance, transient, slice-mvp-1]
 lane: api-conformance
 uow:
   concurrency: optimistic

@@ -9,7 +9,7 @@
 # The aggregate result columns are the group key (order_id) and the sum aliased
 # `total_quantity`; these are the keys in expectedRows.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, sum, groupBy, having]
+tags: [m-agg, m-sql-agg, sum, groupBy, having]
 operation:
   groupBy:
     operand:

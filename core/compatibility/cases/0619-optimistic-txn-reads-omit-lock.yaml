@@ -11,7 +11,7 @@
 # language's API Conformance Suite proves (the same read, run under `optimistic`
 # mode, emits no lock); the M12 harness schema-validates the case.
 model: models/account.yaml
-tags: [m8, m10, m3, read-lock, optimistic, slice-mvp-1]
+tags: [m-read-lock, m-opt-lock, m-dialect, m-api-conformance, slice-mvp-1]
 lane: api-conformance
 uow:
   concurrency: optimistic

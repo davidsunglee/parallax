@@ -190,7 +190,7 @@ group.skipIf(!HAS_DOCKER)(
           const operation = parseOperation(loaded.raw.operation);
           const schema = schemaForReadCase(loaded, operation, mariadbDialect);
           const { sql, binds } = compile(operation, schema, mariadbDialect, {
-            locking: loaded.tags.includes("read-lock"),
+            locking: loaded.tags.includes("m-read-lock"),
           });
 
           expect(sql).toBe(mariadbGolden(loaded));

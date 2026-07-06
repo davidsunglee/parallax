@@ -17,7 +17,7 @@
 #   step 2 find  : cache HIT (0 round trips) — the SAME row, unchanged
 # roundTrips = 1 (the single find; the no-op write and the hit cost nothing).
 model: models/account.yaml
-tags: [m10, m8, optimistic-locking, no-op, scenario, slice-mvp-1]
+tags: [m-opt-lock, m-unit-work, no-op, scenario, slice-mvp-1]
 roundTrips: 1
 scenario:
   - find:

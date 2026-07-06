@@ -1,7 +1,7 @@
 # Aggregate with a WHERE predicate and an OR-composed HAVING expression. The
 # binds prove left-to-right ordering across WHERE then HAVING: [1, 2, 1].
 model: models/orders.yaml
-tags: [m2, m3, aggregate, groupBy, having, or, bind-order]
+tags: [m-agg, m-sql-agg, groupBy, having, or, bind-order]
 operation:
   groupBy:
     operand:

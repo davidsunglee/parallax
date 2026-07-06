@@ -36,9 +36,9 @@ export interface GateCase {
   readonly tags: readonly string[];
 }
 
-/** Every `m<number>` module tag a case carries. */
+/** Every `m-<slug>` module tag a case carries. */
 function moduleTags(tags: readonly string[]): readonly string[] {
-  return tags.filter((tag) => /^m\d+$/.test(tag));
+  return tags.filter((tag) => /^m-[a-z0-9]+(-[a-z0-9]+)*$/.test(tag));
 }
 
 /**

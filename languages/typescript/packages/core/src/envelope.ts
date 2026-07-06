@@ -29,8 +29,44 @@ export type CaseShape =
   | "concurrencySuccess"
   | "boundary";
 
-/** A module tier tag, e.g. `"m0"`, `"m12"`. */
-export type ModuleTag = `m${number}`;
+/**
+ * A canonical module tag from the closed catalog (`core/spec/modules.md`). The
+ * catalog is closed, so this is the exact union of the 32 module slugs — adding a
+ * module is one union member.
+ */
+export type ModuleTag =
+  | "m-core"
+  | "m-descriptor"
+  | "m-pk-gen"
+  | "m-inheritance"
+  | "m-value-object"
+  | "m-op-algebra"
+  | "m-agg"
+  | "m-sql"
+  | "m-sql-agg"
+  | "m-dialect"
+  | "m-db-port"
+  | "m-db-error"
+  | "m-navigate"
+  | "m-deep-fetch"
+  | "m-op-list"
+  | "m-batch-write"
+  | "m-cascade-delete"
+  | "m-unit-work"
+  | "m-read-lock"
+  | "m-auto-retry"
+  | "m-process-cache"
+  | "m-temporal-read"
+  | "m-audit-write"
+  | "m-bitemp-write"
+  | "m-business-only"
+  | "m-detach"
+  | "m-opt-lock"
+  | "m-case-format"
+  | "m-conformance-adapter"
+  | "m-api-conformance"
+  | "m-perf-bench"
+  | "m-coherence";
 
 /**
  * Adapter identity object carried by every envelope. For the TypeScript

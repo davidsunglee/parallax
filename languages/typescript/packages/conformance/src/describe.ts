@@ -2,7 +2,7 @@
  * The canonical `describe` capability claim for the TypeScript adapter.
  *
  * TypeScript V1 *is* the canonical `slice-mvp-1` Conformance Slice
- * (`core/spec/scope-and-tiers.md`): the adapter reports exactly that slice's
+ * (`core/spec/slices.md`): the adapter reports exactly that slice's
  * capabilities and differs from the reference claim only in the `adapter`
  * identity. The slice is include-driven (`caseTags.include:
  * ["slice-mvp-1"]`), so V1 claims precisely the tagged cases and
@@ -12,12 +12,33 @@ import type { AdapterIdentity, Capabilities, DescribeOk } from "@parallax/core";
 import { SCHEMA_VERSION } from "@parallax/core";
 
 /**
- * The canonical `slice-mvp-1` capabilities, verbatim from
- * `scope-and-tiers.md`. This object is the single source of truth for what the
- * TypeScript adapter claims; only the `adapter` identity is supplied per call.
+ * The canonical `slice-mvp-1` capabilities, verbatim from `slices.md`. `modules`
+ * is the derived union of the module tags carried by the 123 tagged cases. This
+ * object is the single source of truth for what the TypeScript adapter claims;
+ * only the `adapter` identity is supplied per call.
  */
 export const SLICE_MVP_1_CAPABILITIES: Capabilities = {
-  modules: ["m0", "m1", "m2", "m3", "m4", "m5", "m7", "m8", "m10", "m11", "m12"],
+  modules: [
+    "m-api-conformance",
+    "m-audit-write",
+    "m-auto-retry",
+    "m-batch-write",
+    "m-case-format",
+    "m-conformance-adapter",
+    "m-core",
+    "m-db-error",
+    "m-deep-fetch",
+    "m-descriptor",
+    "m-dialect",
+    "m-navigate",
+    "m-op-algebra",
+    "m-op-list",
+    "m-opt-lock",
+    "m-read-lock",
+    "m-sql",
+    "m-temporal-read",
+    "m-unit-work",
+  ],
   dialects: ["postgres"],
   caseShapes: [
     "read",

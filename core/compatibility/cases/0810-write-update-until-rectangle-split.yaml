@@ -25,7 +25,7 @@
 # UPDATE is keyed by the current-on-processing predicate (pos_id AND
 # out_z = infinity), never a blind in-place set.
 model: models/position.yaml
-tags: [m7, m3, bitemporal, temporal, write-sequence, update-until, rectangle-split]
+tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split]
 writeSequence:
   - mutation: insert
     entity: Position
