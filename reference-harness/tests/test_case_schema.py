@@ -183,6 +183,53 @@ def _concurrency_success_case() -> dict[str, Any]:
     }
 
 
+def _conflict_retry_case() -> dict[str, Any]:
+    """The conflict RETRY form (`when.attempts`): each attempt asserts `affectedRows`.
+
+    Distinct from `_conflict_case` (the single-attempt `when.write` + `then.affectedRows`
+    form); this pins the retry attempts def, whose per-attempt affected-row count carries
+    the assertion-group name `affectedRows`, NOT the legacy `expectedAffectedRows`.
+    """
+    return {
+        "model": "models/account.yaml",
+        "tags": ["m-opt-lock"],
+        "shape": "conflict",
+        "given": {"apply": [{"sql": "update account set version = 2 where id = 2"}]},
+        "when": {
+            "uow": {"concurrency": "optimistic"},
+            "attempts": [
+                {
+                    "statements": [
+                        {
+                            "sql": {
+                                "postgres": "update account set balance = ? "
+                                "where id = ? and version = ?"
+                            },
+                            "binds": [250.0, 2, 1],
+                        }
+                    ],
+                    "write": {"id": 2, "balance": 250.0, "observedVersion": 1},
+                    "affectedRows": 0,
+                },
+                {
+                    "statements": [
+                        {
+                            "sql": {
+                                "postgres": "update account set balance = ? "
+                                "where id = ? and version = ?"
+                            },
+                            "binds": [250.0, 2, 2],
+                        }
+                    ],
+                    "write": {"id": 2, "balance": 250.0, "observedVersion": 2},
+                    "affectedRows": 1,
+                },
+            ],
+        },
+        "then": {"tableState": {"account": [{"id": 2, "version": 3}]}},
+    }
+
+
 def _boundary_case() -> dict[str, Any]:
     return {
         "model": "models/account.yaml",
@@ -203,6 +250,7 @@ VALID_CASES = {
     "writeSequence": _write_sequence_case,
     "scenario": _scenario_case,
     "conflict": _conflict_case,
+    "conflict-retry": _conflict_retry_case,
     "coherence": _coherence_case,
     "error": _error_case,
     "concurrencySuccess": _concurrency_success_case,
@@ -267,6 +315,33 @@ def _binds_outside_statement_entry() -> dict[str, Any]:
     return doc
 
 
+def _attempt_legacy_affected_rows() -> dict[str, Any]:
+    """A retry attempt carrying the legacy `expectedAffectedRows` name (finding 1).
+
+    The attempts def requires `affectedRows` and is closed, so the legacy
+    `expected*` spelling is rejected two ways: `affectedRows` is now missing and
+    `expectedAffectedRows` is an extra key. No legacy executable vocabulary may
+    validate inside a migrated case body.
+    """
+    doc = _conflict_retry_case()
+    attempt = doc["when"]["attempts"][0]
+    attempt["expectedAffectedRows"] = attempt.pop("affectedRows")
+    return doc
+
+
+def _cross_shape_when_member() -> dict[str, Any]:
+    """A read case carrying a stray cross-shape `when.boundary` block (finding 2).
+
+    The read branch now constrains `when` to only that shape's members
+    (`operation` / `uow` / `equivalentEncodings`), so a mislabeled/mixed document
+    that also carries an unrelated action member fails its shape branch and no
+    other branch matches — the `oneOf` rejects it.
+    """
+    doc = _read_case()
+    doc["when"]["boundary"] = [{"action": "read"}]
+    return doc
+
+
 REJECTED_CASES = {
     "legacy-layout": _legacy_layout,
     "mislabeled-shape": _mislabeled_shape,
@@ -274,6 +349,8 @@ REJECTED_CASES = {
     "empty-sql-map": _empty_sql_map,
     "extra-key-in-closed-group": _extra_key_in_closed_group,
     "binds-outside-statement-entry": _binds_outside_statement_entry,
+    "attempt-legacy-affected-rows": _attempt_legacy_affected_rows,
+    "cross-shape-when-member": _cross_shape_when_member,
 }
 
 

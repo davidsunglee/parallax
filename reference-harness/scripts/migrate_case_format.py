@@ -114,8 +114,18 @@ _THEN_FIELDS = {
 
 # Step forms whose per-step SQL migrates goldenSql + binds -> statements. Their
 # other internal fields ("note", "find", "expectRows", "observeRows", ...) are
-# kept verbatim, so only the SQL representation changes.
+# kept verbatim, so only the SQL representation and the assertion renames below
+# change.
 _SQL_STEP_LISTS = ("scenario", "coherence", "attempts")
+
+# Step-level assertion renames — the legacy `expected*` executable vocabulary is
+# dropped inside step BODIES exactly as it is at the top level (see _THEN_FIELDS),
+# so no `expected*` name survives a migrated case body. Currently only conflict
+# retry `attempts` steps carry one (`expectedAffectedRows`); scenario/coherence/
+# concurrency steps have no `expected*` keys (their result rows are `expectRows`/
+# `observeRows`, which are intentionally NOT renamed). Applied to every SQL step
+# form via `_rebuild_sql_step`; a key not present in a given step is a no-op.
+_STEP_ASSERTION_RENAMES = {"expectedAffectedRows": "affectedRows"}
 
 
 class MigrationError(Exception):
@@ -242,7 +252,7 @@ def _rebuild_sql_step(step: CommentedMap, where: str) -> CommentedMap:
         elif key == "binds":
             continue  # folded into statements
         else:
-            new[key] = value
+            new[_STEP_ASSERTION_RENAMES.get(key, key)] = value
     return new
 
 
@@ -559,9 +569,34 @@ def _project_step_list_new(steps: Any) -> list[dict[str, Any]]:
     return result
 
 
-def _project_concurrency_old(concurrency: Any) -> list[dict[str, Any]]:
+def _project_attempts_old(attempts: Any) -> list[dict[str, Any]]:
+    """Project OLD-layout retry attempts, applying the step assertion renames.
+
+    Only the OLD side is renamed (`expectedAffectedRows` -> `affectedRows`): the
+    NEW side is read STRUCTURALLY via `_project_step_list_new` (which sees the
+    migrated `affectedRows`). If a future migration ever failed to rename an
+    attempt's `expectedAffectedRows`, the old meta would carry `affectedRows`
+    while the new meta still carried `expectedAffectedRows`, and this comparison
+    would FAIL loudly rather than silently pass the legacy vocabulary through.
+    """
     result = []
-    for rnd in (concurrency or {}).get("rounds", []):
+    for step in attempts or []:
+        meta = _step_meta(step, ("goldenSql", "binds"))
+        for old_key, new_key in _STEP_ASSERTION_RENAMES.items():
+            if old_key in meta:
+                meta[new_key] = meta.pop(old_key)
+        result.append(
+            {
+                "sql": _sql_projection_old(step.get("goldenSql"), step.get("binds")),
+                "meta": meta,
+            }
+        )
+    return result
+
+
+def _concurrency_rounds_old(concurrency: dict[str, Any]) -> list[dict[str, Any]]:
+    result = []
+    for rnd in concurrency.get("rounds", []):
         entry = {}
         for node in ("A", "B"):
             if node in rnd:
@@ -574,9 +609,9 @@ def _project_concurrency_old(concurrency: Any) -> list[dict[str, Any]]:
     return result
 
 
-def _project_concurrency_new(concurrency: Any) -> list[dict[str, Any]]:
+def _concurrency_rounds_new(concurrency: dict[str, Any]) -> list[dict[str, Any]]:
     result = []
-    for rnd in (concurrency or {}).get("rounds", []):
+    for rnd in concurrency.get("rounds", []):
         entry = {}
         for node in ("A", "B"):
             if node in rnd:
@@ -587,6 +622,29 @@ def _project_concurrency_new(concurrency: Any) -> list[dict[str, Any]]:
                 }
         result.append(entry)
     return result
+
+
+def _project_concurrency_old(concurrency: Any) -> dict[str, Any]:
+    """Project a concurrency choreography — rounds AND any sibling metadata.
+
+    Comparing only `rounds` would let a non-`rounds` concurrency member (e.g.
+    future round-barrier or isolation metadata) be dropped by the migration
+    without the self-check noticing. Projecting the sibling members too asserts
+    the migration preserves the WHOLE concurrency block.
+    """
+    concurrency = concurrency or {}
+    return {
+        "rounds": _concurrency_rounds_old(concurrency),
+        "meta": {k: v for k, v in concurrency.items() if k != "rounds"},
+    }
+
+
+def _project_concurrency_new(concurrency: Any) -> dict[str, Any]:
+    concurrency = concurrency or {}
+    return {
+        "rounds": _concurrency_rounds_new(concurrency),
+        "meta": {k: v for k, v in concurrency.items() if k != "rounds"},
+    }
 
 
 def project_old(doc: dict[str, Any]) -> dict[str, Any]:
@@ -628,7 +686,7 @@ def project_old(doc: dict[str, Any]) -> dict[str, Any]:
         "apply": {"statements": apply_statements, "binds": apply_binds},
         "scenario": _project_step_list_old(doc.get("scenario")),
         "coherence": _project_step_list_old(doc.get("coherence")),
-        "attempts": _project_step_list_old(doc.get("attempts")),
+        "attempts": _project_attempts_old(doc.get("attempts")),
         "concurrency": _project_concurrency_old(doc.get("concurrency")),
     }
 
