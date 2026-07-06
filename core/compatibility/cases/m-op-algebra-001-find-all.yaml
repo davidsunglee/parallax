@@ -4,9 +4,9 @@
 # single aliased table with no predicate. Trivial single-table case, so
 # referenceSql is omitted (expectedRows is verifiable by eye).
 #
-# This is the walking-skeleton case: it exercises the full M12 case contract
+# This is the walking-skeleton case: it exercises the full m-case-format case contract
 # (schema conformance + golden-SQL equivalence + normalization + operation/
-# metamodel serde round-trip) end-to-end, hence the `m12` tag.
+# metamodel serde round-trip) end-to-end, hence the `m-case-format` tag.
 model: models/orders.yaml
 tags: [m-op-algebra, m-conformance-adapter, m-case-format, all, slice-mvp-1]
 operation:

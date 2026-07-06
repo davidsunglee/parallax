@@ -1,8 +1,8 @@
 /**
- * M12 adapter-boundary comparison unit tests (Docker-free).
+ * m-conformance-adapter adapter-boundary comparison unit tests (Docker-free).
  *
  * Pins the `scalarsEqual` + `compareRowSet` contract directly, in isolation from
- * the Docker-gated Postgres full M12 profile (`@parallax/typescript`'s
+ * the Docker-gated Postgres full m-case-format profile (`@parallax/typescript`'s
  * `slice-run.test.ts`). The central
  * invariant locked in here is the **genuine-numeric discriminator**: a numeric
  * wire STRING reconciles against a genuine `number` / `bigint` in decimal space
@@ -147,7 +147,7 @@ describe("compareRowSet — order-insensitive multiset under the scalar rules", 
     expect(result.equal).toBe(false);
   });
 
-  it("grades columns by their M0 type when a type map is supplied", () => {
+  it("grades columns by their m-core type when a type map is supplied", () => {
     const types = { id: "int64", sku: "string", price: "decimal(18,2)" };
     // sku is textual: "042" must NOT collapse to 42 even though it looks numeric.
     const bad = compareRowSet(

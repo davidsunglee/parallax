@@ -1,6 +1,6 @@
 /**
- * Derive `CREATE TABLE` DDL from a parsed model descriptor (M0 type → the
- * injected dialect's column type, behind the M11 seam). The database schema is
+ * Derive `CREATE TABLE` DDL from a parsed model descriptor (m-core type → the
+ * injected dialect's column type, behind the m-dialect seam). The database schema is
  * never authored by hand — it is a pure function of the metamodel, exactly as a
  * real implementation's would be (mirrors the harness `ddl_builder`).
  *
@@ -78,7 +78,7 @@ function createTable(entity: DdlEntity, dialect: Dialect): string {
   // A temporal entity keeps many milestone rows per business key, so the
   // declared PK is not unique on its own — the physical key is the business key
   // PLUS each as-of dimension's `fromColumn` (the milestone start), so the DDL
-  // admits the milestone chain (M7). No-op for non-temporal entities.
+  // admits the milestone chain (m-temporal-read). No-op for non-temporal entities.
   for (const asOf of entity.asOfAttributes ?? []) {
     if (!pkColumns.includes(asOf.fromColumn)) {
       pkColumns.push(asOf.fromColumn);
@@ -88,7 +88,7 @@ function createTable(entity: DdlEntity, dialect: Dialect): string {
   // Emit a UNIQUE constraint for each declared unique index whose columns are NOT
   // exactly the physical primary key (the PK is already unique via `primary key
   // (...)` below). This lets a model witness a unique-INDEX violation distinct from
-  // a PK collision (M11 error classification — `tag_name_uq`); existing slice models
+  // a PK collision (m-db-error error classification — `tag_name_uq`); existing slice models
   // declare only PK-backed unique indices, so this is a no-op for them. The
   // comparison is against the PHYSICAL primary key (declared PK + temporal
   // fromColumns appended above), so a temporal full-milestone-key unique index is

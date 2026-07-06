@@ -1,5 +1,5 @@
 /**
- * M11 error-code classification — the dialect-owned SQLSTATE → neutral-category
+ * m-db-error error-code classification — the dialect-owned SQLSTATE → neutral-category
  * map (the TypeScript peer of `reference-harness/.../errors.py`).
  *
  * A driver surfaces a native code (Postgres keys on the SQLSTATE *string*; a
@@ -40,7 +40,7 @@ const POSTGRES_ERROR_CODES: Readonly<Record<string, ErrorCategory>> = {
 
 /**
  * Classify a native Postgres error code (the SQLSTATE string a driver surfaces)
- * to a neutral M11 category. Returns `unknown` for an unrecognized or missing code
+ * to a neutral m-db-error category. Returns `unknown` for an unrecognized or missing code
  * so an unclassified error is never silently treated as retriable.
  */
 export function classifyErrorCode(code: string | number | null | undefined): ErrorCategory {

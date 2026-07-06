@@ -5,7 +5,7 @@
 #   stddev_pop(quantity) = sqrt(10/5) = sqrt(2) = 1.4142135623730950... (irrational)
 #   count(quantity)      = 5
 # Like every stdDev*/variance* aggregate it emits BOTH the statistic and a
-# companion sample count (the two-column read; see m2/m3). The independent
+# companion sample count (the two-column read; see m-agg/m-sql). The independent
 # referenceSql computes the same two columns naively, so golden == reference ==
 # expected is proven against real Postgres — pinning the stddev_pop SQL mapping,
 # which no fixture exercised before.

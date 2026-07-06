@@ -1,4 +1,4 @@
-# orderBy with MULTIPLE keys + mixed directions (M2 orderBy, M3 clause order).
+# orderBy with MULTIPLE keys + mixed directions (m-op-algebra orderBy, m-sql clause order).
 #
 # m-op-algebra-026/m-op-algebra-027 order by a single key; this pins the composite, comma-separated
 # `order by t0.active desc, t0.qty asc` render and the tie-break it encodes:

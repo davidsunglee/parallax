@@ -1,5 +1,5 @@
 # Deep fetch, ORDERED to-many — a relationship's declared `orderBy` is honored
-# (M4). `Order.items` declares `id desc`, but the fixture items are inserted in
+# (m-deep-fetch). `Order.items` declares `id desc`, but the fixture items are inserted in
 # ASCENDING id order, so the child query MUST emit `order by t0.id desc` and the
 # assembled `items` list comes back REVERSED (12 before 11). The harness ordering
 # oracle derives the expected order from the declared key and asserts the DB

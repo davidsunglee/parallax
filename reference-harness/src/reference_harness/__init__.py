@@ -1,4 +1,4 @@
-"""The parallax M12 compatibility harness.
+"""The parallax m-case-format compatibility harness.
 
 Tooling, not an ORM: this package never compiles operations to SQL. It validates
 the compatibility suite against its JSON Schemas, normalizes and parses golden

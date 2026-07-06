@@ -1,5 +1,5 @@
 /**
- * `@parallax/db-postgres` — the shippable Postgres adapter (M11 decomposition,
+ * `@parallax/db-postgres` — the shippable Postgres adapter (m-db-port decomposition,
  * layer 3): a concrete `ParallaxDatabase` over the `postgres` (porsager) driver,
  * from a connection string / pool, returning managed scalars via the
  * `@parallax/dialect` parse functions for reads and native affected-row counts

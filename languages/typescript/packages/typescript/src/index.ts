@@ -10,7 +10,7 @@
  *
  * The Phase 9 developer surface (design Q1 Option B) is a thin typed layer over
  * the SAME generic runtime the conformance adapter uses: the DSL builds canonical
- * M2 operations, the runtime lowers them with the M3 compiler, so conformance is
+ * m-op-algebra operations, the runtime lowers them with the m-sql compiler, so conformance is
  * unaffected. This barrel re-exports the public runtime types (`ParallaxList`,
  * the error classes, `ParallaxDecimal`, `Temporal`) so the generated barrel — and
  * applications — reach them through one package (spec §2.1).

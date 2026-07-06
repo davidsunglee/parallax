@@ -1,6 +1,6 @@
 # reference-harness
 
-The canonical **M12 compatibility runner** for parallax — Python + uv + sqlglot.
+The canonical **compatibility runner** for parallax (the `m-case-format` harness) — Python + uv + sqlglot.
 
 It is **tooling, not an ORM**. It **never compiles operations to SQL** (that is
 precisely what a real implementation must do and prove against the golden SQL).
@@ -21,7 +21,7 @@ src/reference_harness/
 ├── schema_validate.py # validate descriptors / operations / cases vs JSON Schema (+ meta-schema)
 ├── sql_lint.py        # sqlglot-parse every golden / reference SQL string
 ├── serde.py           # canonical (de)serialize for operations AND the metamodel (JSON + YAML)
-├── sql_normalize.py   # sqlglot implementation of the M3 normalization rules
+├── sql_normalize.py   # sqlglot implementation of the m-sql normalization rules
 ├── ddl_builder.py     # descriptor -> CREATE TABLE DDL (dialect-aware via the provider)
 ├── data_loader.py     # load fixture rows
 ├── dep_graph_check.py # parse modules.md; assert DAG + legal direction

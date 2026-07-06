@@ -1,9 +1,9 @@
 /**
- * `@parallax/sql` — M3 SQL generation contract.
+ * `@parallax/sql` — m-sql SQL generation contract.
  *
  * The canonical-by-construction compile visitor: switch on the operation tag,
  * thread a first-appearance alias allocator and a binds accumulator, emit the
- * five M3 normalization rules directly. Schema knowledge is injected via the
+ * five m-sql normalization rules directly. Schema knowledge is injected via the
  * `SchemaResolver` port so this package imports no metamodel.
  */
 

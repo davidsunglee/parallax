@@ -181,7 +181,7 @@ _Avoid_: unmanaged entity, insert entity
 ### Conformance And Scope
 
 **Feature**:
-A named behavior within a module, identified by a feature tag on the compatibility cases that exercise it. Features are finer-grained than modules: module tiers cut parity scope at whole-module granularity, while a Conformance Slice cuts the corpus at feature granularity.
+A named behavior within a module, identified by a feature tag on the compatibility cases that exercise it. Features are finer-grained than modules: a module names a whole behavior, while a Conformance Slice cuts the corpus at feature granularity — claiming some features of a module while deferring others.
 _Avoid_: capability, sub-module, facet
 
 **Conformance Slice**:

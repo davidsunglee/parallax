@@ -1,8 +1,8 @@
 /**
- * The M3 **canonical-by-construction** compile visitor (design Q2/Q3, Option A).
+ * The m-sql **canonical-by-construction** compile visitor (design Q2/Q3, Option A).
  *
  * The visitor switches on the operation's single discriminant tag and emits the
- * five M3 normalization rules *directly* as it builds text — table aliases
+ * five m-sql normalization rules *directly* as it builds text — table aliases
  * `t0,t1,…` in first-appearance order, alias-qualified columns, lowercase
  * keywords/identifiers, `?` placeholders consumed left-to-right, and the fixed
  * clause order `select [distinct] … from … [where …] [order by …] [limit …]`.
@@ -21,10 +21,10 @@
  * (`1 = 0`, the one inline literal alongside the `eq` skeleton).
  *
  * The visitor imports no metamodel: it resolves a `Class.attr` reference (to its
- * table, quoted column, and M0 neutral type) and the entity's read projection
+ * table, quoted column, and m-core neutral type) and the entity's read projection
  * through an injected {@link SchemaResolver}, so `@parallax/sql` depends only on
  * `@parallax/operation` (the DAG forbids `sql → metamodel`). The runner builds the
- * resolver from the M1 reader.
+ * resolver from the m-descriptor reader.
  */
 import type { Dialect } from "@parallax/dialect";
 import { type Operation, operationTag } from "@parallax/operation";
@@ -32,7 +32,7 @@ import { coerceBind } from "./bind.js";
 
 /**
  * A resolved physical column: the table alias plus the quoted column name, ready
- * to splice into SQL as `<alias>.<column>`, plus the attribute's M0 neutral type
+ * to splice into SQL as `<alias>.<column>`, plus the attribute's m-core neutral type
  * so the compiler can normalize a literal bound against it into the canonical
  * wire form (§3.2.1 — int64 / decimal beyond float-safe range become canonical
  * strings; everything else keeps its authored JSON form).
@@ -42,7 +42,7 @@ export interface ResolvedColumn {
   readonly table: string;
   /** The dialect-quoted physical column name. */
   readonly column: string;
-  /** The attribute's M0 neutral type (e.g. `int64`, `decimal(18,2)`, `string`). */
+  /** The attribute's m-core neutral type (e.g. `int64`, `decimal(18,2)`, `string`). */
   readonly type: string;
   /**
    * Whether the column admits `NULL`. Consulted by ORDER BY assembly so a NULL-
@@ -56,7 +56,7 @@ export interface ResolvedColumn {
 
 /**
  * A resolved relationship correlation, derived mechanically from the metamodel
- * `join` predicate (M4 — the user never writes a join). A navigation filter
+ * `join` predicate (m-navigate — the user never writes a join). A navigation filter
  * lowers to `exists (select 1 from <childTable> <childAlias> where
  * <childAlias>.<childColumn> = <parentAlias>.<parentColumn> [and <inner>])`.
  *
@@ -111,7 +111,7 @@ export interface AsOfFragment {
 
 /**
  * The schema knowledge the compiler needs, injected so `@parallax/sql` stays
- * free of a metamodel import. The runner implements this over the M1 reader.
+ * free of a metamodel import. The runner implements this over the m-descriptor reader.
  */
 export interface SchemaResolver {
   /** Resolve a `Class.attribute` reference to its table, quoted column + type. */
@@ -130,22 +130,22 @@ export interface SchemaResolver {
   rootTable(): string;
   /**
    * The read projection columns for the root entity, in projection order. Each is
-   * the quoted physical column plus its M0 type / output name, so a `bytes` column
+   * the quoted physical column plus its m-core type / output name, so a `bytes` column
    * can lower to the `encode(...)` hex form while every other type projects
-   * verbatim (M0 scalar-serde projection).
+   * verbatim (m-core scalar-serde projection).
    */
   rootProjection(): readonly ProjectionColumn[];
   /**
    * Resolve a `Class.asOfAttribute` reference (`Balance.processingDate`) to the
    * axis it pins. Used to key the collected as-of pins by axis. Present only when
-   * the resolver supports temporal reads (M7); the compiler probes for it.
+   * the resolver supports temporal reads (m-temporal-read); the compiler probes for it.
    */
   resolveAsOfAxis?(ref: string): Axis;
   /** The root entity's domain class name (for the root as-of injection). */
   rootEntityName?(): string;
   /**
    * The injected as-of predicate for an entity's declared axes under a set of
-   * pins, qualified with the given alias (the M7 default-injection + composition
+   * pins, qualified with the given alias (the m-temporal-read default-injection + composition
    * rule, delegated to `@parallax/bitemporal` through the composition path). The
    * `entity` is named by the class the read roots at (or the EXISTS child
    * entity); a non-temporal entity yields an empty fragment. Present only when the
@@ -168,7 +168,7 @@ export type Bind = string | number | boolean | null;
  * One column of a read's SELECT projection. A plain scalar column projects
  * verbatim (`<alias>.<column>`); a `bytes` column lowers through Postgres
  * `encode(<alias>.<column>, ?) <outputName>` with the `'hex'` format bound in the
- * projection position, so the byte payload materializes as stable hex text (M0
+ * projection position, so the byte payload materializes as stable hex text (m-core
  * scalar-serde projection — case `m-core-001`). The projection binds land BEFORE any
  * `where` binds, matching left-to-right placeholder order.
  */
@@ -176,7 +176,7 @@ export interface ProjectionColumn {
   /** The dialect-quoted physical column name (`payload`, `"order"`). */
   readonly column: string;
   /**
-   * The attribute's M0 neutral type. A `bytes` type triggers the `encode(...)`
+   * The attribute's m-core neutral type. A `bytes` type triggers the `encode(...)`
    * hex lowering; every other type (or `undefined`) projects the column verbatim.
    */
   readonly type?: string;
@@ -193,7 +193,7 @@ export interface ProjectionColumn {
  * resolver, a first-appearance alias allocator, and the binds accumulator. The
  * as-of pins collected off the operation's temporal wrappers travel here too, so
  * a correlated-EXISTS semi-join can **propagate** them into its child subquery
- * (M4 as-of propagation across a temporal hop).
+ * (m-navigate as-of propagation across a temporal hop).
  */
 export interface CompileCtx {
   readonly schema: SchemaResolver;
@@ -252,8 +252,8 @@ interface Directives {
 
 /**
  * The execution context `compile` consults for the dialect-divergent decisions it
- * makes *during* assembly (the M3 → M11 inversion): whether this read takes the
- * in-transaction shared read-lock, and (M4 propagation) the pre-seeded as-of pins.
+ * makes *during* assembly (the m-sql → m-dialect inversion): whether this read takes the
+ * in-transaction shared read-lock, and (m-navigate propagation) the pre-seeded as-of pins.
  */
 export interface CompileExec {
   /**
@@ -268,7 +268,7 @@ export interface CompileExec {
    */
   readonly projection?: boolean;
   /**
-   * Pre-seed the read's as-of pins before peeling — the M4 deep-fetch propagation
+   * Pre-seed the read's as-of pins before peeling — the m-deep-fetch deep-fetch propagation
    * path injects the root's pins (matched by axis) into a child level's temporal
    * predicate, so the child reads as of the same instant(s).
    */
@@ -276,8 +276,8 @@ export interface CompileExec {
 }
 
 /**
- * Compile an M2 operation into **dialect-optimized** SQL plus its ordered binds,
- * against the injected {@link Dialect} contract (the M3 → M11 edge).
+ * Compile an m-op-algebra operation into **dialect-optimized** SQL plus its ordered binds,
+ * against the injected {@link Dialect} contract (the m-sql → m-dialect edge).
  *
  * The result directives (`distinct`, `orderBy`, `limit`) wrap the predicate from
  * the outside; they are peeled first so they can lower into their fixed clause
@@ -297,7 +297,7 @@ export interface CompileExec {
  * projection flag needs no regex). The emitted SQL still carries canonical `?`
  * placeholders; the adapter translates them to the driver's syntax at the boundary.
  *
- * `exec.seedPins` pre-seeds the read's as-of pins before peeling — the M4 deep-fetch
+ * `exec.seedPins` pre-seeds the read's as-of pins before peeling — the m-deep-fetch deep-fetch
  * **propagation** path uses it to inject the root's pins (matched by axis) into a
  * child level's temporal predicate, so the child reads as of the same instant(s).
  * A single-entity read leaves it empty and collects its pins from its own
@@ -324,7 +324,7 @@ export function compile(
 
   // Render the projection FIRST so any projection bind (the `bytes` `encode(…, ?)`
   // hex format) precedes the predicate / as-of / limit binds — the projection sits
-  // before the `where` in the statement, so its `?` is left-most (M3 placeholder
+  // before the `where` in the statement, so its `?` is left-most (m-sql placeholder
   // order). A plain column emits no bind; a `bytes` column emits `'hex'` here.
   const projection = renderProjection(schema.rootProjection(), alias, ctx, dialect);
   const select = directives.distinct ? `select distinct ${projection}` : `select ${projection}`;
@@ -332,7 +332,7 @@ export function compile(
   // Compile the user predicate FIRST so its binds precede the injected as-of binds
   // and the trailing `limit` bind (left-to-right placeholder order).
   const userWhere = compilePredicate(base, ctx);
-  // The injected as-of term is appended AFTER the user predicate (M7): its binds
+  // The injected as-of term is appended AFTER the user predicate (m-temporal-read): its binds
   // land after the user binds. Default-injection + axis composition are owned by
   // the resolver (delegating to `@parallax/bitemporal`); a non-temporal entity or
   // an all-`history` read yields an empty fragment.
@@ -343,8 +343,8 @@ export function compile(
     ctx.binds.push(directives.limit);
   }
 
-  // The root table name routes through the dialect's identifier quoting (the M3 →
-  // M11 identifier contract already applied to every column) so a reserved word
+  // The root table name routes through the dialect's identifier quoting (the m-sql →
+  // m-dialect identifier contract already applied to every column) so a reserved word
   // (MariaDB's `position`) is quoted; Postgres's reserved set excludes every
   // corpus table, so this is byte-identical there.
   let sql = `${select} from ${dialect.quoteIdentifier(table)} ${alias}`;
@@ -360,8 +360,8 @@ export function compile(
   if (directives.limit !== undefined) {
     sql = dialect.rowLimit(sql);
   }
-  // The in-transaction shared read-lock is the FINAL in-compile step (M8 automatic
-  // read-lock correctness, owned by M11): the dialect decides whether/where/how it
+  // The in-transaction shared read-lock is the FINAL in-compile step (m-read-lock automatic
+  // read-lock correctness, owned by m-dialect): the dialect decides whether/where/how it
   // attaches. `compile` knows authoritatively whether it emitted `distinct`, so the
   // projection flag comes straight from the directives (no post-hoc regex). A non-
   // locking read returns unchanged.
@@ -375,7 +375,7 @@ export function compile(
 /**
  * Render the SELECT projection list, alias-qualifying each column and lowering a
  * `bytes` column to the Postgres `encode(<alias>.<column>, ?) <column>_hex` hex
- * form (the M0 scalar-serde projection — `m-core-001`). A lowered column pushes its
+ * form (the m-core scalar-serde projection — `m-core-001`). A lowered column pushes its
  * `'hex'` format bind onto the accumulator IN projection order (before the `where`
  * binds); a plain scalar column projects verbatim and pushes nothing.
  */
@@ -560,7 +560,7 @@ export function compilePredicate(op: Operation, ctx: CompileCtx, scope = "t0"): 
       return undefined;
     case "none":
       // The absorbing element: an unsatisfiable predicate. `1 = 0` is one of the
-      // two inline literals the M3 normalizer keeps (it is not a bind).
+      // two inline literals the m-sql normalizer keeps (it is not a bind).
       return "1 = 0";
 
     case "eq":
@@ -610,7 +610,7 @@ export function compilePredicate(op: Operation, ctx: CompileCtx, scope = "t0"): 
       return `(${requirePredicate(ctx, (op as { group: UnaryBody }).group.operand, scope)})`;
 
     case "navigate":
-      // A navigation FILTER is the positive semi-join (M4): keep parent rows for
+      // A navigation FILTER is the positive semi-join (m-navigate): keep parent rows for
       // which a correlated related row (optionally satisfying the inner op)
       // exists. `navigate` and `exists` lower to the identical EXISTS form; they
       // differ only at the algebra level (navigate always carries an inner op).
@@ -773,7 +773,7 @@ function membership(ctx: CompileCtx, body: MembershipBody, negated: boolean): st
 
 /**
  * Lower a navigation filter (`navigate` / `exists` / `notExists`) to a correlated
- * `EXISTS` semi-join (M4). The child table is aliased with the next free alias
+ * `EXISTS` semi-join (m-navigate). The child table is aliased with the next free alias
  * (`t1`, then `t2` for a nested hop) so the inner predicate — which references
  * the child entity by `Class.attr` — resolves against that alias. The correlation
  * predicate `t1.<childCol> = t0.<parentCol>` is derived mechanically from the
@@ -804,7 +804,7 @@ function existsSemiJoin(
       inner += ` and ${fragment}`;
     }
   }
-  // As-of propagation (M4): a temporal semi-join child carries its OWN as-of
+  // As-of propagation (m-navigate): a temporal semi-join child carries its OWN as-of
   // predicate. The root's pins propagate into it matched by axis, and any axis the
   // root left unpinned defaults to `now` (the per-entity default-injection rule), so
   // the EXISTS subquery reads the child as of the same instant(s) even when the root
@@ -830,11 +830,11 @@ function existsSemiJoin(
  * axis defaulting to `now`), qualified with the child alias.
  *
  * The child is asked for its predicate **regardless of whether the root collected
- * any pins** — M7's default-injection rule is entity-local (each temporal read
+ * any pins** — m-temporal-read's default-injection rule is entity-local (each temporal read
  * derives its own as-of predicate), so a temporal child in the semi-join carries
  * its current-row predicate even when the root omitted its as-of (the default-now
  * case `m-navigate-023`) or the root is non-temporal (a temporal child of a non-temporal root
- * defaults every axis to `now`, per M4). A non-temporal child resolves to no axes
+ * defaults every axis to `now`, per m-navigate). A non-temporal child resolves to no axes
  * and so yields an empty fragment, which the caller drops. `undefined` only when the
  * resolver is non-temporal (no `asOfPredicate` / `relatedEntityName`).
  */
@@ -893,7 +893,7 @@ function qualify(ctx: CompileCtx, ref: string): string {
 /**
  * Render one ORDER BY term for a sort key, consulting the dialect's NULL placement
  * (`dialect.orderByTerm`) **only** for a NULL-bearing column. The canonical
- * ordered-relationship rule (M4) sorts NULLs last on every key, but the two
+ * ordered-relationship rule (m-navigate) sorts NULLs last on every key, but the two
  * dialects reach that order differently (Postgres `desc nulls last`; MariaDB a
  * leading `is null,` term for `asc`) — so a nullable key must go through the
  * dialect. A NOT-NULL key has no NULLs to place, so it emits the bare `<col>
@@ -913,7 +913,7 @@ function orderByTerm(
 
 /**
  * Append a literal to the binds accumulator, normalized to its canonical wire
- * form against the attribute's M0 neutral type (§3.2.1). Float-safe authored
+ * form against the attribute's m-core neutral type (§3.2.1). Float-safe authored
  * numbers keep their JSON form; an int64 / decimal value the serde reader
  * preserved as an exact source string (precision-unsafe) becomes the canonical
  * wire string here.

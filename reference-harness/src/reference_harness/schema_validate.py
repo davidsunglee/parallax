@@ -4,7 +4,7 @@ Run as a module against the compatibility tree::
 
     uv run python -m reference_harness.schema_validate ../core/compatibility
 
-It performs M12 layer 1 statically (no database needed):
+It performs m-case-format layer 1 statically (no database needed):
 
 * **Meta-schema validation** — each core schema is itself a valid JSON Schema
   (Draft 2020-12).

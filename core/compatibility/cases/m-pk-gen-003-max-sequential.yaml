@@ -1,4 +1,4 @@
-# PK generation `max` (M1) — two consecutive allocations re-read the max.
+# PK generation `max` (m-pk-gen) — two consecutive allocations re-read the max.
 #
 # From empty: first allocation -> 1, second -> 2 (each insert re-reads max(id)).
 model: models/pk-max.yaml

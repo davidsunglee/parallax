@@ -7,7 +7,7 @@
  * column locking (`m-opt-lock-005` / `m-opt-lock-006` / `m-opt-lock-007`), written as a developer would and run
  * against each selected shipped `@parallax/db-*` adapter.
  *
- * **Strategy is a per-unit-of-work mode (M8 / M10).** `px.transaction(body, {
+ * **Strategy is a per-unit-of-work mode (m-unit-work / m-opt-lock).** `px.transaction(body, {
  * concurrency })` selects it: the default `locking` mode takes the shared read lock
  * on in-transaction reads (no developer lock SQL) and advances a versioned entity's
  * version WITHOUT a gate; `optimistic` mode takes no lock and GATES a versioned
@@ -47,7 +47,7 @@ const all = (): Predicate => new Predicate({ all: {} });
 
 // Balance — the audit-only (processing-temporal) model the optimistic × temporal
 // close cases (`m-temporal-read-009`-`m-temporal-read-012`) drive: the observed processing-from (`in_z`) is the
-// optimistic-lock version analogue (M7/M10).
+// optimistic-lock version analogue (m-temporal-read/m-opt-lock).
 const Balance = { id: attr("Balance.id"), value: attr("Balance.value") };
 const balancePk = (id: number): Predicate =>
   new Predicate({ eq: { attr: "Balance.id", value: id } });
@@ -363,7 +363,7 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
 
   // --- optimistic x temporal close (m-temporal-read-009–m-temporal-read-012) ------------------------------
   // A processing-axis (audit-only) temporal entity carries NO version column, so the
-  // observed processing-from (in_z) is the optimistic-lock version analogue (M7/M10).
+  // observed processing-from (in_z) is the optimistic-lock version analogue (m-temporal-read/m-opt-lock).
   // The developer reads the current milestone (which records its in_z), then closes
   // it; in optimistic mode the close gates on that observed in_z. Table state is NOT
   // asserted here — the runtime close's out_z is the transaction CLOCK instant, not

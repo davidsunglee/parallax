@@ -30,9 +30,9 @@ slice capabilities, changing only the adapter identity:
     "version": "0.1.0"
   },
   "capabilities": {
-    "modules": ["m0","m1","m2","m3","m4","m5","m7","m8","m10","m11","m12"],
+    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-read-lock", "m-sql", "m-temporal-read", "m-unit-work"],
     "dialects": ["postgres"],
-    "caseShapes": ["read","writeSequence","scenario","conflict"],
+    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess"],
     "caseTags": { "include": ["slice-mvp-1"] },
     "commands": ["describe","compile","run"],
     "provisioning": "self-managed"
@@ -51,8 +51,8 @@ The `languages/typescript/spec` and `languages/typescript/docs` directories are
 documentation, not runtime packages.
 
 The first scaffold should create real pnpm workspace packages that match the
-package map in the TypeScript implementation spec, including the non-numbered
-composition package `@parallax/typescript` for the CLI, generator config, public
+package map in the TypeScript implementation spec, including the composition
+package `@parallax/typescript` for the CLI, generator config, public
 facade, and generated-barrel support.
 
 ## First Milestones
@@ -61,16 +61,16 @@ facade, and generated-barrel support.
    dependency-cruiser, and empty `parallax` / `parallax-conformance` CLI entry
    points.
 2. Make the dependency-boundary check fail on an illegal package import.
-3. Implement M0 scalar utilities and M1 descriptor parsing/normalization until
-   all descriptors in `core/compatibility/models` parse and round-trip through
-   JSON and YAML.
-4. Implement M2 operation serde until operations in `0001`, `0002`, and the
-   `02xx` predicate cases parse and round-trip.
+3. Implement `m-core` scalar utilities and `m-descriptor` parsing/normalization
+   until all descriptors in `core/compatibility/models` parse and round-trip
+   through JSON and YAML.
+4. Implement `m-op-algebra` operation serde until the `m-op-algebra-*` predicate
+   cases parse and round-trip.
 5. Implement the first database-backed walking skeleton:
    `core/compatibility/cases/m-op-algebra-002-eq.yaml` compiles to matching Postgres SQL and
    binds, runs against `postgres:17`, and reports a valid conformance-adapter
    JSON envelope.
-6. Expand by case family in dependency-graph order, using the tagged
+6. Expand by module in dependency-graph order, using the tagged
    `slice-mvp-1` slice as the active matrix.
 
 ## Explicitly Out Of V1
@@ -79,15 +79,15 @@ Do not claim or implement these for the first slice unless the conformance claim
 is deliberately expanded with matching green cases:
 
 - aggregation and projection
-- full M8 identity-cache and query-cache scenarios
+- the `m-process-cache` identity-cache and query-cache scenarios
 - PK generation cases
 - value-object and inheritance cases
-- M9 detached merge-back lifecycle
-- M11 database error classification
+- `m-detach` detached merge-back lifecycle
+- `m-db-error` database error classification
 - bounded business-window and bitemporal rectangle-split writes
 - MariaDB
-- M13 benchmark command and numeric targets
-- M14 cross-process coherence
+- `m-perf-bench` benchmark command and numeric targets
+- `m-coherence` cross-process coherence
 
 ## Verification
 

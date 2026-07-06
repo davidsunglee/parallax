@@ -1,10 +1,10 @@
 /**
- * The `SchemaResolver` the M3 compiler needs, implemented over the M1 metamodel
+ * The `SchemaResolver` the m-sql compiler needs, implemented over the m-descriptor metamodel
  * reader, plus the case-driven projection rules.
  *
  * `@parallax/sql` stays metamodel-free by accepting an injected `SchemaResolver`;
  * this module is the conformance-side implementation. It resolves `Class.attr`
- * references to alias-qualified, quoted columns (with the M0 neutral type the
+ * references to alias-qualified, quoted columns (with the m-core neutral type the
  * compiler coerces literals against), resolves a `Class.relationship` reference to
  * its correlated-EXISTS join columns, and supplies the root entity's table + the
  * ordered read projection the SELECT projects.
@@ -64,17 +64,17 @@ export interface RelationshipCorrelation {
 }
 
 /**
- * A `SchemaResolver` over the M1 metamodel reader. Resolves `Class.attr`
- * references to alias-qualified columns (with the M0 neutral type the compiler
+ * A `SchemaResolver` over the m-descriptor metamodel reader. Resolves `Class.attr`
+ * references to alias-qualified columns (with the m-core neutral type the compiler
  * coerces literals against), resolves relationships to their join correlation,
- * and supplies the root entity's table + read projection the M3 visitor projects.
+ * and supplies the root entity's table + read projection the m-sql visitor projects.
  */
 export class MetamodelSchema implements SchemaResolver {
   constructor(
     private readonly metamodel: Metamodel,
     private readonly rootEntity: EntityMetadata,
     private readonly projection: readonly ProjectionColumn[],
-    /** The injected M11 dialect — the single authority for identifier quoting. */
+    /** The injected m-dialect dialect — the single authority for identifier quoting. */
     private readonly dialect: Dialect,
   ) {}
 
@@ -136,7 +136,7 @@ export class MetamodelSchema implements SchemaResolver {
     return this.rootEntity.name;
   }
 
-  /** Resolve a `Class.asOfAttribute` reference to the axis it pins (M7). */
+  /** Resolve a `Class.asOfAttribute` reference to the axis it pins (m-temporal-read). */
   resolveAsOfAxis(ref: string): Axis {
     const [className, attrName] = splitRef(ref);
     const entity = this.metamodel.entity(className);
@@ -154,8 +154,8 @@ export class MetamodelSchema implements SchemaResolver {
   /**
    * The injected as-of predicate for an entity's declared axes under a set of
    * pins, qualified with `alias`. Delegates the per-axis rule + business/processing
-   * composition + default-injection to `@parallax/bitemporal` (the M7 owner),
-   * reached through the composition path (`@parallax/sql` imports no M7). A
+   * composition + default-injection to `@parallax/bitemporal` (the m-temporal-read owner),
+   * reached through the composition path (`@parallax/sql` imports no m-temporal-read). A
    * non-temporal entity yields an empty fragment.
    */
   asOfPredicate(entity: string, alias: string, pins: CompilerAxisPins): AsOfFragment {
@@ -186,7 +186,7 @@ export class MetamodelSchema implements SchemaResolver {
  * The case's `expectedRows` keys ARE the SQL output column names the golden
  * projects and the harness compares against. Each key resolves back to its
  * physical attribute so the compiler can lower a `bytes` column to the
- * `encode(t0.<col>, ?) <col>_hex` hex form (M0 scalar-serde projection —
+ * `encode(t0.<col>, ?) <col>_hex` hex form (m-core scalar-serde projection —
  * `m-core-001`): a direct column match projects verbatim; an output ending `_hex`
  * whose stripped name is a `bytes` attribute projects through `encode(...)`. A key
  * that names no attribute (a computed output) projects verbatim as a plain quoted
@@ -212,7 +212,7 @@ export function readProjection(
  * Resolve one `expectedRows` output column name to its projection descriptor,
  * against the root entity's attributes. Order of resolution:
  *  1. an attribute whose physical `column` equals the output → project verbatim
- *     (with its M0 type, so a `bytes` column authored WITHOUT the `_hex` output
+ *     (with its m-core type, so a `bytes` column authored WITHOUT the `_hex` output
  *     alias would still lower — belt-and-braces, though the corpus always uses the
  *     `_hex` form);
  *  2. an output ending `_hex` whose stripped name is a `bytes` attribute's column
@@ -245,7 +245,7 @@ function projectionForOutput(
   return { column: dialect.quoteIdentifier(output) };
 }
 
-/** A verbatim projection descriptor for an attribute (quoted column + M0 type). */
+/** A verbatim projection descriptor for an attribute (quoted column + m-core type). */
 function attributeProjection(attr: NormalizedAttribute, dialect: Dialect): ProjectionColumn {
   return { column: dialect.quoteIdentifier(attr.column), type: attr.type };
 }
@@ -467,7 +467,7 @@ export function schemaForReadCase(
 }
 
 /**
- * Build a flat `physical column name -> M0 neutral type` map across EVERY entity
+ * Build a flat `physical column name -> m-core neutral type` map across EVERY entity
  * in the case's descriptor. The type-aware comparator (carry-forward b) keys row
  * / graph columns by this map so a numeric column reconciles in decimal space and
  * a textual column is graded as exact text. A deep-fetch graph projects columns

@@ -1,12 +1,12 @@
 /**
  * The codegen intermediate model — the per-entity shape the emitter renders from
- * (spec §7, §3.2). Derived purely from the fully-defaulted M1 metamodel reader,
+ * (spec §7, §3.2). Derived purely from the fully-defaulted m-descriptor metamodel reader,
  * so codegen emits only artifacts the descriptor declares (no invented enum or
  * value-object field types — spec §2.1).
  */
 import type { EntityMetadata, Metamodel, NormalizedAttribute } from "@parallax/metamodel";
 
-/** The generated TS property type for one M0 neutral scalar (spec §3.2.1). */
+/** The generated TS property type for one m-core neutral scalar (spec §3.2.1). */
 export function propertyTypeFor(type: string): string {
   if (/^decimal\(\d+,\d+\)$/.test(type)) {
     return "ParallaxDecimal";
@@ -46,7 +46,7 @@ export interface AttributeModel {
   readonly name: string;
   /** The qualified metamodel ref (`Order.id`) the DSL serializes. */
   readonly ref: string;
-  /** The raw M0 neutral type (`int64`, `decimal(18,2)`), for import decisions. */
+  /** The raw m-core neutral type (`int64`, `decimal(18,2)`), for import decisions. */
   readonly attributeType: string;
   /** The generated managed-object property type (spec §3.2.1). */
   readonly propertyType: string;
@@ -86,7 +86,7 @@ export interface CodegenModel {
   readonly entities: readonly EntityModel[];
 }
 
-/** Whether an M0 type maps to a `ParallaxDecimal` (needs the decimal re-export). */
+/** Whether an m-core type maps to a `ParallaxDecimal` (needs the decimal re-export). */
 function isDecimal(type: string): boolean {
   return /^decimal\(\d+,\d+\)$/.test(type);
 }

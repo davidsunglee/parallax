@@ -1,4 +1,4 @@
-# Classic two-connection deadlock (M11). Round 1: A locks gauge row 1, B locks
+# Classic two-connection deadlock (m-db-error). Round 1: A locks gauge row 1, B locks
 # row 2 (barrier: both first locks held). Round 2: A waits for row 2, B waits for
 # row 1 -> cycle -> the DB victimizes one transaction, whose statement raises.
 # The victim choice is non-deterministic; the runner classifies whichever error

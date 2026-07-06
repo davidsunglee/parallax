@@ -1,6 +1,6 @@
-# Benchmark fixture (M13): the milestone-chaining write workload.
+# Benchmark fixture (m-perf-bench): the milestone-chaining write workload.
 #
-# Exercises M7's milestone-chaining write cost (audit-only). A milestone insert
+# Exercises m-audit-write's milestone-chaining write cost (audit-only). A milestone insert
 # writes a current row [in_z = txInstant, out_z = infinity); a milestone update
 # closes the current row (out_z = txInstant) and chains a new current row. The
 # benchmark measures the wall-time of each write and its round-trip count.

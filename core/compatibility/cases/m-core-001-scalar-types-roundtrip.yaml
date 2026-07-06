@@ -1,4 +1,4 @@
-# Scalar type round trip for the less-common M0 scalar mappings: float32,
+# Scalar type round trip for the less-common m-core scalar mappings: float32,
 # float64, bytes, time, and uuid.
 #
 # This first scalar witness is Postgres-only because byte, time, and uuid driver

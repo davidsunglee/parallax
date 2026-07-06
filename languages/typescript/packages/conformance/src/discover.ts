@@ -1,5 +1,5 @@
 /**
- * Case discovery + loading (the M12 harness front door).
+ * Case discovery + loading (the m-case-format harness front door).
  *
  * Globs case YAML under `core/compatibility/cases/**`, parses each through the
  * canonical serde seam (re-exported by `@parallax/operation`, the one allowed
@@ -11,7 +11,7 @@
  * descriptor (a plain metamodel document), the fixtures keyed by class name, and
  * the repo-relative case path the envelope's `case` field requires.
  */
-// The M12 lane a case runs on: `harness` (executed) or `api-conformance`
+// The m-case-format lane a case runs on: `harness` (executed) or `api-conformance`
 // (schema-validated by the harness, satisfied by the language's suite).
 export type CaseLane = "harness" | "api-conformance";
 
@@ -51,7 +51,7 @@ export interface LoadedCase {
    */
   readonly lane: CaseLane;
   /**
-   * The declared unit-of-work config (M8 strategy selection), or `undefined`. A
+   * The declared unit-of-work config (m-unit-work strategy selection), or `undefined`. A
    * descriptive passthrough: `{ concurrency: "locking" | "optimistic" }` records
    * which mode produced the authored golden SQL (the harness runs it either way).
    */
@@ -77,7 +77,7 @@ export function detectShape(raw: Record<string, unknown>): CaseShape {
     return "error";
   }
   // A `concurrency` choreography with NO `errorClass` is the concurrency-success
-  // shape (M8 behavioral read-lock: `m-read-lock-007`/`m-read-lock-008`). Checked AFTER `errorClass` so an
+  // shape (m-read-lock behavioral read-lock: `m-read-lock-007`/`m-read-lock-008`). Checked AFTER `errorClass` so an
   // error/concurrency case (`m-read-lock-006`) resolves to `error`, and before `read` so it does
   // not fall through to `read` and throw at `compileRootStatement`.
   if ("concurrency" in raw) {

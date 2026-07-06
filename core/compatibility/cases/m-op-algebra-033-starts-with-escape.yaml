@@ -1,4 +1,4 @@
-# startsWith + wildcard escape — affix escaping (M2 §Wildcard/escape rule).
+# startsWith + wildcard escape — affix escaping (m-op-algebra §Wildcard/escape rule).
 #
 # m-op-algebra-015 escapes only the `contains` form; the affix forms wrap the escaped literal
 # differently. `startsWith 'C_'` appends a trailing `%` but MUST first escape the

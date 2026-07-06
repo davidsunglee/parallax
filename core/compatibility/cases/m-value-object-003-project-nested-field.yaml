@@ -1,5 +1,5 @@
-# valueObject structured-column read: project an inner field (M1 valueObject,
-# M3).
+# valueObject structured-column read: project an inner field (m-value-object valueObject,
+# m-sql).
 #
 # Read a nested field of the `address` valueObject into the result set. The
 # Postgres extraction `jsonb_extract_path_text(t0.address, ?)` is aliased `city`

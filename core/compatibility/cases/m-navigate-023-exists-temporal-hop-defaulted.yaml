@@ -2,7 +2,7 @@
 # a coverage with amount >= 600 — NEITHER the outer Policy NOR the read authors any
 # `asOf` wrapper. This is the semi-join analog of the m-temporal-read-001-vs-m-temporal-read-002 defaulted/explicit
 # equivalence: it MUST lower to the IDENTICAL golden SQL + rows as m-navigate-018 (which pins
-# the explicit `asOf(..., now)` wrappers), because M7's default-injection rule is
+# the explicit `asOf(..., now)` wrappers), because m-temporal-read's default-injection rule is
 # per temporal entity read — an omitted axis is exactly `asOf(..., now)`. So the
 # child Coverage semi-join carries the current-row predicate (`thru_z = ? and out_z
 # = ?`) even though the root pinned nothing, and the outer Policy carries it too.

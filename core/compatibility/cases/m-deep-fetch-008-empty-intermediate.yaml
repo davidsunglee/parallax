@@ -1,4 +1,4 @@
-# Deep fetch, EMPTY INTERMEDIATE level — downstream child SQL is elided (M4).
+# Deep fetch, EMPTY INTERMEDIATE level — downstream child SQL is elided (m-deep-fetch).
 #
 # m-deep-fetch-006 covers an empty ROOT (no statements past the root). This pins the distinct
 # rule that a NON-empty root whose first hop gathers NO children issues no SQL for

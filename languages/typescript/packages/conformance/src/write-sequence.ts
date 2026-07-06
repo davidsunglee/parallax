@@ -1,5 +1,5 @@
 /**
- * Build an executable **write-sequence plan** from a loaded case (M7 + M8 + M12).
+ * Build an executable **write-sequence plan** from a loaded case (m-temporal-read + m-unit-work + m-case-format).
  *
  * A `writeSequence` case carries an ordered list of mutations plus per-statement
  * `binds` and an `expectedTableState`. This module turns the steps into the
@@ -9,7 +9,7 @@
  *  - a **temporal** (audit-only) entity's step is milestone-chaining DML generated
  *    by `@parallax/bitemporal` (`auditWriteStatements`) — open a current row; close
  *    the current row keyed by `pk and out_z = infinity`; chain a new current row;
- *  - a **non-temporal** entity's step is the M8 set-based batched flush generated
+ *  - a **non-temporal** entity's step is the m-unit-work set-based batched flush generated
  *    by `@parallax/transactions`'s unit-of-work planner
  *    (`combineWrites`) — buffered inserts collapse into one multi-row `INSERT`
  *    (`m-batch-write-001`/`m-unit-work-003`), and a batched update is uniform `pk in (…)` (`m-batch-write-001`) or one
@@ -63,7 +63,7 @@ interface RawWriteStep {
    * The transaction / processing instant a TEMPORAL (audit-only) write records —
    * the milestone's `in_z`. The bookkeeping is DERIVED from it (a new milestone
    * opens `in_z = at`, `out_z = infinity`; a close binds `out_z = at`), never
-   * authored in `rows`, so the M7 milestone discipline stays under test. Absent on
+   * authored in `rows`, so the m-audit-write milestone discipline stays under test. Absent on
    * a non-temporal step.
    */
   readonly at?: string;
@@ -136,7 +136,7 @@ export function isWriteSequence(loaded: LoadedCase): boolean {
  *
  * The generator is chosen per step by the entity's temporality: an **audit-only
  * temporal** entity chains milestones (`@parallax/bitemporal`), a **non-temporal**
- * entity flushes the M8 set-based batched forms (`@parallax/transactions`'s
+ * entity flushes the m-unit-work set-based batched forms (`@parallax/transactions`'s
  * unit-of-work planner). The two never mix within a step.
  */
 export function buildWriteSequencePlan(loaded: LoadedCase, dialect: Dialect): WriteSequencePlan {
@@ -174,7 +174,7 @@ function isTemporalEntity(entity: EntityMetadata): boolean {
  * (`writeTargetFor`, `columnOrder(entity)`) — ① carries only the domain values
  * (`rows`) and `at`, and the bookkeeping is DERIVED: a new milestone opens
  * `in_z = at`, `out_z = infinity`, and a close binds `[at, pk, infinity]` (set
- * `out_z = at` where the pk and the still-open `out_z = infinity`). So the M7
+ * `out_z = at` where the pk and the still-open `out_z = infinity`). So the m-temporal-read
  * discipline — bookkeeping is derived, never authored — is under test:
  * `in_z`/`out_z`/`infinity` never appear in ①.
  *
@@ -228,7 +228,7 @@ function auditStatementsForStep(
 }
 
 /**
- * The generated DML statements for one NON-temporal step, via the M8 unit-of-work
+ * The generated DML statements for one NON-temporal step, via the m-unit-work unit-of-work
  * planner (`combineWrites`): an `insert` collapses its buffered rows into one
  * multi-row `INSERT`, an `update` is uniform `pk in (…)` (one statement) or one
  * keyed `UPDATE` per distinct key.
@@ -254,7 +254,7 @@ function batchStatementsForStep(
   const rows = (step.rows ?? []).map((row) => classifyRow(entity, row));
   // A VERSIONED entity's keyed update advances its framework-owned version — the
   // readless batched forms below apply only to a non-versioned entity (a versioned
-  // set-based update MUST materialize per object, M10 / ADR 0031). Columns, the
+  // set-based update MUST materialize per object, m-opt-lock / ADR 0031). Columns, the
   // advance, and the binds are DERIVED from the neutral write input (①) and routed
   // by `(versionAttribute, uow.concurrency)`: locking mode ⇒ ungated advance
   // (`m-opt-lock-002`), optimistic ⇒ gated advance — mirroring the runtime's own routing.
@@ -286,7 +286,7 @@ function batchStatementsForStep(
  * order. A multi-row insert collapses every row into one statement (`combineWrites`).
  *
  * A VERSIONED entity's insert appends the framework-owned version column with the
- * DERIVED initial value `1` (the M10 optimistic-lock baseline, `m-detach-001`) — never
+ * DERIVED initial value `1` (the m-opt-lock optimistic-lock baseline, `m-detach-001`) — never
  * authored in ① (`observedVersion` is absent on an insert), so it is neither in the
  * row's columns nor its binds. This mirrors the reference harness's
  * `_assert_insert_input` gate.
@@ -356,7 +356,7 @@ function tuplesEqual(left: readonly unknown[], right: readonly unknown[]): boole
  *  - the framework-owned version advances `observedVersion + 1` (derived, never
  *    authored), appended to the `set`;
  *  - the mode routes the gate: `locking` ⇒ an ungated advance
- *    (`versionAdvancingUpdate`, the M8 shared-read-lock `m-opt-lock-002` / `m-detach-002` shape),
+ *    (`versionAdvancingUpdate`, the m-read-lock shared-read-lock `m-opt-lock-002` / `m-detach-002` shape),
  *    `optimistic` ⇒ a gated advance (`versionedUpdate`, `... and version = ?`);
  *  - the binds are `[…set values…, newVersion, pk]` (locking) or
  *    `[…set values…, newVersion, pk, observedVersion]` (optimistic).
@@ -455,7 +455,7 @@ function batchTargetFor(entity: EntityMetadata, dialect: Dialect): BatchTarget {
  * in_z). Shared by the write-sequence chaining generator and the conflict-plan
  * temporal gated-close re-derivation (`conflict.ts`), so both derive the close text
  * from ONE resolver (no drift). `fromColumn` (`in_z`) is the derived optimistic gate
- * an OPTIMISTIC-mode close binds the observed value on (M10).
+ * an OPTIMISTIC-mode close binds the observed value on (m-opt-lock).
  */
 export function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteTarget {
   const columns = columnOrder({

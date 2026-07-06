@@ -2,7 +2,7 @@
 
 The only "implementation" is the reference suite itself (the golden SQL); the
 databases are Postgres and MariaDB (Phase 10 added MariaDB as the second dialect
-behind the M11 provider seam). The report shape was built in from day one so the
+behind the m-db-port provider seam). The report shape was built in from day one so the
 matrix grows without a redesign: adding a dialect adds a column; adding a language
 implementation adds a row.
 

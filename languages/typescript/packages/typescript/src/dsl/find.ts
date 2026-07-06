@@ -1,9 +1,9 @@
 /**
- * `find(...)` → canonical M2 operation (spec §2.3, §2.9).
+ * `find(...)` → canonical m-op-algebra operation (spec §2.3, §2.9).
  *
  * Serializes a {@link Predicate} plus the read options (`orderBy`, `limit`,
  * `includes`/deep-fetch, and the temporal `asOf` / `range` / `history` axes)
- * into the single case `operation` tree the M3 compiler consumes. This is the
+ * into the single case `operation` tree the m-sql compiler consumes. This is the
  * one place the developer-facing surface and the conformance corpus meet: the
  * output equals the case `operation` byte-for-byte (`dsl.test.ts`).
  *
@@ -124,7 +124,7 @@ export function buildFindOperation(predicate: Predicate, options: FindOptions = 
 /**
  * Wrap a read operand with the temporal axes (innermost, before the result
  * directives). Explicit-`now` and omitted axes are both left unwrapped for
- * `asOf` (the M7 default-injection rule reads an unwrapped axis as current); an
+ * `asOf` (the m-temporal-read default-injection rule reads an unwrapped axis as current); an
  * explicit non-`now` `asOf`, a `range`, or a `history` axis each emit their
  * wrapper. The business axis wraps outside the processing axis so business
  * binds precede processing binds (spec §2.9, `m-temporal-read-013` / `m-temporal-read-015`).

@@ -4,7 +4,7 @@
 # change takes effect (thru_z = businessInstant) and chains a new row
 # [businessInstant, infinity) with the new value. Unlike the bitemporal rectangle
 # split, there is NO processing axis and so NO residual — it is the same
-# close-and-chain shape as the audit-only profile (M7), driven by business date
+# close-and-chain shape as the audit-only profile (m-audit-write), driven by business date
 # rather than transaction instant. The prior value survives as a superseded
 # business milestone.
 #

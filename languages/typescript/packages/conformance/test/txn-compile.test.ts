@@ -35,7 +35,7 @@
  *    emission per node (the two-connection "no error + expectRows on the held
  *    session" proof is run-lane only).
  *
- * The Docker-gated Postgres full M12 profile (`@parallax/typescript`'s
+ * The Docker-gated Postgres full m-case-format profile (`@parallax/typescript`'s
  * `slice-run.test.ts`) proves the SQL leaves the right rows / table state /
  * affected-row counts.
  */

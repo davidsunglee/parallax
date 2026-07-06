@@ -25,7 +25,7 @@
  *    adapter.
  *
  * The grader (`compare.ts`) + the run envelope are unchanged, and there is **no
- * `M12 → M11` edge**: the provider lives at the `@parallax/typescript` composition
+ * `m-conformance-adapter` → `m-db-port` edge**: the provider lives at the `@parallax/typescript` composition
  * root, the only place allowed to depend on a concrete adapter.
  */
 import type { CompatibilityDatabaseProvider, ProviderRow } from "@parallax/conformance";
@@ -41,7 +41,7 @@ import {
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import type { Sql } from "postgres";
 
-/** Pinned at the latest stable Postgres major (M12/DQ15). */
+/** Pinned at the latest stable Postgres major (m-case-format/DQ15). */
 const POSTGRES_IMAGE = "postgres:17";
 
 /**
@@ -74,7 +74,7 @@ function renderRowToWire(row: ProviderRow): ProviderRow {
 
 /**
  * Render the fixture `INSERT` for a table from its raw physical descriptor
- * `table` / `columns`, quoting every identifier through the SAME M11
+ * `table` / `columns`, quoting every identifier through the SAME m-dialect
  * `quoteIdentifier` seam the DDL uses. This is the seam that keeps creation and
  * insertion from diverging: a reserved or non-simple name (`order`, `User`) that
  * the `CREATE TABLE` quoted is quoted identically here (mirrors the Python
@@ -94,7 +94,7 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
   readonly dialect = POSTGRES_DIALECT;
 
   /**
-   * The concrete M11 {@link Dialect} the composition root injects into `createParallax`
+   * The concrete m-dialect {@link Dialect} the composition root injects into `createParallax`
    * beside {@link database} — so the API Conformance Suite's `px` handle compiles and
    * materializes against the same strategy the shipped adapter parses with. A MariaDB
    * provider exposes `mariadbDialect` here identically.
@@ -180,7 +180,7 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
       return;
     }
     // `table` / `columns` are raw physical descriptor names; quote them through
-    // the same M11 seam the DDL uses so creation and insertion never diverge. The
+    // the same m-dialect seam the DDL uses so creation and insertion never diverge. The
     // insert binds on the adapter's pool, so the adapter's `bytea` serializer runs
     // and a `Buffer` payload renders to the `\x…` hex wire form (never `""`).
     const insert = renderFixtureInsert(table, columns);
@@ -203,7 +203,7 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
   }
 
   async execRolledBack(sql: string, binds: readonly unknown[]): Promise<number> {
-    // The M8 abort contract's execution seam (rollback scenario step): apply the
+    // The m-unit-work abort contract's execution seam (rollback scenario step): apply the
     // DML inside a porsager transaction (acquiring its locks, capturing the
     // affected count) then throw a sentinel to force the driver to ROLL BACK. The
     // write never becomes durable, so a subsequent `query` observes the ORIGINAL

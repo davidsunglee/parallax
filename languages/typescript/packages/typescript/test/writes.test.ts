@@ -9,7 +9,7 @@
  *     FK dependencies, so the runtime must topologically order them itself).
  *  2. Plain `update` on a NON-versioned entity applies the WHOLE assignment array
  *     (spec §4) — `update <t> set c1 = ?, c2 = ? where pk = ?`.
- *  3. VERSIONED `update` (M10, ADR 0029): the version is framework-owned — a prior
+ *  3. VERSIONED `update` (m-opt-lock, ADR 0029): the version is framework-owned — a prior
  *     in-transaction find records the OBSERVED version, and a later keyed update
  *     advances it (both modes) and gates on it (optimistic mode). An unobserved row
  *     read-before-writes; a no-op `set` issues no DML; a 0-row optimistic gate is a
@@ -129,7 +129,7 @@ const RESERVATION = loadCase(
 /**
  * A PHYSICAL Balance current-milestone row the stub returns (keyed by physical
  * column; the materializer renames `in_z` -> the `processingFrom` DSL name). Its
- * `in_z` is the observed processing-from an optimistic close gates on (M7/M10).
+ * `in_z` is the observed processing-from an optimistic close gates on (m-temporal-read/m-opt-lock).
  */
 const BALANCE_ROW: ParallaxRow = {
   bal_id: 2,
@@ -146,7 +146,7 @@ const BALANCE_ROW: ParallaxRow = {
  * both versioned. The corpus versioned model (`Account`) declares no relationship
  * and is never a relationship target, so this synthetic model is the only way to
  * exercise a deep-fetch read of a versioned root (and a versioned included child) —
- * the M8 lock + M10 observed-version recording the flat path already has, applied to
+ * the m-unit-work lock + m-opt-lock observed-version recording the flat path already has, applied to
  * every fetched level.
  */
 const VAULT_DESCRIPTOR = {
@@ -338,7 +338,7 @@ describe("TransactionWriter plain update applies every assignment (spec §4)", (
   });
 });
 
-describe("TransactionWriter versioned update (M10 framework-owned versions)", () => {
+describe("TransactionWriter versioned update (m-opt-lock framework-owned versions)", () => {
   it("locking mode: an observed row advances the version WITHOUT a gate, and the read locks", async () => {
     const db = new StubDatabase([ACCOUNT_ROW]);
     const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
@@ -350,7 +350,7 @@ describe("TransactionWriter versioned update (M10 framework-owned versions)", ()
       return accounts.update(accountPk(2), { set: [{ attr: "balance", value: "500.00" }] });
     });
 
-    // The locking-mode read appends the M8 shared-row-lock suffix (m-read-lock-001).
+    // The locking-mode read appends the m-read-lock shared-row-lock suffix (m-read-lock-001).
     const read = db.queries.find((q) => q.sql.startsWith("select"));
     expect(read?.sql.endsWith("for share of t0")).toBe(true);
     // The versioned update advances the version (observed 1 -> 2) with NO gate.
@@ -432,7 +432,7 @@ describe("TransactionWriter versioned update (M10 framework-owned versions)", ()
   });
 });
 
-describe("TransactionWriter versioned SET-BASED update materializes (M10, ADR 0032)", () => {
+describe("TransactionWriter versioned SET-BASED update materializes (m-opt-lock, ADR 0032)", () => {
   // Two Account rows the materialize read resolves (`balance < 200` matches both).
   const ACCOUNT_1: ParallaxRow = { id: 1, owner: "Ada", balance: "100.00", version: 1 };
   const ACCOUNT_3: ParallaxRow = { id: 3, owner: "Grace", balance: "10.00", version: 1 };
@@ -455,7 +455,7 @@ describe("TransactionWriter versioned SET-BASED update materializes (M10, ADR 00
       tx.entity("Account").update(balanceUnder(200), { set: [{ attr: "balance", value: "0.00" }] }),
     );
 
-    // (a) the materialize read ran and, in locking mode, took the M8 shared lock.
+    // (a) the materialize read ran and, in locking mode, took the m-read-lock shared lock.
     const read = db.queries.find((q) => q.sql.startsWith("select"));
     expect(read?.sql).toContain("where t0.balance < ?");
     expect(read?.sql.endsWith("for share of t0")).toBe(true);
@@ -539,7 +539,7 @@ describe("TransactionWriter versioned SET-BASED update materializes (M10, ADR 00
   });
 });
 
-describe("deep-fetch in-transaction read carries the M8/M10 read context", () => {
+describe("deep-fetch in-transaction read carries the m-unit-work/m-opt-lock read context", () => {
   it("locking mode: a deep-fetch root read locks and records the observed version (no read-before-write)", async () => {
     const db = new StubDatabase([{ ...VAULT_ROW }]);
     const px = createParallax({
@@ -557,12 +557,12 @@ describe("deep-fetch in-transaction read carries the M8/M10 read context", () =>
       return vaults.update(vaultPk(2), { set: [{ attr: "balance", value: "500.00" }] });
     });
 
-    // (a) the ROOT deep-fetch read took the M8 shared row lock (m-read-lock-001), like a flat read.
+    // (a) the ROOT deep-fetch read took the m-read-lock shared row lock (m-read-lock-001), like a flat read.
     const rootRead = db.queries.find(
       (q) => q.sql.startsWith("select") && q.sql.includes("from vault t0"),
     );
     expect(rootRead?.sql.endsWith("for share of t0")).toBe(true);
-    // (b) the CHILD level read is an in-transaction read too, so it takes the SAME M8
+    // (b) the CHILD level read is an in-transaction read too, so it takes the SAME m-unit-work
     //     shared lock (a concurrent writer cannot mutate an included row out from
     //     under a later read-then-write) — every fetched level participates.
     const childRead = db.queries.find((q) => q.sql.includes("from vault_entry"));
@@ -709,7 +709,7 @@ describe("in-transaction projection/aggregation read omits the lock (never throw
   });
 });
 
-describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", () => {
+describe("TransactionWriter optimistic x temporal close (m-temporal-read + m-opt-lock, ADR 0033)", () => {
   /** The recorded milestone-CLOSE UPDATE (`update balance set out_z = …`). */
   const closeOf = (queries: readonly RecordedQuery[]): RecordedQuery | undefined =>
     queries.find((q) => q.sql.startsWith("update balance set out_z"));
@@ -845,7 +845,7 @@ describe("TransactionWriter optimistic x temporal close (M7 + M10, ADR 0033)", (
     const px = createParallax({ descriptor: RESERVATION, database: db, dialect: postgresDialect });
 
     // A business-only entity has no processing axis to derive an optimistic key from,
-    // so writing it under `optimistic` mode is invalid (M1/M7/M10).
+    // so writing it under `optimistic` mode is invalid (m-descriptor/m-temporal-read/m-opt-lock).
     await expect(
       px.transaction(
         (tx) =>

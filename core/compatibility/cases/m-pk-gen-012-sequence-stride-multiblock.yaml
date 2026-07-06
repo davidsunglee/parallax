@@ -1,4 +1,4 @@
-# PK generation `sequence` (M1) — stride across two blocks.
+# PK generation `sequence` (m-pk-gen) — stride across two blocks.
 #
 # voucher_seq batch 2, inc 10: insert 4 -> two allocations (next_val 100->120->140).
 # Block 1 (base 100): 100,110. Block 2 (base 120): 120,130.

@@ -1,4 +1,4 @@
-# Detached-delete merge-back (M9): deleting a detached copy and merging it back
+# Detached-delete merge-back (m-detach): deleting a detached copy and merging it back
 # deletes the original persisted row.
 #
 # Fixtures are loaded first so Account 1 exists. The merge-back of the

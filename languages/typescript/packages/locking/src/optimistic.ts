@@ -1,5 +1,5 @@
 /**
- * M10 version-column optimistic locking — the versioned `UPDATE` and its conflict
+ * m-opt-lock version-column optimistic locking — the versioned `UPDATE` and its conflict
  * signal.
  *
  * An update to an optimistically-locked entity ALWAYS advances the version, and —
@@ -14,7 +14,7 @@
  * affects none — the `updatedRows != 1` conflict signal
  * (`m-opt-lock.md`). A fresh version matches exactly ONE row
  * (success) and the advance moves the gate forward so the next writer's check
- * stays meaningful. In LOCKING mode the M8 shared read lock makes the write
+ * stays meaningful. In LOCKING mode the m-read-lock shared read lock makes the write
  * correct, so the version advances WITHOUT a gate ({@link versionAdvancingUpdate},
  * the `m-detach-002` / detached-merge-back shape). A versioned update that changes no
  * domain column issues no DML at all (the version is framework-owned, not bumped
@@ -46,7 +46,7 @@ export type OptimisticOutcome = "success" | "conflict";
  * `set` clause and the `where` always gates on `pk` AND the observed version.
  * Binds order (caller-supplied): the domain set values, then the new version, then
  * the pk, then the observed version. (A no-op update — no domain columns — issues
- * no DML, M10, so this is never called with an empty `setColumns`.)
+ * no DML, m-opt-lock, so this is never called with an empty `setColumns`.)
  */
 export function versionedUpdate(target: VersionedTarget, setColumns: readonly string[]): string {
   const assignments = [
@@ -62,7 +62,7 @@ export function versionedUpdate(target: VersionedTarget, setColumns: readonly st
 /**
  * Render the LOCKING-mode versioned `UPDATE`: like {@link versionedUpdate} but
  * WITHOUT the `and <version> = ?` gate — the version still advances in the `set`,
- * but the `M8` shared read lock (not the version) makes the write correct (the
+ * but the `m-read-lock` shared read lock (not the version) makes the write correct (the
  * `m-detach-002` / detached-merge-back / `m-opt-lock-002` shape). Binds order (caller-supplied): the
  * domain set values, then the new version, then the pk.
  */

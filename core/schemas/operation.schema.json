@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/operation.schema.json",
-  "title": "Parallax Operation Algebra (M2)",
-  "description": "Canonical, format-agnostic serialization of an M2 operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the M7 as-of model, never written by the user), AND nested-attribute access into a valueObject (the `nestedEq` / `nestedNotEq` predicates compare an inner structured-document field referenced by a dotted path `Class.valueObject.field` against a string literal, lowering to a dialect-specific text extraction). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8).",
+  "title": "Parallax Operation Algebra (m-op-algebra)",
+  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the m-temporal-read as-of model, never written by the user), AND nested-attribute access into a valueObject (the `nestedEq` / `nestedNotEq` predicates compare an inner structured-document field referenced by a dotted path `Class.valueObject.field` against a string literal, lowering to a dialect-specific text extraction). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8).",
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
@@ -393,7 +393,7 @@
     },
 
     "aggregateFunction": {
-      "description": "An aggregate function applied to an attribute (M2 sub-area). `as` is the result column name. `count` MAY omit `attr` to count whole rows in the group (count(*)); every other function requires `attr`.",
+      "description": "An aggregate function applied to an attribute (m-agg sub-area). `as` is the result column name. `count` MAY omit `attr` to count whole rows in the group (count(*)); every other function requires `attr`.",
       "type": "object",
       "minProperties": 1,
       "maxProperties": 1,
@@ -572,7 +572,7 @@
     },
 
     "groupBy": {
-      "description": "The aggregation node (M2 sub-area). Groups `operand`'s rows by `keys` (omit for a whole-table aggregate), projects one or more aggregate functions, and optionally filters groups with `having`. Lowers to a GROUP BY / HAVING SELECT via M3.",
+      "description": "The aggregation node (m-agg sub-area). Groups `operand`'s rows by `keys` (omit for a whole-table aggregate), projects one or more aggregate functions, and optionally filters groups with `having`. Lowers to a GROUP BY / HAVING SELECT via m-sql-agg.",
       "type": "object",
       "additionalProperties": false,
       "required": ["groupBy"],
@@ -609,7 +609,7 @@
       "minLength": 1
     },
     "asOf": {
-      "description": "asOf(asOfAttr, date): pin a temporal dimension to a single instant. The queried entity's rows are restricted to the milestone whose [from, to) interval contains `date` (date = `now` ⇒ the current row, to = infinity). The temporal predicate is AUTO-INJECTED from the as-of model; the user never writes the from/to comparisons by hand. An omitted dimension defaults to `now` (M7 default-injection rule). A BITEMPORAL entity pins BOTH axes by nesting one asOf per axis (the inner asOf's `operand` is the next axis's pin); each axis injects its own interval predicate (Phase 8).",
+      "description": "asOf(asOfAttr, date): pin a temporal dimension to a single instant. The queried entity's rows are restricted to the milestone whose [from, to) interval contains `date` (date = `now` ⇒ the current row, to = infinity). The temporal predicate is AUTO-INJECTED from the as-of model; the user never writes the from/to comparisons by hand. An omitted dimension defaults to `now` (m-temporal-read default-injection rule). A BITEMPORAL entity pins BOTH axes by nesting one asOf per axis (the inner asOf's `operand` is the next axis's pin); each axis injects its own interval predicate (Phase 8).",
       "type": "object",
       "additionalProperties": false,
       "required": ["asOf"],
@@ -664,7 +664,7 @@
     },
 
     "nestedRef": {
-      "description": "A reference into a valueObject's inner field: `Class.valueObject` followed by one or more dotted path segments into the embedded document (e.g. Customer.address.city, Customer.address.geo.lat). Lowers to a dialect-specific text extraction on the value object's backing column (M3/M11).",
+      "description": "A reference into a valueObject's inner field: `Class.valueObject` followed by one or more dotted path segments into the embedded document (e.g. Customer.address.city, Customer.address.geo.lat). Lowers to a dialect-specific text extraction on the value object's backing column (m-sql/m-dialect).",
       "type": "string",
       "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$"
     },

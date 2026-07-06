@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/conformance-adapter.schema.json",
   "title": "Parallax Conformance Adapter Output",
-  "description": "JSON output emitted by a language implementation conformance adapter. The adapter is the M12-adjacent seam used by external runners to ask a concrete language implementation what it supports, what SQL it emits for a compatibility case, and what observations it produces when it runs a case.",
+  "description": "JSON output emitted by a language implementation conformance adapter. The adapter is the `m-conformance-adapter` seam used by external runners to ask a concrete language implementation what it supports, what SQL it emits for a compatibility case, and what observations it produces when it runs a case.",
   "oneOf": [
     { "$ref": "#/$defs/describeOk" },
     { "$ref": "#/$defs/compileOk" },

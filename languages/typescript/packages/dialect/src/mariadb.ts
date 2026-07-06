@@ -1,5 +1,5 @@
 /**
- * The M11 MariaDB dialect — the **second** conforming {@link Dialect}.
+ * The m-dialect MariaDB dialect — the **second** conforming {@link Dialect}.
  *
  * MariaDB exercises exactly the seam points Postgres does not, proving the
  * abstraction earns its keep at the SQL/value-rule level (the corpus divergences
@@ -8,13 +8,13 @@
  *  - **identifier quoting** — a backtick, not a double-quote (`` `order` ``), with
  *    embedded backticks doubled and its own reserved-word set;
  *  - **NULL ordering** — MariaDB has no `NULLS LAST` syntax, so an ascending
- *    nullable key forces NULLs last with a leading `is null,` term (`m11:153-167`);
+ *    nullable key forces NULLs last with a leading `is null,` term (`m-dialect`);
  *  - **read-lock** — MariaDB has no `for share` (MDEV-17514); its shared row lock
  *    is the unaliased ` lock in share mode`;
  *  - **neutral→column type** — `tinyint(1)` / `datetime(6)` / `double` / `longblob`
- *    / `char(36)` … (the M0 table, its MariaDB column);
+ *    / `char(36)` … (the m-core table, its MariaDB column);
  *  - **infinity** — MariaDB's `DATETIME` has no native `'infinity'`, so the open
- *    temporal upper bound binds a documented MAX-SENTINEL datetime (`m11:189-202`);
+ *    temporal upper bound binds a documented MAX-SENTINEL datetime (`m-dialect`);
  *  - **error classification** — MariaDB keys on the vendor errno (`1062`/`1213`/
  *    `1205`), not a SQLSTATE string;
  *  - **placeholders** — the MariaDB driver takes native `?`, so the adapter's
@@ -47,12 +47,12 @@ export const MARIADB_DIALECT = "mariadb" as const;
  * representable `DATETIME(6)`. MariaDB's `DATETIME` has no native `'infinity'`, so
  * the seam substitutes this documented sentinel for the neutral `infinity` on the
  * way in (binds) and detects it on the way out (parsers), so a fixture authored
- * once against native-infinity Postgres compares identically here (`m11:189-202`).
+ * once against native-infinity Postgres compares identically here (`m-dialect`).
  */
 export const MARIADB_INFINITY_SENTINEL = "9999-12-31 23:59:59.999999" as const;
 
 /**
- * MariaDB takes native `?` positional placeholders, so the canonical M3 `?` SQL
+ * MariaDB takes native `?` positional placeholders, so the canonical m-sql `?` SQL
  * needs no rewrite at the driver boundary — this is the identity (contrast the
  * Postgres `?`→`$n` translation).
  */
@@ -101,8 +101,8 @@ function bindValue(neutralType: string, value: unknown): unknown {
 }
 
 /**
- * **Apply** MariaDB's in-transaction shared read lock (M8 automatic read-lock
- * correctness, owned by the M11 seam). MariaDB has no `for share` (MDEV-17514); its
+ * **Apply** MariaDB's in-transaction shared read lock (m-read-lock automatic read-lock
+ * correctness, owned by the m-dialect seam). MariaDB has no `for share` (MDEV-17514); its
  * shared row lock is the unaliased ` lock in share mode`, appended after every
  * other clause. Mirrors the Postgres decision structure exactly — a projection /
  * aggregation read (`projection: true`) and any non-`locking` read are returned
@@ -120,8 +120,8 @@ function applyReadLock(
 }
 
 /**
- * One ORDER BY term with MariaDB's NULL placement (the M4/M11 catalog table,
- * `m11:153-167`). MariaDB has no `NULLS LAST` syntax and sorts NULLs FIRST for
+ * One ORDER BY term with MariaDB's NULL placement (the m-navigate/m-dialect catalog table,
+ * `m-dialect`). MariaDB has no `NULLS LAST` syntax and sorts NULLs FIRST for
  * `asc` / LAST for `desc` by default, so:
  *
  *  - `asc` forces NULLs last with a leading `<col> is null,` term (`is null` is `0`
@@ -137,11 +137,11 @@ function applyReadLock(
 function orderByTerm(qualifiedColumn: string, direction: "asc" | "desc"): string {
   if (direction === "desc") {
     // Bare `desc` — MariaDB sorts NULLs LAST for descending by default, matching the
-    // M4 canonical rule. Do NOT add `nulls last` (MariaDB has no such syntax).
+    // m-navigate canonical rule. Do NOT add `nulls last` (MariaDB has no such syntax).
     return `${qualifiedColumn} desc`;
   }
   // A leading `is null,` term forces NULLs LAST for ascending (MariaDB's default is
-  // NULLs FIRST). This is spec-mandated (`m11:153-167`); do NOT drop it.
+  // NULLs FIRST). This is spec-mandated (`m-dialect`); do NOT drop it.
   return `${qualifiedColumn} is null, ${qualifiedColumn} asc`;
 }
 
@@ -167,10 +167,10 @@ function bytesProjection(
   return { sql: `hex(${qualifiedColumn}) ${outputName}`, binds: [] };
 }
 
-// --- neutral-type → MariaDB column type (the M0 table) ----------------------
+// --- neutral-type → MariaDB column type (the m-core table) ----------------------
 
 /**
- * M0 neutral base type → MariaDB column type (non-parametric types). The
+ * m-core neutral base type → MariaDB column type (non-parametric types). The
  * divergences from Postgres that matter: `boolean`→`tinyint(1)` (no native
  * boolean), `timestamp`→`datetime(6)` (MariaDB `TIMESTAMP` is 2038-limited +
  * auto-updates, so milestones use `DATETIME` with µs precision — and it has no
@@ -194,7 +194,7 @@ const MARIADB_BASE_TYPES: Readonly<Record<string, string>> = {
 const DECIMAL_TYPE = /^decimal\((\d+),(\d+)\)$/;
 
 /**
- * Map an M0 neutral type to its MariaDB column type. `decimal(p,s)` stays
+ * Map an m-core neutral type to its MariaDB column type. `decimal(p,s)` stays
  * `decimal(p,s)` (MariaDB spells it `decimal`, not `numeric`), a bounded `string`
  * → `varchar(n)`, an unbounded `string` → `text`; everything else comes from the
  * base table.
@@ -229,7 +229,7 @@ const SIMPLE_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
  *
  * `position` is a MariaDB-only addition (`POSITION()` is a reserved SQL function
  * name here but not on Postgres, and the corpus's `Position` table would otherwise
- * emit unquoted on MariaDB — both in this DDL derivation and in the M3 compiler's
+ * emit unquoted on MariaDB — both in this DDL derivation and in the m-sql compiler's
  * `from` clause, which now also routes through `quoteIdentifier`). Postgres's
  * reserved set intentionally omits it (`position t0` stays unquoted there,
  * byte-identical to the hand-authored golden).
@@ -374,7 +374,7 @@ const MARIADB_ERROR_CODES: Readonly<Record<number, ErrorCategory>> = {
 
 /**
  * Classify a native MariaDB error code (the vendor errno the driver surfaces) to a
- * neutral M11 category. Coerces the code to an integer errno and looks it up;
+ * neutral m-db-error category. Coerces the code to an integer errno and looks it up;
  * returns `unknown` for an unrecognized / missing / non-numeric code so an
  * unclassified error is never silently treated as retriable.
  */

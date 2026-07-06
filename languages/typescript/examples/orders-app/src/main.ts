@@ -37,7 +37,7 @@ async function main(): Promise<void> {
     database: stubDatabase([
       { id: 42n, name: "Grace", sku: null, qty: 3, price: "19.99", active: true },
     ]),
-    // The M11 dialect is injected beside the database (a MariaDB runtime swaps
+    // The m-dialect dialect is injected beside the database (a MariaDB runtime swaps
     // `mariadbDialect` here with no other change); `postgresDialect` is the shipped
     // adapter's matching strategy.
     dialect: postgresDialect,
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
 
   // Typed finder + generated entity symbol → canonical operation → compiled SQL.
   // A predicate literal is the JSON wire form the operation carries (`42`), which
-  // the compiler normalizes against the attribute's M0 `int64` type; the resolved
+  // the compiler normalizes against the attribute's m-core `int64` type; the resolved
   // row's `id` materializes back to `bigint` (spec §3.2.1).
   const grace = await px.orders.find(Order.id.eq(42)).single();
   process.stdout.write(`found order: ${JSON.stringify(grace, (_k, v) => (typeof v === "bigint" ? v.toString() : v))}\n`);

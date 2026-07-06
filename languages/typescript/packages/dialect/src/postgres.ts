@@ -1,5 +1,5 @@
 /**
- * The M11 Postgres dialect — the runtime DB seam.
+ * The m-dialect Postgres dialect — the runtime DB seam.
  *
  * All Postgres-specific SQL decisions live here (and only here): the
  * `?`→`$n` placeholder translation, the neutral-type → column-type vocabulary,
@@ -32,7 +32,7 @@ import { classifyErrorCode } from "./errors.js";
 export const POSTGRES_DIALECT = "postgres" as const;
 
 /**
- * Translate the canonical `?` positional placeholders (M3) into Postgres `$n`
+ * Translate the canonical `?` positional placeholders (m-sql) into Postgres `$n`
  * placeholders, numbered left-to-right starting at `$1`.
  *
  * The canonical SQL never carries a literal `?` outside a placeholder position
@@ -48,12 +48,12 @@ export function toPositionalPlaceholders(sql: string): string {
   });
 }
 
-/** The canonical root-table alias the M3 SELECT projects from (`from tbl t0`). */
+/** The canonical root-table alias the m-sql SELECT projects from (`from tbl t0`). */
 const READ_LOCK_ALIAS = "t0";
 
 /**
- * **Apply** this dialect's in-transaction shared read lock to a compiled read (M8
- * automatic read-lock correctness, owned by the M11 seam per delta `09` D3). The
+ * **Apply** this dialect's in-transaction shared read lock to a compiled read (m-read-lock
+ * automatic read-lock correctness, owned by the m-dialect seam per delta `09` D3). The
  * dialect owns the whole decision — whether, where, and how the lock attaches —
  * not merely the suffix text:
  *
@@ -70,7 +70,7 @@ const READ_LOCK_ALIAS = "t0";
  *
  * The lock-omission decision keys on the caller-supplied `projection` boolean — the
  * authoritative contract flag `compile` derives from whether it emitted `distinct`
- * (`m11:203-216`) — NOT a regex over the SQL text: the compiler already knows the
+ * (`m-dialect`) — NOT a regex over the SQL text: the compiler already knows the
  * read's shape, so the seam trusts the flag rather than re-deriving it from the SQL.
  *
  * MariaDB diverges (no `for share`; MDEV-17514): its shared lock is the unaliased
@@ -88,8 +88,8 @@ export function applyReadLock(
 }
 
 /**
- * One ORDER BY term with Postgres's NULL placement (the M4/M11 catalog table,
- * `m11:153-167`). Postgres sorts NULLs last for `asc` and first for `desc` by
+ * One ORDER BY term with Postgres's NULL placement (the m-navigate/m-dialect catalog table,
+ * `m-dialect`). Postgres sorts NULLs last for `asc` and first for `desc` by
  * default, so an ascending term is emitted **bare** (relying on the native
  * default, byte-identical to today's `compile.ts` output) while a descending term
  * gets an explicit `nulls last` to override the default and match the neutral
@@ -98,9 +98,9 @@ export function applyReadLock(
  */
 export function orderByTerm(qualifiedColumn: string, direction: "asc" | "desc"): string {
   if (direction === "desc") {
-    // `desc nulls last` is spec-mandated — the m11 NULL-ordering table
-    // (`m11:153-167`) fixes Postgres descending as `order by <col> desc nulls last`.
-    // Bare `desc` would put NULLs FIRST, violating the M4 canonical rule that sorts
+    // `desc nulls last` is spec-mandated — the m-dialect NULL-ordering table
+    // (`m-dialect`) fixes Postgres descending as `order by <col> desc nulls last`.
+    // Bare `desc` would put NULLs FIRST, violating the m-navigate canonical rule that sorts
     // NULLs LAST on every key, so the explicit `nulls last` is REQUIRED. Do NOT
     // "simplify" this to bare `desc`.
     return `${qualifiedColumn} desc nulls last`;
@@ -134,9 +134,9 @@ export function bytesProjection(
   return { sql: `encode(${qualifiedColumn}, ?) ${outputName}`, binds: [HEX_ENCODE_FORMAT] };
 }
 
-// --- neutral-type → Postgres column type (the M0 table) ---------------------
+// --- neutral-type → Postgres column type (the m-core table) ---------------------
 
-/** M0 neutral base type → Postgres column type (non-parametric types). */
+/** m-core neutral base type → Postgres column type (non-parametric types). */
 const POSTGRES_BASE_TYPES: Readonly<Record<string, string>> = {
   boolean: "boolean",
   int32: "integer",
@@ -155,7 +155,7 @@ const POSTGRES_BASE_TYPES: Readonly<Record<string, string>> = {
 const DECIMAL_TYPE = /^decimal\((\d+),(\d+)\)$/;
 
 /**
- * Map an M0 neutral type to its Postgres column type. `decimal(p,s)` →
+ * Map an m-core neutral type to its Postgres column type. `decimal(p,s)` →
  * `numeric(p,s)`, a bounded `string` → `varchar(n)`, an unbounded `string` →
  * `text`; everything else comes from the base table.
  */
@@ -350,7 +350,7 @@ function bindValue(_neutralType: string, value: unknown): unknown {
  * The concrete Postgres {@link Dialect} — the layer-1 authority for Postgres,
  * reifying the loose functions above into the normative contract. Its methods
  * delegate to those functions (all correct and tested); the `parsers` record maps
- * each M0 neutral key to its `*FromRaw`/`*FromDb` parser, and `infinityBind`
+ * each m-core neutral key to its `*FromRaw`/`*FromDb` parser, and `infinityBind`
  * returns the native `'infinity'` sentinel Postgres binds directly.
  *
  * The three error predicates are category membership over the closed neutral

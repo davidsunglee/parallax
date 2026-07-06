@@ -1,4 +1,4 @@
-# Optimistic-lock conflict (M10): a stale-version UPDATE affects ZERO rows.
+# Optimistic-lock conflict (m-opt-lock): a stale-version UPDATE affects ZERO rows.
 #
 # Account id 2 (Linus) is read at version 1. Before our UPDATE flushes, a
 # CONCURRENT transaction commits a change to the same row, bumping its version to
@@ -9,7 +9,7 @@
 #   update account set balance = ?, version = ? where id = ? and version = ?
 # Because the row's version is now 2, the `... and version = ?` predicate (bind 1)
 # matches NO row, so the UPDATE affects ZERO rows — the `updatedRows != 1`
-# conflict signal (M10). The harness asserts the affected-row count is 0; the
+# conflict signal (m-opt-lock). The harness asserts the affected-row count is 0; the
 # conflict is detected against real data, not merely asserted.
 #
 # The resulting table state confirms our write did NOT apply: id 2 still carries

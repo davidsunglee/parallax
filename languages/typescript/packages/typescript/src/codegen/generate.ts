@@ -68,7 +68,7 @@ export function planGenerate(config: ParallaxConfig, cwd: string = process.cwd()
   }
 
   // Merge every matched descriptor into one `entities` document, then read it
-  // through the M1 metamodel (which ajv-validates it against metamodel.schema.json
+  // through the m-descriptor metamodel (which ajv-validates it against metamodel.schema.json
   // and normalizes defaults). Validation failures throw here — the `--check` gate.
   const entities = descriptorPaths.flatMap((path) => entitiesOf(parseDescriptor(path)));
   const descriptor = { entities };

@@ -115,14 +115,14 @@ ts-package-check:
 # Docker-free DB contracts: dialect table, provider selection parsing, matrix profile declarations.
 ts-db-fast:
     pnpm run ts:typecheck
-    pnpm exec vitest run --root languages/typescript packages/dialect/test/dialect-conformance.test.ts packages/typescript/test/api-conformance/provider-selection.test.ts packages/typescript/test/m12-profiles.test.ts
+    pnpm exec vitest run --root languages/typescript packages/dialect/test/dialect-conformance.test.ts packages/typescript/test/api-conformance/provider-selection.test.ts packages/typescript/test/conformance-profiles.test.ts
 
 # Docker-free conformance lane: full-slice compile sweep + honesty gate + matrix report.
 ts-conformance-compile:
     pnpm run ts:typecheck
     pnpm exec vitest run --root languages/typescript packages/conformance
 
-# Primary Docker-backed DB gate: shared adapter/provider contracts, Postgres M12, and Postgres API conformance.
+# Primary Docker-backed DB gate: shared adapter/provider contracts, the Postgres compatibility matrix, and Postgres API conformance.
 ts-db: ts-db-fast
     pnpm exec vitest run --root languages/typescript packages/typescript/test/db-adapter-smoke.test.ts
     PARALLAX_DATABASES=postgres,mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/db-provider-contract.test.ts
@@ -130,7 +130,7 @@ ts-db: ts-db-fast
     node languages/typescript/scripts/render-guide.mjs --check
     pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
 
-# Exhaustive Docker-backed DB sweep: primary gate plus MariaDB API and curated M12 profile.
+# Exhaustive Docker-backed DB sweep: primary gate plus MariaDB API and curated matrix profile.
 ts-db-all: ts-db
     PARALLAX_DATABASES=mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
     pnpm exec vitest run --root languages/typescript packages/typescript/test/mariadb-run.test.ts

@@ -12,8 +12,8 @@
 # rectangle-split, deferred to Phase 8), so audit-only chaining is the simplest
 # observable form of the contract.
 #
-# The interval columns are `timestamp` (M0: instants are UTC `timestamptz`); the
-# open upper bound is the database-native infinity (M0/M11). The non-temporal
+# The interval columns are `timestamp` (m-core: instants are UTC `timestamptz`); the
+# open upper bound is the database-native infinity (m-core/m-dialect). The non-temporal
 # attributes (id, acctNum, value) are the business payload.
 #
 # Row data lives in the sibling fixtures/balance.yaml (used by the as-of READ

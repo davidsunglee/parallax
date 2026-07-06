@@ -1,4 +1,4 @@
-# Boundary case (M8): `retries: 0` DISABLES the loop — even a transient failure
+# Boundary case (m-auto-retry): `retries: 0` DISABLES the loop — even a transient failure
 # surfaces to the caller — `api-conformance` lane.
 #
 # The retry bound is configurable (default 10); a bound of `0` disables the loop

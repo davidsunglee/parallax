@@ -1,5 +1,5 @@
 /**
- * M4 deep-fetch strategy — eager relationship loading with **one bulk query per
+ * m-deep-fetch deep-fetch strategy — eager relationship loading with **one bulk query per
  * level**, never N+1.
  *
  * Deep fetch resolves a root row set plus a set of navigation paths into a graph
@@ -29,7 +29,7 @@
  *
  * This package owns only the **orchestration** (the graph algorithm + the round-
  * trip discipline): it imports no metamodel, compiler, or driver. The runner
- * (M12) supplies, per relationship node, the resolved correlation columns, the
+ * (m-case-format) supplies, per relationship node, the resolved correlation columns, the
  * relationship cardinality, and a `compileLevel(keys)` closure that produces the
  * `{ sql, binds }` for that level — and the `exec` function that runs a query.
  * That keeps `@parallax/relationships` allowlist-clean (it depends only on

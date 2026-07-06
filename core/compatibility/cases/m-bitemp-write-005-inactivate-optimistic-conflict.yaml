@@ -1,4 +1,4 @@
-# Optimistic BITEMPORAL inactivation, STALE observed in_z (M7 + M10): the inactivating
+# Optimistic BITEMPORAL inactivation, STALE observed in_z (m-bitemp-write + m-opt-lock): the inactivating
 # close affects ZERO rows even though a current row for the same business window exists.
 #
 # As in m-bitemp-write-004 the gate carries both the business discriminator `from_z = ?` and the

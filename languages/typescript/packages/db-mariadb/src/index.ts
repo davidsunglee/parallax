@@ -1,5 +1,5 @@
 /**
- * `@parallax/db-mariadb` — the shippable MariaDB adapter (M11 decomposition,
+ * `@parallax/db-mariadb` — the shippable MariaDB adapter (m-db-port decomposition,
  * layer 3): a concrete `ParallaxDatabase` over the `mysql2` driver, returning
  * managed scalars via the `@parallax/dialect` `mariadbDialect` parsers for reads
  * and native affected-row counts for writes. The MariaDB sibling of

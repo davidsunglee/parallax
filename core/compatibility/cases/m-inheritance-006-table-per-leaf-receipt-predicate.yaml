@@ -1,4 +1,4 @@
-# Table-per-leaf leaf query with a predicate (M1 inheritance, M3).
+# Table-per-leaf leaf query with a predicate (m-inheritance inheritance, m-sql).
 #
 # Query the Receipt leaf's own table for paidAmount >= 120. No discriminator is
 # injected (the leaf is selected by its table); the user predicate is the only

@@ -1,4 +1,4 @@
-# Optimistic-lock success (M10): a fresh-version UPDATE affects exactly ONE row.
+# Optimistic-lock success (m-opt-lock): a fresh-version UPDATE affects exactly ONE row.
 #
 # The companion to the conflict case (m-opt-lock-005): with NO concurrent writer (no
 # `precondition`), Account id 2 (Linus) still carries the version we read (1), so

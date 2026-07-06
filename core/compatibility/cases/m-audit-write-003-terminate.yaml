@@ -1,4 +1,4 @@
-# Write sequence: TERMINATE an audit-only balance (milestone chaining, M7).
+# Write sequence: TERMINATE an audit-only balance (milestone chaining, m-audit-write).
 #
 # A terminate closes the current milestone (out_z = the transaction instant) and
 # inserts NOTHING. The terminated state is the ABSENCE of any current row: no row

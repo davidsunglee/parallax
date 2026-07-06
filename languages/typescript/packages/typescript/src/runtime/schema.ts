@@ -2,14 +2,14 @@
  * The application-runtime `SchemaResolver` (spec §2, §3.2).
  *
  * The `parallax(...)` factory's `find` compiles a DSL-built operation with the
- * SAME M3 `compile` visitor the conformance adapter uses — so it needs a
+ * SAME m-sql `compile` visitor the conformance adapter uses — so it needs a
  * `SchemaResolver`. The conformance-side `MetamodelSchema` is case-driven (its
  * projection comes from a case's `expectedRows`); the application runtime instead
  * projects the root entity's FULL attribute set, because `find` returns managed
  * domain objects (spec §2.3). Both resolve `Class.attr` / `Class.relationship` /
- * as-of axes the same way, over the shared M1 reader.
+ * as-of axes the same way, over the shared m-descriptor reader.
  *
- * As-of predicate injection delegates to `@parallax/bitemporal` (the M7 owner),
+ * As-of predicate injection delegates to `@parallax/bitemporal` (the m-temporal-read owner),
  * reached directly from the composition root, so temporal reads (`asOf` / range /
  * history) lower identically to the adapter.
  */
@@ -56,7 +56,7 @@ function parseJoin(join: string): { thisAttr: string; relatedAttr: string } {
 }
 
 /**
- * A `SchemaResolver` over the M1 reader for the application runtime. Rooted at
+ * A `SchemaResolver` over the m-descriptor reader for the application runtime. Rooted at
  * one entity, it projects that entity's full attribute set and resolves refs
  * across the whole metamodel (a predicate may reference a navigated child).
  */
@@ -64,7 +64,7 @@ export class RuntimeSchema implements SchemaResolver {
   constructor(
     private readonly metamodel: Metamodel,
     private readonly rootEntity: EntityMetadata,
-    /** The injected M11 dialect — the single authority for identifier quoting. */
+    /** The injected m-dialect dialect — the single authority for identifier quoting. */
     private readonly dialect: Dialect,
   ) {}
 
@@ -107,7 +107,7 @@ export class RuntimeSchema implements SchemaResolver {
    * projection carries `type === "bytes"` in the compiler — stays EXCLUSIVE to
    * the conformance `MetamodelSchema`/`readProjection` case-driven path (the
    * `_hex` row-observation seam, case `m-core-001`). Every non-bytes column keeps its
-   * M0 `type` (no consumer other than the bytes trigger, but harmless).
+   * m-core `type` (no consumer other than the bytes trigger, but harmless).
    */
   rootProjection(): readonly ProjectionColumn[] {
     return this.rootEntity

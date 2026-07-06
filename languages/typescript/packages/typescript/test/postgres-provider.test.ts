@@ -2,7 +2,7 @@
  * Fixture-insertion quoting invariant (Phase 3 review, Finding 2).
  *
  * `loadFixtures` once rendered `insert into ${table} (${cols})` with RAW
- * descriptor names while the DDL quoted identifiers through the M11 seam, so a
+ * descriptor names while the DDL quoted identifiers through the m-dialect seam, so a
  * reserved/non-simple table or column (e.g. `order`, `User`) would be CREATEd
  * quoted but INSERTed unquoted — a divergence that fails even though the table
  * exists. The fix routes both paths through the same `quoteIdentifier` seam.
@@ -27,10 +27,10 @@ group("renderFixtureInsert quoting", () => {
   it("quotes a reserved-word table and column, leaving simple ones bare", () => {
     // `order` and `select` are reserved and MUST be double-quoted; `id` is a
     // simple non-reserved identifier and stays bare — exactly the per-identifier
-    // decision the M11 seam (and therefore the DDL) makes.
+    // decision the m-dialect seam (and therefore the DDL) makes.
     const sql = renderFixtureInsert("order", ["id", "select"]);
     expect(sql).toBe('insert into "order" (id, "select") values ($1, $2)');
-    // The tokens match the M11 seam exactly (single source of truth).
+    // The tokens match the m-dialect seam exactly (single source of truth).
     expect(sql).toContain(quoteIdentifier("order"));
     expect(sql).toContain(quoteIdentifier("select"));
     expect(quoteIdentifier("id")).toBe("id");

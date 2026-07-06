@@ -3,7 +3,7 @@
  * root over the injected `ParallaxDatabase`.
  *
  * A typed `find(predicate, { includes: [...] })` compiles to a `{ deepFetch: {
- * operand, paths } }` operation. The M3 compiler lowers only the ROOT statement of
+ * operand, paths } }` operation. The m-sql compiler lowers only the ROOT statement of
  * a deep fetch; the eager multi-level assembly is orchestration owned by
  * `@parallax/relationships` (`deepFetch`, one bulk `IN` query per level, `1 + L`
  * round trips, never N+1). This module wires that pure strategy to the *developer*
@@ -13,7 +13,7 @@
  * every level's rows to **managed objects keyed by DSL name** (10b), attaching each
  * relationship under its DSL relationship name.
  *
- * It reuses the SAME M3 `compile` visitor (through a child-rooted `RuntimeSchema`)
+ * It reuses the SAME m-sql `compile` visitor (through a child-rooted `RuntimeSchema`)
  * and the SAME as-of propagation the conformance path uses, so a temporal deep
  * fetch propagates the root's pins per hop identically — the developer surface and
  * the graded runtime never diverge.
@@ -53,14 +53,14 @@ interface DeepFetchBody {
 /**
  * The in-transaction read context threaded into a deep fetch, so EVERY fetched
  * level — the root AND each included child — participates in the unit of work
- * exactly like a flat read does (spec §3, M8/M10): a `locking`-mode read takes the
+ * exactly like a flat read does (spec §3, m-unit-work/m-opt-lock): a `locking`-mode read takes the
  * shared row lock, and the materialized rows record the versions the unit of work
  * observed. The default (an out-of-transaction read, or a root-handle read) takes
  * no lock and records nothing.
  */
 export interface DeepFetchReadContext {
   /**
-   * The M8 correctness mode of the enclosing unit of work, passed to the shared
+   * The m-unit-work correctness mode of the enclosing unit of work, passed to the shared
    * read executor for every fetched level (the root read AND each child-level
    * `in`-membership read): a `locking`-mode read takes the shared lock, so a
    * concurrent writer cannot mutate an included row out from under a later
@@ -68,7 +68,7 @@ export interface DeepFetchReadContext {
    */
   readonly concurrency: Concurrency | undefined;
   /**
-   * Record the versions the materialized rows of a fetched level observed (the M10
+   * Record the versions the materialized rows of a fetched level observed (the m-opt-lock
    * observed-version map), identified by that level's entity. Called once per
    * fetched entity (root + each included level); a non-versioned entity records
    * nothing. Absent on a root-handle / out-of-transaction read.
@@ -85,7 +85,7 @@ export function isDeepFetchOperation(operation: Operation): boolean {
 }
 
 /**
- * Execute a developer-runtime deep fetch: compile the root, run the M4 strategy
+ * Execute a developer-runtime deep fetch: compile the root, run the m-deep-fetch strategy
  * over the metamodel-derived hop tree, and return the decorated managed root rows
  * plus the `1 + L` round-trip count.
  */
@@ -100,7 +100,7 @@ export async function executeDeepFetch(
   const rootEntity = deepFetchRootEntity(metamodel, body.paths, body.operand);
   const rootSchema = new RuntimeSchema(metamodel, rootEntity, dialect);
   // The ROOT read AND each CHILD level are compiled against the injected dialect with
-  // the unit of work's `locking` mode, so `compile()` applies the M8 shared read-lock
+  // the unit of work's `locking` mode, so `compile()` applies the m-read-lock shared read-lock
   // in-line (`for share of t0` in `locking`, `m-read-lock-001`) — the developer writes no lock
   // SQL — and child locking falls out structurally rather than being re-plumbed.
   const locking = readContext.concurrency === "locking";
@@ -116,16 +116,16 @@ export async function executeDeepFetch(
   // Materialize the assembled graph to managed objects keyed by DSL name (10b),
   // recursing into the attached relationship arrays / to-one peers, and collect the
   // materialized rows of EVERY fetched level grouped by entity (root + each included
-  // child) so the unit of work records the version each level observed (M10).
+  // child) so the unit of work records the version each level observed (m-opt-lock).
   const observedLevels = new Map<string, ObservedLevel>();
   const materialized = result.rows.map((row) =>
     materializeNode(row, rootEntity, metamodel, observedLevels, dialect),
   );
   // Record the version this unit of work OBSERVED for each fetched versioned row, so
   // a later keyed update of the versioned root OR of an included versioned child gates
-  // on / advances from it (M10) and does not spuriously raise ParallaxReadBeforeWriteError
+  // on / advances from it (m-opt-lock) and does not spuriously raise ParallaxReadBeforeWriteError
   // — every deep-fetch level participates in the read contract exactly like a flat read
-  // (the M8 lock above, the M10 observed-version recording here). A non-versioned level's
+  // (the m-unit-work lock above, the m-opt-lock observed-version recording here). A non-versioned level's
   // rows are handed over too; the recorder no-ops for an entity with no version column.
   if (readContext.onObserved) {
     for (const level of observedLevels.values()) {
@@ -148,7 +148,7 @@ interface ObservedLevel {
  * DSL relationship name, since the tree decorates by `node.name`).
  *
  * Each materialized row is also accumulated into `observed` under its entity, so
- * the caller can record the version every fetched level observed (M10) — not only
+ * the caller can record the version every fetched level observed (m-opt-lock) — not only
  * the root's.
  */
 function materializeNode(
@@ -293,7 +293,7 @@ interface NodeBuilder {
  * …) [order by …]` for a key set, seeding the root pins for temporal propagation.
  *
  * The level statement is compiled against the injected dialect with the unit of
- * work's `locking` mode, so `compile()` applies the M8 shared lock in-line for a
+ * work's `locking` mode, so `compile()` applies the m-read-lock shared lock in-line for a
  * `locking` deep-fetch level exactly as it does for the root and a flat read.
  */
 function materialize(

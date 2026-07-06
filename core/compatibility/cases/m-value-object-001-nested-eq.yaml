@@ -1,5 +1,5 @@
-# valueObject structured-column filter: nested field equality (M1 valueObject,
-# M0 json, M3).
+# valueObject structured-column filter: nested field equality (m-value-object valueObject,
+# m-core json, m-sql).
 #
 # Filter Customers by an inner field of the `address` valueObject (stored as one
 # structured-document column). In Postgres golden SQL,

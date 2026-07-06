@@ -1,4 +1,4 @@
-# notIn over a column containing NULLs — three-valued-logic exclusion (M2 §Null).
+# notIn over a column containing NULLs — three-valued-logic exclusion (m-op-algebra §Null).
 #
 # `notIn` against a NULL column yields NULL, so the NULL row is EXCLUDED. Order 4
 # has a NULL sku, so `not sku in ('A-100', 'B-200')` drops orders 1 and 2 (the

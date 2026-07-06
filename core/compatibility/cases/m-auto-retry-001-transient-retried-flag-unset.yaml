@@ -1,8 +1,8 @@
-# Boundary case (M8): an injected TRANSIENT database failure is auto-retried —
+# Boundary case (m-auto-retry): an injected TRANSIENT database failure is auto-retried —
 # `retryOptimisticConflicts` UNSET has no bearing on transients — `api-conformance`
 # lane.
 #
-# Transient database failures (serialization failure / deadlock — the M11
+# Transient database failures (serialization failure / deadlock — the m-db-error
 # `deadlock` category) are retriable BY DEFAULT: no caller action, no opt-in
 # needed. This case injects a `serialization-failure` on the first attempt with the
 # conflict-retry flag UNSET; the boundary rolls back, invalidates stale state, and

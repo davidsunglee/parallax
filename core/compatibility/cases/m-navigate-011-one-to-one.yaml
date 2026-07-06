@@ -1,4 +1,4 @@
-# navigate over a ONE-TO-ONE relationship (M1 cardinality, M4 semi-join).
+# navigate over a ONE-TO-ONE relationship (m-descriptor cardinality, m-navigate semi-join).
 #
 # Filter Persons by a predicate on their single Passport peer. A one-to-one
 # navigation lowers to the same correlated EXISTS semi-join as any to-one hop, so

@@ -168,7 +168,7 @@ it("the reads suite covers exactly the READS family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...READS].sort());
 });
 
-// Reads are dialect-agnostic (the M3 compiler is behind the M11 seam), so the suite fans
+// Reads are dialect-agnostic (the m-sql compiler is behind the m-dialect seam), so the suite fans
 // out over every database `PARALLAX_DATABASES` selects (default Postgres). `MARIADB_GUARDED_
 // READS` (`_providers.ts`) is currently empty — the raw `bytes` read case (`m-core-001`) used to be
 // guarded off MariaDB, now fixed — but the guard mechanism stays wired for a future gap.

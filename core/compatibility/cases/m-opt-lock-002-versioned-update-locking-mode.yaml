@@ -1,9 +1,9 @@
-# Versioned update, locking mode (M8 strategy selection + M10): a keyed update on
+# Versioned update, locking mode (m-unit-work strategy selection + m-opt-lock): a keyed update on
 # a versioned entity ADVANCES the version but emits NO gate.
 #
 # The version advances on every UPDATE against a versioned entity in BOTH modes;
 # what differs is the gate. Under the DEFAULT `locking` strategy the in-
-# transaction read already took a shared row lock (M8), so the write needs no
+# transaction read already took a shared row lock (m-read-lock), so the write needs no
 # version check — it is the ungated version-advancing form (the m-detach-002 / detached-
 # merge-back shape). Only OPTIMISTIC mode (m-opt-lock-005 / m-opt-lock-006) adds `and version = ?`.
 #

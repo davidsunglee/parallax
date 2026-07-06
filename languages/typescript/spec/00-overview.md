@@ -6,8 +6,8 @@ language-neutral contract remains the core specification in
 choices the core deliberately leaves open.
 
 This spec describes the first TypeScript API shape. TypeScript V1 adopts the
-canonical `slice-mvp-1` conformance slice, which is smaller than
-the core MVP tier: it claims only cases tagged for that slice. Some core
+canonical `slice-mvp-1` conformance slice: it claims only cases tagged for that
+slice, a subset of the full module catalog. Some core
 capabilities are therefore recorded here as future TypeScript surface decisions
 but deferred from the first conformance claim. A deferred capability is not
 removed from Parallax; it is simply not claimed by the TypeScript conformance
@@ -136,14 +136,14 @@ JSON envelope required by
 [`../../../core/spec/m-conformance-adapter.md`](../../../core/spec/m-conformance-adapter.md)
 to stdout.
 
-The M13 benchmark command is a post-slice conformance command:
+The m-perf-bench benchmark command is a post-slice conformance command:
 
 ```text
 parallax-conformance benchmark --benchmark <benchmark.yaml> --dialect <dialect>
 ```
 
 TypeScript V1 may document that command shape, but it does not claim
-`benchmark` in `parallax-conformance describe` until the M13 slice is
+`benchmark` in `parallax-conformance describe` until the m-perf-bench slice is
 implemented.
 
 ## 4. Parallax Handle
@@ -414,10 +414,10 @@ return result objects with at least `affectedRows`.
 
 The correctness strategy is a per-unit-of-work mode selected on `px.transaction`
 (`{ concurrency: "locking" | "optimistic" }`, default `"locking"`). In `locking`
-mode in-transaction reads take the automatic shared row lock (M8) and a versioned
+mode in-transaction reads take the automatic shared row lock (m-read-lock) and a versioned
 `update` advances the version with no gate; in `optimistic` mode reads take no
 lock and a versioned `update` gates on the version the unit of work observed
-(M10). Optimistic-lock **version values are framework-owned** (ADR 0029): the
+(m-opt-lock). Optimistic-lock **version values are framework-owned** (ADR 0029): the
 developer reads the row — which records the observed version — then `update`s;
 no raw version number is passed. Updating a versioned row the unit of work never
 read is a `ParallaxReadBeforeWriteError`; a stale gate (zero rows affected) throws
@@ -605,15 +605,15 @@ relies on generated types, package versions, documentation, and conformance
 results, not runtime capability branching.
 
 The conformance adapter reports claimed modules through `parallax-conformance
-describe`. TypeScript V1 claims the M8 transaction and unit-of-work cases tagged
+describe`. TypeScript V1 claims the m-unit-work transaction and unit-of-work cases tagged
 `slice-mvp-1`, including read-your-own-writes, but it does not yet
-claim the M8 identity-cache and query-cache scenario slice. Until that cache
+claim the m-process-cache identity-cache and query-cache scenario slice. Until that cache
 slice is claimed, repeated reads of the same primary key are not guaranteed to
 return the same JavaScript object instance. A resolved `ParallaxList` remains
 stable for its own materialized result, but that is not the full core
 identity-cache guarantee.
 
-The post-V1 target remains the core `M8` contract: within a cache scope, reads of
+The post-V1 target remains the core `m-process-cache` contract: within a cache scope, reads of
 the same primary key resolve to the same logical managed object, repeated equal
 operations are served from the query cache, and cache hits preserve identity.
 
@@ -629,7 +629,7 @@ dependency graph in
 [`../../../core/spec/modules.md`](../../../core/spec/modules.md).
 Implementation source lives under `languages/typescript/packages/*`; the
 surrounding `languages/typescript/spec` and `languages/typescript/docs`
-directories are documentation. The non-numbered `@parallax/typescript` package is
+directories are documentation. The `@parallax/typescript` composition package is
 the composition package for the CLI, generator config, public runtime facade, and
 generated-barrel support.
 
@@ -648,16 +648,16 @@ slice:
 - in-memory predicate/comparator reuse
 - non-dependent `link` / `unlink`
 - adding existing children and reparenting through collections
-- full `M8` identity cache and query cache conformance
+- full `m-process-cache` identity cache and query cache conformance
 - PK-generation compatibility cases
 - value-object compatibility cases
 - inheritance compatibility cases
 - detached object lifecycle
-- M11 database error-code classification cases
+- m-db-error database error-code classification cases
 - bounded business-window and bitemporal rectangle-split writes
 - MariaDB provider and dialect conformance
-- M13 benchmark command and numeric performance targets
-- M14 cross-process cache coherence
+- m-perf-bench benchmark command and numeric performance targets
+- m-coherence cross-process cache coherence
 - public flush
 - runtime capability metadata
 - transaction read lock disabling

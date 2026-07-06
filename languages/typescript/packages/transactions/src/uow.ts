@@ -1,5 +1,5 @@
 /**
- * M8 closure-demarcated unit of work — buffered writes combined + flushed as
+ * m-unit-work closure-demarcated unit of work — buffered writes combined + flushed as
  * set-based SQL.
  *
  * A unit of work buffers writes as combinable ops and, at its boundary, combines
@@ -19,7 +19,7 @@
  */
 import { type BatchTarget, keyedUpdate, multiRowInsert, uniformUpdate } from "./batch.js";
 
-/** The mutation kinds the M8 non-temporal batched flush realizes. */
+/** The mutation kinds the m-unit-work non-temporal batched flush realizes. */
 export type BatchMutation = "insert" | "update";
 
 /**

@@ -1,4 +1,4 @@
-# Duplicate primary-key INSERT -> uniqueViolation (M11). The first insert
+# Duplicate primary-key INSERT -> uniqueViolation (m-db-error). The first insert
 # succeeds and commits; the second collides on the PK and raises. The neutral
 # category is uniqueViolation on both dialects; the native code each DB raises
 # (PG SQLSTATE 23505 / MariaDB errno 1062) is witnessed per dialect. The classify

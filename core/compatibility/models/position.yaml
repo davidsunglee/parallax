@@ -10,7 +10,7 @@
 # A row is the milestone at the intersection of a business interval and a
 # processing interval — a "rectangle" in (business x processing) space. Each
 # interval is half-open `[from, to)`; the open upper bound is the database-native
-# infinity (M0/M11). A row is CURRENT on an axis when its `to` on that axis equals
+# infinity (m-core/m-dialect). A row is CURRENT on an axis when its `to` on that axis equals
 # infinity; the fully-current row is current on BOTH (thru_z = out_z = infinity).
 #
 # Milestone-chaining writes never mutate a value in place. The signature
@@ -22,7 +22,7 @@
 # the window while the audit trail is preserved on the processing axis.
 #
 # The non-temporal attributes (id, acctNum, value) are the business payload. The
-# four interval columns (from_z/thru_z, in_z/out_z) are typed `timestamp` (M0:
+# four interval columns (from_z/thru_z, in_z/out_z) are typed `timestamp` (m-core:
 # instants are UTC `timestamptz`).
 #
 # Row data lives in the sibling fixtures/position.yaml (the as-of READ cases).

@@ -1,4 +1,4 @@
-# notExists across TWO hops (M4 negated semi-join, multi-hop).
+# notExists across TWO hops (m-navigate negated semi-join, multi-hop).
 #
 # m-navigate-006 is a single-hop notExists; m-navigate-008 is a multi-hop EXISTS. This pins the
 # negated multi-hop: orders that have NO item carrying any status. The inner

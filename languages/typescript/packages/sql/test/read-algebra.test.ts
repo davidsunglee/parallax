@@ -1,5 +1,5 @@
 /**
- * M3 read-algebra compiler unit tests (Docker-free).
+ * m-sql read-algebra compiler unit tests (Docker-free).
  *
  * Drives the canonical-by-construction `compile` visitor directly over a small,
  * hand-built `SchemaResolver` for the `orders` model, asserting `emitted ===
@@ -26,7 +26,7 @@ import {
 } from "../src/index.js";
 
 /**
- * The `orders` columns the 02xx read algebra ranges over (name → column + M0 type
+ * The `orders` columns the 02xx read algebra ranges over (name → column + m-core type
  * + nullability). `sku` is the one NULL-bearing column (mirrors the corpus
  * descriptor), so an ORDER BY on it exercises the dialect's NULL-placement branch.
  */
@@ -394,7 +394,7 @@ const CASES: ReadonlyArray<{
   },
 ];
 
-describe("M3 read algebra — emitted === golden", () => {
+describe("m-sql read algebra — emitted === golden", () => {
   it.each(CASES)("$id", ({ op, sql, binds, projection }) => {
     const result = emit(op, projection);
     expect(result.sql).toBe(sql);

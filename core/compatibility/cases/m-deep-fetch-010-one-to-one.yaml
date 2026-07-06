@@ -1,4 +1,4 @@
-# Deep fetch over a ONE-TO-ONE relationship (M1 cardinality, M4 deep fetch).
+# Deep fetch over a ONE-TO-ONE relationship (m-descriptor cardinality, m-deep-fetch deep fetch).
 #
 # Every existing deep-fetch case traverses one-to-many or many-to-one; this pins
 # the one-to-one cardinality. Fetch every Person with its single Passport peer:

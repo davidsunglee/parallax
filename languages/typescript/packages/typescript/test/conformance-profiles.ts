@@ -156,7 +156,7 @@ export const POSTGRES_FULL_PROFILE: MatrixProfile = {
   name: "postgres-full-slice-mvp-1",
   dialect: "postgres",
   kind: "full",
-  description: "Full harness-lane slice-mvp-1 M12 profile over Postgres.",
+  description: "Full harness-lane slice-mvp-1 m-case-format profile over Postgres.",
   select: ({ loaded }) => loaded.tags.includes("slice-mvp-1") && loaded.lane !== "api-conformance",
 };
 
@@ -193,7 +193,7 @@ export const MARIADB_CURATED_PROFILE: MatrixProfile = {
   dialect: "mariadb",
   kind: "partial",
   description:
-    "Curated MariaDB M12 profile: every harness-lane slice case with goldenSql.mariadb plus marquee dialect/error cases.",
+    "Curated MariaDB m-case-format profile: every harness-lane slice case with goldenSql.mariadb plus marquee dialect/error cases.",
   select: ({ id, loaded }) =>
     (POSTGRES_FULL_PROFILE.select({ id, loaded }) && hasMariaDbGolden(loaded)) ||
     MARIADB_CURATED_ID_SET.has(id),
@@ -219,7 +219,7 @@ export const MATRIX_PROFILES: readonly MatrixProfile[] = [
  * over the full corpus, so without the cache a single test that resolves many ids
  * (e.g. the curated-profile coverage assertion, which touches 25) re-reads and
  * re-parses all ~200 case + model + fixture YAMLs *per id* — enough synchronous
- * I/O to blow the default 5s test timeout on a contended runner. The M12 corpus is
+ * I/O to blow the default 5s test timeout on a contended runner. The m-case-format corpus is
  * static within a run, so caching the loaded set is safe.
  */
 let cachedProfileCases: readonly MatrixProfileCase[] | undefined;

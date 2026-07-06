@@ -1,4 +1,4 @@
-"""Unit tests for the M13 benchmark harness logic, DB-free.
+"""Unit tests for the m-perf-bench benchmark harness logic, DB-free.
 
 The end-to-end benchmark run (provision, load a generated dataset, time workloads,
 emit report.json) executes against a real database via

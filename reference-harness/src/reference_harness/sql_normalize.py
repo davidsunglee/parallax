@@ -1,6 +1,6 @@
-"""sqlglot-based implementation of the M3 canonical SQL normalization rules.
+"""sqlglot-based implementation of the m-sql canonical SQL normalization rules.
 
-The normative rules (M3, ``core/spec/m-sql.md``):
+The normative rules (m-sql, ``core/spec/m-sql.md``):
 
 1. Table-alias scheme ``t0, t1, …``; columns always alias-qualified.
 2. Lowercase keywords and unquoted identifiers.
@@ -10,7 +10,7 @@ The normative rules (M3, ``core/spec/m-sql.md``):
    (``select … from … where … group by … having … order by … limit …``).
 
 The golden SQL stored in a case **must already be a fixed point**:
-``normalize(goldenSql) == goldenSql``. The M12 harness asserts this (layer 3),
+``normalize(goldenSql) == goldenSql``. The m-case-format harness asserts this (layer 3),
 so a contributor who hand-writes non-canonical golden SQL fails before any
 database is touched.
 
@@ -32,7 +32,7 @@ from sqlglot.expressions.core import Expr
 from sqlglot.tokenizer_core import Token, TokenType
 
 # Map a parallax dialect identifier to the sqlglot dialect that parses/renders
-# it. ``mariadb`` (Phase 10, the second dialect behind the M11 seam) has no
+# it. ``mariadb`` (Phase 10, the second dialect behind the m-dialect seam) has no
 # dedicated sqlglot dialect; MariaDB is MySQL-protocol-compatible and sqlglot's
 # ``mysql`` dialect parses + renders the SQL we need, so the MariaDB normalization
 # pass runs through ``mysql``. Any dialect not listed here is passed to sqlglot
@@ -79,13 +79,13 @@ _FUNCTION_NAME = "function-name"
 # SQL keywords that sqlglot tokenizes as ``VAR`` rather than a dedicated keyword
 # token. The row-locking suffix ``for SHARE OF t0`` is the case in point: sqlglot
 # tokenizes ``SHARE`` and ``OF`` as ``VAR`` and its generator emits them
-# uppercase, so they would otherwise slip past the keyword-lowercasing pass. M3
+# uppercase, so they would otherwise slip past the keyword-lowercasing pass. m-sql
 # rule 2 lowercases keywords, so these are lowercased even though they arrive as
 # value tokens. (Unquoted identifiers are already lowercased on the AST and
 # quoted ones tokenize as ``IDENTIFIER``, so lowercasing these VARs is safe.)
 _KEYWORD_VARS = frozenset({"SHARE", "OF"})
 
-# The identifier-quoting character per dialect (M3 rule 2 leaves quoted
+# The identifier-quoting character per dialect (m-sql rule 2 leaves quoted
 # identifiers intact). A quoted identifier — a reserved word or otherwise
 # non-simple column/table name — tokenizes as a single ``IDENTIFIER`` token whose
 # text has the quotes stripped; the renderer re-wraps it in the dialect's quote
@@ -118,7 +118,7 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
             text = f"{quote_char}{text}{quote_char}"
         # A VAR immediately followed by ``(`` is a function name (``lower(…)``),
         # not a table/column identifier. sqlglot renders function names in
-        # uppercase (``LOWER``); M3 rule 2 lowercases unquoted identifiers, so we
+        # uppercase (``LOWER``); m-sql rule 2 lowercases unquoted identifiers, so we
         # lowercase the function name and render it tight against its paren.
         is_function_name = (
             token.token_type is TokenType.VAR
@@ -126,7 +126,7 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
             and tokens[index + 1].token_type is TokenType.L_PAREN
         )
         # A lock-clause keyword sqlglot tokenized as VAR (``SHARE``/``OF``) must
-        # be lowercased like any other keyword (M3 rule 2), not preserved.
+        # be lowercased like any other keyword (m-sql rule 2), not preserved.
         is_keyword_var = token.token_type is TokenType.VAR and text.upper() in _KEYWORD_VARS
         if token.token_type not in _VALUE_TOKENS or is_function_name or is_keyword_var:
             text = text.lower()
@@ -148,7 +148,7 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
 
 
 class NonCanonicalError(ValueError):
-    """*sql* violates an M3 canonical rule the normalizer enforces structurally
+    """*sql* violates an m-sql canonical rule the normalizer enforces structurally
     rather than by re-rendering: the read alias scheme + column qualification
     (rule 1) and ``?`` bind placeholders for parameters (rule 4).
 
@@ -193,7 +193,7 @@ def _inline_parameter_literal(tree: Expr) -> Expr | None:
 
 
 def _assert_canonical(tree: Expr) -> None:
-    """Enforce the M3 canonical rules that re-rendering cannot. Parameters must
+    """Enforce the m-sql canonical rules that re-rendering cannot. Parameters must
     be ``?`` binds (rule 4) in every statement; and for *read* (``SELECT``)
     statements the alias scheme is ``t0, t1, …`` in first-appearance order with
     every column alias-qualified (rule 1). DML keeps its own canonical shape (an
@@ -201,7 +201,7 @@ def _assert_canonical(tree: Expr) -> None:
     literal = _inline_parameter_literal(tree)
     if literal is not None:
         raise NonCanonicalError(
-            f"inline literal where a ? bind is required (M3 rule 4): {literal.sql()!r}"
+            f"inline literal where a ? bind is required (m-sql rule 4): {literal.sql()!r}"
         )
     if isinstance(tree, exp.Select):
         # A row-lock suffix (`for share of t0`) references an existing alias and
@@ -216,16 +216,16 @@ def _assert_canonical(tree: Expr) -> None:
         if aliases != expected:
             raise NonCanonicalError(
                 f"read table aliases must be {expected} in first-appearance order "
-                f"(M3 rule 1), got {aliases}"
+                f"(m-sql rule 1), got {aliases}"
             )
         for column in tree.find_all(exp.Column):
             if not column.table:
                 raise NonCanonicalError(
-                    f"column {column.name!r} is not alias-qualified (M3 rule 1)"
+                    f"column {column.name!r} is not alias-qualified (m-sql rule 1)"
                 )
 
 
-# MariaDB's shared-row-lock suffix (M11). sqlglot's ``mysql`` dialect parses both
+# MariaDB's shared-row-lock suffix (m-dialect). sqlglot's ``mysql`` dialect parses both
 # ``lock in share mode`` and ``for share`` into the same ``exp.Lock(update=False)``
 # node and *renders* it as ``for share`` — losing MariaDB's spelling (MariaDB has
 # no ``for share``; MDEV-17514). So for MariaDB we strip sqlglot's lock from the
@@ -257,13 +257,13 @@ def _detach_read_lock(tree: Expr, dialect: str) -> str:
 
 
 def normalize(sql: str, dialect: str = "postgres") -> str:
-    """Normalize *sql* into the M3 canonical form for *dialect*.
+    """Normalize *sql* into the m-sql canonical form for *dialect*.
 
     Raises :class:`NonCanonicalError` for the structural rules re-rendering
     cannot express (rule 1 read aliases / column qualification; rule 4 bind
     placeholders); the textual rules (2, 3, 5) are produced by re-rendering.
 
-    A *dialect* the M11 seam knows but sqlglot does not (``mariadb`` → sqlglot
+    A *dialect* the m-dialect seam knows but sqlglot does not (``mariadb`` → sqlglot
     ``mysql``) is mapped through :func:`sqlglot_dialect`; the MariaDB shared-row
     lock suffix is rendered by the seam rather than sqlglot (see
     :func:`_detach_read_lock`).

@@ -1,4 +1,4 @@
-# notEq over a column containing NULLs — three-valued-logic exclusion (M2 §Null).
+# notEq over a column containing NULLs — three-valued-logic exclusion (m-op-algebra §Null).
 #
 # `notEq` against a NULL column yields NULL (not true), so the NULL row is
 # EXCLUDED, never returned. Order 4 has a NULL sku, so `sku <> 'B-200'` must drop

@@ -3,7 +3,7 @@
 # Pinning businessDate = now AND processingDate = now restricts Position to the
 # row that is true in the world NOW and known to the system NOW — the rectangle
 # current on both axes (thru_z = infinity AND out_z = infinity). Each axis injects
-# its current-row equality (M7), so the golden SQL carries TWO infinity binds.
+# its current-row equality (m-temporal-read), so the golden SQL carries TWO infinity binds.
 #
 # Over the id-1 history that is R3 (value 200): R1 is superseded on the processing
 # axis (out_z finite); R2 is the head, current on processing but its business

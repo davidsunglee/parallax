@@ -1,5 +1,5 @@
 /**
- * The six-condition in-claim / out-of-claim gate (M12 routing contract).
+ * The six-condition in-claim / out-of-claim gate (m-case-format routing contract).
  *
  * A case is **in claim** iff every condition holds (a conjunction):
  *   1. the command is claimed (`command ∈ commands`);

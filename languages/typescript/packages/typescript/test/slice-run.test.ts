@@ -6,7 +6,7 @@
  * One container serves every case (the provider resets the schema per case). For
  * each of the 111 harness-lane tagged cases the sweep runs the adapter's `runRun` (the same
  * orchestration the CLI drives) with the concrete composition-root provider
- * injected, and grades the observation the case SHAPE asserts, reusing the M12
+ * injected, and grades the observation the case SHAPE asserts, reusing the m-case-format
  * comparison rules (exact decimal, boolean never `== 1`, µs timestamps,
  * order-insensitive multisets):
  *
@@ -44,7 +44,7 @@ import {
 import type { BindValue, Envelope } from "@parallax/core";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
 import { PostgresProvider } from "../src/conformance/postgres-provider.js";
-import { casesForProfile, POSTGRES_FULL_PROFILE } from "./m12-profiles.js";
+import { casesForProfile, POSTGRES_FULL_PROFILE } from "./conformance-profiles.js";
 
 /**
  * The full `slice-mvp-1` tagged slice the HARNESS runs, in discovery order.
@@ -125,7 +125,7 @@ group.skipIf(!HAS_DOCKER)(
 /**
  * Grade an observation against the case's shape assertion, throwing on a mismatch.
  * The dispatch mirrors the per-shape run-lane graders (read / deep fetch / write
- * sequence / scenario / conflict), reusing the shared M12 comparison rules.
+ * sequence / scenario / conflict), reusing the shared m-case-format comparison rules.
  */
 function gradeObservation(envelope: Envelope, loaded: LoadedCase): void {
   if (envelope.status !== "ok" || envelope.command !== "run") {
@@ -164,7 +164,7 @@ function gradeObservation(envelope: Envelope, loaded: LoadedCase): void {
 
 /**
  * Deep-fetch child statements are generated at runtime from the gathered parent
- * keys, so the Postgres full M12 profile must pin the executed statement list
+ * keys, so the Postgres full m-case-format profile must pin the executed statement list
  * here. Docker-free compile tests only see the root statement.
  */
 function assertDeepFetchEmissions(envelope: Envelope, loaded: LoadedCase): void {

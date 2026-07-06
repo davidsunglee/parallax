@@ -1,5 +1,5 @@
 /**
- * `@parallax/db-postgres` — the shippable Postgres **adapter** (M11 decomposition,
+ * `@parallax/db-postgres` — the shippable Postgres **adapter** (m-db-port decomposition,
  * layer 3): a concrete `ParallaxDatabase` over the `postgres` (porsager) driver.
  *
  * This is the first thing a real application imports for Postgres connectivity.

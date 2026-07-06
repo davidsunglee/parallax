@@ -2,7 +2,7 @@
 
 For each available database provider (selected by ``PARALLAX_DATABASES``,
 default: all registered), one container is booted for the whole module and every
-case is run against it. This is the M12 runner exercising the suite end-to-end:
+case is run against it. This is the m-case-format runner exercising the suite end-to-end:
 schema conformance, triple equivalence, normalization determinism, and serde
 round-trip — against real Postgres.
 
@@ -36,7 +36,7 @@ DIALECTS = available_dialects()
 
 def _case_id(case) -> str:
     # Include the case's tags in the test id so module/feature selectors work,
-    # e.g. ``pytest -k m2`` runs every algebra case and ``pytest -k group`` runs
+    # e.g. ``pytest -k m-op-algebra`` runs every algebra case and ``pytest -k group`` runs
     # the group-precedence pair. Tags are sanitized to id-safe tokens.
     tags = "-".join(tag.replace(" ", "_") for tag in case.tags)
     return f"{case.path.stem}-{tags}" if tags else case.path.stem
@@ -55,7 +55,7 @@ def test_cases_discovered() -> None:
 
 def test_api_conformance_lane_cases_are_not_executed() -> None:
     # DB-free pin: the api-conformance lane is filtered out of the executed set (the
-    # M12 harness only schema-validates it), yet the cases DO exist in the corpus —
+    # m-case-format harness only schema-validates it), yet the cases DO exist in the corpus —
     # a regression that silently ran or dropped them fails here without Docker.
     executed = {c.path.name for c in CASES}
     skipped = {c.path.name for c in ALL_CASES if c.lane == "api-conformance"}

@@ -1,4 +1,4 @@
-# Lock-wait timeout (M11). Round 1: A locks gauge row 1 and holds (no commit).
+# Lock-wait timeout (m-db-error). Round 1: A locks gauge row 1 and holds (no commit).
 # Round 2: B tries to update row 1, blocks on A's lock, and -- with the session's
 # lowered lock-wait budget (lock_timeout / innodb_lock_wait_timeout) -- raises a
 # timeout. Neutral category lockWaitTimeout; native PG 55P03 / MariaDB 1205.

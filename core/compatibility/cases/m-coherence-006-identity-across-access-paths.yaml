@@ -1,5 +1,5 @@
-# Cross-process cache coherence — identity preserved across access paths (M14).
-# The cross-process lift of the M8 identity scenario m-process-cache-002 (find-by-PK and
+# Cross-process cache coherence — identity preserved across access paths (m-coherence).
+# The cross-process lift of the m-process-cache identity scenario m-process-cache-002 (find-by-PK and
 # find-by-owner denote the same logical object). Node B first surfaces the object
 # via a NON-primary-key predicate (owner = 'Linus'), node A commits an update, and
 # node B re-resolves via the primary key. `sameObjectAs: 0` asserts the two access

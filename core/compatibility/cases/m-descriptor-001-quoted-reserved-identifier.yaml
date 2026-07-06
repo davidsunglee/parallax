@@ -1,4 +1,4 @@
-# Reserved-word identifier quoting (M1 column mapping, M3 SQL, M11 dialect seam).
+# Reserved-word identifier quoting (m-descriptor column mapping, m-sql SQL, m-dialect dialect seam).
 #
 # The `ordinal` attribute maps to a column named `order` — a reserved word — so it
 # MUST be quoted everywhere it appears: in the projection AND the predicate. This

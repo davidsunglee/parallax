@@ -1,4 +1,4 @@
-# sum + groupBy + having — the canonical aggregate case (M2 sub-area).
+# sum + groupBy + having — the canonical aggregate case (m-agg sub-area).
 #
 # Group OrderItem rows by their owning order and sum the quantities, then keep
 # only the groups whose summed quantity exceeds 3. The group totals are:

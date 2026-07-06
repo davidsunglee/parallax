@@ -10,7 +10,7 @@
  *  1. **renames** each physical column to its DSL property name (`local_time` →
  *     `localTime`, `external_id` → `externalId`), driven entirely by the entity
  *     metamodel (`attr.column` → `attr.name`), and
- *  2. **coerces** each scalar to its managed carrier per the attribute's M0 type
+ *  2. **coerces** each scalar to its managed carrier per the attribute's m-core type
  *     (`int64` → `bigint`, `decimal` → `ParallaxDecimal`, `timestamp` →
  *     `Temporal.Instant`, `date` → `Temporal.PlainDate`, `time` →
  *     `Temporal.PlainTime`, `bytes` → `Uint8Array`, `uuid`/`string` → string,
@@ -35,7 +35,7 @@ import type { ParallaxRow } from "@parallax/db";
 import type { Dialect } from "@parallax/dialect";
 import type { EntityMetadata } from "@parallax/metamodel";
 
-/** Matches an M0 `decimal(p,s)` neutral type token. */
+/** Matches an m-core `decimal(p,s)` neutral type token. */
 const DECIMAL_TYPE = /^decimal\(\d+,\d+\)$/;
 
 /**
@@ -64,7 +64,7 @@ export function rowMaterializer(
 
 /**
  * Coerce one adapter-returned scalar to its managed carrier for the attribute's
- * M0 type, defensively: an already-managed value is passed through (or copied,
+ * m-core type, defensively: an already-managed value is passed through (or copied,
  * for `bytes`), a raw driver representation is parsed. `null` / `undefined` pass
  * through for every type (a nullable column stays null).
  */
@@ -98,7 +98,7 @@ function coerceScalar(value: unknown, type: string, dialect: Dialect): unknown {
     case "json":
       return coerceJson(value);
     default:
-      // An unknown M0 type is passed through untouched rather than guessed at.
+      // An unknown m-core type is passed through untouched rather than guessed at.
       return value;
   }
 }
@@ -209,7 +209,7 @@ function coerceTime(value: unknown, dialect: Dialect): unknown {
 /**
  * `timestamp` → `Temporal.Instant` (already one passes; the `infinity` sentinel
  * passes; a raw Postgres/ISO string is parsed via the dialect; a driver `Date` is
- * lifted through its ISO rendering). The dialect parser enforces the M0
+ * lifted through its ISO rendering). The dialect parser enforces the m-core
  * microsecond-precision rule.
  *
  * The already-managed `infinity` sentinel (the string `"infinity"`) is passed

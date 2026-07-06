@@ -1,6 +1,6 @@
 /**
  * `@parallax/dialect` unit tests (Docker-free, pure) — SQLSTATE → neutral-category
- * error classification (M11), the TypeScript peer of the reference harness
+ * error classification (m-db-error), the TypeScript peer of the reference harness
  * `errors.py`.
  *
  * The retriable set is `{deadlock}` — a true deadlock (`40P01`) OR a serialization
@@ -11,7 +11,7 @@
 import { classifyErrorCode, isRetriableCategory } from "@parallax/dialect";
 import { describe, expect, it } from "vitest";
 
-describe("classifyErrorCode (M11 SQLSTATE map, errors.py parity)", () => {
+describe("classifyErrorCode (m-db-error SQLSTATE map, errors.py parity)", () => {
   it("classifies the Postgres SQLSTATEs the reference model does", () => {
     expect(classifyErrorCode("23505")).toBe("uniqueViolation");
     expect(classifyErrorCode("40P01")).toBe("deadlock");

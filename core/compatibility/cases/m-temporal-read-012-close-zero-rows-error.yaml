@@ -1,8 +1,8 @@
-# Temporal close hits ZERO rows in LOCKING mode (M7 + M10): a zero-row close is an
+# Temporal close hits ZERO rows in LOCKING mode (m-temporal-read + m-opt-lock): a zero-row close is an
 # error in ANY mode — it MUST NOT silently succeed, even under the default pessimistic
 # strategy.
 #
-# In locking mode the close is UNGATED (the M8 shared read lock makes the write
+# In locking mode the close is UNGATED (the m-read-lock shared read lock makes the write
 # correct, so no `and in_z = ?` gate is emitted) — the locking-mode counterpart of
 # m-temporal-read-009's gated close. But correctness still requires the close to find the current
 # milestone: a concurrent writer TERMINATED id 2 (closed its current row at 2024-09-01,

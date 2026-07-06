@@ -5,7 +5,7 @@
  * (`RAW_TEXT_OIDS`, an adapter-local map now that OIDs are a driver concern, Q3-A)
  * to read as raw text, mapped to the neutral parser key — and delegates every parse
  * decision to `postgresDialect.parsers` (the pure dialect layer stays the single
- * source of parse logic; M11 decomposition). Registering a custom type per OID
+ * source of parse logic; m-dialect decomposition). Registering a custom type per OID
  * forces porsager to hand that column back as raw text so the dialect parser
  * materializes it into a **managed** scalar (`bigint` / `ParallaxDecimal` /
  * `Temporal.*` / `Uint8Array` / string) at the adapter boundary (§3.2.1), rather
@@ -17,7 +17,7 @@
 import { postgresDialect } from "@parallax/dialect";
 
 /**
- * The Postgres OIDs whose driver-default parse would violate an M0 contract, so the
+ * The Postgres OIDs whose driver-default parse would violate an m-core contract, so the
  * adapter registers a raw-text parser for each. An OID is a **driver / adapter**
  * concern — a real Postgres catalog type-number the wire protocol stamps on each
  * returned column (`numeric`→1700, `int8`→20, `timestamptz`→1184, …) — so the map

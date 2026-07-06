@@ -1,4 +1,4 @@
-# PK generation `max` (M1) — max respects an application-assigned id.
+# PK generation `max` (m-pk-gen) — max respects an application-assigned id.
 #
 # Seed an app-assigned high id (100), then allocate: max(id)+1 = 101. Proves `max`
 # is computed from the actual maximum regardless of how prior ids were assigned.

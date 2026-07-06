@@ -1,5 +1,5 @@
-# valueObject structured-column filter: nested field inequality (M1 valueObject,
-# M3).
+# valueObject structured-column filter: nested field inequality (m-value-object valueObject,
+# m-sql).
 #
 # In Postgres golden SQL, nestedNotEq(Customer.address.city, 'Oslo') lowers to a
 # negated extraction `not jsonb_extract_path_text(t0.address, ?) = ?` (the

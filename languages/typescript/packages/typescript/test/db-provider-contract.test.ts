@@ -1,5 +1,5 @@
 /**
- * Shared M12 provider contract suite for composition-root database providers.
+ * Shared m-case-format provider contract suite for composition-root database providers.
  *
  * Providers are selected through the same registry as the API Conformance Suite
  * (`PARALLAX_DATABASES`, default Postgres). The dedicated just lane selects both

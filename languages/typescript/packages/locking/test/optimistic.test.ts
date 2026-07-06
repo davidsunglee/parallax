@@ -1,5 +1,5 @@
 /**
- * `@parallax/locking` unit tests (Docker-free, pure) — the M10 versioned-UPDATE
+ * `@parallax/locking` unit tests (Docker-free, pure) — the m-opt-lock versioned-UPDATE
  * discipline and the `updatedRows != 1` conflict signal, in isolation.
  *
  * Pins the exact canonical versioned UPDATE forms — the OPTIMISTIC-mode gated

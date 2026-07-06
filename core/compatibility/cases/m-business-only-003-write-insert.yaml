@@ -1,4 +1,4 @@
-# Write sequence: business-temporal-only INSERT (milestone chaining, M7).
+# Write sequence: business-temporal-only INSERT (milestone chaining, m-business-only).
 #
 # A business-only insert opens a single milestone [businessInstant, infinity)
 # with no prior row to close — the business-axis counterpart of the audit-only

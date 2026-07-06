@@ -21,7 +21,7 @@ A language target is credible when it can show all of the following:
   counts, identity/cache expectations, and round-trip counts.
 - Dependency-boundary enforcement that respects the core module DAG.
 - A conformance report for every implemented case and dialect.
-- Benchmark reports when claiming M13 performance support.
+- Benchmark reports when claiming `m-perf-bench` performance support.
 
 Passing language-specific unit tests is not enough. The compatibility corpus is
 the primary behavioral surface.
@@ -70,7 +70,7 @@ collection behavior, dependency enforcement, or performance targets.
 - Prefer real compatibility cases over duplicated language-only behavioral
   tests. Use unit tests for internal seams, edge cases, and diagnostics.
 - Postgres is the first required dialect. Additional dialects are added behind
-  the M11 seam.
+  the database seam (`m-dialect` / `m-db-port`).
 - The reference harness's internals are non-normative and
   MUST NOT be used as design input for a language implementation; the binding
   inputs are the spec modules, `core/schemas/`, the compatibility corpus, and
@@ -86,8 +86,8 @@ Before implementation, produce a short plan in the language module that records:
   [core/spec/slices.md](core/spec/slices.md) — recorded as its
   `describe` claim. This is the first decision; see
   [Declaring The Conformance Slice](#declaring-the-conformance-slice).
-- The module/package map for M0, M1, M2, M3, M4, M5, M7, M8, M9, M10, M11, M12,
-  M13, cross-process coherence, and any non-numbered support packages.
+- The module → package map covering the catalog in
+  [core/spec/modules.md](core/spec/modules.md), plus any support packages.
 - The dependency-boundary enforcement tool and configuration.
 - The conformance adapter entry point.
 - The concrete provider reset lifecycle for database-backed cases, including the
@@ -140,19 +140,19 @@ starts.
 | Phase | Capability | First verification target |
 | --- | --- | --- |
 | 0 | Scaffold, package layout, dependency-boundary check, conformance CLI placeholder | Language tests run; illegal module imports fail the build |
-| 1 | M0 core conventions and M1 metamodel/descriptor serde | All descriptors in `core/compatibility/models/` parse and round-trip |
-| 2 | M2 operation model and operation serde | Operations in `0001`, `0002`, and `02xx` cases parse and round-trip |
-| 3 | M11 Postgres dialect seam and M3 basic SQL generation | `m-op-algebra-001-find-all.yaml`, `m-op-algebra-002-eq.yaml`, then all `02xx` predicate cases emit matching SQL and binds |
-| 4 | M4 relationships and M5 operation-backed list results | `0301` through `0313`, including deep-fetch round-trip counts and graphs |
-| 5 | M2 aggregation sub-area | `0401` through `0410` |
-| 6 | M8 transactions, unit of work, identity cache, query cache, read locks, batching | `0601` through `0604` |
-| 7 | M7 audit temporal reads and writes | `0501` through `0512` |
-| 8 | M9 lifecycle/detach and M10 optimistic locking | `0701` through `0704` |
-| 9 | M7 full two-axis and business-temporal behavior | `0801` through `0822` |
-| 10 | M1 inheritance and value objects | `0901` through `0923` |
-| 11 | M11 second dialect support | `1001` and `1002`, then every case with that dialect's `goldenSql` |
-| 12 | Cross-process coherence | `1101` and `1102` |
-| 13 | M13 benchmark methodology and reports | Every file in `core/compatibility/benchmarks/` |
+| 1 | `m-core` conventions and `m-descriptor` metamodel/serde | All descriptors in `core/compatibility/models/` parse and round-trip |
+| 2 | `m-op-algebra` operation model and operation serde | The `m-op-algebra-*` cases parse and round-trip |
+| 3 | `m-dialect` Postgres seam and `m-sql` basic SQL generation | `m-op-algebra-001-find-all.yaml`, `m-op-algebra-002-eq.yaml`, then the predicate cases emit matching SQL and binds |
+| 4 | `m-navigate` relationships and `m-op-list` operation-backed list results | The `m-navigate-*` and `m-deep-fetch-*` cases, including deep-fetch round-trip counts and graphs |
+| 5 | `m-agg` aggregation (deferred module) | The `m-agg-*` cases |
+| 6 | `m-unit-work` transactions, `m-read-lock`, `m-batch-write`, `m-auto-retry` (identity/query cache `m-process-cache` deferred) | The `m-unit-work-*`, `m-read-lock-*`, and `m-batch-write-*` cases |
+| 7 | `m-temporal-read` reads and `m-audit-write` audit temporal writes | The `m-temporal-read-*` and `m-audit-write-*` cases |
+| 8 | `m-detach` lifecycle and `m-opt-lock` optimistic locking | The `m-detach-*` and `m-opt-lock-*` cases |
+| 9 | `m-bitemp-write` two-axis writes (`m-business-only` deferred) | The `m-bitemp-write-*` cases |
+| 10 | `m-inheritance` and `m-value-object` | The `m-inheritance-*` and `m-value-object-*` cases |
+| 11 | `m-dialect` second dialect support | The MariaDB cases (e.g. `m-read-lock-009`, `m-core-004`), then every case with that dialect's `goldenSql` |
+| 12 | `m-coherence` cross-process coherence (deferred) | The `m-coherence-*` cases |
+| 13 | `m-perf-bench` benchmark methodology and reports | Every file in `core/compatibility/benchmarks/` |
 | Suite | API Conformance Suite + Usage Guide over the claimed slice (grows with the developer surface) | Coverage partition is green (exercised ∪ skipped == slice); the Usage Guide renders clean |
 
 The API Conformance Suite is not a trailing phase — it grows alongside the
@@ -216,7 +216,7 @@ walk upward before claiming a milestone.
    ```
 
 7. Claimed language implementation matrix for every supported dialect.
-8. Benchmark report when claiming M13.
+8. Benchmark report when claiming `m-perf-bench`.
 
 The root Python harness validates the core corpus. It does not prove a language
 implementation conforms unless that implementation is wired through its own
@@ -226,16 +226,16 @@ conformance adapter or test runner.
 
 Classify the failure before editing code:
 
-- **Serde failure:** the descriptor or operation cannot round-trip. Fix M1 or M2
-  before touching SQL generation.
-- **Compile failure:** emitted SQL or binds do not match `goldenSql`. Fix M3 or
-  the M11 dialect seam.
+- **Serde failure:** the descriptor or operation cannot round-trip. Fix
+  `m-descriptor` or `m-op-algebra` before touching SQL generation.
+- **Compile failure:** emitted SQL or binds do not match `goldenSql`. Fix `m-sql`
+  or the `m-dialect` seam.
 - **Result failure:** SQL matches but rows differ. Check fixture loading, type
   conversion, value normalization, and object materialization.
 - **Graph failure:** flat rows are correct but deep fetch assembly differs. Check
-  M4 relationship joins, parent-key gathering, and list identity behavior.
+  `m-navigate` relationship joins, parent-key gathering, and list identity behavior.
 - **Round-trip failure:** results are correct but statement counts differ. Check
-  M4/M5/M8 query planning and cache behavior.
+  `m-navigate` / `m-op-list` / `m-unit-work` query planning and cache behavior.
 - **Temporal failure:** check interval closure, infinity representation,
   defaulted as-of dimensions, and milestone write chaining.
 - **Scenario failure:** check transaction boundaries, identity cache, query
@@ -251,7 +251,7 @@ A language spec is ready for implementation when it answers these questions:
 
 - How does a developer author a model?
 - How is the canonical metamodel produced, introspected, and serialized?
-- How does each M0 neutral scalar map to generated property/read types,
+- How does each `m-core` neutral scalar map to generated property/read types,
   create/update input types, adapter bind types, and materialized result types?
 - How does a developer spell common operations, relationship navigation,
   grouping, aggregation, deep fetch, and temporal reads (`asOf`, range, history)?
@@ -269,10 +269,10 @@ A language spec is ready for implementation when it answers these questions:
   schema?
 - Which test runner provisions Postgres and runs compatibility cases?
 - Which dependency-boundary tool enforces the module DAG?
-- Which dialects and tiers are claimed?
+- Which dialects and slices are claimed?
 - What benchmark targets are claimed?
-- How does `parallax-conformance benchmark` emit the M13 report shape in the
-  adapter envelope, and is any `report.json` file only an artifact copy?
+- How does `parallax-conformance benchmark` emit the `m-perf-bench` report shape
+  in the adapter envelope, and is any `report.json` file only an artifact copy?
 - Does the API Conformance Suite exercise or reason-skip every case in the claimed
   slice, with the coverage partition asserted green (suite partition is green)?
 - Is the Usage Guide generated from the suite's source and drift-checked in CI so
