@@ -1,4 +1,4 @@
-# endsWith + wildcard escape — affix escaping (M2 §Wildcard/escape rule).
+# endsWith + wildcard escape — affix escaping (m-op-algebra §Wildcard/escape rule).
 #
 # The endsWith affix prepends a leading `%` to the escaped literal. `endsWith
 # '50%'` escapes the trailing literal `%` so it does NOT act as a wildcard:

@@ -3,11 +3,11 @@
  *
  * The MariaDB analogue of `@parallax/db-postgres`'s `RAW_TEXT_OIDS`: an adapter /
  * driver concern (the field type `mysql2` reports for each returned column, in its
- * `typeCast` callback) mapped to the M0 neutral key whose parser materializes the
+ * `typeCast` callback) mapped to the m-core neutral key whose parser materializes the
  * column into a **managed** scalar. The *parse logic* keyed by neutral type lives
  * on `mariadbDialect.parsers` (the pure dialect layer stays the single source of
- * parse logic — M11 decomposition); this map is only "which driver field types are
- * read as raw text, and which neutral parser they route to" (`m11:44-47`, Q3-A).
+ * parse logic — m-db-port decomposition); this map is only "which driver field types are
+ * read as raw text, and which neutral parser they route to" (`m-db-port`, Q3-A).
  *
  * MariaDB has no OIDs — `mysql2` exposes the MySQL/MariaDB protocol field type by
  * its **name** (`'LONGLONG'`, `'NEWDECIMAL'`, `'DATETIME'`, …) in the `typeCast`
@@ -15,7 +15,7 @@
  * *parse functions* on the dialect. A type absent from this map is left to
  * `mysql2`'s default cast (an `int32` / `float` arrives as a JS `number`, a
  * `varchar` / `char(36)` uuid as a plain string — already the correct managed /
- * wire form), so only the types whose driver-default parse would violate an M0
+ * wire form), so only the types whose driver-default parse would violate an m-core
  * contract are listed.
  */
 import type { DialectParsers } from "@parallax/dialect";

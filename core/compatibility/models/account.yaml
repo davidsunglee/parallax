@@ -1,7 +1,7 @@
-# Account: a plain non-temporal transactional entity for the M8 (transaction /
+# Account: a plain non-temporal transactional entity for the m-unit-work (transaction /
 # unit-of-work / identity + query cache) cases.
 #
-# This descriptor is an instance of core/schemas/metamodel.schema.json. M8 is
+# This descriptor is an instance of core/schemas/metamodel.schema.json. m-unit-work is
 # expressed in operations and object state, not temporal milestoning, so Account
 # is deliberately simple: a primary key plus an owner and a numeric balance. It is
 # the subject of:
@@ -11,8 +11,8 @@
 #   - the batched-write case     (a multi-row INSERT and a batched UPDATE).
 #
 # `version` is an optimistic-locking version column (used as a normal column here;
-# the optimistic-lock conflict contract is M10 / Phase 7). It is present so the M8
-# model already carries the column M10 will check, without changing M8 behavior.
+# the optimistic-lock conflict contract is m-opt-lock / Phase 7). It is present so the m-unit-work
+# model already carries the column m-opt-lock will check, without changing m-unit-work behavior.
 #
 # Row data lives in the sibling fixtures/account.yaml (used by the read cases and
 # the read-in-cache scenarios). The batched-write case loads those fixtures and

@@ -1,7 +1,7 @@
-# Boundary case (M8 abort contract / ADR 0008): the transaction callback's return
+# Boundary case (m-unit-work abort contract / ADR 0008): the transaction callback's return
 # value is WITHHELD on abort — `api-conformance` lane.
 #
-# Promoted into M8 normative text in phase 1 and closed here as the portable
+# Promoted into m-unit-work normative text in phase 1 and closed here as the portable
 # boundary observable: when the closure throws, the unit of work ABORTS — its
 # writes (buffered, force-flushed for a dependent read, or cached) are discarded —
 # and `px.transaction` REJECTS with the thrown error, returning NO value. This is

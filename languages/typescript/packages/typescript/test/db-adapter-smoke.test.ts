@@ -1,7 +1,7 @@
 /**
  * Shared real-database adapter smoke suite.
  *
- * This proves the shipped concrete adapters directly, before the M12 provider
+ * This proves the shipped concrete adapters directly, before the m-case-format provider
  * layer gets involved: connection-string construction, managed scalar reads,
  * transaction callback behavior, bytes writes, affected-row semantics, and
  * feasible transient classification.
@@ -248,7 +248,7 @@ async function provePostgresLockTimeout(
   _peer: ParallaxDatabase,
 ): Promise<void> {
   // Symmetric to `proveMariaDbLockTimeout`: two held `PostgresSession`s prove the
-  // M8 shared read lock has locking EFFECT. Session A holds a `for share` read on
+  // m-read-lock shared read lock has locking EFFECT. Session A holds a `for share` read on
   // row 1; session B's UPDATE of the same row blocks and — with the session's
   // lowered `lock_timeout` — raises `55P03`, surfaced as `lockWaitTimeout`. This is
   // the exact behavior the harness-lane `m-read-lock-006` case grades through `runRun`.

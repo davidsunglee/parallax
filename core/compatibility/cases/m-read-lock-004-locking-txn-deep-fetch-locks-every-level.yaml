@@ -1,4 +1,4 @@
-# Read-lock matrix (M8 / M11): a deep fetch inside a LOCKING unit of work emits the
+# Read-lock matrix (m-read-lock / m-dialect): a deep fetch inside a LOCKING unit of work emits the
 # shared row lock on EVERY level — root + each child — `api-conformance` lane.
 #
 # Every deep-fetch level is an ordinary in-transaction object find flowing through
@@ -11,7 +11,7 @@
 # `lane: api-conformance`: the lock is a concurrency property no single-connection
 # harness can observe, so the language's API Conformance Suite proves the runtime
 # deep-fetch read path locks every level (the developer `find(..., { includes })`
-# surface); the M12 harness schema-validates the case. The golden documents the
+# surface); the m-case-format harness schema-validates the case. The golden documents the
 # expected emitted SQL — the ordinary `m-deep-fetch-001` deep fetch with the lock appended to
 # each level.
 model: models/orders.yaml

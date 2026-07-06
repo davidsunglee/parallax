@@ -1,4 +1,4 @@
-"""Unit tests for the Phase 6 (M8) scenario machinery (no database).
+"""Unit tests for the Phase 6 (m-unit-work) scenario machinery (no database).
 
 These pin the DB-free invariants of a cache / identity scenario case: the
 per-step round-trip / golden-SQL count consistency (each step's declared
@@ -42,7 +42,7 @@ def test_scenario_cases_are_discovered_and_self_describe() -> None:
             assert ("find" in step) ^ ("write" in step)
             if "write" in step:
                 # A committed / rolled-back write lists golden DML; a NO-OP write
-                # (a versioned UPDATE that changes no attribute, M10) issues no DML,
+                # (a versioned UPDATE that changes no attribute, m-opt-lock) issues no DML,
                 # so it declares roundTrips 0 and lists none — like a cache hit.
                 if step["roundTrips"] == 0:
                     assert not step.get("goldenSql"), "a no-op write step lists no golden DML"
@@ -92,7 +92,7 @@ def test_no_op_write_scenario_step_is_discovered_and_self_describes() -> None:
     assert case is not None, "no no-op-write scenario case discovered (m-opt-lock-001)"
     no_op_steps = [s for s in case.scenario if "write" in s and s["roundTrips"] == 0]
     for step in no_op_steps:
-        # A NO-OP write (a versioned UPDATE that changes no attribute, M10) issues
+        # A NO-OP write (a versioned UPDATE that changes no attribute, m-opt-lock) issues
         # NO DML: it lists no golden SQL and costs zero round trips, mirroring a
         # cache-hit read step.
         assert not step.get("goldenSql"), "a no-op write step must list no golden DML"

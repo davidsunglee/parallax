@@ -6,7 +6,7 @@
  * `exists` / `notExists`, incl. multi-hop nested `EXISTS`). Those lowerings pin a
  * precise canonical `goldenSql.postgres` — the cross-dialect SQL contract — so
  * this lane asserts the emitted SQL + binds equal the golden BY TEXT,
- * complementing the Docker-gated Postgres full M12 profile
+ * complementing the Docker-gated Postgres full m-case-format profile
  * (`@parallax/typescript`'s `slice-run.test.ts`) which proves the SQL returns the
  * right rows. Without this, a canonical-form regression
  * (a wrong alias, a dropped clause, a reordered predicate) that still happens to

@@ -1,6 +1,6 @@
 /**
- * Build an executable **conflict plan** from a loaded case (M10 optimistic
- * locking + M12).
+ * Build an executable **conflict plan** from a loaded case (m-opt-lock optimistic
+ * locking + m-case-format).
  *
  * A `conflict` case proves the observable form of optimistic-lock conflict
  * detection: fixtures are loaded (the versioned row exists), an OPTIONAL
@@ -115,14 +115,14 @@ export function buildConflictPlan(loaded: LoadedCase, dialect: Dialect): Conflic
  * The generator that DERIVES a conflict attempt's `UPDATE` + binds, chosen by the
  * entity kind:
  *
- *  - a VERSIONED entity → the M10 versioned `UPDATE` derived from the attempt's
+ *  - a VERSIONED entity → the m-opt-lock versioned `UPDATE` derived from the attempt's
  *    neutral write input (① `write`) classified against the metamodel: the domain
  *    `set` columns are `columnOrder(entity)` filtered to the row's attributes, the
  *    version advances `observedVersion + 1`, and the gate is intrinsic (`and
  *    version = ?`, a conflict is always optimistic — R4). Binds:
  *    `[…set values…, newVersion, pk, observedVersion]`;
  *  - a processing-axis TEMPORAL (audit-only) entity, which carries no version column
- *    → the M7 milestone CLOSE (`@parallax/bitemporal` `auditWriteStatements`,
+ *    → the m-audit-write milestone CLOSE (`@parallax/bitemporal` `auditWriteStatements`,
  *    `"terminate"` yields the single close), GATED on the observed processing-from
  *    (`in_z`) in optimistic mode and ungated in locking mode (the mode the case's
  *    `uow` block declares). The close text is metamodel-derived (DQ-B Family B), and
@@ -304,9 +304,9 @@ function preconditionStatements(loaded: LoadedCase): readonly PreconditionStatem
 }
 
 /**
- * The single entity a conflict case targets: a VERSIONED entity (the M10 optimistic
+ * The single entity a conflict case targets: a VERSIONED entity (the m-opt-lock optimistic
  * gate on a version column) if one is declared, else a processing-axis TEMPORAL
- * (audit-only) entity (the M7 milestone close gated on the observed `in_z`,
+ * (audit-only) entity (the m-audit-write milestone close gated on the observed `in_z`,
  * `m-temporal-read-009`-`m-temporal-read-012`), else the first entity.
  */
 function conflictEntity(metamodel: Metamodel): EntityMetadata {

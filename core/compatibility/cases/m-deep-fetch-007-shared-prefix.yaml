@@ -1,4 +1,4 @@
-# Deep fetch, SHARED-PREFIX paths — the shared hop is fetched once (M4 dedup).
+# Deep fetch, SHARED-PREFIX paths — the shared hop is fetched once (m-deep-fetch dedup).
 #
 # m-deep-fetch-004 fetches two INDEPENDENT paths off the root; this is the spec's literal
 # shared-prefix example: `[Order.items]` and `[Order.items, OrderItem.statuses]`.

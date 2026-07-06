@@ -1,8 +1,8 @@
 /**
- * The M12 runner — orchestrates `compile` / `run` for the `read` shape.
+ * The m-conformance-adapter runner — orchestrates `compile` / `run` for the `read` shape.
  *
- * `compile` (Docker-free): resolve the case's operation against the M1 metamodel
- * reader, lower it with the M3 canonical-by-construction visitor, and assemble a
+ * `compile` (Docker-free): resolve the case's operation against the m-descriptor metamodel
+ * reader, lower it with the m-sql canonical-by-construction visitor, and assemble a
  * schema-valid `compile` envelope (emissions + binds + `roundTrips`). No database
  * is touched.
  *
@@ -14,8 +14,8 @@
  * The provider is **injected** through the port — the runner imports no driver.
  * It is the harness's SQL-assembly orchestrator, so it imports the concrete
  * dialect's pure *rules* (DDL / identifier quoting / read-lock application)
- * directly from `@parallax/dialect` (M12 -> M11), and the M1 reader through the
- * `M2 -> M1` facade re-exported by `@parallax/operation`.
+ * directly from `@parallax/dialect` (m-case-format -> m-dialect), and the m-descriptor reader through the
+ * `m-op-algebra -> m-descriptor` facade re-exported by `@parallax/operation`.
  */
 import type {
   AdapterIdentity,
@@ -101,7 +101,7 @@ const CONCURRENCY_NODES = ["A", "B"] as const;
 type ConcurrencyNode = (typeof CONCURRENCY_NODES)[number];
 
 /**
- * The `error`/concurrency case's barrier-separated rounds (`m-read-lock-006` + the M11
+ * The `error`/concurrency case's barrier-separated rounds (`m-read-lock-006` + the m-db-error
  * deadlock/lock-wait family). Each round names the `A` and/or `B` golden a held
  * non-autocommit session runs that round; a node absent from a round is idle.
  */
@@ -188,8 +188,8 @@ function concurrencyEmissions(loaded: LoadedCase, dialect: Dialect): Emission[] 
 
 /**
  * Select the concrete {@link Dialect} for a run key (the dialect id keying
- * `goldenSql`). The runner is the M12 orchestrator, so it consults the concrete
- * dialect's pure rules directly (M12 → M11). Both conforming dialects are
+ * `goldenSql`). The runner is the m-case-format orchestrator, so it consults the concrete
+ * dialect's pure rules directly (m-case-format → m-dialect). Both conforming dialects are
  * registered: Postgres (the claimed run dialect) and MariaDB (the second
  * implementer, driven Docker-free by the compile-golden lane).
  */
@@ -367,7 +367,7 @@ function compileOk(
 /**
  * Compile the single statement a compile emission carries: for a flat read it is
  * the whole operation; for a deep fetch it is the deep-fetch root statement (the
- * operand compiled with the deep-fetch root projection). Both reuse the M3
+ * operand compiled with the deep-fetch root projection). Both reuse the m-sql
  * `compile` visitor via a `MetamodelSchema`.
  */
 function compileRootStatement(
@@ -381,8 +381,8 @@ function compileRootStatement(
   const operation = parseOperation(loaded.raw.operation);
   const schema = schemaForReadCase(loaded, operation, dialect);
   // A `read-lock`-tagged case is a locking-mode object find: `compile()` applies the
-  // dialect's shared-row-lock in-line after every other clause (M8 automatic read-
-  // lock correctness; the dialect owns the append — M11), so the SQL is already
+  // dialect's shared-row-lock in-line after every other clause (m-read-lock automatic read-
+  // lock correctness; the dialect owns the append — m-dialect), so the SQL is already
   // locked with no post-compile step.
   const { sql, binds } = compile(operation, schema, dialect, { locking: isReadLock(loaded) });
   return { sql, binds: binds as readonly BindValue[] };
@@ -430,7 +430,7 @@ export async function runRun(
   }
 
   // A scenario case commits its write steps and executes its finds against the
-  // provisioned DB, reporting the observed rows + identity checks (M8 read-your-
+  // provisioned DB, reporting the observed rows + identity checks (m-unit-work read-your-
   // own-writes / cache / identity).
   if (isScenario(loaded)) {
     const { emissions, observations } = await runScenario(loaded, provider);
@@ -595,7 +595,7 @@ async function runWriteSequence(
 }
 
 /**
- * Execute a conflict case (M10): provision + load fixtures (the versioned row
+ * Execute a conflict case (m-opt-lock): provision + load fixtures (the versioned row
  * exists), apply the out-of-band `precondition` (a concurrent writer) VERBATIM,
  * then apply the versioned UPDATE(s) — one per attempt — and report the LAST
  * attempt's affected-row count as `affectedRows` plus the resulting `tableState`.
@@ -645,7 +645,7 @@ async function runConflict(
 }
 
 /**
- * Execute a scenario (M8): provision + load fixtures, then run each step in order.
+ * Execute a scenario (m-unit-work): provision + load fixtures, then run each step in order.
  * A WRITE step COMMITs its golden DML (a buffered write the unit of work flushes)
  * and captures no rows; a FIND step executes its golden `select` and captures the
  * observed rows (a cache-HIT step lists no golden and reuses a prior step's rows).
@@ -677,7 +677,7 @@ async function runScenario(
           sql,
           binds: stmtBinds as readonly WireBind[],
         });
-        // A `rollback: true` step applies the DML then ROLLS IT BACK (the M8 abort
+        // A `rollback: true` step applies the DML then ROLLS IT BACK (the m-unit-work abort
         // contract): the write lands in an atomic scope that is discarded, so a
         // later find MUST observe the ORIGINAL rows. A default write COMMITs.
         if (step.rollback === true) {
@@ -729,7 +729,7 @@ async function runScenario(
 }
 
 /**
- * Execute an error/concurrency case (`m-read-lock-006`, the M11 deadlock/lock-wait family):
+ * Execute an error/concurrency case (`m-read-lock-006`, the m-db-error deadlock/lock-wait family):
  * provision + load fixtures, open TWO held non-autocommit sessions (each on its
  * own independent connection with a lowered lock-wait budget via the provider's
  * `openSession` seam), then run the barrier-separated rounds. A round with a
@@ -868,7 +868,7 @@ function renderManagedRowToWire(row: ParallaxRow): Row {
  * INDEPENDENT held connections. A `kind: read` step fetches on its HELD session
  * (`session.query` — a `for share` SELECT both takes its shared lock and returns its
  * rows) and the observed rows are graded (rendered to wire, compared as an
- * order-insensitive multiset under the M12 type-aware rules); a `kind: write` step
+ * order-insensitive multiset under the m-case-format type-aware rules); a `kind: write` step
  * asserts only that it did not block/raise (`m-read-lock-008`'s admitted UPDATE).
  *
  * Success is exactly "NO node raised AND every `expectRows` matched": a buggy adapter

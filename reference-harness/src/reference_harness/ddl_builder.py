@@ -1,7 +1,7 @@
 """Derive ``CREATE TABLE`` DDL from a model descriptor (dialect-aware).
 
-The neutral-type -> column-type mapping is the M0 table; it lives behind the
-dialect (M11). Postgres is round-1; Phase 10 adds MariaDB as the second dialect
+The neutral-type -> column-type mapping is the m-core table; it lives behind the
+dialect (m-dialect). Postgres is round-1; Phase 10 adds MariaDB as the second dialect
 behind the same seam. The harness derives DDL from the descriptor so the database
 schema is never authored by hand — it is a function of the metamodel, exactly as
 an implementation's would be.
@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 from .case import Entity, Model
 
-# M0 neutral type -> Postgres column type.
+# m-core neutral type -> Postgres column type.
 _POSTGRES_BASE_TYPES = {
     "boolean": "boolean",
     "int32": "integer",
@@ -27,13 +27,13 @@ _POSTGRES_BASE_TYPES = {
     "time": "time",
     "timestamp": "timestamptz",
     "uuid": "uuid",
-    # The embedded-value `json` type maps to Postgres JSONB (M0/M1, Phase 9): a
+    # The embedded-value `json` type maps to Postgres JSONB (m-core/m-value-object, Phase 9): a
     # whole valueObject is stored in one structured column rather than
     # column-flattened.
     "json": "jsonb",
 }
 
-# M0 neutral type -> MariaDB column type (Phase 10, the second dialect). The
+# m-core neutral type -> MariaDB column type (Phase 10, the second dialect). The
 # divergences from Postgres that matter here:
 #   * `boolean`   -> MariaDB has no native boolean; `tinyint(1)` is the idiom
 #                    (and `TRUE`/`FALSE` are aliases for `1`/`0`).
@@ -41,7 +41,7 @@ _POSTGRES_BASE_TYPES = {
 #                    (2038) and auto-updates, so milestones use `DATETIME` with
 #                    microsecond precision. Crucially `DATETIME` has NO native
 #                    `'infinity'`, so the open temporal upper bound maps to a
-#                    documented MAX-SENTINEL at the provider seam (M11), not here.
+#                    documented MAX-SENTINEL owned by the dialect (m-dialect), not here.
 #   * `float64`   -> `double`; `bytes` -> `longblob`; `json` -> `json`
 #                    (MariaDB's `JSON` is an alias for `LONGTEXT`).
 #   * `uuid`      -> no native UUID type; stored as `char(36)`.
@@ -137,7 +137,7 @@ def quote_identifier(name: str, dialect: str) -> str:
     word (e.g. ``order``) or a name with uppercase / special characters is wrapped
     in the dialect's quote character — ``"..."`` on Postgres, backticks on MariaDB
     — with any embedded quote doubled. The hand-authored golden SQL quotes the
-    same identifiers; the M3 normalizer preserves that quoting.
+    same identifiers; the m-sql normalizer preserves that quoting.
     """
     if _SIMPLE_IDENTIFIER.match(name) and name not in _RESERVED_WORDS:
         return name
@@ -201,7 +201,7 @@ def _create_table(entity: Entity, dialect: str) -> str:
         if attribute.get("primaryKey", False):
             pk_columns.append(attribute["column"])
 
-    # A valueObject is stored in ONE dialect-mapped `json` column (M1/M0, Phase
+    # A valueObject is stored in ONE dialect-mapped `json` column (m-value-object/m-core, Phase
     # 9): the whole embedded composite, not column-flattened. Append its backing
     # column after the scalar attributes (so the Phase 1-8 cases are unaffected).
     for value_object in entity.value_objects:
@@ -215,7 +215,7 @@ def _create_table(entity: Entity, dialect: str) -> str:
     # declared primaryKey attribute(s) are NOT unique on their own — the unique
     # physical key is the business key PLUS each as-of dimension's `fromColumn`
     # (the milestone start). Extend the physical primary key accordingly so the
-    # DDL admits the milestone chain (M7).
+    # DDL admits the milestone chain (m-temporal-read).
     for as_of in entity.as_of_attributes:
         from_column = as_of["fromColumn"]
         if from_column not in pk_columns:
@@ -224,7 +224,7 @@ def _create_table(entity: Entity, dialect: str) -> str:
     # Emit a UNIQUE constraint for each declared unique index whose columns are
     # NOT exactly the primary key (the PK is already unique via `primary key
     # (...)` below). This lets a model witness a unique-INDEX violation distinct
-    # from a PK collision (M11 error classification). Existing models declare
+    # from a PK collision (m-db-error error classification). Existing models declare
     # only PK-backed unique indices, so this is a no-op for them. The guard
     # compares against the PHYSICAL primary key (declared PK + temporal fromColumns
     # appended above), so a temporal entity's full-milestone-key unique index is

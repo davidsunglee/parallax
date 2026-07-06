@@ -1,10 +1,10 @@
-# Table-per-hierarchy subtype query: find all CardPayments (M1 inheritance, M3).
+# Table-per-hierarchy subtype query: find all CardPayments (m-inheritance inheritance, m-sql).
 #
 # The whole Payment hierarchy lives in one `payment` table discriminated by
 # `kind`. Querying the CardPayment subtype injects a discriminator-equality
 # predicate `t0.kind = ?` (binds ['card']), so only the card rows (1, 2) match —
 # the cash row and the plain root-kind row are excluded. The operation is `all`
-# over the subtype; the discriminator is the M3-injected lowering, never written
+# over the subtype; the discriminator is the m-sql-injected lowering, never written
 # by the user.
 #
 # Non-trivial (discriminator) case => referenceSql is the independent oracle

@@ -2,7 +2,7 @@
 #
 # This file is a model descriptor — an instance of
 # core/schemas/metamodel.schema.json. It is intentionally pure metadata: no
-# fixture rows live here (the descriptor IS the serialized M1 metamodel, and the
+# fixture rows live here (the descriptor IS the serialized m-descriptor metamodel, and the
 # metamodel schema forbids extra top-level keys). Row data for a model lives in
 # the sibling core/compatibility/fixtures/<model-stem>.yaml file.
 #

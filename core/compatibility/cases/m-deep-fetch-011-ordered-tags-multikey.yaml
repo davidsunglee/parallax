@@ -1,4 +1,4 @@
-# Deep fetch, MULTI-KEY / MIXED-DIRECTION ordered to-many (M4). `Order.tags`
+# Deep fetch, MULTI-KEY / MIXED-DIRECTION ordered to-many (m-deep-fetch). `Order.tags`
 # declares `orderBy: [priority desc, label asc]`. Order 1's tags are inserted
 # [urgent(p2), gift(p2), fragile(p5)] (ascending id = insertion order), so the
 # child query MUST emit `order by t0.priority desc, t0.label asc` and the list

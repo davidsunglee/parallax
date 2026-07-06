@@ -1,4 +1,4 @@
-# Boundary case (M8): a PERSISTENT retriable failure surfaces after the bound is
+# Boundary case (m-auto-retry): a PERSISTENT retriable failure surfaces after the bound is
 # exhausted — `api-conformance` lane.
 #
 # The retry loop is BOUNDED: a failure that keeps recurring is not retried forever.

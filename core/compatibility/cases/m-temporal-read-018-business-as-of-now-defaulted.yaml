@@ -1,7 +1,7 @@
 # Business-temporal-only as-of NOW (defaulted): the current business milestone.
 #
 # Reservation has a single `business` as-of dimension. Omitting businessDate
-# defaults it to "as of now" (the M7 default-injection rule), so the
+# defaults it to "as of now" (the m-temporal-read default-injection rule), so the
 # implementation MUST inject the current-row predicate `thru_z = infinity` even
 # though the operation is a plain `all`. This is the business-axis counterpart of
 # the audit-only defaulted read (case m-temporal-read-001) — same injection rule, business axis.

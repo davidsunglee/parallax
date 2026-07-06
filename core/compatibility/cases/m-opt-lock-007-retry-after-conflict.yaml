@@ -1,4 +1,4 @@
-# Optimistic-lock RETRY after conflict (M10 retry contract).
+# Optimistic-lock RETRY after conflict (m-opt-lock retry contract).
 #
 # m-opt-lock-005 stops at the conflict signal (a stale UPDATE affects 0 rows). This proves
 # the retry closes the loop: after the conflict, a retry that re-reads the now-

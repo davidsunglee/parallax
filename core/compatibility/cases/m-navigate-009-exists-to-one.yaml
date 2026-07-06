@@ -1,4 +1,4 @@
-# exists over a TO-ONE relationship (M4 semi-join) — pure existence.
+# exists over a TO-ONE relationship (m-navigate semi-join) — pure existence.
 #
 # Every existing exists/notExists case traverses the to-many `Order.items`; this
 # pins the to-one form over `OrderStatus.orderItem` (a NULLABLE many-to-one). A

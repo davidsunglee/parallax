@@ -1,4 +1,4 @@
-# PK generation `sequence` (M1) — combined batchSize x incrementSize stride.
+# PK generation `sequence` (m-pk-gen) — combined batchSize x incrementSize stride.
 #
 # voucher_seq: init 100, inc 10, batch 2. ONE allocation reserves a block of 2 at
 # stride 10 -> next_val advances by 2*10=20 (100 -> 120), base 100; ids 100,110.

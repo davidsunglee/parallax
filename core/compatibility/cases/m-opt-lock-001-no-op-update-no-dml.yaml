@@ -1,4 +1,4 @@
-# No-op update issues no DML (M10): a versioned update that changes no attribute
+# No-op update issues no DML (m-opt-lock): a versioned update that changes no attribute
 # emits NO statement — zero round trips.
 #
 # The old always-write rule (removed with case 0707) had a versioned UPDATE bump

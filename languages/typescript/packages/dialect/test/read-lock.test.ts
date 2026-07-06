@@ -1,6 +1,6 @@
 /**
  * `@parallax/dialect` unit tests (Docker-free, pure) — in-transaction read-lock
- * **application** (M8 automatic read-lock correctness, owned by the M11 seam;
+ * **application** (m-read-lock automatic read-lock correctness, owned by the m-dialect seam;
  * delta `09` D2/D3, ADR 0030).
  *
  * The dialect owns the whole lock decision — whether, where, and how it attaches:
@@ -16,7 +16,7 @@
 import { applyReadLock } from "@parallax/dialect";
 import { describe, expect, it } from "vitest";
 
-describe("applyReadLock (M8 read-lock application, m-read-lock-001)", () => {
+describe("applyReadLock (m-read-lock read-lock application, m-read-lock-001)", () => {
   it("appends the Postgres shared-row-lock suffix to a locking object find", () => {
     const read = "select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?";
     expect(applyReadLock(read, { locking: true, projection: false })).toBe(

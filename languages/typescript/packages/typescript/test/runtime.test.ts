@@ -127,7 +127,7 @@ describe("EntityFinder bytes materialization (spec §3.2.1)", () => {
 });
 
 /**
- * A synthetic entity that (a) exercises EVERY M0 scalar family and (b) renames
+ * A synthetic entity that (a) exercises EVERY m-core scalar family and (b) renames
  * each physical column to a distinct DSL name, so the materializer's column → DSL
  * mapping and per-type managed coercion are both asserted in one place. Every
  * attribute's `column` differs from its `name` (snake_case → camelCase), so a

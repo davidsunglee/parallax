@@ -1,5 +1,5 @@
 /**
- * M7 milestone-chaining writes (audit-only) — the DML statement generation for the
+ * m-audit-write milestone-chaining writes (audit-only) — the DML statement generation for the
  * `insert` / `update` / `terminate` mutation surface (the MVP mutation surface;
  * the `*Until` rectangle-split trio is out of V1).
  *
@@ -18,7 +18,7 @@
  *
  * The close `UPDATE` is **keyed by the current-row predicate** (`pk and
  * out_z = infinity`), never a blind in-place set. This module owns only the SQL
- * **text** (canonical, `?`-placeholder): the caller (M12 runner) resolves the
+ * **text** (canonical, `?`-placeholder): the caller (m-case-format runner) resolves the
  * physical write target from the metamodel and threads the per-statement binds
  * (the authored milestone values) the case declares — the DML text is a pure
  * function of the entity's physical shape, not the bind values.
@@ -42,7 +42,7 @@ export interface WriteTarget {
    */
   readonly toColumn?: string;
   /**
-   * The processing axis's `fromColumn` (`in_z`) — the DERIVED optimistic key (M10):
+   * The processing axis's `fromColumn` (`in_z`) — the DERIVED optimistic key (m-opt-lock):
    * an OPTIMISTIC-mode close gates on the `in_z` the unit of work observed, since a
    * temporal entity carries no version column and the observed processing-from is
    * the version analogue. Present only for a gated (optimistic) close.
@@ -60,7 +60,7 @@ export type MutationKind = "insert" | "update" | "terminate";
 export interface AuditWriteOptions {
   /**
    * Emit the OPTIMISTIC-mode gated close (`… and <in_z> = ?`) rather than the plain
-   * close (M10). A gated close binds the observed processing-from as the version
+   * close (m-opt-lock). A gated close binds the observed processing-from as the version
    * analogue, so a concurrent writer that superseded the milestone matches 0 rows
    * (the conflict signal). Requires {@link WriteTarget.fromColumn}. Default `false`
    * (the plain close, used in locking mode — no drift with {@link closeStatement}).
@@ -74,7 +74,7 @@ export interface AuditWriteOptions {
  * update 2, terminate 1); the caller pairs each with the authored bind row.
  *
  * In OPTIMISTIC mode (`options.gated`) the close/terminate `UPDATE` gains the
- * `… and <in_z> = ?` optimistic gate on the observed processing-from (M10); the
+ * `… and <in_z> = ?` optimistic gate on the observed processing-from (m-opt-lock); the
  * plain close stays for locking mode (no drift).
  */
 export function auditWriteStatements(
@@ -121,7 +121,7 @@ function closeStatement(target: WriteTarget): WriteStatement {
 
 /**
  * `update <table> set out_z = ? where <pk> = ? and out_z = ? and <in_z> = ?` — the
- * OPTIMISTIC-mode gated close (M10). Like {@link closeStatement} but with the
+ * OPTIMISTIC-mode gated close (m-opt-lock). Like {@link closeStatement} but with the
  * `… and <in_z> = ?` gate on the observed processing-from (the version analogue for
  * a temporal entity, which carries no version column). The gate shape mirrors
  * `@parallax/locking`'s `versionedUpdate` `… and <version> = ?`: a concurrent writer

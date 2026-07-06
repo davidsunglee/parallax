@@ -96,7 +96,7 @@ def test_coherence_has_a_write_step(case: Case) -> None:
 def test_coherence_golden_is_canonical_per_dialect(case: Case) -> None:
     for dialect in ("postgres", "mariadb"):
         if _coherence_has_golden(case, dialect):
-            # Each step's golden SQL is a fixed point of M3 normalization.
+            # Each step's golden SQL is a fixed point of m-sql normalization.
             _assert_coherence_normalization(case, dialect)
 
 

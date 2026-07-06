@@ -1,4 +1,4 @@
-# Table-per-hierarchy family query: find every Payment that is card OR cash (M1, M3).
+# Table-per-hierarchy family query: find every Payment that is card OR cash (m-inheritance, m-sql).
 #
 # A query across a FAMILY of subtypes injects a discriminator `in (…)` predicate
 # (`t0.kind in (?, ?)`, binds ['card','cash']). It matches the two card rows and

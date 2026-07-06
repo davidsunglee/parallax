@@ -1,7 +1,7 @@
-# Optimistic-lock conflict on DETACHED merge-back (M9 x M10 composition).
+# Optimistic-lock conflict on DETACHED merge-back (m-detach x m-opt-lock composition).
 #
-# M10 says optimistic locking "composes with detached merge-back … exactly the
-# same `updatedRows != 1` rule," and M9 says the conflict-on-merge-back is M10's
+# m-opt-lock says optimistic locking "composes with detached merge-back … exactly the
+# same `updatedRows != 1` rule," and m-detach says the conflict-on-merge-back is m-opt-lock's
 # subject — but no case crosses the two. m-opt-lock-005 is a plain in-transaction read-then-
 # write conflict; m-detach-002 is a merge-back with NO concurrent writer. This pins the
 # composition: the version the merge-back gates on is the one SNAPSHOTTED AT

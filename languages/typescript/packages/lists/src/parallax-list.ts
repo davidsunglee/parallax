@@ -1,5 +1,5 @@
 /**
- * M5 `ParallaxList<T>` — the lazy, async, operation-backed list.
+ * m-op-list `ParallaxList<T>` — the lazy, async, operation-backed list.
  *
  * A `ParallaxList` wraps a backing operation (a resolver that runs the query)
  * and is **lazy**: nothing executes until a first async access (`toArray`, a

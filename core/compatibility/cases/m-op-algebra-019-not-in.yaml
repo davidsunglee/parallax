@@ -1,4 +1,4 @@
-# notIn(values) — negated set membership. The M3 canonical form renders the
+# notIn(values) — negated set membership. The m-sql canonical form renders the
 # negation as `not t0.id in (...)` (the normalizer's fixed point); the naive
 # referenceSql uses the familiar `not in` to cross-check.
 model: models/orders.yaml

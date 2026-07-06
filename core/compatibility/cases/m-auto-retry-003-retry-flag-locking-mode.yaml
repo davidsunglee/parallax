@@ -1,4 +1,4 @@
-# Boundary case (M8/M10): `retryOptimisticConflicts` has NO effect in LOCKING mode —
+# Boundary case (m-auto-retry/m-opt-lock): `retryOptimisticConflicts` has NO effect in LOCKING mode —
 # there is no gate to conflict on — `api-conformance` lane.
 #
 # The conflict-retry opt-in only matters where a version gate can conflict — i.e.

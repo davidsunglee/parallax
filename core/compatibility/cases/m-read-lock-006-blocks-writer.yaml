@@ -1,5 +1,5 @@
-# Behavioral counterpart to m-read-lock-001/m-read-lock-002 (M8/M11). Round 1: transaction A issues the
-# M8 in-transaction shared read lock (`for share of t0` / `lock in share mode`) on
+# Behavioral counterpart to m-read-lock-001/m-read-lock-002 (m-read-lock/m-dialect). Round 1: transaction A issues the
+# m-read-lock in-transaction shared read lock (`for share of t0` / `lock in share mode`) on
 # account 2 and HOLDS (no commit). Round 2: transaction B attempts to UPDATE account
 # 2 and, with the session's lowered lock-wait budget (lock_timeout /
 # innodb_lock_wait_timeout), blocks on A's shared lock and raises lockWaitTimeout.

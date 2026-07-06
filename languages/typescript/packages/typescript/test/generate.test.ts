@@ -97,7 +97,7 @@ const CONSUMER_SOURCE = [
   "const px = parallax({ database: db, dialect: postgresDialect });",
   "px.orders.find(); // no-arg shorthand — MUST typecheck (MAJOR-2)",
   "px.orders.find(Order.all()); // explicit form still typechecks",
-  "// the typed transaction MUST accept + forward TransactionOptions (M8 strategy).",
+  "// the typed transaction MUST accept + forward TransactionOptions (m-unit-work strategy).",
   'void px.transaction(async (tx) => tx.orders.find().toArray(), { concurrency: "optimistic" });',
   "void px.transaction(async (tx) => tx.orders.find().toArray()); // options are optional",
   "",

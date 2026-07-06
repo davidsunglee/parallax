@@ -3,8 +3,8 @@
  *
  * This is the **entity-agnostic runtime** the generated entity symbols hang off
  * (`codegen/`): an `AttributeExpression` knows only its qualified metamodel ref
- * (`"Order.id"`) and produces canonical M2 {@link Operation} data — the identical
- * wire form the M3 compiler already consumes, so the DSL and the conformance
+ * (`"Order.id"`) and produces canonical m-op-algebra {@link Operation} data — the identical
+ * wire form the m-sql compiler already consumes, so the DSL and the conformance
  * adapter share one canonical form (design Q1 Option B, Q3 discriminated-union).
  *
  * Nothing here reaches into a database or the compiler: an expression is a pure
@@ -32,7 +32,7 @@ export interface StringPredicateOptions {
 /**
  * A predicate expression — a thin, immutable wrapper over one canonical
  * {@link Operation} node, exposing the boolean combinators (`and` / `or` / `not`
- * / `group`) that serialize to the M2 boolean junctions. Boolean chaining is
+ * / `group`) that serialize to the m-op-algebra boolean junctions. Boolean chaining is
  * left-associative; explicit precedence is postfix `.group()` (spec §2.5).
  */
 export class Predicate {
@@ -99,7 +99,7 @@ export class OrderKeyExpression {
 
 /**
  * A typed attribute reference (`Order.id`). Every predicate method serializes to
- * the matching single-key M2 node with `attr` set to this ref; the value is
+ * the matching single-key m-op-algebra node with `attr` set to this ref; the value is
  * carried as a bind by the compiler, so the literal passes straight through
  * (`m-op-algebra-002`: `Order.id.eq(42)` → `{ eq: { attr: "Order.id", value: 42 } }`).
  */

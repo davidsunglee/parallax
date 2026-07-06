@@ -1,5 +1,5 @@
 /**
- * `@parallax/db` — the abstract runtime **database port** (M11 decomposition,
+ * `@parallax/db` — the abstract runtime **database port** (m-db-port decomposition,
  * core spec `m-db-port.md`, layer 2).
  *
  * This is the execution interface every layer above the seam calls to run
@@ -22,7 +22,7 @@
  *
  * Extracted cleanly out of the `@parallax/typescript` runtime at this point (no
  * back-compat re-export — there were no external consumers of the inline
- * definition). The method is named `execute` for parity with the core M11
+ * definition). The method is named `execute` for parity with the core m-db-port
  * contract; `ParallaxClock` stays in `@parallax/typescript` because it is a
  * runtime strategy, not a database concern.
  */

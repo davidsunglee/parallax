@@ -1,15 +1,15 @@
 /**
- * Adapter-boundary row comparison rules (M12, the case's row comparison rules).
+ * Adapter-boundary row comparison rules (m-conformance-adapter, the case's row comparison rules).
  *
  * A `run` envelope reports observed `rows` in the **neutral wire form** (§3.2.1):
  * an `int64` arrives as its canonical base-10 string (`"42"`), an exact
  * `decimal(p,s)` as its scale-aware string (`"20.00"`), a `boolean` as a JS
  * boolean, a `timestamp` as its microsecond UTC string. A case's `expectedRows`
  * are authored values parsed by the same serde (numbers / strings / booleans).
- * Comparing them faithfully needs the M12 rules, NOT JS `==`:
+ * Comparing them faithfully needs the m-case-format rules, NOT JS `==`:
  *
  *  - **Type-aware scalar equality (carry-forward b).** When the projected column's
- *    M0 neutral type is known, it decides the grading axis: a **numeric** column
+ *    m-core neutral type is known, it decides the grading axis: a **numeric** column
  *    (`int64` / `int32` / `float*` / `decimal(p,s)`) reconciles both sides in
  *    decimal space (so `"20.00"` == `20` and two numeric wire strings `"20.0"` /
  *    `"20.00"` compare in decimal, never as text), while a **textual** column
@@ -38,7 +38,7 @@ import { ParallaxDecimal } from "@parallax/core";
 type Row = Record<string, unknown>;
 
 /**
- * A projected `column -> M0 neutral type` map (e.g. `{ id: "int64", name:
+ * A projected `column -> m-core neutral type` map (e.g. `{ id: "int64", name:
  * "string", price: "decimal(18,2)" }`). Supplied by the caller from the metamodel
  * so a column is graded by its declared type; a column absent from the map (or an
  * omitted map) falls back to the genuine-numeric discriminator.
@@ -54,9 +54,9 @@ export interface RowSetComparison {
 }
 
 /**
- * Compare two row sets as **order-insensitive multisets** under the M12 scalar
+ * Compare two row sets as **order-insensitive multisets** under the m-case-format scalar
  * rules. Rows match when they have the same column keys and every column's
- * values are scalar-equal (graded by the column's M0 type when supplied); the
+ * values are scalar-equal (graded by the column's m-core type when supplied); the
  * sets match when each observed row pairs with a distinct expected row (greedy
  * one-to-one matching, correct for the small, duplicate-light corpus row sets).
  */
@@ -101,9 +101,9 @@ function rowsEqual(left: Row, right: Row, columnTypes: ColumnTypes): boolean {
 }
 
 /**
- * Scalar equality under the M12 rules, reconciling the wire form of an observed
+ * Scalar equality under the m-case-format rules, reconciling the wire form of an observed
  * value with the authored form of an expected value. The optional `columnType`
- * is the projected column's M0 neutral type; it selects the grading axis:
+ * is the projected column's m-core neutral type; it selects the grading axis:
  *
  *  - `null` matches only `null`.
  *  - booleans compare only to booleans (never `== 1`).
@@ -138,7 +138,7 @@ export function scalarsEqual(observed: unknown, expected: unknown, columnType?: 
     return observed === expected;
   }
 
-  // Type-aware grading (carry-forward b), when the column's M0 type is known.
+  // Type-aware grading (carry-forward b), when the column's m-core type is known.
   if (columnType !== undefined) {
     if (isNumericType(columnType)) {
       const obsNumeric = asDecimal(observed);
@@ -174,7 +174,7 @@ export function scalarsEqual(observed: unknown, expected: unknown, columnType?: 
 }
 
 /**
- * Element-wise scalar equality over two ordered bind lists, under the same M12
+ * Element-wise scalar equality over two ordered bind lists, under the same m-case-format
  * scalar rules ({@link scalarsEqual}, no column type — the genuine-numeric
  * discriminator reconciles a decimal money value across representations). The
  * write-sequence / conflict compile lanes use it to cross-check the binds a
@@ -193,10 +193,10 @@ export function bindsEqual(left: readonly unknown[], right: readonly unknown[]):
 export type TableState = Readonly<Record<string, readonly Row[]>>;
 
 /**
- * Compare an observed table state against `expectedTableState` (M7 write
+ * Compare an observed table state against `expectedTableState` (m-temporal-read write
  * sequences). Each named table's rows are compared as an order-insensitive
- * multiset under the M12 scalar rules (exact decimal, µs timestamps, native
- * `infinity` read back as the `"infinity"` string), graded by each column's M0
+ * multiset under the m-case-format scalar rules (exact decimal, µs timestamps, native
+ * `infinity` read back as the `"infinity"` string), graded by each column's m-core
  * type. The tables must match on the set the expected state names.
  */
 export function compareTableState(
@@ -220,7 +220,7 @@ export function compareTableState(
 export type Graph = Readonly<Record<string, readonly Row[]>>;
 
 /**
- * Resolve the M0 type of a (possibly-nested) output column by physical column
+ * Resolve the m-core type of a (possibly-nested) output column by physical column
  * name across every projected entity. Deep-fetch child columns (`order_id`,
  * `code`, …) live on their own entities, so the caller supplies one flat map
  * merged across the root + every fetched entity (physical column names are
@@ -305,7 +305,7 @@ function nodesEqual(left: Row, right: Row, columnTypes: ColumnTypes): boolean {
 /**
  * Compare one node value. A relationship-valued key is an array (to-many) or an
  * object / `null` (to-one), and recurses under the graph rules; a scalar grades
- * by the scalar rules (with the column's M0 type when known).
+ * by the scalar rules (with the column's m-core type when known).
  */
 function nodeValuesEqual(
   left: unknown,
@@ -336,7 +336,7 @@ function isPlainObject(value: unknown): value is Row {
 // --- scalar helpers ---------------------------------------------------------
 
 /**
- * True when an M0 neutral type is numeric (graded in decimal space): the integer
+ * True when an m-core neutral type is numeric (graded in decimal space): the integer
  * families, the float families, and any `decimal(p,s)`. Everything else (string,
  * uuid, boolean, date, time, timestamp, bytes) is textual / its own type.
  */

@@ -1,15 +1,15 @@
 """Testcontainers-backed MariaDB provider (dialect = "mariadb").
 
-The **second** concrete dialect behind the M11 database-provider seam (Phase 10),
+The **second** concrete dialect behind the m-db-port database-provider seam (Phase 10),
 proving "equivalent SQL per database, optimized per dialect" beyond Postgres.
 MariaDB is fully open-source and exercises exactly the seam points Postgres does
 not:
 
 * **Read-lock divergence.** MariaDB has no ``for share``; the shared row lock is
   ``lock in share mode`` (MDEV-17514). The golden SQL carries that form per
-  dialect; the M3 normalizer renders it through the seam.
+  dialect; the m-sql normalizer renders it through the seam.
 * **No native timestamp infinity.** MariaDB's ``DATETIME`` has no ``'infinity'``,
-  so the open temporal upper bound (M0/M11) maps to a documented **max-sentinel**
+  so the open temporal upper bound (m-core/m-dialect) maps to a documented **max-sentinel**
   — ``9999-12-31 23:59:59.999999`` (the largest ``DATETIME(6)``). This provider
   translates the suite's ``infinity`` literal to that sentinel on the way in
   (fixture loads, binds) and back to ``"infinity"`` on the way out (reads), so a
@@ -40,10 +40,10 @@ from . import register
 if TYPE_CHECKING:
     from . import Node
 
-# Pinned at a current stable MariaDB major (M12/DQ15). Refresh on new majors.
+# Pinned at a current stable MariaDB major (m-case-format/DQ15). Refresh on new majors.
 MARIADB_IMAGE = "mariadb:11.4"
 
-# MariaDB has no native timestamp infinity; the open upper bound (M0/M11) is the
+# MariaDB has no native timestamp infinity; the open upper bound (m-core/m-dialect) is the
 # largest representable DATETIME(6). This is the documented max-sentinel the seam
 # substitutes for the suite's `infinity` literal.
 _INFINITY_SENTINEL = _dt.datetime(9999, 12, 31, 23, 59, 59, 999999)
@@ -53,7 +53,7 @@ _INFINITY_LITERAL = "infinity"
 def _to_db_bind(value: Any) -> Any:
     """Adapt a fixture / bind value for MariaDB binding.
 
-    * the suite's ``infinity`` literal -> the max-sentinel ``DATETIME`` (M11);
+    * the suite's ``infinity`` literal -> the max-sentinel ``DATETIME`` (m-dialect);
     * an ISO-8601 instant string -> a naive UTC ``datetime`` (MariaDB ``DATETIME``
       is timezone-naive; every instant in the suite is UTC, so we drop the offset
       after normalizing to UTC);
@@ -94,7 +94,7 @@ def _parse_iso_instant(text: str) -> _dt.datetime | None:
 def _from_db_value(value: Any) -> Any:
     """Adapt a MariaDB-read value back to the suite's canonical form.
 
-    * the max-sentinel ``DATETIME`` -> the literal ``"infinity"`` (M11), so a
+    * the max-sentinel ``DATETIME`` -> the literal ``"infinity"`` (m-dialect), so a
       current-row open bound compares to the fixture's ``infinity``;
     * a finite ``datetime`` -> a stable ISO-8601 UTC string with ``+00:00`` (the
       same shape the Postgres provider yields), so instant columns compare across
@@ -169,7 +169,7 @@ class MariaDbProvider:
         self._conn.commit()
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
-        # The harness stores golden SQL with `?` placeholders (M3); pymysql uses
+        # The harness stores golden SQL with `?` placeholders (m-sql); pymysql uses
         # `%s`. Translate positional placeholders for execution, and translate the
         # `infinity` literal / ISO instants in the binds to MariaDB forms.
         with self._conn.cursor() as cur:
@@ -205,7 +205,7 @@ class MariaDbProvider:
         return None
 
     def classify_error(self, exc: Exception) -> str:
-        """Map a raised pymysql error to a neutral M11 category (see errors.py)."""
+        """Map a raised pymysql error to a neutral m-db-error category (see errors.py)."""
         return errors.classify(self.dialect, self.native_error_code(exc))
 
     @contextmanager

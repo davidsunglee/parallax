@@ -1,4 +1,4 @@
-# Optimistic BITEMPORAL inactivation, FRESH observed in_z (M7 + M10): the rectangle-
+# Optimistic BITEMPORAL inactivation, FRESH observed in_z (m-bitemp-write + m-opt-lock): the rectangle-
 # split inactivation gates on the observed processing-from and inactivates EXACTLY the
 # one observed current row.
 #

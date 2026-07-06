@@ -1,5 +1,5 @@
 /**
- * `@parallax/transactions` unit tests (Docker-free, pure) — the M8 set-based
+ * `@parallax/transactions` unit tests (Docker-free, pure) — the m-unit-work set-based
  * batched-flush SQL discipline, in isolation from the metamodel and a database.
  *
  * Pins the exact canonical DML each batched form emits — the `m-batch-write-001` / `m-batch-write-002`
@@ -16,7 +16,7 @@
  * The batched subject is the NON-VERSIONED `Wallet` (`id`/`owner`/`balance`),
  * matching the corpus: the readless batched forms are honest only for a
  * non-versioned entity — a versioned entity's set-based update MUST materialize
- * into per-object version-advancing updates (M10 / ADR 0031), so the batched
+ * into per-object version-advancing updates (m-opt-lock / ADR 0031), so the batched
  * forms cannot apply to it.
  */
 import {

@@ -1,4 +1,4 @@
-# PK generation `sequence` (M1) — non-unit initialValue + incrementSize.
+# PK generation `sequence` (m-pk-gen) — non-unit initialValue + incrementSize.
 #
 # ticket_seq: init 1000, inc 5, batch 1. One allocation advances by 1*5=5
 # (1000 -> 1005); id 1000.

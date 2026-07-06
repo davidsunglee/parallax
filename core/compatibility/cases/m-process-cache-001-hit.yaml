@@ -1,4 +1,4 @@
-# Cache-hit scenario (M8): two identical finds cost ONE round trip.
+# Cache-hit scenario (m-process-cache): two identical finds cost ONE round trip.
 #
 # The query cache maps an operation to its result. The first find (an `eq` on the
 # primary key) is a cache MISS and executes one statement against the database;

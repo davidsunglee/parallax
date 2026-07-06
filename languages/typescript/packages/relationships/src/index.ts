@@ -1,5 +1,5 @@
 /**
- * `@parallax/relationships` — M4 relationships & deep fetch.
+ * `@parallax/relationships` — relationships and deep fetch (`m-navigate`, `m-deep-fetch`).
  *
  * The correlated-EXISTS navigation semi-join lowers in `@parallax/sql` (the
  * compiler owns SQL text); this package owns the **deep-fetch orchestration** —

@@ -1,4 +1,4 @@
-# Optimistic temporal close, STALE observed in_z (M7 + M10): the close affects ZERO
+# Optimistic temporal close, STALE observed in_z (m-temporal-read + m-opt-lock): the close affects ZERO
 # rows even though a CURRENT row exists — the lost-update the in_z gate exists to catch.
 #
 # This is why the current-row predicate (out_z = infinity) ALONE is not a gate. A

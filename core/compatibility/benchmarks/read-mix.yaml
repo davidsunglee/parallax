@@ -1,6 +1,6 @@
-# Benchmark fixture (M13): the read operation-mix workload.
+# Benchmark fixture (m-perf-bench): the read operation-mix workload.
 #
-# Exercises the M2/M3 predicate path and the query-cache hit/miss distinction at a
+# Exercises the m-op-algebra/m-sql predicate path and the query-cache hit/miss distinction at a
 # meaningful scale. Unlike a correctness case (a handful of rows so expectedRows is
 # eyeball-verifiable), a benchmark loads a GENERATED dataset — here 1,000 accounts
 # produced by the harness's deterministic generator — so a measured number means
@@ -31,7 +31,7 @@ workloads:
       mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
     binds: [500]
   - name: range-read
-    note: a bounded range scan over the balance column (M2 range predicates)
+    note: a bounded range scan over the balance column (m-op-algebra range predicates)
     iterations: 100
     expectRoundTrips: 1
     goldenSql:
@@ -39,7 +39,7 @@ workloads:
       mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.balance between ? and ?
     binds: [10000.00, 20000.00]
   - name: aggregate-group-by
-    note: a group-by / aggregate workload (the M2 aggregate path) over the dataset
+    note: a group-by / aggregate workload (the m-agg aggregate path) over the dataset
     iterations: 100
     expectRoundTrips: 1
     goldenSql:

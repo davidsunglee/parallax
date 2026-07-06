@@ -1,7 +1,7 @@
-# Read-your-own-writes scenario (M8): a dependent find observes a not-yet-read
+# Read-your-own-writes scenario (m-unit-work): a dependent find observes a not-yet-read
 # buffered write after the unit of work flushes.
 #
-# M8 requires that a read which depends on a pending write observes that write —
+# m-unit-work requires that a read which depends on a pending write observes that write —
 # the unit of work flushes buffered writes before serving a dependent read. The
 # scenario buffers an INSERT, then issues a find that depends on it:
 #   step 0 write : COMMIT an INSERT of a brand-new account 7 (Newton, 5.00)

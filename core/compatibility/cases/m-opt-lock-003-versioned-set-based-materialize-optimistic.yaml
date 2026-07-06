@@ -1,4 +1,4 @@
-# Versioned SET-BASED update materializes, optimistic mode (M10 materialize, ADR 0032).
+# Versioned SET-BASED update materializes, optimistic mode (m-opt-lock materialize, ADR 0032).
 #
 # The optimistic-mode companion to m-opt-lock-004. A set-based update targeting a VERSIONED
 # entity has no set-based template — the gate binds a per-row observed version — so

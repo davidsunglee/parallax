@@ -1,4 +1,4 @@
-# Optimistic-lock conflict AUTO-retried by the boundary (M8/M10 bounded automatic
+# Optimistic-lock conflict AUTO-retried by the boundary (m-auto-retry/m-opt-lock bounded automatic
 # retry) — the `m-opt-lock-007` analogue with NO caller retry code.
 #
 # `m-opt-lock-007` proves a CALLER-driven retry closes the loop (the developer catches the
@@ -9,7 +9,7 @@
 #
 # The harness observable is identical to `m-opt-lock-007` (this is a `harness`-lane conflict
 # `attempts` case — the golden UPDATEs the retry loop issues are the same 0-then-1
-# sequence), so the M12 harness runs it against real Postgres exactly as it runs
+# sequence), so the m-case-format harness runs it against real Postgres exactly as it runs
 # `m-opt-lock-007`. What differs is the `uow` block: the loop is automatic, not caller-driven.
 # The API Conformance Suite additionally proves the auto-retry-via-flag path (no
 # caller catch/re-read), registered against this id in `covered.ts`.

@@ -2,7 +2,7 @@
 # both mixed directions: Tenant.leases is non-temporal -> temporal (the child
 # Lease defaults every axis to LATEST), and Lease.notes is temporal ->
 # non-temporal (the child LeaseNote carries NO as-of term). Proves the two mixed
-# rules of M4's as-of-propagation section. Row data lives in fixtures/lease.yaml.
+# rules of m-navigate's as-of-propagation section. Row data lives in fixtures/lease.yaml.
 entities:
   - name: Tenant
     namespace: parallax.compatibility

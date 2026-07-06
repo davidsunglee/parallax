@@ -1,5 +1,5 @@
 # Deep fetch Policy.coverages, business LATEST / processing PAST 2024-02-01 — the
-# combo the M7 read-matrix table previously OMITTED. Business propagates as the
+# combo the m-temporal-read read-matrix table previously OMITTED. Business propagates as the
 # equality form, processing as a range, IN THE SAME child predicate:
 # `thru_z = ? and in_z <= ? and out_z > ?` (binds infinity, P, P). As the system
 # believed on 2024-02-01, the latest-business value of coverage 10 was the

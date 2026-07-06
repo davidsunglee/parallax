@@ -1,4 +1,4 @@
-# Foreign-key insert ordering (M8): a parent row is inserted BEFORE a child that
+# Foreign-key insert ordering (m-unit-work): a parent row is inserted BEFORE a child that
 # references it.
 #
 # m-cascade-delete-001 proves the DELETE direction (dependent statuses/items before the root

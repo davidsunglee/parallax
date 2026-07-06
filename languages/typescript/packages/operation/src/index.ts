@@ -1,5 +1,5 @@
 /**
- * `@parallax/operation` — M2 query/operation algebra.
+ * `@parallax/operation` — m-op-algebra query/operation algebra.
  *
  * The discriminated-union operation data model (single-key tagged nodes) and
  * ajv-validation against `operation.schema.json`. The wire form and the
@@ -7,8 +7,8 @@
  * `@parallax/serde`.
  */
 
-// Re-export the M1 metamodel reader so M2-consumers (the conformance harness)
-// can introspect descriptors through the one allowed `M2 -> M1` edge rather
+// Re-export the m-descriptor metamodel reader so m-op-algebra-consumers (the conformance harness)
+// can introspect descriptors through the one allowed `m-op-algebra -> m-descriptor` edge rather
 // than taking a direct dependency on `@parallax/metamodel` (which the DAG
 // forbids for `@parallax/conformance`). Operations are expressed in terms of
 // metamodel references, so surfacing the reader here is the natural facade.
@@ -22,10 +22,10 @@ export {
   type NormalizedEntity,
   type NormalizedRelationship,
 } from "@parallax/metamodel";
-// Re-export the canonical serde seam so M2-consumers (the conformance harness)
+// Re-export the canonical serde seam so m-op-algebra-consumers (the conformance harness)
 // can parse case / model YAML through the *same* seam the algebra
 // canonicalizes through — without a direct `@parallax/conformance ->
-// @parallax/serde` edge (the DAG routes serde through M1/M2 only).
+// @parallax/serde` edge (the DAG routes serde through m-descriptor/m-op-algebra only).
 export {
   canonical,
   canonicallyEqual,

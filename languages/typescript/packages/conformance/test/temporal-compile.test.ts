@@ -1,5 +1,5 @@
 /**
- * Temporal **compile lane** over the M7 corpus (Docker-free).
+ * Temporal **compile lane** over the m-temporal-read corpus (Docker-free).
  *
  * Phase 6 lowers the as-of read algebra (`asOf` / `asOfRange` / `history`, single
  * + both axes, default-injection), the temporal EXISTS semi-joins
@@ -7,7 +7,7 @@
  * audit-only milestone-chaining writes (`insert` / `update` / `terminate`). Each
  * pins a precise canonical `goldenSql.postgres`, so this lane asserts the emitted
  * SQL + binds equal the golden BY TEXT, complementing the Docker-gated Postgres
- * full M12 profile (`@parallax/typescript`'s `slice-run.test.ts`) that proves the
+ * full m-case-format profile (`@parallax/typescript`'s `slice-run.test.ts`) that proves the
  * SQL returns the right rows / table state.
  *
  * Split by golden shape:
@@ -98,7 +98,7 @@ const EXPECTED_DEEP_FETCH_IDS: readonly string[] = Array.from(
 const READ_WRITE = temporalReadWriteCases();
 const DEEP_FETCH = temporalDeepFetchCases();
 
-describe("temporal compile lane — emitted === golden over the M7 corpus", () => {
+describe("temporal compile lane — emitted === golden over the m-temporal-read corpus", () => {
   it("discovers exactly the in-scope temporal audit-only + bitemporal MVP cases", () => {
     expect(READ_WRITE.map(({ id }) => id).sort()).toEqual([...EXPECTED_READ_WRITE_IDS].sort());
   });

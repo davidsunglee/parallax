@@ -1,4 +1,4 @@
-"""The layered assertion engine (M12 runner sub-part).
+"""The layered assertion engine (m-case-format runner sub-part).
 
 Per case, against a freshly-provisioned database selected via the provider seam:
 
@@ -215,7 +215,7 @@ def _assert_normalization(case: Case, dialect: str) -> None:
 def _assert_serde(case: Case) -> None:
     # Layer 4a: operation serde. A read case has one top-level operation; a
     # scenario case has one operation per step (under `find`); a write-sequence
-    # case and a conflict case (M10) have none. Layer 4b: metamodel (descriptor)
+    # case and a conflict case (m-opt-lock) have none. Layer 4b: metamodel (descriptor)
     # serde — always.
     if case.is_scenario:
         for step in case.scenario:
@@ -333,7 +333,8 @@ def _deepfetch_root_entity(case: Case) -> Entity:
 
 
 # Canonical as-of axis order: business terms precede processing terms in both the
-# golden SQL clause order and the bind order (M7 bitemporal table; case m-temporal-read-015).
+# golden SQL clause order and the bind order (m-bitemp-write bitemporal table;
+# case m-temporal-read-015).
 _CANONICAL_AXIS_ORDER: tuple[str, ...] = ("business", "processing")
 
 
@@ -594,7 +595,7 @@ def _provision_empty(case: Case, db: DatabaseProvider) -> None:
     A write-sequence case constructs its entire milestone history from its own
     ordered DML (the `insert` step is part of the sequence), so it starts from an
     empty schema and is fully self-contained — UNLESS it sets ``loadFixtures``
-    (the M9 detached-update merge-back case), in which case the model's fixtures
+    (the m-detach detached-update merge-back case), in which case the model's fixtures
     are loaded first so the merge-back can mutate a pre-existing persisted row.
     """
     db.reset()
@@ -646,7 +647,7 @@ def _sorted_by_order_keys(
 ) -> list[dict[str, Any]]:
     """Return *rows* sorted by *sort_spec* — a list of ``(column, descending)``
     pairs evaluated left to right. Stable: rows tied on every key keep input order.
-    NULL values sort LAST on every key, regardless of ``asc``/``desc`` (M4 policy).
+    NULL values sort LAST on every key, regardless of ``asc``/``desc`` (m-navigate policy).
     """
 
     def compare(row_a: dict[str, Any], row_b: dict[str, Any]) -> int:
@@ -654,7 +655,7 @@ def _sorted_by_order_keys(
             left, right = row_a[column], row_b[column]
             if left == right:
                 continue
-            # NULLs sort last on every key, regardless of asc/desc (M4 policy).
+            # NULLs sort last on every key, regardless of asc/desc (m-navigate policy).
             if left is None:
                 return 1
             if right is None:
@@ -674,13 +675,13 @@ def _assert_child_ordering(
     """Assert each ordered to-many level returned its children in the declared order.
 
     A to-many relationship that declares ``orderBy`` requires the per-level child
-    query to emit ``ORDER BY`` over the declared keys (M4), so the rows the DB
+    query to emit ``ORDER BY`` over the declared keys (m-navigate), so the rows the DB
     returned — preserved in SQL order inside each parent's bucket — must already
     equal those rows sorted by the declared keys/directions. The harness derives
     the expected order from the model (an independent oracle) rather than trusting
     the authored ``expectedGraph`` order. A relationship with no ``orderBy`` is
     skipped (its order is unspecified). NULL values sort LAST on every key,
-    regardless of ``asc``/``desc`` (the canonical M4 policy); two NULLs are equal
+    regardless of ``asc``/``desc`` (the canonical m-navigate policy); two NULLs are equal
     and fall through to the next key. Residual ties beyond the declared keys keep
     their DB order (the sort is stable), which the contract permits. Every
     declared ``orderBy`` key MUST be present in the child query's projection; a
@@ -946,7 +947,7 @@ def _graphs_equal(
     return equal_value(left, right)
 
 
-# --- write sequences (Phase 5, M7) ------------------------------------------
+# --- write sequences (Phase 5, m-audit-write) ------------------------------------------
 
 
 def _assert_write_step_count(case: Case, dialect: str) -> None:
@@ -1053,7 +1054,7 @@ def _version_column(entity: Entity) -> str | None:
     """The physical column of an entity's explicit optimistic-lock version, or None.
 
     A VERSIONED entity carries an attribute-level ``optimisticLocking: true`` version
-    (M10); the value advance (``initial 1`` / ``observed + 1``) and gate are DERIVED,
+    (m-opt-lock); the value advance (``initial 1`` / ``observed + 1``) and gate are DERIVED,
     so the column never appears in the neutral write input (①). A temporal entity
     locks via its processing ``in_z`` timestamp and declares no such attribute.
     """
@@ -1232,7 +1233,7 @@ def _assert_insert_statement(
     for cols, *_ in classified:
         expected.extend(cols[column] for column in domain)
         if version_col is not None:
-            expected.append(1)  # derived initial version (M10 baseline), never authored
+            expected.append(1)  # derived initial version (m-opt-lock baseline), never authored
     _assert_write_values(case, expected, binds, statement)
 
 
@@ -1249,7 +1250,8 @@ def _assert_versioned_update_input(
     The golden SET clause is the domain set columns + the framework-owned ``version``
     column (advanced ``observedVersion + 1``, DERIVED — never authored in ①). The
     binds are ``[…set values…, newVersion, pk]`` in the default LOCKING mode
-    (``m-opt-lock-002`` / ``m-detach-002`` — the M8 shared read lock makes the write correct, so no
+    (``m-opt-lock-002`` / ``m-detach-002`` — the m-read-lock shared read lock makes
+    the write correct, so no
     ``and version = ?`` gate) or ``[…, newVersion, pk, observedVersion]`` in
     optimistic mode. One golden statement per ① row.
     """
@@ -1362,7 +1364,7 @@ def _assert_temporal_input(
     BUSINESS-ONLY (unitemporal-business) entity it is ``businessAt`` (→ ``from_z``) —
     the same close-and-chain shape driven by business date rather than transaction
     instant. The bookkeeping ``fromColumn = instant`` and the open bound
-    ``toColumn = infinity`` are DERIVED, never authored in ① (the M7 milestone
+    ``toColumn = infinity`` are DERIVED, never authored in ① (the m-temporal-read milestone
     discipline stays under test). The gate cross-checks, per statement: an ``insert``
     (open a milestone) writes the full physical row with ``fromColumn = instant`` and
     ``toColumn = infinity``; a close (``update`` step 1 / ``terminate``) binds
@@ -1712,7 +1714,7 @@ def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
 def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     """Apply the ordered DML golden SQL, then assert the resulting table state.
 
-    This is the observable form of the milestone-chaining write contract (M7):
+    This is the observable form of the milestone-chaining write contract (m-audit-write):
     rather than introspecting the implementation, we APPLY the documented golden
     DML in order and assert the rows it leaves behind — including the current-row
     state where the open bound ``to`` equals native ``infinity``.
@@ -1742,7 +1744,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
             )
 
 
-# --- scenarios (Phase 6, M8) ------------------------------------------------
+# --- scenarios (Phase 6, m-unit-work) ------------------------------------------------
 
 
 def _step_statements(step: dict[str, Any], dialect: str) -> list[str]:
@@ -1811,7 +1813,7 @@ def _pk_column(entity: Entity) -> str:
 def _scenario_root_entity(case: Case) -> Entity:
     """The entity the scenario's finds target (the model's root entity).
 
-    M8 scenarios query a single entity (cache / identity over one type), so the
+    Scenario cases query a single entity (cache / identity over one type), so the
     identity column defaults to that entity's primary-key column.
     """
     return case.model.root_entity
@@ -1835,7 +1837,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
         binds = step.get("binds", [])
         if "write" in step:
             if step.get("rollback"):
-                # An ABORTED write (M8 abort contract): apply each DML statement
+                # An ABORTED write (m-unit-work abort contract): apply each DML statement
                 # inside a manual-commit session, then ROLL BACK. The write lands
                 # in the atomic scope the abort discards, so a later find MUST
                 # re-resolve and observe the ORIGINAL rows, never the aborted write.
@@ -1845,7 +1847,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                         session.execute(statement, stmt_binds)
                     session.rollback()
             else:
-                # A committed write between finds (M8 read-your-own-writes / cache
+                # A committed write between finds (read-your-own-writes / cache
                 # invalidation): apply and COMMIT each DML statement on the unit of
                 # work's connection. It captures no rows; a later find observes the
                 # committed state.
@@ -1857,7 +1859,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             results.append([])
             continue
         if statements:
-            # A DB-touching step: M8 finds are single-statement, so the round-trip
+            # A DB-touching step: m-unit-work finds are single-statement, so the round-trip
             # count is one; execute it and capture the rows.
             rows = _query_rows(db, statements[0], binds)
         else:
@@ -1919,13 +1921,13 @@ def _identity_keys(
     return sorted(_coerce_identity_key(row[identity_col]) for row in rows)
 
 
-# --- conflict cases (Phase 7, M10 optimistic locking) -----------------------
+# --- conflict cases (Phase 7, m-opt-lock optimistic locking) -----------------------
 
 
 def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
     """Run the precondition + golden UPDATE, assert the affected-row count.
 
-    This is the observable form of optimistic-lock conflict detection (M10).
+    This is the observable form of optimistic-lock conflict detection (m-opt-lock).
     The model's fixtures are loaded (the row exists with its current version),
     then an OPTIONAL out-of-band ``precondition`` simulates a concurrent
     transaction mutating the row (e.g. bumping the version). The golden
@@ -1990,7 +1992,7 @@ def _binds_for_list(binds: list[Any], index: int, count: int) -> list[Any]:
     return binds if index == 0 else []
 
 
-# --- conflict RETRY cases (M10 retry contract) ------------------------------
+# --- conflict RETRY cases (m-opt-lock retry contract) ------------------------------
 
 
 def _attempt_statements(attempt: dict[str, Any], dialect: str) -> list[str]:
@@ -2023,7 +2025,7 @@ def _assert_conflict_retry_normalization(case: Case, dialect: str) -> None:
 def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
     """Run the precondition + ordered retry attempts, asserting each affected count.
 
-    This is the observable form of the M10 RETRY contract (Phase 7). The model's
+    This is the observable form of the m-opt-lock RETRY contract (Phase 7). The model's
     fixtures are loaded (the versioned row exists), an OPTIONAL out-of-band
     ``precondition`` simulates a concurrent writer that advanced the version, then
     each attempt's golden ``UPDATE`` is applied in order. The first attempt gates
@@ -2080,7 +2082,7 @@ def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
             )
 
 
-# --- error-code classification cases (M11 dialect seam) ----------------------
+# --- error-code classification cases (m-db-error dialect seam) ----------------------
 
 
 def _error_statements(case: Case, dialect: str) -> list[str]:
@@ -2252,7 +2254,7 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     _assert_classified(case, db, next(iter(raised.values())))
 
 
-# --- concurrency-success cases (M8 behavioral read-lock) ---------------------
+# --- concurrency-success cases (m-read-lock behavioral read-lock) ---------------------
 
 
 def _concurrency_statements(case: Case, dialect: str) -> list[str]:
@@ -2443,7 +2445,7 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
     the FINAL node-B re-fetch, which MUST return node A's committed post-write
     state, never the stale pre-write rows. A read step MAY additionally declare
     ``sameObjectAs`` — that its observed object is the SAME logical object (same
-    primary-key identity) as an earlier step, the cross-process lift of the M8
+    primary-key identity) as an earlier step, the cross-process lift of the m-process-cache
     identity contract: the refresh updates the interned object in place rather than
     forking a second object for the same primary key.
 
@@ -2557,7 +2559,7 @@ def _assert_coherence_identity(
 def run_case(case: Case, db: DatabaseProvider) -> None:
     """Run all available assertion layers for *case* against *db*."""
     if case.lane == "api-conformance":
-        # The api-conformance lane is schema-validated by the M12 harness but NOT
+        # The api-conformance lane is schema-validated by the m-case-format harness but NOT
         # executed here — its observable (an injected transient, a retry-loop
         # branch, the emitted read-lock proof) needs machinery the single-connection
         # harness lacks. Each language's API Conformance Suite satisfies it. Run the
@@ -2608,7 +2610,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         return
 
     if case.is_conflict and case.attempts:
-        # Retry conflict (M10): golden SQL lives PER ATTEMPT, so there is no
+        # Retry conflict (m-opt-lock): golden SQL lives PER ATTEMPT, so there is no
         # top-level goldenSql to key on. Handle it here, before the goldenSql
         # access below, mirroring the scenario / coherence per-step shapes.
         if not _conflict_retry_has_golden(case, dialect):
@@ -2638,7 +2640,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         return
 
     if case.is_concurrency_success:
-        # A concurrency-success case (M8 behavioral read-lock:
+        # A concurrency-success case (m-read-lock behavioral read-lock:
         # m-read-lock-007/m-read-lock-008) also carries its golden per round inside
         # `concurrency.rounds` (no top-level goldenSql), so
         # branch before the goldenSql access below, as a sibling of `is_error`.

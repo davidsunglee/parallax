@@ -107,7 +107,7 @@ group("default surfacing", () => {
     expect(order.relationshipByName("items").dependent).toBe(true);
   });
 
-  it("surfaces the optimisticLocking version attribute (M10 metamodel surface)", () => {
+  it("surfaces the optimisticLocking version attribute (m-opt-lock metamodel surface)", () => {
     const metamodel = Metamodel.fromDescriptor(loadDescriptor("account.yaml"));
     const account = metamodel.entity("Account");
     const version = account.versionAttribute();
@@ -115,7 +115,7 @@ group("default surfacing", () => {
     expect(version?.optimisticLocking).toBe(true);
   });
 
-  it("derives the temporal optimistic key from the processing-from column (in_z), M7/M10", () => {
+  it("derives the temporal optimistic key from the processing-from column (in_z), m-temporal-read/m-opt-lock", () => {
     const balance = Metamodel.fromDescriptor(loadDescriptor("balance.yaml")).entity("Balance");
     // A processing-axis temporal entity carries no version column; its optimistic key
     // is derived from the processing-from column (in_z) — the version analogue.
@@ -128,7 +128,7 @@ group("default surfacing", () => {
     expect(order.processingFromAttribute()).toBeUndefined();
   });
 
-  it("resolves the processing-to column (out_z), the current-milestone marker, M7/M10", () => {
+  it("resolves the processing-to column (out_z), the current-milestone marker, m-temporal-read/m-opt-lock", () => {
     const balance = Metamodel.fromDescriptor(loadDescriptor("balance.yaml")).entity("Balance");
     // The current milestone is the row whose processing-to (out_z) is infinity; observed
     // recording filters on it so a closed milestone cannot overwrite the current in_z.
@@ -140,7 +140,7 @@ group("default surfacing", () => {
     expect(order.processingToAttribute()).toBeUndefined();
   });
 
-  it("rejects optimisticLocking + asOfAttributes on one entity (invalid composition, M1/M7/M10)", () => {
+  it("rejects optimisticLocking + asOfAttributes on one entity (invalid composition, m-descriptor/m-temporal-read/m-opt-lock)", () => {
     // A temporal entity DERIVES its optimistic key from the processing-from column, so
     // combining an explicit `optimisticLocking` attribute with `asOfAttributes` is invalid.
     const bad = JSON.parse(JSON.stringify(loadDescriptor("balance.yaml"))) as {

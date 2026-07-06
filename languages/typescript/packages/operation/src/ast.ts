@@ -1,5 +1,5 @@
 /**
- * The M2 operation data model — a tree of **single-key tagged objects**, where
+ * The m-op-algebra operation data model — a tree of **single-key tagged objects**, where
  * the one key names the kind (design Q3, Option A). The wire form and the
  * in-memory form are *identical*, so serde round-trips trivially through
  * `@parallax/serde` and the compile visitor (Phase 3+) switches on the tag.
@@ -293,7 +293,7 @@ export interface NestedNotEqOp {
 }
 
 /**
- * The full M2 operation algebra as a discriminated union. The single key on
+ * The full m-op-algebra operation algebra as a discriminated union. The single key on
  * each node is its discriminant; the compile visitor switches on it.
  */
 export type Operation =

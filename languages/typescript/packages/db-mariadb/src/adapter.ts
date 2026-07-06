@@ -1,5 +1,5 @@
 /**
- * `@parallax/db-mariadb` — the shippable MariaDB **adapter** (M11 decomposition,
+ * `@parallax/db-mariadb` — the shippable MariaDB **adapter** (m-db-port decomposition,
  * layer 3): a concrete `ParallaxDatabase` over the `mysql2` driver, the MariaDB
  * sibling of `@parallax/db-postgres`.
  *
@@ -124,7 +124,7 @@ interface TypeCastField {
  *    utf8mb4 text length (`262140`) and falls through to mysql2's default string
  *    cast.
  *
- * The convention assumes no RAW `bytes` column is itself named `*_hex`; the M0
+ * The convention assumes no RAW `bytes` column is itself named `*_hex`; the m-core
  * `bytes` column is `payload`, and any `_hex`-named model column would be a
  * self-inflicted collision.
  */
@@ -211,7 +211,7 @@ function nativeErrno(error: unknown): number | undefined {
 }
 
 /**
- * Classify a `mysql2` driver error to a neutral M11 {@link ErrorCategory} via the
+ * Classify a `mysql2` driver error to a neutral m-db-error {@link ErrorCategory} via the
  * dialect's errno map. Exposed so the composition root's error-round-trip proofs
  * (`m-db-error-001`-`m-db-error-008`) can assert a raised error's category without inspecting a driver
  * `.errno` themselves.
@@ -250,7 +250,7 @@ function toRows(rows: unknown): readonly ParallaxRow[] {
 /**
  * Start the runtime transaction at READ COMMITTED. MariaDB defaults to
  * REPEATABLE READ, which would keep an optimistic retry's second read on the
- * stale snapshot; the cross-dialect M8/M10 contract requires a re-read after a
+ * stale snapshot; the cross-dialect m-unit-work/m-opt-lock contract requires a re-read after a
  * conflict to observe the peer commit, matching Postgres's default behavior.
  */
 async function beginRuntimeTransaction(connection: PoolConnection): Promise<void> {
@@ -395,7 +395,7 @@ export class MariaDbDatabase implements ParallaxDatabase {
 
   /**
    * Apply a DML statement inside a transaction, then ROLL IT BACK, returning the
-   * affected-row count it reported before the rollback (the M8 abort seam).
+   * affected-row count it reported before the rollback (the m-unit-work abort seam).
    */
   async executeRolledBack(sql: string, binds: readonly unknown[]): Promise<number> {
     const connection = await this.db.getConnection();

@@ -1,4 +1,4 @@
-# A projection read takes NO lock, so it ADMITS a concurrent writer (M8 / M11).
+# A projection read takes NO lock, so it ADMITS a concurrent writer (m-read-lock / m-dialect).
 # Round 1: transaction A holds a `select distinct ... from account t0` -- a projection
 # read, which takes no shared row lock (its result rows have no identifiable base row
 # to lock; the D2 reversal of m-read-lock-003) -- inside an open unit of work, observing all three

@@ -1,5 +1,5 @@
 # Deep fetch, ORDERED to-many by a NULLABLE key — NULLs sort LAST, proven on BOTH
-# dialects (M4 + M11). `Order.itemsByShipDate` orders line items by `shippedOn`,
+# dialects (m-deep-fetch + m-dialect). `Order.itemsByShipDate` orders line items by `shippedOn`,
 # a nullable date: shipped items carry a date, unshipped items do not. The
 # canonical rule sorts NULLs last; the dialects reach it differently (Postgres
 # trails NULLs for `asc` by default; MariaDB has no NULLS LAST syntax, so it

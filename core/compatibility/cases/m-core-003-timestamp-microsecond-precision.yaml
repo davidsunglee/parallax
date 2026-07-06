@@ -1,9 +1,9 @@
-# Timestamp microsecond precision (M0 timezone/precision rule).
+# Timestamp microsecond precision (m-core timezone/precision rule).
 #
-# M0 requires sub-second values be preserved to microsecond precision and not
+# m-core requires sub-second values be preserved to microsecond precision and not
 # silently truncated. This inserts an instant carrying .123456 fractional seconds
 # and asserts all six digits survive the round trip. Postgres `timestamptz` and
-# MariaDB `datetime(6)` both carry microsecond precision (M11), so the one
+# MariaDB `datetime(6)` both carry microsecond precision (m-dialect), so the one
 # authored expected value holds on both dialects.
 model: models/event.yaml
 tags: [m-core, m-sql, m-dialect, timestamp, precision, microsecond, write-sequence, slice-mvp-1]

@@ -20,22 +20,23 @@ discharges them.
 
 TypeScript V1 declares the canonical **`slice-mvp-1`** Conformance Slice defined
 in [`../../core/spec/slices.md`](../../core/spec/slices.md). It
-claims the cases tagged `slice-mvp-1` across modules M0–M5, M7, M8, M10, M11, and
-M12, on the Postgres dialect, for the `read`, `writeSequence`, `scenario`, and
-`conflict` case shapes.
+claims the cases tagged `slice-mvp-1` (the module set enumerated in that claim) on
+the Postgres dialect, for the `read`, `writeSequence`, `scenario`, and `conflict`
+case shapes.
 
 Capabilities the core defines but this first slice does not yet claim —
-aggregation and projection, the M8 identity/query caches, value objects,
-inheritance, bounded business-window and bitemporal writes, M13 benchmarks, and
-M14 coherence, among others — are documented as future TypeScript surface but
-are not claimed until their compatibility slice passes.
-The full deferral list is in
+aggregation and projection, the `m-process-cache` identity/query caches, value
+objects, inheritance, bounded business-window and bitemporal writes,
+`m-perf-bench` benchmarks, and `m-coherence` coherence, among others — are
+documented as future TypeScript surface but are not claimed until their
+compatibility slice passes. The full deferral list is in
 [`spec/00-overview.md`](spec/00-overview.md) §16.
 
 MariaDB is different: it is not part of the V1 `describe` claim, but TypeScript
-does ship it as the second concrete M11 dialect/adapter/provider. It is covered
-by Docker-free dialect tests, shared adapter/provider contract tests, a selectable
-API Conformance lane, and the declared `mariadb-curated-25` partial M12 profile.
+does ship it as the second concrete dialect/adapter behind the database seam
+(`m-dialect` / `m-db-port`). It is covered by Docker-free dialect tests, shared
+adapter/provider contract tests, a selectable API Conformance lane, and the
+declared `mariadb-curated-25` partial matrix profile.
 
 The adapter's machine-readable form is a `describe` envelope whose `capabilities`
 are byte-equal to the canonical slice, differing only in adapter identity. An
@@ -127,7 +128,7 @@ languages/typescript/
 ```
 
 Runtime source lives under `packages/*`; `spec/` and `docs/` are documentation.
-The non-numbered `@parallax/typescript` package is the composition package — the
+The `@parallax/typescript` package is the composition package — the
 CLI, generator config, public runtime facade, and generated-barrel support. The
 full package map is in
 [`spec/01-implementation-spec.md`](spec/01-implementation-spec.md).
@@ -142,14 +143,14 @@ just ts-lint                   # Biome + the dependency-cruiser DAG gate
 just ts-test                   # vitest unit / adapter tests
 just ts-db-fast                # Docker-free dialect, provider-selection, profile checks
 just ts-conformance-compile    # full-slice compile sweep + honesty gate (Docker-free)
-just ts-db                     # primary DB gate: adapter/provider, Postgres M12/API (Docker)
-just ts-db-all                 # exhaustive DB sweep: primary gate + MariaDB M12/API (Docker)
+just ts-db                     # primary DB gate: adapter/provider, Postgres matrix/API (Docker)
+just ts-db-all                 # exhaustive DB sweep: primary gate + MariaDB matrix/API (Docker)
 ```
 
 `just verify` from the repository root runs the primary merge gate: static checks,
 Docker-free conformance, the primary TypeScript DB gate, and the Python suite.
 `just ts-db-all` adds the MariaDB API Conformance Suite and the curated
-`mariadb-curated-25` M12 profile.
+`mariadb-curated-25` matrix profile.
 
 ## Learn More
 

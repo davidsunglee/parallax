@@ -1,4 +1,4 @@
-# ScalarThing exercises the M0 neutral scalar mappings that are not covered by
+# ScalarThing exercises the m-core neutral scalar mappings that are not covered by
 # the relationship, aggregate, temporal, or lifecycle fixtures.
 entity:
   name: ScalarThing

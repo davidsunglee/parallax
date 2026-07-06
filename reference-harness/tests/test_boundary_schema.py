@@ -1,8 +1,9 @@
 """DB-free schema tests for the boundary-case api-conformance-lane invariant.
 
-A boundary case (M8/M10 bounded automatic retry) is a runtime-loop observable the
-single-connection M12 harness cannot provoke, so it lives on the `api-conformance`
-lane and is satisfied by each language's API Conformance Suite. The
+A boundary case (`m-auto-retry` / `m-opt-lock` bounded automatic retry) is a
+runtime-loop observable the single-connection harness cannot provoke, so it lives
+on the `api-conformance` lane and is satisfied by each language's API Conformance
+Suite. The
 compatibility-case schema ENFORCES that invariant: a boundary case must pin
 `lane: api-conformance` and carry no golden SQL. Without the pin, a boundary case
 that forgets `lane` would default to `harness`, then hit compile/run paths not
@@ -30,7 +31,7 @@ def _valid_boundary_case() -> dict:
     """A minimal well-formed boundary case (models the `m-unit-work-004` abort case)."""
     return {
         "model": "models/account.yaml",
-        "tags": ["m8", "abort", "slice-mvp-1"],
+        "tags": ["m-unit-work", "abort", "slice-mvp-1"],
         "lane": "api-conformance",
         "boundary": [
             {"action": "read", "note": "observe the row"},

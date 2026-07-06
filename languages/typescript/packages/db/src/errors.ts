@@ -1,5 +1,5 @@
 /**
- * `@parallax/db` — the port's **portable error surface** (M8/M10 bounded automatic
+ * `@parallax/db` — the port's **portable error surface** (m-auto-retry/m-opt-lock bounded automatic
  * retry).
  *
  * The port carries no dialect and no driver, but the unit-of-work retry loop above
@@ -15,7 +15,7 @@
  */
 
 /**
- * The portable transient-failure vocabulary (the M11 neutral category names, the
+ * The portable transient-failure vocabulary (the m-db-error neutral category names, the
  * `@parallax/dialect` `ErrorCategory` minus `unknown`). `deadlock` — a true
  * deadlock or a serialization failure (retriable); `lockWaitTimeout` — blocked
  * past the lock-wait budget (not retriable); `uniqueViolation` — duplicate key;

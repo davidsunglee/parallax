@@ -1,4 +1,4 @@
-# having with the `>=` comparator (M2 having comparators).
+# having with the `>=` comparator (m-agg having comparators).
 #
 # m-agg-001 exercises only `>`; this pins the `gte` token in the HAVING clause. Group
 # OrderItem by order and keep groups whose summed quantity is at least 4:

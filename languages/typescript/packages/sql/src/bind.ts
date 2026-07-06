@@ -1,12 +1,12 @@
 /**
- * Type-aware literal coercion at the M3 compile boundary.
+ * Type-aware literal coercion at the m-sql compile boundary.
  *
  * A predicate literal arrives from the serde reader already normalized: a
  * float-**safe** authored number (`42`, `20.00`, `50.75`) is a JS `number`, while
  * a precision-**unsafe** int64 / decimal token the reader could not represent as
  * a double (`9223372036854775807`, `1234567890123456.78`) is preserved as its
  * exact source **string** (`serde/canonical.ts` `parseYamlLossless`). This module
- * resolves each literal against its M0 neutral type and normalizes it to the
+ * resolves each literal against its m-core neutral type and normalizes it to the
  * canonical wire form the conformance contract compares (§3.2.1):
  *
  *  - `int64`   → keep a float-safe JS number as-is; a preserved source string or
@@ -31,7 +31,7 @@ import type { Bind } from "./compile.js";
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 
 /**
- * Normalize a predicate literal to its canonical wire form against the M0
+ * Normalize a predicate literal to its canonical wire form against the m-core
  * neutral type of the attribute it compares. `null` is a SQL null and passes
  * through untouched regardless of type.
  */

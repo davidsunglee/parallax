@@ -1,4 +1,4 @@
-# having with the `<` comparator (M2 having comparators).
+# having with the `<` comparator (m-agg having comparators).
 #
 # Keep groups whose summed quantity is below 4:
 #   order 1 -> 3 (kept), order 2 -> 4 (dropped), order 42 -> 8 (dropped).

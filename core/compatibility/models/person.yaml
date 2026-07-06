@@ -1,4 +1,4 @@
-# Person/Passport: a ONE-TO-ONE relationship model (M1 cardinality, M4).
+# Person/Passport: a ONE-TO-ONE relationship model (m-descriptor cardinality, m-navigate).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. No other
 # model declares the `one-to-one` cardinality (orders is one-to-many / many-to-

@@ -1,4 +1,4 @@
-# PK generation `max` (M1) — allocate into an EMPTY table.
+# PK generation `max` (m-pk-gen) — allocate into an EMPTY table.
 #
 # `max` strategy: the next id is max(col)+1, expressed portably as an
 # INSERT ... SELECT computing coalesce(max(id), 0) + 1. From an empty table the

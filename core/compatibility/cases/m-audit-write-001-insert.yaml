@@ -1,4 +1,4 @@
-# Write sequence: INSERT a new audit-only balance (milestone-chaining, M7).
+# Write sequence: INSERT a new audit-only balance (milestone-chaining, m-audit-write).
 #
 # An insert in audit-only mode is a single milestone row opened at the
 # transaction instant with the open upper bound infinity: in_z = txInstant,

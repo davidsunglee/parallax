@@ -1,4 +1,4 @@
-# Rollback / abort scenario (M8): a write performed inside a unit of work that
+# Rollback / abort scenario (m-unit-work): a write performed inside a unit of work that
 # ABORTS is discarded — a post-abort find re-resolves and observes the ORIGINAL rows.
 #
 # m-unit-work-001 proves read-your-own-writes (a committed write is observed mid-transaction).

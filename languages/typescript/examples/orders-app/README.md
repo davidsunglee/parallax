@@ -5,7 +5,7 @@ A minimal application that exercises the Phase 9 developer surface: the generate
 
 ## Layout
 
-- `parallax/orders.yaml` — the canonical descriptor (serialized M1 metamodel).
+- `parallax/orders.yaml` — the canonical descriptor (serialized m-descriptor metamodel).
 - `parallax.config.js` — the generator config (`defineParallaxConfig`).
 - `src/main.ts` — imports `#parallax`, builds `px`, runs a typed `find`.
 - `.parallax/generated/` — the generated barrel (gitignored; `parallax generate`

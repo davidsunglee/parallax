@@ -1,8 +1,8 @@
 /**
- * `@parallax/bitemporal` — M7 bitemporal / milestoning.
+ * `@parallax/bitemporal` — temporal reads and milestoning writes (`m-temporal-read`, `m-audit-write`, `m-bitemp-write`).
  *
- * The pure as-of predicate injection (`asof.ts`) — reused by the M3 single-entity
- * read lowering (through the injected `SchemaResolver`) and the M4 deep-fetch
+ * The pure as-of predicate injection (`asof.ts`) — reused by the m-sql single-entity
+ * read lowering (through the injected `SchemaResolver`) and the m-deep-fetch deep-fetch
  * as-of propagation — plus audit-only milestone-chaining write DML generation
  * (`audit-writes.ts`). This package is dialect-agnostic and metamodel-free: it
  * takes already-resolved physical column expressions / write targets and produces

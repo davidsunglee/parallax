@@ -1,5 +1,5 @@
 /**
- * M0 neutral scalar handling.
+ * m-core neutral scalar handling.
  *
  * The neutral type set (`core/spec/m-core.md`) is the
  * language-neutral vocabulary every `attribute.type` draws from. This module
@@ -62,7 +62,7 @@ export type NeutralScalar =
 
 /**
  * The structural JSON value type (spec §3.2.1) — the public runtime mapping for
- * the M0 `json` scalar and for value-object properties (which V1 exposes as
+ * the m-core `json` scalar and for value-object properties (which V1 exposes as
  * unstructured JSON, spec §2.1). The generated `#parallax` barrel re-exports it
  * from here alongside {@link ParallaxDecimal}.
  */
@@ -99,7 +99,7 @@ export function parseDecimalType(type: string): DecimalTypeSpec | undefined {
 }
 
 /**
- * `ParallaxDecimal` — the exact fixed-point carrier for the M0 `decimal(p,s)`
+ * `ParallaxDecimal` — the exact fixed-point carrier for the m-core `decimal(p,s)`
  * type, wrapping `decimal.js` so the concrete library stays reversible behind
  * this seam (design Q6). Comparison and arithmetic run in decimal space, never
  * binary float; the wire form is the fixed-scale canonical string.
@@ -163,15 +163,15 @@ export class ParallaxDecimal {
   }
 }
 
-/** Microseconds per second — the M0 timestamp precision granularity. */
+/** Microseconds per second — the m-core timestamp precision granularity. */
 const MICROS_PER_SECOND = 1_000_000n;
 /** Nanoseconds per microsecond. `Temporal.Instant` stores nanoseconds. */
 const NANOS_PER_MICRO = 1_000n;
 
 /**
  * The temporal-infinity sentinel. The open upper bound of a temporal interval
- * is the database-native infinity (M0); in the neutral descriptor / operation
- * surface it is the literal string `"infinity"`, and the M11 dialect seam owns
+ * is the database-native infinity (m-core); in the neutral descriptor / operation
+ * surface it is the literal string `"infinity"`, and the m-dialect dialect seam owns
  * the concrete representation. Temporal binds carry this sentinel as-is.
  */
 export const INFINITY = "infinity" as const;
@@ -183,7 +183,7 @@ export function isInfinity(value: unknown): value is Infinity {
 }
 
 /**
- * Parse an ISO-8601 UTC instant into a `Temporal.Instant`, enforcing the M0
+ * Parse an ISO-8601 UTC instant into a `Temporal.Instant`, enforcing the m-core
  * microsecond-precision rule: an input carrying non-zero sub-microsecond
  * precision is **rejected**, never silently truncated. Inputs with fewer than
  * six fractional digits are interpreted exactly.
@@ -197,7 +197,7 @@ export function parseTimestamp(iso: string): Temporal.Instant {
   // `epochNanoseconds` is exact; reject any value not aligned to a microsecond.
   if (instant.epochNanoseconds % NANOS_PER_MICRO !== 0n) {
     throw new RangeError(
-      `timestamp ${iso} carries sub-microsecond precision; M0 rejects it (microsecond granularity)`,
+      `timestamp ${iso} carries sub-microsecond precision; m-core rejects it (microsecond granularity)`,
     );
   }
   return instant;
