@@ -7,10 +7,10 @@
  * materializes a **stable** in-memory result reused by every later access
  * (idempotent — the query runs at most once), and it runs every materialized row
  * through an **identity map** keyed by the row's primary key so the same PK
- * yields the same object instance across calls and across iteration (ADR-0025,
- * ADR-0030: references, not promise properties).
+ * yields the same object instance across calls and across iteration (ADR-0014,
+ * ADR-0016: references, not promise properties).
  *
- * Helpers (ADR-0025):
+ * Helpers (ADR-0014):
  *  - `toArray()` resolves and returns the stable array.
  *  - `first()` / `firstOrNull()` resolve; `first` throws `ParallaxNotFoundError`
  *    when empty, `firstOrNull` returns `null`.
@@ -28,7 +28,7 @@
  * synchronous iteration) — those are left to normal TypeScript over `toArray()`.
  */
 
-/** The base class of the public Parallax error hierarchy (ADR-0053). */
+/** The base class of the public Parallax error hierarchy (ADR-0007). */
 export class ParallaxError extends Error {
   /** A stable, machine-readable error code applications branch on. */
   readonly code: string;

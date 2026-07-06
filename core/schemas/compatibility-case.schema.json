@@ -152,7 +152,7 @@
       ]
     },
     "expect": {
-      "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value — the m-unit-work abort contract / ADR 0008), or a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled). The concrete per-language error type (e.g. `ParallaxOptimisticLockError`) stays language-local; this is the neutral kind the suite asserts.",
+      "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value — the m-unit-work abort contract / ADR 0006), or a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled). The concrete per-language error type (e.g. `ParallaxOptimisticLockError`) stays language-local; this is the neutral kind the suite asserts.",
       "enum": [
         "committed",
         "aborted",

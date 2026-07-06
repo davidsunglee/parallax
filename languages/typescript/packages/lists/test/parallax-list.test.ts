@@ -4,8 +4,8 @@
  * The 03xx conformance corpus grades the assembled deep-fetch graph (plain
  * decorated rows), not this developer-facing API, so `ParallaxList` is otherwise
  * unexercised by the run lanes. These tests pin its contract directly: laziness +
- * at-most-once resolution, the `first`/`single` error semantics (ADR-0025), and
- * the identity map (same PK ⇒ same object instance — ADR-0025/ADR-0030).
+ * at-most-once resolution, the `first`/`single` error semantics (ADR-0014), and
+ * the identity map (same PK ⇒ same object instance — ADR-0014/ADR-0016).
  */
 import {
   ParallaxError,
@@ -62,7 +62,7 @@ describe("ParallaxList — laziness and idempotent resolution", () => {
   });
 });
 
-describe("ParallaxList — first / single semantics (ADR-0025)", () => {
+describe("ParallaxList — first / single semantics (ADR-0014)", () => {
   it("first() returns the head; firstOrNull() mirrors it", async () => {
     const list = new ParallaxList<Order>(async () => [
       { id: 1, name: "a" },

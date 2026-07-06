@@ -12,7 +12,7 @@
  * on in-transaction reads (no developer lock SQL) and advances a versioned entity's
  * version WITHOUT a gate; `optimistic` mode takes no lock and GATES a versioned
  * update on the version the unit of work observed. Version values are framework-
- * owned (ADR 0029): the developer reads the row (which records the observed
+ * owned (core ADR 0013): the developer reads the row (which records the observed
  * version), then `update`s — no raw version number is ever passed. A concurrent
  * writer is modeled by the corpus `precondition` (raw SQL) applied out of band,
  * AFTER the read and BEFORE the write, so the gate is genuinely stale.
@@ -114,7 +114,7 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
       const f = await provisionCase(provider, "m-read-lock-001-shared-suffix");
       // A `distinct`/projection read cannot carry a row lock (no base row to lock),
       // so inside a locking transaction it proceeds UNLOCKED — no `for share`, and it
-      // is never rejected (the D2 reversal; ADR 0030) — and returns its rows.
+      // is never rejected (the D2 reversal; core ADR 0012) — and returns its rows.
       const rows = await f.px.transaction((tx) =>
         tx.entity("Account").find(Account.id.eq(2), { distinct: true }).toArray(),
       );
@@ -148,7 +148,7 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
     async () => {
       const f = await provisionCase(provider, "m-read-lock-003-locking-txn-projection-omits-lock");
       // A distinct/projection read cannot carry a row lock, so it proceeds UNLOCKED
-      // and is never rejected (the D2 reversal, ADR 0030) — it returns its rows.
+      // and is never rejected (the D2 reversal, core ADR 0012) — it returns its rows.
       const rows = await f.px.transaction(
         (tx) => tx.entity("Account").find(all(), { distinct: true }).toArray(),
         { concurrency: "locking" },

@@ -16,7 +16,7 @@
  * The batched subject is the NON-VERSIONED `Wallet` (`id`/`owner`/`balance`),
  * matching the corpus: the readless batched forms are honest only for a
  * non-versioned entity — a versioned entity's set-based update MUST materialize
- * into per-object version-advancing updates (m-opt-lock / ADR 0031), so the batched
+ * into per-object version-advancing updates (m-opt-lock / core ADR 0014), so the batched
  * forms cannot apply to it.
  */
 import {

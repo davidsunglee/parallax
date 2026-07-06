@@ -9,7 +9,7 @@
  *     FK dependencies, so the runtime must topologically order them itself).
  *  2. Plain `update` on a NON-versioned entity applies the WHOLE assignment array
  *     (spec §4) — `update <t> set c1 = ?, c2 = ? where pk = ?`.
- *  3. VERSIONED `update` (m-opt-lock, ADR 0029): the version is framework-owned — a prior
+ *  3. VERSIONED `update` (m-opt-lock, core ADR 0013): the version is framework-owned — a prior
  *     in-transaction find records the OBSERVED version, and a later keyed update
  *     advances it (both modes) and gates on it (optimistic mode). An unobserved row
  *     read-before-writes; a no-op `set` issues no DML; a 0-row optimistic gate is a
@@ -432,7 +432,7 @@ describe("TransactionWriter versioned update (m-opt-lock framework-owned version
   });
 });
 
-describe("TransactionWriter versioned SET-BASED update materializes (m-opt-lock, ADR 0032)", () => {
+describe("TransactionWriter versioned SET-BASED update materializes (m-opt-lock, core ADR 0014)", () => {
   // Two Account rows the materialize read resolves (`balance < 200` matches both).
   const ACCOUNT_1: ParallaxRow = { id: 1, owner: "Ada", balance: "100.00", version: 1 };
   const ACCOUNT_3: ParallaxRow = { id: 3, owner: "Grace", balance: "10.00", version: 1 };
@@ -525,7 +525,7 @@ describe("TransactionWriter versioned SET-BASED update materializes (m-opt-lock,
     // A non-versioned entity has no framework-owned version, so a non-pk predicate
     // does NOT take the materialize branch — it stays on the unchanged plain keyed-
     // update path, which requires a single pk and rejects a set-based predicate
-    // (status quo, ADR 0011). The point: no materialize READ is issued.
+    // (status quo, core ADR 0014). The point: no materialize READ is issued.
     await expect(
       px.transaction(async (tx) =>
         tx
@@ -683,8 +683,8 @@ describe("in-transaction projection/aggregation read omits the lock (never throw
     const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
 
     // A `distinct` projection has no base row to lock, so `for share` is illegal on
-    // it — the dialect OMITS the lock and the read proceeds (the D2 reversal; ADR
-    // 0030). It is never rejected, even in a locking transaction.
+    // it — the dialect OMITS the lock and the read proceeds (the D2 reversal; core ADR 0012).
+    // It is never rejected, even in a locking transaction.
     const rows = await px.transaction(async (tx) =>
       tx.entity("Account").find(accountPk(2), { distinct: true }).toArray(),
     );
@@ -709,7 +709,7 @@ describe("in-transaction projection/aggregation read omits the lock (never throw
   });
 });
 
-describe("TransactionWriter optimistic x temporal close (m-temporal-read + m-opt-lock, ADR 0033)", () => {
+describe("TransactionWriter optimistic x temporal close (m-temporal-read + m-opt-lock, core ADR 0015)", () => {
   /** The recorded milestone-CLOSE UPDATE (`update balance set out_z = …`). */
   const closeOf = (queries: readonly RecordedQuery[]): RecordedQuery | undefined =>
     queries.find((q) => q.sql.startsWith("update balance set out_z"));

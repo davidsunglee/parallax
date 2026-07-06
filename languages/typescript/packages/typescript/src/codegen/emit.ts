@@ -9,7 +9,7 @@
  * `@parallax/typescript` — legal because generated code lives in an application,
  * not a numbered package (no numbered package imports `@parallax/typescript`).
  *
- * Output is uncommitted / gitignored (ADR-0003); it is produced by `parallax
+ * Output is uncommitted / gitignored (ADR-0002); it is produced by `parallax
  * generate` and validated by `parallax generate --check`.
  */
 import type {

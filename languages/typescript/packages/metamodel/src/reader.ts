@@ -2,7 +2,7 @@
  * m-descriptor generic metamodel reader — introspection over a parsed descriptor with no
  * generated symbols.
  *
- * This is the conformance backbone (ADR-0055): the adapter reads arbitrary
+ * This is the conformance backbone (ADR-0008): the adapter reads arbitrary
  * corpus descriptors and the generated typed layer (Phase 9) delegates to it.
  * `Metamodel.entity(name)` yields an `EntityMetadata` over the *fully defaulted*
  * normalized view (`normalize.ts`), exposing `attributes`, `attributeByName`,

@@ -1,6 +1,6 @@
 /**
  * API Conformance Suite — **boundary** family (Phase 4): the bounded automatic
- * retry loop mechanics (m-auto-retry/m-opt-lock, ADR 0031 / TS ADR 0065), driven the way a developer
+ * retry loop mechanics (m-auto-retry/m-opt-lock, core ADR 0008 / ts ADR 0026), driven the way a developer
  * would (`px.transaction(body, { retries, retryOptimisticConflicts })`) over each
  * selected shipped `@parallax/db-*` adapter.
  *
@@ -8,7 +8,7 @@
  * connection harness cannot provoke — an injected transient auto-retried away, a
  * conflict surfacing without the opt-in, a conflict auto-retried WITH it, the flag's
  * no-op in locking mode, `retries: 0`, bound exhaustion, callback-value-withheld-on-
- * abort. Per the contract carve-out (api-conformance-contract §Required properties
+ * abort. Per the contract carve-out (core/spec/m-api-conformance.md §Required properties
  * 2), fault injection rides a **thin decorator wrapped around the shipped adapter**:
  * it injects the declared fault on a chosen attempt and delegates every other call
  * to the real adapter, so the actual DB work stays on the production path. Real
