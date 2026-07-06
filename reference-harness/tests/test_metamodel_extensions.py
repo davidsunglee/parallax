@@ -176,7 +176,7 @@ def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
 
 def test_phase9_cases_are_discovered() -> None:
     cases = {c.path.stem: c for c in discover_cases(COMPATIBILITY_ROOT)}
-    inheritance = [c for c in cases.values() if "inheritance" in c.tags]
+    inheritance = [c for c in cases.values() if "m-inheritance" in c.tags]
     nested = [c for c in cases.values() if "nested" in c.tags]
     assert inheritance, "no inheritance cases discovered"
     assert nested, "no nested/valueObject cases discovered"

@@ -4,7 +4,7 @@
 # maximum price across all six orders (10.50 .. 99.99). min/max are defined over
 # ordered types; this case pins the numeric ordering.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, min, max, numeric]
+tags: [m-agg, m-sql-agg, min, max, numeric]
 operation:
   groupBy:
     operand:

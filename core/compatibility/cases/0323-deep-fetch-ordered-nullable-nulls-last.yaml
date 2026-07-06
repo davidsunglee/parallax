@@ -10,7 +10,7 @@
 # oracle derives the expected order (non-null asc, then NULLs) from the declared
 # key and checks both dialects' returned rows obey it.
 model: models/orders.yaml
-tags: [m4, m5, m11, deepFetch, orderBy, ordering, nullable, relationship, slice-mvp-1]
+tags: [m-deep-fetch, m-op-list, m-dialect, orderBy, ordering, nullable, relationship, slice-mvp-1]
 operation:
   deepFetch:
     operand:

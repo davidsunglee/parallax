@@ -2,7 +2,7 @@
 # Single-axis propagation: the child carries `out_z = ?` (bind infinity). Line
 # 1000 -> 75 (current), line 1001 -> 25.
 model: models/invoice.yaml
-tags: [m4, m7, temporal, relationship, deepFetch, propagation, audit-only, slice-mvp-1]
+tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, audit-only, slice-mvp-1]
 operation:
   deepFetch:
     operand:

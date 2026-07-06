@@ -2,7 +2,7 @@
 #
 # From empty: first allocation -> 1, second -> 2 (each insert re-reads max(id)).
 model: models/pk-max.yaml
-tags: [m1, m8, pk-generation, max, write-sequence]
+tags: [m-pk-gen, m-unit-work, max, write-sequence]
 writeSequence:
   - mutation: insert
     entity: Attendee

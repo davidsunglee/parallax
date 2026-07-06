@@ -4,7 +4,7 @@
 # (1000 -> 1005); id 1000.
 model: models/pk-sequence.yaml
 loadFixtures: true
-tags: [m1, m8, pk-generation, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
 writeSequence:
   - mutation: update
     entity: PkSequence

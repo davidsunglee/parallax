@@ -10,7 +10,7 @@
 # proves golden == reference == expected against real Postgres, pinning the
 # var_pop SQL mapping, which no fixture exercised before.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, variance, variancePop, twoColumn]
+tags: [m-agg, m-sql-agg, variance, variancePop, twoColumn]
 operation:
   groupBy:
     operand:

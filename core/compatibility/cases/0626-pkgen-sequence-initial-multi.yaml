@@ -3,7 +3,7 @@
 # ticket_seq 1000->1005->1010->1015; ids 1000,1005,1010 (stride-5 gaps between ids).
 model: models/pk-sequence.yaml
 loadFixtures: true
-tags: [m1, m8, pk-generation, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
 writeSequence:
   - mutation: update
     entity: PkSequence

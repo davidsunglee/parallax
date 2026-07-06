@@ -52,7 +52,7 @@ function compileFlat(loaded: LoadedCase): string {
   const operation = parseOperation(loaded.raw.operation);
   const schema = schemaForReadCase(loaded, operation, mariadbDialect);
   const { sql } = compile(operation, schema, mariadbDialect, {
-    locking: loaded.tags.includes("read-lock"),
+    locking: loaded.tags.includes("m-read-lock"),
   });
   return sql;
 }

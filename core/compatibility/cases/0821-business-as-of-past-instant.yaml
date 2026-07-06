@@ -9,7 +9,7 @@
 # (business [2024-01-01, 2024-03-01) contains 2024-02-01). The later Bob
 # milestone (from 2024-03-01) is excluded — it was not yet in effect.
 model: models/reservation.yaml
-tags: [m7, m3, business_temporal, temporal, as-of, business-only, past]
+tags: [m-temporal-read, m-sql, business_temporal, temporal, as-of, business-only, past]
 operation:
   asOf:
     operand:

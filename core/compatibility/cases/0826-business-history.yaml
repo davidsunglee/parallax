@@ -8,7 +8,7 @@
 # The projection carries the interval columns, so the current row's open bound
 # (thru_z = infinity) reads back alongside a finite, superseded thru_z.
 model: models/reservation.yaml
-tags: [m7, m3, business_temporal, temporal, history, business-only]
+tags: [m-temporal-read, m-sql, business_temporal, temporal, history, business-only]
 operation:
   history:
     operand:

@@ -9,7 +9,7 @@
 # referenceSql proves golden == reference == expected against real Postgres,
 # pinning the var_samp SQL mapping, which no fixture exercised before.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, variance, varianceSample, twoColumn]
+tags: [m-agg, m-sql-agg, variance, varianceSample, twoColumn]
 operation:
   groupBy:
     operand:

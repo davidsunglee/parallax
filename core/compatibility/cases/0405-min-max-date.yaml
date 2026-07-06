@@ -4,7 +4,7 @@
 # order dates span 2024-01-05 .. 2024-06-30, so min/max return those endpoints.
 # This is the third min/max domain (numeric / string / date) the suite exercises.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, min, max, date]
+tags: [m-agg, m-sql-agg, min, max, date]
 operation:
   groupBy:
     operand:

@@ -40,11 +40,12 @@ export interface LoadedCase {
   readonly raw: Record<string, unknown>;
   /** The detected case shape. */
   readonly shape: CaseShape;
-  /** The module tags (e.g. `["m2", "m12"]`) the case declares. */
+  /** The module tags (e.g. `["m-op-algebra", "m-conformance-adapter"]`) the case declares. */
   readonly tags: readonly string[];
   /**
-   * The M12 lane the case runs on (default `harness`). An `api-conformance`-lane
-   * case (every boundary case, plus the read-lock matrix reads `0616`-`0619`) is
+   * The conformance lane the case runs on (default `harness`). An
+   * `api-conformance`-lane case (every boundary case, plus the read-lock matrix
+   * reads `0616`-`0619`) is
    * suite-satisfied, not harness-run: the runner marks it suite-satisfied and the
    * harness sweeps exclude it, while the API Conformance Suite exercises it.
    */

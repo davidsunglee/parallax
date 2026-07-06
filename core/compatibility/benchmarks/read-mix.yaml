@@ -12,7 +12,7 @@
 # check. The harness measures wall-time p50/p95, the database round trips actually
 # issued, and peak/steady memory; it emits report.json. The numbers it records are
 # REFERENCE figures — per-language targets live in each language spec (DQ10).
-tags: [m13, benchmark, operation-mix]
+tags: [m-perf-bench, operation-mix]
 model: models/account.yaml
 dataset:
   generate:

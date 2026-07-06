@@ -17,7 +17,7 @@
 # optimistic-mode semantics never re-touch it. roundTrips = 3 (two finds + the
 # rolled-back write, whose DML still executes).
 model: models/account.yaml
-tags: [m8, transactions cache, rollback, abort, scenario, slice-mvp-1]
+tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1]
 roundTrips: 3
 scenario:
   - find:

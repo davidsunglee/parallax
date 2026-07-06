@@ -16,7 +16,7 @@
 #   2  read  on B : B re-fetches by PK 2; observes 888.00 at the SAME identity the
 #                   owner predicate surfaced (sameObjectAs 0).
 model: models/account.yaml
-tags: [coherence, cross-process, m14, identity, identity-preservation]
+tags: [m-coherence, identity, identity-preservation]
 coherence:
   - node: B
     kind: read

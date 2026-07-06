@@ -6,7 +6,7 @@
 # the Visa card row (id 1, amount 100.00) qualifies; the Amex card row (50.00) is
 # filtered out by the amount predicate.
 model: models/payment.yaml
-tags: [m1, m3, inheritance, table-per-hierarchy, discriminator]
+tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator]
 operation:
   greaterThan: { attr: CardPayment.amount, value: 60.00 }
 goldenSql:

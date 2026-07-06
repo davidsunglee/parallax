@@ -6,7 +6,7 @@
 # applies the DML and asserts the resulting row. (No oracle: `max` is pinned by its
 # self-describing golden + expectedTableState against the real DB.)
 model: models/pk-max.yaml
-tags: [m1, m8, pk-generation, max, write-sequence]
+tags: [m-pk-gen, m-unit-work, max, write-sequence]
 writeSequence:
   - mutation: insert
     entity: Attendee

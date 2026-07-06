@@ -4,7 +4,7 @@
 # Block 1 (base 100): 100,110. Block 2 (base 120): 120,130.
 model: models/pk-sequence.yaml
 loadFixtures: true
-tags: [m1, m8, pk-generation, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
 writeSequence:
   - mutation: update
     entity: PkSequence

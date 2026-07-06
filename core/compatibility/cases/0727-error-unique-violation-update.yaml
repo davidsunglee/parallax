@@ -3,7 +3,7 @@
 # distinct names; the final UPDATE sets tag 2's name to tag 1's name, colliding
 # on tag_name_uq.
 model: models/error-cases.yaml
-tags: [m11, error-classification, uniqueViolation]
+tags: [m-db-error, uniqueViolation]
 errorClass: uniqueViolation
 expectedNativeCode:
   postgres: "23505"

@@ -2,7 +2,7 @@
 # the classification is the same whether the violated constraint is the primary
 # key or a secondary unique index (the DDL emits `unique (name)`; Task 5).
 model: models/error-cases.yaml
-tags: [m11, error-classification, uniqueViolation]
+tags: [m-db-error, uniqueViolation]
 errorClass: uniqueViolation
 expectedNativeCode:
   postgres: "23505"

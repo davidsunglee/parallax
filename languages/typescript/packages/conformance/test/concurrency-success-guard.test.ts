@@ -105,7 +105,7 @@ function caseValidator(): ValidateFunction {
   return new Ajv2020({ allErrors: true, strict: false }).compile(schema);
 }
 
-const CONCURRENCY_TAGS = ["m8", "m11", "read-lock", "concurrency", "slice-mvp-1"];
+const CONCURRENCY_TAGS = ["m-read-lock", "m-dialect", "concurrency", "slice-mvp-1"];
 
 describe("compatibility-case.schema.json — the concurrency-step kind if/then", () => {
   const validate = caseValidator();

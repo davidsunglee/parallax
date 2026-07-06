@@ -1,12 +1,14 @@
-"""Unit tests for the module-dependency graph check + the Phase 12 coverage gate.
+"""Unit tests for the module-dependency graph check + the catalog coverage gate.
 
-These are Docker-free: both the DAG check and the coverage gate are pure text /
-filesystem functions. They guard two normative properties of the spec:
+These are Docker-free: the DAG check, the catalog coverage gate, and the profile
+gate are pure text / filesystem functions. They guard the normative properties of
+the spec:
 
-* the real ``dependency-graph.md`` is a legal DAG (acyclic, legal directions);
-* every in-scope module (MVP / fast-follow / definitely-do, read from
-  ``scope-and-tiers.md``) has at least one fixture tagged to it — the coverage
-  gate that turns "the spec is complete for parity" into a passing check.
+* the real ``modules.md`` is a legal DAG (acyclic, legal directions);
+* every ``active`` module whose coverage source is ``cases`` (read from the
+  ``modules.md`` catalog table) has at least one fixture tagged to it;
+* no ``active`` module depends on a ``deferred`` one;
+* the ``slice-mvp-1`` slice is consistent with its canonical claim in ``slices.md``.
 """
 
 from __future__ import annotations
@@ -18,10 +20,12 @@ import yaml
 
 from reference_harness.dep_graph_check import (
     _SLICE_TAG,
+    active_deferred_edge_errors,
     check,
     coverage_errors,
+    gated_modules,
+    parse_catalog,
     parse_edges,
-    parse_in_scope_modules,
     parse_profile_claim,
     profile_errors,
 )
@@ -36,91 +40,135 @@ _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
 
 def test_real_dependency_graph_is_a_legal_dag() -> None:
-    markdown = (_SPEC_DIR / "dependency-graph.md").read_text(encoding="utf-8")
+    markdown = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
     assert check(markdown) == []
     edges = parse_edges(markdown)
-    assert ("M3", "M2") in edges  # sanity: a known edge is present
-    assert ("M4", "M5") in edges  # the "surprising" direction is declared
-    assert ("M14", "M8") in edges  # cross-process coherence is now a numbered edge
-
-
-# --- a constructed cycle is rejected -----------------------------------------
+    assert ("m-sql", "m-op-algebra") in edges  # sanity: a known edge is present
+    assert ("m-deep-fetch", "m-navigate") in edges  # the "surprising" direction is declared
+    assert ("m-coherence", "m-process-cache") in edges  # coherence keeps caches coherent
 
 
 def test_cycle_is_rejected() -> None:
-    cyclic = "```dependency-graph\nM2 --> M1\nM1 --> M2\n```"
+    cyclic = (
+        "```dependency-graph\nm-op-algebra --> m-descriptor\nm-descriptor --> m-op-algebra\n```"
+    )
     errors = check(cyclic)
     assert any("not a DAG" in e for e in errors)
+
+
+# --- the module catalog table -------------------------------------------------
+
+
+def _catalog_md(rows: list[tuple[str, str, str]], edges: list[str] | None = None) -> str:
+    """A minimal modules.md carrying the catalog table (and optional fenced graph)."""
+    lines = [
+        "## The module catalog",
+        "",
+        "Intro prose the parser skips.",
+        "",
+        "| Module | Summary | Status | Coverage |",
+        "|---|---|---|---|",
+    ]
+    lines += [
+        f"| `{module}` | some behavior | {status} | {coverage} |"
+        for module, status, coverage in rows
+    ]
+    lines += ["", "## The dependency graph", ""]
+    if edges is not None:
+        lines += ["```dependency-graph", *edges, "```"]
+    return "\n".join(lines) + "\n"
+
+
+def test_parse_catalog_reads_status_and_coverage() -> None:
+    catalog = parse_catalog(
+        _catalog_md([("m-core", "active", "cases"), ("m-agg", "deferred", "cases")])
+    )
+    assert catalog["m-core"] == {"status": "active", "coverage": "cases"}
+    assert catalog["m-agg"] == {"status": "deferred", "coverage": "cases"}
+
+
+def test_real_catalog_matches_the_graph() -> None:
+    markdown = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    catalog = parse_catalog(markdown)
+    graph_modules = {m for edge in parse_edges(markdown) for m in edge}
+    # The catalog table and the dependency graph list exactly the same modules.
+    assert graph_modules == set(catalog)
+    assert catalog["m-db-port"]["coverage"] == "contract"  # the sole contract-covered module
+    assert catalog["m-agg"]["status"] == "deferred"  # aggregation is deferred
+    assert catalog["m-core"]["status"] == "active"
 
 
 # --- the coverage gate over the real spec ------------------------------------
 
 
 def test_real_spec_is_fully_covered() -> None:
-    scope = (_SPEC_DIR / "scope-and-tiers.md").read_text(encoding="utf-8")
-    assert coverage_errors(scope, _COMPATIBILITY_ROOT) == []
+    markdown = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    assert coverage_errors(markdown, _COMPATIBILITY_ROOT) == []
 
 
-def test_in_scope_modules_match_the_numbered_graph() -> None:
-    scope = (_SPEC_DIR / "scope-and-tiers.md").read_text(encoding="utf-8")
-    graph = (_SPEC_DIR / "dependency-graph.md").read_text(encoding="utf-8")
-    in_scope = parse_in_scope_modules(scope)
-    graph_modules = {m for edge in parse_edges(graph) for m in edge}
-    # Every numbered module in the graph is an in-scope tier (there is no
-    # numbered module in the might-do / won't-do tiers); M6 does not exist.
-    assert graph_modules <= in_scope
-    assert "M14" in in_scope  # cross-process coherence, now a numbered module
-    assert "M6" not in in_scope  # aggregation is folded into M2
-    assert "coherence" not in in_scope  # retired: M14 is covered by its m14 tag
+def test_real_spec_has_no_active_to_deferred_edge() -> None:
+    markdown = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    assert active_deferred_edge_errors(markdown) == []
 
 
-# --- the gate FAILS when an in-scope module is uncovered ---------------------
+# --- the coverage gate FAILS when an active/cases module is uncovered ---------
 
 
 def test_coverage_gate_fails_on_a_gap() -> None:
-    scope = (
-        "### MVP\n"
-        "- **M0** core conventions\n"
-        "- **M99** a module with no fixtures\n"
-        "### Won't-do (round 1)\n"
-        "- something out of scope\n"
-    )
-    errors = coverage_errors(scope, _COMPATIBILITY_ROOT)
-    assert any("M99" in e for e in errors)
-    # M0 IS covered by a real fixture, so it must not be reported as a gap.
-    assert not any("M0" in e for e in errors)
+    markdown = _catalog_md([("m-core", "active", "cases"), ("m-nonexistent", "active", "cases")])
+    errors = coverage_errors(markdown, _COMPATIBILITY_ROOT)
+    assert any("m-nonexistent" in e for e in errors)
+    # m-core IS covered by a real fixture, so it must not be reported as a gap.
+    assert not any("m-core" in e for e in errors)
 
 
-def test_might_do_and_wont_do_tiers_are_excluded_from_the_gate() -> None:
-    # A module mentioned ONLY under might-do / won't-do is not in scope, so even
-    # with zero fixtures it does not fail the gate.
-    scope = (
-        "### MVP\n"
-        "- **M2** operation algebra\n"
-        "### Might-do\n"
-        "- **M98** an optional, uncovered module\n"
-        "### Won't-do (round 1)\n"
-        "- **M97** an excluded, uncovered module\n"
+def test_deferred_and_contract_modules_are_excluded_from_the_gate() -> None:
+    # A `deferred` module and a `contract`-covered module are not gated, so even
+    # with zero fixtures they do not fail the coverage gate.
+    markdown = _catalog_md(
+        [
+            ("m-op-algebra", "active", "cases"),
+            ("m-ghost-deferred", "deferred", "cases"),
+            ("m-ghost-port", "active", "contract"),
+        ]
     )
-    in_scope = parse_in_scope_modules(scope)
-    assert "M98" not in in_scope
-    assert "M97" not in in_scope
-    assert coverage_errors(scope, _COMPATIBILITY_ROOT) == []
+    catalog = parse_catalog(markdown)
+    assert gated_modules(catalog) == ["m-op-algebra"]
+    assert coverage_errors(markdown, _COMPATIBILITY_ROOT) == []
+
+
+# --- the active -> deferred rule ---------------------------------------------
+
+
+def test_active_to_deferred_edge_is_rejected() -> None:
+    markdown = _catalog_md(
+        [("m-op-algebra", "active", "cases"), ("m-agg", "deferred", "cases")],
+        edges=["m-op-algebra --> m-agg"],
+    )
+    errors = active_deferred_edge_errors(markdown)
+    assert any("m-op-algebra" in e and "m-agg" in e for e in errors)
+
+
+def test_deferred_to_active_edge_is_allowed() -> None:
+    markdown = _catalog_md(
+        [("m-op-algebra", "active", "cases"), ("m-agg", "deferred", "cases")],
+        edges=["m-agg --> m-op-algebra"],
+    )
+    assert active_deferred_edge_errors(markdown) == []
 
 
 # --- the profile (conformance-slice) consistency gate, on synthetic inputs ----
 #
-# These mirror ``test_coverage_gate_fails_on_a_gap``: a synthetic slice claim plus
-# a synthetic ``cases/`` tree, one failing assertion per gate dimension plus a
-# clean pass. The real-corpus assertion lands in Phase 2.
+# A synthetic slice claim plus a synthetic ``cases/`` tree, one failing assertion
+# per gate dimension plus a clean pass.
 
 
-def _synthetic_scope(
-    modules: str = '["m1","m2"]',
+def _synthetic_slices(
+    modules: str = '["m-core","m-op-algebra"]',
     shapes: str = '["read","writeSequence"]',
     case_tags: str = '{ "include": ["slice-mvp-1"] }',
 ) -> str:
-    """A minimal scope-and-tiers.md carrying the slice heading + a json claim."""
+    """A minimal slices.md carrying the slice heading + a json claim."""
     return textwrap.dedent(
         f"""\
         ## First-implementation Conformance Slice
@@ -163,78 +211,78 @@ def _clean_read_case(tags: list[str]) -> dict:
 
 
 def test_parse_profile_claim_extracts_the_embedded_claim() -> None:
-    capabilities = parse_profile_claim(_synthetic_scope())
-    assert capabilities["modules"] == ["m1", "m2"]
+    capabilities = parse_profile_claim(_synthetic_slices())
+    assert capabilities["modules"] == ["m-core", "m-op-algebra"]
     assert capabilities["caseShapes"] == ["read", "writeSequence"]
     assert capabilities["caseTags"] == {"include": ["slice-mvp-1"]}
 
 
 def test_profile_gate_passes_on_a_consistent_slice(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "slice-mvp-1"]))
-    _write_case(cases, "0002.yaml", _clean_read_case(["m2", "slice-mvp-1"]))
+    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "0002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
     # an untagged case with a stray module must be ignored entirely.
-    _write_case(cases, "0003.yaml", _clean_read_case(["m99", "other"]))
-    assert profile_errors(_synthetic_scope(), tmp_path) == []
+    _write_case(cases, "0003.yaml", _clean_read_case(["m-ghost", "other"]))
+    assert profile_errors(_synthetic_slices(), tmp_path) == []
 
 
 def test_profile_gate_requires_the_canonical_single_include_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "slice-mvp-1"]))
-    _write_case(cases, "0002.yaml", _clean_read_case(["m2", "slice-mvp-1"]))
+    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "0002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
 
     for case_tags in (
         "{}",
         '{ "include": ["renamed-slice"] }',
         '{ "include": ["slice-mvp-1", "extra-slice"] }',
     ):
-        errors = profile_errors(_synthetic_scope(case_tags=case_tags), tmp_path)
+        errors = profile_errors(_synthetic_slices(case_tags=case_tags), tmp_path)
         assert any("caseTags.include" in e and _SLICE_TAG in e for e in errors)
 
 
 def test_profile_gate_fails_when_a_claimed_module_is_uncovered(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    # only m1 is carried; the claim also lists m2 -> m2 is uncovered.
-    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "slice-mvp-1"]))
-    errors = profile_errors(_synthetic_scope(), tmp_path)
-    assert any("m2" in e and "no tagged case" in e for e in errors)
+    # only m-core is carried; the claim also lists m-op-algebra -> uncovered.
+    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    errors = profile_errors(_synthetic_slices(), tmp_path)
+    assert any("m-op-algebra" in e and "no tagged case" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "slice-mvp-1"]))
-    # m9 is on a tagged case but not in the claim's modules.
-    _write_case(cases, "0002.yaml", _clean_read_case(["m2", "m9", "slice-mvp-1"]))
-    errors = profile_errors(_synthetic_scope(), tmp_path)
-    assert any("0002.yaml" in e and "'m9'" in e for e in errors)
+    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    # m-detach is on a tagged case but not in the claim's modules.
+    _write_case(cases, "0002.yaml", _clean_read_case(["m-op-algebra", "m-detach", "slice-mvp-1"]))
+    errors = profile_errors(_synthetic_slices(), tmp_path)
+    assert any("0002.yaml" in e and "'m-detach'" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "slice-mvp-1"]))
-    _write_case(cases, "0002.yaml", _clean_read_case(["m2", "slice-mvp-1"]))
+    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "0002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
     # a conflict-shaped tagged case while the claim allows only read/writeSequence.
     _write_case(
         cases,
         "0003.yaml",
         {
             "model": "models/account.yaml",
-            "tags": ["m2", "slice-mvp-1"],
+            "tags": ["m-op-algebra", "slice-mvp-1"],
             "expectedAffectedRows": 0,
             "goldenSql": {"postgres": "update account set balance = ? where id = ?"},
         },
     )
-    errors = profile_errors(_synthetic_scope(), tmp_path)
+    errors = profile_errors(_synthetic_slices(), tmp_path)
     assert any("0003.yaml" in e and "conflict" in e and "outside" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_missing_postgres_golden(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "slice-mvp-1"]))
-    no_golden = _clean_read_case(["m2", "slice-mvp-1"])
+    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    no_golden = _clean_read_case(["m-op-algebra", "slice-mvp-1"])
     no_golden["goldenSql"] = {"mariadb": "select t0.id from orders t0"}
     _write_case(cases, "0002.yaml", no_golden)
-    errors = profile_errors(_synthetic_scope(), tmp_path)
+    errors = profile_errors(_synthetic_slices(), tmp_path)
     assert any("0002.yaml" in e and "Postgres golden" in e for e in errors)
 
 
@@ -242,28 +290,28 @@ def test_profile_gate_fails_on_an_excluded_tag_when_the_claim_lists_exclude(
     tmp_path: Path,
 ) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "slice-mvp-1"]))
+    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
     _write_case(
         cases,
         "0002.yaml",
-        _clean_read_case(["m2", "aggregate", "slice-mvp-1"]),
+        _clean_read_case(["m-op-algebra", "aggregate", "slice-mvp-1"]),
     )
-    scope = _synthetic_scope(case_tags='{ "include": ["slice-mvp-1"], "exclude": ["aggregate"] }')
-    errors = profile_errors(scope, tmp_path)
+    slices = _synthetic_slices(case_tags='{ "include": ["slice-mvp-1"], "exclude": ["aggregate"] }')
+    errors = profile_errors(slices, tmp_path)
     assert any("0002.yaml" in e and "excluded" in e and "aggregate" in e for e in errors)
 
 
 def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) -> None:
-    # The scenario shape (0607) carries Postgres golden SQL per step, not at the
-    # top level; the shape-aware golden check must accept it.
+    # The scenario shape carries Postgres golden SQL per step, not at the top
+    # level; the shape-aware golden check must accept it.
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m1", "slice-mvp-1"]))
+    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
     _write_case(
         cases,
         "0002.yaml",
         {
             "model": "models/account.yaml",
-            "tags": ["m2", "m8", "slice-mvp-1"],
+            "tags": ["m-core", "m-op-algebra", "m-unit-work", "slice-mvp-1"],
             "roundTrips": 2,
             "scenario": [
                 {
@@ -280,35 +328,24 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
             ],
         },
     )
-    scope = _synthetic_scope(
-        modules='["m1","m2","m8"]',
+    slices = _synthetic_slices(
+        modules='["m-core","m-op-algebra","m-unit-work"]',
         shapes='["read","writeSequence","scenario"]',
     )
-    assert profile_errors(scope, tmp_path) == []
+    assert profile_errors(slices, tmp_path) == []
 
 
 # --- the profile gate over the real corpus -----------------------------------
 #
-# The real-corpus assertions: the family-selected cases are internally
-# consistent with the canonical claim, and exactly 123 cases carry the slice tag
-# (a drift tripwire — adding or losing a tagged case fails the count). The count
-# rose from 97 to 99 when the temporal deep-fetch cases 0335/0336 were added to
-# the corpus, to 100 when the rollback scenario 0608 was added (the M8 abort
-# contract, COR-14), to 101 when the Phase-2 optimistic cases 0609/0611 were
-# added and the redundant 0707 removed, to 114 when the Phase-4 bounded-retry
-# boundary cases (0710-0718) and read-lock matrix reads (0616-0619) were added,
-# to 116 when the Phase-5 versioned set-based materialize scenarios (0614/0615)
-# were added, to 120 when the Phase-6 optimistic × temporal close cases
-# (0730-0733) were added (clarify transaction semantics, COR-14), to 121 when
-# the behavioral read-lock-blocks-writer case (0728) drew the error/concurrency
-# shape into the slice for the first time (COR-12), and to 123 when the behavioral
-# read-lock-shared-compatible (0729) and projection-omits-lock-admits-writer (0734)
-# cases drew the concurrencySuccess shape into the slice (COR-12).
+# The family-selected cases are internally consistent with the canonical claim,
+# and exactly 123 cases carry the slice tag (a drift tripwire — adding or losing a
+# tagged case fails the count). The cutover to the slugged catalog preserved
+# slice membership exactly; only the claim vocabulary changed.
 
 
 def test_real_corpus_profile_is_consistent() -> None:
-    scope = (_SPEC_DIR / "scope-and-tiers.md").read_text(encoding="utf-8")
-    assert profile_errors(scope, _COMPATIBILITY_ROOT) == []
+    slices = (_SPEC_DIR / "slices.md").read_text(encoding="utf-8")
+    assert profile_errors(slices, _COMPATIBILITY_ROOT) == []
 
 
 def test_profile_slice_tag_count() -> None:

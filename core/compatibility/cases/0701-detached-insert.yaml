@@ -14,7 +14,7 @@
 # asserted in prose. The version column is initialized to 1 on insert (the M10
 # optimistic-lock baseline).
 model: models/account.yaml
-tags: [m9, m3, detached, detached-insert, write-sequence, lifecycle detach]
+tags: [m-detach, m-sql, detached-insert, write-sequence]
 writeSequence:
   - mutation: insert
     entity: Account

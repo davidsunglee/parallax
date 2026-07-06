@@ -6,7 +6,7 @@
 # them from the declared config; this case asserts the target table only.
 model: models/pk-sequence.yaml
 loadFixtures: true
-tags: [m1, m8, pk-generation, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
 writeSequence:
   - mutation: update
     entity: PkSequence

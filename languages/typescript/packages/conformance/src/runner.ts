@@ -55,15 +55,16 @@ import { columnTypesForCase, schemaForReadCase } from "./schema-resolver.js";
 import { buildWriteSequencePlan, isWriteSequence } from "./write-sequence.js";
 
 /**
- * The `read-lock` tag marks a locking-mode in-transaction object find that must
- * carry the dialect's shared-row-lock suffix (M8 automatic read-lock correctness).
- * The signal is the tag (not the operation AST — the operation is a plain `eq`), so
- * the runner detects it here and compiles the read in `locking` mode; `compile()`
- * then applies the dialect's read-lock in-line (`for share of t0` after every other
- * clause), so the emitted SQL already carries the lock (no post-compile step).
+ * The `m-read-lock` module tag marks a locking-mode in-transaction object find
+ * that must carry the dialect's shared-row-lock suffix (automatic read-lock
+ * correctness). The signal is the tag (not the operation AST — the operation is a
+ * plain `eq`), so the runner detects it here and compiles the read in `locking`
+ * mode; `compile()` then applies the dialect's read-lock in-line (`for share of
+ * t0` after every other clause), so the emitted SQL already carries the lock (no
+ * post-compile step).
  */
 function isReadLock(loaded: LoadedCase): boolean {
-  return loaded.tags.includes("read-lock");
+  return loaded.tags.includes("m-read-lock");
 }
 
 /** One side (`A`/`B`) of a `concurrency.rounds` step: a dialect-keyed golden + binds. */

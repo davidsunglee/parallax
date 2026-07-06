@@ -12,7 +12,7 @@
 # set-based update MUST materialize into per-object version-advancing updates
 # (M10 / ADR 0031).
 model: models/wallet.yaml
-tags: [m8, m3, batched-write, write-sequence, per-key, transactions cache, slice-mvp-1]
+tags: [m-batch-write, m-sql, write-sequence, per-key, slice-mvp-1]
 loadFixtures: true
 writeSequence:
   - mutation: update

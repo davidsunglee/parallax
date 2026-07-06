@@ -5,7 +5,7 @@
 # Fixtures are loaded first. Deleting Order 1 removes dependent statuses, then
 # dependent items, then the root order. Rows for other orders remain untouched.
 model: models/orders.yaml
-tags: [m5, m8, m3, cascade, cascade-delete, write-sequence]
+tags: [m-cascade-delete, m-unit-work, m-sql, write-sequence]
 loadFixtures: true
 writeSequence:
   - mutation: cascadeDelete

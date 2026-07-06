@@ -19,7 +19,7 @@
 # current Bob milestone (thru_z = infinity). The close UPDATE is keyed by the
 # current-business predicate (res_id AND thru_z = infinity).
 model: models/reservation.yaml
-tags: [m7, m3, business_temporal, temporal, write-sequence, update, business-only]
+tags: [m-business-only, m-sql, business_temporal, temporal, write-sequence, update, business-only]
 writeSequence:
   - mutation: insert
     entity: Reservation

@@ -5,7 +5,7 @@
 # distinct from count(attr) which counts non-NULL values. The single aggregate
 # column is aliased `order_count`.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, count]
+tags: [m-agg, m-sql-agg, count]
 operation:
   groupBy:
     operand:

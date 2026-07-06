@@ -10,7 +10,7 @@
 # predicate algebra). The two having binds follow HAVING-clause left-to-right
 # order: [2 (avg gte), 2 (count gte)]. avg 4.0 coerces to the integer 4.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, avg, groupBy, having, and]
+tags: [m-agg, m-sql-agg, avg, groupBy, having, and]
 operation:
   groupBy:
     operand:

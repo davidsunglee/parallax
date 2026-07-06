@@ -12,7 +12,7 @@
 # harness cannot provoke; the language's API Conformance Suite drives it through
 # a fault-injecting decorator wrapped around the shipped adapter.
 model: models/account.yaml
-tags: [m10, m8, optimistic-locking, conflict, retry, slice-mvp-1]
+tags: [m-opt-lock, m-auto-retry, m-api-conformance, conflict, slice-mvp-1]
 lane: api-conformance
 uow:
   concurrency: optimistic

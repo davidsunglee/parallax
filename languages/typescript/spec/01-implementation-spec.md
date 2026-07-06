@@ -54,7 +54,7 @@ claim and its name is its `caseTags.include` tag.
 ### 1.1 V1 conformance capability claims
 
 TypeScript V1 **is** the canonical `slice-mvp-1` Conformance Slice
-declared in [`scope-and-tiers.md`](../../../core/spec/scope-and-tiers.md#first-implementation-conformance-slice)
+declared in [`slices.md`](../../../core/spec/slices.md#first-implementation-conformance-slice)
 ([TS-0064](../docs/adr/0064-adopt-first-implementation-mvp-slice.md)). The V1
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
@@ -80,17 +80,25 @@ capabilities in this shape:
   },
   "capabilities": {
     "modules": [
-      "m0",
-      "m1",
-      "m2",
-      "m3",
-      "m4",
-      "m5",
-      "m7",
-      "m8",
-      "m10",
-      "m11",
-      "m12"
+      "m-api-conformance",
+      "m-audit-write",
+      "m-auto-retry",
+      "m-batch-write",
+      "m-case-format",
+      "m-conformance-adapter",
+      "m-core",
+      "m-db-error",
+      "m-deep-fetch",
+      "m-descriptor",
+      "m-dialect",
+      "m-navigate",
+      "m-op-algebra",
+      "m-op-list",
+      "m-opt-lock",
+      "m-read-lock",
+      "m-sql",
+      "m-temporal-read",
+      "m-unit-work"
     ],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess"],

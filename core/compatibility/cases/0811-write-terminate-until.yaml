@@ -22,7 +22,7 @@
 # business [2024-01-01, 2024-03-01)) + tail (100, business [2024-09-01, infinity)),
 # the window left uncovered by any current-on-processing row.
 model: models/position.yaml
-tags: [m7, m3, bitemporal, temporal, write-sequence, terminate-until, rectangle-split]
+tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, terminate-until, rectangle-split]
 writeSequence:
   - mutation: insert
     entity: Position

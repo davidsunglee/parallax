@@ -6,7 +6,7 @@
 # returned rows obey it, so a dropped or wrong `ORDER BY` fails this case. This is
 # the dedicated, single-purpose witness for the ordering contract.
 model: models/orders.yaml
-tags: [m4, m5, deepFetch, orderBy, ordering, relationship, slice-mvp-1]
+tags: [m-deep-fetch, m-op-list, orderBy, ordering, relationship, slice-mvp-1]
 operation:
   deepFetch:
     operand:

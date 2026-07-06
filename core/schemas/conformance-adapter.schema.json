@@ -56,7 +56,7 @@
     },
     "moduleTag": {
       "type": "string",
-      "pattern": "^m[0-9]+$"
+      "pattern": "^m-[a-z0-9]+(-[a-z0-9]+)*$"
     },
     "caseShapeList": {
       "type": "array",

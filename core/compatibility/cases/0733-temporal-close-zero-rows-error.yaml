@@ -17,7 +17,7 @@
 # and asserts affectedRows 0. expectedTableState is the fixtures with id 2 terminated
 # (our close applied nothing).
 model: models/balance.yaml
-tags: [m7, m10, m3, temporal, conflict, locking, slice-mvp-1]
+tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, locking, slice-mvp-1]
 uow:
   concurrency: locking
 # A concurrent writer TERMINATED id 2: close the current row at 2024-09-01, chain nothing.

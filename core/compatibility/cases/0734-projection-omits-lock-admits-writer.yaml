@@ -13,7 +13,7 @@
 # block/raise). 0734, not 0730: 0730-0733 are the Phase-6 temporal-close-optimistic
 # family.
 model: models/account.yaml
-tags: [m8, m11, read-lock, concurrency, projection-omits-lock, slice-mvp-1]
+tags: [m-read-lock, m-dialect, concurrency, projection-omits-lock, slice-mvp-1]
 loadFixtures: true
 concurrency:
   rounds:

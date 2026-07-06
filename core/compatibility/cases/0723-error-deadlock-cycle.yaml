@@ -4,7 +4,7 @@
 # The victim choice is non-deterministic; the runner classifies whichever error
 # is raised. Neutral category deadlock; native PG 40P01 / MariaDB 1213.
 model: models/error-cases.yaml
-tags: [m11, error-classification, deadlock]
+tags: [m-db-error, deadlock]
 loadFixtures: true
 errorClass: deadlock
 expectedNativeCode:

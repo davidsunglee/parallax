@@ -7,7 +7,7 @@
 # all). Order 1 (items 11/12 have statuses) and order 42 (item 421 has a status)
 # are dropped; order 2 (item 21 has none) and the item-less orders 3/4/5 survive.
 model: models/orders.yaml
-tags: [m4, notExists, relationship, multi-hop, slice-mvp-1]
+tags: [m-navigate, notExists, relationship, multi-hop, slice-mvp-1]
 operation:
   notExists:
     rel: Order.items
