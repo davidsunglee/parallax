@@ -1,33 +1,34 @@
-# M10 — Optimistic Locking
+# m-opt-lock — Optimistic Locking
 
-`M10` is the **optimistic concurrency** strategy: instead of holding a row lock
-for the duration of a read-then-write (`M8`'s automatic shared-row lock), an
-entity carries a **version column** that a write **advances** and, in optimistic
-mode, **gates on**. A concurrent write that changed the version first makes the
-stale-version write match **no** row, and that *missing* row is the conflict
-signal.
+`m-opt-lock` is the **optimistic concurrency** strategy: instead of holding a row
+lock for the duration of a read-then-write (`m-read-lock`'s automatic shared-row
+lock), an entity carries a **version column** that a write **advances** and, in
+optimistic mode, **gates on**. A concurrent write that changed the version first
+makes the stale-version write match **no** row, and that *missing* row is the
+conflict signal.
 
-`M10` is a fast-follow module. It depends on `M8` (the unit of work whose flush
-issues the versioned `UPDATE`, and the identity cache that holds the version a
-reader observed) and on nothing below it. The version-check SQL is fixed by `M3`;
-`M10` mandates the **observable** conflict-detection rule.
+`m-opt-lock` depends on `m-unit-work` (the unit of work whose flush issues the
+versioned `UPDATE`) and `m-temporal-read` (the milestoning read model a temporal
+entity's derived key rides on). The version a reader observed is held by the
+identity cache (`m-process-cache`). The version-check SQL is fixed by `m-sql`;
+`m-opt-lock` mandates the **observable** conflict-detection rule.
 
 Optimistic locking is a **per-unit-of-work participation mode** the caller
-selects (`M8` strategy selection — `concurrency: optimistic`), not a static entity
-property. In optimistic mode a read takes **no** lock (so readers never block
-writers), and correctness is recovered at write time by the version check; the
-default `locking` mode instead takes `M8`'s implicit shared read lock. The same
-versioned entity can be written under either mode in different workflows. The
-metamodel only **names** the version column (`optimisticLocking: true`, `M1`);
-whether the gate is emitted is the unit of work's choice. Optimistic mode suits
-read-mostly workloads and detached edits (`M9`), where holding a lock across the
-edit is undesirable or impossible.
+selects (`m-unit-work` strategy selection — `concurrency: optimistic`), not a
+static entity property. In optimistic mode a read takes **no** lock (so readers
+never block writers), and correctness is recovered at write time by the version
+check; the default `locking` mode instead takes the `m-read-lock` shared read lock.
+The same versioned entity can be written under either mode in different workflows.
+The metamodel only **names** the version column (`optimisticLocking: true`,
+`m-descriptor`); whether the gate is emitted is the unit of work's choice.
+Optimistic mode suits read-mostly workloads and detached edits (`m-detach`), where
+holding a lock across the edit is undesirable or impossible.
 
 ## The version column
 
 An entity names its version column by marking exactly one attribute
-`optimisticLocking: true` (`M1`). That attribute is the **version**: an integer
-an implementation **MUST**:
+`optimisticLocking: true` (`m-descriptor`). That attribute is the **version**: an
+integer an implementation **MUST**:
 
 - **project** alongside the row on every read of a versioned entity (the reader
   observes the current version — the versioned-read golden SELECTs the version
@@ -37,16 +38,16 @@ an implementation **MUST**:
 - **gate** on **in optimistic mode only** — include `and <version> = ?` in the
   `where` clause binding the version the unit of work *observed* for that row. In
   `locking` mode the shared read lock makes the write correct, so no gate is
-  emitted (the `UPDATE` still advances the version — the `m-detach-002` / locking-mode
-  shape).
+  emitted (the `UPDATE` still advances the version — the `m-detach-002` /
+  locking-mode shape).
 
 ### Version values are framework-owned
 
 The version an implementation binds in the gate **MUST** be the version the unit
 of work *observed* for that row — the value a transaction-scoped read hydrated
 into the identity cache (a detached copy carries the one read at detachment,
-`M9`). An implementation **MUST NOT** accept a caller-authored version value as
-the gate or as the new version; the new version is always runtime-computed
+`m-detach`). An implementation **MUST NOT** accept a caller-authored version value
+as the gate or as the new version; the new version is always runtime-computed
 (`observed + 1`). "Caller-driven" refers to conflict *handling* only, never to the
 version *value*. A keyed `UPDATE` of a versioned row the unit of work never
 observed is a **read-before-write** error in **either** mode: the new version is
@@ -58,13 +59,11 @@ version to advance it.)
 
 ### No-op updates issue no DML
 
-Replacing the older "write the version on every update even when no domain field
-changed" rule: the version advances on every `UPDATE` statement an
-implementation *issues*, but an update whose `set` changes **no** attribute
-**MUST** issue **no DML** at all (zero round trips). A no-domain-change write does
-not need to bump the version — the concurrent editor that races it advances the
-version itself, so nothing slips through — and the removed always-write rule only
-produced overhead writes and spurious conflicts.
+The version advances on every `UPDATE` statement an implementation *issues*, but
+an update whose `set` changes **no** attribute **MUST** issue **no DML** at all
+(zero round trips). A no-domain-change write does not need to bump the version —
+the concurrent editor that races it advances the version itself, so nothing slips
+through.
 
 ### Set-based updates materialize
 
@@ -77,7 +76,7 @@ so a single `where <predicate>` statement cannot carry it. Such an update
 
 1. **resolves the predicate to rows** through a read — a real round trip that
    records each matched row's observed version into the identity cache (and, in
-   `locking` mode, takes `M8`'s shared read lock on them); then
+   `locking` mode, takes the `m-read-lock` shared read lock on them); then
 2. issues **one keyed per-object `UPDATE` per resolved row** — the gated
    optimistic form or the ungated locking form above, each binding *that row's*
    observed version and advancing it.
@@ -85,37 +84,36 @@ so a single `where <predicate>` statement cannot carry it. Such an update
 Round-trip accounting is therefore **`1` read + `N` per-object updates**. A
 per-object gate that matches zero rows is the same `updatedRows != 1` conflict
 and **MUST** surface (a mid-batch conflict aborts the unit of work like any
-other). This makes read-before-write **universal** for versioned entities: a
-keyed update *requires* a prior observe (above), and a set-based update
-*performs* it. For a **non-versioned** entity the readless batched forms stand
-(`M3`, ADR 0011) — materialization applies only where a framework-owned version
-must ride each write.
+other). This makes read-before-write **universal** for versioned entities. For a
+**non-versioned** entity the readless batched forms stand (`m-sql`, ADR 0011) —
+materialization applies only where a framework-owned version must ride each write.
 
 ### Temporal entities derive the version from the processing axis
 
-A processing-axis temporal entity (`M7`) carries **no** version column, so its
-optimistic key is **derived**: the observed processing-from (`in_z`) value **is**
-the version analogue (Reladomo's `IN_Z` rule). In optimistic mode the milestone
-close/inactivate `UPDATE` the write already issues gains an `and <in_z> = ?` gate
-bound to the `in_z` the unit of work observed for the current milestone; a
-concurrent chain that superseded that milestone left a **fresh** `in_z`, so the
-stale gate matches zero rows — the same `updatedRows != 1` conflict. On **success**
-no version numbers exist to bump: the gate rides only on the close(s) (one per
-closed/inactivated current row, each binding *that row's* observed `in_z`, each
-**MUST** affect exactly one row), and the chained replacement rows are plain
-ungated `INSERT`s whose fresh `in_z = txInstant` **is** the advance. A **zero-row**
-close is an error in **any** mode (never silent) — a retriable conflict in
-optimistic mode, a distinct non-retriable stale/consistency error in locking mode.
-The write shapes and the current-row-predicate-is-not-a-gate rationale are `M7`;
-the conflict/retry contract is this module (the `M10 --> M7` composition edge).
-Combining an explicit `optimisticLocking` attribute with `asOfAttributes` is
-invalid (`M1`), and a business-temporal-only entity cannot participate in
+A processing-axis temporal entity (`m-temporal-read`) carries **no** version
+column, so its optimistic key is **derived**: the observed processing-from (`in_z`)
+value **is** the version analogue (Reladomo's `IN_Z` rule). In optimistic mode the
+milestone close/inactivate `UPDATE` the write already issues gains an
+`and <in_z> = ?` gate bound to the `in_z` the unit of work observed for the current
+milestone; a concurrent chain that superseded that milestone left a **fresh**
+`in_z`, so the stale gate matches zero rows — the same `updatedRows != 1` conflict.
+On **success** no version numbers exist to bump: the gate rides only on the
+close(s) (one per closed/inactivated current row, each binding *that row's*
+observed `in_z`, each **MUST** affect exactly one row), and the chained replacement
+rows are plain ungated `INSERT`s whose fresh `in_z = txInstant` **is** the advance.
+A **zero-row** close is an error in **any** mode (never silent) — a retriable
+conflict in optimistic mode, a distinct non-retriable stale/consistency error in
+locking mode. The write shapes and the current-row-predicate-is-not-a-gate
+rationale are `m-audit-write` / `m-bitemp-write`; the conflict/retry contract is
+this module (the `m-opt-lock --> m-temporal-read` composition edge). Combining an
+explicit `optimisticLocking` attribute with `asOfAttributes` is invalid
+(`m-descriptor`), and a business-temporal-only entity cannot participate in
 optimistic mode (no processing axis to derive the key from).
 
 ## Conflict detection
 
 In **optimistic mode** the version turns a lost update into a **detectable**
-event. The canonical golden `UPDATE` (`M3`) gates on the observed version:
+event. The canonical golden `UPDATE` (`m-sql`) gates on the observed version:
 
 ```text
 update account set balance = ?, version = ? where id = ? and version = ?
@@ -148,40 +146,41 @@ A detected conflict is **retriable**. On conflict an implementation **MUST**:
    conflict / retriable exception, the per-language shape of which is an
    idiomatic concern);
 2. invalidate the stale cached row so a re-read fetches the **current** version
-   and values (`M8` cache freshness);
+   and values (`m-process-cache` freshness);
 3. permit a **retry** that re-reads the fresh version and re-applies the
    intended change against it.
 
 The unit-of-work boundary **MUST** offer **bounded automatic retry** as specified
-in `M8` (*Bounded automatic retry*): a configurable bound (default **10**; `0`
-disables the loop), and on a retriable failure a rollback, a freshness
-invalidation, and a re-execution of the closure against fresh state. A conflict is
-**not** automatically retried by default — it surfaces to the caller — and joins
-the retriable set only when the unit of work opts in (`retryOptimisticConflicts`,
+in `m-auto-retry`: a configurable bound (default **10**; `0` disables the loop),
+and on a retriable failure a rollback, a freshness invalidation, and a
+re-execution of the closure against fresh state. A conflict is **not**
+automatically retried by default — it surfaces to the caller — and joins the
+retriable set only when the unit of work opts in (`retryOptimisticConflicts`,
 Reladomo's `setRetryOnOptimisticLockFailure`, default off). Transient database
 failures (deadlock / serialization failure) are always retriable regardless of
 that flag. A retry that exhausts its bound surfaces the conflict to the caller.
 
 The suite proves the retriable half observably with a conflict case's
-**`attempts`** sequence (M12): a stale-version `UPDATE` affects `0` rows, then a
-retry that re-reads the fresh version and re-applies affects `1` — the `0`-then-
-`1` transition, asserted against real data. The loop-mechanics branches a
+**`attempts`** sequence (`m-case-format`): a stale-version `UPDATE` affects `0`
+rows, then a retry that re-reads the fresh version and re-applies affects `1` — the
+`0`-then-`1` transition, asserted against real data. The loop-mechanics branches a
 single-connection harness cannot provoke (a conflict surfacing without the opt-in,
 an injected transient auto-retried, `retries: 0`, bound exhaustion) are authored as
 **boundary** cases on the `api-conformance` lane and satisfied by each language's
-API Conformance Suite.
+API Conformance Suite (`m-api-conformance`).
 
-Optimistic locking composes with **detached merge-back** (`M9`): the version a
-detached copy carries is the one read at detachment, so a merge-back `UPDATE`
+Optimistic locking composes with **detached merge-back** (`m-detach`): the version
+a detached copy carries is the one read at detachment, so a merge-back `UPDATE`
 gates on that version and detects a conflict if the original changed in the
 interim — exactly the same `updatedRows != 1` rule.
 
 ## What the suite pins down
 
-`M10` is proven by a **conflict case** (`M12`): the golden `UPDATE` is applied to
-a loaded table and the **affected-row count** is asserted. The case carries an
-optional out-of-band **`precondition`** — a naive SQL statement that simulates a
-concurrent transaction mutating the row — and an **`expectedAffectedRows`** count:
+`m-opt-lock` is proven by a **conflict case** (`m-case-format`): the golden
+`UPDATE` is applied to a loaded table and the **affected-row count** is asserted.
+The case carries an optional out-of-band **`precondition`** — a naive SQL statement
+that simulates a concurrent transaction mutating the row — and an
+**`expectedAffectedRows`** count:
 
 | Case | Mode | Precondition | Golden UPDATE version | Affected rows |
 |---|---|---|---|---|

@@ -1,13 +1,13 @@
-# Conformance Adapter Contract
+# m-conformance-adapter — Conformance Adapter Contract
 
 The conformance adapter is the seam between the language-neutral compatibility
 corpus and a concrete language implementation. It gives an external runner a
 small interface for asking an implementation what it supports, what SQL it
 emits for a case, and what observations it produces when it runs a case.
 
-This contract is M12-adjacent: the reference harness proves the core corpus is
-internally coherent; a language implementation proves itself by satisfying this
-adapter contract against that same corpus.
+This contract is adjacent to `m-case-format`: the reference harness proves the
+core corpus is internally coherent; a language implementation proves itself by
+satisfying this adapter contract against that same corpus.
 
 ## Purpose
 
@@ -115,11 +115,11 @@ Example:
     "version": "0.1.0"
   },
   "capabilities": {
-    "modules": ["m0", "m1", "m2", "m3", "m11", "m12"],
+    "modules": ["m-core", "m-descriptor", "m-op-algebra", "m-sql", "m-dialect", "m-case-format"],
     "dialects": ["postgres"],
     "caseShapes": ["read"],
     "caseTags": {
-      "exclude": ["aggregate", "groupBy", "having"]
+      "exclude": ["groupBy", "having"]
     },
     "commands": ["describe", "compile", "run"],
     "provisioning": "external-url"
@@ -130,14 +130,15 @@ Example:
 Capability claims are deliberately **case-slice aware**. `modules`,
 `dialects`, and `caseShapes` are broad filters; `caseTags` is an optional
 fine-grained filter over the compatibility case's own `tags` array. This lets a
-partial implementation honestly claim, for example, M2 predicate reads while
-deferring M2 aggregation reads, or M8 transaction/write cases while deferring
-query-cache and identity-cache scenarios.
+partial implementation honestly claim, for example, `m-op-algebra` predicate reads
+while deferring aggregation (`m-agg`) reads, or `m-unit-work` transaction/write
+cases while deferring the `m-process-cache` query-cache and identity-cache
+scenarios.
 
 The example above is intentionally minimal. For a worked, canonical
 **include-driven** first slice, see the
-[`slice-mvp-1`](scope-and-tiers.md#first-implementation-conformance-slice)
-Conformance Slice in `scope-and-tiers.md`: its `describe` claim selects 120
+[`slice-mvp-1`](slices.md#first-implementation-conformance-slice)
+Conformance Slice in `slices.md`: its `describe` claim selects 123
 Postgres-only cases by a single `caseTags.include: ["slice-mvp-1"]`
 tag rather than by a fragile list of exclusions, and a consistency gate keeps the
 tagged corpus aligned with that claim. A fresh implementer authoring a first build
@@ -149,14 +150,14 @@ machine-readable form is a `describeOk` envelope validated against this schema,
 and its name is its `caseTags.include` tag, which follows the slice-naming
 convention `^slice-[a-z0-9][a-z0-9-]*$`. Both the rule and the convention are
 stated with the slice in
-[`scope-and-tiers.md`](scope-and-tiers.md#first-implementation-conformance-slice).
+[`slices.md`](slices.md#first-implementation-conformance-slice).
 
 A case command is claimed only when **all** of these are true:
 
 - the command is listed in `commands`
 - the requested dialect is listed in `dialects`
 - the case shape is listed in `caseShapes`
-- every module-like tag on the case (`m0`, `m1`, …, `m14`) is
+- every module-like tag on the case (`m-core`, `m-op-algebra`, …) is
   listed in `modules`
 - if `caseTags.include` is present, the case has at least one listed tag
 - if `caseTags.exclude` is present, the case has none of the listed tags
@@ -248,13 +249,13 @@ public behavior, and reporting observations. A runner may compare those
 observations to `expectedRows`, `expectedGraph`, `expectedTableState`,
 `expectedAffectedRows`, cache/identity expectations, and `roundTrips`.
 
-When a language implementation routes case execution through its M11 runtime
-database port, read/result statements and DML outcome statements remain separate:
-row-returning reads use the port's row execution method, while write-sequence and
-conflict affected counts come from the port's affected-row write method
-(`executeWrite` in the TypeScript port). An adapter MUST NOT weaken the emitted
-SQL by adding dialect-specific row-returning clauses solely to compute affected
-rows.
+When a language implementation routes case execution through its `m-db-port`
+runtime database port, read/result statements and DML outcome statements remain
+separate: row-returning reads use the port's row execution method, while
+write-sequence and conflict affected counts come from the port's affected-row
+write method (`executeWrite` in the TypeScript port). An adapter MUST NOT weaken
+the emitted SQL by adding dialect-specific row-returning clauses solely to compute
+affected rows.
 
 Example:
 
@@ -301,12 +302,13 @@ assert different things:
 
 ## `benchmark`
 
-`benchmark` runs one benchmark fixture and reports measurements using the M13
-methodology. The command returns the same report shape M13 calls `report.json`,
-wrapped in the standard adapter envelope. For a single `--benchmark <b.yaml>`
-invocation, `report.benchmarks` contains one entry for that requested fixture.
-Adapters MAY also write the same `report` object to a local `report.json` artifact
-for CI collection, but stdout is the normative adapter output.
+`benchmark` runs one benchmark fixture and reports measurements using the
+`m-perf-bench` methodology. The command returns the same report shape
+`m-perf-bench` calls `report.json`, wrapped in the standard adapter envelope. For a
+single `--benchmark <b.yaml>` invocation, `report.benchmarks` contains one entry
+for that requested fixture. Adapters MAY also write the same `report` object to a
+local `report.json` artifact for CI collection, but stdout is the normative adapter
+output.
 
 Example:
 
@@ -352,14 +354,14 @@ Example:
 }
 ```
 
-Benchmarks are required only when a language implementation claims M13 support.
-The benchmark envelope MUST NOT use the legacy single-workload `metrics` object;
-the report object is the machine-readable performance artifact.
+Benchmarks are required only when a language implementation claims `m-perf-bench`
+support. The benchmark envelope MUST NOT use the legacy single-workload `metrics`
+object; the report object is the machine-readable performance artifact.
 
 ## Comparison Rules
 
 A conformance runner compares adapter output to the compatibility case using the
-same rules as M12:
+same rules as `m-case-format`:
 
 - emitted SQL is normalized and compared to `goldenSql[dialect]`
 - binds compare in authored order

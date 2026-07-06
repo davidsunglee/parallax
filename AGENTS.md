@@ -2,11 +2,11 @@
 
 ## Language Implementation Work
 
-- Before implementing a language target, read `README.md`, `IMPLEMENTING.md`, `core/spec/00-overview.md`, `core/spec/scope-and-tiers.md`, `core/spec/dependency-graph.md`, `core/spec/conformance-adapter-contract.md`, and the target language spec.
+- Before implementing a language target, read `README.md`, `IMPLEMENTING.md`, `core/spec/00-overview.md`, `core/spec/modules.md`, `core/spec/slices.md`, `core/spec/m-conformance-adapter.md`, and the target language spec.
 - Do not change `core/spec`, `core/schemas`, or `core/compatibility` only to make a language implementation pass. Treat those artifacts as the source of truth; any change to them must update the spec, schema, fixtures, and cases consistently.
-- Implement capabilities in dependency-graph order from `core/spec/dependency-graph.md`, and preserve any language-module dependency-boundary enforcement.
+- Implement capabilities in dependency-graph order from `core/spec/modules.md`, and preserve any language-module dependency-boundary enforcement.
 - Use compatibility corpus cases as the primary behavioral verification. Add language unit tests for internal seams, diagnostics, and failure modes.
-- Expose implementation conformance through `core/spec/conformance-adapter-contract.md`; do not invent a different language-specific conformance surface.
+- Expose implementation conformance through `core/spec/m-conformance-adapter.md`; do not invent a different language-specific conformance surface.
 - The reference harness's internals are non-normative and MUST NOT be used as design input for a language implementation; the binding inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the conformance-adapter contract.
 - For implementation changes, run the smallest relevant language conformance slice plus feasible root verification. Report any skipped database-backed checks.
 

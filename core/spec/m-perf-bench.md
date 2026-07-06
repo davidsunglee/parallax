@@ -1,21 +1,22 @@
-# M13 — Performance & Benchmark Harness
+# m-perf-bench — Performance & Benchmark Harness
 
-`M13` is the **shared cross-language performance methodology**: a normative set of
-**benchmark fixtures** (datasets, operation mixes, deep-fetch shapes, milestone
-workloads) plus a **measurement protocol** (what to measure, how to report it),
-so implementations are **comparable**, not just individually fast. It is a
-**definitely-do** capability (DQ10), committed after the parity baseline. `M13`
-depends on `M12` (it reuses the same provisioning seam, model descriptors, and
-fixture format).
+`m-perf-bench` is the **shared cross-language performance methodology**: a
+normative set of **benchmark fixtures** (datasets, operation mixes, deep-fetch
+shapes, milestone workloads) plus a **measurement protocol** (what to measure, how
+to report it), so implementations are **comparable**, not just individually fast.
+Per the dependency graph, `m-perf-bench` depends on `m-conformance-adapter` (it
+emits its report through the adapter's `benchmark` command) and, through it, reuses
+the compatibility harness (`m-case-format`) provisioning seam, model descriptors,
+and fixture format.
 
-The thing `M13` standardizes is **methodology, not data structures.** Reladomo
-leans on specialized open-addressing collections (`UnifiedMap` / `UnifiedSet`) and
-key-derived hashing (`HashingStrategy`) for cache/index footprint and speed; those
-are *implementation details*, not contracts. The portable analogue is a shared
-benchmark + shared measurement protocol with **per-language numeric targets** —
-every implementation runs the same workloads under the same protocol and reports
-against its own targets, so performance is comparable across runtimes without
-forcing non-idiomatic structures.
+The thing `m-perf-bench` standardizes is **methodology, not data structures.**
+Reladomo leans on specialized open-addressing collections (`UnifiedMap` /
+`UnifiedSet`) and key-derived hashing (`HashingStrategy`) for cache/index footprint
+and speed; those are *implementation details*, not contracts. The portable analogue
+is a shared benchmark + shared measurement protocol with **per-language numeric
+targets** — every implementation runs the same workloads under the same protocol
+and reports against its own targets, so performance is comparable across runtimes
+without forcing non-idiomatic structures.
 
 ## What is shared vs. per-language
 
@@ -28,9 +29,9 @@ forcing non-idiomatic structures.
 
 > **Per-language targets are placeholders, by design.** A Rust target is not a
 > Python target. Mandating one absolute number across runtimes would be unfair and
-> easily gamed (DQ10). `M13` mandates the *workloads and the measurement*, not the
-> ceilings; each language spec fills in its own targets and may list the optional
-> specialized-collection techniques it uses to hit them.
+> easily gamed (DQ10). `m-perf-bench` mandates the *workloads and the measurement*,
+> not the ceilings; each language spec fills in its own targets and may list the
+> optional specialized-collection techniques it uses to hit them.
 
 ## Benchmark fixtures
 
@@ -41,10 +42,10 @@ out:
 
 | Workload family | Exercises | Example fixture |
 |---|---|---|
-| **operation mix** (point + range reads) | `M2`/`M3` predicate evaluation, query-cache hit/miss | `read-mix.yaml` |
-| **deep-fetch shapes** (to-one, to-many, multi-hop) | `M4` N+1 elimination — round-trips must stay `1 + levels` regardless of fan-out | `deep-fetch.yaml` |
-| **milestone workloads** (insert / update / terminate chains) | `M7` milestone-chaining write cost | `milestone-write.yaml` |
-| **aggregation** (group-by / having) | `M2` aggregate path | folded into `read-mix.yaml` |
+| **operation mix** (point + range reads) | `m-op-algebra` / `m-sql` predicate evaluation, query-cache hit/miss (`m-process-cache`) | `read-mix.yaml` |
+| **deep-fetch shapes** (to-one, to-many, multi-hop) | `m-deep-fetch` N+1 elimination — round-trips must stay `1 + levels` regardless of fan-out | `deep-fetch.yaml` |
+| **milestone workloads** (insert / update / terminate chains) | `m-audit-write` milestone-chaining write cost | `milestone-write.yaml` |
+| **aggregation** (group-by / having) | `m-agg` aggregate path | folded into `read-mix.yaml` |
 
 Each workload declares the SQL it runs (per dialect, like a compatibility case),
 its bind values, and an **`iterations`** count (how many times the harness repeats
@@ -74,7 +75,8 @@ For each workload the harness measures and reports:
 - **wall-time percentiles** — `p50` and `p95` over the workload's iterations (a
   single mean hides tail latency; percentiles are the comparable metric);
 - **database round trips** — the count of statements actually issued (the
-  round-trip discipline that `M4`/`M8` guarantee, measured rather than asserted);
+  round-trip discipline that `m-deep-fetch` / `m-unit-work` guarantee, measured
+  rather than asserted);
 - **memory** — **peak** and **steady** resident set over the run (cache/index
   footprint is a first-class cost for a cache-centric framework).
 

@@ -1,9 +1,9 @@
-# API Conformance Suite Contract
+# m-api-conformance — API Conformance Suite Contract
 
 The **API Conformance Suite** proves that a language implementation's idiomatic
 developer surface reproduces the compatibility corpus. It is the developer-surface
 sibling of the conformance adapter: the
-[conformance adapter](conformance-adapter-contract.md) grades wire-level
+[conformance adapter](m-conformance-adapter.md) grades wire-level
 conformance through a narrow CLI envelope, while the suite proves that the *code an
 application developer actually writes* — run through the shipped adapter against a
 real database — produces the corpus's results.
@@ -68,9 +68,9 @@ portable requirements; the mechanism that satisfies each is language-local.
    case that is neither exercised nor reasoned-skipped — MUST fail the build. The
    partition covers **every** in-slice case regardless of lane: an
    `api-conformance`-lane case (a boundary retry case, a read-lock-matrix read) is
-   satisfied here — by construction, since the M12 harness only schema-validates
-   it — so its id MUST be exercised or reasoned-skipped exactly like a harness-lane
-   case.
+   satisfied here — by construction, since the `m-case-format` harness only
+   schema-validates it — so its id MUST be exercised or reasoned-skipped exactly
+   like a harness-lane case.
 4. **Expected results match the corpus oracles.** For every exercised case the
    suite MUST assert the developer surface produces the corpus's expected results
    (`expectedRows`, `expectedGraph`, `expectedTableState`, `expectedAffectedRows`,
@@ -115,7 +115,7 @@ mandate on other languages:
   idiomatic `px.*` / `px.transaction` surface over the shipped `@parallax/db-postgres`
   adapter against a Testcontainers `postgres:17`;
 - `coverage.test.ts` is the Docker-free partition assertion (exercised ∪ skipped ==
-  the 120-case `slice-mvp-1` slice, no strays, every skip reasoned), with the
+  the 123-case `slice-mvp-1` slice, no strays, every skip reasoned), with the
   exercised map in `covered.ts` and the reasoned skips in `skip-manifest.ts`;
 - the no-drift guard is `assertSameOperation` in `_harness.ts`;
 - the value-shape assertion is `assertManagedShape` in `_harness.ts`;

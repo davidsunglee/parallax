@@ -6,7 +6,7 @@
  * A write to an audit-only temporal entity **chains milestone rows** rather than
  * mutating in place — that is what produces the audit trail. In audit-only mode
  * the processing axis has no business-date residual, so the chaining is the simple
- * close-and-open form (m7-temporal.md §"Milestone-chaining writes"):
+ * close-and-open form (m-audit-write.md §"Milestone-chaining writes"):
  *
  *  | mutation  | statements                                                        |
  *  |-----------|-------------------------------------------------------------------|

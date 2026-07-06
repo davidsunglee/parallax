@@ -1,20 +1,21 @@
-# M9 — Object Lifecycle & Detach
+# m-detach — Object Lifecycle & Detach
 
-`M9` is the **object lifecycle state machine** and the **detached-copy / merge-
-back** protocol: the rules that govern when an object's mutations are buffered
-into a unit of work, when they are flushed as SQL, and how an object can be
-edited entirely **outside** any transaction (a *detached* copy) and later merged
+`m-detach` is the **object lifecycle state machine** and the **detached-copy /
+merge-back** protocol: the rules that govern when an object's mutations are
+buffered into a unit of work, when they are flushed as SQL, and how an object can
+be edited entirely **outside** any transaction (a *detached* copy) and later merged
 back into the persisted store.
 
-`M9` is a fast-follow module. It depends on `M8` — the unit of work, the identity
-cache, and the buffered-write machinery it is layered on — and on nothing below
-that. Like `M8`, it is expressed in terms of **operations and object state**, not
-SQL; the concrete DML a merge-back flushes is produced by `M3` and run through
-the `M11` execution seam, so `M9` takes no direct edge to SQL generation.
+`m-detach` depends on `m-unit-work` — the unit of work and the buffered-write
+machinery it is layered on — and on nothing below that. Object identity (one
+interned object per primary key) is `m-process-cache`. Like `m-unit-work`,
+`m-detach` is expressed in terms of **operations and object state**, not SQL; the
+concrete DML a merge-back flushes is produced by `m-sql` and run through the
+`m-db-port` execution seam, so `m-detach` takes no direct edge to SQL generation.
 
 This mirrors Reladomo's per-state behavior dispatch (a persisted object behaves
 differently from a detached or deleted one) and its `getDetachedCopy` /
-`copyDetachedValuesToOriginalOrInsertIfNew` pair — but `M9` mandates only the
+`copyDetachedValuesToOriginalOrInsertIfNew` pair — but `m-detach` mandates only the
 **observable** lifecycle rules, not any particular behavior-object decomposition.
 
 ## The lifecycle state machine
@@ -50,7 +51,7 @@ The transitions an implementation **MUST** support:
   the unit of work it was created in) flushes an `INSERT` and interns it in the
   identity cache.
 - **`persisted → deleted`.** Deleting a persisted object marks it; the `DELETE`
-  flushes at the unit-of-work boundary (`M8` ordering rules apply).
+  flushes at the unit-of-work boundary (`m-unit-work` ordering rules apply).
 - **`persisted → detached`.** Taking a **detached copy** (below) yields a new
   object in the `detached` state, fully decoupled from the cache.
 - **`detached → detached-deleted`.** Deleting a detached copy marks the copy; no
@@ -71,7 +72,8 @@ observable contract:
 - An **`in-memory`** object's mutations are held in the object until it is
   inserted; nothing reaches the database until then.
 - A **`persisted`** object's mutations **buffer** into the enclosing unit of work
-  (`M8`) and flush as SQL at the boundary — never eagerly, one statement per set.
+  (`m-unit-work`) and flush as SQL at the boundary — never eagerly, one statement
+  per set.
 - A **`detached`** object's mutations land **only in the copy**. A detached object
   is **not** enrolled in any unit of work and issues **no** SQL when mutated; the
   database is untouched until merge-back. This is the property that makes a
@@ -91,8 +93,8 @@ brand-new object in the `detached` state, with **no** link to the identity cache
   key.
 
 Because the copy is decoupled, two detached copies of the same row are
-independent objects (the one-object-per-PK identity rule, `M8`, governs the
-**cache** — detached copies live *outside* it by construction).
+independent objects (the one-object-per-PK identity rule, `m-process-cache`,
+governs the **cache** — detached copies live *outside* it by construction).
 
 ### `isModifiedSinceDetachment`
 
@@ -111,28 +113,28 @@ still exists:
 
 | Detached state | Original found (by PK) | Effect |
 |---|---|---|
-| `detached` | yes | copy the changed attributes onto the live object ⇒ a buffered `UPDATE` (the normal `M8` flush) |
+| `detached` | yes | copy the changed attributes onto the live object ⇒ a buffered `UPDATE` (the normal `m-unit-work` flush) |
 | `detached` | no | **insert** the copy as a new row ⇒ an `INSERT` |
 | `detached-deleted` | yes | delete the original ⇒ a `DELETE` |
 
 So merge-back is *copy-values-to-original-or-insert-if-new* (plus the delete
 case): it looks up the original by primary key in the cache / store, and either
-updates it in place (driving the ordinary buffered-write machinery of `M8`),
-inserts a new row when the original is gone, or deletes it. A merge-back of an
-**unmodified** copy (`isModifiedSinceDetachment` is `false`) flushes **no**
-`UPDATE`.
+updates it in place (driving the ordinary buffered-write machinery of
+`m-unit-work`), inserts a new row when the original is gone, or deletes it. A
+merge-back of an **unmodified** copy (`isModifiedSinceDetachment` is `false`)
+flushes **no** `UPDATE`.
 
 Only the **changed** attributes need participate in the `UPDATE`'s `set` (a
-`readOnly` attribute, `M1`, is never written), but an implementation **MAY** write
-the full attribute set; the observable contract is the **resulting persisted
-rows**, which the suite asserts.
+`readOnly` attribute, `m-descriptor`, is never written), but an implementation
+**MAY** write the full attribute set; the observable contract is the **resulting
+persisted rows**, which the suite asserts.
 
 ## What the suite pins down
 
-`M9` is expressed in object state, so its **observable** effect is the rows a
+`m-detach` is expressed in object state, so its **observable** effect is the rows a
 merge-back leaves behind. The compatibility suite proves it with **write-sequence**
-cases (`M12`) — applying the golden DML a merge-back flushes and asserting the
-resulting table state:
+cases (`m-case-format`) — applying the golden DML a merge-back flushes and asserting
+the resulting table state:
 
 | Case | What it proves |
 |---|---|
@@ -145,9 +147,9 @@ persisted) and asserts the inserted row. The detached-update and detached-delete
 cases **load the model's fixtures first** (the original persisted row exists),
 then apply the merge-back `UPDATE` or `DELETE` and assert the table state — the
 edited row changed or the deleted row is gone, while the others are untouched.
-All three reuse the `M12` write-sequence machinery: *apply the documented golden
-DML, assert the rows it leaves behind*, so the merge-back contract is verified
-against real data rather than merely asserted in prose.
+All three reuse the `m-case-format` write-sequence machinery: *apply the documented
+golden DML, assert the rows it leaves behind*, so the merge-back contract is
+verified against real data rather than merely asserted in prose.
 
 Optimistic-lock conflict on merge-back — when a concurrent transaction changed
-the original between detachment and merge-back — is the subject of `M10`.
+the original between detachment and merge-back — is the subject of `m-opt-lock`.

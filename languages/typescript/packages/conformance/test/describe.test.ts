@@ -25,7 +25,7 @@ function repoPath(relative: string): string {
 function canonicalSliceCapabilities(): unknown {
   const md = readFileSync(repoPath("core/spec/slices.md"), "utf8");
   const start = md.indexOf("First-implementation Conformance Slice");
-  expect(start, "slice heading present in scope-and-tiers.md").toBeGreaterThan(-1);
+  expect(start, "slice heading present in slices.md").toBeGreaterThan(-1);
   const fenceOpen = md.indexOf("```json", start);
   expect(fenceOpen, "json fence present after slice heading").toBeGreaterThan(-1);
   const bodyStart = fenceOpen + "```json".length;

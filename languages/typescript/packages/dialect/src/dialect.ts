@@ -2,7 +2,7 @@
  * The normative M11 **`Dialect` interface** — layer-1 of the dialect seam.
  *
  * `Dialect` is the single authority over the per-database decision catalog
- * (`core/spec/m11-dialect-seam.md`): identifier quoting, ORDER BY / NULL
+ * (`core/spec/m-dialect.md`): identifier quoting, ORDER BY / NULL
  * placement, the row-limit clause, in-transaction read-lock application, the
  * neutral-type → column-type vocabulary, driver-boundary placeholder syntax,
  * the typed-bind normalization rules, the normalize-at-boundary value parsers,

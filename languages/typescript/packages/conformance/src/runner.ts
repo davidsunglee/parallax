@@ -209,7 +209,7 @@ type WireBind = BindValue;
 /**
  * The JSON Pointer an emission carries for a single read-shape operation: the
  * case's `operation` key. The conformance contract names `/operation` as the
- * common read-operation pointer (`conformance-adapter-contract.md` — both the
+ * common read-operation pointer (`m-conformance-adapter.md` — both the
  * `compile` and `run` examples), reserving the empty pointer `""` for
  * diagnostics that apply to the whole case (e.g. the out-of-claim gate). Write
  * sequences / scenarios / deep fetch use per-statement pointers (Phase 4+).
