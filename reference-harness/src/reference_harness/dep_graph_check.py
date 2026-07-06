@@ -56,6 +56,12 @@ _MODULE_RE = re.compile(rf"^{_SLUG}$")  # doubles as the fixture-tag pattern
 # coverage) instead of a separate config file.
 _CATALOG_HEADING = "the module catalog"
 
+# The only legal values of the catalog's status/coverage columns. Parsing rejects
+# anything else so a typo (`activ`, `case`) or a column-shifting stray pipe can't
+# silently drop a module out of the gated set.
+_CATALOG_STATUSES = frozenset({"active", "deferred"})
+_CATALOG_COVERAGES = frozenset({"cases", "contract"})
+
 # The named conformance slice the profile gate enforces. The slice is selected by
 # this single tag on each included case; the canonical describe claim that declares
 # its boundaries lives in slices.md.
@@ -184,10 +190,19 @@ def parse_catalog(modules_markdown: str) -> dict[str, dict[str, str]]:
         module = row.get("module", "").strip("` ")
         if not _MODULE_RE.match(module):
             continue
-        catalog[module] = {
-            "status": row.get("status", "").strip("` ").lower(),
-            "coverage": row.get("coverage", "").strip("` ").lower(),
-        }
+        status = row.get("status", "").strip("` ").lower()
+        coverage = row.get("coverage", "").strip("` ").lower()
+        if status not in _CATALOG_STATUSES:
+            raise DepGraphFailure(
+                f"module {module} has unknown status {status!r} in the catalog table "
+                f"(expected one of {sorted(_CATALOG_STATUSES)})"
+            )
+        if coverage not in _CATALOG_COVERAGES:
+            raise DepGraphFailure(
+                f"module {module} has unknown coverage {coverage!r} in the catalog table "
+                f"(expected one of {sorted(_CATALOG_COVERAGES)})"
+            )
+        catalog[module] = {"status": status, "coverage": coverage}
     if not catalog:
         raise DepGraphFailure(
             f"no module catalog table found under the '## {_CATALOG_HEADING}' heading of modules.md"
@@ -260,6 +275,31 @@ def active_deferred_edge_errors(modules_markdown: str) -> list[str]:
         f"active module {src} depends on deferred module {dst} ({src} --> {dst})"
         for src, dst in edges
         if status.get(src) == "active" and status.get(dst) == "deferred"
+    ]
+
+
+def catalog_graph_consistency_errors(modules_markdown: str) -> list[str]:
+    """Assert the catalog table and the DAG name the same set of modules.
+
+    The coverage and active->deferred gates both key off the catalog, so a
+    module that is edged but not catalogued would slip past them silently (its
+    status resolves to ``None``); a module that is catalogued but never edged is
+    an orphan the DAG check cannot see. Requiring the two node sets to match
+    closes both holes.
+    """
+    try:
+        catalog = set(parse_catalog(modules_markdown))
+        edges = parse_edges(modules_markdown)
+    except DepGraphFailure as exc:
+        return [str(exc)]
+
+    nodes = {node for edge in edges for node in edge}
+    return [
+        f"module {module} appears in the DAG but not the catalog table"
+        for module in sorted(nodes - catalog)
+    ] + [
+        f"module {module} is catalogued but never appears in the DAG"
+        for module in sorted(catalog - nodes)
     ]
 
 
@@ -515,8 +555,11 @@ def run_coverage(spec_dir: Path, compatibility_root: Path) -> int:
     dag_rc = run_dag_check(graph_path)
 
     modules_markdown = graph_path.read_text(encoding="utf-8")
-    errors = coverage_errors(modules_markdown, compatibility_root)
+    errors = catalog_graph_consistency_errors(modules_markdown)
+    errors += coverage_errors(modules_markdown, compatibility_root)
     errors += active_deferred_edge_errors(modules_markdown)
+    # A catalog parse failure surfaces from each gate; collapse the repeats.
+    errors = list(dict.fromkeys(errors))
     if errors:
         print(
             f"coverage gate FAILED ({len(errors)} problem(s)):",
