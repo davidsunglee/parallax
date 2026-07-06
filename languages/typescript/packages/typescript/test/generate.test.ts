@@ -122,7 +122,6 @@ function typecheckConfig(barrelPath: string, consumerPath: string): unknown {
       skipLibCheck: true,
       noEmit: true,
       types: [],
-      baseUrl: ".",
       paths: {
         "@parallax/typescript": [join(DIST, "index.d.ts")],
         "@parallax/typescript/config": [join(DIST, "config.d.ts")],
