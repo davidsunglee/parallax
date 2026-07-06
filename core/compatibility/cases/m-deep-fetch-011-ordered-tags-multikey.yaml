@@ -7,28 +7,31 @@
 # load-bearing, so this proves multi-key ordering, not just a single clause.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, orderBy, ordering, multi-key, relationship, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      eq:
-        attr: Order.id
-        value: 1
-    paths:
-      - [Order.tags]
-goldenSql:
-  postgres:
-    - select t0.id, t0.name from orders t0 where t0.id = ?
-    - select t0.id, t0.order_id, t0.label, t0.priority from order_tag t0 where t0.order_id in (?) order by t0.priority desc, t0.label asc
-binds:
-  - [1]
-  - [1]
-referenceSql: select id, name from orders where id = 1
-roundTrips: 2
-expectedGraph:
-  Order:
-    - id: 1
-      name: Ada
-      tags:
-        - { id: 3, order_id: 1, label: fragile, priority: 5 }
-        - { id: 2, order_id: 1, label: gift, priority: 2 }
-        - { id: 1, order_id: 1, label: urgent, priority: 2 }
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        eq:
+          attr: Order.id
+          value: 1
+      paths:
+        - [Order.tags]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+      binds: [1]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.label, t0.priority from order_tag t0 where t0.order_id in (?) order by t0.priority desc, t0.label asc
+      binds: [1]
+  referenceSql: select id, name from orders where id = 1
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        tags:
+          - { id: 3, order_id: 1, label: fragile, priority: 5 }
+          - { id: 2, order_id: 1, label: gift, priority: 2 }
+          - { id: 1, order_id: 1, label: urgent, priority: 2 }
+  roundTrips: 2

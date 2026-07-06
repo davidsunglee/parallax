@@ -250,9 +250,12 @@ def _clean_read_case(tags: list[str]) -> dict:
     return {
         "model": "models/orders.yaml",
         "tags": tags,
-        "operation": {"all": {}},
-        "goldenSql": {"postgres": "select t0.id from orders t0"},
-        "expectedRows": [{"id": 1}],
+        "shape": "read",
+        "when": {"operation": {"all": {}}},
+        "then": {
+            "statements": [{"sql": {"postgres": "select t0.id from orders t0"}}],
+            "rows": [{"id": 1}],
+        },
     }
 
 
@@ -318,8 +321,17 @@ def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None
         {
             "model": "models/account.yaml",
             "tags": ["m-op-algebra", "slice-mvp-1"],
-            "expectedAffectedRows": 0,
-            "goldenSql": {"postgres": "update account set balance = ? where id = ?"},
+            "shape": "conflict",
+            "when": {"write": {"id": 2, "balance": 250.00, "observedVersion": 1}},
+            "then": {
+                "affectedRows": 0,
+                "statements": [
+                    {
+                        "sql": {"postgres": "update account set balance = ? where id = ?"},
+                        "binds": [250.00, 2],
+                    }
+                ],
+            },
         },
     )
     errors = profile_errors(_synthetic_slices(), tmp_path)
@@ -330,7 +342,7 @@ def test_profile_gate_fails_on_a_missing_postgres_golden(tmp_path: Path) -> None
     cases = tmp_path / "cases"
     _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
     no_golden = _clean_read_case(["m-op-algebra", "slice-mvp-1"])
-    no_golden["goldenSql"] = {"mariadb": "select t0.id from orders t0"}
+    no_golden["then"]["statements"] = [{"sql": {"mariadb": "select t0.id from orders t0"}}]
     _write_case(cases, "m-op-algebra-002.yaml", no_golden)
     errors = profile_errors(_synthetic_slices(), tmp_path)
     assert any("m-op-algebra-002.yaml" in e and "Postgres golden" in e for e in errors)
@@ -364,20 +376,33 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
         {
             "model": "models/account.yaml",
             "tags": ["m-core", "m-op-algebra", "m-unit-work", "slice-mvp-1"],
-            "roundTrips": 2,
-            "scenario": [
-                {
-                    "write": "insert",
-                    "goldenSql": {"postgres": "insert into account(id) values (?)"},
-                    "binds": [7],
-                },
-                {
-                    "find": {"eq": {"attr": "Account.id", "value": 7}},
-                    "goldenSql": {"postgres": "select t0.id from account t0 where t0.id = ?"},
-                    "binds": [7],
-                    "expectRows": [{"id": 7}],
-                },
-            ],
+            "shape": "scenario",
+            "when": {
+                "scenario": [
+                    {
+                        "write": "insert",
+                        "roundTrips": 1,
+                        "statements": [
+                            {
+                                "sql": {"postgres": "insert into account(id) values (?)"},
+                                "binds": [7],
+                            }
+                        ],
+                    },
+                    {
+                        "find": {"eq": {"attr": "Account.id", "value": 7}},
+                        "roundTrips": 1,
+                        "statements": [
+                            {
+                                "sql": {"postgres": "select t0.id from account t0 where t0.id = ?"},
+                                "binds": [7],
+                            }
+                        ],
+                        "expectRows": [{"id": 7}],
+                    },
+                ],
+            },
+            "then": {"roundTrips": 2},
         },
     )
     slices = _synthetic_slices(

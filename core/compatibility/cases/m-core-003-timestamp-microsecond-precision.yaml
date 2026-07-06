@@ -7,22 +7,22 @@
 # authored expected value holds on both dialects.
 model: models/event.yaml
 tags: [m-core, m-sql, m-dialect, timestamp, precision, microsecond, write-sequence, slice-mvp-1]
-writeSequence:
-  - mutation: insert
-    entity: Event
-    statements: 1
-    note: insert an instant with .123456 microseconds; all six digits must survive
-    rows:
-      - { id: 1, occurredAt: "2024-03-01T12:00:00.123456+00:00" }
-goldenSql:
-  postgres:
-    - insert into event(id, occurred_at) values (?, ?)
-  mariadb:
-    - insert into event(id, occurred_at) values (?, ?)
-binds:
-  - [1, "2024-03-01T12:00:00.123456+00:00"]
-roundTrips: 1
-expectedTableState:
-  event:
-    - id: 1
-      occurred_at: "2024-03-01T12:00:00.123456+00:00"
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Event
+      statements: 1
+      note: insert an instant with .123456 microseconds; all six digits must survive
+      rows:
+        - { id: 1, occurredAt: "2024-03-01T12:00:00.123456+00:00" }
+then:
+  statements:
+    - sql:
+        postgres: insert into event(id, occurred_at) values (?, ?)
+        mariadb: insert into event(id, occurred_at) values (?, ?)
+      binds: [1, "2024-03-01T12:00:00.123456+00:00"]
+  tableState:
+    event:
+      - { id: 1, occurred_at: "2024-03-01T12:00:00.123456+00:00" }
+  roundTrips: 1

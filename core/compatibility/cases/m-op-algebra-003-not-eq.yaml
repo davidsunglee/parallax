@@ -1,18 +1,22 @@
 # notEq — inequality predicate. Lowers to `<>` with one bind.
 model: models/orders.yaml
 tags: [m-op-algebra, notEq, slice-mvp-1]
-operation:
-  notEq:
-    attr: Order.qty
-    value: 20
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.qty <> ?
-binds: [20]
-referenceSql: select id, name from orders where qty != 20
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 2, name: Linus }
-  - { id: 3, name: ada }
-  - { id: 5, name: Alan }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    notEq:
+      attr: Order.qty
+      value: 20
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.qty <> ?
+      binds: [20]
+  referenceSql: select id, name from orders where qty != 20
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+    - { id: 3, name: ada }
+    - { id: 5, name: Alan }
+    - { id: 42, name: Grace }
+  roundTrips: 1

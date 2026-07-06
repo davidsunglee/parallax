@@ -9,29 +9,29 @@
 # (never one query per person), proving N+1 elimination holds for 1:1 too.
 model: models/person.yaml
 tags: [m-deep-fetch, m-op-list, one-to-one, relationship, nullable, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      all: {}
-    paths:
-      - [Person.passport]
-goldenSql:
-  postgres:
-    - select t0.id, t0.name from person t0
-    - select t0.id, t0.person_id, t0.number from passport t0 where t0.person_id in (?, ?, ?)
-binds:
-  - []
-  - [1, 2, 3]
-referenceSql: select id, name from person
-roundTrips: 2
-expectedGraph:
-  Person:
-    - id: 1
-      name: Alan
-      passport: { id: 101, person_id: 1, number: P-AAA }
-    - id: 2
-      name: Grace
-      passport: { id: 102, person_id: 2, number: P-BBB }
-    - id: 3
-      name: Ada
-      passport: null
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [Person.passport]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0
+    - sql:
+        postgres: select t0.id, t0.person_id, t0.number from passport t0 where t0.person_id in (?, ?, ?)
+      binds: [1, 2, 3]
+  referenceSql: select id, name from person
+  graph:
+    Person:
+      - id: 1
+        name: Alan
+        passport: { id: 101, person_id: 1, number: P-AAA }
+      - id: 2
+        name: Grace
+        passport: { id: 102, person_id: 2, number: P-BBB }
+      - { id: 3, name: Ada, passport: null }
+  roundTrips: 2

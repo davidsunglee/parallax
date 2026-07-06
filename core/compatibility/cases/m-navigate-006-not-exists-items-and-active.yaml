@@ -5,16 +5,20 @@
 # the EXISTS semi-join's correlation binds come before the trailing scalar bind.
 model: models/orders.yaml
 tags: [m-navigate, notExists, boolean, relationship, slice-mvp-1]
-operation:
-  and:
-    operands:
-      - notExists:
-          rel: Order.items
-      - eq: { attr: Order.active, value: true }
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where not exists (select 1 from order_item t1 where t1.order_id = t0.id) and t0.active = ?
-binds: [true]
-referenceSql: select id, name from orders where id not in (select order_id from order_item) and active = true
-expectedRows:
-  - { id: 4, name: Margaret }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    and:
+      operands:
+        - notExists:
+            rel: Order.items
+        - eq: { attr: Order.active, value: true }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where not exists (select 1 from order_item t1 where t1.order_id = t0.id) and t0.active = ?
+      binds: [true]
+  referenceSql: select id, name from orders where id not in (select order_id from order_item) and active = true
+  rows:
+    - { id: 4, name: Margaret }
+  roundTrips: 1

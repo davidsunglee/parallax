@@ -4,31 +4,33 @@
 # is computed from the actual maximum regardless of how prior ids were assigned.
 model: models/pk-max.yaml
 tags: [m-pk-gen, m-unit-work, max, write-sequence]
-writeSequence:
-  - mutation: insert
-    entity: Attendee
-    statements: 1
-    note: application-assigned id 100
-    rows:
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Attendee
+      statements: 1
+      note: application-assigned id 100
+      rows:
+        - { id: 100, name: Pat }
+    - mutation: insert
+      entity: Attendee
+      statements: 1
+      note: allocate max(id)+1 = 101
+      rows:
+        - { id: { computed: maxPlusOne }, name: Ada }
+then:
+  statements:
+    - sql:
+        postgres: insert into attendee(id, name) values (?, ?)
+        mariadb: insert into attendee(id, name) values (?, ?)
+      binds: [100, Pat]
+    - sql:
+        postgres: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+        mariadb: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+      binds: [0, 1, Ada]
+  tableState:
+    attendee:
       - { id: 100, name: Pat }
-  - mutation: insert
-    entity: Attendee
-    statements: 1
-    note: allocate max(id)+1 = 101
-    rows:
-      - { id: { computed: maxPlusOne }, name: Ada }
-goldenSql:
-  postgres:
-    - insert into attendee(id, name) values (?, ?)
-    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
-  mariadb:
-    - insert into attendee(id, name) values (?, ?)
-    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
-binds:
-  - [100, Pat]
-  - [0, 1, Ada]
-roundTrips: 2
-expectedTableState:
-  attendee:
-    - { id: 100, name: Pat }
-    - { id: 101, name: Ada }
+      - { id: 101, name: Ada }
+  roundTrips: 2

@@ -6,34 +6,37 @@
 # attached as single objects.
 model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, to-one, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      asOf:
-        operand:
-          asOf:
-            operand: { all: {} }
-            asOfAttr: Coverage.processingDate
-            date: now
-        asOfAttr: Coverage.businessDate
-        date: now
-    paths:
-      - [Coverage.policy]
-goldenSql:
-  postgres:
-    - select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.thru_z = ? and t0.out_z = ?
-    - select t0.id, t0.name from policy t0 where t0.id in (?, ?) and t0.thru_z = ? and t0.out_z = ?
-binds:
-  - [infinity, infinity]
-  - [1, 2, infinity, infinity]
-roundTrips: 2
-expectedGraph:
-  Coverage:
-    - id: 10
-      policy_id: 1
-      amount: 700.00
-      policy: { id: 1, name: Auto }
-    - id: 20
-      policy_id: 2
-      amount: 300.00
-      policy: { id: 2, name: Home }
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        asOf:
+          operand:
+            asOf:
+              operand: { all: {} }
+              asOfAttr: Coverage.processingDate
+              date: now
+          asOfAttr: Coverage.businessDate
+          date: now
+      paths:
+        - [Coverage.policy]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.thru_z = ? and t0.out_z = ?
+      binds: [infinity, infinity]
+    - sql:
+        postgres: select t0.id, t0.name from policy t0 where t0.id in (?, ?) and t0.thru_z = ? and t0.out_z = ?
+      binds: [1, 2, infinity, infinity]
+  graph:
+    Coverage:
+      - id: 10
+        policy_id: 1
+        amount: 700.00
+        policy: { id: 1, name: Auto }
+      - id: 20
+        policy_id: 2
+        amount: 300.00
+        policy: { id: 2, name: Home }
+  roundTrips: 2

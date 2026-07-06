@@ -9,18 +9,22 @@
 # (thru_z = infinity) reads back alongside a finite, superseded thru_z.
 model: models/reservation.yaml
 tags: [m-temporal-read, m-sql, business_temporal, temporal, history, business-only]
-operation:
-  history:
-    operand:
-      eq:
-        attr: Reservation.id
-        value: 1
-    asOfAttr: Reservation.businessDate
-goldenSql:
-  postgres: select t0.res_id, t0.guest, t0.from_z, t0.thru_z from reservation t0 where t0.res_id = ?
-binds: [1]
-referenceSql: select res_id, guest, from_z, thru_z from reservation where res_id = 1
-expectedRows:
-  - { res_id: 1, guest: Ada, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-03-01T00:00:00+00:00" }
-  - { res_id: 1, guest: Bob, from_z: "2024-03-01T00:00:00+00:00", thru_z: infinity }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    history:
+      operand:
+        eq:
+          attr: Reservation.id
+          value: 1
+      asOfAttr: Reservation.businessDate
+then:
+  statements:
+    - sql:
+        postgres: select t0.res_id, t0.guest, t0.from_z, t0.thru_z from reservation t0 where t0.res_id = ?
+      binds: [1]
+  referenceSql: select res_id, guest, from_z, thru_z from reservation where res_id = 1
+  rows:
+    - { res_id: 1, guest: Ada, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-03-01T00:00:00+00:00" }
+    - { res_id: 1, guest: Bob, from_z: "2024-03-01T00:00:00+00:00", thru_z: infinity }
+  roundTrips: 1

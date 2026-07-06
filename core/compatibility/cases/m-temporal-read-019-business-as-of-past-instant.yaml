@@ -10,16 +10,20 @@
 # milestone (from 2024-03-01) is excluded — it was not yet in effect.
 model: models/reservation.yaml
 tags: [m-temporal-read, m-sql, business_temporal, temporal, as-of, business-only, past]
-operation:
-  asOf:
-    operand:
-      all: {}
-    asOfAttr: Reservation.businessDate
-    date: "2024-02-01T00:00:00+00:00"
-goldenSql:
-  postgres: select t0.res_id, t0.guest from reservation t0 where t0.from_z <= ? and t0.thru_z > ?
-binds: ["2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
-referenceSql: select res_id, guest from reservation where from_z <= '2024-02-01T00:00:00+00:00'::timestamptz and thru_z > '2024-02-01T00:00:00+00:00'::timestamptz
-expectedRows:
-  - { res_id: 1, guest: Ada }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        all: {}
+      asOfAttr: Reservation.businessDate
+      date: "2024-02-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: select t0.res_id, t0.guest from reservation t0 where t0.from_z <= ? and t0.thru_z > ?
+      binds: ["2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+  referenceSql: select res_id, guest from reservation where from_z <= '2024-02-01T00:00:00+00:00'::timestamptz and thru_z > '2024-02-01T00:00:00+00:00'::timestamptz
+  rows:
+    - { res_id: 1, guest: Ada }
+  roundTrips: 1

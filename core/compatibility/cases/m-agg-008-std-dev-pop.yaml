@@ -15,18 +15,21 @@
 # var_*/exact aggregates elsewhere compare exactly.
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, stdDev, stdDevPop, twoColumn]
-operation:
-  groupBy:
-    operand:
-      all: {}
-    aggregates:
-      - stdDevPop: { attr: OrderItem.quantity, as: quantity_stddev_pop }
-      - count: { attr: OrderItem.quantity, as: sample_count }
-goldenSql:
-  postgres: select stddev_pop(t0.quantity) quantity_stddev_pop, count(t0.quantity) sample_count from order_item t0
-binds: []
-referenceSql: select stddev_pop(quantity) as quantity_stddev_pop, count(quantity) as sample_count from order_item
-expectedRows:
-  - { quantity_stddev_pop: 1.4142135624, sample_count: 5 }
-tolerance: 1.0e-9
-roundTrips: 1
+shape: read
+when:
+  operation:
+    groupBy:
+      operand:
+        all: {}
+      aggregates:
+        - stdDevPop: { attr: OrderItem.quantity, as: quantity_stddev_pop }
+        - count: { attr: OrderItem.quantity, as: sample_count }
+then:
+  statements:
+    - sql:
+        postgres: select stddev_pop(t0.quantity) quantity_stddev_pop, count(t0.quantity) sample_count from order_item t0
+  referenceSql: select stddev_pop(quantity) as quantity_stddev_pop, count(quantity) as sample_count from order_item
+  rows:
+    - { quantity_stddev_pop: 1.4142135624, sample_count: 5 }
+  roundTrips: 1
+  tolerance: 1.0e-9

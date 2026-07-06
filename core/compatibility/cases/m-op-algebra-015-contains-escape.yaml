@@ -8,14 +8,18 @@
 # referenceSql (using Postgres `position`) would catch.
 model: models/orders.yaml
 tags: [m-op-algebra, contains, string, escape, slice-mvp-1]
-operation:
-  contains:
-    attr: Order.sku
-    value: 50%
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.sku like ? escape ?
-binds: ["%50\\%%", "\\"]
-referenceSql: select id, name from orders where position('50%' in sku) > 0
-expectedRows:
-  - { id: 5, name: Alan }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    contains:
+      attr: Order.sku
+      value: 50%
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.sku like ? escape ?
+      binds: ["%50\\%%", "\\"]
+  referenceSql: select id, name from orders where position('50%' in sku) > 0
+  rows:
+    - { id: 5, name: Alan }
+  roundTrips: 1

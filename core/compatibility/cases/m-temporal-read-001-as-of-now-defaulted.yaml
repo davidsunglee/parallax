@@ -18,13 +18,17 @@
 # cast, which the harness runs verbatim and MariaDB would reject.
 model: models/balance.yaml
 tags: [m-temporal-read, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-mvp-1]
-operation:
-  all: {}
-goldenSql:
-  postgres: select t0.bal_id, t0.val from balance t0 where t0.out_z = ?
-binds: [infinity]
-referenceSql: select bal_id, val from balance where out_z = 'infinity'::timestamptz
-expectedRows:
-  - { bal_id: 1, val: 150.00 }
-  - { bal_id: 2, val: 200.00 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.bal_id, t0.val from balance t0 where t0.out_z = ?
+      binds: [infinity]
+  referenceSql: select bal_id, val from balance where out_z = 'infinity'::timestamptz
+  rows:
+    - { bal_id: 1, val: 150.00 }
+    - { bal_id: 2, val: 200.00 }
+  roundTrips: 1

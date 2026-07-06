@@ -14,33 +14,27 @@
 # version advanced (id 2 → balance 500.00, version 2; ids 1 and 3 untouched).
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, m-sql, locking-mode, write-sequence, slice-mvp-1]
-uow:
-  concurrency: locking
-loadFixtures: true
-writeSequence:
-  - mutation: update
-    entity: Account
-    statements: 1
-    note: locking-mode keyed update advances the version with no gate
-    rows:
-      - { id: 2, balance: 500.00, observedVersion: 1 }
-goldenSql:
-  postgres:
-    - update account set balance = ?, version = ? where id = ?
-binds:
-  - [500.00, 2, 2]
-roundTrips: 1
-expectedTableState:
-  account:
-    - id: 1
-      owner: Ada
-      balance: 100.00
-      version: 1
-    - id: 2
-      owner: Linus
-      balance: 500.00
-      version: 2
-    - id: 3
-      owner: Grace
-      balance: 10.00
-      version: 1
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  writeSequence:
+    - mutation: update
+      entity: Account
+      statements: 1
+      note: locking-mode keyed update advances the version with no gate
+      rows:
+        - { id: 2, balance: 500.00, observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: update account set balance = ?, version = ? where id = ?
+      binds: [500.00, 2, 2]
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+      - { id: 2, owner: Linus, balance: 500.00, version: 2 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+  roundTrips: 1

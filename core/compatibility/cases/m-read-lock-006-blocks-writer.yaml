@@ -13,20 +13,26 @@
 # holds a lock exactly like a round-1 write.
 model: models/account.yaml
 tags: [m-read-lock, m-dialect, m-db-error, concurrency, lockWaitTimeout, slice-mvp-1]
-loadFixtures: true
-errorClass: lockWaitTimeout
-expectedNativeCode:
-  postgres: "55P03"
-  mariadb: 1205
-concurrency:
-  rounds:
-    - A:
-        goldenSql:
-          postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
-          mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
-        binds: [2]
-    - B:
-        goldenSql:
-          postgres: update account set balance = ? where id = ?
-          mariadb: update account set balance = ? where id = ?
-        binds: [999.00, 2]
+shape: error
+given:
+  fixtures: true
+when:
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
+              binds: [2]
+      - B:
+          statements:
+            - sql:
+                postgres: update account set balance = ? where id = ?
+                mariadb: update account set balance = ? where id = ?
+              binds: [999.00, 2]
+then:
+  errorClass: lockWaitTimeout
+  nativeCode:
+    postgres: "55P03"
+    mariadb: 1205

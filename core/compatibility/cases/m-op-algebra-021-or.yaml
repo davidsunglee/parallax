@@ -1,16 +1,20 @@
 # or — disjunction of two atomic predicates.
 model: models/orders.yaml
 tags: [m-op-algebra, or, boolean, slice-mvp-1]
-operation:
-  or:
-    operands:
-      - lessThan: { attr: Order.qty, value: 10 }
-      - greaterThan: { attr: Order.qty, value: 25 }
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.qty < ? or t0.qty > ?
-binds: [10, 25]
-referenceSql: select id, name from orders where qty < 10 or qty > 25
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    or:
+      operands:
+        - lessThan: { attr: Order.qty, value: 10 }
+        - greaterThan: { attr: Order.qty, value: 25 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.qty < ? or t0.qty > ?
+      binds: [10, 25]
+  referenceSql: select id, name from orders where qty < 10 or qty > 25
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 42, name: Grace }
+  roundTrips: 1

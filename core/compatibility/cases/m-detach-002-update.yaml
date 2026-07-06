@@ -20,31 +20,25 @@
 # Account model carries the optimisticLocking version column from Phase 6.
 model: models/account.yaml
 tags: [m-detach, m-sql, detached-update, write-sequence]
-loadFixtures: true
-writeSequence:
-  - mutation: update
-    entity: Account
-    statements: 1
-    note: merge-back of a mutated detached copy updates the original in place
-    rows:
-      - { id: 1, balance: 175.00, observedVersion: 1 }
-goldenSql:
-  postgres:
-    - update account set balance = ?, version = ? where id = ?
-binds:
-  - [175.00, 2, 1]
-roundTrips: 1
-expectedTableState:
-  account:
-    - id: 1
-      owner: Ada
-      balance: 175.00
-      version: 2
-    - id: 2
-      owner: Linus
-      balance: 250.00
-      version: 1
-    - id: 3
-      owner: Grace
-      balance: 10.00
-      version: 1
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: Account
+      statements: 1
+      note: merge-back of a mutated detached copy updates the original in place
+      rows:
+        - { id: 1, balance: 175.00, observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: update account set balance = ?, version = ? where id = ?
+      binds: [175.00, 2, 1]
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: 175.00, version: 2 }
+      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+  roundTrips: 1

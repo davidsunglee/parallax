@@ -14,12 +14,15 @@
 model: models/account.yaml
 tags: [m-auto-retry, m-opt-lock, m-api-conformance, locking-mode, slice-mvp-1]
 lane: api-conformance
-uow:
-  concurrency: locking
-  retryOptimisticConflicts: true
-boundary:
-  - action: read
-    note: observe the versioned row under the shared lock
-  - action: update
-    note: the ungated locking-mode UPDATE commits — the conflict flag is inert
-expect: committed
+shape: boundary
+when:
+  uow:
+    concurrency: locking
+    retryOptimisticConflicts: true
+  boundary:
+    - action: read
+      note: observe the versioned row under the shared lock
+    - action: update
+      note: the ungated locking-mode UPDATE commits — the conflict flag is inert
+then:
+  outcome: committed

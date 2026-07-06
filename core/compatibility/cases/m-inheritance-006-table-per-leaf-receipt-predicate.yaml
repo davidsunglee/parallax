@@ -5,12 +5,16 @@
 # WHERE clause. The single authored receipt (paidAmount 120.00) qualifies.
 model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-leaf]
-operation:
-  greaterThanEquals: { attr: Receipt.paidAmount, value: 120.00 }
-goldenSql:
-  postgres: select t0.id, t0.title, t0.paid_amount from receipt t0 where t0.paid_amount >= ?
-binds: [120.00]
-referenceSql: select id, title, paid_amount from receipt where paid_amount >= 120.00
-expectedRows:
-  - { id: 1, title: Receipt-A, paid_amount: 120.00 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    greaterThanEquals: { attr: Receipt.paidAmount, value: 120.00 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.title, t0.paid_amount from receipt t0 where t0.paid_amount >= ?
+      binds: [120.00]
+  referenceSql: select id, title, paid_amount from receipt where paid_amount >= 120.00
+  rows:
+    - { id: 1, title: Receipt-A, paid_amount: 120.00 }
+  roundTrips: 1

@@ -3,15 +3,19 @@
 # the SQL three-valued-logic the naive referenceSql also produces.
 model: models/orders.yaml
 tags: [m-op-algebra, notLike, string, slice-mvp-1]
-operation:
-  notLike:
-    attr: Order.sku
-    value: A-%
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.sku not like ?
-binds: ["A-%"]
-referenceSql: select id, name from orders where sku not like 'A-%'
-expectedRows:
-  - { id: 2, name: Linus }
-  - { id: 5, name: Alan }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    notLike:
+      attr: Order.sku
+      value: A-%
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.sku not like ?
+      binds: ["A-%"]
+  referenceSql: select id, name from orders where sku not like 'A-%'
+  rows:
+    - { id: 2, name: Linus }
+    - { id: 5, name: Alan }
+  roundTrips: 1

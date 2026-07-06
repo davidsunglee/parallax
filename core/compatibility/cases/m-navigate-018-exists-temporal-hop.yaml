@@ -9,23 +9,27 @@
 # reformulation, as-of included) returning the same rows.
 model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, slice-mvp-1]
-operation:
-  asOf:
-    operand:
-      asOf:
-        operand:
-          exists:
-            rel: Policy.coverages
-            op:
-              greaterThanEquals: { attr: Coverage.amount, value: 600.00 }
-        asOfAttr: Policy.processingDate
-        date: now
-    asOfAttr: Policy.businessDate
-    date: now
-goldenSql:
-  postgres: select t0.id, t0.name from policy t0 where exists (select 1 from coverage t1 where t1.policy_id = t0.id and t1.amount >= ? and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?
-binds: [600.00, infinity, infinity, infinity, infinity]
-referenceSql: select id, name from policy where id in (select policy_id from coverage where amount >= 600.00 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz) and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
-expectedRows:
-  - { id: 1, name: Auto }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        asOf:
+          operand:
+            exists:
+              rel: Policy.coverages
+              op:
+                greaterThanEquals: { attr: Coverage.amount, value: 600.00 }
+          asOfAttr: Policy.processingDate
+          date: now
+      asOfAttr: Policy.businessDate
+      date: now
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from policy t0 where exists (select 1 from coverage t1 where t1.policy_id = t0.id and t1.amount >= ? and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?
+      binds: [600.00, infinity, infinity, infinity, infinity]
+  referenceSql: select id, name from policy where id in (select policy_id from coverage where amount >= 600.00 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz) and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+  rows:
+    - { id: 1, name: Auto }
+  roundTrips: 1

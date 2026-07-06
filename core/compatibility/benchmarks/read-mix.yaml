@@ -12,46 +12,44 @@
 # check. The harness measures wall-time p50/p95, the database round trips actually
 # issued, and peak/steady memory; it emits report.json. The numbers it records are
 # REFERENCE figures — per-language targets live in each language spec (DQ10).
+# The deterministic generator recipe: id = 1..rows; owner = "owner-<id>";
+# balance = (id * 100) cents as decimal(18,2); version = 1.
 tags: [m-perf-bench, operation-mix]
 model: models/account.yaml
 dataset:
   generate:
     entity: Account
     rows: 1000
-    # The deterministic generator recipe: id = 1..rows; owner = "owner-<id>";
-    # balance = (id * 100) cents as decimal(18,2); version = 1.
     recipe: accounts-sequential
 workloads:
   - name: point-read
     note: a single primary-key lookup — the query-cache miss/first-fetch cost
     iterations: 200
     expectRoundTrips: 1
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
-    binds: [500]
+    statements:
+      - sql:
+          postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+          mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
+        binds: [500]
   - name: range-read
     note: a bounded range scan over the balance column (m-op-algebra range predicates)
     iterations: 100
     expectRoundTrips: 1
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.balance between ? and ?
-      mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.balance between ? and ?
-    binds: [10000.00, 20000.00]
+    statements:
+      - sql:
+          postgres: select t0.id, t0.owner, t0.balance from account t0 where t0.balance between ? and ?
+          mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.balance between ? and ?
+        binds: [10000.00, 20000.00]
   - name: aggregate-group-by
     note: a group-by / aggregate workload (the m-agg aggregate path) over the dataset
     iterations: 100
     expectRoundTrips: 1
-    goldenSql:
-      postgres: select count(*) n, sum(t0.balance) total from account t0
-      mariadb: select count(*) n, sum(t0.balance) total from account t0
-    binds: []
+    statements:
+      - sql:
+          postgres: select count(*) n, sum(t0.balance) total from account t0
+          mariadb: select count(*) n, sum(t0.balance) total from account t0
   - name: point-read-cached
     kind: cache-hit
-    note: the SAME point-read issued again — a query-cache HIT costs ZERO round
-      trips (served from the cache). Pairs with `point-read` (the miss) so the
-      hit/miss distinction is a measured round-trip regression guard. A cache-hit
-      workload lists no golden SQL; the reference harness has no cache, so it runs
-      nothing and records 0 trips, proving the methodology end-to-end.
+    note: the SAME point-read issued again — a query-cache HIT costs ZERO round trips (served from the cache). Pairs with `point-read` (the miss) so the hit/miss distinction is a measured round-trip regression guard. A cache-hit workload lists no golden SQL; the reference harness has no cache, so it runs nothing and records 0 trips, proving the methodology end-to-end.
     iterations: 200
     expectRoundTrips: 0

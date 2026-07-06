@@ -7,21 +7,22 @@
 # self-describing golden + expectedTableState against the real DB.)
 model: models/pk-max.yaml
 tags: [m-pk-gen, m-unit-work, max, write-sequence]
-writeSequence:
-  - mutation: insert
-    entity: Attendee
-    statements: 1
-    note: allocate the first id via max(id)+1 over an empty table
-    rows:
-      - { id: { computed: maxPlusOne }, name: Ada }
-goldenSql:
-  postgres:
-    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
-  mariadb:
-    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
-binds:
-  - [0, 1, Ada]
-roundTrips: 1
-expectedTableState:
-  attendee:
-    - { id: 1, name: Ada }
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Attendee
+      statements: 1
+      note: allocate the first id via max(id)+1 over an empty table
+      rows:
+        - { id: { computed: maxPlusOne }, name: Ada }
+then:
+  statements:
+    - sql:
+        postgres: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+        mariadb: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+      binds: [0, 1, Ada]
+  tableState:
+    attendee:
+      - { id: 1, name: Ada }
+  roundTrips: 1

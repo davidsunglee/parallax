@@ -11,13 +11,17 @@
 # (inline `kind = 'card'`).
 model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator]
-operation:
-  all: {}
-goldenSql:
-  postgres: select t0.id, t0.kind, t0.amount, t0.card_network from payment t0 where t0.kind = ?
-binds: [card]
-referenceSql: select id, kind, amount, card_network from payment where kind = 'card'
-expectedRows:
-  - { id: 1, kind: card, amount: 100.00, card_network: Visa }
-  - { id: 2, kind: card, amount: 50.00, card_network: Amex }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.amount, t0.card_network from payment t0 where t0.kind = ?
+      binds: [card]
+  referenceSql: select id, kind, amount, card_network from payment where kind = 'card'
+  rows:
+    - { id: 1, kind: card, amount: 100.00, card_network: Visa }
+    - { id: 2, kind: card, amount: 50.00, card_network: Amex }
+  roundTrips: 1

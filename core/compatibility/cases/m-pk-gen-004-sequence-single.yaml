@@ -5,32 +5,35 @@
 # the PK-generation oracle (case_runner._assert_pk_allocation), which re-derives
 # them from the declared config; this case asserts the target table only.
 model: models/pk-sequence.yaml
-loadFixtures: true
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
-writeSequence:
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: reserve a block of 1 (next_val += 1), base = 1
-    rows:
-      - { name: badge_seq, nextVal: { increment: 1 } }
-  - mutation: insert
-    entity: Badge
-    statements: 1
-    note: hand out the reserved id 1
-    rows:
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: reserve a block of 1 (next_val += 1), base = 1
+      rows:
+        - { name: badge_seq, nextVal: { increment: 1 } }
+    - mutation: insert
+      entity: Badge
+      statements: 1
+      note: hand out the reserved id 1
+      rows:
+        - { id: 1, holder: Bo }
+then:
+  statements:
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [1, badge_seq]
+    - sql:
+        postgres: insert into badge(id, holder) values (?, ?)
+        mariadb: insert into badge(id, holder) values (?, ?)
+      binds: [1, Bo]
+  tableState:
+    badge:
       - { id: 1, holder: Bo }
-goldenSql:
-  postgres:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into badge(id, holder) values (?, ?)
-  mariadb:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into badge(id, holder) values (?, ?)
-binds:
-  - [1, badge_seq]
-  - [1, Bo]
-roundTrips: 2
-expectedTableState:
-  badge:
-    - { id: 1, holder: Bo }
+  roundTrips: 2

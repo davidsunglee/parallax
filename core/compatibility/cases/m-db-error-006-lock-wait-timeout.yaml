@@ -4,12 +4,26 @@
 # timeout. Neutral category lockWaitTimeout; native PG 55P03 / MariaDB 1205.
 model: models/error-cases.yaml
 tags: [m-db-error, lockWaitTimeout]
-loadFixtures: true
-errorClass: lockWaitTimeout
-expectedNativeCode:
-  postgres: "55P03"
-  mariadb: 1205
-concurrency:
-  rounds:
-    - A: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [10, 1] }
-    - B: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [20, 1] }
+shape: error
+given:
+  fixtures: true
+when:
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: "update gauge set v = ? where id = ?"
+                mariadb: "update gauge set v = ? where id = ?"
+              binds: [10, 1]
+      - B:
+          statements:
+            - sql:
+                postgres: "update gauge set v = ? where id = ?"
+                mariadb: "update gauge set v = ? where id = ?"
+              binds: [20, 1]
+then:
+  errorClass: lockWaitTimeout
+  nativeCode:
+    postgres: "55P03"
+    mariadb: 1205

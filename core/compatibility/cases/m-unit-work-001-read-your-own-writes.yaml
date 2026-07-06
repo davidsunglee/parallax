@@ -12,22 +12,27 @@
 # real committed data. roundTrips = 2 (the committed insert + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1]
-roundTrips: 2
-scenario:
-  - write: insert
-    roundTrips: 1
-    note: buffer + COMMIT an insert of a new account 7
-    goldenSql:
-      postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-    binds: [7, Newton, 5.00, 1]
-  - find:
-      eq:
-        attr: Account.id
-        value: 7
-    roundTrips: 1
-    note: a dependent find MUST observe the flushed write (read-your-own-writes)
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-    binds: [7]
-    expectRows:
-      - { id: 7, owner: Newton, balance: 5.00, version: 1 }
+shape: scenario
+when:
+  scenario:
+    - write: insert
+      roundTrips: 1
+      note: buffer + COMMIT an insert of a new account 7
+      statements:
+        - sql:
+            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [7, Newton, 5.00, 1]
+    - find:
+        eq:
+          attr: Account.id
+          value: 7
+      roundTrips: 1
+      note: a dependent find MUST observe the flushed write (read-your-own-writes)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [7]
+      expectRows:
+        - { id: 7, owner: Newton, balance: 5.00, version: 1 }
+then:
+  roundTrips: 2

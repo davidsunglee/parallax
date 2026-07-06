@@ -11,49 +11,51 @@
 # authored level-1 binds and that statement count == roundTrips.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, to-many, relationship, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      all: {}
-    paths:
-      - [Order.items]
-goldenSql:
-  postgres:
-    - select t0.id, t0.name, t0.price from orders t0
-    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?) order by t0.id desc
-binds:
-  - []
-  - [1, 2, 3, 4, 5, 42]
-referenceSql: select id, name, price from orders
-roundTrips: 2
-expectedGraph:
-  Order:
-    - id: 1
-      name: Ada
-      price: 10.50
-      items:
-        - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
-        - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
-    - id: 2
-      name: Linus
-      price: 20.00
-      items:
-        - { id: 21, order_id: 2, sku: A-300, quantity: 4 }
-    - id: 3
-      name: ada
-      price: 30.25
-      items: []
-    - id: 4
-      name: Margaret
-      price: 40.00
-      items: []
-    - id: 5
-      name: Alan
-      price: 50.75
-      items: []
-    - id: 42
-      name: Grace
-      price: 99.99
-      items:
-        - { id: 422, order_id: 42, sku: B-200, quantity: 5 }
-        - { id: 421, order_id: 42, sku: A-999, quantity: 3 }
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [Order.items]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.price from orders t0
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?) order by t0.id desc
+      binds: [1, 2, 3, 4, 5, 42]
+  referenceSql: select id, name, price from orders
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        price: 10.50
+        items:
+          - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+          - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+      - id: 2
+        name: Linus
+        price: 20.00
+        items:
+          - { id: 21, order_id: 2, sku: A-300, quantity: 4 }
+      - id: 3
+        name: ada
+        price: 30.25
+        items: []
+      - id: 4
+        name: Margaret
+        price: 40.00
+        items: []
+      - id: 5
+        name: Alan
+        price: 50.75
+        items: []
+      - id: 42
+        name: Grace
+        price: 99.99
+        items:
+          - { id: 422, order_id: 42, sku: B-200, quantity: 5 }
+          - { id: 421, order_id: 42, sku: A-999, quantity: 3 }
+  roundTrips: 2

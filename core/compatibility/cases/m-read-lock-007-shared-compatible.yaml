@@ -12,22 +12,27 @@
 # concurrency-success shape asserts NO node blocked/raised and each read's expectRows.
 model: models/account.yaml
 tags: [m-read-lock, m-dialect, concurrency, shared-lock-compatible, slice-mvp-1]
-loadFixtures: true
-concurrency:
-  rounds:
-    - A:
-        kind: read
-        goldenSql:
-          postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
-          mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
-        binds: [2]
-        expectRows:
-          - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-    - B:
-        kind: read
-        goldenSql:
-          postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
-          mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
-        binds: [2]
-        expectRows:
-          - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+shape: concurrencySuccess
+given:
+  fixtures: true
+when:
+  concurrency:
+    rounds:
+      - A:
+          kind: read
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
+              binds: [2]
+          expectRows:
+            - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+      - B:
+          kind: read
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
+              binds: [2]
+          expectRows:
+            - { id: 2, owner: Linus, balance: 250.00, version: 1 }

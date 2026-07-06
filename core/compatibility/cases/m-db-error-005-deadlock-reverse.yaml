@@ -3,14 +3,38 @@
 # transaction the DB picks as victim.
 model: models/error-cases.yaml
 tags: [m-db-error, deadlock]
-loadFixtures: true
-errorClass: deadlock
-expectedNativeCode:
-  postgres: "40P01"
-  mariadb: 1213
-concurrency:
-  rounds:
-    - A: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [10, 2] }
-      B: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [20, 1] }
-    - A: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [11, 1] }
-      B: { goldenSql: { postgres: "update gauge set v = ? where id = ?", mariadb: "update gauge set v = ? where id = ?" }, binds: [21, 2] }
+shape: error
+given:
+  fixtures: true
+when:
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: "update gauge set v = ? where id = ?"
+                mariadb: "update gauge set v = ? where id = ?"
+              binds: [10, 2]
+        B:
+          statements:
+            - sql:
+                postgres: "update gauge set v = ? where id = ?"
+                mariadb: "update gauge set v = ? where id = ?"
+              binds: [20, 1]
+      - A:
+          statements:
+            - sql:
+                postgres: "update gauge set v = ? where id = ?"
+                mariadb: "update gauge set v = ? where id = ?"
+              binds: [11, 1]
+        B:
+          statements:
+            - sql:
+                postgres: "update gauge set v = ? where id = ?"
+                mariadb: "update gauge set v = ? where id = ?"
+              binds: [21, 2]
+then:
+  errorClass: deadlock
+  nativeCode:
+    postgres: "40P01"
+    mariadb: 1213

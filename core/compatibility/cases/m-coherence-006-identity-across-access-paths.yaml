@@ -17,39 +17,44 @@
 #                   owner predicate surfaced (sameObjectAs 0).
 model: models/account.yaml
 tags: [m-coherence, identity, identity-preservation]
-coherence:
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.owner
-        value: Linus
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-    binds: [Linus]
-    note: seed read by owner — surfaces and interns PK 2 (Linus) at 250.00
-    observeRows:
-      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-  - node: A
-    kind: write
-    goldenSql:
-      postgres: update account set balance = ?, version = ? where id = ?
-      mariadb: update account set balance = ?, version = ? where id = ?
-    binds: [888.00, 2, 2]
-    note: node A commits an in-place update (version advances 1 -> 2) on a separate connection
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.id
-        value: 2
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-    binds: [2]
-    sameObjectAs: 0
-    identityAttr: id
-    note: re-fetch by PK 2 — SAME object the owner predicate surfaced, now 888.00 / version 2
-    observeRows:
-      - { id: 2, owner: Linus, balance: 888.00, version: 2 }
+shape: coherence
+when:
+  coherence:
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.owner
+          value: Linus
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+          binds: [Linus]
+      note: seed read by owner — surfaces and interns PK 2 (Linus) at 250.00
+      observeRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+    - node: A
+      kind: write
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ?
+            mariadb: update account set balance = ?, version = ? where id = ?
+          binds: [888.00, 2, 2]
+      note: node A commits an in-place update (version advances 1 -> 2) on a separate connection
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.id
+          value: 2
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      sameObjectAs: 0
+      identityAttr: id
+      note: re-fetch by PK 2 — SAME object the owner predicate surfaced, now 888.00 / version 2
+      observeRows:
+        - { id: 2, owner: Linus, balance: 888.00, version: 2 }

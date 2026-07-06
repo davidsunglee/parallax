@@ -9,16 +9,19 @@
 # metamodel serde round-trip) end-to-end, hence the `m-case-format` tag.
 model: models/orders.yaml
 tags: [m-op-algebra, m-conformance-adapter, m-case-format, all, slice-mvp-1]
-operation:
-  all: {}
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0
-binds: []
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 2, name: Linus }
-  - { id: 3, name: ada }
-  - { id: 4, name: Margaret }
-  - { id: 5, name: Alan }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+    - { id: 3, name: ada }
+    - { id: 4, name: Margaret }
+    - { id: 5, name: Alan }
+    - { id: 42, name: Grace }
+  roundTrips: 1

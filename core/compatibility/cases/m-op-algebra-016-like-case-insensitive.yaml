@@ -10,17 +10,21 @@
 # explicit `lower()` folding is the portable contract and matches the same rows.)
 model: models/orders.yaml
 tags: [m-op-algebra, like, string, caseInsensitive, slice-mvp-1]
-operation:
-  like:
-    attr: Order.name
-    value: ada
-    caseInsensitive: true
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)
-  mariadb: select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)
-binds: ["ada"]
-referenceSql: select id, name from orders where lower(name) like lower('ada')
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 3, name: ada }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    like:
+      attr: Order.name
+      value: ada
+      caseInsensitive: true
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)
+        mariadb: select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)
+      binds: ["ada"]
+  referenceSql: select id, name from orders where lower(name) like lower('ada')
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 3, name: ada }
+  roundTrips: 1

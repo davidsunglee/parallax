@@ -4,11 +4,14 @@
 # combinators.
 model: models/orders.yaml
 tags: [m-op-algebra, none, boolean, slice-mvp-1]
-operation:
-  none: {}
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where 1 = 0
-binds: []
-referenceSql: select id, name from orders where false
-expectedRows: []
-roundTrips: 1
+shape: read
+when:
+  operation:
+    none: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where 1 = 0
+  referenceSql: select id, name from orders where false
+  rows: []
+  roundTrips: 1

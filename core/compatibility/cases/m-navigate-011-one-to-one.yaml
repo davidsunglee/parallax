@@ -6,15 +6,19 @@
 # 'P-AAA'.
 model: models/person.yaml
 tags: [m-navigate, navigate, relationship, one-to-one, slice-mvp-1]
-operation:
-  navigate:
-    rel: Person.passport
-    op:
-      eq: { attr: Passport.number, value: P-AAA }
-goldenSql:
-  postgres: select t0.id, t0.name from person t0 where exists (select 1 from passport t1 where t1.person_id = t0.id and t1.number = ?)
-binds: [P-AAA]
-referenceSql: select id, name from person where id in (select person_id from passport where number = 'P-AAA')
-expectedRows:
-  - { id: 1, name: Alan }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    navigate:
+      rel: Person.passport
+      op:
+        eq: { attr: Passport.number, value: P-AAA }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where exists (select 1 from passport t1 where t1.person_id = t0.id and t1.number = ?)
+      binds: [P-AAA]
+  referenceSql: select id, name from person where id in (select person_id from passport where number = 'P-AAA')
+  rows:
+    - { id: 1, name: Alan }
+  roundTrips: 1

@@ -7,16 +7,20 @@
 # companion to m-op-algebra-019 (notIn over non-null data).
 model: models/orders.yaml
 tags: [m-op-algebra, notIn, membership, "null", three-valued-logic, slice-mvp-1]
-operation:
-  notIn:
-    attr: Order.sku
-    values: [A-100, B-200]
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where not t0.sku in (?, ?)
-binds: [A-100, B-200]
-referenceSql: select id, name from orders where sku not in ('A-100', 'B-200')
-expectedRows:
-  - { id: 3, name: ada }
-  - { id: 5, name: Alan }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    notIn:
+      attr: Order.sku
+      values: [A-100, B-200]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where not t0.sku in (?, ?)
+      binds: [A-100, B-200]
+  referenceSql: select id, name from orders where sku not in ('A-100', 'B-200')
+  rows:
+    - { id: 3, name: ada }
+    - { id: 5, name: Alan }
+    - { id: 42, name: Grace }
+  roundTrips: 1

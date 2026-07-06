@@ -16,40 +16,36 @@
 # current-row predicate (bal_id AND out_z = infinity), never a blind in-place set.
 model: models/balance.yaml
 tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-mvp-1]
-writeSequence:
-  - mutation: insert
-    entity: Balance
-    statements: 1
-    note: open the original current milestone [2024-01-01, infinity)
-    rows:
-      - { id: 1, acctNum: A, value: 100.00 }
-    at: "2024-01-01T00:00:00+00:00"
-  - mutation: update
-    entity: Balance
-    statements: 2
-    note: close the current row, then chain a new current milestone with the new value
-    rows:
-      - { id: 1, acctNum: A, value: 150.00 }
-    at: "2024-06-01T00:00:00+00:00"
-goldenSql:
-  postgres:
-    - insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-    - update balance set out_z = ? where bal_id = ? and out_z = ?
-    - insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-binds:
-  - [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]
-  - ["2024-06-01T00:00:00+00:00", 1, infinity]
-  - [1, A, 150.00, "2024-06-01T00:00:00+00:00", infinity]
-roundTrips: 3
-expectedTableState:
-  balance:
-    - bal_id: 1
-      acct_num: A
-      val: 100.00
-      in_z: "2024-01-01T00:00:00+00:00"
-      out_z: "2024-06-01T00:00:00+00:00"
-    - bal_id: 1
-      acct_num: A
-      val: 150.00
-      in_z: "2024-06-01T00:00:00+00:00"
-      out_z: infinity
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Balance
+      statements: 1
+      note: open the original current milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, acctNum: A, value: 100.00 }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: update
+      entity: Balance
+      statements: 2
+      note: close the current row, then chain a new current milestone with the new value
+      rows:
+        - { id: 1, acctNum: A, value: 150.00 }
+      at: "2024-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+      binds: ["2024-06-01T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, 150.00, "2024-06-01T00:00:00+00:00", infinity]
+  tableState:
+    balance:
+      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+  roundTrips: 3

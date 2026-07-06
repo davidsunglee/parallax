@@ -7,17 +7,21 @@
 # order 42 (qty 30) fails qty<30 and the inactive rows fail active=true.
 model: models/orders.yaml
 tags: [m-op-algebra, and, boolean, n-ary, slice-mvp-1]
-operation:
-  and:
-    operands:
-      - eq: { attr: Order.active, value: true }
-      - greaterThan: { attr: Order.qty, value: 5 }
-      - lessThan: { attr: Order.qty, value: 30 }
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.active = ? and t0.qty > ? and t0.qty < ?
-binds: [true, 5, 30]
-referenceSql: select id, name from orders where active = true and qty > 5 and qty < 30
-expectedRows:
-  - { id: 2, name: Linus }
-  - { id: 4, name: Margaret }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    and:
+      operands:
+        - eq: { attr: Order.active, value: true }
+        - greaterThan: { attr: Order.qty, value: 5 }
+        - lessThan: { attr: Order.qty, value: 30 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.active = ? and t0.qty > ? and t0.qty < ?
+      binds: [true, 5, 30]
+  referenceSql: select id, name from orders where active = true and qty > 5 and qty < 30
+  rows:
+    - { id: 2, name: Linus }
+    - { id: 4, name: Margaret }
+  roundTrips: 1

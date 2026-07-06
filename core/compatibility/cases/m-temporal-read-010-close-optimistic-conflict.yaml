@@ -16,49 +16,34 @@
 # close and asserts affectedRows 0; it does NOT run any replacement INSERT. So
 # expectedTableState is the fixtures + the precondition's two id-2 rows (our stale
 # close applied nothing).
-model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1]
-uow:
-  concurrency: optimistic
 # A concurrent writer fully chained id 2: close the old current row at 2024-09-01,
 # then open a fresh current row (value 999.00, in_z 2024-09-01).
-precondition:
-  - update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'
-  - insert into balance(bal_id, acct_num, val, in_z, out_z) values (2, 'B', 999.00, '2024-09-01T00:00:00+00:00', 'infinity')
-write: { id: 2 }
-at: "2024-10-01T00:00:00+00:00"
-observedInZ: "2024-02-01T00:00:00+00:00"
-expectedAffectedRows: 0
-goldenSql:
-  postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
-binds: ["2024-10-01T00:00:00+00:00", 2, infinity, "2024-02-01T00:00:00+00:00"]
-expectedTableState:
-  balance:
-    - bal_id: 1
-      acct_num: A
-      val: 100.00
-      in_z: "2024-01-01T00:00:00+00:00"
-      out_z: "2024-06-01T00:00:00+00:00"
-    - bal_id: 1
-      acct_num: A
-      val: 150.00
-      in_z: "2024-06-01T00:00:00+00:00"
-      out_z: infinity
-    # id 2's original current milestone, CLOSED by the concurrent writer at 2024-09-01.
-    - bal_id: 2
-      acct_num: B
-      val: 200.00
-      in_z: "2024-02-01T00:00:00+00:00"
-      out_z: "2024-09-01T00:00:00+00:00"
-    # id 2's NEW current milestone from the concurrent writer (still open) — our stale
-    # close did NOT touch it (its in_z is 2024-09-01, not the observed 2024-02-01).
-    - bal_id: 2
-      acct_num: B
-      val: 999.00
-      in_z: "2024-09-01T00:00:00+00:00"
-      out_z: infinity
-    - bal_id: 3
-      acct_num: C
-      val: 50.00
-      in_z: "2024-03-01T00:00:00+00:00"
-      out_z: "2024-08-01T00:00:00+00:00"
+# id 2's original current milestone, CLOSED by the concurrent writer at 2024-09-01.
+# id 2's NEW current milestone from the concurrent writer (still open) — our stale
+# close did NOT touch it (its in_z is 2024-09-01, not the observed 2024-02-01).
+model: models/balance.yaml
+tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1]
+shape: conflict
+given:
+  apply:
+    - sql: update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'
+    - sql: insert into balance(bal_id, acct_num, val, in_z, out_z) values (2, 'B', 999.00, '2024-09-01T00:00:00+00:00', 'infinity')
+when:
+  uow:
+    concurrency: optimistic
+  write: { id: 2 }
+  at: "2024-10-01T00:00:00+00:00"
+  observedInZ: "2024-02-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+      binds: ["2024-10-01T00:00:00+00:00", 2, infinity, "2024-02-01T00:00:00+00:00"]
+  affectedRows: 0
+  tableState:
+    balance:
+      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+      - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: "2024-09-01T00:00:00+00:00" }
+      - { bal_id: 2, acct_num: B, val: 999.00, in_z: "2024-09-01T00:00:00+00:00", out_z: infinity }
+      - { bal_id: 3, acct_num: C, val: 50.00, in_z: "2024-03-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }

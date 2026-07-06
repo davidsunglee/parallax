@@ -6,37 +6,41 @@
 # saving (contrast m-pk-gen-005: batch=1 needs one allocation per row). The counter
 # landing at 4 (proving the whole block was reserved) is asserted by the oracle.
 model: models/pk-sequence.yaml
-loadFixtures: true
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
-writeSequence:
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: "reserve block of 3 (next_val += 3), base 1"
-    rows:
-      - { name: pass_seq, nextVal: { increment: 3 } }
-  - mutation: insert
-    entity: Pass
-    statements: 2
-    note: "hand out 2 of the reserved block (ids 1,2; id 3 lost)"
-    rows:
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: "reserve block of 3 (next_val += 3), base 1"
+      rows:
+        - { name: pass_seq, nextVal: { increment: 3 } }
+    - mutation: insert
+      entity: Pass
+      statements: 2
+      note: "hand out 2 of the reserved block (ids 1,2; id 3 lost)"
+      rows:
+        - { id: 1, zone: north }
+        - { id: 2, zone: south }
+then:
+  statements:
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [3, pass_seq]
+    - sql:
+        postgres: insert into pass(id, zone) values (?, ?)
+        mariadb: insert into pass(id, zone) values (?, ?)
+      binds: [1, north]
+    - sql:
+        postgres: insert into pass(id, zone) values (?, ?)
+        mariadb: insert into pass(id, zone) values (?, ?)
+      binds: [2, south]
+  tableState:
+    pass:
       - { id: 1, zone: north }
       - { id: 2, zone: south }
-goldenSql:
-  postgres:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into pass(id, zone) values (?, ?)
-    - insert into pass(id, zone) values (?, ?)
-  mariadb:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into pass(id, zone) values (?, ?)
-    - insert into pass(id, zone) values (?, ?)
-binds:
-  - [3, pass_seq]
-  - [1, north]
-  - [2, south]
-roundTrips: 3
-expectedTableState:
-  pass:
-    - { id: 1, zone: north }
-    - { id: 2, zone: south }
+  roundTrips: 3

@@ -10,8 +10,8 @@ It performs m-case-format layer 1 statically (no database needed):
   (Draft 2020-12).
 * **Descriptor validation** — every model under ``models/`` validates against the
   metamodel schema.
-* **Operation validation** — every case's ``operation`` validates against the
-  operation schema.
+* **Operation validation** — every case's ``when.operation`` (and each
+  scenario/coherence step's ``find``) validates against the operation schema.
 * **Case validation** — every case validates against the compatibility-case
   schema, and its referenced model + golden-SQL dialect keys are coherent.
 """
@@ -93,17 +93,22 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     for case_path in sorted(cases_dir.glob("**/*.y*ml")):
         case = _load_yaml(case_path)
         _validate(case, case_schema, f"case {case_path.name}", errors)
-        if isinstance(case, dict) and "operation" in case:
+        # The action under test lives under `when`; a read case's operation and a
+        # scenario/coherence step's `find` are canonical m-op-algebra nodes that
+        # must also validate against the operation algebra schema.
+        when = case.get("when") if isinstance(case, dict) else None
+        when = when if isinstance(when, dict) else {}
+        if "operation" in when:
             _validate(
-                case["operation"],
+                when["operation"],
                 operation_schema,
                 f"case {case_path.name} operation",
                 errors,
             )
-        # A scenario case carries its operations per step (under `find`); each one
-        # must also validate against the operation algebra schema.
-        if isinstance(case, dict) and isinstance(case.get("scenario"), list):
-            for index, step in enumerate(case["scenario"]):
+        # A scenario case carries its operations per step (under `when.scenario[].find`);
+        # each one must also validate against the operation algebra schema.
+        if isinstance(when.get("scenario"), list):
+            for index, step in enumerate(when["scenario"]):
                 if isinstance(step, dict) and "find" in step:
                     _validate(
                         step["find"],
@@ -112,9 +117,9 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         errors,
                     )
         # A coherence case (Phase 11) likewise carries read-step operations under
-        # `find`; each must validate against the operation algebra schema.
-        if isinstance(case, dict) and isinstance(case.get("coherence"), list):
-            for index, step in enumerate(case["coherence"]):
+        # `when.coherence[].find`; each must validate against the operation algebra schema.
+        if isinstance(when.get("coherence"), list):
+            for index, step in enumerate(when["coherence"]):
                 if isinstance(step, dict) and "find" in step:
                     _validate(
                         step["find"],

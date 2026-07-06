@@ -24,41 +24,46 @@
 # caller number. roundTrips = 4 (materialize read + two per-object updates + verify read).
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, m-unit-work, materialize, set-based, scenario, slice-mvp-1]
-uow:
-  concurrency: optimistic
-roundTrips: 4
-scenario:
-  - find:
-      lessThan:
-        attr: Account.balance
-        value: 200.00
-    roundTrips: 1
-    note: the materialize read — resolve `balance < 200` to rows (ids 1 and 3, version 1); optimistic mode takes no lock
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
-    binds: [200.00]
-    expectRows:
-      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
-  - write: update
-    roundTrips: 2
-    note: one per-object GATED UPDATE per materialized row (`and version = ?` binds the observed version 1)
-    goldenSql:
-      postgres:
-        - update account set balance = ?, version = ? where id = ? and version = ?
-        - update account set balance = ?, version = ? where id = ? and version = ?
-    binds:
-      - [0.00, 2, 1, 1]
-      - [0.00, 2, 3, 1]
-  - find:
-      lessThan:
-        attr: Account.balance
-        value: 200.00
-    roundTrips: 1
-    note: the SAME find re-resolves (cache MISS) and MUST observe both rows at balance 0.00, version 2
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
-    binds: [200.00]
-    expectRows:
-      - { id: 1, owner: Ada, balance: 0.00, version: 2 }
-      - { id: 3, owner: Grace, balance: 0.00, version: 2 }
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - find:
+        lessThan:
+          attr: Account.balance
+          value: 200.00
+      roundTrips: 1
+      note: the materialize read — resolve `balance < 200` to rows (ids 1 and 3, version 1); optimistic mode takes no lock
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+          binds: [200.00]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+    - write: update
+      roundTrips: 2
+      note: one per-object GATED UPDATE per materialized row (`and version = ?` binds the observed version 1)
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: [0.00, 2, 1, 1]
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: [0.00, 2, 3, 1]
+    - find:
+        lessThan:
+          attr: Account.balance
+          value: 200.00
+      roundTrips: 1
+      note: the SAME find re-resolves (cache MISS) and MUST observe both rows at balance 0.00, version 2
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+          binds: [200.00]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 0.00, version: 2 }
+        - { id: 3, owner: Grace, balance: 0.00, version: 2 }
+then:
+  roundTrips: 4

@@ -19,41 +19,45 @@
 # (conflict granularity is the rectangle, not the primary key).
 #
 # Harness-only (bitemporal writes are outside slice-mvp-1: no TS *Until runtime exists).
+# R1 — superseded on the processing axis (out_z finite), untouched.
+# R2 — the head (business [2024-01-01, 2024-06-01)), still current, untouched: the
+# gate's from_z discriminator kept our close off it (conflict granularity = rectangle).
+# R3 — the observed current row, now INACTIVATED on the processing axis at 2024-10-01.
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict]
-uow:
-  concurrency: optimistic
-write: { id: 1, businessFrom: "2024-06-01T00:00:00+00:00" }
-at: "2024-10-01T00:00:00+00:00"
-observedInZ: "2024-04-01T00:00:00+00:00"
-expectedAffectedRows: 1
-goldenSql:
-  postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
-binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
-expectedTableState:
-  position:
-    # R1 — superseded on the processing axis (out_z finite), untouched.
-    - pos_id: 1
-      acct_num: A
-      val: 90.00
-      from_z: "2024-01-01T00:00:00+00:00"
-      thru_z: infinity
-      in_z: "2024-01-01T00:00:00+00:00"
-      out_z: "2024-04-01T00:00:00+00:00"
-    # R2 — the head (business [2024-01-01, 2024-06-01)), still current, untouched: the
-    # gate's from_z discriminator kept our close off it (conflict granularity = rectangle).
-    - pos_id: 1
-      acct_num: A
-      val: 100.00
-      from_z: "2024-01-01T00:00:00+00:00"
-      thru_z: "2024-06-01T00:00:00+00:00"
-      in_z: "2024-04-01T00:00:00+00:00"
-      out_z: infinity
-    # R3 — the observed current row, now INACTIVATED on the processing axis at 2024-10-01.
-    - pos_id: 1
-      acct_num: A
-      val: 200.00
-      from_z: "2024-06-01T00:00:00+00:00"
-      thru_z: infinity
-      in_z: "2024-04-01T00:00:00+00:00"
-      out_z: "2024-10-01T00:00:00+00:00"
+shape: conflict
+when:
+  uow:
+    concurrency: optimistic
+  write: { id: 1, businessFrom: "2024-06-01T00:00:00+00:00" }
+  at: "2024-10-01T00:00:00+00:00"
+  observedInZ: "2024-04-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
+      binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+  affectedRows: 1
+  tableState:
+    position:
+      - pos_id: 1
+        acct_num: A
+        val: 90.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-04-01T00:00:00+00:00"
+      - pos_id: 1
+        acct_num: A
+        val: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: infinity
+      - pos_id: 1
+        acct_num: A
+        val: 200.00
+        from_z: "2024-06-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: "2024-10-01T00:00:00+00:00"

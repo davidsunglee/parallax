@@ -5,37 +5,39 @@
 # (C-R2); coverage 20 -> 300.
 model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      asOf:
-        operand:
-          asOf:
-            operand: { all: {} }
-            asOfAttr: Policy.processingDate
-            date: now
-        asOfAttr: Policy.businessDate
-        date: "2024-03-01T00:00:00+00:00"
-    paths:
-      - [Policy.coverages]
-goldenSql:
-  postgres:
-    - select t0.id, t0.name from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-    - select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?, ?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-  mariadb:
-    - select t0.id, t0.name from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-    - select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?, ?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-binds:
-  - ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
-  - [1, 2, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
-roundTrips: 2
-expectedGraph:
-  Policy:
-    - id: 1
-      name: Auto
-      coverages:
-        - { id: 10, policy_id: 1, amount: 600.00 }
-    - id: 2
-      name: Home
-      coverages:
-        - { id: 20, policy_id: 2, amount: 300.00 }
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        asOf:
+          operand:
+            asOf:
+              operand: { all: {} }
+              asOfAttr: Policy.processingDate
+              date: now
+          asOfAttr: Policy.businessDate
+          date: "2024-03-01T00:00:00+00:00"
+      paths:
+        - [Policy.coverages]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+        mariadb: select t0.id, t0.name from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+      binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?, ?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+        mariadb: select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?, ?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+      binds: [1, 2, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+  graph:
+    Policy:
+      - id: 1
+        name: Auto
+        coverages:
+          - { id: 10, policy_id: 1, amount: 600.00 }
+      - id: 2
+        name: Home
+        coverages:
+          - { id: 20, policy_id: 2, amount: 300.00 }
+  roundTrips: 2

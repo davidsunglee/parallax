@@ -9,21 +9,25 @@
 # parity witness in the matrix (the row-limit decision point of the m-dialect seam).
 model: models/orders.yaml
 tags: [m-op-algebra, orderBy, limit, directive, slice-mvp-1]
-operation:
-  limit:
-    count: 2
-    operand:
-      orderBy:
-        keys:
-          - { attr: Order.qty, direction: desc }
-        operand:
-          all: {}
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 order by t0.qty desc limit ?
-  mariadb: select t0.id, t0.name from orders t0 order by t0.qty desc limit ?
-binds: [2]
-referenceSql: select id, name from orders order by qty desc limit 2
-expectedRows:
-  - { id: 5, name: Alan }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    limit:
+      count: 2
+      operand:
+        orderBy:
+          keys:
+            - { attr: Order.qty, direction: desc }
+          operand:
+            all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 order by t0.qty desc limit ?
+        mariadb: select t0.id, t0.name from orders t0 order by t0.qty desc limit ?
+      binds: [2]
+  referenceSql: select id, name from orders order by qty desc limit 2
+  rows:
+    - { id: 5, name: Alan }
+    - { id: 42, name: Grace }
+  roundTrips: 1

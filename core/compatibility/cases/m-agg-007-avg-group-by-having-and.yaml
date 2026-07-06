@@ -11,28 +11,32 @@
 # order: [2 (avg gte), 2 (count gte)]. avg 4.0 coerces to the integer 4.
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, avg, groupBy, having, and]
-operation:
-  groupBy:
-    operand:
-      all: {}
-    keys: [OrderItem.orderId]
-    aggregates:
-      - avg: { attr: OrderItem.quantity, as: avg_quantity }
-    having:
-      and:
-        operands:
-          - gte:
-              agg:
-                avg: { attr: OrderItem.quantity, as: avg_quantity }
-              value: 2
-          - gte:
-              agg:
-                count: { as: row_count }
-              value: 2
-goldenSql:
-  postgres: select t0.order_id, avg(t0.quantity) avg_quantity from order_item t0 group by t0.order_id having avg(t0.quantity) >= ? and count(*) >= ?
-binds: [2, 2]
-referenceSql: select order_id, avg(quantity) as avg_quantity from order_item group by order_id having avg(quantity) >= 2 and count(*) >= 2
-expectedRows:
-  - { order_id: 42, avg_quantity: 4 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    groupBy:
+      operand:
+        all: {}
+      keys: [OrderItem.orderId]
+      aggregates:
+        - avg: { attr: OrderItem.quantity, as: avg_quantity }
+      having:
+        and:
+          operands:
+            - gte:
+                agg:
+                  avg: { attr: OrderItem.quantity, as: avg_quantity }
+                value: 2
+            - gte:
+                agg:
+                  count: { as: row_count }
+                value: 2
+then:
+  statements:
+    - sql:
+        postgres: select t0.order_id, avg(t0.quantity) avg_quantity from order_item t0 group by t0.order_id having avg(t0.quantity) >= ? and count(*) >= ?
+      binds: [2, 2]
+  referenceSql: select order_id, avg(quantity) as avg_quantity from order_item group by order_id having avg(quantity) >= 2 and count(*) >= 2
+  rows:
+    - { order_id: 42, avg_quantity: 4 }
+  roundTrips: 1

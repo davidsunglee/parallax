@@ -3,37 +3,41 @@
 # voucher_seq: init 100, inc 10, batch 2. ONE allocation reserves a block of 2 at
 # stride 10 -> next_val advances by 2*10=20 (100 -> 120), base 100; ids 100,110.
 model: models/pk-sequence.yaml
-loadFixtures: true
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
-writeSequence:
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: "reserve block (next_val += 20), base 100"
-    rows:
-      - { name: voucher_seq, nextVal: { increment: 20 } }
-  - mutation: insert
-    entity: Voucher
-    statements: 2
-    note: "hand out 100,110"
-    rows:
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: "reserve block (next_val += 20), base 100"
+      rows:
+        - { name: voucher_seq, nextVal: { increment: 20 } }
+    - mutation: insert
+      entity: Voucher
+      statements: 2
+      note: "hand out 100,110"
+      rows:
+        - { id: 100, label: spring }
+        - { id: 110, label: summer }
+then:
+  statements:
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [20, voucher_seq]
+    - sql:
+        postgres: insert into voucher(id, label) values (?, ?)
+        mariadb: insert into voucher(id, label) values (?, ?)
+      binds: [100, spring]
+    - sql:
+        postgres: insert into voucher(id, label) values (?, ?)
+        mariadb: insert into voucher(id, label) values (?, ?)
+      binds: [110, summer]
+  tableState:
+    voucher:
       - { id: 100, label: spring }
       - { id: 110, label: summer }
-goldenSql:
-  postgres:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into voucher(id, label) values (?, ?)
-    - insert into voucher(id, label) values (?, ?)
-  mariadb:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into voucher(id, label) values (?, ?)
-    - insert into voucher(id, label) values (?, ?)
-binds:
-  - [20, voucher_seq]
-  - [100, spring]
-  - [110, summer]
-roundTrips: 3
-expectedTableState:
-  voucher:
-    - { id: 100, label: spring }
-    - { id: 110, label: summer }
+  roundTrips: 3

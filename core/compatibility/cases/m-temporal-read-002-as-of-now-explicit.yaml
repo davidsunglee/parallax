@@ -4,17 +4,21 @@
 # the default-injection rule produces — pinning the equivalence in a fixture.
 model: models/balance.yaml
 tags: [m-temporal-read, m-sql, as-of, audit-only, explicit, slice-mvp-1]
-operation:
-  asOf:
-    operand:
-      all: {}
-    asOfAttr: Balance.processingDate
-    date: now
-goldenSql:
-  postgres: select t0.bal_id, t0.val from balance t0 where t0.out_z = ?
-binds: [infinity]
-referenceSql: select bal_id, val from balance where out_z = 'infinity'::timestamptz
-expectedRows:
-  - { bal_id: 1, val: 150.00 }
-  - { bal_id: 2, val: 200.00 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        all: {}
+      asOfAttr: Balance.processingDate
+      date: now
+then:
+  statements:
+    - sql:
+        postgres: select t0.bal_id, t0.val from balance t0 where t0.out_z = ?
+      binds: [infinity]
+  referenceSql: select bal_id, val from balance where out_z = 'infinity'::timestamptz
+  rows:
+    - { bal_id: 1, val: 150.00 }
+    - { bal_id: 2, val: 200.00 }
+  roundTrips: 1

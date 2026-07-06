@@ -13,16 +13,20 @@
 model: models/account.yaml
 tags: [m-read-lock, m-opt-lock, m-dialect, m-api-conformance, slice-mvp-1]
 lane: api-conformance
-uow:
-  concurrency: optimistic
-operation:
-  eq:
-    attr: Account.id
-    value: 2
-goldenSql:
-  postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-binds: [2]
-referenceSql: select id, owner, balance, version from account where id = 2
-expectedRows:
-  - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-roundTrips: 1
+shape: read
+when:
+  uow:
+    concurrency: optimistic
+  operation:
+    eq:
+      attr: Account.id
+      value: 2
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      binds: [2]
+  referenceSql: select id, owner, balance, version from account where id = 2
+  rows:
+    - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+  roundTrips: 1

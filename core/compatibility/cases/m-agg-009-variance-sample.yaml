@@ -10,17 +10,20 @@
 # pinning the var_samp SQL mapping, which no fixture exercised before.
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, variance, varianceSample, twoColumn]
-operation:
-  groupBy:
-    operand:
-      all: {}
-    aggregates:
-      - varianceSample: { attr: OrderItem.quantity, as: quantity_variance }
-      - count: { attr: OrderItem.quantity, as: sample_count }
-goldenSql:
-  postgres: select var_samp(t0.quantity) quantity_variance, count(t0.quantity) sample_count from order_item t0
-binds: []
-referenceSql: select var_samp(quantity) as quantity_variance, count(quantity) as sample_count from order_item
-expectedRows:
-  - { quantity_variance: 2.5, sample_count: 5 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    groupBy:
+      operand:
+        all: {}
+      aggregates:
+        - varianceSample: { attr: OrderItem.quantity, as: quantity_variance }
+        - count: { attr: OrderItem.quantity, as: sample_count }
+then:
+  statements:
+    - sql:
+        postgres: select var_samp(t0.quantity) quantity_variance, count(t0.quantity) sample_count from order_item t0
+  referenceSql: select var_samp(quantity) as quantity_variance, count(quantity) as sample_count from order_item
+  rows:
+    - { quantity_variance: 2.5, sample_count: 5 }
+  roundTrips: 1

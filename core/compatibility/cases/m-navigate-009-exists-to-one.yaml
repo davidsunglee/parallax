@@ -9,16 +9,19 @@
 # nullable.
 model: models/orders.yaml
 tags: [m-navigate, exists, relationship, to-one, slice-mvp-1]
-operation:
-  exists:
-    rel: OrderStatus.orderItem
-goldenSql:
-  postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where exists (select 1 from order_item t1 where t1.id = t0.order_item_id)
-binds: []
-referenceSql: select id, order_id, order_item_id, code from order_status where order_item_id in (select id from order_item)
-expectedRows:
-  - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
-  - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
-  - { id: 203, order_id: 1, order_item_id: 12, code: PICKED }
-  - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    exists:
+      rel: OrderStatus.orderItem
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where exists (select 1 from order_item t1 where t1.id = t0.order_item_id)
+  referenceSql: select id, order_id, order_item_id, code from order_status where order_item_id in (select id from order_item)
+  rows:
+    - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
+    - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
+    - { id: 203, order_id: 1, order_item_id: 12, code: PICKED }
+    - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }
+  roundTrips: 1

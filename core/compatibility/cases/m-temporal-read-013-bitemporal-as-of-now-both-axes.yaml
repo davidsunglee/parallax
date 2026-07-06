@@ -11,20 +11,24 @@
 # on both axes.
 model: models/position.yaml
 tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, both-axes, defaulted, slice-mvp-1]
-operation:
-  asOf:
-    operand:
-      asOf:
-        operand:
-          all: {}
-        asOfAttr: Position.processingDate
-        date: now
-    asOfAttr: Position.businessDate
-    date: now
-goldenSql:
-  postgres: select t0.pos_id, t0.val from position t0 where t0.thru_z = ? and t0.out_z = ?
-binds: [infinity, infinity]
-referenceSql: select pos_id, val from position where thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
-expectedRows:
-  - { pos_id: 1, val: 200.00 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        asOf:
+          operand:
+            all: {}
+          asOfAttr: Position.processingDate
+          date: now
+      asOfAttr: Position.businessDate
+      date: now
+then:
+  statements:
+    - sql:
+        postgres: select t0.pos_id, t0.val from position t0 where t0.thru_z = ? and t0.out_z = ?
+      binds: [infinity, infinity]
+  referenceSql: select pos_id, val from position where thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+  rows:
+    - { pos_id: 1, val: 200.00 }
+  roundTrips: 1

@@ -4,18 +4,22 @@
 # As-of now, account A's current balance is the 150.00 milestone (id 1).
 model: models/balance.yaml
 tags: [m-temporal-read, m-sql, as-of, audit-only, composed, slice-mvp-1]
-operation:
-  asOf:
-    operand:
-      eq:
-        attr: Balance.acctNum
-        value: A
-    asOfAttr: Balance.processingDate
-    date: now
-goldenSql:
-  postgres: select t0.bal_id, t0.val from balance t0 where t0.acct_num = ? and t0.out_z = ?
-binds: [A, infinity]
-referenceSql: select bal_id, val from balance where acct_num = 'A' and out_z = 'infinity'::timestamptz
-expectedRows:
-  - { bal_id: 1, val: 150.00 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        eq:
+          attr: Balance.acctNum
+          value: A
+      asOfAttr: Balance.processingDate
+      date: now
+then:
+  statements:
+    - sql:
+        postgres: select t0.bal_id, t0.val from balance t0 where t0.acct_num = ? and t0.out_z = ?
+      binds: [A, infinity]
+  referenceSql: select bal_id, val from balance where acct_num = 'A' and out_z = 'infinity'::timestamptz
+  rows:
+    - { bal_id: 1, val: 150.00 }
+  roundTrips: 1

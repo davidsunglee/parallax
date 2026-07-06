@@ -3,32 +3,35 @@
 # ticket_seq: init 1000, inc 5, batch 1. One allocation advances by 1*5=5
 # (1000 -> 1005); id 1000.
 model: models/pk-sequence.yaml
-loadFixtures: true
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
-writeSequence:
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: "reserve block (stride 5), base 1000"
-    rows:
-      - { name: ticket_seq, nextVal: { increment: 5 } }
-  - mutation: insert
-    entity: Ticket
-    statements: 1
-    note: hand out id 1000
-    rows:
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: "reserve block (stride 5), base 1000"
+      rows:
+        - { name: ticket_seq, nextVal: { increment: 5 } }
+    - mutation: insert
+      entity: Ticket
+      statements: 1
+      note: hand out id 1000
+      rows:
+        - { id: 1000, tier: gold }
+then:
+  statements:
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [5, ticket_seq]
+    - sql:
+        postgres: insert into ticket(id, tier) values (?, ?)
+        mariadb: insert into ticket(id, tier) values (?, ?)
+      binds: [1000, gold]
+  tableState:
+    ticket:
       - { id: 1000, tier: gold }
-goldenSql:
-  postgres:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into ticket(id, tier) values (?, ?)
-  mariadb:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into ticket(id, tier) values (?, ?)
-binds:
-  - [5, ticket_seq]
-  - [1000, gold]
-roundTrips: 2
-expectedTableState:
-  ticket:
-    - { id: 1000, tier: gold }
+  roundTrips: 2

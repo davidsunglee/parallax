@@ -17,47 +17,49 @@
 model: models/orders.yaml
 tags: [m-read-lock, m-dialect, m-deep-fetch, m-op-list, m-api-conformance, locking-mode, slice-mvp-1]
 lane: api-conformance
-uow:
-  concurrency: locking
-operation:
-  deepFetch:
-    operand:
-      all: {}
-    paths:
-      - [OrderItem.order]
-goldenSql:
-  postgres:
-    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 for share of t0
-    - select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?) for share of t0
-binds:
-  - []
-  - [1, 2, 42]
-referenceSql: select id, order_id, sku, quantity from order_item
-roundTrips: 2
-expectedGraph:
-  OrderItem:
-    - id: 11
-      order_id: 1
-      sku: A-100
-      quantity: 2
-      order: { id: 1, name: Ada }
-    - id: 12
-      order_id: 1
-      sku: B-200
-      quantity: 1
-      order: { id: 1, name: Ada }
-    - id: 21
-      order_id: 2
-      sku: A-300
-      quantity: 4
-      order: { id: 2, name: Linus }
-    - id: 421
-      order_id: 42
-      sku: A-999
-      quantity: 3
-      order: { id: 42, name: Grace }
-    - id: 422
-      order_id: 42
-      sku: B-200
-      quantity: 5
-      order: { id: 42, name: Grace }
+shape: read
+when:
+  uow:
+    concurrency: locking
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [OrderItem.order]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 for share of t0
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?) for share of t0
+      binds: [1, 2, 42]
+  referenceSql: select id, order_id, sku, quantity from order_item
+  graph:
+    OrderItem:
+      - id: 11
+        order_id: 1
+        sku: A-100
+        quantity: 2
+        order: { id: 1, name: Ada }
+      - id: 12
+        order_id: 1
+        sku: B-200
+        quantity: 1
+        order: { id: 1, name: Ada }
+      - id: 21
+        order_id: 2
+        sku: A-300
+        quantity: 4
+        order: { id: 2, name: Linus }
+      - id: 421
+        order_id: 42
+        sku: A-999
+        quantity: 3
+        order: { id: 42, name: Grace }
+      - id: 422
+        order_id: 42
+        sku: B-200
+        quantity: 5
+        order: { id: 42, name: Grace }
+  roundTrips: 2

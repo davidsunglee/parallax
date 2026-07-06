@@ -15,33 +15,32 @@
 # thru_z = infinity row — the observable signature of a business termination.
 model: models/reservation.yaml
 tags: [m-business-only, m-sql, business_temporal, temporal, write-sequence, terminate, business-only]
-writeSequence:
-  - mutation: insert
-    entity: Reservation
-    statements: 1
-    note: open a current business milestone [2024-01-01, infinity)
-    rows:
-      - { id: 1, room: "101", guest: Ada }
-    businessAt: "2024-01-01T00:00:00+00:00"
-  - mutation: terminate
-    entity: Reservation
-    statements: 1
-    note: close the current business row; insert nothing (no current row remains)
-    rows:
-      - { id: 1 }
-    businessAt: "2024-03-01T00:00:00+00:00"
-goldenSql:
-  postgres:
-    - insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
-    - update reservation set thru_z = ? where res_id = ? and thru_z = ?
-binds:
-  - [1, "101", Ada, "2024-01-01T00:00:00+00:00", infinity]
-  - ["2024-03-01T00:00:00+00:00", 1, infinity]
-roundTrips: 2
-expectedTableState:
-  reservation:
-    - res_id: 1
-      room: "101"
-      guest: Ada
-      from_z: "2024-01-01T00:00:00+00:00"
-      thru_z: "2024-03-01T00:00:00+00:00"
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Reservation
+      statements: 1
+      note: open a current business milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, room: "101", guest: Ada }
+      businessAt: "2024-01-01T00:00:00+00:00"
+    - mutation: terminate
+      entity: Reservation
+      statements: 1
+      note: close the current business row; insert nothing (no current row remains)
+      rows:
+        - { id: 1 }
+      businessAt: "2024-03-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
+      binds: [1, "101", Ada, "2024-01-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: update reservation set thru_z = ? where res_id = ? and thru_z = ?
+      binds: ["2024-03-01T00:00:00+00:00", 1, infinity]
+  tableState:
+    reservation:
+      - { res_id: 1, room: "101", guest: Ada, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-03-01T00:00:00+00:00" }
+  roundTrips: 2

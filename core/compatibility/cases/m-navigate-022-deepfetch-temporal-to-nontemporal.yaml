@@ -5,28 +5,31 @@
 # renewed.
 model: models/lease.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      asOf:
-        operand: { all: {} }
-        asOfAttr: Lease.processingDate
-        date: now
-    paths:
-      - [Lease.notes]
-goldenSql:
-  postgres:
-    - select t0.id, t0.tenant_id, t0.term from lease t0 where t0.out_z = ?
-    - select t0.id, t0.lease_id, t0.note_text from lease_note t0 where t0.lease_id in (?)
-binds:
-  - [infinity]
-  - [10]
-roundTrips: 2
-expectedGraph:
-  Lease:
-    - id: 10
-      tenant_id: 1
-      term: "24mo"
-      notes:
-        - { id: 100, lease_id: 10, note_text: signed }
-        - { id: 101, lease_id: 10, note_text: renewed }
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        asOf:
+          operand: { all: {} }
+          asOfAttr: Lease.processingDate
+          date: now
+      paths:
+        - [Lease.notes]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.tenant_id, t0.term from lease t0 where t0.out_z = ?
+      binds: [infinity]
+    - sql:
+        postgres: select t0.id, t0.lease_id, t0.note_text from lease_note t0 where t0.lease_id in (?)
+      binds: [10]
+  graph:
+    Lease:
+      - id: 10
+        tenant_id: 1
+        term: "24mo"
+        notes:
+          - { id: 100, lease_id: 10, note_text: signed }
+          - { id: 101, lease_id: 10, note_text: renewed }
+  roundTrips: 2

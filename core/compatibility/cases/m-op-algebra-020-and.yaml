@@ -2,16 +2,20 @@
 # follow left-to-right appearance.
 model: models/orders.yaml
 tags: [m-op-algebra, and, boolean, slice-mvp-1]
-operation:
-  and:
-    operands:
-      - eq: { attr: Order.active, value: true }
-      - greaterThan: { attr: Order.qty, value: 10 }
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.active = ? and t0.qty > ?
-binds: [true, 10]
-referenceSql: select id, name from orders where active = true and qty > 10
-expectedRows:
-  - { id: 4, name: Margaret }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    and:
+      operands:
+        - eq: { attr: Order.active, value: true }
+        - greaterThan: { attr: Order.qty, value: 10 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.active = ? and t0.qty > ?
+      binds: [true, 10]
+  referenceSql: select id, name from orders where active = true and qty > 10
+  rows:
+    - { id: 4, name: Margaret }
+    - { id: 42, name: Grace }
+  roundTrips: 1

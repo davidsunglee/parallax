@@ -5,17 +5,20 @@
 # This is the third min/max domain (numeric / string / date) the suite exercises.
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, min, max, date]
-operation:
-  groupBy:
-    operand:
-      all: {}
-    aggregates:
-      - min: { attr: Order.orderedOn, as: min_ordered_on }
-      - max: { attr: Order.orderedOn, as: max_ordered_on }
-goldenSql:
-  postgres: select min(t0.ordered_on) min_ordered_on, max(t0.ordered_on) max_ordered_on from orders t0
-binds: []
-referenceSql: select min(ordered_on) as min_ordered_on, max(ordered_on) as max_ordered_on from orders
-expectedRows:
-  - { min_ordered_on: 2024-01-05, max_ordered_on: 2024-06-30 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    groupBy:
+      operand:
+        all: {}
+      aggregates:
+        - min: { attr: Order.orderedOn, as: min_ordered_on }
+        - max: { attr: Order.orderedOn, as: max_ordered_on }
+then:
+  statements:
+    - sql:
+        postgres: select min(t0.ordered_on) min_ordered_on, max(t0.ordered_on) max_ordered_on from orders t0
+  referenceSql: select min(ordered_on) as min_ordered_on, max(ordered_on) as max_ordered_on from orders
+  rows:
+    - { min_ordered_on: 2024-01-05, max_ordered_on: 2024-06-30 }
+  roundTrips: 1

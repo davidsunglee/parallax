@@ -3,15 +3,18 @@
 # correlation predicate. Orders 1, 2, 42 have items; 3, 4, 5 do not.
 model: models/orders.yaml
 tags: [m-navigate, exists, relationship, slice-mvp-1]
-operation:
-  exists:
-    rel: Order.items
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id)
-binds: []
-referenceSql: select id, name from orders where id in (select order_id from order_item)
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 2, name: Linus }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    exists:
+      rel: Order.items
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id)
+  referenceSql: select id, name from orders where id in (select order_id from order_item)
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+    - { id: 42, name: Grace }
+  roundTrips: 1

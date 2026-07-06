@@ -17,18 +17,21 @@
 # tolerance). Every other aggregate value in the suite compares exactly.
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, stdDev, stdDevSample, twoColumn]
-operation:
-  groupBy:
-    operand:
-      all: {}
-    aggregates:
-      - stdDevSample: { attr: OrderItem.quantity, as: quantity_stddev }
-      - count: { attr: OrderItem.quantity, as: sample_count }
-goldenSql:
-  postgres: select stddev_samp(t0.quantity) quantity_stddev, count(t0.quantity) sample_count from order_item t0
-binds: []
-referenceSql: select stddev_samp(quantity) as quantity_stddev, count(quantity) as sample_count from order_item
-expectedRows:
-  - { quantity_stddev: 1.5811388301, sample_count: 5 }
-tolerance: 1.0e-9
-roundTrips: 1
+shape: read
+when:
+  operation:
+    groupBy:
+      operand:
+        all: {}
+      aggregates:
+        - stdDevSample: { attr: OrderItem.quantity, as: quantity_stddev }
+        - count: { attr: OrderItem.quantity, as: sample_count }
+then:
+  statements:
+    - sql:
+        postgres: select stddev_samp(t0.quantity) quantity_stddev, count(t0.quantity) sample_count from order_item t0
+  referenceSql: select stddev_samp(quantity) as quantity_stddev, count(quantity) as sample_count from order_item
+  rows:
+    - { quantity_stddev: 1.5811388301, sample_count: 5 }
+  roundTrips: 1
+  tolerance: 1.0e-9

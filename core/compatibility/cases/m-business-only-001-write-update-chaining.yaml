@@ -20,40 +20,36 @@
 # current-business predicate (res_id AND thru_z = infinity).
 model: models/reservation.yaml
 tags: [m-business-only, m-sql, business_temporal, temporal, write-sequence, update, business-only]
-writeSequence:
-  - mutation: insert
-    entity: Reservation
-    statements: 1
-    note: open the original business milestone [2024-01-01, infinity)
-    rows:
-      - { id: 1, room: "101", guest: Ada }
-    businessAt: "2024-01-01T00:00:00+00:00"
-  - mutation: update
-    entity: Reservation
-    statements: 2
-    note: close the current business row, then chain a new milestone with the new guest
-    rows:
-      - { id: 1, room: "101", guest: Bob }
-    businessAt: "2024-03-01T00:00:00+00:00"
-goldenSql:
-  postgres:
-    - insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
-    - update reservation set thru_z = ? where res_id = ? and thru_z = ?
-    - insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
-binds:
-  - [1, "101", Ada, "2024-01-01T00:00:00+00:00", infinity]
-  - ["2024-03-01T00:00:00+00:00", 1, infinity]
-  - [1, "101", Bob, "2024-03-01T00:00:00+00:00", infinity]
-roundTrips: 3
-expectedTableState:
-  reservation:
-    - res_id: 1
-      room: "101"
-      guest: Ada
-      from_z: "2024-01-01T00:00:00+00:00"
-      thru_z: "2024-03-01T00:00:00+00:00"
-    - res_id: 1
-      room: "101"
-      guest: Bob
-      from_z: "2024-03-01T00:00:00+00:00"
-      thru_z: infinity
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Reservation
+      statements: 1
+      note: open the original business milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, room: "101", guest: Ada }
+      businessAt: "2024-01-01T00:00:00+00:00"
+    - mutation: update
+      entity: Reservation
+      statements: 2
+      note: close the current business row, then chain a new milestone with the new guest
+      rows:
+        - { id: 1, room: "101", guest: Bob }
+      businessAt: "2024-03-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
+      binds: [1, "101", Ada, "2024-01-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: update reservation set thru_z = ? where res_id = ? and thru_z = ?
+      binds: ["2024-03-01T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
+      binds: [1, "101", Bob, "2024-03-01T00:00:00+00:00", infinity]
+  tableState:
+    reservation:
+      - { res_id: 1, room: "101", guest: Ada, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-03-01T00:00:00+00:00" }
+      - { res_id: 1, room: "101", guest: Bob, from_z: "2024-03-01T00:00:00+00:00", thru_z: infinity }
+  roundTrips: 3
