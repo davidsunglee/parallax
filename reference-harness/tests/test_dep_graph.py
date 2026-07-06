@@ -16,11 +16,14 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 
 from reference_harness.dep_graph_check import (
     _SLICE_TAG,
+    DepGraphFailure,
     active_deferred_edge_errors,
+    catalog_graph_consistency_errors,
     check,
     coverage_errors,
     gated_modules,
@@ -96,6 +99,49 @@ def test_real_catalog_matches_the_graph() -> None:
     assert catalog["m-db-port"]["coverage"] == "contract"  # the sole contract-covered module
     assert catalog["m-agg"]["status"] == "deferred"  # aggregation is deferred
     assert catalog["m-core"]["status"] == "active"
+
+
+def test_parse_catalog_rejects_an_unknown_status() -> None:
+    # A typo'd status must fail loudly, not silently drop the module out of the
+    # gated set (which would let an uncovered module pass the coverage gate).
+    with pytest.raises(DepGraphFailure, match="unknown status 'activ'"):
+        parse_catalog(_catalog_md([("m-core", "activ", "cases")]))
+
+
+def test_parse_catalog_rejects_an_unknown_coverage() -> None:
+    with pytest.raises(DepGraphFailure, match="unknown coverage 'case'"):
+        parse_catalog(_catalog_md([("m-core", "active", "case")]))
+
+
+def test_catalog_graph_consistency_flags_an_edged_but_uncatalogued_module() -> None:
+    # m-ghost is edged but absent from the catalog: the coverage and
+    # active->deferred gates key off the catalog, so without this check it would
+    # slip past them (its status resolves to None).
+    markdown = _catalog_md(
+        [("m-core", "active", "cases")],
+        edges=["m-ghost --> m-core"],
+    )
+    errors = catalog_graph_consistency_errors(markdown)
+    assert any("m-ghost" in e and "not the catalog" in e for e in errors)
+
+
+def test_catalog_graph_consistency_flags_a_catalogued_but_unedged_module() -> None:
+    markdown = _catalog_md(
+        [
+            ("m-core", "active", "cases"),
+            ("m-descriptor", "active", "cases"),
+            ("m-orphan", "active", "cases"),
+        ],
+        edges=["m-descriptor --> m-core"],
+    )
+    errors = catalog_graph_consistency_errors(markdown)
+    # m-orphan is the only mismatch: the two edged modules are both catalogued.
+    assert errors == ["module m-orphan is catalogued but never appears in the DAG"]
+
+
+def test_real_catalog_and_graph_are_consistent() -> None:
+    markdown = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
+    assert catalog_graph_consistency_errors(markdown) == []
 
 
 # --- the coverage gate over the real spec ------------------------------------
