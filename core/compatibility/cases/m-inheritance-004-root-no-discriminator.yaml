@@ -7,15 +7,18 @@
 # root-kind row. The golden SQL has no WHERE clause; its absence is the contract.
 model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, root, no-discriminator]
-operation:
-  all: {}
-goldenSql:
-  postgres: select t0.id, t0.kind, t0.amount from payment t0
-binds: []
-referenceSql: select id, kind, amount from payment
-expectedRows:
-  - { id: 1, kind: card, amount: 100.00 }
-  - { id: 2, kind: card, amount: 50.00 }
-  - { id: 3, kind: cash, amount: 20.00 }
-  - { id: 4, kind: payment, amount: 10.00 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.amount from payment t0
+  referenceSql: select id, kind, amount from payment
+  rows:
+    - { id: 1, kind: card, amount: 100.00 }
+    - { id: 2, kind: card, amount: 50.00 }
+    - { id: 3, kind: cash, amount: 20.00 }
+    - { id: 4, kind: payment, amount: 10.00 }
+  roundTrips: 1

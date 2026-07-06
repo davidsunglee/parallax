@@ -18,28 +18,32 @@
 # roundTrips = 1 (the single find; the no-op write and the hit cost nothing).
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, no-op, scenario, slice-mvp-1]
-roundTrips: 1
-scenario:
-  - find:
-      eq:
-        attr: Account.id
-        value: 2
-    roundTrips: 1
-    note: cache MISS — read account 2 (balance 250.00, version 1)
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-    binds: [2]
-    expectRows:
-      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-  - write: update
-    roundTrips: 0
-    note: a versioned update whose set changes no attribute issues NO DML (no golden SQL)
-  - find:
-      eq:
-        attr: Account.id
-        value: 2
-    roundTrips: 0
-    sameObjectAs: 0
-    note: cache HIT — the no-op did not invalidate the cache; the row is unchanged
-    expectRows:
-      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+shape: scenario
+when:
+  scenario:
+    - find:
+        eq:
+          attr: Account.id
+          value: 2
+      roundTrips: 1
+      note: cache MISS — read account 2 (balance 250.00, version 1)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+    - write: update
+      roundTrips: 0
+      note: a versioned update whose set changes no attribute issues NO DML (no golden SQL)
+    - find:
+        eq:
+          attr: Account.id
+          value: 2
+      roundTrips: 0
+      sameObjectAs: 0
+      note: cache HIT — the no-op did not invalidate the cache; the row is unchanged
+      expectRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+then:
+  roundTrips: 1

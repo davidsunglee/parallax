@@ -3,19 +3,23 @@
 # `%...%`. Every name containing an `a`/`A` matches except `Linus`.
 model: models/orders.yaml
 tags: [m-op-algebra, contains, string, caseInsensitive, slice-mvp-1]
-operation:
-  contains:
-    attr: Order.name
-    value: A
-    caseInsensitive: true
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)
-binds: ["%a%"]
-referenceSql: select id, name from orders where lower(name) like '%a%'
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 3, name: ada }
-  - { id: 4, name: Margaret }
-  - { id: 5, name: Alan }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    contains:
+      attr: Order.name
+      value: A
+      caseInsensitive: true
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)
+      binds: ["%a%"]
+  referenceSql: select id, name from orders where lower(name) like '%a%'
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 3, name: ada }
+    - { id: 4, name: Margaret }
+    - { id: 5, name: Alan }
+    - { id: 42, name: Grace }
+  roundTrips: 1

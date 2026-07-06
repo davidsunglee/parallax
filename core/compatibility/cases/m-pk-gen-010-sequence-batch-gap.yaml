@@ -4,32 +4,35 @@
 # (id 1). ids 2 and 3 are reserved-and-lost -> a GAP. Counter lands at 4 (the full
 # block was reserved) -- asserted by the oracle.
 model: models/pk-sequence.yaml
-loadFixtures: true
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
-writeSequence:
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: reserve block of 3 (base 1)
-    rows:
-      - { name: pass_seq, nextVal: { increment: 3 } }
-  - mutation: insert
-    entity: Pass
-    statements: 1
-    note: "hand out only id 1 (2,3 lost)"
-    rows:
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: reserve block of 3 (base 1)
+      rows:
+        - { name: pass_seq, nextVal: { increment: 3 } }
+    - mutation: insert
+      entity: Pass
+      statements: 1
+      note: "hand out only id 1 (2,3 lost)"
+      rows:
+        - { id: 1, zone: north }
+then:
+  statements:
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [3, pass_seq]
+    - sql:
+        postgres: insert into pass(id, zone) values (?, ?)
+        mariadb: insert into pass(id, zone) values (?, ?)
+      binds: [1, north]
+  tableState:
+    pass:
       - { id: 1, zone: north }
-goldenSql:
-  postgres:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into pass(id, zone) values (?, ?)
-  mariadb:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into pass(id, zone) values (?, ?)
-binds:
-  - [3, pass_seq]
-  - [1, north]
-roundTrips: 2
-expectedTableState:
-  pass:
-    - { id: 1, zone: north }
+  roundTrips: 2

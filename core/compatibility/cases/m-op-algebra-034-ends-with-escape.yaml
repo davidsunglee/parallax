@@ -7,14 +7,18 @@
 # match any suffix). Companion to m-op-algebra-033 (startsWith) and m-op-algebra-015 (contains).
 model: models/orders.yaml
 tags: [m-op-algebra, endsWith, string, escape, slice-mvp-1]
-operation:
-  endsWith:
-    attr: Order.sku
-    value: 50%
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.sku like ? escape ?
-binds: ["%50\\%", "\\"]
-referenceSql: select id, name from orders where right(sku, 3) = '50%'
-expectedRows:
-  - { id: 5, name: Alan }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    endsWith:
+      attr: Order.sku
+      value: 50%
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.sku like ? escape ?
+      binds: ["%50\\%", "\\"]
+  referenceSql: select id, name from orders where right(sku, 3) = '50%'
+  rows:
+    - { id: 5, name: Alan }
+  roundTrips: 1

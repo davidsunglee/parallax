@@ -13,16 +13,20 @@
 # both dialects in the matrix.
 model: models/orders.yaml
 tags: [m-navigate, navigate, relationship, slice-mvp-1]
-operation:
-  navigate:
-    rel: Order.items
-    op:
-      eq: { attr: OrderItem.sku, value: A-100 }
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)
-  mariadb: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)
-binds: [A-100]
-referenceSql: select id, name from orders where id in (select order_id from order_item where sku = 'A-100')
-expectedRows:
-  - { id: 1, name: Ada }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    navigate:
+      rel: Order.items
+      op:
+        eq: { attr: OrderItem.sku, value: A-100 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)
+        mariadb: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)
+      binds: [A-100]
+  referenceSql: select id, name from orders where id in (select order_id from order_item where sku = 'A-100')
+  rows:
+    - { id: 1, name: Ada }
+  roundTrips: 1

@@ -4,31 +4,33 @@
 # max(id)+1 = 6. Empty-schema start; the case builds its own state (no fixtures).
 model: models/pk-max.yaml
 tags: [m-pk-gen, m-unit-work, max, write-sequence]
-writeSequence:
-  - mutation: insert
-    entity: Attendee
-    statements: 1
-    note: seed a baseline row with an application-assigned id
-    rows:
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Attendee
+      statements: 1
+      note: seed a baseline row with an application-assigned id
+      rows:
+        - { id: 5, name: Sol }
+    - mutation: insert
+      entity: Attendee
+      statements: 1
+      note: allocate max(id)+1 = 6
+      rows:
+        - { id: { computed: maxPlusOne }, name: Ada }
+then:
+  statements:
+    - sql:
+        postgres: insert into attendee(id, name) values (?, ?)
+        mariadb: insert into attendee(id, name) values (?, ?)
+      binds: [5, Sol]
+    - sql:
+        postgres: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+        mariadb: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+      binds: [0, 1, Ada]
+  tableState:
+    attendee:
       - { id: 5, name: Sol }
-  - mutation: insert
-    entity: Attendee
-    statements: 1
-    note: allocate max(id)+1 = 6
-    rows:
-      - { id: { computed: maxPlusOne }, name: Ada }
-goldenSql:
-  postgres:
-    - insert into attendee(id, name) values (?, ?)
-    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
-  mariadb:
-    - insert into attendee(id, name) values (?, ?)
-    - insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
-binds:
-  - [5, Sol]
-  - [0, 1, Ada]
-roundTrips: 2
-expectedTableState:
-  attendee:
-    - { id: 5, name: Sol }
-    - { id: 6, name: Ada }
+      - { id: 6, name: Ada }
+  roundTrips: 2

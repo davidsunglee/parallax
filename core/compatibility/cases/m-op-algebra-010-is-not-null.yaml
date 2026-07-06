@@ -3,17 +3,20 @@
 # referenceSql uses the more familiar `is not null` to cross-check.
 model: models/orders.yaml
 tags: [m-op-algebra, isNotNull, slice-mvp-1]
-operation:
-  isNotNull:
-    attr: Order.sku
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where not t0.sku is null
-binds: []
-referenceSql: select id, name from orders where sku is not null
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 2, name: Linus }
-  - { id: 3, name: ada }
-  - { id: 5, name: Alan }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    isNotNull:
+      attr: Order.sku
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where not t0.sku is null
+  referenceSql: select id, name from orders where sku is not null
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+    - { id: 3, name: ada }
+    - { id: 5, name: Alan }
+    - { id: 42, name: Grace }
+  roundTrips: 1

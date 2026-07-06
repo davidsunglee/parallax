@@ -4,17 +4,18 @@
 # an in-flight batch.
 model: models/error-cases.yaml
 tags: [m-db-error, uniqueViolation]
-errorClass: uniqueViolation
-expectedNativeCode:
-  postgres: "23505"
-  mariadb: 1062
-goldenSql:
-  postgres:
-    - insert into widget(id, label) values (?, ?)
-    - insert into widget(id, label) values (?, ?)
-  mariadb:
-    - insert into widget(id, label) values (?, ?)
-    - insert into widget(id, label) values (?, ?)
-binds:
-  - [7, "seed"]
-  - [7, "collide"]
+shape: error
+then:
+  statements:
+    - sql:
+        postgres: insert into widget(id, label) values (?, ?)
+        mariadb: insert into widget(id, label) values (?, ?)
+      binds: [7, "seed"]
+    - sql:
+        postgres: insert into widget(id, label) values (?, ?)
+        mariadb: insert into widget(id, label) values (?, ?)
+      binds: [7, "collide"]
+  errorClass: uniqueViolation
+  nativeCode:
+    postgres: "23505"
+    mariadb: 1062

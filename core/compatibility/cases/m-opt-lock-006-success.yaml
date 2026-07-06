@@ -15,24 +15,19 @@
 # fresh version provably touches one row, a stale version provably touches zero.
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-mvp-1]
-uow:
-  concurrency: optimistic
-write: { id: 2, balance: 500.00, observedVersion: 1 }
-expectedAffectedRows: 1
-goldenSql:
-  postgres: update account set balance = ?, version = ? where id = ? and version = ?
-binds: [500.00, 2, 2, 1]
-expectedTableState:
-  account:
-    - id: 1
-      owner: Ada
-      balance: 100.00
-      version: 1
-    - id: 2
-      owner: Linus
-      balance: 500.00
-      version: 2
-    - id: 3
-      owner: Grace
-      balance: 10.00
-      version: 1
+shape: conflict
+when:
+  uow:
+    concurrency: optimistic
+  write: { id: 2, balance: 500.00, observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: update account set balance = ?, version = ? where id = ? and version = ?
+      binds: [500.00, 2, 2, 1]
+  affectedRows: 1
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+      - { id: 2, owner: Linus, balance: 500.00, version: 2 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }

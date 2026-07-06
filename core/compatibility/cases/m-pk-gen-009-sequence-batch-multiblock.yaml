@@ -4,61 +4,68 @@
 # block hands out 1,2,3; second block base 4 hands out 4 (ids 5,6 reserved-and-
 # lost). Two allocations for 4 rows. Counter 7 asserted by the oracle.
 model: models/pk-sequence.yaml
-loadFixtures: true
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
-writeSequence:
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: reserve block 1 (base 1)
-    rows:
-      - { name: pass_seq, nextVal: { increment: 3 } }
-  - mutation: insert
-    entity: Pass
-    statements: 3
-    note: "hand out 1,2,3"
-    rows:
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: reserve block 1 (base 1)
+      rows:
+        - { name: pass_seq, nextVal: { increment: 3 } }
+    - mutation: insert
+      entity: Pass
+      statements: 3
+      note: "hand out 1,2,3"
+      rows:
+        - { id: 1, zone: north }
+        - { id: 2, zone: south }
+        - { id: 3, zone: east }
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: reserve block 2 (base 4)
+      rows:
+        - { name: pass_seq, nextVal: { increment: 3 } }
+    - mutation: insert
+      entity: Pass
+      statements: 1
+      note: "hand out 4 (5,6 lost)"
+      rows:
+        - { id: 4, zone: west }
+then:
+  statements:
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [3, pass_seq]
+    - sql:
+        postgres: insert into pass(id, zone) values (?, ?)
+        mariadb: insert into pass(id, zone) values (?, ?)
+      binds: [1, north]
+    - sql:
+        postgres: insert into pass(id, zone) values (?, ?)
+        mariadb: insert into pass(id, zone) values (?, ?)
+      binds: [2, south]
+    - sql:
+        postgres: insert into pass(id, zone) values (?, ?)
+        mariadb: insert into pass(id, zone) values (?, ?)
+      binds: [3, east]
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [3, pass_seq]
+    - sql:
+        postgres: insert into pass(id, zone) values (?, ?)
+        mariadb: insert into pass(id, zone) values (?, ?)
+      binds: [4, west]
+  tableState:
+    pass:
       - { id: 1, zone: north }
       - { id: 2, zone: south }
       - { id: 3, zone: east }
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: reserve block 2 (base 4)
-    rows:
-      - { name: pass_seq, nextVal: { increment: 3 } }
-  - mutation: insert
-    entity: Pass
-    statements: 1
-    note: "hand out 4 (5,6 lost)"
-    rows:
       - { id: 4, zone: west }
-goldenSql:
-  postgres:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into pass(id, zone) values (?, ?)
-    - insert into pass(id, zone) values (?, ?)
-    - insert into pass(id, zone) values (?, ?)
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into pass(id, zone) values (?, ?)
-  mariadb:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into pass(id, zone) values (?, ?)
-    - insert into pass(id, zone) values (?, ?)
-    - insert into pass(id, zone) values (?, ?)
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into pass(id, zone) values (?, ?)
-binds:
-  - [3, pass_seq]
-  - [1, north]
-  - [2, south]
-  - [3, east]
-  - [3, pass_seq]
-  - [4, west]
-roundTrips: 6
-expectedTableState:
-  pass:
-    - { id: 1, zone: north }
-    - { id: 2, zone: south }
-    - { id: 3, zone: east }
-    - { id: 4, zone: west }
+  roundTrips: 6

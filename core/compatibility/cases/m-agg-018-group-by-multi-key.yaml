@@ -7,21 +7,24 @@
 # multi-key GROUP BY is emitted in order.
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, sum, groupBy, multi-key]
-operation:
-  groupBy:
-    operand:
-      all: {}
-    keys: [OrderItem.orderId, OrderItem.sku]
-    aggregates:
-      - sum: { attr: OrderItem.quantity, as: total_quantity }
-goldenSql:
-  postgres: select t0.order_id, t0.sku, sum(t0.quantity) total_quantity from order_item t0 group by t0.order_id, t0.sku
-binds: []
-referenceSql: select order_id, sku, sum(quantity) as total_quantity from order_item group by order_id, sku
-expectedRows:
-  - { order_id: 1, sku: A-100, total_quantity: 2 }
-  - { order_id: 1, sku: B-200, total_quantity: 1 }
-  - { order_id: 2, sku: A-300, total_quantity: 4 }
-  - { order_id: 42, sku: A-999, total_quantity: 3 }
-  - { order_id: 42, sku: B-200, total_quantity: 5 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    groupBy:
+      operand:
+        all: {}
+      keys: [OrderItem.orderId, OrderItem.sku]
+      aggregates:
+        - sum: { attr: OrderItem.quantity, as: total_quantity }
+then:
+  statements:
+    - sql:
+        postgres: select t0.order_id, t0.sku, sum(t0.quantity) total_quantity from order_item t0 group by t0.order_id, t0.sku
+  referenceSql: select order_id, sku, sum(quantity) as total_quantity from order_item group by order_id, sku
+  rows:
+    - { order_id: 1, sku: A-100, total_quantity: 2 }
+    - { order_id: 1, sku: B-200, total_quantity: 1 }
+    - { order_id: 2, sku: A-300, total_quantity: 4 }
+    - { order_id: 42, sku: A-999, total_quantity: 3 }
+    - { order_id: 42, sku: B-200, total_quantity: 5 }
+  roundTrips: 1

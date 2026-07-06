@@ -13,13 +13,17 @@
 # and inline key.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json]
-operation:
-  nestedEq: { path: Customer.address.city, value: Oslo }
-goldenSql:
-  postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
-binds: [city, Oslo]
-referenceSql: select id, name from customer where address ->> 'city' = 'Oslo'
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 2, name: Linus }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    nestedEq: { path: Customer.address.city, value: Oslo }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
+      binds: [city, Oslo]
+  referenceSql: select id, name from customer where address ->> 'city' = 'Oslo'
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+  roundTrips: 1

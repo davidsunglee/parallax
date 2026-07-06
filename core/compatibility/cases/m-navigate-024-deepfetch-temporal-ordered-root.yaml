@@ -15,40 +15,42 @@
 # proves propagation survives the directive peel; `limit 1` keeps only Policy 1.
 model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, orderBy, limit, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      limit:
-        operand:
-          orderBy:
-            operand:
-              asOf:
-                operand:
-                  asOf:
-                    operand: { all: {} }
-                    asOfAttr: Policy.processingDate
-                    date: now
-                asOfAttr: Policy.businessDate
-                date: "2024-03-01T00:00:00+00:00"
-            keys:
-              - { attr: Policy.id, direction: asc }
-        count: 1
-    paths:
-      - [Policy.coverages]
-goldenSql:
-  postgres:
-    - select t0.id, t0.name from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc limit ?
-    - select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-  mariadb:
-    - select t0.id, t0.name from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc limit ?
-    - select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-binds:
-  - ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity, 1]
-  - [1, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
-roundTrips: 2
-expectedGraph:
-  Policy:
-    - id: 1
-      name: Auto
-      coverages:
-        - { id: 10, policy_id: 1, amount: 600.00 }
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        limit:
+          operand:
+            orderBy:
+              operand:
+                asOf:
+                  operand:
+                    asOf:
+                      operand: { all: {} }
+                      asOfAttr: Policy.processingDate
+                      date: now
+                  asOfAttr: Policy.businessDate
+                  date: "2024-03-01T00:00:00+00:00"
+              keys:
+                - { attr: Policy.id, direction: asc }
+          count: 1
+      paths:
+        - [Policy.coverages]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc limit ?
+        mariadb: select t0.id, t0.name from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc limit ?
+      binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity, 1]
+    - sql:
+        postgres: select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+        mariadb: select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+      binds: [1, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+  graph:
+    Policy:
+      - id: 1
+        name: Auto
+        coverages:
+          - { id: 10, policy_id: 1, amount: 600.00 }
+  roundTrips: 2

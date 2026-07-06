@@ -18,38 +18,35 @@
 # by the batched update; 12 unchanged at 30.00.
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, write-sequence, slice-mvp-1]
-writeSequence:
-  - mutation: insert
-    entity: Wallet
-    statements: 1
-    note: three buffered inserts collapse into one multi-row INSERT
-    rows:
-      - { id: 10, owner: Mira, balance: 100.00 }
-      - { id: 11, owner: Omar, balance: 20.00 }
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Wallet
+      statements: 1
+      note: three buffered inserts collapse into one multi-row INSERT
+      rows:
+        - { id: 10, owner: Mira, balance: 100.00 }
+        - { id: 11, owner: Omar, balance: 20.00 }
+        - { id: 12, owner: Nell, balance: 30.00 }
+    - mutation: update
+      entity: Wallet
+      statements: 1
+      note: a batched UPDATE over two keys in a single statement
+      rows:
+        - { id: 10, balance: 500.00 }
+        - { id: 11, balance: 500.00 }
+then:
+  statements:
+    - sql:
+        postgres: insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
+      binds: [10, Mira, 100.00, 11, Omar, 20.00, 12, Nell, 30.00]
+    - sql:
+        postgres: update wallet set balance = ? where id in (?, ?)
+      binds: [500.00, 10, 11]
+  tableState:
+    wallet:
+      - { id: 10, owner: Mira, balance: 500.00 }
+      - { id: 11, owner: Omar, balance: 500.00 }
       - { id: 12, owner: Nell, balance: 30.00 }
-  - mutation: update
-    entity: Wallet
-    statements: 1
-    note: a batched UPDATE over two keys in a single statement
-    rows:
-      - { id: 10, balance: 500.00 }
-      - { id: 11, balance: 500.00 }
-goldenSql:
-  postgres:
-    - insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
-    - update wallet set balance = ? where id in (?, ?)
-binds:
-  - [10, Mira, 100.00, 11, Omar, 20.00, 12, Nell, 30.00]
-  - [500.00, 10, 11]
-roundTrips: 2
-expectedTableState:
-  wallet:
-    - id: 10
-      owner: Mira
-      balance: 500.00
-    - id: 11
-      owner: Omar
-      balance: 500.00
-    - id: 12
-      owner: Nell
-      balance: 30.00
+  roundTrips: 2

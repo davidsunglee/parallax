@@ -1,13 +1,16 @@
 # isNull — nullability predicate on the nullable `sku` column.
 model: models/orders.yaml
 tags: [m-op-algebra, isNull, slice-mvp-1]
-operation:
-  isNull:
-    attr: Order.sku
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.sku is null
-binds: []
-referenceSql: select id, name from orders where sku is null
-expectedRows:
-  - { id: 4, name: Margaret }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    isNull:
+      attr: Order.sku
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.sku is null
+  referenceSql: select id, name from orders where sku is null
+  rows:
+    - { id: 4, name: Margaret }
+  roundTrips: 1

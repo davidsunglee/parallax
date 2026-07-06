@@ -16,23 +16,20 @@
 # writer's values (888.00, version 2).
 model: models/account.yaml
 tags: [m-opt-lock, m-detach, m-sql, conflict, merge-back]
-precondition: update account set balance = 888.00, version = 2 where id = 1
-write: { id: 1, balance: 150.00, observedVersion: 1 }
-expectedAffectedRows: 0
-goldenSql:
-  postgres: update account set balance = ?, version = ? where id = ? and version = ?
-binds: [150.00, 2, 1, 1]
-expectedTableState:
-  account:
-    - id: 1
-      owner: Ada
-      balance: 888.00
-      version: 2
-    - id: 2
-      owner: Linus
-      balance: 250.00
-      version: 1
-    - id: 3
-      owner: Grace
-      balance: 10.00
-      version: 1
+shape: conflict
+given:
+  apply:
+    - sql: update account set balance = 888.00, version = 2 where id = 1
+when:
+  write: { id: 1, balance: 150.00, observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: update account set balance = ?, version = ? where id = ? and version = ?
+      binds: [150.00, 2, 1, 1]
+  affectedRows: 0
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: 888.00, version: 2 }
+      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }

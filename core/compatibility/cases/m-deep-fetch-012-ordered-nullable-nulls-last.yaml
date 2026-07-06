@@ -11,35 +11,37 @@
 # key and checks both dialects' returned rows obey it.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, m-dialect, orderBy, ordering, nullable, relationship, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      in:
-        attr: Order.id
-        values: [1, 42]
-    paths:
-      - [Order.itemsByShipDate]
-goldenSql:
-  postgres:
-    - select t0.id, t0.name from orders t0 where t0.id in (?, ?)
-    - select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.shipped_on asc
-  mariadb:
-    - select t0.id, t0.name from orders t0 where t0.id in (?, ?)
-    - select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.shipped_on is null, t0.shipped_on asc
-binds:
-  - [1, 42]
-  - [1, 42]
-referenceSql: select id, name from orders where id in (1, 42)
-roundTrips: 2
-expectedGraph:
-  Order:
-    - id: 1
-      name: Ada
-      itemsByShipDate:
-        - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
-        - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
-    - id: 42
-      name: Grace
-      itemsByShipDate:
-        - { id: 422, order_id: 42, sku: B-200, quantity: 5, shipped_on: 2024-02-05 }
-        - { id: 421, order_id: 42, sku: A-999, quantity: 3, shipped_on: 2024-03-10 }
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        in:
+          attr: Order.id
+          values: [1, 42]
+      paths:
+        - [Order.itemsByShipDate]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?)
+        mariadb: select t0.id, t0.name from orders t0 where t0.id in (?, ?)
+      binds: [1, 42]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.shipped_on asc
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.shipped_on is null, t0.shipped_on asc
+      binds: [1, 42]
+  referenceSql: select id, name from orders where id in (1, 42)
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        itemsByShipDate:
+          - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+          - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+      - id: 42
+        name: Grace
+        itemsByShipDate:
+          - { id: 422, order_id: 42, sku: B-200, quantity: 5, shipped_on: 2024-02-05 }
+          - { id: 421, order_id: 42, sku: A-999, quantity: 3, shipped_on: 2024-03-10 }
+  roundTrips: 2

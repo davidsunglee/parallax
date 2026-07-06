@@ -3,27 +3,30 @@
 # 1000 -> 75 (current), line 1001 -> 25.
 model: models/invoice.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, audit-only, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      asOf:
-        operand: { all: {} }
-        asOfAttr: Invoice.processingDate
-        date: now
-    paths:
-      - [Invoice.lines]
-goldenSql:
-  postgres:
-    - select t0.id, t0.name from invoice t0 where t0.out_z = ?
-    - select t0.id, t0.invoice_id, t0.amount from invoice_line t0 where t0.invoice_id in (?) and t0.out_z = ?
-binds:
-  - [infinity]
-  - [100, infinity]
-roundTrips: 2
-expectedGraph:
-  Invoice:
-    - id: 100
-      name: INV-100
-      lines:
-        - { id: 1000, invoice_id: 100, amount: 75.00 }
-        - { id: 1001, invoice_id: 100, amount: 25.00 }
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        asOf:
+          operand: { all: {} }
+          asOfAttr: Invoice.processingDate
+          date: now
+      paths:
+        - [Invoice.lines]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from invoice t0 where t0.out_z = ?
+      binds: [infinity]
+    - sql:
+        postgres: select t0.id, t0.invoice_id, t0.amount from invoice_line t0 where t0.invoice_id in (?) and t0.out_z = ?
+      binds: [100, infinity]
+  graph:
+    Invoice:
+      - id: 100
+        name: INV-100
+        lines:
+          - { id: 1000, invoice_id: 100, amount: 75.00 }
+          - { id: 1001, invoice_id: 100, amount: 25.00 }
+  roundTrips: 2

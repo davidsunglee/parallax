@@ -6,16 +6,19 @@
 # column is aliased `order_count`.
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, count]
-operation:
-  groupBy:
-    operand:
-      all: {}
-    aggregates:
-      - count: { as: order_count }
-goldenSql:
-  postgres: select count(*) order_count from orders t0
-binds: []
-referenceSql: select count(*) as order_count from orders
-expectedRows:
-  - { order_count: 6 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    groupBy:
+      operand:
+        all: {}
+      aggregates:
+        - count: { as: order_count }
+then:
+  statements:
+    - sql:
+        postgres: select count(*) order_count from orders t0
+  referenceSql: select count(*) as order_count from orders
+  rows:
+    - { order_count: 6 }
+  roundTrips: 1

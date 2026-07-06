@@ -7,17 +7,21 @@
 # spec mandates, proven against real data.
 model: models/orders.yaml
 tags: [m-op-algebra, notEq, "null", three-valued-logic, slice-mvp-1]
-operation:
-  notEq:
-    attr: Order.sku
-    value: B-200
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.sku <> ?
-binds: [B-200]
-referenceSql: select id, name from orders where sku != 'B-200'
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 3, name: ada }
-  - { id: 5, name: Alan }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    notEq:
+      attr: Order.sku
+      value: B-200
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.sku <> ?
+      binds: [B-200]
+  referenceSql: select id, name from orders where sku != 'B-200'
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 3, name: ada }
+    - { id: 5, name: Alan }
+    - { id: 42, name: Grace }
+  roundTrips: 1

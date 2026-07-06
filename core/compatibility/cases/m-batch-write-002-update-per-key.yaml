@@ -13,31 +13,29 @@
 # (m-opt-lock / ADR 0014).
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, write-sequence, per-key, slice-mvp-1]
-loadFixtures: true
-writeSequence:
-  - mutation: update
-    entity: Wallet
-    statements: 2
-    note: two distinct keys take DIFFERENT new balances ⇒ one keyed UPDATE each
-    rows:
-      - { id: 1, balance: 111.00 }
-      - { id: 2, balance: 222.00 }
-goldenSql:
-  postgres:
-    - update wallet set balance = ? where id = ?
-    - update wallet set balance = ? where id = ?
-binds:
-  - [111.00, 1]
-  - [222.00, 2]
-roundTrips: 2
-expectedTableState:
-  wallet:
-    - id: 1
-      owner: Ada
-      balance: 111.00
-    - id: 2
-      owner: Linus
-      balance: 222.00
-    - id: 3
-      owner: Grace
-      balance: 10.00
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: Wallet
+      statements: 2
+      note: two distinct keys take DIFFERENT new balances ⇒ one keyed UPDATE each
+      rows:
+        - { id: 1, balance: 111.00 }
+        - { id: 2, balance: 222.00 }
+then:
+  statements:
+    - sql:
+        postgres: update wallet set balance = ? where id = ?
+      binds: [111.00, 1]
+    - sql:
+        postgres: update wallet set balance = ? where id = ?
+      binds: [222.00, 2]
+  tableState:
+    wallet:
+      - { id: 1, owner: Ada, balance: 111.00 }
+      - { id: 2, owner: Linus, balance: 222.00 }
+      - { id: 3, owner: Grace, balance: 10.00 }
+  roundTrips: 2

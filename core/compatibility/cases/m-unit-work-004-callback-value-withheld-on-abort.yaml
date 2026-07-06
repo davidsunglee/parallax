@@ -18,11 +18,14 @@
 model: models/account.yaml
 tags: [m-unit-work, m-api-conformance, abort, slice-mvp-1]
 lane: api-conformance
-boundary:
-  - action: read
-    note: observe the row
-  - action: update
-    note: buffer/flush a write (forces the read-your-own-writes flush for a dependent read)
-  - action: read
-    note: a dependent find observes the flushed write (still inside the atomic scope)
-expect: aborted
+shape: boundary
+when:
+  boundary:
+    - action: read
+      note: observe the row
+    - action: update
+      note: buffer/flush a write (forces the read-your-own-writes flush for a dependent read)
+    - action: read
+      note: a dependent find observes the flushed write (still inside the atomic scope)
+then:
+  outcome: aborted

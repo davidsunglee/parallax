@@ -3,18 +3,22 @@
 # PACKED status (row 202 on item 11).
 model: models/orders.yaml
 tags: [m-navigate, exists, relationship, multi-hop, slice-mvp-1]
-operation:
-  exists:
-    rel: Order.items
-    op:
-      exists:
-        rel: OrderItem.statuses
-        op:
-          eq: { attr: OrderStatus.code, value: PACKED }
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and exists (select 1 from order_status t2 where t2.order_item_id = t1.id and t2.code = ?))
-binds: [PACKED]
-referenceSql: select id, name from orders where id in (select order_id from order_item where id in (select order_item_id from order_status where code = 'PACKED'))
-expectedRows:
-  - { id: 1, name: Ada }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    exists:
+      rel: Order.items
+      op:
+        exists:
+          rel: OrderItem.statuses
+          op:
+            eq: { attr: OrderStatus.code, value: PACKED }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and exists (select 1 from order_status t2 where t2.order_item_id = t1.id and t2.code = ?))
+      binds: [PACKED]
+  referenceSql: select id, name from orders where id in (select order_id from order_item where id in (select order_item_id from order_status where code = 'PACKED'))
+  rows:
+    - { id: 1, name: Ada }
+  roundTrips: 1

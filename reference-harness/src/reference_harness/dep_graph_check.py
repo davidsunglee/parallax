@@ -62,6 +62,21 @@ _CATALOG_HEADING = "the module catalog"
 _CATALOG_STATUSES = frozenset({"active", "deferred"})
 _CATALOG_COVERAGES = frozenset({"cases", "contract"})
 
+# The eight case shapes the schema `oneOf` keys on, read directly from each case's
+# explicit top-level `shape` field (cases are self-describing; no key-sniffing).
+_CASE_SHAPES = frozenset(
+    {
+        "read",
+        "writeSequence",
+        "scenario",
+        "conflict",
+        "coherence",
+        "error",
+        "concurrencySuccess",
+        "boundary",
+    }
+)
+
 # The named conformance slice the profile gate enforces. The slice is selected by
 # this single tag on each included case; the canonical describe claim that declares
 # its boundaries lives in slices.md.
@@ -352,67 +367,66 @@ def parse_profile_claim(claim_markdown: str) -> dict:
 
 
 def _case_shape(doc: dict) -> str | None:
-    """Detect the case shape from the present discriminating keys.
+    """Read the explicit ``shape`` discriminator, validated against the enum.
 
-    Mirrors the ``oneOf`` discrimination in ``compatibility-case.schema.json`` and
-    the ``is_*`` properties of ``Case``; there is no literal ``shape`` field. Order
-    matters — the more specific shapes are checked before ``read``. Returns one of
-    ``read`` / ``writeSequence`` / ``scenario`` / ``conflict`` / ``coherence`` /
-    ``error`` / ``concurrencySuccess`` / ``boundary``, or ``None`` if the document
-    matches no known shape.
+    Cases are self-describing: the top-level ``shape`` field names one of the eight
+    shapes the schema ``oneOf`` keys on (``read`` / ``writeSequence`` / ``scenario`` /
+    ``conflict`` / ``coherence`` / ``error`` / ``concurrencySuccess`` / ``boundary``).
+    This reads it directly instead of sniffing which keys happen to be present, and
+    returns ``None`` if the field is missing or names no known shape.
     """
-    if "errorClass" in doc:
-        return "error"
-    # A concurrency choreography with NO `errorClass` is the concurrency-success shape
-    # (behavioral read-lock: m-read-lock-007/m-read-lock-008). Checked AFTER `errorClass` so an
-    # error/concurrency case (m-read-lock-006) still resolves to `error`.
-    if "concurrency" in doc:
-        return "concurrencySuccess"
-    if "coherence" in doc:
-        return "coherence"
-    if "scenario" in doc:
-        return "scenario"
-    if "writeSequence" in doc:
-        return "writeSequence"
-    if "expectedAffectedRows" in doc or "attempts" in doc:
-        return "conflict"
-    if "boundary" in doc:
-        return "boundary"
-    if "operation" in doc:
-        return "read"
-    return None
+    shape = doc.get("shape")
+    return shape if shape in _CASE_SHAPES else None
+
+
+def _entries_have_postgres(entries: object) -> bool:
+    """Whether any golden statement entry in *entries* carries a ``postgres`` sql text."""
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        sql = entry.get("sql")
+        if isinstance(sql, dict) and "postgres" in sql:
+            return True
+    return False
 
 
 def _has_postgres_golden(doc: dict, shape: str) -> bool:
     """Whether a case carries Postgres golden SQL, shape-aware.
 
-    read / writeSequence / conflict carry golden SQL at the top level — except the
-    ``attempts`` conflict form, whose golden SQL lives per attempt. scenario carries
-    golden SQL per step. A case satisfies the gate when *some* Postgres golden is
-    present where its shape puts it.
+    read / writeSequence / conflict carry golden SQL at ``then.statements`` — except
+    the ``attempts`` conflict form, whose golden SQL lives per attempt. scenario
+    carries golden SQL per step; an error/read-lock choreography carries it per
+    concurrency-round node. A case satisfies the gate when *some* Postgres golden is
+    present in the statement entries where its shape puts it.
     """
-    if isinstance(doc.get("goldenSql"), dict) and "postgres" in doc["goldenSql"]:
+    raw_when = doc.get("when")
+    when = raw_when if isinstance(raw_when, dict) else {}
+    raw_then = doc.get("then")
+    then = raw_then if isinstance(raw_then, dict) else {}
+
+    if _entries_have_postgres(then.get("statements")):
         return True
-    if isinstance(doc.get("concurrency"), dict):
-        for rnd in doc["concurrency"].get("rounds", []):
+
+    concurrency = when.get("concurrency")
+    if isinstance(concurrency, dict):
+        for rnd in concurrency.get("rounds", []):
             if not isinstance(rnd, dict):
                 continue
             for node in ("A", "B"):
                 step = rnd.get(node)
-                golden = step.get("goldenSql") if isinstance(step, dict) else None
-                if isinstance(golden, dict) and "postgres" in golden:
+                if isinstance(step, dict) and _entries_have_postgres(step.get("statements")):
                     return True
+
     if shape == "scenario":
-        steps = doc.get("scenario", [])
+        steps = when.get("scenario", [])
     elif shape == "conflict":
-        steps = doc.get("attempts", [])
+        steps = when.get("attempts", [])
     else:
         steps = []
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        golden = step.get("goldenSql")
-        if isinstance(golden, dict) and "postgres" in golden:
+    for step in steps or []:
+        if isinstance(step, dict) and _entries_have_postgres(step.get("statements")):
             return True
     return False
 

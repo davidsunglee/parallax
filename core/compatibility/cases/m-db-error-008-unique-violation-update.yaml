@@ -2,22 +2,25 @@
 # uniqueViolation via the UPDATE path (not INSERT). Two tags are inserted with
 # distinct names; the final UPDATE sets tag 2's name to tag 1's name, colliding
 # on tag_name_uq.
+# collides with tag 1's name
 model: models/error-cases.yaml
 tags: [m-db-error, uniqueViolation]
-errorClass: uniqueViolation
-expectedNativeCode:
-  postgres: "23505"
-  mariadb: 1062
-goldenSql:
-  postgres:
-    - insert into tag(id, name) values (?, ?)
-    - insert into tag(id, name) values (?, ?)
-    - update tag set name = ? where id = ?
-  mariadb:
-    - insert into tag(id, name) values (?, ?)
-    - insert into tag(id, name) values (?, ?)
-    - update tag set name = ? where id = ?
-binds:
-  - [1, "one"]
-  - [2, "two"]
-  - ["one", 2]   # collides with tag 1's name
+shape: error
+then:
+  statements:
+    - sql:
+        postgres: insert into tag(id, name) values (?, ?)
+        mariadb: insert into tag(id, name) values (?, ?)
+      binds: [1, "one"]
+    - sql:
+        postgres: insert into tag(id, name) values (?, ?)
+        mariadb: insert into tag(id, name) values (?, ?)
+      binds: [2, "two"]
+    - sql:
+        postgres: update tag set name = ? where id = ?
+        mariadb: update tag set name = ? where id = ?
+      binds: ["one", 2]
+  errorClass: uniqueViolation
+  nativeCode:
+    postgres: "23505"
+    mariadb: 1062

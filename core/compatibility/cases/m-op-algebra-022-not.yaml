@@ -1,15 +1,19 @@
 # not — logical negation wrapping a single inner operation.
 model: models/orders.yaml
 tags: [m-op-algebra, not, boolean, slice-mvp-1]
-operation:
-  not:
-    operand:
-      eq: { attr: Order.active, value: true }
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where not t0.active = ?
-binds: [true]
-referenceSql: select id, name from orders where not (active = true)
-expectedRows:
-  - { id: 3, name: ada }
-  - { id: 5, name: Alan }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    not:
+      operand:
+        eq: { attr: Order.active, value: true }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where not t0.active = ?
+      binds: [true]
+  referenceSql: select id, name from orders where not (active = true)
+  rows:
+    - { id: 3, name: ada }
+    - { id: 5, name: Alan }
+  roundTrips: 1

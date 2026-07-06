@@ -15,36 +15,41 @@
 #   2  read  on B : node B re-fetches and MUST observe the newly-inserted row.
 model: models/account.yaml
 tags: [m-coherence, full-cache-refetch, insert]
-coherence:
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.owner
-        value: Trent
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-    binds: [Trent]
-    note: seed read on node B — Trent does not exist yet, so the result is empty
-    observeRows: []
-  - node: A
-    kind: write
-    goldenSql:
-      postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-      mariadb: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-    binds: [8, Trent, 64.00, 1]
-    note: node A commits an INSERT of the new account on a separate connection
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.owner
-        value: Trent
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-    binds: [Trent]
-    note: node B re-fetches after re-fetch invalidation and MUST observe A's committed insert
-    observeRows:
-      - { id: 8, owner: Trent, balance: 64.00, version: 1 }
+shape: coherence
+when:
+  coherence:
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.owner
+          value: Trent
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+          binds: [Trent]
+      note: seed read on node B — Trent does not exist yet, so the result is empty
+      observeRows: []
+    - node: A
+      kind: write
+      statements:
+        - sql:
+            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+            mariadb: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [8, Trent, 64.00, 1]
+      note: node A commits an INSERT of the new account on a separate connection
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.owner
+          value: Trent
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+          binds: [Trent]
+      note: node B re-fetches after re-fetch invalidation and MUST observe A's committed insert
+      observeRows:
+        - { id: 8, owner: Trent, balance: 64.00, version: 1 }

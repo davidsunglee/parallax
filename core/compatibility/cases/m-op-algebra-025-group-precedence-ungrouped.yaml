@@ -6,20 +6,24 @@
 # pair together proves the canonical `group` node faithfully carries precedence.
 model: models/orders.yaml
 tags: [m-op-algebra, group, boolean, precedence, slice-mvp-1]
-operation:
-  or:
-    operands:
-      - greaterThanEquals: { attr: Order.qty, value: 25 }
-      - and:
-          operands:
-            - lessThanEquals: { attr: Order.qty, value: 5 }
-            - eq: { attr: Order.active, value: true }
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.qty >= ? or t0.qty <= ? and t0.active = ?
-binds: [25, 5, true]
-referenceSql: select id, name from orders where qty >= 25 or (qty <= 5 and active = true)
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 5, name: Alan }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    or:
+      operands:
+        - greaterThanEquals: { attr: Order.qty, value: 25 }
+        - and:
+            operands:
+              - lessThanEquals: { attr: Order.qty, value: 5 }
+              - eq: { attr: Order.active, value: true }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.qty >= ? or t0.qty <= ? and t0.active = ?
+      binds: [25, 5, true]
+  referenceSql: select id, name from orders where qty >= 25 or (qty <= 5 and active = true)
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 5, name: Alan }
+    - { id: 42, name: Grace }
+  roundTrips: 1

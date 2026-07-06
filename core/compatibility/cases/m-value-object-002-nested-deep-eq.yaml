@@ -9,12 +9,16 @@
 # referenceSql spells the same path with native operators (`-> 'geo' ->> 'country'`).
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json]
-operation:
-  nestedEq: { path: Customer.address.geo.country, value: US }
-goldenSql:
-  postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
-binds: [geo, country, US]
-referenceSql: select id, name from customer where address -> 'geo' ->> 'country' = 'US'
-expectedRows:
-  - { id: 3, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    nestedEq: { path: Customer.address.geo.country, value: US }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
+      binds: [geo, country, US]
+  referenceSql: select id, name from customer where address -> 'geo' ->> 'country' = 'US'
+  rows:
+    - { id: 3, name: Grace }
+  roundTrips: 1

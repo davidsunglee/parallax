@@ -6,27 +6,24 @@
 # the untouched rows.
 model: models/account.yaml
 tags: [m-detach, m-sql, detached-delete, write-sequence]
-loadFixtures: true
-writeSequence:
-  - mutation: delete
-    entity: Account
-    statements: 1
-    note: merge-back of a deleted detached copy deletes the original row
-    rows:
-      - { id: 1 }
-goldenSql:
-  postgres:
-    - delete from account where id = ?
-binds:
-  - [1]
-roundTrips: 1
-expectedTableState:
-  account:
-    - id: 2
-      owner: Linus
-      balance: 250.00
-      version: 1
-    - id: 3
-      owner: Grace
-      balance: 10.00
-      version: 1
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: delete
+      entity: Account
+      statements: 1
+      note: merge-back of a deleted detached copy deletes the original row
+      rows:
+        - { id: 1 }
+then:
+  statements:
+    - sql:
+        postgres: delete from account where id = ?
+      binds: [1]
+  tableState:
+    account:
+      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+  roundTrips: 1

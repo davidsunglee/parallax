@@ -9,22 +9,41 @@
 # (the current rows read back thru_z = infinity and/or out_z = infinity).
 model: models/position.yaml
 tags: [m-temporal-read, m-sql, bitemporal, temporal, history, slice-mvp-1]
-operation:
-  history:
-    operand:
-      history:
-        operand:
-          eq:
-            attr: Position.id
-            value: 1
-        asOfAttr: Position.processingDate
-    asOfAttr: Position.businessDate
-goldenSql:
-  postgres: select t0.pos_id, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ?
-binds: [1]
-referenceSql: select pos_id, val, from_z, thru_z, in_z, out_z from position where pos_id = 1
-expectedRows:
-  - { pos_id: 1, val: 90.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
-  - { pos_id: 1, val: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-06-01T00:00:00+00:00", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
-  - { pos_id: 1, val: 200.00, from_z: "2024-06-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    history:
+      operand:
+        history:
+          operand:
+            eq:
+              attr: Position.id
+              value: 1
+          asOfAttr: Position.processingDate
+      asOfAttr: Position.businessDate
+then:
+  statements:
+    - sql:
+        postgres: select t0.pos_id, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ?
+      binds: [1]
+  referenceSql: select pos_id, val, from_z, thru_z, in_z, out_z from position where pos_id = 1
+  rows:
+    - pos_id: 1
+      val: 90.00
+      from_z: "2024-01-01T00:00:00+00:00"
+      thru_z: infinity
+      in_z: "2024-01-01T00:00:00+00:00"
+      out_z: "2024-04-01T00:00:00+00:00"
+    - pos_id: 1
+      val: 100.00
+      from_z: "2024-01-01T00:00:00+00:00"
+      thru_z: "2024-06-01T00:00:00+00:00"
+      in_z: "2024-04-01T00:00:00+00:00"
+      out_z: infinity
+    - pos_id: 1
+      val: 200.00
+      from_z: "2024-06-01T00:00:00+00:00"
+      thru_z: infinity
+      in_z: "2024-04-01T00:00:00+00:00"
+      out_z: infinity
+  roundTrips: 1

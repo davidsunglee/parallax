@@ -14,13 +14,17 @@
 model: models/account.yaml
 tags: [m-opt-lock, m-auto-retry, m-api-conformance, conflict, slice-mvp-1]
 lane: api-conformance
-uow:
-  concurrency: optimistic
-  retryOptimisticConflicts: false
-inject: optimistic-lock-conflict
-boundary:
-  - action: read
-    note: observe the versioned row (records the observed version)
-  - action: update
-    note: the gated UPDATE conflicts once — with the opt-in unset it is NOT retried
-expect: optimistic-lock-conflict
+shape: boundary
+given:
+  fault: optimistic-lock-conflict
+when:
+  uow:
+    concurrency: optimistic
+    retryOptimisticConflicts: false
+  boundary:
+    - action: read
+      note: observe the versioned row (records the observed version)
+    - action: update
+      note: the gated UPDATE conflicts once — with the opt-in unset it is NOT retried
+then:
+  outcome: optimistic-lock-conflict

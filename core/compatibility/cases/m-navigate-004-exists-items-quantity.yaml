@@ -4,16 +4,20 @@
 # the result is orders {2, 42}.
 model: models/orders.yaml
 tags: [m-navigate, exists, relationship, slice-mvp-1]
-operation:
-  exists:
-    rel: Order.items
-    op:
-      greaterThanEquals: { attr: OrderItem.quantity, value: 4 }
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.quantity >= ?)
-binds: [4]
-referenceSql: select id, name from orders where id in (select order_id from order_item where quantity >= 4)
-expectedRows:
-  - { id: 2, name: Linus }
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    exists:
+      rel: Order.items
+      op:
+        greaterThanEquals: { attr: OrderItem.quantity, value: 4 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.quantity >= ?)
+      binds: [4]
+  referenceSql: select id, name from orders where id in (select order_id from order_item where quantity >= 4)
+  rows:
+    - { id: 2, name: Linus }
+    - { id: 42, name: Grace }
+  roundTrips: 1

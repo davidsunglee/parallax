@@ -7,12 +7,16 @@
 # filtered out by the amount predicate.
 model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator]
-operation:
-  greaterThan: { attr: CardPayment.amount, value: 60.00 }
-goldenSql:
-  postgres: select t0.id, t0.kind, t0.amount from payment t0 where t0.amount > ? and t0.kind = ?
-binds: [60.00, card]
-referenceSql: select id, kind, amount from payment where amount > 60.00 and kind = 'card'
-expectedRows:
-  - { id: 1, kind: card, amount: 100.00 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    greaterThan: { attr: CardPayment.amount, value: 60.00 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.amount from payment t0 where t0.amount > ? and t0.kind = ?
+      binds: [60.00, card]
+  referenceSql: select id, kind, amount from payment where amount > 60.00 and kind = 'card'
+  rows:
+    - { id: 1, kind: card, amount: 100.00 }
+  roundTrips: 1

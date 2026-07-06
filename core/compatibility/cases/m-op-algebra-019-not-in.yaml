@@ -3,16 +3,20 @@
 # referenceSql uses the familiar `not in` to cross-check.
 model: models/orders.yaml
 tags: [m-op-algebra, notIn, membership, slice-mvp-1]
-operation:
-  notIn:
-    attr: Order.id
-    values: [1, 2, 42]
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where not t0.id in (?, ?, ?)
-binds: [1, 2, 42]
-referenceSql: select id, name from orders where id not in (1, 2, 42)
-expectedRows:
-  - { id: 3, name: ada }
-  - { id: 4, name: Margaret }
-  - { id: 5, name: Alan }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    notIn:
+      attr: Order.id
+      values: [1, 2, 42]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where not t0.id in (?, ?, ?)
+      binds: [1, 2, 42]
+  referenceSql: select id, name from orders where id not in (1, 2, 42)
+  rows:
+    - { id: 3, name: ada }
+    - { id: 4, name: Margaret }
+    - { id: 5, name: Alan }
+  roundTrips: 1

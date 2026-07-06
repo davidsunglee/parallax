@@ -10,15 +10,19 @@
 # BOTH dialects and the harness runs it against both — the simplest matrix row.
 model: models/orders.yaml
 tags: [m-op-algebra, m-conformance-adapter, eq, slice-mvp-1]
-operation:
-  eq:
-    attr: Order.id
-    value: 42
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.id = ?
-  mariadb: select t0.id, t0.name from orders t0 where t0.id = ?
-binds: [42]
-referenceSql: select id, name from orders where id = 42
-expectedRows:
-  - { id: 42, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    eq:
+      attr: Order.id
+      value: 42
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+        mariadb: select t0.id, t0.name from orders t0 where t0.id = ?
+      binds: [42]
+  referenceSql: select id, name from orders where id = 42
+  rows:
+    - { id: 42, name: Grace }
+  roundTrips: 1

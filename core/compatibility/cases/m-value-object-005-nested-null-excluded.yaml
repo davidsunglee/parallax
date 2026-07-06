@@ -10,13 +10,17 @@
 # column parity of the scalar NULL exclusion (m-op-algebra-029/m-op-algebra-030).
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic]
-operation:
-  nestedNotEq: { path: Customer.address.city, value: Boston }
-goldenSql:
-  postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
-binds: [city, Boston]
-referenceSql: select id, name from customer where address ->> 'city' <> 'Boston'
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 2, name: Linus }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    nestedNotEq: { path: Customer.address.city, value: Boston }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
+      binds: [city, Boston]
+  referenceSql: select id, name from customer where address ->> 'city' <> 'Boston'
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+  roundTrips: 1

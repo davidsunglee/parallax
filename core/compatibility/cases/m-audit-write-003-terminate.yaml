@@ -13,33 +13,32 @@
 # out_z = infinity row, the observable signature of termination.
 model: models/balance.yaml
 tags: [m-audit-write, m-sql, write-sequence, terminate, audit-only, slice-mvp-1]
-writeSequence:
-  - mutation: insert
-    entity: Balance
-    statements: 1
-    note: open a current milestone [2024-01-01, infinity)
-    rows:
-      - { id: 1, acctNum: A, value: 100.00 }
-    at: "2024-01-01T00:00:00+00:00"
-  - mutation: terminate
-    entity: Balance
-    statements: 1
-    note: close the current row; insert nothing (no current row remains)
-    rows:
-      - { id: 1 }
-    at: "2024-08-01T00:00:00+00:00"
-goldenSql:
-  postgres:
-    - insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-    - update balance set out_z = ? where bal_id = ? and out_z = ?
-binds:
-  - [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]
-  - ["2024-08-01T00:00:00+00:00", 1, infinity]
-roundTrips: 2
-expectedTableState:
-  balance:
-    - bal_id: 1
-      acct_num: A
-      val: 100.00
-      in_z: "2024-01-01T00:00:00+00:00"
-      out_z: "2024-08-01T00:00:00+00:00"
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Balance
+      statements: 1
+      note: open a current milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, acctNum: A, value: 100.00 }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: terminate
+      entity: Balance
+      statements: 1
+      note: close the current row; insert nothing (no current row remains)
+      rows:
+        - { id: 1 }
+      at: "2024-08-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+      binds: ["2024-08-01T00:00:00+00:00", 1, infinity]
+  tableState:
+    balance:
+      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
+  roundTrips: 2

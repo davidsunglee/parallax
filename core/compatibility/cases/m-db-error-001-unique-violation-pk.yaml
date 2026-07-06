@@ -5,17 +5,18 @@
 # seam maps both to the single neutral category.
 model: models/error-cases.yaml
 tags: [m-db-error, uniqueViolation]
-errorClass: uniqueViolation
-expectedNativeCode:
-  postgres: "23505"
-  mariadb: 1062
-goldenSql:
-  postgres:
-    - insert into widget(id, label) values (?, ?)
-    - insert into widget(id, label) values (?, ?)
-  mariadb:
-    - insert into widget(id, label) values (?, ?)
-    - insert into widget(id, label) values (?, ?)
-binds:
-  - [1, "first"]
-  - [1, "dup"]
+shape: error
+then:
+  statements:
+    - sql:
+        postgres: insert into widget(id, label) values (?, ?)
+        mariadb: insert into widget(id, label) values (?, ?)
+      binds: [1, "first"]
+    - sql:
+        postgres: insert into widget(id, label) values (?, ?)
+        mariadb: insert into widget(id, label) values (?, ?)
+      binds: [1, "dup"]
+  errorClass: uniqueViolation
+  nativeCode:
+    postgres: "23505"
+    mariadb: 1062

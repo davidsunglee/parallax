@@ -3,36 +3,41 @@
 # the row as gone rather than serving the stale cached object.
 model: models/account.yaml
 tags: [m-coherence, delete]
-coherence:
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.id
-        value: 3
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-    binds: [3]
-    note: seed read on node B - would cache Grace before the delete
-    observeRows:
-      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
-  - node: A
-    kind: write
-    goldenSql:
-      postgres: delete from account where id = ?
-      mariadb: delete from account where id = ?
-    binds: [3]
-    note: node A commits the delete on a separate connection
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.id
-        value: 3
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-    binds: [3]
-    note: node B re-fetches and MUST observe that Grace is gone
-    observeRows: []
+shape: coherence
+when:
+  coherence:
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.id
+          value: 3
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [3]
+      note: seed read on node B - would cache Grace before the delete
+      observeRows:
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+    - node: A
+      kind: write
+      statements:
+        - sql:
+            postgres: delete from account where id = ?
+            mariadb: delete from account where id = ?
+          binds: [3]
+      note: node A commits the delete on a separate connection
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.id
+          value: 3
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [3]
+      note: node B re-fetches and MUST observe that Grace is gone
+      observeRows: []

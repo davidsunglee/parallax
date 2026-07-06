@@ -2,19 +2,22 @@
 # count(attr) skips NULL while count(*) counts every row.
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, count, nullable, groupBy]
-operation:
-  groupBy:
-    operand:
-      all: {}
-    keys: [Order.active]
-    aggregates:
-      - count: { as: row_count }
-      - count: { attr: Order.sku, as: sku_count }
-goldenSql:
-  postgres: select t0.active, count(*) row_count, count(t0.sku) sku_count from orders t0 group by t0.active
-binds: []
-referenceSql: select active, count(*) as row_count, count(sku) as sku_count from orders group by active
-expectedRows:
-  - { active: true, row_count: 4, sku_count: 3 }
-  - { active: false, row_count: 2, sku_count: 2 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    groupBy:
+      operand:
+        all: {}
+      keys: [Order.active]
+      aggregates:
+        - count: { as: row_count }
+        - count: { attr: Order.sku, as: sku_count }
+then:
+  statements:
+    - sql:
+        postgres: select t0.active, count(*) row_count, count(t0.sku) sku_count from orders t0 group by t0.active
+  referenceSql: select active, count(*) as row_count, count(sku) as sku_count from orders group by active
+  rows:
+    - { active: true, row_count: 4, sku_count: 3 }
+    - { active: false, row_count: 2, sku_count: 2 }
+  roundTrips: 1

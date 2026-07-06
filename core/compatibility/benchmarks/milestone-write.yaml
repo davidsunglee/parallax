@@ -21,7 +21,8 @@ workloads:
     note: insert a current milestone row [in_z, infinity) — one statement, one round trip
     iterations: 200
     expectRoundTrips: 1
-    goldenSql:
-      postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-      mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-    binds: ["$i", "ACCT-1", 100.00, "2024-01-01T00:00:00+00:00", "infinity"]
+    statements:
+      - sql:
+          postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+          mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        binds: ["$i", "ACCT-1", 100.00, "2024-01-01T00:00:00+00:00", "infinity"]

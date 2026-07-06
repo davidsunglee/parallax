@@ -19,36 +19,41 @@
 #                   re-resolve), proving node B converged on A's committed insert.
 model: models/account.yaml
 tags: [m-coherence, partial-cache-mark-dirty]
-coherence:
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.owner
-        value: Mallory
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-    binds: [Mallory]
-    note: seed read on node B — Mallory does not exist yet, so the result is empty
-    observeRows: []
-  - node: A
-    kind: write
-    goldenSql:
-      postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-      mariadb: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-    binds: [9, Mallory, 42.00, 1]
-    note: node A commits an INSERT of the new account on a separate connection
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.owner
-        value: Mallory
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-    binds: [Mallory]
-    note: node B re-resolves after mark-dirty and MUST observe A's committed insert
-    observeRows:
-      - { id: 9, owner: Mallory, balance: 42.00, version: 1 }
+shape: coherence
+when:
+  coherence:
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.owner
+          value: Mallory
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+          binds: [Mallory]
+      note: seed read on node B — Mallory does not exist yet, so the result is empty
+      observeRows: []
+    - node: A
+      kind: write
+      statements:
+        - sql:
+            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+            mariadb: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [9, Mallory, 42.00, 1]
+      note: node A commits an INSERT of the new account on a separate connection
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.owner
+          value: Mallory
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+          binds: [Mallory]
+      note: node B re-resolves after mark-dirty and MUST observe A's committed insert
+      observeRows:
+        - { id: 9, owner: Mallory, balance: 42.00, version: 1 }

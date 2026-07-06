@@ -12,13 +12,17 @@
 model: models/account.yaml
 tags: [m-auto-retry, m-opt-lock, m-api-conformance, transient, slice-mvp-1]
 lane: api-conformance
-uow:
-  concurrency: locking
-  retries: 0
-inject: serialization-failure
-boundary:
-  - action: read
-    note: observe the versioned row
-  - action: update
-    note: the write raises an injected serialization failure — with retries 0 it surfaces
-expect: serialization-failure
+shape: boundary
+given:
+  fault: serialization-failure
+when:
+  uow:
+    concurrency: locking
+    retries: 0
+  boundary:
+    - action: read
+      note: observe the versioned row
+    - action: update
+      note: the write raises an injected serialization failure — with retries 0 it surfaces
+then:
+  outcome: serialization-failure

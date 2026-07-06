@@ -12,29 +12,34 @@
 # cache-hit scenario) but identity: same PK => same object.
 model: models/account.yaml
 tags: [m-process-cache, identity cache, identity, scenario]
-roundTrips: 2
-scenario:
-  - find:
-      eq:
-        attr: Account.id
-        value: 2
-    roundTrips: 1
-    note: find by primary key
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-    binds: [2]
-    expectRows:
-      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-  - find:
-      eq:
-        attr: Account.owner
-        value: Linus
-    roundTrips: 1
-    sameObjectAs: 0
-    identityAttr: id
-    note: find by unique owner — resolves the SAME logical object as step 0 (PK 2)
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
-    binds: [Linus]
-    expectRows:
-      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+shape: scenario
+when:
+  scenario:
+    - find:
+        eq:
+          attr: Account.id
+          value: 2
+      roundTrips: 1
+      note: find by primary key
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+    - find:
+        eq:
+          attr: Account.owner
+          value: Linus
+      roundTrips: 1
+      sameObjectAs: 0
+      identityAttr: id
+      note: find by unique owner — resolves the SAME logical object as step 0 (PK 2)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+          binds: [Linus]
+      expectRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+then:
+  roundTrips: 2

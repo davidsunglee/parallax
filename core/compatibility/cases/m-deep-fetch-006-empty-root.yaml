@@ -3,17 +3,20 @@
 # authored or executed, and roundTrips is 1.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, empty-root, relationship, slice-mvp-1]
-operation:
-  deepFetch:
-    operand:
-      eq: { attr: Order.id, value: 999 }
-    paths:
-      - [Order.items, OrderItem.statuses]
-goldenSql:
-  postgres:
-    - select t0.id, t0.name from orders t0 where t0.id = ?
-binds: [999]
-referenceSql: select id, name from orders where id = 999
-roundTrips: 1
-expectedGraph:
-  Order: []
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand:
+        eq: { attr: Order.id, value: 999 }
+      paths:
+        - [Order.items, OrderItem.statuses]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+      binds: [999]
+  referenceSql: select id, name from orders where id = 999
+  graph:
+    Order: []
+  roundTrips: 1

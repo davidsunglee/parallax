@@ -2,29 +2,33 @@
 # binds prove left-to-right ordering across WHERE then HAVING: [1, 2, 1].
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, groupBy, having, or, bind-order]
-operation:
-  groupBy:
-    operand:
-      greaterThan: { attr: OrderItem.quantity, value: 1 }
-    keys: [OrderItem.orderId]
-    aggregates:
-      - sum: { attr: OrderItem.quantity, as: total_quantity }
-    having:
-      or:
-        operands:
-          - eq:
-              agg:
-                sum: { attr: OrderItem.quantity, as: total_quantity }
-              value: 2
-          - gt:
-              agg:
-                count: { as: row_count }
-              value: 1
-goldenSql:
-  postgres: select t0.order_id, sum(t0.quantity) total_quantity from order_item t0 where t0.quantity > ? group by t0.order_id having sum(t0.quantity) = ? or count(*) > ?
-binds: [1, 2, 1]
-referenceSql: select order_id, sum(quantity) as total_quantity from order_item where quantity > 1 group by order_id having sum(quantity) = 2 or count(*) > 1
-expectedRows:
-  - { order_id: 1, total_quantity: 2 }
-  - { order_id: 42, total_quantity: 8 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    groupBy:
+      operand:
+        greaterThan: { attr: OrderItem.quantity, value: 1 }
+      keys: [OrderItem.orderId]
+      aggregates:
+        - sum: { attr: OrderItem.quantity, as: total_quantity }
+      having:
+        or:
+          operands:
+            - eq:
+                agg:
+                  sum: { attr: OrderItem.quantity, as: total_quantity }
+                value: 2
+            - gt:
+                agg:
+                  count: { as: row_count }
+                value: 1
+then:
+  statements:
+    - sql:
+        postgres: select t0.order_id, sum(t0.quantity) total_quantity from order_item t0 where t0.quantity > ? group by t0.order_id having sum(t0.quantity) = ? or count(*) > ?
+      binds: [1, 2, 1]
+  referenceSql: select order_id, sum(quantity) as total_quantity from order_item where quantity > 1 group by order_id having sum(quantity) = 2 or count(*) > 1
+  rows:
+    - { order_id: 1, total_quantity: 2 }
+    - { order_id: 42, total_quantity: 8 }
+  roundTrips: 1

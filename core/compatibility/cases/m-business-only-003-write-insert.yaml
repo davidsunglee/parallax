@@ -7,24 +7,22 @@
 # The lone current business row carries thru_z = infinity.
 model: models/reservation.yaml
 tags: [m-business-only, m-sql, business_temporal, temporal, write-sequence, insert, business-only]
-writeSequence:
-  - mutation: insert
-    entity: Reservation
-    statements: 1
-    note: open a current business milestone [2024-01-01, infinity)
-    rows:
-      - { id: 1, room: "101", guest: Ada }
-    businessAt: "2024-01-01T00:00:00+00:00"
-goldenSql:
-  postgres:
-    - insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
-binds:
-  - [1, "101", Ada, "2024-01-01T00:00:00+00:00", infinity]
-roundTrips: 1
-expectedTableState:
-  reservation:
-    - res_id: 1
-      room: "101"
-      guest: Ada
-      from_z: "2024-01-01T00:00:00+00:00"
-      thru_z: infinity
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Reservation
+      statements: 1
+      note: open a current business milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, room: "101", guest: Ada }
+      businessAt: "2024-01-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into reservation(res_id, room, guest, from_z, thru_z) values (?, ?, ?, ?, ?)
+      binds: [1, "101", Ada, "2024-01-01T00:00:00+00:00", infinity]
+  tableState:
+    reservation:
+      - { res_id: 1, room: "101", guest: Ada, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity }
+  roundTrips: 1

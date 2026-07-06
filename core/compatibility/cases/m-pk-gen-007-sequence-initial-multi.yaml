@@ -2,70 +2,77 @@
 #
 # ticket_seq 1000->1005->1010->1015; ids 1000,1005,1010 (stride-5 gaps between ids).
 model: models/pk-sequence.yaml
-loadFixtures: true
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
-writeSequence:
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: base 1000
-    rows:
-      - { name: ticket_seq, nextVal: { increment: 5 } }
-  - mutation: insert
-    entity: Ticket
-    statements: 1
-    note: id 1000
-    rows:
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: base 1000
+      rows:
+        - { name: ticket_seq, nextVal: { increment: 5 } }
+    - mutation: insert
+      entity: Ticket
+      statements: 1
+      note: id 1000
+      rows:
+        - { id: 1000, tier: gold }
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: base 1005
+      rows:
+        - { name: ticket_seq, nextVal: { increment: 5 } }
+    - mutation: insert
+      entity: Ticket
+      statements: 1
+      note: id 1005
+      rows:
+        - { id: 1005, tier: silver }
+    - mutation: update
+      entity: PkSequence
+      statements: 1
+      note: base 1010
+      rows:
+        - { name: ticket_seq, nextVal: { increment: 5 } }
+    - mutation: insert
+      entity: Ticket
+      statements: 1
+      note: id 1010
+      rows:
+        - { id: 1010, tier: bronze }
+then:
+  statements:
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [5, ticket_seq]
+    - sql:
+        postgres: insert into ticket(id, tier) values (?, ?)
+        mariadb: insert into ticket(id, tier) values (?, ?)
+      binds: [1000, gold]
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [5, ticket_seq]
+    - sql:
+        postgres: insert into ticket(id, tier) values (?, ?)
+        mariadb: insert into ticket(id, tier) values (?, ?)
+      binds: [1005, silver]
+    - sql:
+        postgres: update pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+      binds: [5, ticket_seq]
+    - sql:
+        postgres: insert into ticket(id, tier) values (?, ?)
+        mariadb: insert into ticket(id, tier) values (?, ?)
+      binds: [1010, bronze]
+  tableState:
+    ticket:
       - { id: 1000, tier: gold }
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: base 1005
-    rows:
-      - { name: ticket_seq, nextVal: { increment: 5 } }
-  - mutation: insert
-    entity: Ticket
-    statements: 1
-    note: id 1005
-    rows:
       - { id: 1005, tier: silver }
-  - mutation: update
-    entity: PkSequence
-    statements: 1
-    note: base 1010
-    rows:
-      - { name: ticket_seq, nextVal: { increment: 5 } }
-  - mutation: insert
-    entity: Ticket
-    statements: 1
-    note: id 1010
-    rows:
       - { id: 1010, tier: bronze }
-goldenSql:
-  postgres:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into ticket(id, tier) values (?, ?)
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into ticket(id, tier) values (?, ?)
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into ticket(id, tier) values (?, ?)
-  mariadb:
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into ticket(id, tier) values (?, ?)
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into ticket(id, tier) values (?, ?)
-    - update pk_sequence set next_val = next_val + ? where name = ?
-    - insert into ticket(id, tier) values (?, ?)
-binds:
-  - [5, ticket_seq]
-  - [1000, gold]
-  - [5, ticket_seq]
-  - [1005, silver]
-  - [5, ticket_seq]
-  - [1010, bronze]
-roundTrips: 6
-expectedTableState:
-  ticket:
-    - { id: 1000, tier: gold }
-    - { id: 1005, tier: silver }
-    - { id: 1010, tier: bronze }
+  roundTrips: 6

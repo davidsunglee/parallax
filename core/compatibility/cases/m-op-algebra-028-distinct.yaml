@@ -4,15 +4,18 @@
 # id/name pair, so the expected rows carry only `active`.
 model: models/orders.yaml
 tags: [m-op-algebra, distinct, directive, slice-mvp-1]
-operation:
-  distinct:
-    operand:
-      all: {}
-goldenSql:
-  postgres: select distinct t0.active from orders t0
-binds: []
-referenceSql: select distinct active from orders
-expectedRows:
-  - { active: true }
-  - { active: false }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    distinct:
+      operand:
+        all: {}
+then:
+  statements:
+    - sql:
+        postgres: select distinct t0.active from orders t0
+  referenceSql: select distinct active from orders
+  rows:
+    - { active: true }
+    - { active: false }
+  roundTrips: 1

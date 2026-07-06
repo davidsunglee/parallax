@@ -7,12 +7,16 @@
 # `isNotNull`/`notIn`). Only Grace (Boston) does NOT live in Oslo.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json]
-operation:
-  nestedNotEq: { path: Customer.address.city, value: Oslo }
-goldenSql:
-  postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
-binds: [city, Oslo]
-referenceSql: select id, name from customer where address ->> 'city' <> 'Oslo'
-expectedRows:
-  - { id: 3, name: Grace }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    nestedNotEq: { path: Customer.address.city, value: Oslo }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
+      binds: [city, Oslo]
+  referenceSql: select id, name from customer where address ->> 'city' <> 'Oslo'
+  rows:
+    - { id: 3, name: Grace }
+  roundTrips: 1

@@ -8,19 +8,23 @@
 # normative branch of m-temporal-read-007 (exclusive boundary), which drops the ending row.
 model: models/ledger.yaml
 tags: [m-temporal-read, m-sql, m-descriptor, as-of, audit-only, boundary, inclusive, slice-mvp-1]
-operation:
-  asOf:
-    operand:
-      all: {}
-    asOfAttr: Ledger.processingDate
-    date: "2024-06-01T00:00:00+00:00"
-goldenSql:
-  postgres: select t0.led_id, t0.val from ledger t0 where t0.in_z <= ? and t0.out_z >= ?
-binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"]
-referenceSql: select led_id, val from ledger where in_z <= '2024-06-01T00:00:00+00:00'::timestamptz and out_z >= '2024-06-01T00:00:00+00:00'::timestamptz
-expectedRows:
-  - { led_id: 1, val: 100.00 }
-  - { led_id: 1, val: 150.00 }
-  - { led_id: 2, val: 200.00 }
-  - { led_id: 3, val: 50.00 }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        all: {}
+      asOfAttr: Ledger.processingDate
+      date: "2024-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: select t0.led_id, t0.val from ledger t0 where t0.in_z <= ? and t0.out_z >= ?
+      binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"]
+  referenceSql: select led_id, val from ledger where in_z <= '2024-06-01T00:00:00+00:00'::timestamptz and out_z >= '2024-06-01T00:00:00+00:00'::timestamptz
+  rows:
+    - { led_id: 1, val: 100.00 }
+    - { led_id: 1, val: 150.00 }
+    - { led_id: 2, val: 200.00 }
+    - { led_id: 3, val: 50.00 }
+  roundTrips: 1

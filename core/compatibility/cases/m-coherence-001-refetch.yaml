@@ -21,37 +21,42 @@
 #                   cache converged on A's committed write rather than serving 250.00.
 model: models/account.yaml
 tags: [m-coherence, full-cache-refetch]
-coherence:
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.id
-        value: 2
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-    binds: [2]
-    note: seed read on node B — would cache Linus at balance 250.00
-    observeRows:
-      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-  - node: A
-    kind: write
-    goldenSql:
-      postgres: update account set balance = ?, version = ? where id = ?
-      mariadb: update account set balance = ?, version = ? where id = ?
-    binds: [999.00, 2, 2]
-    note: node A commits a new balance (version advances 1 -> 2) on a separate connection
-  - node: B
-    kind: read
-    find:
-      eq:
-        attr: Account.id
-        value: 2
-    goldenSql:
-      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-      mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-    binds: [2]
-    note: node B re-fetches and MUST observe A's committed 999.00 / version 2 (not stale 250.00 / version 1)
-    observeRows:
-      - { id: 2, owner: Linus, balance: 999.00, version: 2 }
+shape: coherence
+when:
+  coherence:
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.id
+          value: 2
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      note: seed read on node B — would cache Linus at balance 250.00
+      observeRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+    - node: A
+      kind: write
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ?
+            mariadb: update account set balance = ?, version = ? where id = ?
+          binds: [999.00, 2, 2]
+      note: node A commits a new balance (version advances 1 -> 2) on a separate connection
+    - node: B
+      kind: read
+      find:
+        eq:
+          attr: Account.id
+          value: 2
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      note: node B re-fetches and MUST observe A's committed 999.00 / version 2 (not stale 250.00 / version 1)
+      observeRows:
+        - { id: 2, owner: Linus, balance: 999.00, version: 2 }

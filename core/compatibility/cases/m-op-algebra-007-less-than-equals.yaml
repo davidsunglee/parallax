@@ -1,16 +1,20 @@
 # lessThanEquals — inclusive `<=` range predicate.
 model: models/orders.yaml
 tags: [m-op-algebra, lessThanEquals, slice-mvp-1]
-operation:
-  lessThanEquals:
-    attr: Order.qty
-    value: 15
-goldenSql:
-  postgres: select t0.id, t0.name from orders t0 where t0.qty <= ?
-binds: [15]
-referenceSql: select id, name from orders where qty <= 15
-expectedRows:
-  - { id: 1, name: Ada }
-  - { id: 2, name: Linus }
-  - { id: 3, name: ada }
-roundTrips: 1
+shape: read
+when:
+  operation:
+    lessThanEquals:
+      attr: Order.qty
+      value: 15
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.qty <= ?
+      binds: [15]
+  referenceSql: select id, name from orders where qty <= 15
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+    - { id: 3, name: ada }
+  roundTrips: 1

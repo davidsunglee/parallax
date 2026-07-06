@@ -4,23 +4,25 @@
 # child carries `out_z = ?` (bind infinity). Lease 10 -> the current term "24mo".
 model: models/lease.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-mvp-1]
-operation:
-  deepFetch:
-    operand: { all: {} }
-    paths:
-      - [Tenant.leases]
-goldenSql:
-  postgres:
-    - select t0.id, t0.name from tenant t0
-    - select t0.id, t0.tenant_id, t0.term from lease t0 where t0.tenant_id in (?) and t0.out_z = ?
-binds:
-  - []
-  - [1, infinity]
-referenceSql: select id, name from tenant
-roundTrips: 2
-expectedGraph:
-  Tenant:
-    - id: 1
-      name: Acme
-      leases:
-        - { id: 10, tenant_id: 1, term: "24mo" }
+shape: read
+when:
+  operation:
+    deepFetch:
+      operand: { all: {} }
+      paths:
+        - [Tenant.leases]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from tenant t0
+    - sql:
+        postgres: select t0.id, t0.tenant_id, t0.term from lease t0 where t0.tenant_id in (?) and t0.out_z = ?
+      binds: [1, infinity]
+  referenceSql: select id, name from tenant
+  graph:
+    Tenant:
+      - id: 1
+        name: Acme
+        leases:
+          - { id: 10, tenant_id: 1, term: "24mo" }
+  roundTrips: 2

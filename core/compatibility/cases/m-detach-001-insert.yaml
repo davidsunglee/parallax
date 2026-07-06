@@ -15,22 +15,21 @@
 # optimistic-lock baseline).
 model: models/account.yaml
 tags: [m-detach, m-sql, detached-insert, write-sequence]
-writeSequence:
-  - mutation: insert
-    entity: Account
-    statements: 1
-    note: merge-back of an unpersisted detached copy inserts a new row
-    rows:
-      - { id: 20, owner: Dijkstra, balance: 75.00 }
-goldenSql:
-  postgres:
-    - insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-binds:
-  - [20, Dijkstra, 75.00, 1]
-roundTrips: 1
-expectedTableState:
-  account:
-    - id: 20
-      owner: Dijkstra
-      balance: 75.00
-      version: 1
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Account
+      statements: 1
+      note: merge-back of an unpersisted detached copy inserts a new row
+      rows:
+        - { id: 20, owner: Dijkstra, balance: 75.00 }
+then:
+  statements:
+    - sql:
+        postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+      binds: [20, Dijkstra, 75.00, 1]
+  tableState:
+    account:
+      - { id: 20, owner: Dijkstra, balance: 75.00, version: 1 }
+  roundTrips: 1
