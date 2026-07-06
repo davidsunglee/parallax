@@ -125,7 +125,7 @@ const HEX_ENCODE_FORMAT = "hex";
  * Lower a `bytes` column to Postgres's hex-text projection — `encode(<col>, ?)
  * <out>` — carrying the `'hex'` format as a bind (not an inline literal), spliced
  * in projection order. Byte-identical to the form `compile.ts` emitted before the
- * projection moved behind the dialect (`0003`).
+ * projection moved behind the dialect (`m-core-001`).
  */
 export function bytesProjection(
   qualifiedColumn: string,

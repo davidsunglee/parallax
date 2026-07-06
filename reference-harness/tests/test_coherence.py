@@ -116,7 +116,7 @@ def test_step_statements_handles_single_and_missing() -> None:
 
 def test_coherence_executes_every_statement_with_its_own_binds() -> None:
     case = load_case(
-        COMPATIBILITY_ROOT, COMPATIBILITY_ROOT / "cases" / "1101-coherence-refetch.yaml"
+        COMPATIBILITY_ROOT, COMPATIBILITY_ROOT / "cases" / "m-coherence-001-refetch.yaml"
     )
     raw = dict(case.raw)
     raw["coherence"] = [
@@ -164,7 +164,8 @@ def test_coherence_without_assertion_is_rejected() -> None:
             ],
         },
         model=load_case(
-            COMPATIBILITY_ROOT, COMPATIBILITY_ROOT / "cases" / "1101-coherence-refetch.yaml"
+            COMPATIBILITY_ROOT,
+            COMPATIBILITY_ROOT / "cases" / "m-coherence-001-refetch.yaml",
         ).model,
     )
     with pytest.raises(CaseFailure):
@@ -177,7 +178,7 @@ def test_coherence_without_assertion_is_rejected() -> None:
 def _identity_case(coherence: list[dict[str, Any]]) -> Case:
     """A minimal coherence Case over the account model for identity-helper tests."""
     model = load_case(
-        COMPATIBILITY_ROOT, COMPATIBILITY_ROOT / "cases" / "1101-coherence-refetch.yaml"
+        COMPATIBILITY_ROOT, COMPATIBILITY_ROOT / "cases" / "m-coherence-001-refetch.yaml"
     ).model
     return Case(
         path=Path("identity-coherence.yaml"),

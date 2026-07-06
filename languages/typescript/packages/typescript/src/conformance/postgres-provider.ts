@@ -153,7 +153,7 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
   /**
    * Open a manual-commit {@link PostgresSession} on a fresh, independent connection
    * with a lowered lock-wait budget — the two-connection choreography seam the
-   * `error` / concurrency runner opens two sessions on (`0728`). Delegates to the
+   * `error` / concurrency runner opens two sessions on (`m-read-lock-006`). Delegates to the
    * shipped adapter, the MariaDB-provider `openSession` sibling.
    */
   openSession(): Promise<PostgresSession> {

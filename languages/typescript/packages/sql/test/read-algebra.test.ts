@@ -5,7 +5,7 @@
  * hand-built `SchemaResolver` for the `orders` model, asserting `emitted ===
  * golden` + binds for every single-entity read-algebra fragment the corpus pins
  * in the 02xx family — comparison, null, string (incl. wildcard escaping +
- * caseInsensitive), membership, boolean precedence (the `0222`/`0223` grouped vs
+ * caseInsensitive), membership, boolean precedence (the `m-op-algebra-024`/`m-op-algebra-025` grouped vs
  * ungrouped pair), and the result directives (`orderBy` / `limit` / `distinct`).
  * The whole-corpus compile lane (driving the real adapter path over the metamodel
  * reader) lives in `@parallax/conformance`'s `read-algebra.test.ts`; this file
@@ -83,37 +83,37 @@ const CASES: ReadonlyArray<{
 }> = [
   // --- comparison ---
   {
-    id: "0201 notEq",
+    id: "m-op-algebra-003 notEq",
     op: { notEq: { attr: "Order.qty", value: 20 } },
     sql: "select t0.id, t0.name from orders t0 where t0.qty <> ?",
     binds: [20],
   },
   {
-    id: "0202 greaterThan",
+    id: "m-op-algebra-004 greaterThan",
     op: { greaterThan: { attr: "Order.qty", value: 20 } },
     sql: "select t0.id, t0.name from orders t0 where t0.qty > ?",
     binds: [20],
   },
   {
-    id: "0203 greaterThanEquals",
+    id: "m-op-algebra-005 greaterThanEquals",
     op: { greaterThanEquals: { attr: "Order.qty", value: 20 } },
     sql: "select t0.id, t0.name from orders t0 where t0.qty >= ?",
     binds: [20],
   },
   {
-    id: "0204 lessThan",
+    id: "m-op-algebra-006 lessThan",
     op: { lessThan: { attr: "Order.qty", value: 15 } },
     sql: "select t0.id, t0.name from orders t0 where t0.qty < ?",
     binds: [15],
   },
   {
-    id: "0205 lessThanEquals",
+    id: "m-op-algebra-007 lessThanEquals",
     op: { lessThanEquals: { attr: "Order.qty", value: 15 } },
     sql: "select t0.id, t0.name from orders t0 where t0.qty <= ?",
     binds: [15],
   },
   {
-    id: "0206 between",
+    id: "m-op-algebra-008 between",
     op: { between: { attr: "Order.price", lower: 20.0, upper: 50.75 } },
     sql: "select t0.id, t0.name from orders t0 where t0.price between ? and ?",
     binds: [20.0, 50.75],
@@ -121,13 +121,13 @@ const CASES: ReadonlyArray<{
 
   // --- null ---
   {
-    id: "0207 isNull",
+    id: "m-op-algebra-009 isNull",
     op: { isNull: { attr: "Order.sku" } },
     sql: "select t0.id, t0.name from orders t0 where t0.sku is null",
     binds: [],
   },
   {
-    id: "0208 isNotNull",
+    id: "m-op-algebra-010 isNotNull",
     op: { isNotNull: { attr: "Order.sku" } },
     sql: "select t0.id, t0.name from orders t0 where not t0.sku is null",
     binds: [],
@@ -135,55 +135,55 @@ const CASES: ReadonlyArray<{
 
   // --- string ---
   {
-    id: "0209 like",
+    id: "m-op-algebra-011 like",
     op: { like: { attr: "Order.sku", value: "A-%" } },
     sql: "select t0.id, t0.name from orders t0 where t0.sku like ?",
     binds: ["A-%"],
   },
   {
-    id: "0210 notLike",
+    id: "m-op-algebra-012 notLike",
     op: { notLike: { attr: "Order.sku", value: "A-%" } },
     sql: "select t0.id, t0.name from orders t0 where t0.sku not like ?",
     binds: ["A-%"],
   },
   {
-    id: "0211 startsWith",
+    id: "m-op-algebra-013 startsWith",
     op: { startsWith: { attr: "Order.sku", value: "A-" } },
     sql: "select t0.id, t0.name from orders t0 where t0.sku like ?",
     binds: ["A-%"],
   },
   {
-    id: "0212 endsWith",
+    id: "m-op-algebra-014 endsWith",
     op: { endsWith: { attr: "Order.sku", value: "00" } },
     sql: "select t0.id, t0.name from orders t0 where t0.sku like ?",
     binds: ["%00"],
   },
   {
-    id: "0213 contains+escape",
+    id: "m-op-algebra-015 contains+escape",
     op: { contains: { attr: "Order.sku", value: "50%" } },
     sql: "select t0.id, t0.name from orders t0 where t0.sku like ? escape ?",
     binds: ["%50\\%%", "\\"],
   },
   {
-    id: "0214 like caseInsensitive",
+    id: "m-op-algebra-016 like caseInsensitive",
     op: { like: { attr: "Order.name", value: "ada", caseInsensitive: true } },
     sql: "select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)",
     binds: ["ada"],
   },
   {
-    id: "0215 contains caseInsensitive",
+    id: "m-op-algebra-017 contains caseInsensitive",
     op: { contains: { attr: "Order.name", value: "A", caseInsensitive: true } },
     sql: "select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)",
     binds: ["%a%"],
   },
   {
-    id: "0231 startsWith+escape",
+    id: "m-op-algebra-033 startsWith+escape",
     op: { startsWith: { attr: "Order.sku", value: "C_" } },
     sql: "select t0.id, t0.name from orders t0 where t0.sku like ? escape ?",
     binds: ["C\\_%", "\\"],
   },
   {
-    id: "0232 endsWith+escape",
+    id: "m-op-algebra-034 endsWith+escape",
     op: { endsWith: { attr: "Order.sku", value: "50%" } },
     sql: "select t0.id, t0.name from orders t0 where t0.sku like ? escape ?",
     binds: ["%50\\%", "\\"],
@@ -191,19 +191,19 @@ const CASES: ReadonlyArray<{
 
   // --- membership ---
   {
-    id: "0216 in",
+    id: "m-op-algebra-018 in",
     op: { in: { attr: "Order.id", values: [1, 2, 42] } },
     sql: "select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)",
     binds: [1, 2, 42],
   },
   {
-    id: "0217 notIn",
+    id: "m-op-algebra-019 notIn",
     op: { notIn: { attr: "Order.id", values: [1, 2, 42] } },
     sql: "select t0.id, t0.name from orders t0 where not t0.id in (?, ?, ?)",
     binds: [1, 2, 42],
   },
   {
-    id: "0228 notIn null-excluded",
+    id: "m-op-algebra-030 notIn null-excluded",
     op: { notIn: { attr: "Order.sku", values: ["A-100", "B-200"] } },
     sql: "select t0.id, t0.name from orders t0 where not t0.sku in (?, ?)",
     binds: ["A-100", "B-200"],
@@ -211,7 +211,7 @@ const CASES: ReadonlyArray<{
 
   // --- boolean ---
   {
-    id: "0218 and",
+    id: "m-op-algebra-020 and",
     op: {
       and: {
         operands: [
@@ -224,7 +224,7 @@ const CASES: ReadonlyArray<{
     binds: [true, 10],
   },
   {
-    id: "0219 or",
+    id: "m-op-algebra-021 or",
     op: {
       or: {
         operands: [
@@ -237,19 +237,19 @@ const CASES: ReadonlyArray<{
     binds: [10, 25],
   },
   {
-    id: "0220 not",
+    id: "m-op-algebra-022 not",
     op: { not: { operand: { eq: { attr: "Order.active", value: true } } } },
     sql: "select t0.id, t0.name from orders t0 where not t0.active = ?",
     binds: [true],
   },
   {
-    id: "0221 none",
+    id: "m-op-algebra-023 none",
     op: { none: {} },
     sql: "select t0.id, t0.name from orders t0 where 1 = 0",
     binds: [],
   },
   {
-    id: "0229 and three operands",
+    id: "m-op-algebra-031 and three operands",
     op: {
       and: {
         operands: [
@@ -263,9 +263,9 @@ const CASES: ReadonlyArray<{
     binds: [true, 5, 30],
   },
 
-  // --- group precedence (0222 grouped vs 0223 ungrouped) ---
+  // --- group precedence (m-op-algebra-024 grouped vs m-op-algebra-025 ungrouped) ---
   {
-    id: "0222 group precedence grouped",
+    id: "m-op-algebra-024 group precedence grouped",
     op: {
       and: {
         operands: [
@@ -289,7 +289,7 @@ const CASES: ReadonlyArray<{
     binds: [25, 5, true],
   },
   {
-    id: "0223 group precedence ungrouped",
+    id: "m-op-algebra-025 group precedence ungrouped",
     op: {
       or: {
         operands: [
@@ -311,7 +311,7 @@ const CASES: ReadonlyArray<{
 
   // --- directives ---
   {
-    id: "0224 orderBy+limit",
+    id: "m-op-algebra-026 orderBy+limit",
     op: {
       limit: {
         count: 2,
@@ -327,7 +327,7 @@ const CASES: ReadonlyArray<{
     binds: [2],
   },
   {
-    id: "0225 orderBy asc+limit",
+    id: "m-op-algebra-027 orderBy asc+limit",
     op: {
       limit: {
         count: 3,
@@ -343,7 +343,7 @@ const CASES: ReadonlyArray<{
     binds: [3],
   },
   {
-    id: "0230 orderBy multi-key+limit",
+    id: "m-op-algebra-032 orderBy multi-key+limit",
     op: {
       limit: {
         count: 2,
@@ -362,7 +362,7 @@ const CASES: ReadonlyArray<{
     binds: [2],
   },
   {
-    id: "0226 distinct",
+    id: "m-op-algebra-028 distinct",
     op: { distinct: { operand: { all: {} } } },
     sql: "select distinct t0.active from orders t0",
     binds: [],
@@ -385,9 +385,9 @@ const CASES: ReadonlyArray<{
     binds: [],
   },
 
-  // --- 3VL null exclusion (same SQL as 0201, NULL-bearing column) ---
+  // --- 3VL null exclusion (same SQL as m-op-algebra-003, NULL-bearing column) ---
   {
-    id: "0227 notEq null-excluded",
+    id: "m-op-algebra-029 notEq null-excluded",
     op: { notEq: { attr: "Order.sku", value: "B-200" } },
     sql: "select t0.id, t0.name from orders t0 where t0.sku <> ?",
     binds: ["B-200"],

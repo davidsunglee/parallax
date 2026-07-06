@@ -64,7 +64,7 @@ export type PostgresDatabaseOptions = Options<Record<string, never>>;
 /**
  * A manual-commit Postgres session on a **fresh, independent** non-autocommit
  * connection with a lowered lock-wait budget, for the two-connection lock-
- * contention proofs (`0723`-`0729`, `0734`). The Postgres sibling of {@link MariaDbSession}
+ * contention proofs (`m-db-error-004`-`m-read-lock-007`, `m-read-lock-008`). The Postgres sibling of {@link MariaDbSession}
  * — Postgres has no auto-detected lock-wait deadline, so the session lowers BOTH
  * `lock_timeout` (bounding a plain wait) and `deadlock_timeout` (shortening the
  * cycle-detector delay), mirroring the Python reference provider. Each `execute`
@@ -92,7 +92,7 @@ export class PostgresSession {
 
   /**
    * Fetch rows INSIDE the session's held transaction — the concurrency-success seam
-   * (`0729` / `0734`): a `for share of t0` SELECT both takes its shared lock AND
+   * (`m-read-lock-007` / `m-read-lock-008`): a `for share of t0` SELECT both takes its shared lock AND
    * returns its rows, and an unlocked projection reads under the open unit of work.
    * Returns **managed** scalars (§3.2.1), copied into plain objects, exactly like
    * {@link PostgresDatabase.execute}.

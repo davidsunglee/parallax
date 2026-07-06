@@ -1,0 +1,47 @@
+# Query-cache invalidation scenario (M8): a committed write makes a re-issued
+# find re-resolve, never serve a stale cached row.
+#
+# m-process-cache-001 proves the cache HIT (two identical finds, the second free). This proves
+# the complementary FRESHNESS rule: after a committed write to an entity, a
+# subsequent find of that entity MUST NOT return stale rows. The scenario
+# interleaves a committed write between two identical finds:
+#   step 0 find  : cache MISS — read account 2 (Linus, balance 250.00), 1 round trip
+#   step 1 write : COMMIT `balance = 777.00` for account 2
+#   step 2 find  : the SAME find — it MUST be a cache MISS again (1 round trip) and
+#                  observe the new balance 777.00.
+# The teeth: step 2 cannot be modeled as a cache HIT (roundTrips 0). A hit would
+# reuse step 0's cached rows (250.00) and fail against the post-write expectRows
+# (777.00) — so a conforming query cache MUST invalidate on the committed write.
+# roundTrips = 2 (the two finds; the committed write is one more).
+model: models/account.yaml
+tags: [m-process-cache, query cache, cache-invalidation, freshness, scenario]
+roundTrips: 3
+scenario:
+  - find:
+      eq:
+        attr: Account.id
+        value: 2
+    roundTrips: 1
+    note: cache MISS — read account 2 (balance 250.00, version 1), caching the result
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+    binds: [2]
+    expectRows:
+      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+  - write: update
+    roundTrips: 1
+    note: COMMIT a new balance for account 2 (version advances 1 -> 2) — MUST invalidate the cached find
+    goldenSql:
+      postgres: update account set balance = ?, version = ? where id = ?
+    binds: [777.00, 2, 2]
+  - find:
+      eq:
+        attr: Account.id
+        value: 2
+    roundTrips: 1
+    note: the SAME find re-resolves (cache MISS) and MUST observe 777.00 / version 2, not 250.00 / version 1
+    goldenSql:
+      postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+    binds: [2]
+    expectRows:
+      - { id: 2, owner: Linus, balance: 777.00, version: 2 }

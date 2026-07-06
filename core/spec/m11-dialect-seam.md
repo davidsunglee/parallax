@@ -138,8 +138,8 @@ The two decision points MariaDB **diverges** on — the read-lock (application) 
 the infinity representation — are exactly the ones the second dialect was chosen
 to exercise; they are detailed below. The divergent **type mappings** are
 round-tripped against real MariaDB by the scalar witness (compatibility case
-`1005`), and the UTC-instant normalization + microsecond precision of
-`datetime(6)` by the timestamp write cases (`0004`/`0005`).
+`m-core-004`), and the UTC-instant normalization + microsecond precision of
+`datetime(6)` by the timestamp write cases (`m-core-002`/`m-core-003`).
 
 ### MariaDB type mapping (the M0 table, MariaDB column)
 
@@ -177,7 +177,7 @@ Postgres treats `NULL` as the largest value (so `asc` already trails `NULL`s and
 `desc` needs an explicit `nulls last`); MariaDB/MySQL treat `NULL` as the
 smallest and have **no** `NULLS FIRST/LAST` syntax, so the ascending case forces
 `NULL`s last with a leading `<col> is null` term. The compatibility suite proves
-both forms yield the identical observable order (case `0323`).
+both forms yield the identical observable order (case `m-deep-fetch-012`).
 
 ## Decision points needed now
 
@@ -204,7 +204,7 @@ both forms yield the identical observable order (case `0323`).
 - **Identifier quoting.** Simple lowercase identifiers are unquoted on both
   dialects. A reserved word or otherwise non-simple name MUST be quoted, and the
   quote **character diverges** — Postgres double-quotes (`"order"`), MariaDB
-  backticks (`` `order` ``). The compatibility case `0006` witnesses this on both
+  backticks (`` `order` ``). The compatibility case `m-descriptor-001` witnesses this on both
   dialects (a column literally named `order`); the M3 normalizer preserves quoted
   identifiers, and the harness quotes reserved identifiers in the DDL/DML it
   generates while leaving simple names unquoted.
@@ -267,7 +267,7 @@ both forms yield the identical observable order (case `0323`).
   | `lockWaitTimeout` | `55P03` | `1205` |
 
   The compatibility suite exercises all three classes on both dialects (cases
-  `0720`–`0727`): a case triggers a real error and asserts the neutral category,
+  `m-db-error-001`–`m-db-error-008`): a case triggers a real error and asserts the neutral category,
   the per-dialect native code, and the call-site predicate partition. This is the
   **only** place native error codes are interpreted; everything above the seam
   reasons in categories.

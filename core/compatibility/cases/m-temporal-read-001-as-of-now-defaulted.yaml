@@ -1,0 +1,30 @@
+# Defaulted as-of read (the M7 default-injection rule, made observable).
+#
+# The operation is a plain `all` over Balance — the caller OMITS the
+# processingDate dimension. The temporal MVP rule is "an omitted as-of dimension
+# defaults to as-of now", so the implementation MUST auto-inject the current-row
+# predicate `out_z = infinity`. The golden SQL therefore carries the injected
+# `t0.out_z = ?` even though the operation has no asOf node — that is exactly the
+# injection rule the harness proves automatically here (golden SQL + expected
+# current rows).
+#
+# As-of now over the fixture history returns only the CURRENT milestone of each
+# live account: (1, 150.00) and (2, 200.00). The superseded id-1 row and the
+# terminated id-3 account are excluded because their out_z is finite.
+# The cross-dialect infinity-fallback proof lives in the dedicated
+# cases/m-temporal-read-021-infinity-fallback-mariadb.yaml (a goldenSql.mariadb twin of this
+# read whose referenceSql is dialect-neutral); this case stays Postgres-only
+# because its referenceSql uses the Postgres-specific `'infinity'::timestamptz`
+# cast, which the harness runs verbatim and MariaDB would reject.
+model: models/balance.yaml
+tags: [m-temporal-read, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-mvp-1]
+operation:
+  all: {}
+goldenSql:
+  postgres: select t0.bal_id, t0.val from balance t0 where t0.out_z = ?
+binds: [infinity]
+referenceSql: select bal_id, val from balance where out_z = 'infinity'::timestamptz
+expectedRows:
+  - { bal_id: 1, val: 150.00 }
+  - { bal_id: 2, val: 200.00 }
+roundTrips: 1

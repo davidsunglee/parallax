@@ -20,7 +20,7 @@
  * witness (the object shape the corpus authored), matching the golden by
  * construction; an empty level with no witness falls back to the child entity's
  * non-nullable columns plus any nullable `orderBy` keys (the documented
- * empty-intermediate path, exercised only by `0318`).
+ * empty-intermediate path, exercised only by `m-deep-fetch-008`).
  */
 import type { Dialect } from "@parallax/dialect";
 import { type Operation, parseOperation } from "@parallax/operation";
@@ -70,7 +70,7 @@ function deepFetchBody(rawOperation: unknown): DeepFetchBody {
  * (`OrderItem` in `[OrderItem.order]`) — NOT the operand's first `Class.attr`
  * reference. A deep fetch whose operand is `all: {}` (no class ref) carries the
  * root class only in its paths, and the root may not be the model's first entity
- * (`0310`/`0314` root at `OrderItem`, not `Order`), so rooting the schema at the
+ * (`m-deep-fetch-001`/`m-deep-fetch-005` root at `OrderItem`, not `Order`), so rooting the schema at the
  * path class is what makes the root SELECT hit the right table.
  */
 export function buildDeepFetchPlan(loaded: LoadedCase, dialect: Dialect): DeepFetchPlan {
@@ -104,7 +104,7 @@ export function buildDeepFetchPlan(loaded: LoadedCase, dialect: Dialect): DeepFe
  *
  * The result directives (`distinct` / `orderBy` / `limit`) are peeled FIRST — the
  * root `compile()` peels them before the temporal wrappers, so a directive-wrapped
- * temporal root (`limit(orderBy(asOf(…)))`, case `0336`) still seeds the child
+ * temporal root (`limit(orderBy(asOf(…)))`, case `m-navigate-024`) still seeds the child
  * propagation pins from the authored instant rather than silently defaulting the
  * child to `now`.
  */

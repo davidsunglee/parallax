@@ -17,7 +17,7 @@ import { SKIP_MANIFEST, SKIPPED_IDS } from "./skip-manifest.js";
 /** The four-digit ids of the whole `slice-mvp-1` slice, from the corpus. */
 function sliceIds(): readonly string[] {
   return discoverCasePaths()
-    .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
+    .map((path) => ({ id: path.replace(/^.*\/(m-[a-z0-9-]+-\d{3})-.*$/, "$1"), path }))
     .filter(({ path }) => loadCase(path).tags.includes("slice-mvp-1"))
     .map(({ id }) => id)
     .sort();

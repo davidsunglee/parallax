@@ -1,5 +1,5 @@
 # Wallet: a plain NON-VERSIONED transactional entity for the M8 batched-write
-# cases (0604 / 0613).
+# cases (m-batch-write-001 / m-batch-write-002).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. Wallet is
 # Account (models/account.yaml) MINUS the optimistic-lock `version` column — the

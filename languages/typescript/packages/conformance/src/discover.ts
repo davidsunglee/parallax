@@ -45,7 +45,7 @@ export interface LoadedCase {
   /**
    * The conformance lane the case runs on (default `harness`). An
    * `api-conformance`-lane case (every boundary case, plus the read-lock matrix
-   * reads `0616`-`0619`) is
+   * reads `m-read-lock-002`-`m-read-lock-005`) is
    * suite-satisfied, not harness-run: the runner marks it suite-satisfied and the
    * harness sweeps exclude it, while the API Conformance Suite exercises it.
    */
@@ -71,14 +71,14 @@ export function detectShape(raw: Record<string, unknown>): CaseShape {
     return "scenario";
   }
   // An error-classification case (`errorClass` + `expectedNativeCode`), single- or
-  // two-connection (`concurrency`). Checked before `conflict`/`read` so `0728`'s
+  // two-connection (`concurrency`). Checked before `conflict`/`read` so `m-read-lock-006`'s
   // read-lock-blocks-writer concurrency shape resolves to `error`, not `read`.
   if ("errorClass" in raw) {
     return "error";
   }
   // A `concurrency` choreography with NO `errorClass` is the concurrency-success
-  // shape (M8 behavioral read-lock: `0729`/`0734`). Checked AFTER `errorClass` so an
-  // error/concurrency case (`0728`) resolves to `error`, and before `read` so it does
+  // shape (M8 behavioral read-lock: `m-read-lock-007`/`m-read-lock-008`). Checked AFTER `errorClass` so an
+  // error/concurrency case (`m-read-lock-006`) resolves to `error`, and before `read` so it does
   // not fall through to `read` and throw at `compileRootStatement`.
   if ("concurrency" in raw) {
     return "concurrencySuccess";

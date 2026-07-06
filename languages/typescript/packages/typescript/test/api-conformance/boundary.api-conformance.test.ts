@@ -4,7 +4,7 @@
  * would (`px.transaction(body, { retries, retryOptimisticConflicts })`) over each
  * selected shipped `@parallax/db-*` adapter.
  *
- * These cases (`0710`-`0718`, `api-conformance` lane) prove loop branches a single-
+ * These cases (`m-opt-lock-009`-`m-unit-work-004`, `api-conformance` lane) prove loop branches a single-
  * connection harness cannot provoke — an injected transient auto-retried away, a
  * conflict surfacing without the opt-in, a conflict auto-retried WITH it, the flag's
  * no-op in locking mode, `retries: 0`, bound exhaustion, callback-value-withheld-on-
@@ -39,20 +39,20 @@ const Account = { id: attr("Account.id"), balance: attr("Account.balance") };
 const accountPk = (id: number): Predicate =>
   new Predicate({ eq: { attr: "Account.id", value: id } });
 
-/** The out-of-band concurrent write that makes an optimistic conflict genuine (0703 shape). */
+/** The out-of-band concurrent write that makes an optimistic conflict genuine (m-opt-lock-005 shape). */
 const CONCURRENT_WRITE = "update account set balance = 999.00, version = 2 where id = 2";
 
 it("the boundary suite covers exactly the BOUNDARY family", () => {
   const covered = [
-    "0710-optimistic-conflict-auto-retry",
-    "0711-conflict-surfaces-without-optin",
-    "0712-transient-retried-flag-unset",
-    "0713-transient-retried-flag-set",
-    "0714-conflict-auto-retry-loop",
-    "0715-retry-flag-locking-mode",
-    "0716-retries-zero-disables-loop",
-    "0717-retry-bound-exhausted",
-    "0718-callback-value-withheld-on-abort",
+    "m-opt-lock-009-conflict-auto-retry",
+    "m-opt-lock-010-conflict-surfaces-without-optin",
+    "m-auto-retry-001-transient-retried-flag-unset",
+    "m-auto-retry-002-transient-retried-flag-set",
+    "m-opt-lock-011-conflict-auto-retry-loop",
+    "m-auto-retry-003-retry-flag-locking-mode",
+    "m-auto-retry-004-retries-zero-disables-loop",
+    "m-auto-retry-005-retry-bound-exhausted",
+    "m-unit-work-004-callback-value-withheld-on-abort",
   ];
   expect(covered.sort()).toEqual([...BOUNDARY].sort());
 });
@@ -163,9 +163,9 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
   });
 
   it(
-    "0710/0714: a conflict is auto-retried WITH the opt-in — the body re-reads and commits",
+    "m-opt-lock-009/m-opt-lock-011: a conflict is auto-retried WITH the opt-in — the body re-reads and commits",
     async () => {
-      const f = await provisionCase(provider, "0714-conflict-auto-retry-loop");
+      const f = await provisionCase(provider, "m-opt-lock-011-conflict-auto-retry-loop");
       // A real concurrent write commits before the first attempt's gated UPDATE, so
       // it conflicts; with the opt-in the loop re-executes, re-reads the fresh
       // version, and succeeds — no caller retry code.
@@ -188,9 +188,9 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
   );
 
   it(
-    "0711: a conflict surfaces WITHOUT the opt-in (one attempt)",
+    "m-opt-lock-010: a conflict surfaces WITHOUT the opt-in (one attempt)",
     async () => {
-      const f = await provisionCase(provider, "0711-conflict-surfaces-without-optin");
+      const f = await provisionCase(provider, "m-opt-lock-010-conflict-surfaces-without-optin");
       const db = new FaultInjectingDatabase(f.db, {
         beforeWriteOnAttempt: async (attempt) => {
           if (attempt === 0) {
@@ -208,9 +208,9 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
   );
 
   it(
-    "0712: an injected transient is auto-retried by default (flag unset) and commits",
+    "m-auto-retry-001: an injected transient is auto-retried by default (flag unset) and commits",
     async () => {
-      const f = await provisionCase(provider, "0712-transient-retried-flag-unset");
+      const f = await provisionCase(provider, "m-auto-retry-001-transient-retried-flag-unset");
       const db = new FaultInjectingDatabase(f.db, { transientOnAttempts: [0] });
       const px = pxOver(f, db);
       const result = await findThenUpdate(px, { concurrency: "optimistic" });
@@ -221,9 +221,9 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
   );
 
   it(
-    "0713: an injected transient is auto-retried identically WITH the flag set",
+    "m-auto-retry-002: an injected transient is auto-retried identically WITH the flag set",
     async () => {
-      const f = await provisionCase(provider, "0713-transient-retried-flag-set");
+      const f = await provisionCase(provider, "m-auto-retry-002-transient-retried-flag-set");
       const db = new FaultInjectingDatabase(f.db, { transientOnAttempts: [0] });
       const px = pxOver(f, db);
       const result = await findThenUpdate(px, {
@@ -237,9 +237,9 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
   );
 
   it(
-    "0715: the conflict-retry flag is inert in locking mode (the update commits)",
+    "m-auto-retry-003: the conflict-retry flag is inert in locking mode (the update commits)",
     async () => {
-      const f = await provisionCase(provider, "0715-retry-flag-locking-mode");
+      const f = await provisionCase(provider, "m-auto-retry-003-retry-flag-locking-mode");
       const db = new FaultInjectingDatabase(f.db, {});
       const px = pxOver(f, db);
       const result = await findThenUpdate(px, {
@@ -253,9 +253,9 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
   );
 
   it(
-    "0716: retries: 0 disables the loop — even a transient surfaces",
+    "m-auto-retry-004: retries: 0 disables the loop — even a transient surfaces",
     async () => {
-      const f = await provisionCase(provider, "0716-retries-zero-disables-loop");
+      const f = await provisionCase(provider, "m-auto-retry-004-retries-zero-disables-loop");
       const db = new FaultInjectingDatabase(f.db, { transientOnAttempts: [0] });
       const px = pxOver(f, db);
       await expect(
@@ -267,9 +267,9 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
   );
 
   it(
-    "0717: a persistent transient surfaces after the bound is exhausted",
+    "m-auto-retry-005: a persistent transient surfaces after the bound is exhausted",
     async () => {
-      const f = await provisionCase(provider, "0717-retry-bound-exhausted");
+      const f = await provisionCase(provider, "m-auto-retry-005-retry-bound-exhausted");
       const db = new FaultInjectingDatabase(f.db, { transientOnAttempts: [0, 1, 2] });
       const px = pxOver(f, db);
       await expect(
@@ -281,9 +281,9 @@ group.skipIf(!HAS_DOCKER).each(writeProviders())("boundary suite ($label)", (dbp
   );
 
   it(
-    "0718: a body that throws aborts — px.transaction rejects and yields no value",
+    "m-unit-work-004: a body that throws aborts — px.transaction rejects and yields no value",
     async () => {
-      const f = await provisionCase(provider, "0718-callback-value-withheld-on-abort");
+      const f = await provisionCase(provider, "m-unit-work-004-callback-value-withheld-on-abort");
       const sentinel = new Error("domain rule violated");
       let returned: unknown = "unset";
       try {

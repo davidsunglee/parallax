@@ -1,0 +1,38 @@
+# Optimistic-lock conflict on DETACHED merge-back (M9 x M10 composition).
+#
+# M10 says optimistic locking "composes with detached merge-back … exactly the
+# same `updatedRows != 1` rule," and M9 says the conflict-on-merge-back is M10's
+# subject — but no case crosses the two. m-opt-lock-005 is a plain in-transaction read-then-
+# write conflict; m-detach-002 is a merge-back with NO concurrent writer. This pins the
+# composition: the version the merge-back gates on is the one SNAPSHOTTED AT
+# DETACHMENT, and a concurrent writer has since advanced it. A conflict is
+# intrinsically optimistic (R4), so the UPDATE is gated even with no `uow` block.
+#
+# Account id 1 (Ada) was detached at version 1. Before the merge-back flushes, a
+# concurrent transaction commits (the `precondition`: balance 888.00, version 2).
+# The merge-back UPDATE gates on the detachment-time version (1), which now
+# matches NO row, so it affects ZERO rows — the conflict signal. The resulting
+# state confirms our stale write never applied: id 1 still carries the concurrent
+# writer's values (888.00, version 2).
+model: models/account.yaml
+tags: [m-opt-lock, m-detach, m-sql, conflict, merge-back]
+precondition: update account set balance = 888.00, version = 2 where id = 1
+write: { id: 1, balance: 150.00, observedVersion: 1 }
+expectedAffectedRows: 0
+goldenSql:
+  postgres: update account set balance = ?, version = ? where id = ? and version = ?
+binds: [150.00, 2, 1, 1]
+expectedTableState:
+  account:
+    - id: 1
+      owner: Ada
+      balance: 888.00
+      version: 2
+    - id: 2
+      owner: Linus
+      balance: 250.00
+      version: 1
+    - id: 3
+      owner: Grace
+      balance: 10.00
+      version: 1

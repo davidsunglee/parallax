@@ -8,9 +8,9 @@
  * output equals the case `operation` byte-for-byte (`dsl.test.ts`).
  *
  * Directive nesting order matches the corpus goldens: the base predicate is
- * wrapped inside-out by `distinct` → `orderBy` → `limit` (`0224`
+ * wrapped inside-out by `distinct` → `orderBy` → `limit` (`m-op-algebra-026`
  * limit-of-order-by-of-all), and the temporal axes wrap outermost with the
- * business axis **outside** the processing axis (`0801`, matching the core bind
+ * business axis **outside** the processing axis (`m-temporal-read-013`, matching the core bind
  * order: business binds before processing).
  */
 import { type Temporal, timestampToWire } from "@parallax/core";
@@ -69,9 +69,9 @@ export interface FindOptions {
   readonly includes?: readonly NavigationPath[];
   /** Generated sort keys (`orderBy: [Order.qty.desc()]`, spec §2.7). */
   readonly orderBy?: readonly OrderKeyExpression[];
-  /** Row cap, bound as `?` (`0224`). */
+  /** Row cap, bound as `?` (`m-op-algebra-026`). */
   readonly limit?: number;
-  /** Emit a `select distinct` (`0226`). */
+  /** Emit a `select distinct` (`m-op-algebra-028`). */
   readonly distinct?: boolean;
   /** Temporal read axes (spec §2.9); serialized outermost. */
   readonly temporal?: TemporalReadOptions;
@@ -98,9 +98,9 @@ export function buildFindOperation(predicate: Predicate, options: FindOptions = 
   // The temporal axes wrap the base predicate INNERMOST (business outside
   // processing), so the result directives (`distinct` / `orderBy` / `limit`)
   // wrap OUTSIDE them — matching the corpus `limit(orderBy(asOf(asOf(all))))`
-  // ordering (`0336`): a conforming compiler peels the directives before the
+  // ordering (`m-navigate-024`): a conforming compiler peels the directives before the
   // temporal wrappers on the root. Non-temporal reads are unaffected (temporal
-  // is a no-op), so `0224` stays `limit(orderBy(all))`.
+  // is a no-op), so `m-op-algebra-026` stays `limit(orderBy(all))`.
   op = applyTemporal(op, options.temporal, options.axisRefs);
 
   if (options.distinct) {
@@ -127,7 +127,7 @@ export function buildFindOperation(predicate: Predicate, options: FindOptions = 
  * `asOf` (the M7 default-injection rule reads an unwrapped axis as current); an
  * explicit non-`now` `asOf`, a `range`, or a `history` axis each emit their
  * wrapper. The business axis wraps outside the processing axis so business
- * binds precede processing binds (spec §2.9, `0801` / `0803`).
+ * binds precede processing binds (spec §2.9, `m-temporal-read-013` / `m-temporal-read-015`).
  */
 function applyTemporal(
   operand: Operation,
@@ -176,7 +176,7 @@ function applyAxis(
   }
   // An explicit `now` still serializes to an `asOf … now` wrapper (spec §2.9:
   // `"now"` in an asOf option serializes to the core `now` pin — the corpus
-  // `0502` authors it explicitly; an OMITTED axis is left unwrapped).
+  // `m-temporal-read-002` authors it explicitly; an OMITTED axis is left unwrapped).
   return { asOf: { operand, asOfAttr, date: temporalDate(asOf as TemporalPoint) } };
 }
 

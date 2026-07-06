@@ -82,7 +82,7 @@ interface ConcurrencyStep {
   readonly kind?: "read" | "write";
   /**
    * concurrency-SUCCESS form only: the rows a `kind: read` step MUST return on its HELD
-   * session (`0729` / `0734`). Required for a read and forbidden on a write — enforced
+   * session (`m-read-lock-007` / `m-read-lock-008`). Required for a read and forbidden on a write — enforced
    * structurally by the schema's `kind` if/then AND re-checked pre-flight by
    * {@link concurrencySuccessStepProblems}; a write step omits it and asserts only that
    * it did not block/raise.
@@ -101,7 +101,7 @@ const CONCURRENCY_NODES = ["A", "B"] as const;
 type ConcurrencyNode = (typeof CONCURRENCY_NODES)[number];
 
 /**
- * The `error`/concurrency case's barrier-separated rounds (`0728` + the M11
+ * The `error`/concurrency case's barrier-separated rounds (`m-read-lock-006` + the M11
  * deadlock/lock-wait family). Each round names the `A` and/or `B` golden a held
  * non-autocommit session runs that round; a node absent from a round is idle.
  */
@@ -277,8 +277,8 @@ export function runCompile(
   if (isScenario(loaded)) {
     const plan = buildScenarioPlan(loaded);
     const emissions: Emission[] = plan.steps.flatMap((step) =>
-      // A MULTI-statement step (a versioned set-based materialize write, `0614` /
-      // `0615`) carries a list-of-lists `binds`, one per statement — slice it so
+      // A MULTI-statement step (a versioned set-based materialize write, `m-opt-lock-003` /
+      // `m-opt-lock-004`) carries a list-of-lists `binds`, one per statement — slice it so
       // each per-object `UPDATE` emission carries its own bind row.
       step.statements.map((sql, statementIndex) => ({
         casePointer: step.casePointer,
@@ -299,7 +299,7 @@ export function runCompile(
     });
   }
 
-  // A concurrency case — error (`0728`) or concurrency-success (`0729`/`0734`) — is
+  // A concurrency case — error (`m-read-lock-006`) or concurrency-success (`m-read-lock-007`/`m-read-lock-008`) — is
   // NOT compiled to SQL: its golden lives per round inside `concurrency.rounds` and is
   // authored, not derived. Surface those per-round statements as emissions (like a
   // scenario) so the compile gate classifies it in-claim `ok` instead of throwing at
@@ -437,21 +437,21 @@ export async function runRun(
     return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
   }
 
-  // An error/concurrency case (`0728`) opens two held non-autocommit sessions,
+  // An error/concurrency case (`m-read-lock-006`) opens two held non-autocommit sessions,
   // runs the barrier-separated rounds, and asserts the contention round raises the
   // declared `errorClass` (a held `for share` read excludes B's UPDATE → a
   // lockWaitTimeout). This is the behavioral proof the single-connection read-lock
-  // cases (`0603`/`1001`) cannot make.
+  // cases (`m-read-lock-001`/`m-read-lock-009`) cannot make.
   if (loaded.shape === "error") {
     const { emissions, observations } = await runErrorConcurrency(loaded, provider, dialectImpl);
     return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
   }
 
-  // A concurrency-success case (`0729`/`0734`) opens two held non-autocommit sessions
+  // A concurrency-success case (`m-read-lock-007`/`m-read-lock-008`) opens two held non-autocommit sessions
   // and runs the barrier-separated rounds asserting NO error is raised — the read
-  // lock is SHARED (`0729`, a second reader is admitted) or ABSENT (`0734`, an
+  // lock is SHARED (`m-read-lock-007`, a second reader is admitted) or ABSENT (`m-read-lock-008`, an
   // unlocked projection admits a writer) — and checks each read step's `expectRows` on
-  // its HELD session. The behavioral control 0728 (blocks a writer) cannot make.
+  // its HELD session. The behavioral control m-read-lock-006 (blocks a writer) cannot make.
   if (loaded.shape === "concurrencySuccess") {
     const { emissions, observations } = await runConcurrencySuccess(loaded, provider, dialectImpl);
     return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
@@ -601,7 +601,7 @@ async function runWriteSequence(
  * attempt's affected-row count as `affectedRows` plus the resulting `tableState`.
  *
  * The single form has one attempt (`affectedRows` is that update's count); the
- * retry form has two (`0708`: a stale attempt affects 0, the fresh retry affects
+ * retry form has two (`m-opt-lock-007`: a stale attempt affects 0, the fresh retry affects
  * 1 — `affectedRows` reports the retry's 1, the terminal outcome). Each attempt's
  * count is checked against its declared `expectedAffectedRows` so a wrong count
  * fails loudly here, not only at the table-state grade. `roundTrips` counts the
@@ -649,7 +649,7 @@ async function runConflict(
  * A WRITE step COMMITs its golden DML (a buffered write the unit of work flushes)
  * and captures no rows; a FIND step executes its golden `select` and captures the
  * observed rows (a cache-HIT step lists no golden and reuses a prior step's rows).
- * The `rows` observation is the LAST find's rows (`0607`'s dependent find that
+ * The `rows` observation is the LAST find's rows (`m-unit-work-001`'s dependent find that
  * MUST observe the committed write); `roundTrips` is the declared case total; each
  * `sameObjectAs` becomes an `identityChecks` entry (the one-object-per-PK rule).
  */
@@ -668,7 +668,7 @@ async function runScenario(
   for (const [index, step] of plan.steps.entries()) {
     if (step.kind === "write") {
       // A step may emit SEVERAL statements (a versioned set-based materialize write,
-      // `0614` / `0615`: one per-object `UPDATE` per row); its `binds` is then a
+      // `m-opt-lock-003` / `m-opt-lock-004`: one per-object `UPDATE` per row); its `binds` is then a
       // list-of-lists sliced per statement (`stepBindsAt`).
       for (const [statementIndex, sql] of step.statements.entries()) {
         const stmtBinds = stepBindsAt(step.binds, statementIndex);
@@ -729,7 +729,7 @@ async function runScenario(
 }
 
 /**
- * Execute an error/concurrency case (`0728`, the M11 deadlock/lock-wait family):
+ * Execute an error/concurrency case (`m-read-lock-006`, the M11 deadlock/lock-wait family):
  * provision + load fixtures, open TWO held non-autocommit sessions (each on its
  * own independent connection with a lowered lock-wait budget via the provider's
  * `openSession` seam), then run the barrier-separated rounds. A round with a
@@ -859,7 +859,7 @@ function renderManagedRowToWire(row: ParallaxRow): Row {
 }
 
 /**
- * Execute a concurrency-SUCCESS case (`0729` read-lock-shared-compatible, `0734`
+ * Execute a concurrency-SUCCESS case (`m-read-lock-007` read-lock-shared-compatible, `m-read-lock-008`
  * projection-omits-lock-admits-writer): provision + load fixtures, open TWO held
  * non-autocommit sessions, and run the barrier-separated rounds asserting NO error is
  * raised on either node. A round runs its single node awaited (round 0 holds, round 1
@@ -869,7 +869,7 @@ function renderManagedRowToWire(row: ParallaxRow): Row {
  * (`session.query` — a `for share` SELECT both takes its shared lock and returns its
  * rows) and the observed rows are graded (rendered to wire, compared as an
  * order-insensitive multiset under the M12 type-aware rules); a `kind: write` step
- * asserts only that it did not block/raise (`0734`'s admitted UPDATE).
+ * asserts only that it did not block/raise (`m-read-lock-008`'s admitted UPDATE).
  *
  * Success is exactly "NO node raised AND every `expectRows` matched": a buggy adapter
  * whose read took an EXCLUSIVE lock (`for update` not `for share`) — or that wrongly
@@ -933,7 +933,7 @@ async function runConcurrencySuccess(
           rowFailures.push(`/concurrency/rounds/${index}/${node}: ${comparison.reason}`);
         }
       } else {
-        // A write step (`0734`'s round-1 UPDATE): succeeds iff no lock blocks it.
+        // A write step (`m-read-lock-008`'s round-1 UPDATE): succeeds iff no lock blocks it.
         await session.execute(sql, binds);
       }
     } catch (error) {
@@ -1054,7 +1054,7 @@ async function provision(
 /**
  * Provision a clean, EMPTY DB (reset + DDL, no fixtures) for a write sequence —
  * the case builds its own state from its ordered DML — UNLESS it opts into
- * `loadFixtures` (the per-key batched-update case `0613` mutates pre-existing
+ * `loadFixtures` (the per-key batched-update case `m-batch-write-002` mutates pre-existing
  * fixture rows), in which case the model's fixtures are loaded first (mirrors the
  * Python harness `_provision_empty`).
  */
@@ -1137,7 +1137,7 @@ function gateOrNonOk(
  * Route an `api-conformance`-lane case to a **suite-satisfied** `unsupported`
  * envelope (in-claim by shape/tags/dialect, but not harness-run — the language's
  * API Conformance Suite satisfies it). Applies to every `boundary`-shape case and
- * to the `read`-shape read-lock matrix cases (`0616`-`0619`) that carry
+ * to the `read`-shape read-lock matrix cases (`m-read-lock-002`-`m-read-lock-005`) that carry
  * `lane: api-conformance`: their observable is a runtime-loop / injected-fault /
  * emitted-lock property the single-connection harness cannot execute. The full-slice
  * harness sweeps filter these out; this branch is the defensive route for the CLI /

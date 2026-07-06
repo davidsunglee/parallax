@@ -67,7 +67,7 @@ facade, and generated-barrel support.
 4. Implement M2 operation serde until operations in `0001`, `0002`, and the
    `02xx` predicate cases parse and round-trip.
 5. Implement the first database-backed walking skeleton:
-   `core/compatibility/cases/0002-eq.yaml` compiles to matching Postgres SQL and
+   `core/compatibility/cases/m-op-algebra-002-eq.yaml` compiles to matching Postgres SQL and
    binds, runs against `postgres:17`, and reports a valid conformance-adapter
    JSON envelope.
 6. Expand by case family in dependency-graph order, using the tagged

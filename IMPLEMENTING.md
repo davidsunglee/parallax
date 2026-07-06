@@ -142,7 +142,7 @@ starts.
 | 0 | Scaffold, package layout, dependency-boundary check, conformance CLI placeholder | Language tests run; illegal module imports fail the build |
 | 1 | M0 core conventions and M1 metamodel/descriptor serde | All descriptors in `core/compatibility/models/` parse and round-trip |
 | 2 | M2 operation model and operation serde | Operations in `0001`, `0002`, and `02xx` cases parse and round-trip |
-| 3 | M11 Postgres dialect seam and M3 basic SQL generation | `0001-find-all.yaml`, `0002-eq.yaml`, then all `02xx` predicate cases emit matching SQL and binds |
+| 3 | M11 Postgres dialect seam and M3 basic SQL generation | `m-op-algebra-001-find-all.yaml`, `m-op-algebra-002-eq.yaml`, then all `02xx` predicate cases emit matching SQL and binds |
 | 4 | M4 relationships and M5 operation-backed list results | `0301` through `0313`, including deep-fetch round-trip counts and graphs |
 | 5 | M2 aggregation sub-area | `0401` through `0410` |
 | 6 | M8 transactions, unit of work, identity cache, query cache, read locks, batching | `0601` through `0604` |
@@ -163,7 +163,7 @@ idiomatic public API as that API lands. See
 The first green slice should be intentionally small. A useful first slice is:
 
 - parse `account.yaml`
-- parse `0002-eq.yaml`
+- parse `m-op-algebra-002-eq.yaml`
 - build the operation tree
 - emit Postgres SQL and binds
 - execute against Postgres and compare rows.

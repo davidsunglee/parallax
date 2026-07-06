@@ -6,13 +6,13 @@
  * adapter is conformant at its actual boundary.
  *
  * Three lanes:
- *  - **compile** (Docker-free): `0002` emits the canonical golden SQL + binds,
- *    and the envelope validates against the schema (validated inside the CLI).
+ *  - **compile** (Docker-free): `m-op-algebra-002` emits the canonical golden SQL +
+ *    binds, and the envelope validates against the schema (validated inside the CLI).
  *  - **out-of-claim** (Docker-free): a `mariadb` dialect request returns
  *    `unsupported` (exit `10`) with the first-failed-filter diagnostic.
- *  - **run** (Testcontainers `postgres:17`): `0002` returns `[{ id, name }]`
- *    with `observations.roundTrips == 1` and exit `0`. Skipped when Docker is
- *    unavailable (reported, not silently passed).
+ *  - **run** (Testcontainers `postgres:17`): `m-op-algebra-002` returns
+ *    `[{ id, name }]` with `observations.roundTrips == 1` and exit `0`. Skipped when
+ *    Docker is unavailable (reported, not silently passed).
  */
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -28,8 +28,8 @@ function repoPath(relative: string): string {
 /** The built CLI entry point the harness drives. */
 const CLI = repoPath("languages/typescript/packages/typescript/dist/cli/parallax-conformance.js");
 
-/** The 0002 walking-skeleton case path (repo-relative, the envelope form). */
-const CASE_0002 = "core/compatibility/cases/0002-eq.yaml";
+/** The eq walking-skeleton case path (`m-op-algebra-002`, repo-relative envelope form). */
+const CASE_0002 = "core/compatibility/cases/m-op-algebra-002-eq.yaml";
 
 /** Run the CLI and capture `{ exitCode, envelope }`, by contract only. */
 function runCli(
@@ -73,7 +73,7 @@ beforeAll(() => {
 });
 
 group("compile lane (Docker-free)", () => {
-  it("0002 emits the canonical golden SQL + binds and exits 0", () => {
+  it("m-op-algebra-002 emits the canonical golden SQL + binds and exits 0", () => {
     const { exitCode, envelope } = runCli([
       "compile",
       "--case",
@@ -133,7 +133,7 @@ group.skipIf(!HAS_DOCKER)("run lane (Testcontainers postgres:17)", () => {
   });
 
   it(
-    "0002 returns [{ id: 42, name: Grace }] with roundTrips 1 and exits 0",
+    "m-op-algebra-002 returns [{ id: 42, name: Grace }] with roundTrips 1 and exits 0",
     () => {
       expect(result.exitCode).toBe(0);
       expect(result.envelope.status).toBe("ok");

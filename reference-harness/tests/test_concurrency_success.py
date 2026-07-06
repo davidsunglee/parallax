@@ -6,7 +6,7 @@ discriminator (`read` / `write`) with its structural `expectRows` if/then, and t
 runner's minimal `kind`-based structural guard are pinned here. The DB-coupled part
 -- running two held sessions and asserting NO error + each read's `expectRows` on
 its held session -- is exercised end-to-end against real Postgres + MariaDB by the
-compatibility suite's `0729` / `0734` cases via `test_compatibility.py`.
+compatibility suite's `m-read-lock-007` / `m-read-lock-008` cases via `test_compatibility.py`.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def _case_validator() -> Draft202012Validator:
 def _concurrency_case(raw: dict) -> Case:
     descriptor = {"entity": {"name": "Account", "table": "account", "attributes": []}}
     model = Model(path=Path("account.yaml"), descriptor=descriptor)
-    return Case(path=Path("0729-x.yaml"), raw=raw, model=model)
+    return Case(path=Path("m-read-lock-007-x.yaml"), raw=raw, model=model)
 
 
 # --- shape recognition (the errorClass-absent discriminator) -----------------
@@ -86,7 +86,7 @@ def test_case_recognizes_concurrency_success_shape() -> None:
 
 
 def test_error_concurrency_is_not_concurrency_success() -> None:
-    # An error/concurrency case (0728) carries errorClass, so it stays an `error`
+    # An error/concurrency case (m-read-lock-006) carries errorClass, so it stays an `error`
     # case and is NOT a concurrency-success case -- the discriminator that keeps the
     # root oneOf single-match. It carries NO `kind` (only the classified error is
     # asserted).
@@ -105,7 +105,7 @@ def test_error_concurrency_is_not_concurrency_success() -> None:
 
 
 def test_schema_accepts_shared_reader_concurrency_success_case() -> None:
-    # 0729: both A and B take the shared read lock and BOTH succeed, each a kind: read
+    # m-read-lock-007: both A and B take the shared read lock and BOTH succeed, each a kind: read
     # asserting its held-session rows. Validates against the concurrency-success oneOf
     # member (concurrency present, errorClass absent, every present step declaring kind).
     case = {
@@ -141,7 +141,7 @@ def test_schema_accepts_shared_reader_concurrency_success_case() -> None:
 
 
 def test_schema_accepts_projection_admits_writer_concurrency_success_case() -> None:
-    # 0734: A holds an unlocked projection (kind: read + expectRows), B's UPDATE is
+    # m-read-lock-008: A holds an unlocked projection (kind: read + expectRows), B's UPDATE is
     # admitted (kind: write, NO expectRows -- a write asserts only that it did not block).
     case = {
         "model": "models/account.yaml",
@@ -329,7 +329,7 @@ def test_runner_assert_schema_rejects_read_step_missing_expect_rows() -> None:
 
 
 def test_runner_assert_schema_allows_write_step_without_expect_rows() -> None:
-    # 0734's shape: a kind: read step declares expectRows and the round-2 kind: write
+    # m-read-lock-008's shape: a kind: read step declares expectRows and the round-2 kind: write
     # UPDATE omits it. The guard must NOT disturb the passing write step.
     case = _concurrency_case(
         {

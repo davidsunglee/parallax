@@ -139,7 +139,7 @@ function dedent(raw) {
 function parseTableFamily(source, family) {
   const entries = [];
   // Split the CASES array into per-entry blocks keyed by their `stem` / literal.
-  const stemRe = /(?:stem:\s*)?"(\d{4}-[a-z0-9-]+)"/g;
+  const stemRe = /(?:stem:\s*)?"(m-[a-z0-9-]+-\d{3}-[a-z0-9-]+)"/g;
   const stems = [];
   let m;
   while ((m = stemRe.exec(source)) !== null) {

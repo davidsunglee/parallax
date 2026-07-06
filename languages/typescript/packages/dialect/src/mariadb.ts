@@ -3,7 +3,7 @@
  *
  * MariaDB exercises exactly the seam points Postgres does not, proving the
  * abstraction earns its keep at the SQL/value-rule level (the corpus divergences
- * `0006`, `0323`, `1001`, `1002`, `1005`, `0720`–`0727`):
+ * `m-descriptor-001`, `m-deep-fetch-012`, `m-read-lock-009`, `m-temporal-read-021`, `m-core-004`, `m-db-error-001`–`m-db-error-008`):
  *
  *  - **identifier quoting** — a backtick, not a double-quote (`` `order` ``), with
  *    embedded backticks doubled and its own reserved-word set;
@@ -158,7 +158,7 @@ function rowLimit(sql: string): string {
  * Lower a `bytes` column to MariaDB's hex-text projection — the argument-less
  * `hex(<col>) <out>` — carrying NO bind (contrast Postgres's `encode(<col>, ?)`
  * with a `'hex'` format bind). MariaDB's `hex(...)` takes no format argument, so
- * the projection is bind-free (`1005`).
+ * the projection is bind-free (`m-core-004`).
  */
 function bytesProjection(
   qualifiedColumn: string,

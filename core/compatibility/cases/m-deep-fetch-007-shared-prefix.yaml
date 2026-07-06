@@ -1,0 +1,81 @@
+# Deep fetch, SHARED-PREFIX paths — the shared hop is fetched once (M4 dedup).
+#
+# m-deep-fetch-004 fetches two INDEPENDENT paths off the root; this is the spec's literal
+# shared-prefix example: `[Order.items]` and `[Order.items, OrderItem.statuses]`.
+# The two paths share the `Order.items` hop, which MUST be fetched ONCE (de-
+# duplicated), so the level count is 3, not 4:
+#   level 0 (root)     : all orders
+#   level 1 (items)    : items keyed by the distinct order ids {1,2,3,4,5,42}
+#   level 2 (statuses) : item-level statuses keyed by the distinct item ids
+#                        {11,12,21,421,422}
+# A naive reading would fetch `Order.items` twice (once per path); the harness
+# asserts exactly 3 statements, proving the prefix is shared.
+model: models/orders.yaml
+tags: [m-deep-fetch, m-op-list, shared-prefix, relationship, slice-mvp-1]
+operation:
+  deepFetch:
+    operand:
+      all: {}
+    paths:
+      - [Order.items]
+      - [Order.items, OrderItem.statuses]
+goldenSql:
+  postgres:
+    - select t0.id, t0.name from orders t0
+    - select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?) order by t0.id desc
+    - select t0.id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?, ?) order by t0.code asc
+binds:
+  - []
+  - [1, 2, 3, 4, 5, 42]
+  - [11, 12, 21, 421, 422]
+referenceSql: select id, name from orders
+roundTrips: 3
+expectedGraph:
+  Order:
+    - id: 1
+      name: Ada
+      items:
+        - id: 12
+          order_id: 1
+          sku: B-200
+          quantity: 1
+          statuses:
+            - { id: 203, order_item_id: 12, code: PICKED }
+        - id: 11
+          order_id: 1
+          sku: A-100
+          quantity: 2
+          statuses:
+            - { id: 202, order_item_id: 11, code: PACKED }
+            - { id: 201, order_item_id: 11, code: PICKED }
+    - id: 2
+      name: Linus
+      items:
+        - id: 21
+          order_id: 2
+          sku: A-300
+          quantity: 4
+          statuses: []
+    - id: 3
+      name: ada
+      items: []
+    - id: 4
+      name: Margaret
+      items: []
+    - id: 5
+      name: Alan
+      items: []
+    - id: 42
+      name: Grace
+      items:
+        - id: 422
+          order_id: 42
+          sku: B-200
+          quantity: 5
+          statuses: []
+        - id: 421
+          order_id: 42
+          sku: A-999
+          quantity: 3
+          statuses:
+            - { id: 204, order_item_id: 421, code: PICKED }

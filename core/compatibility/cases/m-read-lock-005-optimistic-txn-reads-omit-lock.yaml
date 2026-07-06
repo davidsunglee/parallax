@@ -1,0 +1,28 @@
+# Read-lock matrix (M8 / M10): reads inside an OPTIMISTIC unit of work emit NO lock
+# — the locking/optimistic contrast — `api-conformance` lane.
+#
+# The counterpart to `m-read-lock-002`: in `px.transaction(body, { concurrency: "optimistic"
+# })` reads take NO shared lock (so readers never block writers) — an object find
+# and a projection both proceed unlocked. Correctness in optimistic mode comes from
+# the version gate on the WRITE (M10), not a lock on the read. So the golden object
+# find has NO `for share of t0` suffix (contrast `m-read-lock-002`, same query, locking mode).
+#
+# `lane: api-conformance`: the absence of the lock is a runtime property the
+# language's API Conformance Suite proves (the same read, run under `optimistic`
+# mode, emits no lock); the M12 harness schema-validates the case.
+model: models/account.yaml
+tags: [m-read-lock, m-opt-lock, m-dialect, m-api-conformance, slice-mvp-1]
+lane: api-conformance
+uow:
+  concurrency: optimistic
+operation:
+  eq:
+    attr: Account.id
+    value: 2
+goldenSql:
+  postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+binds: [2]
+referenceSql: select id, owner, balance, version from account where id = 2
+expectedRows:
+  - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+roundTrips: 1

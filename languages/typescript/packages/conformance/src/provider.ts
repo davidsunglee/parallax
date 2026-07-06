@@ -23,7 +23,7 @@ export type ProviderRow = Record<string, unknown>;
 /**
  * A manual-commit database session on its own **independent, non-autocommit**
  * connection with a lowered lock-wait budget — the two-connection choreography
- * seam the `error` / concurrency cases (`0728` and the deadlock/lock-wait family)
+ * seam the `error` / concurrency cases (`m-read-lock-006` and the deadlock/lock-wait family)
  * run on. Each `execute` runs inside the session's open transaction so locks are
  * HELD until {@link commit} / {@link rollback}; a blocked lock surfaces as a
  * portable `ParallaxTransientError` (classified by the shipped adapter). Symmetric
@@ -36,7 +36,7 @@ export interface CompatibilitySession {
   execute(sql: string, binds?: readonly unknown[]): Promise<void>;
   /**
    * Fetch rows INSIDE the session's held transaction — the concurrency-SUCCESS seam
-   * (`0729` / `0734`): a shared-lock SELECT both takes its lock and returns its rows,
+   * (`m-read-lock-007` / `m-read-lock-008`): a shared-lock SELECT both takes its lock and returns its rows,
    * and an unlocked projection reads under the open unit of work, so `expectRows` is
    * observed on the HELD session (not the provider's autocommit connection). Returns
    * **managed** scalars (§3.2.1, like the adapter's `execute`); the runner renders
@@ -102,7 +102,7 @@ export interface CompatibilityDatabaseProvider {
    * Open a manual-commit {@link CompatibilitySession} on a fresh, independent
    * non-autocommit connection with a lowered lock-wait budget — the seam the
    * `error` / concurrency runner opens two sessions on to prove one holds a lock
-   * while the other contends (`0728`). Symmetric to the Python harness
+   * while the other contends (`m-read-lock-006`). Symmetric to the Python harness
    * `open_session`.
    */
   openSession(): Promise<CompatibilitySession>;

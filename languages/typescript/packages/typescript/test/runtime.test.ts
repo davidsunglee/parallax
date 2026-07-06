@@ -54,7 +54,9 @@ class StubDatabase implements ParallaxDatabase {
 }
 
 /** The scalars descriptor (`ScalarThing`, the only in-corpus `bytes`-bearing model). */
-const SCALARS = loadCase("core/compatibility/cases/0003-scalar-types-roundtrip.yaml").descriptor;
+const SCALARS = loadCase(
+  "core/compatibility/cases/m-core-001-scalar-types-roundtrip.yaml",
+).descriptor;
 
 describe("EntityFinder no-arg find() shorthand (spec §2.3)", () => {
   it("compiles find() with no predicate to an `all` read (no where clause)", async () => {

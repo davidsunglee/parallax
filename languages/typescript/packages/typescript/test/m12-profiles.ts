@@ -23,89 +23,123 @@ export interface MatrixProfile {
 }
 
 export const POSTGRES_READ_PROFILE_IDS: readonly string[] = [
-  "0001",
-  "0002",
-  "0006",
-  ...Array.from({ length: 32 }, (_, i) => String(201 + i).padStart(4, "0")),
+  "m-op-algebra-001",
+  "m-op-algebra-002",
+  "m-descriptor-001",
+  ...Array.from({ length: 32 }, (_, i) => `m-op-algebra-${String(3 + i).padStart(3, "0")}`),
 ];
 
-export const POSTGRES_GRAPH_PROFILE_IDS: readonly string[] = Array.from({ length: 23 }, (_, i) =>
-  String(301 + i).padStart(4, "0"),
-);
+export const POSTGRES_GRAPH_PROFILE_IDS: readonly string[] = [
+  "m-navigate-001",
+  "m-navigate-002",
+  "m-navigate-003",
+  "m-navigate-004",
+  "m-navigate-005",
+  "m-navigate-006",
+  "m-navigate-007",
+  "m-navigate-008",
+  "m-navigate-009",
+  "m-navigate-010",
+  "m-navigate-011",
+  "m-deep-fetch-001",
+  "m-deep-fetch-002",
+  "m-deep-fetch-003",
+  "m-deep-fetch-004",
+  "m-deep-fetch-005",
+  "m-deep-fetch-006",
+  "m-deep-fetch-007",
+  "m-deep-fetch-008",
+  "m-deep-fetch-009",
+  "m-deep-fetch-010",
+  "m-deep-fetch-011",
+  "m-deep-fetch-012",
+];
 
 export const POSTGRES_TXN_PROFILE_IDS: readonly string[] = [
-  "0603",
-  "0604",
-  "0607",
-  "0608",
-  "0609",
-  "0611",
-  "0612",
-  "0613",
-  "0614",
-  "0615",
-  "0703",
-  "0704",
-  "0708",
-  "0710",
-  "0728",
-  "0729",
-  "0730",
-  "0731",
-  "0732",
-  "0733",
-  "0734",
+  "m-read-lock-001",
+  "m-batch-write-001",
+  "m-unit-work-001",
+  "m-unit-work-002",
+  "m-opt-lock-001",
+  "m-opt-lock-002",
+  "m-unit-work-003",
+  "m-batch-write-002",
+  "m-opt-lock-003",
+  "m-opt-lock-004",
+  "m-opt-lock-005",
+  "m-opt-lock-006",
+  "m-opt-lock-007",
+  "m-opt-lock-009",
+  "m-read-lock-006",
+  "m-read-lock-007",
+  "m-temporal-read-009",
+  "m-temporal-read-010",
+  "m-temporal-read-011",
+  "m-temporal-read-012",
+  "m-read-lock-008",
 ];
 
 export const POSTGRES_TEMPORAL_PROFILE_IDS: readonly string[] = [
-  "0004",
-  "0005",
-  "0501",
-  "0502",
-  "0503",
-  "0504",
-  "0505",
-  "0506",
-  "0507",
-  "0508",
-  "0510",
-  "0511",
-  "0512",
-  "0801",
-  "0802",
-  "0803",
-  "0804",
-  "0805",
-  ...Array.from({ length: 13 }, (_, i) => String(324 + i).padStart(4, "0")),
+  "m-core-002",
+  "m-core-003",
+  "m-temporal-read-001",
+  "m-temporal-read-002",
+  "m-temporal-read-003",
+  "m-temporal-read-004",
+  "m-temporal-read-005",
+  "m-temporal-read-006",
+  "m-temporal-read-007",
+  "m-temporal-read-008",
+  "m-audit-write-001",
+  "m-audit-write-002",
+  "m-audit-write-003",
+  "m-temporal-read-013",
+  "m-temporal-read-014",
+  "m-temporal-read-015",
+  "m-temporal-read-016",
+  "m-temporal-read-017",
+  ...Array.from({ length: 13 }, (_, i) => `m-navigate-${String(12 + i).padStart(3, "0")}`),
 ];
 
 export const MARIADB_FLAT_READ_PROFILE_IDS: readonly string[] = [
-  "0002",
-  "0006",
-  "0214",
-  "0216",
-  "0224",
-  "0301",
-  "1001",
-  "1002",
-  "1005",
+  "m-op-algebra-002",
+  "m-descriptor-001",
+  "m-op-algebra-016",
+  "m-op-algebra-018",
+  "m-op-algebra-026",
+  "m-navigate-001",
+  "m-read-lock-009",
+  "m-temporal-read-021",
+  "m-core-004",
 ];
 
 export const MARIADB_DEEP_FETCH_PROFILE_IDS: readonly string[] = [
-  "0323",
-  "0325",
-  "0327",
-  "0332",
-  "0336",
+  "m-deep-fetch-012",
+  "m-navigate-013",
+  "m-navigate-015",
+  "m-navigate-020",
+  "m-navigate-024",
 ];
 
-export const MARIADB_WRITE_PROFILE_IDS: readonly string[] = ["0004", "0005", "0510"];
+export const MARIADB_WRITE_PROFILE_IDS: readonly string[] = [
+  "m-core-002",
+  "m-core-003",
+  "m-audit-write-001",
+];
 
-export const MARIADB_UNIQUE_PROFILE_IDS: readonly string[] = ["0720", "0721", "0722", "0727"];
+export const MARIADB_UNIQUE_PROFILE_IDS: readonly string[] = [
+  "m-db-error-001",
+  "m-db-error-002",
+  "m-db-error-003",
+  "m-db-error-008",
+];
 
-export const MARIADB_DEADLOCK_PROFILE_IDS: readonly string[] = ["0723", "0724"];
+export const MARIADB_DEADLOCK_PROFILE_IDS: readonly string[] = ["m-db-error-004", "m-db-error-005"];
 
-export const MARIADB_LOCK_WAIT_PROFILE_IDS: readonly string[] = ["0725", "0726"];
+export const MARIADB_LOCK_WAIT_PROFILE_IDS: readonly string[] = [
+  "m-db-error-006",
+  "m-db-error-007",
+];
 
 export const MARIADB_CURATED_PROFILE_IDS: readonly string[] = [
   ...MARIADB_FLAT_READ_PROFILE_IDS,
@@ -129,21 +163,21 @@ export const POSTGRES_FULL_PROFILE: MatrixProfile = {
 export const POSTGRES_READ_PROFILE: MatrixProfile = fixedIdProfile(
   "postgres-read-focused",
   "postgres",
-  "Historical Docker-backed 00xx/02xx read profile, now a named subset.",
+  "Historical Docker-backed single-entity read profile, now a named subset.",
   POSTGRES_READ_PROFILE_IDS,
 );
 
 export const POSTGRES_GRAPH_PROFILE: MatrixProfile = fixedIdProfile(
   "postgres-graph-focused",
   "postgres",
-  "Historical Docker-backed non-temporal 03xx graph profile, now a named subset.",
+  "Historical Docker-backed non-temporal navigation graph profile, now a named subset.",
   POSTGRES_GRAPH_PROFILE_IDS,
 );
 
 export const POSTGRES_TXN_PROFILE: MatrixProfile = fixedIdProfile(
   "postgres-txn-focused",
   "postgres",
-  "Historical Docker-backed 06xx/07xx transaction profile, now a named subset.",
+  "Historical Docker-backed transaction profile, now a named subset.",
   POSTGRES_TXN_PROFILE_IDS,
 );
 
@@ -246,7 +280,7 @@ function hasMariaDbGolden(loaded: LoadedCase): boolean {
 }
 
 function caseId(path: string): string {
-  const match = /(\d{4})-[^/]*\.ya?ml$/.exec(path);
+  const match = /(m-[a-z0-9-]+-\d{3})-[^/]*\.ya?ml$/.exec(path);
   if (match === null) {
     throw new Error(`cannot derive case id from '${path}'`);
   }

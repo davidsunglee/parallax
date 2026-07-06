@@ -9,19 +9,19 @@
  * {@link MariaDbProvider}), and is graded on BOTH the observed result (rows / graph
  * / table state, under the shared M12 comparison rules) AND the emitted SQL
  * (`emission.sql === goldenSql.mariadb`). This is where MariaDB's divergences —
- * backtick quoting (`0006`), `is null,` NULL ordering (`0323`), ` lock in share
- * mode` (`1001`), max-sentinel infinity (`1002` / `0510`), the scalar-type map +
- * `hex()` (`1005`), and errno classification (`0720`-`0727`) — are proven by a real
+ * backtick quoting (`m-descriptor-001`), `is null,` NULL ordering (`m-deep-fetch-012`), ` lock in share
+ * mode` (`m-read-lock-009`), max-sentinel infinity (`m-temporal-read-021` / `m-audit-write-001`), the scalar-type map +
+ * `hex()` (`m-core-004`), and errno classification (`m-db-error-001`-`m-db-error-008`) — are proven by a real
  * round trip, not only by the Docker-free compile-golden / dialect-unit lanes.
  *
  * The 25-case set (14 `slice-mvp-1 ∩ goldenSql.mariadb` + 11 marquee proofs):
- *   - flat reads:  `0002 0006 0214 0216 0224 0301 1001 1002 1005`
- *   - deep fetch:  `0323 0325 0327 0332 0336`
- *   - writes:      `0004 0005 0510`
- *   - errno:       `0720`-`0727` (uniqueViolation / deadlock / lock-wait timeout)
+ *   - flat reads:  `m-op-algebra-002 m-descriptor-001 m-op-algebra-016 m-op-algebra-018 m-op-algebra-026 m-navigate-001 m-read-lock-009 m-temporal-read-021 m-core-004`
+ *   - deep fetch:  `m-deep-fetch-012 m-navigate-013 m-navigate-015 m-navigate-020 m-navigate-024`
+ *   - writes:      `m-core-002 m-core-003 m-audit-write-001`
+ *   - errno:       `m-db-error-001`-`m-db-error-008` (uniqueViolation / deadlock / lock-wait timeout)
  *
  * The errno family asserts the thrown `ParallaxTransientError` / neutral category
- * via the adapter's classifier, and `0723`-`0726` drive the TWO-CONNECTION
+ * via the adapter's classifier, and `m-db-error-004`-`m-db-error-007` drive the TWO-CONNECTION
  * `concurrency.rounds` choreography (the multi-connection harness, not single-shot
  * reads). Skipped when Docker is unavailable (reported, never silently passed);
  * this lane REQUIRES Docker (Testcontainers).

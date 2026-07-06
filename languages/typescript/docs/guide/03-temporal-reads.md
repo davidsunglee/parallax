@@ -6,7 +6,7 @@ Temporal reads pin one or both axes with `{ asOf }`, a `range`, or full `history
 
 Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/temporal.api-conformance.test.ts`).
 
-## 0330-exists-temporal-hop
+## m-navigate-018-exists-temporal-hop
 
 ```ts
 buildFindOperation(Policy.coverages.exists(Coverage.amount.gte(600.0)), {
@@ -14,21 +14,21 @@ temporal: { asOf: { processing: "now", business: "now" }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0335-exists-temporal-hop-defaulted
+## m-navigate-023-exists-temporal-hop-defaulted
 
 ```ts
 Policy.coverages.exists(Coverage.amount.gte(600.0))
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0501-as-of-now-defaulted
+## m-temporal-read-001-as-of-now-defaulted
 
 ```ts
 buildFindOperation(all())
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0502-as-of-now-explicit
+## m-temporal-read-002-as-of-now-explicit
 
 ```ts
 buildFindOperation(all(), {
@@ -36,7 +36,7 @@ temporal: { asOf: { processing: "now" }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0503-as-of-past-instant
+## m-temporal-read-003-as-of-past-instant
 
 ```ts
 buildFindOperation(all(), {
@@ -44,7 +44,7 @@ temporal: { asOf: { processing: at("2024-04-01T00:00:00+00:00") }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0504-history
+## m-temporal-read-004-history
 
 ```ts
 buildFindOperation(new Predicate({ eq: { attr: "Balance.id", value: 1 } }), {
@@ -52,7 +52,7 @@ temporal: { history: ["processing"]
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0505-as-of-now-with-predicate
+## m-temporal-read-005-as-of-now-with-predicate
 
 ```ts
 buildFindOperation(Balance.acctNum.eq("A"), {
@@ -60,7 +60,7 @@ temporal: { asOf: { processing: "now" }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0506-as-of-range
+## m-temporal-read-006-as-of-range
 
 ```ts
 buildFindOperation(all(), {
@@ -72,7 +72,7 @@ temporal: {
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0507-as-of-boundary-exclusive
+## m-temporal-read-007-as-of-boundary-exclusive
 
 ```ts
 buildFindOperation(all(), {
@@ -80,7 +80,7 @@ temporal: { asOf: { processing: at("2024-06-01T00:00:00+00:00") }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0508-as-of-boundary-inclusive
+## m-temporal-read-008-as-of-boundary-inclusive
 
 ```ts
 buildFindOperation(all(), {
@@ -88,7 +88,7 @@ temporal: { asOf: { processing: at("2024-06-01T00:00:00+00:00") }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0801-bitemporal-as-of-now-both-axes
+## m-temporal-read-013-bitemporal-as-of-now-both-axes
 
 ```ts
 buildFindOperation(all(), {
@@ -96,7 +96,7 @@ temporal: { asOf: { processing: "now", business: "now" }
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0802-bitemporal-business-past-processing-now
+## m-temporal-read-014-bitemporal-business-past-processing-now
 
 ```ts
 buildFindOperation(all(), {
@@ -105,7 +105,7 @@ temporal: {
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0803-bitemporal-both-axes-past
+## m-temporal-read-015-bitemporal-both-axes-past
 
 ```ts
 buildFindOperation(all(), {
@@ -116,7 +116,7 @@ temporal: {
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0804-bitemporal-history
+## m-temporal-read-016-bitemporal-history
 
 ```ts
 buildFindOperation(new Predicate({ eq: { attr: "Position.id", value: 1 } }), {
@@ -124,7 +124,7 @@ temporal: { history: ["processing", "business"]
 const rows = await px.entity(entity).find(base, options).toArray();
 ```
 
-## 0805-bitemporal-omitted-processing-default
+## m-temporal-read-017-bitemporal-omitted-processing-default
 
 ```ts
 buildFindOperation(all(), {

@@ -7,12 +7,12 @@
  * compiling the operation against `mariadbDialect` must emit `goldenSql.mariadb`
  * byte-for-byte. The three witnesses:
  *
- *  - `0006` — the quote CHARACTER: MariaDB backticks (`` t0.`order` ``) vs Postgres
- *    double-quotes, applied per identifier (the standalone read-projection quoting
- *    helpers now thread the injected dialect — the deferred Phase-2 conversion);
- *  - `0323` — NULL ordering: MariaDB's leading `is null,` term (no `NULLS LAST`
- *    syntax), exercised on the deep-fetch CHILD level via `mariadbDialect.orderByTerm`;
- *  - `1001` — the read-lock spelling: MariaDB's unaliased ` lock in share mode`.
+ *  - `m-descriptor-001` — the quote CHARACTER: MariaDB backticks (`` t0.`order` ``)
+ *    vs Postgres double-quotes, applied per identifier (the standalone read-projection
+ *    quoting helpers now thread the injected dialect — the deferred Phase-2 conversion);
+ *  - `m-deep-fetch-012` — NULL ordering: MariaDB's leading `is null,` term (no
+ *    `NULLS LAST` syntax), exercised on the deep-fetch CHILD level via `mariadbDialect.orderByTerm`;
+ *  - `m-read-lock-009` — the read-lock spelling: MariaDB's unaliased ` lock in share mode`.
  *
  * These compile BELOW the harness claim gate (which claims Postgres only — the
  * `slice-sweep` honesty test pins `runCompile(…, "mariadb")` → `unsupported-dialect`),
@@ -28,7 +28,7 @@ import { buildDeepFetchPlan } from "../src/deepfetch-plan.js";
 import { discoverCasePaths, type LoadedCase, loadCase } from "../src/discover.js";
 import { schemaForReadCase } from "../src/schema-resolver.js";
 
-/** Load a corpus case by its four-digit id (throws if the id is not discovered). */
+/** Load a corpus case by its per-module id (throws if the id is not discovered). */
 function caseById(id: string): LoadedCase {
   const path = discoverCasePaths().find((p) => new RegExp(`/${id}-`).test(p));
   if (path === undefined) {
@@ -58,18 +58,18 @@ function compileFlat(loaded: LoadedCase): string {
 }
 
 describe("MariaDB compile-golden lane — emitted === goldenSql.mariadb (Docker-free)", () => {
-  it("0006 quotes a reserved-word identifier with backticks (per identifier)", () => {
-    const loaded = caseById("0006");
+  it("m-descriptor-001 quotes a reserved-word identifier with backticks (per identifier)", () => {
+    const loaded = caseById("m-descriptor-001");
     expect(compileFlat(loaded)).toBe(mariadbGolden(loaded));
   });
 
-  it("1001 appends MariaDB's ` lock in share mode` shared read-lock", () => {
-    const loaded = caseById("1001");
+  it("m-read-lock-009 appends MariaDB's ` lock in share mode` shared read-lock", () => {
+    const loaded = caseById("m-read-lock-009");
     expect(compileFlat(loaded)).toBe(mariadbGolden(loaded));
   });
 
-  it("0323 orders a nullable deep-fetch level with the leading `is null,` term", () => {
-    const loaded = caseById("0323");
+  it("m-deep-fetch-012 orders a nullable deep-fetch level with the leading `is null,` term", () => {
+    const loaded = caseById("m-deep-fetch-012");
     const golden = mariadbGolden(loaded) as readonly string[];
     const plan = buildDeepFetchPlan(loaded, mariadbDialect);
 
@@ -82,7 +82,7 @@ describe("MariaDB compile-golden lane — emitted === goldenSql.mariadb (Docker-
     // authored root binds `[1, 42]` fix that arity.
     const child = plan.tree[0];
     if (child === undefined) {
-      throw new Error("0323 deep-fetch plan has no child level");
+      throw new Error("m-deep-fetch-012 deep-fetch plan has no child level");
     }
     const level = child.compileLevel([1, 42]);
     expect(level.sql).toBe(golden[1]);

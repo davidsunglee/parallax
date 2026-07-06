@@ -333,7 +333,7 @@ def _deepfetch_root_entity(case: Case) -> Entity:
 
 
 # Canonical as-of axis order: business terms precede processing terms in both the
-# golden SQL clause order and the bind order (M7 bitemporal table; case 0803).
+# golden SQL clause order and the bind order (M7 bitemporal table; case m-temporal-read-015).
 _CANONICAL_AXIS_ORDER: tuple[str, ...] = ("business", "processing")
 
 
@@ -341,7 +341,7 @@ def _peel_directive_wrappers(node: Any) -> Any:
     """Descend past the result-directive wrappers (``distinct`` / ``orderBy`` /
     ``limit``) that the root compile peels *before* the temporal wrappers, returning
     the innermost node. Without this, a directive-wrapped temporal root (e.g.
-    ``limit(orderBy(asOf(...)))``, case 0336) would seed no child propagation pins
+    ``limit(orderBy(asOf(...)))``, case m-navigate-024) would seed no child propagation pins
     and the child would wrongly default to now (mismatching the authored instant).
     """
     while isinstance(node, dict):
@@ -1180,7 +1180,7 @@ def _assert_insert_input(
         return
     version_col = _version_column(entity)
     # A pk-gen `sequence` insert step emits one single-row INSERT per allocated id
-    # (statements == rows); a set-based batched insert (0604) is one multi-row INSERT.
+    # (statements == rows); a set-based batched insert (m-batch-write-001) is one multi-row INSERT.
     per_row = len(step_statements) == len(classified) and len(step_statements) > 1
     if per_row:
         for cls, statement, binds in zip(classified, step_statements, step_binds, strict=True):
@@ -1249,7 +1249,7 @@ def _assert_versioned_update_input(
     The golden SET clause is the domain set columns + the framework-owned ``version``
     column (advanced ``observedVersion + 1``, DERIVED — never authored in ①). The
     binds are ``[…set values…, newVersion, pk]`` in the default LOCKING mode
-    (``0611`` / ``0702`` — the M8 shared read lock makes the write correct, so no
+    (``m-opt-lock-002`` / ``m-detach-002`` — the M8 shared read lock makes the write correct, so no
     ``and version = ?`` gate) or ``[…, newVersion, pk, observedVersion]`` in
     optimistic mode. One golden statement per ① row.
     """
@@ -1497,10 +1497,10 @@ def _assert_until_input(
 def _conflict_versioned_entity(case: Case) -> Entity | None:
     """The versioned entity a conflict case targets, or None (a temporal close).
 
-    A versioned conflict (``0703`` / ``0704`` / ``0708`` / ``0709`` / ``0710``)
-    gates on a version column; a temporal / bitemporal close (``0730``-``0733`` /
-    ``0813`` / ``0814``) has none and carries a different ① (see
-    :func:`_assert_temporal_conflict_input`).
+    A versioned conflict (``m-opt-lock-005`` through ``m-opt-lock-009``) gates on a
+    version column; a temporal / bitemporal close (``m-temporal-read-009`` through
+    ``m-temporal-read-012`` / ``m-bitemp-write-004`` / ``m-bitemp-write-005``) has none
+    and carries a different ① (see :func:`_assert_temporal_conflict_input`).
     """
     for entity in case.model.entities:
         if _version_column(entity) is not None:
@@ -1511,8 +1511,9 @@ def _conflict_versioned_entity(case: Case) -> Entity | None:
 def _conflict_temporal_entity(case: Case) -> Entity | None:
     """The processing-axis TEMPORAL entity a conflict-close case targets, or None.
 
-    A temporal / bitemporal conflict close (``0730``-``0733`` / ``0813`` / ``0814``)
-    carries no version column; it locks via the observed processing-from (``in_z``),
+    A temporal / bitemporal conflict close (``m-temporal-read-009`` through
+    ``m-temporal-read-012`` / ``m-bitemp-write-004`` / ``m-bitemp-write-005``) carries no
+    version column; it locks via the observed processing-from (``in_z``),
     so the target is the first entity with a processing as-of axis.
     """
     for entity in case.model.entities:
@@ -2319,8 +2320,8 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
     """Two-node, barrier-synchronized rounds that assert NO error and each read's rows.
 
     The non-error counterpart of :func:`_assert_error_concurrency`, reusing the same
-    barrier + two ``open_session`` plumbing: ``0729`` (both readers take the shared
-    lock and BOTH succeed -- shared, not exclusive) and ``0734`` (A holds an UNLOCKED
+    barrier + two ``open_session`` plumbing: ``m-read-lock-007`` (both readers take the shared
+    lock and BOTH succeed -- shared, not exclusive) and ``m-read-lock-008`` (A holds an UNLOCKED
     projection, B's UPDATE is admitted -- no lock to block it). Each node runs its
     round steps on its own held non-autocommit session; a ``kind: read`` step is
     fetched on that HELD session (``session.query`` -- inside the open transaction, so
@@ -2363,7 +2364,8 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
                             )
                     else:
                         # A write step (kind: write): succeeds iff no lock blocks it
-                        # (0734's admitted UPDATE); it holds until the finally rolls it back.
+                        # (m-read-lock-008's admitted UPDATE); it holds until the finally
+                        # rolls it back.
                         session.execute(sql, binds)
                 except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
                     raised[node] = exc
@@ -2564,8 +2566,9 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         # execution — so this lane runs even with no provider bound).
         _assert_schema(case)
         if not case.is_boundary:
-            # A read-shape api-conformance case (the read-lock matrix `0616`-`0619`)
-            # still round-trips its operation + descriptor through the serde seam.
+            # A read-shape api-conformance case (the read-lock matrix
+            # `m-read-lock-002`-`m-read-lock-005`) still round-trips its operation +
+            # descriptor through the serde seam.
             _assert_serde(case)
             _assert_equivalent_encodings(case)
         return
@@ -2635,8 +2638,9 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         return
 
     if case.is_concurrency_success:
-        # A concurrency-success case (M8 behavioral read-lock: 0729/0734) also carries
-        # its golden per round inside `concurrency.rounds` (no top-level goldenSql), so
+        # A concurrency-success case (M8 behavioral read-lock:
+        # m-read-lock-007/m-read-lock-008) also carries its golden per round inside
+        # `concurrency.rounds` (no top-level goldenSql), so
         # branch before the goldenSql access below, as a sibling of `is_error`.
         _assert_schema(case)
         _assert_serde(case)  # descriptor serde only (no operation)

@@ -537,7 +537,7 @@ success exactly **one** row is affected and its version advances.
 
 **Locking mode** issues the same statement **without** the version gate — the
 `M8` shared read lock, not the version, makes it correct — but still advances the
-version (the `0702` / detached-merge-back shape):
+version (the `m-detach-002` / detached-merge-back shape):
 
 ```text
 update account set balance = ?, version = ? where id = ?

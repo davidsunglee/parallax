@@ -106,7 +106,7 @@ export class RuntimeSchema implements SchemaResolver {
    * §3.2.1). The `encode(...,'hex')` lowering — which fires solely when a
    * projection carries `type === "bytes"` in the compiler — stays EXCLUSIVE to
    * the conformance `MetamodelSchema`/`readProjection` case-driven path (the
-   * `_hex` row-observation seam, case `0003`). Every non-bytes column keeps its
+   * `_hex` row-observation seam, case `m-core-001`). Every non-bytes column keeps its
    * M0 `type` (no consumer other than the bytes trigger, but harmless).
    */
   rootProjection(): readonly ProjectionColumn[] {

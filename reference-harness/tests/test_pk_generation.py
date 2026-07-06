@@ -7,6 +7,7 @@ DB state. These tests pin the pure derivation math and the failure path.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -25,6 +26,11 @@ from reference_harness.case_runner import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
+
+
+def _case_id(stem: str) -> str:
+    """The per-module id prefix of a case stem (`m-pk-gen-001-max-empty` → `m-pk-gen-001`)."""
+    return re.match(r"(m-[a-z0-9-]+-\d{3})", stem).group(1)
 
 
 # --- pure derivation -------------------------------------------------------
@@ -86,7 +92,7 @@ def _pass_case() -> SimpleNamespace:
             {"mutation": "update", "entity": "PkSequence"},
             {"mutation": "insert", "entity": "Pass"},
         ],
-        path=Path("0627-unit.yaml"),
+        path=Path("m-pk-gen-008-unit.yaml"),
     )
 
 
@@ -193,7 +199,7 @@ def _pkgen_case(stem_prefix: str):
 def test_pkgen_write_input_holds_for_authored_cases() -> None:
     cases = _pkgen_write_input_cases()
     # The `max` (computed) and `sequence` (increment) families both carry ①.
-    assert {case.path.stem[:4] for case in cases} >= {"0620", "0623"}
+    assert {_case_id(case.path.stem) for case in cases} >= {"m-pk-gen-001", "m-pk-gen-004"}
     for case in cases:
         # Must not raise: a `computed` pk column appears in the golden INSERT list
         # (its DB-derived bind skipped), an `increment` registry advance matches the
@@ -203,10 +209,10 @@ def test_pkgen_write_input_holds_for_authored_cases() -> None:
 
 
 def test_pkgen_max_computed_literal_corruption_is_rejected() -> None:
-    # `0620` is a pk-gen `max` insert: `{ id: { computed: maxPlusOne }, name: Ada }`.
+    # `m-pk-gen-001` is a pk-gen `max` insert: `{ id: { computed: maxPlusOne }, name: Ada }`.
     # The DB-computed `id` bind is skipped, but the LITERAL `name` is still cross-
     # checked — corrupt it so its ① value no longer matches the golden bind.
-    case = _pkgen_case("0620")
+    case = _pkgen_case("m-pk-gen-001")
     step = next(s for s in case.write_sequence if s.get("rows"))
     step["rows"][0]["name"] = "NotAda"
     with pytest.raises(CaseFailure):
@@ -214,9 +220,9 @@ def test_pkgen_max_computed_literal_corruption_is_rejected() -> None:
 
 
 def test_pkgen_sequence_increment_amount_corruption_is_rejected() -> None:
-    # `0623` step 1 advances the registry via `next_val = next_val + ?` by 1. Corrupt
+    # `m-pk-gen-004` step 1 advances the registry via `next_val = next_val + ?` by 1. Corrupt
     # the `{ increment: <n> }` amount so the DERIVED bind no longer matches the golden.
-    case = _pkgen_case("0623")
+    case = _pkgen_case("m-pk-gen-004")
     step = next(s for s in case.write_sequence if s["entity"] == "PkSequence")
     step["rows"][0]["nextVal"] = {"increment": 99}
     with pytest.raises(CaseFailure):

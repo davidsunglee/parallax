@@ -13,6 +13,7 @@ exercised end-to-end against real Postgres by the compatibility suite.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
 
+def _case_id(stem: str) -> str:
+    """The per-module id prefix of a case stem (drops the trailing ``-<slug>``)."""
+    return re.match(r"(m-[a-z0-9-]+-\d{3})", stem).group(1)
+
+
 def _position_model():
     return load_model(COMPATIBILITY_ROOT, "models/position.yaml")
 
@@ -38,8 +44,20 @@ def _reservation_model():
     return load_model(COMPATIBILITY_ROOT, "models/reservation.yaml")
 
 
+_PHASE8_MODULES = ("m-temporal-read", "m-bitemp-write", "m-business-only")
+
+
 def _phase8_cases():
-    return [c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith("08")]
+    """The full-bitemporal + business-temporal single-entity cases (formerly the 08xx
+    range): reads/writes on the bitemporal/business models, excluding the audit-only
+    reads and the relationship-propagation deep-fetch cases (which also carry a
+    temporal flavor but file under `m-navigate`)."""
+    return [
+        c
+        for c in discover_cases(COMPATIBILITY_ROOT)
+        if any(c.path.stem.startswith(f"{module}-") for module in _PHASE8_MODULES)
+        and ("bitemporal" in c.tags or "business_temporal" in c.tags)
+    ]
 
 
 def test_position_is_bitemporal_with_both_axes() -> None:
@@ -98,7 +116,9 @@ def test_business_only_unique_index_matches_physical_primary_key() -> None:
 
 
 def test_bitemporal_history_case_suppresses_both_axes() -> None:
-    history_case = next(c for c in _phase8_cases() if c.path.stem == "0804-bitemporal-history")
+    history_case = next(
+        c for c in _phase8_cases() if c.path.stem == "m-temporal-read-016-bitemporal-history"
+    )
     business_history = history_case.operation["history"]
     processing_history = business_history["operand"]["history"]
     assert business_history["asOfAttr"] == "Position.businessDate"
@@ -131,7 +151,11 @@ def _temporal_write_input_cases():
 def test_temporal_write_input_holds_for_authored_cases() -> None:
     cases = _temporal_write_input_cases()
     # The Phase 3 in-slice audit trio all carry ① (rows + at).
-    assert {case.path.stem[:4] for case in cases} >= {"0510", "0511", "0512"}
+    assert {_case_id(case.path.stem) for case in cases} >= {
+        "m-audit-write-001",
+        "m-audit-write-002",
+        "m-audit-write-003",
+    }
     for case in cases:
         # Must not raise: each audit-only ① derives in_z = at / out_z = infinity and
         # the full-row binds that cross-check the authored golden binds.
@@ -139,7 +163,9 @@ def test_temporal_write_input_holds_for_authored_cases() -> None:
 
 
 def test_temporal_write_input_at_corruption_is_rejected() -> None:
-    case = next(c for c in _temporal_write_input_cases() if c.path.stem.startswith("0510"))
+    case = next(
+        c for c in _temporal_write_input_cases() if c.path.stem.startswith("m-audit-write-001")
+    )
     step = next(s for s in case.write_sequence if s.get("rows"))
     # Corrupt the transaction instant: the DERIVED in_z bind no longer matches the
     # golden in_z bind, so the ① ↔ ② temporal gate MUST fail (in_z is derived from
@@ -150,7 +176,8 @@ def test_temporal_write_input_at_corruption_is_rejected() -> None:
 
 
 def _until_write_cases():
-    """Full-bitemporal `*Until` rectangle-split write-sequence cases (`0810`-`0812`)."""
+    """Full-bitemporal `*Until` rectangle-split write-sequence cases
+    (`m-bitemp-write-001`-`m-bitemp-write-003`)."""
     return [
         case
         for case in _phase8_cases()
@@ -165,7 +192,11 @@ def _until_write_cases():
 def test_until_write_input_holds_for_authored_cases() -> None:
     cases = _until_write_cases()
     # The `*Until` trio all carry the valid-time window ① (rows + at + until).
-    assert {case.path.stem[:4] for case in cases} >= {"0810", "0811", "0812"}
+    assert {_case_id(case.path.stem) for case in cases} >= {
+        "m-bitemp-write-001",
+        "m-bitemp-write-002",
+        "m-bitemp-write-003",
+    }
     for case in cases:
         # Must not raise: the close binds [at, pk, infinity], every chained insert
         # opens at fresh processing [at, infinity), and the business window bounds
@@ -174,7 +205,7 @@ def test_until_write_input_holds_for_authored_cases() -> None:
 
 
 def test_until_write_input_window_corruption_is_rejected() -> None:
-    case = next(c for c in _until_write_cases() if c.path.stem.startswith("0810"))
+    case = next(c for c in _until_write_cases() if c.path.stem.startswith("m-bitemp-write-001"))
     step = next(s for s in case.write_sequence if s.get("until"))
     # Corrupt the business valid-time window end: `until` no longer appears among the
     # chained inserts' business-axis binds, so the `*Until` ① ↔ ② window gate MUST
@@ -185,7 +216,8 @@ def test_until_write_input_window_corruption_is_rejected() -> None:
 
 
 def _business_write_cases():
-    """Business-temporal-only milestone-chaining write cases (`0822`-`0824`)."""
+    """Business-temporal-only milestone-chaining write cases
+    (`m-business-only-001`-`m-business-only-003`)."""
     return [
         case
         for case in discover_cases(COMPATIBILITY_ROOT)
@@ -199,7 +231,11 @@ def test_business_write_input_holds_for_authored_cases() -> None:
     cases = _business_write_cases()
     # The business-only insert / update-chaining / terminate trio all carry ①
     # (rows + businessAt).
-    assert {case.path.stem[:4] for case in cases} >= {"0822", "0823", "0824"}
+    assert {_case_id(case.path.stem) for case in cases} >= {
+        "m-business-only-001",
+        "m-business-only-002",
+        "m-business-only-003",
+    }
     for case in cases:
         # Must not raise: each business-only ① derives from_z = businessAt /
         # thru_z = infinity and the full-row binds that cross-check the golden binds
@@ -209,7 +245,7 @@ def test_business_write_input_holds_for_authored_cases() -> None:
 
 
 def test_business_write_input_business_at_corruption_is_rejected() -> None:
-    case = next(c for c in _business_write_cases() if c.path.stem.startswith("0824"))
+    case = next(c for c in _business_write_cases() if c.path.stem.startswith("m-business-only-003"))
     step = next(s for s in case.write_sequence if s.get("businessAt"))
     # Corrupt the business instant: the DERIVED from_z bind no longer matches the
     # golden from_z bind, so the business-temporal ① ↔ ② gate MUST fail (from_z is
@@ -220,7 +256,8 @@ def test_business_write_input_business_at_corruption_is_rejected() -> None:
 
 
 def _bitemporal_conflict_close_cases():
-    """Bitemporal conflict-close cases (`0813` / `0814`): a business + processing axis."""
+    """Bitemporal conflict-close cases (`m-bitemp-write-004` / `m-bitemp-write-005`):
+    a business + processing axis."""
     return [
         case
         for case in discover_cases(COMPATIBILITY_ROOT)
@@ -235,7 +272,10 @@ def _bitemporal_conflict_close_cases():
 
 def test_bitemporal_conflict_close_input_holds_for_authored_cases() -> None:
     cases = _bitemporal_conflict_close_cases()
-    assert {case.path.stem[:4] for case in cases} >= {"0813", "0814"}
+    assert {_case_id(case.path.stem) for case in cases} >= {
+        "m-bitemp-write-004",
+        "m-bitemp-write-005",
+    }
     for case in cases:
         # Must not raise: the close ① derives [at, pk, infinity, businessFrom,
         # observedInZ] — the metamodel names the from_z discriminator column, ①
@@ -244,7 +284,11 @@ def test_bitemporal_conflict_close_input_holds_for_authored_cases() -> None:
 
 
 def test_bitemporal_conflict_close_business_from_corruption_is_rejected() -> None:
-    case = next(c for c in _bitemporal_conflict_close_cases() if c.path.stem.startswith("0813"))
+    case = next(
+        c
+        for c in _bitemporal_conflict_close_cases()
+        if c.path.stem.startswith("m-bitemp-write-004")
+    )
     # Corrupt the business discriminator VALUE: the DERIVED from_z gate bind no longer
     # matches the golden bind, so the bitemporal close ① ↔ ② gate MUST fail.
     case.raw["write"]["businessFrom"] = "1999-12-31T00:00:00+00:00"

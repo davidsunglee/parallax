@@ -8,7 +8,7 @@
  * corpus's canonical `operation` — the no-drift guard (`assertSameOperation`) — and
  * the returned MANAGED rows equal the corpus `expectedRows` (Phase-4 rules) with the
  * managed shapes (10b). An OMITTED axis is left unwrapped (M7 default-injection at
- * the compiler); an explicit `now` still emits an `asOf … now` wrapper (`0502`).
+ * the compiler); an explicit `now` still emits an `asOf … now` wrapper (`m-temporal-read-002`).
  */
 
 import { Temporal } from "@parallax/core";
@@ -61,7 +61,7 @@ interface Row {
 const CASES: readonly Row[] = [
   // exists-temporal-hop flat reads
   {
-    stem: "0330-exists-temporal-hop",
+    stem: "m-navigate-018-exists-temporal-hop",
     entity: "Policy",
     build: () =>
       buildFindOperation(Policy.coverages.exists(Coverage.amount.gte(600.0)), {
@@ -70,14 +70,18 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0335-exists-temporal-hop-defaulted",
+    stem: "m-navigate-023-exists-temporal-hop-defaulted",
     entity: "Policy",
     build: () => Policy.coverages.exists(Coverage.amount.gte(600.0)).toOperation(),
   },
   // processing-axis reads (05xx)
-  { stem: "0501-as-of-now-defaulted", entity: "Balance", build: () => buildFindOperation(all()) },
   {
-    stem: "0502-as-of-now-explicit",
+    stem: "m-temporal-read-001-as-of-now-defaulted",
+    entity: "Balance",
+    build: () => buildFindOperation(all()),
+  },
+  {
+    stem: "m-temporal-read-002-as-of-now-explicit",
     entity: "Balance",
     build: () =>
       buildFindOperation(all(), {
@@ -86,7 +90,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0503-as-of-past-instant",
+    stem: "m-temporal-read-003-as-of-past-instant",
     entity: "Balance",
     build: () =>
       buildFindOperation(all(), {
@@ -95,7 +99,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0504-history",
+    stem: "m-temporal-read-004-history",
     entity: "Balance",
     build: () =>
       buildFindOperation(new Predicate({ eq: { attr: "Balance.id", value: 1 } }), {
@@ -104,7 +108,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0505-as-of-now-with-predicate",
+    stem: "m-temporal-read-005-as-of-now-with-predicate",
     entity: "Balance",
     build: () =>
       buildFindOperation(Balance.acctNum.eq("A"), {
@@ -113,7 +117,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0506-as-of-range",
+    stem: "m-temporal-read-006-as-of-range",
     entity: "Balance",
     build: () =>
       buildFindOperation(all(), {
@@ -129,7 +133,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0507-as-of-boundary-exclusive",
+    stem: "m-temporal-read-007-as-of-boundary-exclusive",
     entity: "Balance",
     build: () =>
       buildFindOperation(all(), {
@@ -138,7 +142,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0508-as-of-boundary-inclusive",
+    stem: "m-temporal-read-008-as-of-boundary-inclusive",
     entity: "Ledger",
     build: () =>
       buildFindOperation(all(), {
@@ -148,7 +152,7 @@ const CASES: readonly Row[] = [
   },
   // bitemporal reads (08xx) — business axis outside processing
   {
-    stem: "0801-bitemporal-as-of-now-both-axes",
+    stem: "m-temporal-read-013-bitemporal-as-of-now-both-axes",
     entity: "Position",
     build: () =>
       buildFindOperation(all(), {
@@ -157,7 +161,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0802-bitemporal-business-past-processing-now",
+    stem: "m-temporal-read-014-bitemporal-business-past-processing-now",
     entity: "Position",
     build: () =>
       buildFindOperation(all(), {
@@ -168,7 +172,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0803-bitemporal-both-axes-past",
+    stem: "m-temporal-read-015-bitemporal-both-axes-past",
     entity: "Position",
     build: () =>
       buildFindOperation(all(), {
@@ -182,7 +186,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0804-bitemporal-history",
+    stem: "m-temporal-read-016-bitemporal-history",
     entity: "Position",
     build: () =>
       buildFindOperation(new Predicate({ eq: { attr: "Position.id", value: 1 } }), {
@@ -191,7 +195,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0805-bitemporal-omitted-processing-default",
+    stem: "m-temporal-read-017-bitemporal-omitted-processing-default",
     entity: "Position",
     build: () =>
       buildFindOperation(all(), {
@@ -207,7 +211,7 @@ it("the temporal suite covers exactly the TEMPORAL family", () => {
 
 // Temporal reads are dialect-agnostic (the M7 axis wrapping lowers through the M11 seam),
 // so the suite fans out over every database `PARALLAX_DATABASES` selects. `MARIADB_GUARDED_
-// READS` (`_providers.ts`) is currently empty — the bitemporal `Position` cases (0801-0805)
+// READS` (`_providers.ts`) is currently empty — the bitemporal `Position` cases (m-temporal-read-013–m-temporal-read-017)
 // used to be guarded off MariaDB (a reserved-word gap), now fixed — but the guard mechanism
 // stays wired for a future dialect-specific gap.
 group.skipIf(!HAS_DOCKER).each(selectedProviders())("temporal reads suite ($label)", (dbp) => {

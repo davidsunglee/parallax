@@ -13,11 +13,11 @@
  *
  *  | form                    | statements | shape                                      |
  *  |-------------------------|------------|--------------------------------------------|
- *  | multi-row insert (0604) | 1          | `insert into t(cols) values (…), (…), (…)` |
- *  | uniform update  (0604)  | 1          | `update t set col = ? where pk in (?, …)`  |
- *  | per-key update  (0613)  | k          | one `update t set col = ? where pk = ?` ×k |
+ *  | multi-row insert (m-batch-write-001) | 1          | `insert into t(cols) values (…), (…), (…)` |
+ *  | uniform update  (m-batch-write-001)  | 1          | `update t set col = ? where pk in (?, …)`  |
+ *  | per-key update  (m-batch-write-002)  | k          | one `update t set col = ? where pk = ?` ×k |
  *
- * FK-insert ordering (0612) is a UNIT-OF-WORK concern (which entity's inserts run
+ * FK-insert ordering (m-unit-work-003) is a UNIT-OF-WORK concern (which entity's inserts run
  * first), so it lives in {@link ./uow.js}; each individual insert is a single-row
  * insert this module renders.
  */
@@ -38,7 +38,7 @@ export type BatchStatement = string;
 /**
  * Render a multi-row `insert` that collapses `rowCount` buffered inserts into one
  * statement (`insert into t(cols) values (?, …), (?, …), …`). A `rowCount` of 1
- * is the ordinary single-row insert (an FK-ordered insert step, `0612`).
+ * is the ordinary single-row insert (an FK-ordered insert step, `m-unit-work-003`).
  */
 export function multiRowInsert(target: BatchTarget, rowCount: number): BatchStatement {
   if (rowCount < 1) {
@@ -52,7 +52,7 @@ export function multiRowInsert(target: BatchTarget, rowCount: number): BatchStat
 
 /**
  * Render a uniform batched `update` over `keyCount` keys that share one new value
- * (`update t set <col> = ? where <pk> in (?, …)`). One statement — the `0604`
+ * (`update t set <col> = ? where <pk> in (?, …)`). One statement — the `m-batch-write-001`
  * form. The set column is passed unquoted-as-column-name so the caller quotes it
  * consistently with the metamodel.
  */
@@ -70,7 +70,7 @@ export function uniformUpdate(
 
 /**
  * Render ONE keyed `update` for a single distinct key that takes its OWN new
- * value (`update t set <col> = ? where <pk> = ?`). The `0613` per-key form emits
+ * value (`update t set <col> = ? where <pk> = ?`). The `m-batch-write-002` per-key form emits
  * one of these per distinct key (the caller repeats it `k` times, pairing each
  * with its own bind row) — the non-uniform complement of {@link uniformUpdate}.
  */

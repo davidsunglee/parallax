@@ -16,7 +16,7 @@
  * authored, not derived — `m12-compatibility-harness.md`): read-your-own-writes,
  * cache reuse and identity are observable RUN properties. This module resolves the
  * ordered steps + their authored golden/binds so the runner can execute them; the
- * `0607` slice is the single read-your-own-writes scenario (a committed insert +
+ * `m-unit-work-001` slice is the single read-your-own-writes scenario (a committed insert +
  * a dependent find that MUST observe it), `roundTrips` 2.
  */
 import type { LoadedCase } from "./discover.js";
@@ -111,7 +111,7 @@ function sumRoundTrips(steps: readonly ScenarioStep[]): number {
 /**
  * The binds for statement `index` of a (possibly MULTI-statement) scenario step.
  * A step with several golden statements (a versioned set-based materialize write —
- * one per-object `UPDATE` per row, `0614` / `0615`) carries a LIST-OF-LISTS `binds`,
+ * one per-object `UPDATE` per row, `m-opt-lock-003` / `m-opt-lock-004`) carries a LIST-OF-LISTS `binds`,
  * one bind list per statement; a single-statement step carries a flat list. Mirrors
  * the reference harness's `_binds_for_list`, so the TS runner slices per-statement
  * exactly as the Python harness does. A flat list is the binds for statement 0.

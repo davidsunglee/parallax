@@ -24,6 +24,20 @@ conformance-adapter contract.
 
 A case is a YAML document under `core/compatibility/cases/`, validated against
 [`core/schemas/compatibility-case.schema.json`](../schemas/compatibility-case.schema.json).
+
+A case's identity is its **filename**, `<module>-NNN-<slug>.yaml`: `<module>` is the
+primary module slug the case chiefly proves (the first module tag in its `tags`),
+`NNN` is a 3-digit sequence number unique **within that module** (not globally), and
+`<slug>` is a short descriptive name. The case **ID** is the `<module>-NNN` prefix
+(e.g. `m-batch-write-001`); a case carries no separate `id` field, and IDs need only
+be unique per primary module — numbering is never coordinated across modules.
+
+`m-` is a **reserved tag namespace**: a `tags` entry matching
+`^m-[a-z0-9]+(-[a-z0-9]+)*$` names a module and is validated against the closed
+catalog in [`modules.md`](modules.md); every other tag is a free-form feature tag. A
+case ID (`m-pk-gen-001`) also matches that grammar — a harmless overlap, since module
+identity is only ever resolved against the catalog, never inferred from a filename.
+
 Its fields:
 
 A case is one of eight shapes: a **read case** (carries an `operation`), a
@@ -48,7 +62,7 @@ The fields:
 | Field | Required | Meaning |
 |---|---|---|
 | `model` | yes | path (relative to `core/compatibility/`) to the model descriptor |
-| `tags` | yes | module/feature tags (e.g. `["m2", "eq"]`); drive coverage + test selection |
+| `tags` | yes | module/feature tags (e.g. `["m-op-algebra", "eq"]`); drive coverage + test selection |
 | `lane` | no | which executor satisfies the case (default `harness`): `harness` — the M12 harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
 | `operation` | read | a canonical M2 algebra node, validated against the operation schema (read cases) |
 | `writeSequence` | write | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only + business-only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the full-bitemporal rectangle split |

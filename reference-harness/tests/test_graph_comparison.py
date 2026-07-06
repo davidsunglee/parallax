@@ -91,7 +91,7 @@ def test_graph_comparison_is_order_insensitive_for_nested_to_many_lists() -> Non
 def test_empty_root_deep_fetch_executes_no_child_sql() -> None:
     case = load_case(
         COMPATIBILITY_ROOT,
-        COMPATIBILITY_ROOT / "cases" / "0315-deep-fetch-empty-root.yaml",
+        COMPATIBILITY_ROOT / "cases" / "m-deep-fetch-006-empty-root.yaml",
     )
     db = _RecordingEmptyRootDb()
 
@@ -192,11 +192,11 @@ class _OrderedItemsWrongOrderDb:
 
 def test_deep_fetch_runner_enforces_child_ordering():
     # Guards the WIRING: _assert_deep_fetch must invoke the ordering oracle.
-    # 0319 declares Order.items = id desc; the fake DB returns items ascending,
+    # m-deep-fetch-009 declares Order.items = id desc; the fake DB returns items ascending,
     # so the runner must raise — if the oracle call were removed, this fails.
     case = load_case(
         COMPATIBILITY_ROOT,
-        COMPATIBILITY_ROOT / "cases" / "0319-deep-fetch-ordered-items-desc.yaml",
+        COMPATIBILITY_ROOT / "cases" / "m-deep-fetch-009-ordered-items-desc.yaml",
     )
     with pytest.raises(CaseFailure):
         _assert_deep_fetch(case, _OrderedItemsWrongOrderDb())
@@ -321,7 +321,8 @@ def test_expected_suffix_non_temporal_child_is_empty():
 
 def test_root_pins_reads_nested_asof_by_axis():
     case = load_case(
-        COMPATIBILITY_ROOT, COMPATIBILITY_ROOT / "cases" / "0327-deepfetch-temporal-both-past.yaml"
+        COMPATIBILITY_ROOT,
+        COMPATIBILITY_ROOT / "cases" / "m-navigate-015-deepfetch-temporal-both-past.yaml",
     )
     assert _root_asof_pins(case) == {
         "business": "2024-03-01T00:00:00+00:00",
@@ -330,13 +331,13 @@ def test_root_pins_reads_nested_asof_by_axis():
 
 
 def test_root_pins_peels_result_directives_before_asof():
-    # 0336 wraps the temporal root in `limit(orderBy(asOf(asOf(all))))`. The pin
+    # m-navigate-024 wraps the temporal root in `limit(orderBy(asOf(asOf(all))))`. The pin
     # collector MUST descend past the result directives first (exactly as the root
     # compile peels distinct/orderBy/limit before the temporal wrappers); otherwise a
     # directive-wrapped root seeds NO pins and the child wrongly defaults to now.
     case = load_case(
         COMPATIBILITY_ROOT,
-        COMPATIBILITY_ROOT / "cases" / "0336-deepfetch-temporal-ordered-root.yaml",
+        COMPATIBILITY_ROOT / "cases" / "m-navigate-024-deepfetch-temporal-ordered-root.yaml",
     )
     assert _root_asof_pins(case) == {
         "business": "2024-03-01T00:00:00+00:00",
@@ -346,7 +347,7 @@ def test_root_pins_peels_result_directives_before_asof():
 
 class _WrongAsofChildDb:
     """Returns both fully-current Policies and both fully-current Coverages,
-    matching 0324's expectedGraph exactly. The ONLY thing that can fail is the
+    matching m-navigate-012's expectedGraph exactly. The ONLY thing that can fail is the
     corrupted as-of suffix in the authored binds. Used to prove the suffix
     enforcement block is load-bearing: without it, the graph matches and no
     CaseFailure is raised."""
@@ -364,11 +365,13 @@ class _WrongAsofChildDb:
 
 def test_deep_fetch_enforces_propagated_asof_suffix(tmp_path):
     # An otherwise-valid case whose child as-of suffix is WRONG must raise.
-    # Build it from 0324 with a corrupted level-1 suffix bind.
+    # Build it from m-navigate-012 with a corrupted level-1 suffix bind.
     import yaml
 
     src = yaml.safe_load(
-        (COMPATIBILITY_ROOT / "cases" / "0324-deepfetch-temporal-both-latest.yaml").read_text()
+        (
+            COMPATIBILITY_ROOT / "cases" / "m-navigate-012-deepfetch-temporal-both-latest.yaml"
+        ).read_text()
     )
     src["binds"][1][-1] = "2099-01-01T00:00:00+00:00"  # not the propagated `infinity`
     bad = tmp_path / "bad.yaml"
@@ -379,10 +382,10 @@ def test_deep_fetch_enforces_propagated_asof_suffix(tmp_path):
 
 
 def test_existing_non_temporal_deep_fetch_still_passes():
-    # Backward-compat guard: 0311 (non-temporal Order.items) has no as-of suffix.
+    # Backward-compat guard: m-deep-fetch-002 (non-temporal Order.items) has no as-of suffix.
     case = load_case(
         COMPATIBILITY_ROOT,
-        COMPATIBILITY_ROOT / "cases" / "0311-deep-fetch-to-many.yaml",
+        COMPATIBILITY_ROOT / "cases" / "m-deep-fetch-002-to-many.yaml",
     )
 
     class _OrdersDb:

@@ -2,8 +2,8 @@
  * Temporal **compile lane** over the M7 corpus (Docker-free).
  *
  * Phase 6 lowers the as-of read algebra (`asOf` / `asOfRange` / `history`, single
- * + both axes, default-injection), the temporal EXISTS semi-joins (`0330` explicit
- * as-of + `0335` defaulted root), and the
+ * + both axes, default-injection), the temporal EXISTS semi-joins
+ * (`m-navigate-018` explicit as-of + `m-navigate-023` defaulted root), and the
  * audit-only milestone-chaining writes (`insert` / `update` / `terminate`). Each
  * pins a precise canonical `goldenSql.postgres`, so this lane asserts the emitted
  * SQL + binds equal the golden BY TEXT, complementing the Docker-gated Postgres
@@ -11,84 +11,99 @@
  * SQL returns the right rows / table state.
  *
  * Split by golden shape:
- *  - a **single-statement read** (`05xx` reads, `08xx` reads, the temporal EXISTS
- *    semi-joins `0330`/`0335`) pins one `goldenSql.postgres` string — asserted
- *    against the sole `/operation` emission;
- *  - a **write sequence** (`0510`–`0512`, `0004`/`0005`) pins an ARRAY of DML
+ *  - a **single-statement read** (audit-only reads, bitemporal reads, the temporal
+ *    EXISTS semi-joins `m-navigate-018`/`m-navigate-023`) pins one
+ *    `goldenSql.postgres` string — asserted against the sole `/operation` emission;
+ *  - a **write sequence** (`m-audit-write-001`–`-003`) pins an ARRAY of DML
  *    statements with an array-of-arrays `binds` — asserted against the per-statement
  *    emissions, each keyed by its `/writeSequence/<step>` pointer;
- *  - a **deep-fetch** read (`0324`–`0336` minus the flat EXISTS `0330`/`0335`) pins an ARRAY whose child
- *    levels are keyed by run-time-gathered parent keys — those emit root-only here
- *    (per the Phase-5 rule) and are pinned per-level in the run lane instead.
+ *  - a **deep-fetch** read (the temporal `m-navigate` subset minus the flat EXISTS
+ *    `m-navigate-018`/`m-navigate-023`) pins an ARRAY whose child levels are keyed
+ *    by run-time-gathered parent keys — those emit root-only here (per the Phase-5
+ *    rule) and are pinned per-level in the run lane instead.
  */
 import { describe, expect, it } from "vitest";
 import { isDeepFetch } from "../src/deepfetch-plan.js";
 import { discoverCasePaths } from "../src/discover.js";
 import { loadCase, runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
 
-/** The in-scope M7 MVP case ids: `05xx` reads+writes, `08xx` bitemporal reads. */
+/** The module slug of a per-module case id (`m-temporal-read-003` → `m-temporal-read`). */
+function moduleOf(id: string): string {
+  return id.replace(/-\d{3}$/, "");
+}
+
+/** The audit-only read/write temporal modules this lane compiles (the optimistic ×
+ * temporal-close cases share `m-temporal-read` but are `conflict`-shaped, so a shape
+ * filter keeps them out — they compile in `txn-compile.test.ts`). */
+const TEMPORAL_RW_MODULES: ReadonlySet<string> = new Set(["m-temporal-read", "m-audit-write"]);
+
+/** The in-scope temporal MVP cases: audit-only reads, bitemporal reads, audit writes. */
 function temporalReadWriteCases(): readonly { id: string; path: string }[] {
   return discoverCasePaths()
-    .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
-    .filter(({ id }) => /^(05|08)\d\d$/.test(id))
+    .map((path) => ({ id: path.replace(/^.*\/(m-[a-z0-9-]+-\d{3})-.*$/, "$1"), path }))
+    .filter(({ id }) => TEMPORAL_RW_MODULES.has(moduleOf(id)))
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
     .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"))
+    .filter(({ loaded }) => loaded.shape === "read" || loaded.shape === "writeSequence")
     .map(({ id, path }) => ({ id, path }));
 }
 
-/** The temporal deep-fetch `m7` subset (`0324`–`0336`), incl. the flat EXISTS
- * semi-joins `0330` (explicit as-of) and `0335` (defaulted root). */
+/** The temporal navigate deep-fetch subset (`m-navigate-012`–`m-navigate-024`), incl.
+ * the flat EXISTS semi-joins `m-navigate-018` (explicit as-of) and `m-navigate-023`
+ * (defaulted root) — the `m-navigate` cases carrying the `temporal` tag. */
 function temporalDeepFetchCases(): readonly { id: string; path: string }[] {
   return discoverCasePaths()
-    .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
-    .filter(({ id }) => /^03(2[4-9]|3[0-6])$/.test(id))
+    .map((path) => ({ id: path.replace(/^.*\/(m-[a-z0-9-]+-\d{3})-.*$/, "$1"), path }))
+    .filter(({ id }) => moduleOf(id) === "m-navigate")
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
-    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"))
+    .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1") && loaded.tags.includes("temporal"))
     .map(({ id, path }) => ({ id, path }));
 }
 
 /**
- * The EXACT in-scope M7 MVP `05xx`/`08xx` set: the audit-only reads/writes
- * `0501`–`0508`/`0510`–`0512` and the bitemporal reads `0801`–`0805`. The
- * out-of-V1 `*Until` writes (`0810`–`0812`) and the business-only slice
- * (`0820`–`0826`) are NOT tagged `slice-mvp-1`, so they never
- * discover here. Asserting the exact set fails loudly on a discovery regression.
+ * The EXACT in-scope temporal MVP set: the audit-only reads `m-temporal-read-001`–
+ * `-008`, the audit writes `m-audit-write-001`–`-003`, and the bitemporal reads
+ * `m-temporal-read-013`–`-017`. The out-of-V1 `*Until` writes (`m-bitemp-write-*`)
+ * and the business-only slice (`m-business-only-*`) are NOT tagged `slice-mvp-1`, so
+ * they never discover here. Asserting the exact set fails loudly on a discovery
+ * regression.
  */
 const EXPECTED_READ_WRITE_IDS: readonly string[] = [
-  "0501",
-  "0502",
-  "0503",
-  "0504",
-  "0505",
-  "0506",
-  "0507",
-  "0508",
-  "0510",
-  "0511",
-  "0512",
-  "0801",
-  "0802",
-  "0803",
-  "0804",
-  "0805",
+  "m-temporal-read-001",
+  "m-temporal-read-002",
+  "m-temporal-read-003",
+  "m-temporal-read-004",
+  "m-temporal-read-005",
+  "m-temporal-read-006",
+  "m-temporal-read-007",
+  "m-temporal-read-008",
+  "m-audit-write-001",
+  "m-audit-write-002",
+  "m-audit-write-003",
+  "m-temporal-read-013",
+  "m-temporal-read-014",
+  "m-temporal-read-015",
+  "m-temporal-read-016",
+  "m-temporal-read-017",
 ];
 
-/** The exact temporal deep-fetch `m7` set (`0324`–`0336`, 13 cases: the 11 as-of
- * propagation cases plus the defaulted-root EXISTS `0335` and the directive-wrapped
- * temporal deep-fetch root `0336`). */
-const EXPECTED_DEEP_FETCH_IDS: readonly string[] = Array.from({ length: 13 }, (_, i) =>
-  String(324 + i).padStart(4, "0"),
+/** The exact temporal navigate deep-fetch set (`m-navigate-012`–`m-navigate-024`, 13
+ * cases: the 11 as-of propagation cases plus the defaulted-root EXISTS
+ * `m-navigate-023` and the directive-wrapped temporal deep-fetch root `m-navigate-024`). */
+const EXPECTED_DEEP_FETCH_IDS: readonly string[] = Array.from(
+  { length: 13 },
+  (_, i) => `m-navigate-${String(12 + i).padStart(3, "0")}`,
 );
 
 const READ_WRITE = temporalReadWriteCases();
 const DEEP_FETCH = temporalDeepFetchCases();
 
 describe("temporal compile lane — emitted === golden over the M7 corpus", () => {
-  it("discovers exactly the in-scope 05xx + 08xx MVP cases", () => {
+  it("discovers exactly the in-scope temporal audit-only + bitemporal MVP cases", () => {
     expect(READ_WRITE.map(({ id }) => id).sort()).toEqual([...EXPECTED_READ_WRITE_IDS].sort());
   });
 
-  it("discovers exactly the temporal deep-fetch m7 subset (0324–0336)", () => {
+  it("discovers exactly the temporal navigate deep-fetch subset", () => {
     expect(DEEP_FETCH.map(({ id }) => id).sort()).toEqual([...EXPECTED_DEEP_FETCH_IDS].sort());
   });
 
@@ -122,7 +137,8 @@ describe("temporal compile lane — emitted === golden over the M7 corpus", () =
 
   it.each(DEEP_FETCH)("$id compiles its deep-fetch ROOT to the golden root SQL", ({ path }) => {
     const loaded = loadCase(path);
-    // 0330 / 0335 are flat EXISTS reads (single golden string), not deep fetches.
+    // m-navigate-018 / m-navigate-023 are flat EXISTS reads (single golden string),
+    // not deep fetches.
     if (!isDeepFetch(loaded.raw.operation)) {
       const envelope = runCompile(loaded, "postgres", TYPESCRIPT_ADAPTER);
       expect(envelope.status).toBe("ok");

@@ -3,7 +3,7 @@
  * mechanics over a controlled `ParallaxDatabase` stub.
  *
  * These pin the retry-loop branches the `api-conformance`-lane boundary cases
- * (`0710`-`0718`) declare, without a real database: each `px.transaction` attempt
+ * (`m-opt-lock-009`-`m-unit-work-004`) declare, without a real database: each `px.transaction` attempt
  * opens a fresh `transaction(body)` on the stub, and the stub is configured to
  * inject a per-attempt fault (a `ParallaxTransientError`) or a per-attempt
  * affected-row count (to steer the optimistic gate to conflict / success) through
@@ -33,7 +33,7 @@ import {
 
 /** The versioned `Account` descriptor (carries the optimistic-lock `version` column). */
 const ACCOUNT = loadCase(
-  "core/compatibility/cases/0611-versioned-update-locking-mode.yaml",
+  "core/compatibility/cases/m-opt-lock-002-versioned-update-locking-mode.yaml",
 ).descriptor;
 
 /** A physical Account row the stub returns for an in-transaction find (version 1). */
@@ -112,7 +112,7 @@ async function findThenUpdate(
 }
 
 describe("bounded automatic retry (M8/M10)", () => {
-  it("0712: an injected transient is auto-retried by default (flag unset) and commits", async () => {
+  it("m-auto-retry-001: an injected transient is auto-retried by default (flag unset) and commits", async () => {
     const db = new ControlledDatabase((attempt) =>
       attempt === 0 ? { fault: transient() } : { affected: 1 },
     );
@@ -121,7 +121,7 @@ describe("bounded automatic retry (M8/M10)", () => {
     expect(db.attempts).toBe(2); // the body re-executed once
   });
 
-  it("0713: a transient is auto-retried identically with the flag SET (no bearing on transients)", async () => {
+  it("m-auto-retry-002: a transient is auto-retried identically with the flag SET (no bearing on transients)", async () => {
     const db = new ControlledDatabase((attempt) =>
       attempt === 0 ? { fault: transient() } : { affected: 1 },
     );
@@ -133,7 +133,7 @@ describe("bounded automatic retry (M8/M10)", () => {
     expect(db.attempts).toBe(2);
   });
 
-  it("0711: an optimistic conflict is NOT retried without the opt-in — it surfaces", async () => {
+  it("m-opt-lock-010: an optimistic conflict is NOT retried without the opt-in — it surfaces", async () => {
     const db = new ControlledDatabase(() => ({ affected: 0 })); // every attempt conflicts
     await expect(findThenUpdate(db, { concurrency: "optimistic" })).rejects.toBeInstanceOf(
       ParallaxOptimisticLockError,
@@ -141,7 +141,7 @@ describe("bounded automatic retry (M8/M10)", () => {
     expect(db.attempts).toBe(1); // surfaced after ONE attempt, not retried
   });
 
-  it("0714/0710: an optimistic conflict IS auto-retried with the opt-in, re-reads, and commits", async () => {
+  it("m-opt-lock-011/m-opt-lock-009: an optimistic conflict IS auto-retried with the opt-in, re-reads, and commits", async () => {
     const db = new ControlledDatabase((attempt) =>
       attempt === 0 ? { affected: 0 } : { affected: 1 },
     );
@@ -153,7 +153,7 @@ describe("bounded automatic retry (M8/M10)", () => {
     expect(db.attempts).toBe(2); // the body re-executed and re-read
   });
 
-  it("0715: the conflict-retry flag is inert in locking mode (the update commits)", async () => {
+  it("m-auto-retry-003: the conflict-retry flag is inert in locking mode (the update commits)", async () => {
     const db = new ControlledDatabase(() => ({ affected: 1 }));
     const result = await findThenUpdate(db, {
       concurrency: "locking",
@@ -163,7 +163,7 @@ describe("bounded automatic retry (M8/M10)", () => {
     expect(db.attempts).toBe(1);
   });
 
-  it("0716: retries: 0 disables the loop — even a transient surfaces", async () => {
+  it("m-auto-retry-004: retries: 0 disables the loop — even a transient surfaces", async () => {
     const db = new ControlledDatabase(() => ({ fault: transient() }));
     await expect(
       findThenUpdate(db, { concurrency: "optimistic", retries: 0 }),
@@ -171,7 +171,7 @@ describe("bounded automatic retry (M8/M10)", () => {
     expect(db.attempts).toBe(1);
   });
 
-  it("0717: a persistent transient surfaces after the bound is exhausted, annotated", async () => {
+  it("m-auto-retry-005: a persistent transient surfaces after the bound is exhausted, annotated", async () => {
     const db = new ControlledDatabase(() => ({ fault: transient() })); // fails every attempt
     await expect(
       findThenUpdate(db, { concurrency: "optimistic", retries: 2 }),
@@ -179,7 +179,7 @@ describe("bounded automatic retry (M8/M10)", () => {
     expect(db.attempts).toBe(3); // 1 initial + 2 retries
   });
 
-  it("0718: a body that throws aborts — px.transaction rejects and yields no value", async () => {
+  it("m-unit-work-004: a body that throws aborts — px.transaction rejects and yields no value", async () => {
     const db = new ControlledDatabase(() => ({ affected: 1 }));
     const px = createParallax({ descriptor: ACCOUNT, database: db, dialect: postgresDialect });
     const sentinel = new Error("domain rule violated");
