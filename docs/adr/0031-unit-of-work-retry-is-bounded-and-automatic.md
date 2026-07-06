@@ -1,3 +1,0 @@
-# Unit-of-work retry is bounded and automatic
-
-Parallax's unit-of-work boundary offers bounded automatic retry: on a retriable failure it rolls back, invalidates stale cached state, and re-executes the closure against fresh state, up to a configurable bound (default 10; 0 disables the loop). Transient database failures — deadlock and serialization failure — are retriable by default; an optimistic-lock conflict is retriable only when the unit of work opts in, and otherwise surfaces to the caller after one attempt. This supersedes ADR 0013's pure caller-driven posture, adopting Reladomo's default automatic-retry-with-opt-in-for-conflicts model.

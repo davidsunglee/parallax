@@ -5,7 +5,7 @@
  * `px.*` / `px.transaction` over the SHIPPED adapter for the SELECTED dialect — and
  * asserts the corpus's expected results AND the managed shapes (10b). It does NOT
  * touch the grader: the official conformance grade stays contract-driven over the
- * generic runtime (ADR-0010). This harness is additive proof that the shipped
+ * generic runtime (ADR-0006). This harness is additive proof that the shipped
  * adapter + the developer surface produce the corpus's results.
  *
  * The harness is DIALECT-AGNOSTIC: it names no concrete provider, dialect, or

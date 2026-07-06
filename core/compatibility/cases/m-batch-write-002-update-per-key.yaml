@@ -10,7 +10,7 @@
 # The subject is the NON-VERSIONED Wallet (models/wallet.yaml): a readless batched
 # UPDATE per key is honest only for a non-versioned entity — a versioned entity's
 # set-based update MUST materialize into per-object version-advancing updates
-# (m-opt-lock / ADR 0031).
+# (m-opt-lock / ADR 0014).
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, write-sequence, per-key, slice-mvp-1]
 loadFixtures: true

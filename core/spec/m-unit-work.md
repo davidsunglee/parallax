@@ -48,7 +48,7 @@ observable contract:
   **pre-transaction** state.
 - The transaction callback's return value is **withheld on abort**: if the unit
   of work rolls back — or its commit fails — the operation **fails** rather than
-  returning the callback value as though it were durable (promoting ADR 0008 into
+  returning the callback value as though it were durable (promoting ADR 0006 into
   normative text).
 
 This reconciles the abort contract with the **read-your-own-writes forced flush**.

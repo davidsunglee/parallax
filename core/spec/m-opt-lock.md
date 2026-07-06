@@ -72,7 +72,7 @@ modes) the version the unit of work observed for that row. A **set-based** updat
 — one that selects rows by a predicate rather than a single primary key — has
 **no** set-based versioned template: the gate binds a *per-row* observed version,
 so a single `where <predicate>` statement cannot carry it. Such an update
-**MUST** therefore **materialize** (ADR 0032): the implementation
+**MUST** therefore **materialize** (ADR 0014): the implementation
 
 1. **resolves the predicate to rows** through a read — a real round trip that
    records each matched row's observed version into the identity cache (and, in
@@ -85,7 +85,7 @@ Round-trip accounting is therefore **`1` read + `N` per-object updates**. A
 per-object gate that matches zero rows is the same `updatedRows != 1` conflict
 and **MUST** surface (a mid-batch conflict aborts the unit of work like any
 other). This makes read-before-write **universal** for versioned entities. For a
-**non-versioned** entity the readless batched forms stand (`m-sql`, ADR 0011) —
+**non-versioned** entity the readless batched forms stand (`m-sql`, ADR 0014) —
 materialization applies only where a framework-owned version must ride each write.
 
 ### Temporal entities derive the version from the processing axis

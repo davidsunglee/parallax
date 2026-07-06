@@ -1,0 +1,7 @@
+# One canonical serde is shared by the metamodel and the operation algebra
+
+TypeScript uses a single canonical, format-agnostic serde package shared by the metamodel (`m-descriptor`, `@parallax/metamodel`) and the operation algebra (`m-op-algebra`, `@parallax/operation`), mirroring the Python reference harness's `serde.py` ("Canonical, format-agnostic serde for operations AND the metamodel"). The dedicated-module requirement of the template's §3 is satisfied by giving serde its own package (`@parallax/serde`); sharing that one seam across the metamodel and the operation algebra does not dilute it.
+
+The descriptor *is* the serialized metamodel, and the Python oracle proves both the operation encoding and the model descriptor through the same seam (`m-case-format` layer 4a for the operation, layer 4b for the descriptor). Routing both through one canonical serde guarantees the TypeScript adapter canonicalizes byte-for-byte the way the oracle does, so a conformance comparison never fails on an incidental encoding difference.
+
+A metamodel-only serde was rejected: a second, separate canonicalizer for operations would risk drift between how the descriptor and the operation encoding are canonicalized, and that drift would surface as spurious conformance failures against the oracle. The package keeps a single responsibility — canonicalize, serialize, deserialize, and round-trip — and is consumed by both higher modules rather than reimplemented in each.

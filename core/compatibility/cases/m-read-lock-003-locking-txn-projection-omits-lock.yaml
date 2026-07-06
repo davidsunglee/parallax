@@ -4,10 +4,10 @@
 # The complement to `m-read-lock-002`: a `distinct`/projection read inside `px.transaction(
 # body, { concurrency: "locking" })` takes NO lock and is NEVER rejected. Its
 # result rows have no identifiable base row to lock (the database rejects a
-# row-lock clause on a projection), and per ADR 0024 a projection returns plain
+# row-lock clause on a projection), and per ADR 0002 a projection returns plain
 # unmanaged data that never enters the observed-version map or the write path — so
 # there is nothing for a lock to protect. Omitting the lock is both necessary and
-# safe (ADR 0030, delta 09 D2). The golden is the plain projection with NO
+# safe (ADR 0012, delta 09 D2). The golden is the plain projection with NO
 # `for share of t0` suffix.
 #
 # `lane: api-conformance`: the reversal (a projection proceeds unlocked instead of

@@ -1,4 +1,4 @@
-# Versioned SET-BASED update materializes, optimistic mode (m-opt-lock materialize, ADR 0032).
+# Versioned SET-BASED update materializes, optimistic mode (m-opt-lock materialize, ADR 0014).
 #
 # The optimistic-mode companion to m-opt-lock-004. A set-based update targeting a VERSIONED
 # entity has no set-based template — the gate binds a per-row observed version — so
@@ -20,7 +20,7 @@
 #   step 2 find  : the SAME `balance < 200` re-resolves (cache MISS after the write)
 #                  and MUST observe both accounts at balance 0.00, version 2.
 # The only difference from m-opt-lock-004 is the per-object gate (`and version = ?`) and its
-# extra observed-version bind — the version is framework-owned (ADR 0029), never a
+# extra observed-version bind — the version is framework-owned (ADR 0013), never a
 # caller number. roundTrips = 4 (materialize read + two per-object updates + verify read).
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, m-unit-work, materialize, set-based, scenario, slice-mvp-1]

@@ -2,7 +2,7 @@
  * Operation canonicalization, routed through the shared `@parallax/serde` seam.
  *
  * The operation algebra and the metamodel canonicalize through the *same* serde
- * seam (ADR-0056), so the adapter canonicalizes byte-for-byte like the Python
+ * seam (ADR-0009), so the adapter canonicalizes byte-for-byte like the Python
  * oracle. This module is the operation side of that seam: it decides node
  * identity for the `equivalentEncodings` precedence check (e.g. `m-op-algebra-024`), where a
  * prefix surface and a fluent surface differing only in object-key order must

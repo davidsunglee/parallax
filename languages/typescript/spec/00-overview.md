@@ -417,7 +417,7 @@ The correctness strategy is a per-unit-of-work mode selected on `px.transaction`
 mode in-transaction reads take the automatic shared row lock (m-read-lock) and a versioned
 `update` advances the version with no gate; in `optimistic` mode reads take no
 lock and a versioned `update` gates on the version the unit of work observed
-(m-opt-lock). Optimistic-lock **version values are framework-owned** (ADR 0029): the
+(m-opt-lock). Optimistic-lock **version values are framework-owned** (core ADR 0013): the
 developer reads the row — which records the observed version — then `update`s;
 no raw version number is passed. Updating a versioned row the unit of work never
 read is a `ParallaxReadBeforeWriteError`; a stale gate (zero rows affected) throws

@@ -143,7 +143,7 @@ both forms yield the identical observable order (case `m-deep-fetch-012`).
   - a **projection / aggregation** read (a `distinct` / grouped / aggregate
     result) is returned **unchanged** — it has no identifiable base row to lock and
     the database rejects the clause on such shapes, so the dialect **omits** the
-    lock rather than erroring (ADR 0030; mirrors Reladomo's never-locking
+    lock rather than erroring (ADR 0012; mirrors Reladomo's never-locking
     `getSelectForAggregatedData` beside the object-find `getSelect(isInTransaction)`);
   - any read in **optimistic** mode is returned unchanged (`m-opt-lock` takes no
     lock).

@@ -12,7 +12,7 @@
  *    to one multi-row `INSERT`, a referenced parent's inserts precede a child's
  *    (`m-batch-write-001` / `m-unit-work-003`);
  *  - **non-temporal `update`** on a VERSIONED entity always advances the framework-
- *    owned version (m-opt-lock, ADR 0029): in `optimistic` mode it issues the gated m-opt-lock
+ *    owned version (m-opt-lock, core ADR 0013): in `optimistic` mode it issues the gated m-opt-lock
  *    `UPDATE` (gate on the version the unit of work OBSERVED, advance it) and
  *    classifies the affected count (`m-opt-lock-005` / `m-opt-lock-006` / `m-opt-lock-007`); in the default
  *    `locking` mode it issues the ungated version-advancing `UPDATE` (`m-opt-lock-002`). Either
@@ -107,7 +107,7 @@ export class ParallaxTemporalOptimisticError extends Error {
 /**
  * Thrown when a versioned entity's row is updated WITHOUT the unit of work having
  * observed it first (m-opt-lock read-before-write). Optimistic-lock version values are
- * framework-owned (ADR 0029): the gate binds — and the advance is computed from —
+ * framework-owned (core ADR 0013): the gate binds — and the advance is computed from —
  * the version a transaction-scoped read hydrated, so an update of an unobserved
  * row has no version to gate on or advance from and MUST be a read-before-write.
  */
@@ -161,7 +161,7 @@ export interface UpdateOptions {
  * (table + pk column + version column) plus the quoted DOMAIN `set` columns and
  * their binds (the framework-owned version column dropped). Resolved once from the
  * assignments, then reused for one keyed update or per resolved row of a set-based
- * materialize (ADR 0032), so both paths render identical statements.
+ * materialize (core ADR 0014), so both paths render identical statements.
  */
 interface VersionedUpdateShape {
   readonly target: VersionedTarget;
@@ -257,8 +257,8 @@ export class TransactionWriter {
   }
 
   /**
-   * A KEYED versioned-entity `update` (m-opt-lock). The version is FRAMEWORK-OWNED (ADR
-   * 0029): the write advances it in BOTH modes, and in `optimistic` mode also gates
+   * A KEYED versioned-entity `update` (m-opt-lock, core ADR 0013). The version is
+   * FRAMEWORK-OWNED: the write advances it in BOTH modes, and in `optimistic` mode also gates
    * on the version the unit of work OBSERVED for the row (a prior transaction-scoped
    * find populated the observed map). Three rules:
    *
@@ -290,7 +290,7 @@ export class TransactionWriter {
   }
 
   /**
-   * A SET-BASED versioned-entity `update` (m-opt-lock materialize, ADR 0032). A versioned
+   * A SET-BASED versioned-entity `update` (m-opt-lock materialize, core ADR 0014). A versioned
    * set-based update has NO set-based template — the optimistic gate binds a
    * per-row observed version, so a single statement cannot carry it. The caller
    * (`TransactionEntity.update`) has already resolved the predicate to rows through
@@ -301,7 +301,7 @@ export class TransactionWriter {
    * per row. A no-op `set` issues no DML; a mid-batch optimistic conflict (a
    * per-object gated update affecting 0 rows) throws `ParallaxOptimisticLockError`.
    * Reuses the same per-row emitter the keyed update uses (no drift). Non-versioned
-   * entities never reach here — they keep the readless batched path (ADR 0011).
+   * entities never reach here — they keep the readless batched path (core ADR 0014).
    */
   async versionedSetUpdate(
     entity: EntityMetadata,
@@ -363,7 +363,7 @@ export class TransactionWriter {
    * `ParallaxOptimisticLockError`, `m-opt-lock-005`); emits the ungated version-advancing form
    * in `locking` mode (`m-opt-lock-002`). An unobserved row is a read-before-write error (m-opt-lock).
    * The single per-row emitter both the keyed update and the set-based materialize
-   * (ADR 0032) share, so the two paths never drift.
+   * (core ADR 0014) share, so the two paths never drift.
    */
   private async emitVersionedRowUpdate(
     entity: EntityMetadata,
@@ -840,7 +840,7 @@ function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteTarget {
  * ANY OTHER predicate — a range (`balance < ?`), a non-pk equality, `all` — has no
  * single pk to key on and MATERIALIZES instead: `TransactionEntity.update` resolves
  * the predicate to rows through the observing finder, then updates per object (m-opt-lock,
- * ADR 0032). A non-versioned entity keeps its readless batched path either way.
+ * core ADR 0014). A non-versioned entity keeps its readless batched path either way.
  */
 export function isPkEqualityPredicate(entity: EntityMetadata, predicate: Predicate): boolean {
   const pkName = entity.primaryKey()[0]?.name;

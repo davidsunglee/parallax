@@ -254,7 +254,7 @@ function batchStatementsForStep(
   const rows = (step.rows ?? []).map((row) => classifyRow(entity, row));
   // A VERSIONED entity's keyed update advances its framework-owned version — the
   // readless batched forms below apply only to a non-versioned entity (a versioned
-  // set-based update MUST materialize per object, m-opt-lock / ADR 0031). Columns, the
+  // set-based update MUST materialize per object, m-opt-lock / core ADR 0014). Columns, the
   // advance, and the binds are DERIVED from the neutral write input (①) and routed
   // by `(versionAttribute, uow.concurrency)`: locking mode ⇒ ungated advance
   // (`m-opt-lock-002`), optimistic ⇒ gated advance — mirroring the runtime's own routing.

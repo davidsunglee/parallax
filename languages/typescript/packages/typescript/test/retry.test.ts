@@ -1,5 +1,5 @@
 /**
- * Bounded automatic retry loop (m-auto-retry/m-opt-lock, ADR 0031 / TS ADR 0065) — Docker-free
+ * Bounded automatic retry loop (m-auto-retry/m-opt-lock, core ADR 0008 / ts ADR 0026) — Docker-free
  * mechanics over a controlled `ParallaxDatabase` stub.
  *
  * These pin the retry-loop branches the `api-conformance`-lane boundary cases

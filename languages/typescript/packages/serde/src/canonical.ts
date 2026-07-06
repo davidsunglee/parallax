@@ -9,7 +9,7 @@
  * (`reference-harness/src/reference_harness/serde.py`), including the
  * `equivalentEncodings` precedence check.
  *
- * The four-part contract (m-descriptor §"Metamodel serde"; ADR-0057):
+ * The four-part contract (m-descriptor §"Metamodel serde"; ADR-0010):
  *  1. safe load (the `yaml` reader is safe by default — no custom tags);
  *  2. **recursive key-sort** so object-key authoring order is irrelevant;
  *  3. **list order preserved** — order is significant in the algebra and in

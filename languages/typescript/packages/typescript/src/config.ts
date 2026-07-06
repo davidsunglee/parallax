@@ -1,5 +1,5 @@
 /**
- * Generator configuration (spec §7, ADR-0002) — exposed as the
+ * Generator configuration (spec §7, ADR-0001) — exposed as the
  * `@parallax/typescript/config` subpath.
  *
  * A project authors a `parallax.config.ts` that default-exports
@@ -24,7 +24,7 @@ export interface ParallaxConfig {
   readonly descriptors: readonly string[];
   /**
    * Where the generated `#parallax` barrel is written (default
-   * `./.parallax/generated`, outside `src/`, gitignored — ADR-0003).
+   * `./.parallax/generated`, outside `src/`, gitignored — ADR-0002).
    */
   readonly output: string;
   /**
@@ -42,7 +42,7 @@ export interface ParallaxConfigInput {
   readonly importAlias?: string;
 }
 
-/** The default output directory for generated code (ADR-0003 — gitignored). */
+/** The default output directory for generated code (ADR-0002 — gitignored). */
 export const DEFAULT_OUTPUT = "./.parallax/generated" as const;
 
 /** The default package-local import alias (spec §2.1). */
