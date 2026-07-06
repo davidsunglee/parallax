@@ -184,7 +184,7 @@ def _pkgen_write_input_cases() -> list:
         case
         for case in discover_cases(COMPATIBILITY_ROOT)
         if case.is_write_sequence
-        and "postgres" in case.golden_sql
+        and "postgres" in case.golden_dialects
         and "m-pk-gen" in case.tags
         and any(step.get("rows") for step in case.write_sequence)
     ]

@@ -1,7 +1,7 @@
 """Unit tests for the Phase 5 write-sequence machinery (no database).
 
 These pin the DB-free invariants of a milestone-chaining write case: the
-statement-count consistency check (sum of per-step counts == goldenSql DML count
+statement-count consistency check (sum of per-step counts == then.statements DML count
 == roundTrips), the temporal DDL (a temporal entity's physical primary key spans
 the as-of fromColumn so the milestone chain is admissible), and the as-of-aware
 descriptor accessors. The full apply-DML-and-assert-table-state behavior is
@@ -35,10 +35,10 @@ def test_write_sequence_cases_are_discovered_and_self_describe() -> None:
     write_cases = [c for c in cases.values() if c.is_write_sequence]
     assert write_cases, "no write-sequence cases discovered"
     for case in write_cases:
-        # Each declares a writeSequence + an expectedTableState, no operation.
+        # Each declares a writeSequence + a then.tableState, no operation.
         assert case.write_sequence
         assert case.expected_table_state
-        assert "operation" not in case.raw
+        assert "operation" not in case.when
 
 
 def test_write_step_count_consistency_holds_for_authored_cases() -> None:
@@ -51,8 +51,8 @@ def test_write_step_count_consistency_holds_for_authored_cases() -> None:
 def test_write_step_count_mismatch_is_rejected() -> None:
     case = next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.is_write_sequence)
     # Corrupt the declared per-step statement count so the sum no longer matches
-    # the goldenSql DML count; the consistency check MUST fail.
-    case.raw["writeSequence"][0]["statements"] += 1
+    # the then.statements DML count; the consistency check MUST fail.
+    case.when["writeSequence"][0]["statements"] += 1
     with pytest.raises(CaseFailure):
         _assert_write_step_count(case, "postgres")
 
@@ -67,7 +67,7 @@ def _non_temporal_row_step(case) -> dict | None:
 
 def test_write_input_columns_hold_for_authored_cases() -> None:
     for case in discover_cases(COMPATIBILITY_ROOT):
-        if case.is_write_sequence and "postgres" in case.golden_sql:
+        if case.is_write_sequence and "postgres" in case.golden_dialects:
             # Must not raise: every authored ① classifies against the model to the
             # golden's INSERT/SET column list, and its values match the binds.
             _assert_write_input_columns(case, "postgres")

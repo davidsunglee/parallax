@@ -4,16 +4,16 @@ Per case, against a freshly-provisioned database selected via the provider seam:
 
 1. **Schema conformance** — descriptor / operation / case validate (done
    statically by :mod:`schema_validate`; re-asserted here for the loaded case).
-2. **Triple equivalence** — ``exec(goldenSql[dialect]) == exec(referenceSql) ==
-   expectedRows`` (the ``referenceSql`` term only when present).
-3. **Normalization determinism** — ``normalize(goldenSql[dialect]) ==
-   goldenSql[dialect]`` (per statement, for multi-statement cases).
+2. **Triple equivalence** — ``exec(then.statements[dialect]) == exec(referenceSql) ==
+   then.rows`` (the ``referenceSql`` term only when present).
+3. **Normalization determinism** — ``normalize(then.statements[dialect]) ==
+   then.statements[dialect]`` (per statement, for multi-statement cases).
 4. **Serde round-trip** — ``serialize(deserialize(x)) == x`` for BOTH the
    operation encoding AND the model descriptor, in BOTH JSON and YAML.
 5. **Round-trip-count consistency** (Phase 3) — for relationship / deep-fetch
    cases the number of golden SQL statements equals the declared ``roundTrips``,
    each level executes (child levels keyed by the parents gathered from the
-   previous level), and the assembled object graph equals ``expectedGraph``.
+   previous level), and the assembled object graph equals ``then.graph``.
 
 It deliberately **never compiles the operation to SQL** — that is the job of a
 real implementation, graded against the golden SQL.
@@ -132,21 +132,64 @@ def _rows_equal(
     return not remaining
 
 
+# --- statement-entry readers ------------------------------------------------
+#
+# Every per-step SQL location (scenario / coherence / attempts / concurrency
+# rounds) carries its golden SQL as an ordered list of `{sql, binds}` statement
+# entries, mirroring the top-level `then.statements`. Binds are attached to their
+# statement structurally — there is no positional pairing convention to interpret.
+
+
+def _entry_statements(entries: Any, dialect: str) -> list[str]:
+    """The per-dialect golden SQL texts of a `statements` entry list (empty if none)."""
+    if not isinstance(entries, list):
+        return []
+    return [
+        entry["sql"][dialect]
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("sql"), dict)
+        and dialect in entry["sql"]
+    ]
+
+
+def _entry_pairs(entries: Any, dialect: str) -> list[tuple[str, list[Any]]]:
+    """The ``(sql, binds)`` pairs a `statements` entry list declares for *dialect*.
+
+    Each statement's binds ride inline on its own entry (default ``[]``), so the
+    execution sites read the two together rather than pairing them positionally.
+    """
+    if not isinstance(entries, list):
+        return []
+    pairs: list[tuple[str, list[Any]]] = []
+    for entry in entries:
+        sql = entry.get("sql") if isinstance(entry, dict) else None
+        if isinstance(sql, dict) and dialect in sql:
+            pairs.append((sql[dialect], list(entry.get("binds", []))))
+    return pairs
+
+
+def _entry_binds(entries: Any, index: int) -> list[Any]:
+    """The authored binds of statement *index* in a `statements` entry list (default [])."""
+    if not isinstance(entries, list) or index >= len(entries):
+        return []
+    entry = entries[index]
+    return list(entry.get("binds", [])) if isinstance(entry, dict) else []
+
+
 def _assert_schema(case: Case) -> None:
     # Layer 1 is enforced statically across the whole tree by schema_validate.
     # Here we assert the minimal structural invariants the runner relies on so a
     # malformed case fails loudly rather than deep in execution.
     if case.is_write_sequence:
         if not case.expected_table_state:
-            raise CaseFailure(f"{case.path.name}: write sequence missing expectedTableState")
+            raise CaseFailure(f"{case.path.name}: write sequence missing then.tableState")
     elif case.is_scenario:
         if not case.scenario:
             raise CaseFailure(f"{case.path.name}: scenario case has no steps")
     elif case.is_conflict:
         if case.expected_affected_rows is None and not case.attempts:
-            raise CaseFailure(
-                f"{case.path.name}: conflict case missing expectedAffectedRows / attempts"
-            )
+            raise CaseFailure(f"{case.path.name}: conflict case missing affectedRows / attempts")
     elif case.is_coherence:
         if len(case.coherence) < 2:
             raise CaseFailure(
@@ -168,10 +211,10 @@ def _assert_schema(case: Case) -> None:
         if not case.error_class:
             raise CaseFailure(f"{case.path.name}: error case missing errorClass")
         if not case.expected_native_code:
-            raise CaseFailure(f"{case.path.name}: error case missing expectedNativeCode")
+            raise CaseFailure(f"{case.path.name}: error case missing then.nativeCode")
         if not (_error_has_golden(case, "postgres") or _error_has_golden(case, "mariadb")):
             raise CaseFailure(
-                f"{case.path.name}: error case declares no trigger — needs goldenSql "
+                f"{case.path.name}: error case declares no trigger — needs then.statements "
                 f"(single-connection) or a non-empty concurrency choreography"
             )
     elif case.is_concurrency_success:
@@ -190,9 +233,9 @@ def _assert_schema(case: Case) -> None:
     elif case.is_boundary:
         if not case.boundary:
             raise CaseFailure(f"{case.path.name}: boundary case has no actions")
-        if not case.expect:
-            raise CaseFailure(f"{case.path.name}: boundary case missing expect")
-    elif "operation" not in case.raw:
+        if not case.outcome:
+            raise CaseFailure(f"{case.path.name}: boundary case missing outcome")
+    elif "operation" not in case.when:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:
         raise CaseFailure(f"{case.path.name}: model has no class name")
@@ -202,9 +245,7 @@ def _assert_normalization(case: Case, dialect: str) -> None:
     for index, statement in enumerate(case.golden_statements(dialect)):
         canonical = normalize(statement, dialect)
         if canonical != statement:
-            where = f"goldenSql.{dialect}"
-            if len(case.golden_statements(dialect)) > 1:
-                where += f"[{index}]"
+            where = f"then.statements[{index}].sql.{dialect}"
             raise CaseFailure(
                 f"{case.path.name}: {where} is not canonical.\n"
                 f"  stored:     {statement!r}\n"
@@ -275,7 +316,7 @@ def _assert_round_trip_count(case: Case, dialect: str) -> None:
     statements = case.golden_statements(dialect)
     if len(statements) != case.round_trips:
         raise CaseFailure(
-            f"{case.path.name}: goldenSql.{dialect} has {len(statements)} "
+            f"{case.path.name}: then.statements ({dialect}) has {len(statements)} "
             f"statement(s) but roundTrips is {case.round_trips}. The statement "
             f"count MUST equal the declared round-trip count."
         )
@@ -476,7 +517,7 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     simulated sequence should have allocated and the value its registry counter
     should hold, and asserts both against the real post-write DB state. ``max`` and
     non-pk-gen writeSequence cases are a no-op (``max`` is pinned by its
-    self-describing ``coalesce(max(...),0)+1`` golden + ``expectedTableState``).
+    self-describing ``coalesce(max(...),0)+1`` golden + ``then.tableState``).
     """
     target = _pk_sequence_target(case)
     if target is None:
@@ -594,7 +635,7 @@ def _provision_empty(case: Case, db: DatabaseProvider) -> None:
 
     A write-sequence case constructs its entire milestone history from its own
     ordered DML (the `insert` step is part of the sequence), so it starts from an
-    empty schema and is fully self-contained — UNLESS it sets ``loadFixtures``
+    empty schema and is fully self-contained — UNLESS it sets ``given.fixtures``
     (the m-detach detached-update merge-back case), in which case the model's fixtures
     are loaded first so the merge-back can mutate a pre-existing persisted row.
     """
@@ -608,13 +649,13 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     dialect = db.dialect
     (golden,) = case.golden_statements(dialect)
 
-    golden_rows = _query_rows(db, golden, case.binds)
+    golden_rows = _query_rows(db, golden, case.statement_binds(0))
     expected = case.expected_rows
     tolerance = case.tolerance
 
     if not _rows_equal(golden_rows, expected, tolerance):
         raise CaseFailure(
-            f"{case.path.name}: goldenSql.{dialect} rows != expectedRows.\n"
+            f"{case.path.name}: then.statements ({dialect}) rows != then.rows.\n"
             f"  golden:   {golden_rows!r}\n"
             f"  expected: {expected!r}"
         )
@@ -623,22 +664,10 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
         reference_rows = db.query(case.reference_sql)
         if not _rows_equal(reference_rows, expected, tolerance):
             raise CaseFailure(
-                f"{case.path.name}: referenceSql rows != expectedRows.\n"
+                f"{case.path.name}: referenceSql rows != then.rows.\n"
                 f"  reference: {reference_rows!r}\n"
                 f"  expected:  {expected!r}"
             )
-
-
-def _binds_for_statement(case: Case, index: int) -> list[Any]:
-    """The authored binds for statement *index* of a multi-statement case.
-
-    ``binds`` for a multi-statement case is a list-of-lists (one per statement).
-    For a single flat list (single-statement case) this is never called.
-    """
-    raw = case.binds
-    if raw and isinstance(raw[0], list):
-        return raw[index] if index < len(raw) else []
-    return raw if index == 0 else []
 
 
 def _sorted_by_order_keys(
@@ -679,7 +708,7 @@ def _assert_child_ordering(
     returned — preserved in SQL order inside each parent's bucket — must already
     equal those rows sorted by the declared keys/directions. The harness derives
     the expected order from the model (an independent oracle) rather than trusting
-    the authored ``expectedGraph`` order. A relationship with no ``orderBy`` is
+    the authored ``then.graph`` order. A relationship with no ``orderBy`` is
     skipped (its order is unspecified). NULL values sort LAST on every key,
     regardless of ``asc``/``desc`` (the canonical m-navigate policy); two NULLs are equal
     and fall through to the next key. Residual ties beyond the declared keys keep
@@ -722,7 +751,7 @@ def _assert_child_ordering(
 
 
 def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
-    """Execute each level, assemble the object graph, compare to expectedGraph.
+    """Execute each level, assemble the object graph, compare to then.graph.
 
     The contract proven here is N+1 elimination: the root plus at most one
     statement per relationship level (never one-per-parent). A child level is
@@ -739,7 +768,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     root_pins = _root_asof_pins(case)
 
     # Level 0: the root query.
-    root_binds = _binds_for_statement(case, 0)
+    root_binds = case.statement_binds(0)
     root_rows = _query_rows(db, statements[0], root_binds)
 
     # rows_by_entity[entity_name] -> list of result-rows fetched for that entity.
@@ -762,17 +791,17 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
 
         if statement_index >= len(statements):
             raise CaseFailure(
-                f"{case.path.name}: goldenSql.{dialect} has no child statement "
+                f"{case.path.name}: then.statements ({dialect}) has no child statement "
                 f"for {step.rel_ref}, but the previous level gathered parent "
                 f"keys {parent_keys!r}."
             )
 
-        raw_authored = _binds_for_statement(case, statement_index)
+        raw_authored = case.statement_binds(statement_index)
         in_slice = raw_authored[: len(parent_keys)]
         asof_suffix = list(raw_authored[len(parent_keys) :])
         if sorted(_coerce_identity_key(b) for b in in_slice) != parent_keys:
             raise CaseFailure(
-                f"{case.path.name}: goldenSql.{dialect} level {statement_index} "
+                f"{case.path.name}: then.statements ({dialect}) level {statement_index} "
                 f"({step.rel_ref}) IN-list binds {in_slice!r} != gathered parent "
                 f"keys {parent_keys!r}. The child level MUST be keyed by exactly "
                 f"the parents from the previous level (the N+1-eliminating IN list)."
@@ -790,7 +819,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         )
         if asof_suffix != expected_suffix:
             raise CaseFailure(
-                f"{case.path.name}: goldenSql.{dialect} level {statement_index} "
+                f"{case.path.name}: then.statements ({dialect}) level {statement_index} "
                 f"({step.rel_ref}) as-of suffix {asof_suffix!r} != the propagated "
                 f"as-of binds {expected_suffix!r}. The root pin MUST propagate to "
                 f"this temporal child (matched by axis), appended after the IN list."
@@ -812,7 +841,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
 
     if statement_index != len(statements):
         raise CaseFailure(
-            f"{case.path.name}: goldenSql.{dialect} lists "
+            f"{case.path.name}: then.statements ({dialect}) lists "
             f"{len(statements) - statement_index} unused deep-fetch child "
             f"statement(s). Child SQL MUST be omitted after a level gathers no "
             f"parent keys."
@@ -825,7 +854,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     expected = case.expected_graph or {}
     if not _graphs_equal(assembled, expected):
         raise CaseFailure(
-            f"{case.path.name}: assembled graph != expectedGraph.\n"
+            f"{case.path.name}: assembled graph != then.graph.\n"
             f"  assembled: {assembled!r}\n"
             f"  expected:  {expected!r}"
         )
@@ -837,7 +866,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         root_projection = [_project_like(r, root_rows) for r in reference_rows]
         if not _rows_equal(root_projection, root_rows, case.tolerance):
             raise CaseFailure(
-                f"{case.path.name}: referenceSql root rows != goldenSql root rows.\n"
+                f"{case.path.name}: referenceSql root rows != then.statements root rows.\n"
                 f"  reference: {reference_rows!r}\n"
                 f"  golden:    {root_rows!r}"
             )
@@ -955,19 +984,19 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
 
     Each ``writeSequence`` step declares how many golden DML statements it emits
     (default 1); the total over the sequence is the round-trip count, which MUST
-    equal the number of goldenSql statements for the dialect (and ``roundTrips``).
+    equal the number of then.statements for the dialect (and ``roundTrips``).
     """
     statements = case.golden_statements(dialect)
     step_total = sum(step.get("statements", 1) for step in case.write_sequence)
     if len(statements) != step_total:
         raise CaseFailure(
-            f"{case.path.name}: goldenSql.{dialect} has {len(statements)} DML "
+            f"{case.path.name}: then.statements ({dialect}) has {len(statements)} DML "
             f"statement(s) but the writeSequence declares {step_total} "
             f"(sum of per-step statement counts). They MUST be equal."
         )
     if len(statements) != case.round_trips:
         raise CaseFailure(
-            f"{case.path.name}: goldenSql.{dialect} has {len(statements)} DML "
+            f"{case.path.name}: then.statements ({dialect}) has {len(statements)} DML "
             f"statement(s) but roundTrips is {case.round_trips}."
         )
 
@@ -1151,7 +1180,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             )
         classified = [_classify_write_row(case, entity, row) for row in rows]
         step_statements = statements[stmt_index : stmt_index + count]
-        step_binds = [_binds_for_statement(case, stmt_index + offset) for offset in range(count)]
+        step_binds = [case.statement_binds(stmt_index + offset) for offset in range(count)]
         mutation = step["mutation"]
         if mutation in _UNTIL_MUTATIONS:
             _assert_until_input(case, entity, classified, step, step_statements, step_binds)
@@ -1449,7 +1478,7 @@ def _assert_until_input(
         chained inserts' business-axis (``from_z`` / ``thru_z``) binds.
 
     The domain values (carried, not derived) and the head/tail residual windows are
-    graded observably by ``expectedTableState`` in the run, not restated in ①.
+    graded observably by ``then.tableState`` in the run, not restated in ①.
     """
     business = next(a for a in entity.as_of_attributes if a["axis"] == "business")
     processing = next(a for a in entity.as_of_attributes if a["axis"] == "processing")
@@ -1549,7 +1578,7 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
                 version_col,
                 attempt.get("write"),
                 _attempt_statements(attempt, dialect),
-                attempt.get("binds", []),
+                _entry_binds(attempt.get("statements"), 0),
                 f"attempts[{index}].write",
             )
         return
@@ -1557,9 +1586,9 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
         case,
         entity,
         version_col,
-        case.raw.get("write"),
+        case.write,
         case.golden_statements(dialect),
-        case.binds,
+        case.statement_binds(0),
         "write",
     )
 
@@ -1633,19 +1662,19 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
                 attempt.get("observedInZ"),
                 gated,
                 _attempt_statements(attempt, dialect),
-                attempt.get("binds", []),
+                _entry_binds(attempt.get("statements"), 0),
                 f"attempts[{index}]",
             )
         return
     _assert_temporal_conflict_close(
         case,
         entity,
-        case.raw.get("write"),
-        case.raw.get("at"),
-        case.raw.get("observedInZ"),
+        case.write,
+        case.at,
+        case.observed_in_z,
         gated,
         case.golden_statements(dialect),
-        case.binds,
+        case.statement_binds(0),
         "write",
     )
 
@@ -1723,7 +1752,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     statements = case.golden_statements(dialect)
 
     for index, statement in enumerate(statements):
-        binds = _binds_for_statement(case, index)
+        binds = case.statement_binds(index)
         db.execute(statement, binds)
 
     expected = case.expected_table_state
@@ -1731,14 +1760,14 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     for table, expected_rows in expected.items():
         if table not in entity_by_table:
             raise CaseFailure(
-                f"{case.path.name}: expectedTableState names table {table!r} "
+                f"{case.path.name}: then.tableState names table {table!r} "
                 f"which the model does not declare."
             )
         actual = _read_table(db, entity_by_table[table])
         if not _rows_equal(actual, expected_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: table {table!r} state after the write "
-                f"sequence != expectedTableState.\n"
+                f"sequence != then.tableState.\n"
                 f"  actual:   {actual!r}\n"
                 f"  expected: {expected_rows!r}"
             )
@@ -1749,11 +1778,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
 
 def _step_statements(step: dict[str, Any], dialect: str) -> list[str]:
     """The ordered golden SQL statements a scenario step lists for *dialect*."""
-    golden = step.get("goldenSql") or {}
-    value = golden.get(dialect)
-    if value is None:
-        return []
-    return [value] if isinstance(value, str) else list(value)
+    return _entry_statements(step.get("statements"), dialect)
 
 
 def _scenario_has_golden(case: Case, dialect: str) -> bool:
@@ -1767,7 +1792,7 @@ def _assert_scenario_normalization(case: Case, dialect: str) -> None:
             canonical = normalize(sql, dialect)
             if canonical != sql:
                 raise CaseFailure(
-                    f"{case.path.name}: scenario[{index}].goldenSql.{dialect} is "
+                    f"{case.path.name}: when.scenario[{index}].statements ({dialect}) is "
                     f"not canonical.\n"
                     f"  stored:     {sql!r}\n"
                     f"  normalized: {canonical!r}"
@@ -1833,8 +1858,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
 
     results: list[list[dict[str, Any]]] = []
     for index, step in enumerate(case.scenario):
-        statements = _step_statements(step, dialect)
-        binds = step.get("binds", [])
+        pairs = _entry_pairs(step.get("statements"), dialect)
         if "write" in step:
             if step.get("rollback"):
                 # An ABORTED write (m-unit-work abort contract): apply each DML statement
@@ -1842,8 +1866,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # in the atomic scope the abort discards, so a later find MUST
                 # re-resolve and observe the ORIGINAL rows, never the aborted write.
                 with db.open_session() as session:
-                    for statement_index, statement in enumerate(statements):
-                        stmt_binds = _binds_for_list(binds, statement_index, len(statements))
+                    for statement, stmt_binds in pairs:
                         session.execute(statement, stmt_binds)
                     session.rollback()
             else:
@@ -1851,17 +1874,17 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # invalidation): apply and COMMIT each DML statement on the unit of
                 # work's connection. It captures no rows; a later find observes the
                 # committed state.
-                for statement_index, statement in enumerate(statements):
-                    stmt_binds = _binds_for_list(binds, statement_index, len(statements))
+                for statement, stmt_binds in pairs:
                     db.execute(statement, stmt_binds)
             # The step's index still occupies a slot so `sameObjectAs` references
             # stay aligned.
             results.append([])
             continue
-        if statements:
+        if pairs:
             # A DB-touching step: m-unit-work finds are single-statement, so the round-trip
             # count is one; execute it and capture the rows.
-            rows = _query_rows(db, statements[0], binds)
+            statement, stmt_binds = pairs[0]
+            rows = _query_rows(db, statement, stmt_binds)
         else:
             # A cache hit: no statement executes. The contract is that it returns
             # the SAME interned objects as the find it hits — modeled here as
@@ -1925,18 +1948,18 @@ def _identity_keys(
 
 
 def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
-    """Run the precondition + golden UPDATE, assert the affected-row count.
+    """Run the given.apply + golden UPDATE, assert the affected-row count.
 
     This is the observable form of optimistic-lock conflict detection (m-opt-lock).
     The model's fixtures are loaded (the row exists with its current version),
-    then an OPTIONAL out-of-band ``precondition`` simulates a concurrent
+    then an OPTIONAL out-of-band ``given.apply`` simulates a concurrent
     transaction mutating the row (e.g. bumping the version). The golden
     ``UPDATE … where pk = ? and version = ?`` is then applied with the version
     the caller read EARLIER; if a concurrent write changed the version, the
     stale-version predicate matches **zero** rows — the conflict signal
     (``updatedRows != 1``). A fresh version matches exactly **one** row.
 
-    The harness asserts the affected-row count equals ``expectedAffectedRows``,
+    The harness asserts the affected-row count equals ``affectedRows``,
     and (when authored) the resulting table state — so the contract is proven
     against real data, not merely asserted in prose.
     """
@@ -1945,20 +1968,19 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
     if len(statements) != 1:
         raise CaseFailure(
             f"{case.path.name}: a conflict case has exactly one golden UPDATE "
-            f"statement, but goldenSql.{dialect} lists {len(statements)}."
+            f"statement, but then.statements ({dialect}) lists {len(statements)}."
         )
 
-    # Apply any out-of-band precondition (a concurrent mutation) before the UPDATE.
-    for index, statement in enumerate(case.precondition):
-        binds = _binds_for_list(case.precondition_binds, index, len(case.precondition))
-        db.execute(statement, binds)
+    # Apply any out-of-band given.apply setup (a concurrent mutation) before the UPDATE.
+    for entry in case.apply:
+        db.execute(entry["sql"], list(entry.get("binds", [])))
 
-    affected = db.execute(statements[0], case.binds)
+    affected = db.execute(statements[0], case.statement_binds(0))
     expected = case.expected_affected_rows
     if affected != expected:
         raise CaseFailure(
             f"{case.path.name}: golden UPDATE affected {affected} row(s) but "
-            f"expectedAffectedRows is {expected}. A stale optimistic-lock version "
+            f"affectedRows is {expected}. A stale optimistic-lock version "
             f"MUST affect 0 rows (conflict); a fresh version MUST affect 1."
         )
 
@@ -1967,29 +1989,17 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
         for table, expected_rows in case.expected_table_state.items():
             if table not in entity_by_table:
                 raise CaseFailure(
-                    f"{case.path.name}: expectedTableState names table {table!r} "
+                    f"{case.path.name}: then.tableState names table {table!r} "
                     f"which the model does not declare."
                 )
             actual = _read_table(db, entity_by_table[table])
             if not _rows_equal(actual, expected_rows, case.tolerance):
                 raise CaseFailure(
                     f"{case.path.name}: table {table!r} state after the conflict "
-                    f"case != expectedTableState.\n"
+                    f"case != then.tableState.\n"
                     f"  actual:   {actual!r}\n"
                     f"  expected: {expected_rows!r}"
                 )
-
-
-def _binds_for_list(binds: list[Any], index: int, count: int) -> list[Any]:
-    """The binds for statement *index* of a (possibly multi-statement) list.
-
-    A list-of-lists carries one bind list per statement; a flat list is the binds
-    for a single statement. Mirrors :func:`_binds_for_statement` for the
-    precondition list, which is independent of the case's golden-SQL ``binds``.
-    """
-    if binds and isinstance(binds[0], list):
-        return binds[index] if index < len(binds) else []
-    return binds if index == 0 else []
 
 
 # --- conflict RETRY cases (m-opt-lock retry contract) ------------------------------
@@ -1997,11 +2007,7 @@ def _binds_for_list(binds: list[Any], index: int, count: int) -> list[Any]:
 
 def _attempt_statements(attempt: dict[str, Any], dialect: str) -> list[str]:
     """The golden UPDATE statement(s) a retry attempt lists for *dialect*."""
-    golden = attempt.get("goldenSql") or {}
-    value = golden.get(dialect)
-    if value is None:
-        return []
-    return [value] if isinstance(value, str) else list(value)
+    return _entry_statements(attempt.get("statements"), dialect)
 
 
 def _conflict_retry_has_golden(case: Case, dialect: str) -> bool:
@@ -2015,7 +2021,7 @@ def _assert_conflict_retry_normalization(case: Case, dialect: str) -> None:
             canonical = normalize(sql, dialect)
             if canonical != sql:
                 raise CaseFailure(
-                    f"{case.path.name}: attempts[{index}].goldenSql.{dialect} is "
+                    f"{case.path.name}: when.attempts[{index}].statements ({dialect}) is "
                     f"not canonical.\n"
                     f"  stored:     {sql!r}\n"
                     f"  normalized: {canonical!r}"
@@ -2023,11 +2029,11 @@ def _assert_conflict_retry_normalization(case: Case, dialect: str) -> None:
 
 
 def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
-    """Run the precondition + ordered retry attempts, asserting each affected count.
+    """Run the given.apply + ordered retry attempts, asserting each affected count.
 
     This is the observable form of the m-opt-lock RETRY contract (Phase 7). The model's
     fixtures are loaded (the versioned row exists), an OPTIONAL out-of-band
-    ``precondition`` simulates a concurrent writer that advanced the version, then
+    ``given.apply`` simulates a concurrent writer that advanced the version, then
     each attempt's golden ``UPDATE`` is applied in order. The first attempt gates
     on the STALE version the caller read before detaching/reading, so it affects
     ZERO rows (the ``updatedRows != 1`` conflict signal); the retry re-reads the
@@ -2038,9 +2044,8 @@ def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
     """
     dialect = db.dialect
 
-    for index, statement in enumerate(case.precondition):
-        binds = _binds_for_list(case.precondition_binds, index, len(case.precondition))
-        db.execute(statement, binds)
+    for entry in case.apply:
+        db.execute(entry["sql"], list(entry.get("binds", [])))
 
     for index, attempt in enumerate(case.attempts):
         statements = _attempt_statements(attempt, dialect)
@@ -2049,12 +2054,12 @@ def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
                 f"{case.path.name}: attempts[{index}] must list exactly one golden "
                 f"UPDATE for {dialect}, found {len(statements)}."
             )
-        affected = db.execute(statements[0], attempt.get("binds", []))
-        expected = attempt["expectedAffectedRows"]
+        affected = db.execute(statements[0], _entry_binds(attempt.get("statements"), 0))
+        expected = attempt["affectedRows"]
         if affected != expected:
             raise CaseFailure(
                 f"{case.path.name}: attempts[{index}] UPDATE affected {affected} "
-                f"row(s) but expectedAffectedRows is {expected}. A stale version "
+                f"row(s) but affectedRows is {expected}. A stale version "
                 f"MUST affect 0 rows (conflict); the fresh-version retry MUST "
                 f"affect 1."
             )
@@ -2063,20 +2068,20 @@ def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
 
 
 def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
-    """Assert each table named in ``expectedTableState`` matches (order-insensitive)."""
+    """Assert each table named in ``then.tableState`` matches (order-insensitive)."""
     if not case.expected_table_state:
         return
     entity_by_table = {entity.table: entity for entity in case.model.entities}
     for table, expected_rows in case.expected_table_state.items():
         if table not in entity_by_table:
             raise CaseFailure(
-                f"{case.path.name}: expectedTableState names table {table!r} "
+                f"{case.path.name}: then.tableState names table {table!r} "
                 f"which the model does not declare."
             )
         actual = _read_table(db, entity_by_table[table])
         if not _rows_equal(actual, expected_rows, case.tolerance):
             raise CaseFailure(
-                f"{case.path.name}: table {table!r} state != expectedTableState.\n"
+                f"{case.path.name}: table {table!r} state != then.tableState.\n"
                 f"  actual:   {actual!r}\n"
                 f"  expected: {expected_rows!r}"
             )
@@ -2088,20 +2093,17 @@ def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
 def _error_statements(case: Case, dialect: str) -> list[str]:
     """Every golden statement an error case lists for *dialect* (for lint/layer 3).
 
-    Single-connection: the ordered top-level goldenSql. Two-connection: each
-    node's per-round step goldenSql, in round/node order.
+    Single-connection: the ordered top-level ``then.statements``. Two-connection:
+    each node's per-round step ``statements``, in round/node order.
     """
     if case.concurrency is None:
-        value = case.raw.get("goldenSql", {}).get(dialect)
-        if value is None:
-            return []
-        return [value] if isinstance(value, str) else list(value)
+        return case.golden_statements(dialect) if dialect in case.golden_dialects else []
     statements: list[str] = []
     for rnd in case.concurrency["rounds"]:
         for node in ("A", "B"):
             step = rnd.get(node)
-            if step and dialect in step["goldenSql"]:
-                statements.append(step["goldenSql"][dialect])
+            if isinstance(step, dict):
+                statements.extend(_entry_statements(step.get("statements"), dialect))
     return statements
 
 
@@ -2114,7 +2116,7 @@ def _assert_error_normalization(case: Case, dialect: str) -> None:
         canonical = normalize(statement, dialect)
         if canonical != statement:
             raise CaseFailure(
-                f"{case.path.name}: error-case goldenSql.{dialect} is not canonical.\n"
+                f"{case.path.name}: error-case statements ({dialect}) is not canonical.\n"
                 f"  stored:     {statement!r}\n"
                 f"  normalized: {canonical!r}"
             )
@@ -2135,7 +2137,7 @@ def _assert_error_single_connection(case: Case, db: DatabaseProvider) -> None:
     last = len(statements) - 1
     raised: Exception | None = None
     for index, statement in enumerate(statements):
-        binds = _binds_for_statement(case, index)
+        binds = case.statement_binds(index)
         try:
             db.execute(statement, binds)
         except Exception as exc:  # noqa: BLE001 -- any driver error is the signal
@@ -2208,14 +2210,16 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     barrier = threading.Barrier(len(nodes))
     raised: dict[str, Exception] = {}
 
-    _provision(case, db)  # loadFixtures seeds the lockable Gauge rows
+    _provision(case, db)  # given.fixtures seeds the lockable Gauge rows
 
     def run_node(node: str, session: Any) -> None:
         for rnd in rounds:
             step = rnd.get(node)
-            if step is not None and dialect in step["goldenSql"]:
+            pairs = _entry_pairs(step.get("statements"), dialect) if isinstance(step, dict) else []
+            if pairs:
                 try:
-                    session.execute(step["goldenSql"][dialect], step.get("binds", []))
+                    for sql, binds in pairs:
+                        session.execute(sql, binds)
                 except Exception as exc:  # noqa: BLE001 -- the contention signal
                     raised[node] = exc
                     with contextlib.suppress(Exception):
@@ -2265,8 +2269,8 @@ def _concurrency_statements(case: Case, dialect: str) -> list[str]:
     for rnd in concurrency.get("rounds", []):
         for node in ("A", "B"):
             step = rnd.get(node)
-            if step and dialect in step["goldenSql"]:
-                statements.append(step["goldenSql"][dialect])
+            if isinstance(step, dict):
+                statements.extend(_entry_statements(step.get("statements"), dialect))
     return statements
 
 
@@ -2312,7 +2316,7 @@ def _assert_concurrency_normalization(case: Case, dialect: str) -> None:
         canonical = normalize(statement, dialect)
         if canonical != statement:
             raise CaseFailure(
-                f"{case.path.name}: concurrency goldenSql.{dialect} is not canonical.\n"
+                f"{case.path.name}: concurrency statements ({dialect}) is not canonical.\n"
                 f"  stored:     {statement!r}\n"
                 f"  normalized: {canonical!r}"
             )
@@ -2344,19 +2348,20 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
     raised: dict[str, Exception] = {}
     row_failures: list[str] = []
 
-    _provision(case, db)  # loadFixtures seeds the Account rows the reads observe
+    _provision(case, db)  # given.fixtures seeds the Account rows the reads observe
 
     def run_node(node: str, session: Any) -> None:
         for rnd in rounds:
             step = rnd.get(node)
-            if step is not None and dialect in step["goldenSql"]:
-                sql = step["goldenSql"][dialect]
-                binds = step.get("binds", [])
+            pairs = _entry_pairs(step.get("statements"), dialect) if isinstance(step, dict) else []
+            if pairs:
                 try:
                     if step.get("kind") == "read":
                         # A read step: fetch on the HELD session (a shared-lock SELECT
                         # takes its lock here) and compare the observed rows.
-                        rows = session.query(sql, binds)
+                        rows: list[dict[str, Any]] = []
+                        for sql, binds in pairs:
+                            rows = session.query(sql, binds)
                         expect = step.get("expectRows") or []
                         if not _rows_equal(rows, expect, tolerance):
                             row_failures.append(
@@ -2368,7 +2373,8 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
                         # A write step (kind: write): succeeds iff no lock blocks it
                         # (m-read-lock-008's admitted UPDATE); it holds until the finally
                         # rolls it back.
-                        session.execute(sql, binds)
+                        for sql, binds in pairs:
+                            session.execute(sql, binds)
                 except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
                     raised[node] = exc
                     with contextlib.suppress(Exception):
@@ -2408,11 +2414,7 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
 
 def _coherence_step_statements(step: dict[str, Any], dialect: str) -> list[str]:
     """The ordered golden SQL statements a coherence step lists for *dialect*."""
-    golden = step.get("goldenSql") or {}
-    value = golden.get(dialect)
-    if value is None:
-        return []
-    return [value] if isinstance(value, str) else list(value)
+    return _entry_statements(step.get("statements"), dialect)
 
 
 def _coherence_has_golden(case: Case, dialect: str) -> bool:
@@ -2426,7 +2428,7 @@ def _assert_coherence_normalization(case: Case, dialect: str) -> None:
             canonical = normalize(sql, dialect)
             if canonical != sql:
                 raise CaseFailure(
-                    f"{case.path.name}: coherence[{index}].goldenSql.{dialect} is "
+                    f"{case.path.name}: when.coherence[{index}].statements ({dialect}) is "
                     f"not canonical.\n"
                     f"  stored:     {sql!r}\n"
                     f"  normalized: {canonical!r}"
@@ -2463,24 +2465,22 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
         results: list[list[dict[str, Any]]] = []
         for index, step in enumerate(case.coherence):
             node = nodes[step["node"]]
-            statements = _coherence_step_statements(step, dialect)
+            pairs = _entry_pairs(step.get("statements"), dialect)
             if step["kind"] == "write":
-                for statement_index, statement in enumerate(statements):
-                    binds = _binds_for_list(step.get("binds", []), statement_index, len(statements))
+                for statement, binds in pairs:
                     node.execute(statement, binds)
                 results.append([])  # keep indices aligned for sameObjectAs
                 continue
 
             # A read step: execute its SELECT on its node and (when declared)
             # assert the rows it observes.
-            if not statements:
+            if not pairs:
                 raise CaseFailure(
                     f"{case.path.name}: coherence[{index}] is a read step but "
                     f"lists no golden SQL for {dialect}."
                 )
             rows: list[dict[str, Any]] = []
-            for statement_index, statement in enumerate(statements):
-                binds = _binds_for_list(step.get("binds", []), statement_index, len(statements))
+            for statement, binds in pairs:
                 rows = _query_rows(node, statement, binds)
             results.append(rows)
 
@@ -2611,7 +2611,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
 
     if case.is_conflict and case.attempts:
         # Retry conflict (m-opt-lock): golden SQL lives PER ATTEMPT, so there is no
-        # top-level goldenSql to key on. Handle it here, before the goldenSql
+        # top-level then.statements to key on. Handle it here, before the then.statements
         # access below, mirroring the scenario / coherence per-step shapes.
         if not _conflict_retry_has_golden(case, dialect):
             _assert_schema(case)
@@ -2624,12 +2624,12 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_equivalent_encodings(case)  # layer 4c
         _assert_conflict_input(case, dialect)  # layer 5c (① ↔ ② per attempt)
         _provision(case, db)  # fixtures loaded: the versioned row exists
-        _assert_conflict_retry(case, db)  # precondition + ordered attempts
+        _assert_conflict_retry(case, db)  # given.apply + ordered attempts
         return
 
     if case.is_error:
-        # A two-connection (concurrency) error case has no top-level goldenSql, so
-        # branch before the goldenSql access below, like the per-step shapes.
+        # A two-connection (concurrency) error case has no top-level then.statements, so
+        # branch before the then.statements access below, like the per-step shapes.
         _assert_schema(case)
         _assert_serde(case)  # descriptor serde only (error cases have no operation)
         _assert_equivalent_encodings(case)
@@ -2642,8 +2642,8 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     if case.is_concurrency_success:
         # A concurrency-success case (m-read-lock behavioral read-lock:
         # m-read-lock-007/m-read-lock-008) also carries its golden per round inside
-        # `concurrency.rounds` (no top-level goldenSql), so
-        # branch before the goldenSql access below, as a sibling of `is_error`.
+        # `concurrency.rounds` (no top-level then.statements), so
+        # branch before the then.statements access below, as a sibling of `is_error`.
         _assert_schema(case)
         _assert_serde(case)  # descriptor serde only (no operation)
         _assert_equivalent_encodings(case)
@@ -2653,7 +2653,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_concurrency_success(case, db)  # layer 2 (two held sessions, no error)
         return
 
-    if dialect not in case.golden_sql:
+    if dialect not in case.golden_dialects:
         # No golden SQL for this dialect: nothing to execute against it. The
         # serde + (dialect-agnostic) checks still run so coverage is not skipped.
         _assert_schema(case)
@@ -2677,7 +2677,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     if case.is_conflict:
         _assert_conflict_input(case, dialect)  # layer 5c (① ↔ ② single form)
         _provision(case, db)  # fixtures loaded: the row to lock exists
-        _assert_conflict(case, db)  # precondition + golden UPDATE, affected rows
+        _assert_conflict(case, db)  # given.apply + golden UPDATE, affected rows
         return
 
     _assert_round_trip_count(case, dialect)  # layer 5 (count)

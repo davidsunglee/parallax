@@ -9,7 +9,7 @@ also the seam the compatibility matrix grows along.
 Each provider exposes:
 
 * ``dialect`` — the dialect identifier (e.g. ``"postgres"``) selecting the
-  ``goldenSql`` key and the sqlglot dialect.
+  statement entry's ``sql`` dialect key and the sqlglot dialect.
 * ``reset()`` — return to a clean, empty state (drop everything).
 * ``apply_ddl(statements)`` — run derived ``CREATE TABLE`` DDL.
 * ``load(table, columns, rows)`` — bulk-insert fixture rows.

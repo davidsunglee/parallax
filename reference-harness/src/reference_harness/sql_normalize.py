@@ -10,9 +10,9 @@ The normative rules (m-sql, ``core/spec/m-sql.md``):
    (``select … from … where … group by … having … order by … limit …``).
 
 The golden SQL stored in a case **must already be a fixed point**:
-``normalize(goldenSql) == goldenSql``. The m-case-format harness asserts this (layer 3),
-so a contributor who hand-writes non-canonical golden SQL fails before any
-database is touched.
+``normalize(sql) == sql`` for each statement's dialect text. The m-case-format
+harness asserts this (layer 3), so a contributor who hand-writes non-canonical
+golden SQL fails before any database is touched.
 
 Approach. sqlglot parses the statement and re-renders it, which gives us
 deterministic clause order (rule 5), single-space whitespace (rule 3), explicit
@@ -46,7 +46,7 @@ def sqlglot_dialect(dialect: str) -> str:
     ``mariadb`` maps to sqlglot's ``mysql`` (MariaDB is MySQL-protocol-compatible
     and sqlglot has no dedicated MariaDB dialect); every other dialect is its own
     sqlglot dialect and passes through. Used by both the normalizer and the static
-    SQL lint so a ``goldenSql.mariadb`` statement is parsed under the right dialect.
+    SQL lint so a statement entry's ``sql.mariadb`` text is parsed under the right dialect.
     """
     return _SQLGLOT_DIALECT.get(dialect, dialect)
 

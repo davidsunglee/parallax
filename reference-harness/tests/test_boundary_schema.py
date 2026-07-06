@@ -32,12 +32,15 @@ def _valid_boundary_case() -> dict:
     return {
         "model": "models/account.yaml",
         "tags": ["m-unit-work", "abort", "slice-mvp-1"],
+        "shape": "boundary",
         "lane": "api-conformance",
-        "boundary": [
-            {"action": "read", "note": "observe the row"},
-            {"action": "update", "note": "buffer/flush a write"},
-        ],
-        "expect": "aborted",
+        "when": {
+            "boundary": [
+                {"action": "read", "note": "observe the row"},
+                {"action": "update", "note": "buffer/flush a write"},
+            ],
+        },
+        "then": {"outcome": "aborted"},
     }
 
 
@@ -66,7 +69,9 @@ def test_schema_rejects_boundary_case_on_the_harness_lane() -> None:
 def test_schema_rejects_boundary_case_with_golden_sql() -> None:
     """A boundary case carries no golden SQL — the DML stays per-language."""
     case = _valid_boundary_case()
-    case["goldenSql"] = {"postgres": "update account set balance = ? where id = ?"}
+    case["then"]["statements"] = [
+        {"sql": {"postgres": "update account set balance = ? where id = ?"}, "binds": [999.0, 2]}
+    ]
     assert list(_case_validator().iter_errors(case)), (
         "Schema should reject a boundary case that carries golden SQL"
     )

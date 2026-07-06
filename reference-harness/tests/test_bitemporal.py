@@ -140,7 +140,7 @@ def _temporal_write_input_cases():
         case
         for case in discover_cases(COMPATIBILITY_ROOT)
         if case.is_write_sequence
-        and "postgres" in case.golden_sql
+        and "postgres" in case.golden_dialects
         and any(
             step.get("rows") and case.model.entity(step["entity"]).is_temporal
             for step in case.write_sequence
@@ -222,7 +222,7 @@ def _business_write_cases():
         case
         for case in discover_cases(COMPATIBILITY_ROOT)
         if case.is_write_sequence
-        and "postgres" in case.golden_sql
+        and "postgres" in case.golden_dialects
         and any(step.get("businessAt") for step in case.write_sequence)
     ]
 
@@ -291,7 +291,7 @@ def test_bitemporal_conflict_close_business_from_corruption_is_rejected() -> Non
     )
     # Corrupt the business discriminator VALUE: the DERIVED from_z gate bind no longer
     # matches the golden bind, so the bitemporal close ① ↔ ② gate MUST fail.
-    case.raw["write"]["businessFrom"] = "1999-12-31T00:00:00+00:00"
+    case.when["write"]["businessFrom"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 
