@@ -12,7 +12,10 @@
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "read" },
-        "when": { "required": ["operation"] },
+        "when": {
+          "required": ["operation"],
+          "propertyNames": { "enum": ["operation", "uow", "equivalentEncodings"] }
+        },
         "then": {
           "required": ["statements"],
           "anyOf": [{ "required": ["rows"] }, { "required": ["graph"] }]
@@ -24,7 +27,10 @@
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "writeSequence" },
-        "when": { "required": ["writeSequence"] },
+        "when": {
+          "required": ["writeSequence"],
+          "propertyNames": { "enum": ["writeSequence", "uow"] }
+        },
         "then": { "required": ["tableState", "statements"] }
       }
     },
@@ -33,13 +39,21 @@
       "required": ["shape", "when"],
       "properties": {
         "shape": { "const": "scenario" },
-        "when": { "required": ["scenario"] }
+        "when": {
+          "required": ["scenario"],
+          "propertyNames": { "enum": ["scenario", "uow"] }
+        }
       }
     },
     {
       "description": "A conflict case (m-opt-lock): an optimistic-lock UPDATE asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `given.apply` (a concurrent transaction's stale-version mutation), then runs the golden UPDATE(s) and asserts the affected-row count. Two forms: a SINGLE attempt (`when.write` + `then.affectedRows` + `then.statements`); or an ordered `when.attempts` retry sequence (each attempt carrying its own statements + affectedRows + write), proving the m-opt-lock retry contract — a stale UPDATE affects 0 rows, then a retry that re-reads the fresh version affects 1.",
       "required": ["shape"],
-      "properties": { "shape": { "const": "conflict" } },
+      "properties": {
+        "shape": { "const": "conflict" },
+        "when": {
+          "propertyNames": { "enum": ["uow", "write", "at", "observedInZ", "attempts"] }
+        }
+      },
       "anyOf": [
         {
           "required": ["when", "then"],
@@ -59,7 +73,10 @@
       "required": ["shape", "when"],
       "properties": {
         "shape": { "const": "coherence" },
-        "when": { "required": ["coherence"] }
+        "when": {
+          "required": ["coherence"],
+          "propertyNames": { "enum": ["coherence"] }
+        }
       }
     },
     {
@@ -67,6 +84,7 @@
       "required": ["shape", "then"],
       "properties": {
         "shape": { "const": "error" },
+        "when": { "propertyNames": { "enum": ["concurrency"] } },
         "then": { "required": ["errorClass", "nativeCode"] }
       },
       "anyOf": [
@@ -87,6 +105,7 @@
         "shape": { "const": "concurrencySuccess" },
         "when": {
           "required": ["concurrency"],
+          "propertyNames": { "enum": ["concurrency"] },
           "properties": {
             "concurrency": {
               "properties": {
@@ -111,7 +130,10 @@
       "properties": {
         "shape": { "const": "boundary" },
         "lane": { "const": "api-conformance" },
-        "when": { "required": ["boundary"] },
+        "when": {
+          "required": ["boundary"],
+          "propertyNames": { "enum": ["boundary", "uow"] }
+        },
         "then": {
           "required": ["outcome"],
           "not": { "required": ["statements"] }
@@ -469,7 +491,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["statements", "expectedAffectedRows", "write"],
+            "required": ["statements", "affectedRows", "write"],
             "properties": {
               "statements": {
                 "description": "This attempt's golden UPDATE, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form).",
@@ -489,8 +511,8 @@
                 "type": "string",
                 "minLength": 1
               },
-              "expectedAffectedRows": {
-                "description": "The rows this attempt's UPDATE must affect: 0 for the stale-version attempt (conflict), 1 for the fresh-version retry (success).",
+              "affectedRows": {
+                "description": "The rows this attempt's UPDATE must affect: 0 for the stale-version attempt (conflict), 1 for the fresh-version retry (success). Named to match the single-attempt `then.affectedRows` — no legacy `expected*` vocabulary survives in a migrated case body.",
                 "type": "integer",
                 "minimum": 0
               },

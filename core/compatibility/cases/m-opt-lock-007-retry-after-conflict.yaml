@@ -28,14 +28,14 @@ when:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
           binds: [250.00, 2, 2, 1]
       write: { id: 2, balance: 250.00, observedVersion: 1 }
-      expectedAffectedRows: 0
+      affectedRows: 0
     - note: retry — re-read the fresh version (2) and re-apply ⇒ 1 row, version 2 -> 3
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
           binds: [250.00, 3, 2, 2]
       write: { id: 2, balance: 250.00, observedVersion: 2 }
-      expectedAffectedRows: 1
+      affectedRows: 1
 then:
   tableState:
     account:
