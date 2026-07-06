@@ -18,7 +18,7 @@ The lock applies to **object finds only**. A **projection or aggregation** read
 inside a unit of work takes **no** lock and **proceeds unlocked — it never
 errors**: its result rows have no identifiable base row to lock (the database
 rejects a row-lock clause on a `distinct` / grouped / aggregate result), and per
-ADR 0024 a projection returns **plain, unmanaged data** that never enters the
+ADR 0002 a projection returns **plain, unmanaged data** that never enters the
 observed-version map or the write path — so there is nothing for a lock to
 protect. Omitting the lock is therefore both necessary and safe.
 
@@ -54,5 +54,5 @@ is proven by the two-connection concurrency cases: it **excludes a writer**
 admits a writer** (`m-read-lock-008`, the behavioral counterpart to the
 projection-omits-lock emission case) — the last two carrying the
 `concurrencySuccess` shape (two held sessions, no error raised). The
-object-find-vs-aggregation split is recorded in ADR 0030 (which supersedes-in-part
-ADR 0009).
+object-find-vs-aggregation split is recorded in ADR 0012 (which supersedes-in-part
+ADR 0011).

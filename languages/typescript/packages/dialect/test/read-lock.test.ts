@@ -1,7 +1,7 @@
 /**
  * `@parallax/dialect` unit tests (Docker-free, pure) — in-transaction read-lock
  * **application** (m-read-lock automatic read-lock correctness, owned by the m-dialect seam;
- * delta `09` D2/D3, ADR 0030).
+ * delta `09` D2/D3, core ADR 0012).
  *
  * The dialect owns the whole lock decision — whether, where, and how it attaches:
  *
@@ -10,7 +10,7 @@
  *  - a `locking`-mode **projection / aggregation** (the `select distinct` shape) is
  *    returned **unchanged** — no suffix, and crucially **no throw** (the reversal of
  *    the former `ParallaxUnlockableReadError`: no base row to lock, unmanaged data
- *    per ADR 0024, so it proceeds unlocked);
+ *    per core ADR 0002, so it proceeds unlocked);
  *  - a **non-`locking`** read (optimistic mode / out-of-transaction) is unchanged.
  */
 import { applyReadLock } from "@parallax/dialect";
@@ -27,7 +27,7 @@ describe("applyReadLock (m-read-lock read-lock application, m-read-lock-001)", (
   it("returns a distinct/projection read UNCHANGED — no suffix, no throw", () => {
     // A row lock applies to base rows, so Postgres/MariaDB reject `FOR SHARE` on a
     // DISTINCT result. The dialect OMITS the lock (it proceeds unlocked) rather than
-    // erroring — the D2 reversal (ADR 0030), even in locking mode.
+    // erroring — the D2 reversal (core ADR 0012), even in locking mode.
     const distinctRead = "select distinct t0.owner from account t0";
     expect(applyReadLock(distinctRead, { locking: true, projection: true })).toBe(distinctRead);
   });

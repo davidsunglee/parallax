@@ -311,7 +311,7 @@ export class Parallax {
    * (m-unit-work); in `optimistic` mode reads take no lock and versioned updates gate on the
    * observed version (m-opt-lock).
    *
-   * The boundary offers **bounded automatic retry** (m-auto-retry/m-opt-lock, ADR 0031/0065): on a
+   * The boundary offers **bounded automatic retry** (m-auto-retry/m-opt-lock, core ADR 0008 / ts ADR 0026): on a
    * retriable failure it rolls back, discards stale state, and re-executes the body
    * against fresh state, up to `options.retries` re-executions (default 10; `0`
    * disables the loop). Each attempt opens a **fresh** driver transaction and a
@@ -445,12 +445,12 @@ export class TransactionEntity<T extends ParallaxRow = ParallaxRow> {
    * `update` the selected row(s) (spec §3): explicit assignment array, not a partial.
    *
    * A versioned entity whose predicate is NOT a single primary-key equality is a
-   * SET-BASED versioned update, which MATERIALIZES (m-opt-lock, ADR 0032): resolve the
+   * SET-BASED versioned update, which MATERIALIZES (m-opt-lock, core ADR 0014): resolve the
    * predicate to rows through the OBSERVING finder — which records each row's
    * observed version and, in `locking` mode, takes the m-read-lock shared lock (satisfying
    * read-before-write) — then emit one keyed per-object update per resolved row.
    * A keyed (single-pk) versioned update and EVERY non-versioned update keep the
-   * direct write path (the latter's readless batched form is unchanged, ADR 0011).
+   * direct write path (the latter's readless batched form is unchanged, core ADR 0014).
    */
   async update(predicate: Predicate, options: UpdateOptions): Promise<WriteResult> {
     if (

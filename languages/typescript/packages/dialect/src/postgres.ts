@@ -62,9 +62,9 @@ const READ_LOCK_ALIAS = "t0";
  *    qualified, lowercased);
  *  - a **projection / aggregation** read (`projection: true` — a `select distinct` /
  *    grouped / aggregate result) is returned **unchanged**: its result rows have no
- *    identifiable base row to lock, and per ADR 0024 return plain unmanaged data, so
- *    there is nothing to protect — it proceeds unlocked rather than erroring (ADR
- *    0030, the D2 reversal);
+ *    identifiable base row to lock, and per core ADR 0002 return plain unmanaged data, so
+ *    there is nothing to protect — it proceeds unlocked rather than erroring (the D2 reversal;
+ *    core ADR 0012);
  *  - any **non-`locking`** read (`optimistic` mode, or an out-of-transaction read)
  *    is returned unchanged.
  *

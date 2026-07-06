@@ -42,7 +42,7 @@ future gap surfaces as an explicit marker rather than silent prose.
 
 ## 1. Conformance Slice declaration
 
-**ANSWERED — see [TS-0064](../docs/adr/0064-adopt-first-implementation-mvp-slice.md).**
+**ANSWERED — see [core ADR 0018](../../../docs/adr/0018-slice-tags-follow-the-slice-naming-convention.md).**
 The Conformance Slice this build claims leads the spec because it scopes every
 other section — the module → package map, the case/dialect matrix
 ([§5](#5-test-double-integration-m-case-format-dq15)), the conformance-adapter grade, and
@@ -55,7 +55,7 @@ claim and its name is its `caseTags.include` tag.
 
 TypeScript V1 **is** the canonical `slice-mvp-1` Conformance Slice
 declared in [`slices.md`](../../../core/spec/slices.md#first-implementation-conformance-slice)
-([TS-0064](../docs/adr/0064-adopt-first-implementation-mvp-slice.md)). The V1
+([core ADR 0018](../../../docs/adr/0018-slice-tags-follow-the-slice-naming-convention.md)). The V1
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
 the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
@@ -126,7 +126,7 @@ important V1 rule is the slice boundary:
   `groupBy` / `having` cases and cases tagged `projection` are untagged and
   therefore outside the claim even though basic m-op-algebra predicate reads are inside it.
 - The transaction/read-lock/batched-write slice of m-read-lock is inside §4, but the m-read-lock
-  identity-cache and query-cache scenario slice is deferred by TS-0054. Those
+  identity-cache and query-cache scenario slice is deferred by TS-0027. Those
   cache/identity cases are untagged and outside the V1 claim.
 - The `scenario` shape is **inside** the claim: the read-your-own-writes scenario
   `m-unit-work-001-read-your-own-writes` is tagged `slice-mvp-1` and runs as
@@ -137,7 +137,7 @@ important V1 rule is the slice boundary:
   `lifecycle detach` cases are untagged and outside the V1 claim unless a later
   implementation explicitly adds that slice.
 - m-perf-bench benchmarks are **outside** the V1 claim: `m-perf-bench` is not in `modules` and the
-  `benchmark` command is not in `commands` (TS-0062, TS-0064). TypeScript still
+  `benchmark` command is not in `commands` (TS-0032, core ADR 0018). TypeScript still
   binds to the shared m-perf-bench methodology and report shape (§11), but the first build
   does not *claim* benchmark execution in its conformance slice — the benchmark
   surface lands after the first slice.
@@ -368,9 +368,9 @@ current (`now`).
 
 ## 3. Metadata / model input format (DQ5, DQ6)
 
-**ANSWERED — see [TS-0055](../docs/adr/0055-metamodel-introspection-api-has-generic-and-typed-layers.md),
-[TS-0056](../docs/adr/0056-one-canonical-serde-shared-by-metamodel-and-operations.md),
-[TS-0057](../docs/adr/0057-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md).**
+**ANSWERED — see [TS-0008](../docs/adr/0008-metamodel-introspection-api-has-generic-and-typed-layers.md),
+[TS-0009](../docs/adr/0009-one-canonical-serde-shared-by-metamodel-and-operations.md),
+[TS-0010](../docs/adr/0010-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md).**
 The metamodel (`m-descriptor`) is one artifact wearing two hats — an introspectable runtime
 protocol and a serializable document — and this section specifies both hats so an
 implementer can build the metamodel layer without inferring its shape from
@@ -391,7 +391,7 @@ later as authoring conveniences but the serialized descriptor stays the backbone
 
 ### 3.2 Introspection API (the `RelatedFinder` / `ReladomoClassMetaData` analogue)
 
-Introspection is exposed in **two layers over the same descriptor** (TS-0055): a
+Introspection is exposed in **two layers over the same descriptor** (TS-0008): a
 **generic reader** over any parsed descriptor (no codegen required), and **typed
 accessors** generated onto each entity symbol that delegate to it. The generic
 layer is what the generator, the serde round-trip, and the `parallax-conformance`
@@ -497,7 +497,7 @@ not part of the public scalar surface.
 A dedicated **`@parallax/serde`** package is the single canonical, format-agnostic
 serde seam, shared by the metamodel (`m-descriptor`) and the operation algebra (`m-op-algebra`) — the
 same shared seam the Python harness realizes in `serde.py` and proves as `m-case-format`
-layer 4a/4b (TS-0056). Giving serde its own package satisfies the template's
+layer 4a/4b (TS-0009). Giving serde its own package satisfies the template's
 "dedicated module" requirement; sharing it across `m-descriptor`/`m-op-algebra` guarantees the adapter
 canonicalizes identically to the oracle.
 
@@ -509,7 +509,7 @@ deserialize(text: string, fmt: "json" | "yaml"): unknown
 assertRoundTrip(value): void               // JSON and YAML; idempotent + value-identity
 ```
 
-The serde module MUST satisfy this **round-trip contract** (TS-0057), transcribed
+The serde module MUST satisfy this **round-trip contract** (TS-0010), transcribed
 from the Python harness so it canonicalizes identically to the oracle:
 
 - **Safe load.** `deserialize` uses a safe loader that never constructs arbitrary
@@ -527,7 +527,7 @@ from the Python harness so it canonicalizes identically to the oracle:
 
 The `yaml` package (or `js-yaml`) plus built-in `JSON` is a **non-binding** suggested
 default with the canonicalizer written in-house; the round-trip contract above —
-not any named library — is the normative requirement (TS-0057).
+not any named library — is the normative requirement (TS-0010).
 
 ## 4. Transaction-block demarcation (m-unit-work)
 
@@ -557,7 +557,7 @@ transaction; reads may use `px`, writes are available only through `tx`.
 
 - **Bounded automatic retry.** `TransactionOptions.retries` (default **10**; `0`
   disables the loop) and `TransactionOptions.retryOptimisticConflicts` (default
-  `false`) configure the m-auto-retry/m-opt-lock retry contract (ADR 0031 / TS ADR 0065). On a
+  `false`) configure the m-auto-retry/m-opt-lock retry contract (core ADR 0008 / ts ADR 0026). On a
   **retriable** failure the boundary rolls back, discards the unit of work's
   observed state, and re-executes the body against fresh state, up to `retries`
   re-executions — each attempt opens a **fresh** driver transaction and a **fresh**
@@ -592,13 +592,13 @@ transaction; reads may use `px`, writes are available only through `tx`.
   flat find and every deep-fetch level through one in-transaction read executor. A
   **projection / aggregation** read (a `distinct` result) takes **no** lock and
   **proceeds unlocked — it never errors** (no base row to lock; unmanaged data per
-  ADR 0024 / ADR 0030); `optimistic`-mode reads take no lock either. A versioned
+  core ADR 0002 / core ADR 0012); `optimistic`-mode reads take no lock either. A versioned
   read records the observed version so a later update can gate on / advance from it.
   V1 does not expose a per-read `lock: false`.
 - **Set-based writes.** `update` / `delete` accept either a predicate or an
   unresolved `ParallaxList` target, use explicit assignment arrays (not partial
   objects), and return result objects carrying at least `affectedRows`. On a
-  versioned entity the framework-owned version (ADR 0029) advances in both modes
+  versioned entity the framework-owned version (core ADR 0013) advances in both modes
   and gates in `optimistic` mode: updating a row the unit of work never observed
   throws `ParallaxReadBeforeWriteError`, a stale gate (zero rows) throws
   `ParallaxOptimisticLockError`, and an update whose assignment array changes no
@@ -724,9 +724,8 @@ validation error.
 
 ## 5. Test-double integration (m-case-format, DQ15)
 
-**ANSWERED — see [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md),
-[TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md),
-[TS-0060](../docs/adr/0060-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md).**
+**ANSWERED — see [TS-0030](../docs/adr/0030-cases-discovered-by-glob-executed-through-conformance-adapter.md),
+[TS-0031](../docs/adr/0031-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md).**
 The TypeScript conformance suite proves the implementation against the same
 language-neutral corpus the Python reference harness proves green. This section
 specifies the runner, how cases are discovered and executed, how the database is
@@ -735,7 +734,7 @@ inferring it from the harness internals.
 
 ### 5.1 Test runner
 
-The runner is **vitest** (TS-0058). The suite is a parametrized matrix of
+The runner is **vitest** (TS-0030). The suite is a parametrized matrix of
 discovered compatibility cases × dialects — the same shape as the Python harness's
 parametrized `test_compatibility.py` — and vitest's `test.each` / programmatic test
 generation maps directly onto it, so every `(case, dialect)` pair is its own named,
@@ -758,7 +757,7 @@ Globbing the same files the oracle proves keeps the case set authoritative — t
 is no hand-maintained list to drift — and the sorted, deduped order makes the
 matrix deterministic.
 
-Cases are **executed through the `parallax-conformance` adapter contract** (TS-0059,
+Cases are **executed through the `parallax-conformance` adapter contract** (TS-0030,
 [`m-conformance-adapter.md`](../../../core/spec/m-conformance-adapter.md)),
 **not** by reaching into runtime internals:
 
@@ -1036,7 +1035,7 @@ language-local realization of the contract's guide drift-check requirement.
 
 ## 9. Build-time dependency enforcement (DQ3, dependency-graph)
 
-**ANSWERED — see [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m-core-m-coherence-package-map.md).**
+**ANSWERED — see [TS-0034](../docs/adr/0034-module-dag-enforced-by-dependency-cruiser.md).**
 The normative module-dependency graph
 ([`modules.md`](../../../core/spec/modules.md)) is the **only**
 legal dependency direction between core modules, and each per-language
@@ -1051,7 +1050,7 @@ package-topology edges, not additions to the core module DAG.
 
 ### 9.1 Enforcement tool
 
-The tool is **dependency-cruiser** (TS-0061), run as a standalone
+The tool is **dependency-cruiser** (TS-0034), run as a standalone
 `depcruise --validate` build step decoupled from ESLint. Its `forbidden` /
 `allowed` from/to contract encodes the DAG edges directly: the legal edges become
 an `allowed` allowlist of `{ from, to }` package selectors, and any
@@ -1131,7 +1130,7 @@ module.exports = {
 Modules are language-neutral behavioral modules, not packages. Each
 **pnpm-workspace package** under `languages/typescript/packages/` implements one
 **or more** core modules and enforces the module-dependency graph internally
-(TS-0061). Real workspace packages — rather than path-ruled directories — make the
+(TS-0034). Real workspace packages — rather than path-ruled directories — make the
 workspace graph itself participate in the layering: a package's `package.json`
 lists only the sibling packages it is permitted to depend on, and
 dependency-cruiser is the mechanical gate over the `import` graph. The
@@ -1291,10 +1290,10 @@ the core graph.
 ## 10. Optional optimized data structures (m-perf-bench, DQ10)
 
 **DEFERRED-with-rationale — non-normative, no V1 decision; see
-[TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md).**
+[TS-0033](../docs/adr/0033-optimized-data-structures-non-normative-no-v1-decision.md).**
 This section is **non-normative**: the optional optimized data structures exist
 only to back the `m-process-cache` identity / query caches, and that cache/identity slice of
-m-unit-work is deferred from TypeScript V1 (TS-0054,
+m-unit-work is deferred from TypeScript V1 (TS-0027,
 [§4](#4-transaction-block-demarcation-m-unit-work)). The transaction/read-lock/write
 slice specified in §4 still belongs to V1. There is nothing cache-specific to
 optimize for V1, so no V1 decision is recorded. The core itself marks these
@@ -1323,7 +1322,7 @@ implemented.
 
 **DEFERRED-with-rationale (m-perf-bench command and numeric targets) + the
 `expectRoundTrips` invariant is binding for V1 compatibility cases — see
-[TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md).**
+[TS-0032](../docs/adr/0032-performance-methodology-bound-numeric-targets-deferred.md).**
 TypeScript records the shared `m-perf-bench` methodology now, but the canonical
 `slice-mvp-1` conformance slice does **not** claim module `m-perf-bench` or
 the `benchmark` command. A V1 adapter adopting that slice may therefore return
@@ -1404,9 +1403,9 @@ object-lifecycle slot). It records the TypeScript surface for getting data **out
 of** and **back into** managed objects — the TypeScript analogue of Reladomo's
 detach / merge-back lifecycle (`m-detach`, the `@parallax/lifecycle` package of
 [§9.2](#92-module--package-mapping)). The decisions are recorded in
-[TS-0036](../docs/adr/0036-snapshots-are-the-typescript-detached-data-surface.md)
+[TS-0020](../docs/adr/0020-snapshots-are-the-typescript-detached-data-surface.md)
 and
-[TS-0037](../docs/adr/0037-generated-entity-inputs-provide-validation-helpers.md).
+[TS-0018](../docs/adr/0018-generated-entity-inputs-provide-validation-helpers.md).
 
 **Snapshots are the detached-data surface.** TypeScript does not expose
 Reladomo-style detached *managed objects* in V1; the plain, JSON-serializable
@@ -1467,14 +1466,14 @@ Create consumes nested relationship data only when listed in `relationships`;
 data listed in `ignoreRelationships` is accepted but ignored; any remaining
 nested relationship data is rejected. These helpers validate plain payloads —
 they do **not** create managed objects, parse detached entities, parse snapshots,
-or replace `tx.entity.create(...)` (TS-0037).
+or replace `tx.entity.create(...)` (TS-0018).
 
 **Deferred from V1.** The full Reladomo-style detached-object lifecycle — the
 `m-detach` state machine (`persisted` → `detached` → `detached-deleted`) and merge-back
 (`getDetachedCopy` / `copyDetachedValuesToOriginalOrInsertIfNew`) — is **deferred
 from TypeScript V1**. When `m-detach` merge-back lands it should be expressed through
 explicit snapshot apply / merge APIs that preserve the core observable semantics
-(TS-0036), not by introducing detached managed objects.
+(TS-0020), not by introducing detached managed objects.
 
 ## Template Coverage Appendix
 
@@ -1487,17 +1486,17 @@ section (`m-detach`) beyond the template skeleton; it is not a template row.
 
 | Template section | Status | Answer location | ADRs |
 |---|---|---|---|
-| §1 Conformance Slice declaration | ANSWERED | [§1](#1-conformance-slice-declaration) | [TS-0064](../docs/adr/0064-adopt-first-implementation-mvp-slice.md) |
+| §1 Conformance Slice declaration | ANSWERED | [§1](#1-conformance-slice-declaration) | [core ADR 0018](../../../docs/adr/0018-slice-tags-follow-the-slice-naming-convention.md) |
 | §2 API surface | ANSWERED | [§2](#2-api-surface-non-normative--dq3) | — |
-| §3 Metadata / introspection + serde | ANSWERED | [§3](#3-metadata--model-input-format-dq5-dq6) | [TS-0055](../docs/adr/0055-metamodel-introspection-api-has-generic-and-typed-layers.md), [TS-0056](../docs/adr/0056-one-canonical-serde-shared-by-metamodel-and-operations.md), [TS-0057](../docs/adr/0057-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md) |
+| §3 Metadata / introspection + serde | ANSWERED | [§3](#3-metadata--model-input-format-dq5-dq6) | [TS-0008](../docs/adr/0008-metamodel-introspection-api-has-generic-and-typed-layers.md), [TS-0009](../docs/adr/0009-one-canonical-serde-shared-by-metamodel-and-operations.md), [TS-0010](../docs/adr/0010-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md) |
 | §4 Transaction-block demarcation | ANSWERED | [§4](#4-transaction-block-demarcation-m-unit-work) | — |
-| §5 Test-double integration | ANSWERED | [§5](#5-test-double-integration-m-case-format-dq15) | [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md), [TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md), [TS-0060](../docs/adr/0060-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md) |
+| §5 Test-double integration | ANSWERED | [§5](#5-test-double-integration-m-case-format-dq15) | [TS-0030](../docs/adr/0030-cases-discovered-by-glob-executed-through-conformance-adapter.md), [TS-0031](../docs/adr/0031-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md) |
 | §6 API Conformance Suite & Usage Guide | ANSWERED | [§6](#6-api-conformance-suite--usage-guide) | — |
 | §7 Codegen-or-not | ANSWERED | [§7](#7-codegen-or-not-dq5) | — |
 | §8 Collection idioms | ANSWERED | [§8](#8-collection-idioms-m-op-list) | — |
-| §9 Build-time dependency enforcement | ANSWERED | [§9](#9-build-time-dependency-enforcement-dq3-dependency-graph) | [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m-core-m-coherence-package-map.md) |
-| §10 Optional optimized data structures | DEFERRED-with-rationale | [§10](#10-optional-optimized-data-structures-m-perf-bench-dq10) | [TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md) |
-| §11 Per-language performance targets | DEFERRED-with-rationale | [§11](#11-per-language-performance-targets-m-perf-bench-dq10) | [TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md) |
+| §9 Build-time dependency enforcement | ANSWERED | [§9](#9-build-time-dependency-enforcement-dq3-dependency-graph) | [TS-0034](../docs/adr/0034-module-dag-enforced-by-dependency-cruiser.md) |
+| §10 Optional optimized data structures | DEFERRED-with-rationale | [§10](#10-optional-optimized-data-structures-m-perf-bench-dq10) | [TS-0033](../docs/adr/0033-optimized-data-structures-non-normative-no-v1-decision.md) |
+| §11 Per-language performance targets | DEFERRED-with-rationale | [§11](#11-per-language-performance-targets-m-perf-bench-dq10) | [TS-0032](../docs/adr/0032-performance-methodology-bound-numeric-targets-deferred.md) |
 
 ### Completion check
 

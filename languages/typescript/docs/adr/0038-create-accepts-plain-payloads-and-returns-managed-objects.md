@@ -1,3 +1,0 @@
-# Create accepts plain payloads and returns managed objects
-
-TypeScript create operations accept plain create payloads rather than constructed or managed entity instances. A generated entity input such as `OrderInput` is the validation surface for unknown input accepted by create. Create is available only inside a `ParallaxTransaction`: it registers a pending insert, returns the managed object immediately, and flushes at commit; nested relationship data is consumed only when listed in `relationships`, may be explicitly allowed-but-ignored with `ignoreRelationships`, and otherwise causes validation failure.

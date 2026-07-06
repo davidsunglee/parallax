@@ -9,7 +9,7 @@ A minimal application that exercises the Phase 9 developer surface: the generate
 - `parallax.config.js` — the generator config (`defineParallaxConfig`).
 - `src/main.ts` — imports `#parallax`, builds `px`, runs a typed `find`.
 - `.parallax/generated/` — the generated barrel (gitignored; `parallax generate`
-  materializes it behind the `#parallax` import alias — ADR-0003).
+  materializes it behind the `#parallax` import alias — ADR-0002).
 
 ## Try it
 

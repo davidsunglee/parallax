@@ -1,4 +1,4 @@
-# Boundary case (m-unit-work abort contract / ADR 0008): the transaction callback's return
+# Boundary case (m-unit-work abort contract / ADR 0006): the transaction callback's return
 # value is WITHHELD on abort — `api-conformance` lane.
 #
 # Promoted into m-unit-work normative text in phase 1 and closed here as the portable

@@ -6,7 +6,7 @@
 # developer-surface object find issued inside `px.transaction(body, { concurrency:
 # "locking" })` carries the dialect's shared-row-lock suffix (`for share of t0`) —
 # the m-read-lock automatic read-lock correctness the runtime applies with no caller SQL,
-# owned by the m-dialect dialect (`applyReadLock`, ADR 0030 / delta 09).
+# owned by the m-dialect dialect (`applyReadLock`, ADR 0012 / delta 09).
 #
 # The lock is a concurrency property no single-connection harness can distinguish
 # (exactly like `m-read-lock-001`), so this case is `lane: api-conformance`: the m-case-format harness
