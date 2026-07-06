@@ -82,7 +82,7 @@ jobs:
         run: cat coverage/conformance-slice.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload conformance slice coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-slice-coverage
           path: |
@@ -135,7 +135,7 @@ jobs:
         run: node languages/typescript/scripts/coverage-summary.mjs coverage/typescript/coverage-summary.json >> "$GITHUB_STEP_SUMMARY"
       - name: Upload TypeScript coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: typescript-coverage
           path: coverage/typescript
