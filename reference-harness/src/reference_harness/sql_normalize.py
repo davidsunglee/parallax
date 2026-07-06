@@ -1,6 +1,6 @@
 """sqlglot-based implementation of the M3 canonical SQL normalization rules.
 
-The normative rules (M3, ``core/spec/m3-sql-contract.md``):
+The normative rules (M3, ``core/spec/m-sql.md``):
 
 1. Table-alias scheme ``t0, t1, …``; columns always alias-qualified.
 2. Lowercase keywords and unquoted identifiers.

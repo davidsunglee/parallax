@@ -32,12 +32,12 @@ Before writing runtime code, read these files in this order:
 
 1. [README.md](README.md)
 2. [core/spec/00-overview.md](core/spec/00-overview.md)
-3. [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md)
-4. [core/spec/dependency-graph.md](core/spec/dependency-graph.md)
+3. [core/spec/modules.md](core/spec/modules.md)
+4. [core/spec/slices.md](core/spec/slices.md)
 5. [core/spec/language-spec-template.md](core/spec/language-spec-template.md)
-6. [core/spec/m12-compatibility-harness.md](core/spec/m12-compatibility-harness.md)
-7. [core/spec/conformance-adapter-contract.md](core/spec/conformance-adapter-contract.md)
-8. [core/spec/api-conformance-contract.md](core/spec/api-conformance-contract.md)
+6. [core/spec/m-case-format.md](core/spec/m-case-format.md)
+7. [core/spec/m-conformance-adapter.md](core/spec/m-conformance-adapter.md)
+8. [core/spec/m-api-conformance.md](core/spec/m-api-conformance.md)
 9. [core/schemas/](core/schemas/)
 10. [core/compatibility/models/](core/compatibility/models/)
 11. [core/compatibility/cases/](core/compatibility/cases/)
@@ -64,7 +64,7 @@ collection behavior, dependency enforcement, or performance targets.
 - If the core contract appears wrong or incomplete, update the spec, schema,
   fixtures, and cases together, then run the root verification gates.
 - Implement in the legal dependency direction from
-  [core/spec/dependency-graph.md](core/spec/dependency-graph.md).
+  [core/spec/modules.md](core/spec/modules.md).
 - Keep language-facing APIs idiomatic, but serialize to the canonical metamodel
   and operation forms.
 - Prefer real compatibility cases over duplicated language-only behavioral
@@ -83,7 +83,7 @@ Before implementation, produce a short plan in the language module that records:
 - The completed language spec path.
 - The named **Conformance Slice** this build claims — or the definition of a new
   named slice in
-  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md) — recorded as its
+  [core/spec/slices.md](core/spec/slices.md) — recorded as its
   `describe` claim. This is the first decision; see
   [Declaring The Conformance Slice](#declaring-the-conformance-slice).
 - The module/package map for M0, M1, M2, M3, M4, M5, M7, M8, M9, M10, M11, M12,
@@ -95,8 +95,8 @@ Before implementation, produce a short plan in the language module that records:
   fallback if a snapshot optimization is used.
 - The first case slice that will be made green.
 - The final case/dialect matrix the implementation intends to claim.
-- Any deferred modules, with tier justification from
-  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md).
+- Any deferred modules, with their status from
+  [core/spec/modules.md](core/spec/modules.md).
 
 ## Declaring The Conformance Slice
 
@@ -107,11 +107,11 @@ scoped by it. Choose (or define) the named Conformance Slice:
 
 - **Adopt an existing slice.** A fresh first build ordinarily adopts the
   canonical `slice-mvp-1` slice defined in
-  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md): Postgres-only, 120
+  [core/spec/slices.md](core/spec/slices.md): Postgres-only, 123
   cases selected by the single `caseTags.include: ["slice-mvp-1"]` tag. Copy its
   `capabilities` block verbatim, changing only the `adapter` identity.
 - **Or define a new slice.** If no existing slice fits, define one in
-  [core/spec/scope-and-tiers.md](core/spec/scope-and-tiers.md) following the
+  [core/spec/slices.md](core/spec/slices.md) following the
   slice-naming convention (`^slice-[a-z0-9][a-z0-9-]*$`, where the slice's name
   is its tag) and tag the included cases. A slice is case-granular: it may claim
   some features of a module while deferring others, without redefining that
@@ -123,7 +123,7 @@ That envelope is the slice's machine-readable form, and its `caseTags.include`
 tag is the slice's name. Inside it, `modules`, `dialects`, and `caseShapes` are
 broad filters and `caseTags` is the fine-grained slice filter; a case command is
 in-claim only when it satisfies all of them (see
-[core/spec/conformance-adapter-contract.md](core/spec/conformance-adapter-contract.md)).
+[core/spec/m-conformance-adapter.md](core/spec/m-conformance-adapter.md)).
 
 Then hold the `unsupported` discipline. For every case command outside the
 claimed slice — an out-of-slice case shape, dialect, module, or tag — the adapter
@@ -158,7 +158,7 @@ starts.
 The API Conformance Suite is not a trailing phase — it grows alongside the
 developer surface, exercising each family of the claimed slice through the
 idiomatic public API as that API lands. See
-[core/spec/api-conformance-contract.md](core/spec/api-conformance-contract.md).
+[core/spec/m-api-conformance.md](core/spec/m-api-conformance.md).
 
 The first green slice should be intentionally small. A useful first slice is:
 
@@ -172,7 +172,7 @@ The first green slice should be intentionally small. A useful first slice is:
 
 Each language implementation should expose the conformance interface specified
 in
-[core/spec/conformance-adapter-contract.md](core/spec/conformance-adapter-contract.md).
+[core/spec/m-conformance-adapter.md](core/spec/m-conformance-adapter.md).
 A CLI is the easiest cross-language seam because it can be driven by any
 runner.
 

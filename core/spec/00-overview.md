@@ -14,27 +14,22 @@ suite against real databases.
 
 ## How to read this spec
 
-The spec is a set of **capability modules** (`M0`–`M14`). Each module is one file defining
-its protocol surface, its observable behavior, and the compatibility cases that pin it down. Modules
-depend on one another only in the directions permitted by the **normative
-module-dependency graph** ([`dependency-graph.md`](dependency-graph.md)).
+The spec is a set of **capability modules** with canonical `m-<slug>` identifiers
+(e.g. `m-op-algebra`, `m-unit-work`). Each active module is one file
+(`<module-id>.md`) defining its protocol surface, its observable behavior, and the
+compatibility cases that pin it down; a deferred module carries a short stub.
+Modules depend on one another only in the directions permitted by the **normative
+module-dependency graph**.
 
-| Module | File | Title |
-|---|---|---|
-| M0 | [`m0-core-conventions.md`](m0-core-conventions.md) | Core conventions — neutral types, timezone, infinity |
-| M1 | [`m1-metamodel.md`](m1-metamodel.md) | Domain model & metamodel |
-| M2 | [`m2-operation-algebra.md`](m2-operation-algebra.md) | Query, operation & aggregation algebra |
-| M3 | [`m3-sql-contract.md`](m3-sql-contract.md) | SQL generation & equivalence contract |
-| M4 | [`m4-relationships-deepfetch.md`](m4-relationships-deepfetch.md) | Relationships & deep fetch |
-| M5 | [`m5-lists-bulk.md`](m5-lists-bulk.md) | Lists & bulk/set operations |
-| M7 | [`m7-temporal.md`](m7-temporal.md) | Bitemporal / milestoning |
-| M8 | [`m8-transactions-cache.md`](m8-transactions-cache.md) | Transactions, unit of work & identity + query cache |
-| M9 | [`m9-lifecycle-detach.md`](m9-lifecycle-detach.md) | Object lifecycle & detach |
-| M10 | [`m10-optimistic-locking.md`](m10-optimistic-locking.md) | Optimistic locking |
-| M11 | [`m11-dialect-seam.md`](m11-dialect-seam.md) | Database seam & portability |
-| M12 | [`m12-compatibility-harness.md`](m12-compatibility-harness.md) | Compatibility harness & test-double integration |
-| M13 | [`m13-performance.md`](m13-performance.md) | Performance & benchmark harness |
-| M14 | [`m14-cross-process-coherence.md`](m14-cross-process-coherence.md) | Cross-process cache coherence (fast-follow) |
+A module is a **language-neutral behavioral module, not a package**: a language
+implementation MAY group many modules into one package / artifact / crate, so long
+as it enforces the module-dependency graph internally. The identifier names *what
+behavior* a module owns, never *how* a language ships it.
+
+The catalog — every module, its status (`active` / `deferred`), its coverage
+source, and the normative dependency graph — lives in
+[`modules.md`](modules.md). **Slices**, the mechanism that composes modules into
+concrete deliverables, live in [`slices.md`](slices.md).
 
 ## Normative vs. non-normative boundary (DQ3)
 
@@ -74,14 +69,14 @@ their ordinary English meaning and impose no requirement.
 ## How to read a compatibility case
 
 A compatibility case is a YAML file under `core/compatibility/cases/`. It binds
-a model descriptor, a canonical **operation** (an instance of the M2 algebra),
-and the expected outcome. It carries **three independent things** the harness
-cross-checks against a freshly-provisioned real database:
+a model descriptor, a canonical **operation** (an instance of the `m-op-algebra`
+algebra), and the expected outcome. It carries **three independent things** the
+harness cross-checks against a freshly-provisioned real database:
 
 - **`goldenSql`** — the *optimized* SQL an implementation is **expected to
   emit** for the operation. This is the normative SQL contract a real ORM is
   graded against, and it is **keyed by dialect** (`postgres:`, with more behind
-  the M11 seam over time).
+  the `m-dialect` seam over time).
 - **`expectedRows`** — the result the query must return, authored against the
   small fixture dataset.
 - **`referenceSql`** — a deliberately *naive, obviously-correct* second
@@ -95,16 +90,16 @@ The harness asserts, per case:
 `rows(goldenSql[dialect]) == rows(referenceSql) == expectedRows`,
 that the golden SQL is already in canonical normalized form, and that both the
 operation and the model descriptor survive a serde round-trip. See
-[`m12-compatibility-harness.md`](m12-compatibility-harness.md) for the full
+[`m-case-format.md`](m-case-format.md) for the full
 contract and the case-envelope schema.
 
 Concrete language implementations prove themselves through the
-[`conformance-adapter-contract.md`](conformance-adapter-contract.md) seam: a
+[`m-conformance-adapter.md`](m-conformance-adapter.md) seam: a
 small `describe` / `compile` / `run` / `benchmark` interface that accepts corpus
 files and emits JSON validated by
 [`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json).
 Database support is tested in three reusable layers — pure dialect contract,
-real-adapter smoke, and M12 provider/matrix profiles — recorded in
+real-adapter smoke, and `m-case-format` provider/matrix profiles — recorded in
 [`database-provider-test-contract.md`](database-provider-test-contract.md). That
 document is placement guidance for implementation test suites; it does not
 change the case format or the conformance-adapter wire contract.

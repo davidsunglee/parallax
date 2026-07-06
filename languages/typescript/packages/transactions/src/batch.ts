@@ -2,7 +2,7 @@
  * M8 buffered-write batching — the set-based DML the unit of work flushes.
  *
  * At the unit-of-work boundary buffered writes are combined and flushed as
- * SET-BASED SQL, not one statement per row (`m8-transactions-cache.md`). This
+ * SET-BASED SQL, not one statement per row (`m-batch-write.md`). This
  * module owns only the canonical `?`-placeholder DML **text** each batched form
  * emits; the caller (the M12 runner) resolves the physical table + columns from
  * the metamodel and threads the authored per-statement binds. Keeping the text a

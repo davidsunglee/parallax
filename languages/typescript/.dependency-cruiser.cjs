@@ -6,7 +6,7 @@ const { join } = require("node:path");
  * dependency-cruiser allowlist for the TypeScript workspace.
  *
  * This is the trimmed + corrected encoding of the module DAG from
- * `core/spec/dependency-graph.md`, mapped onto the `@parallax/*` packages by
+ * `core/spec/modules.md`, mapped onto the `@parallax/*` packages by
  * `languages/typescript/spec/01-implementation-spec.md` §9.
  *
  * Trimmed (design Q4): only the 13 packages the `slice-mvp-1`
@@ -78,7 +78,7 @@ module.exports = {
 
     // --- M11 port/adapter support edges (@parallax/db, @parallax/db-postgres) ---
     // The M11 database seam is normatively decomposed (core spec
-    // `m11-dialect-seam.md` → *M11 decomposition*) into the pure dialect layer
+    // `m-dialect.md` / `m-db-port.md`) into the pure dialect layer
     // (`@parallax/dialect`, M11 = portability), an abstract runtime port
     // (`@parallax/db` = port; a leaf reaching only `core`, already allowed by the
     // universal core rule above), and N concrete adapters (`@parallax/db-postgres`
@@ -86,7 +86,7 @@ module.exports = {
     // layer; only the composition root may depend on a concrete adapter. These are
     // language-impl support edges (like the `serde` edges), NOT numbered core-DAG
     // modules — the whole seam already shares the one `M11 --> M0` numbered edge,
-    // so `dependency-graph.md` is unchanged.
+    // so `modules.md` is unchanged.
     edge("db-postgres", "db"), //      adapter -> port
     edge("db-postgres", "dialect"), // adapter -> pure dialect layer
     edge("db-mariadb", "db"), //       adapter -> port (MariaDB, the second concrete adapter)
@@ -105,7 +105,7 @@ module.exports = {
       },
     },
 
-    // --- Numbered module edges from core/spec/dependency-graph.md ---
+    // --- Numbered module edges from core/spec/modules.md ---
     edge("metamodel", "core"), //      M1  -> M0
     edge("dialect", "core"), //        M11 -> M0
     edge("operation", "metamodel"), // M2  -> M1

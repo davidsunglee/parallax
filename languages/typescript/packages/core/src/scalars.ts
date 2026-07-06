@@ -1,7 +1,7 @@
 /**
  * M0 neutral scalar handling.
  *
- * The neutral type set (`core/spec/m0-core-conventions.md`) is the
+ * The neutral type set (`core/spec/m-core.md`) is the
  * language-neutral vocabulary every `attribute.type` draws from. This module
  * gives each scalar an idiomatic TypeScript carrier and — crucially — the
  * **wire (de)serialization rules** that make `?`-bind values and observed rows

@@ -15,7 +15,7 @@ The pure `Dialect` layer has no I/O and no driver dependency. Its conformance
 suite is a table-driven test with one row per database. Adding a database means
 adding one row to that shared table, not creating a one-off suite.
 
-Each row proves the database's answers for the M11 decision catalog:
+Each row proves the database's answers for the `m-dialect` decision catalog:
 
 - stable dialect identifier used by `goldenSql.<dialect>`
 - identifier quoting, including reserved and non-simple identifiers
@@ -39,7 +39,7 @@ provider row is incomplete.
 
 Each concrete adapter module is driver-bound and therefore needs a small
 database-backed smoke suite. This suite proves the shipped adapter path, not the
-M12 case runner.
+`m-case-format` case runner.
 
 For every supported adapter, the smoke suite covers:
 
@@ -56,9 +56,9 @@ proves the same classification.
 
 ## 3. Provider and matrix contract
 
-The M12 database provider is the case-runner provisioning surface. It is selected
-at the composition root and must not leak concrete driver dependencies into
-above-seam runtime modules.
+The `m-case-format` database provider is the case-runner provisioning surface. It
+is selected at the composition root and must not leak concrete driver dependencies
+into above-seam runtime modules.
 
 A provider contract suite must exercise these operations:
 
@@ -83,7 +83,7 @@ The provider matrix must be declared with named profiles. A profile records:
 
 A full profile runs every case in the claimed slice for that dialect. A partial
 profile is first-class only when its omissions are explicit. In particular, a
-second dialect with incomplete M12 coverage must classify cases without
+second dialect with incomplete `m-case-format` coverage must classify cases without
 `goldenSql.<dialect>` as profile exclusions, not as silent skips.
 
 ## Reporting

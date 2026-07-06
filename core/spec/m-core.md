@@ -1,16 +1,15 @@
-# M0 — Core Conventions
+# m-core — Core Conventions
 
 The normative primitives the whole spec rests on: the neutral data-type set, the
-timezone/UTC rules, and (introduced in a later phase) the temporal-infinity
-representation. `M0` depends on nothing; every other module depends, directly or
-transitively, on it.
+timezone/UTC rules, and the temporal-infinity representation. `m-core` depends on
+nothing; every other module depends on it, directly or transitively.
 
 ## Neutral data types
 
 An implementation **MUST** support the neutral type set below and **MUST** map
-each neutral type to an equivalent concrete column type through the M11 dialect
-seam. The neutral name is what appears in a model descriptor's `attribute.type`;
-the Postgres type shown is the round-1 concrete dialect mapping.
+each neutral type to an equivalent concrete column type through the dialect seam
+(`m-dialect`). The neutral name is what appears in a model descriptor's
+`attribute.type`; the Postgres type shown is the round-1 concrete dialect mapping.
 
 | Neutral type | Description | Postgres type | Notes |
 |---|---|---|---|
@@ -26,7 +25,7 @@ the Postgres type shown is the round-1 concrete dialect mapping.
 | `time` | time of day, no date | `time` | timezone-naive (wall-clock) |
 | `timestamp` | absolute instant | `timestamptz` | UTC-normalized, microsecond precision (see below) |
 | `uuid` | 128-bit UUID | `uuid` | in core (Postgres-native) |
-| `json` | embedded composite value | `jsonb` | the `valueObject` mapping (M1); dialects map this to their native structured-document type |
+| `json` | embedded composite value | `jsonb` | the `m-value-object` mapping; dialects map this to their native structured-document type |
 
 > The walking-skeleton phase exercises `int64`/`int32`, `string`, and (in the
 > schema) the full set. `boolean`, `decimal(p,s)`, the temporal types, and the
@@ -38,20 +37,22 @@ the Postgres type shown is the round-1 concrete dialect mapping.
 ## The `json` embedded-value type
 
 The optional `json` neutral type is the storage type a `valueObject` element
-(M1) maps to: an embedded composite value (e.g. an address, a money pair) is
-stored as a **single structured-document column** rather than column-flattened
-into the owning table. This is a **deliberate deviation from Reladomo**, which
-flattens an embedded value object into individual columns; a single document
-column keeps the composite atomic, schema-flexible, and directly queryable.
+(`m-value-object`) maps to: an embedded composite value (e.g. an address, a money
+pair) is stored as a **single structured-document column** rather than
+column-flattened into the owning table. This is a **deliberate deviation from
+Reladomo**, which flattens an embedded value object into individual columns; a
+single document column keeps the composite atomic, schema-flexible, and directly
+queryable.
 
-The M11 dialect seam owns the concrete storage type and extraction functions.
-Examples include Postgres `jsonb`, MariaDB `json`, and Snowflake `VARIANT`.
+The dialect seam (`m-dialect`) owns the concrete storage type and extraction
+functions. Examples include Postgres `jsonb`, MariaDB `json`, and Snowflake
+`VARIANT`.
 
 An implementation **MUST** read and filter a value object's inner fields through
-the nested-attribute access form (M2 `nestedEq` / `nestedNotEq`, lowered to a
-dialect-specific document extraction by M3/M11). A `json`-typed column **MAY**
-be `null` when the value object is declared `nullable`; otherwise it is
-`not null` and carries the embedded object.
+the nested-attribute access form (`m-op-algebra` `nestedEq` / `nestedNotEq`,
+lowered to a dialect-specific document extraction by `m-sql` / `m-dialect`). A
+`json`-typed column **MAY** be `null` when the value object is declared
+`nullable`; otherwise it is `not null` and carries the embedded object.
 
 ## Timezone handling
 
@@ -77,8 +78,8 @@ be `null` when the value object is declared `nullable`; otherwise it is
 The open upper bound of a temporal interval (the `to`/`thru`/`out` column) is
 represented by the **database's native infinity** where one exists, not a
 `9999-12-01` sentinel and not `NULL`. The metamodel declares that a temporal
-dimension *has* an infinity sentinel; the **M11 dialect seam owns the concrete
-representation**:
+dimension *has* an infinity sentinel; the **dialect seam (`m-dialect`) owns the
+concrete representation**:
 
 - **Postgres** → native `'infinity'::timestamptz`.
 - **MariaDB** (and any dialect without native timestamp infinity) → a documented
@@ -87,7 +88,8 @@ representation**:
   and back on reads, so the metamodel, golden SQL, fixtures, and asserted table
   state stay dialect-neutral — the difference is confined to the seam.
 
-The full temporal interval model and milestone-chaining writes are M7.
+The full temporal interval model and milestone-chaining writes are
+`m-temporal-read` / `m-audit-write` / `m-bitemp-write`.
 
 Benefits of native infinity over a `9999` sentinel or `NULL`: correct
 ordering/comparison, no Y9999 cliff, no `NULL`-in-predicate/index complications,

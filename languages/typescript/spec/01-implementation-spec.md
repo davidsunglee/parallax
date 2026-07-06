@@ -374,7 +374,7 @@ current (`now`).
 The metamodel (`M1`) is one artifact wearing two hats — an introspectable runtime
 protocol and a serializable document — and this section specifies both hats so an
 implementer can build the metamodel layer without inferring its shape from
-`m1-metamodel.md`.
+`m-descriptor.md`.
 
 ### 3.1 Primary authoring format
 
@@ -759,7 +759,7 @@ is no hand-maintained list to drift — and the sorted, deduped order makes the
 matrix deterministic.
 
 Cases are **executed through the `parallax-conformance` adapter contract** (TS-0059,
-[`conformance-adapter-contract.md`](../../../core/spec/conformance-adapter-contract.md)),
+[`m-conformance-adapter.md`](../../../core/spec/m-conformance-adapter.md)),
 **not** by reaching into runtime internals:
 
 - `parallax-conformance compile --case <c.yaml> --dialect <d>` emits SQL + binds and
@@ -890,7 +890,7 @@ adapter by default (`just ts-db`), with a MariaDB fan-out lane (`just ts-db-all`
 that runs the same developer reads and writes through `@parallax/db-mariadb`.
 It also renders a Usage Guide from that same suite source. Both are the
 worked example of the language-neutral
-[`api-conformance-contract.md`](../../../core/spec/api-conformance-contract.md):
+[`m-api-conformance.md`](../../../core/spec/m-api-conformance.md):
 they are additive proof beside the conformance-adapter grade and never touch the
 grader.
 
@@ -1038,7 +1038,7 @@ language-local realization of the contract's guide drift-check requirement.
 
 **ANSWERED — see [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m14-package-map.md).**
 The normative module-dependency graph
-([`dependency-graph.md`](../../../core/spec/dependency-graph.md)) is the **only**
+([`modules.md`](../../../core/spec/modules.md)) is the **only**
 legal dependency direction between numbered core modules, and each per-language
 spec **SHOULD** prescribe a build-time mechanism that fails the build on any
 module-to-module dependency the graph does not declare. This section names the
@@ -1096,7 +1096,7 @@ module.exports = {
     { from: { path: "^languages/typescript/packages/db-mariadb/" },    to: { path: "^languages/typescript/packages/db/" } },
     { from: { path: "^languages/typescript/packages/db-mariadb/" },    to: { path: "^languages/typescript/packages/dialect/" } },
 
-    // Numbered module edges from core/spec/dependency-graph.md.
+    // Numbered module edges from core/spec/modules.md.
     { from: { path: "^languages/typescript/packages/metamodel/" },     to: { path: "^languages/typescript/packages/core/" } },
     { from: { path: "^languages/typescript/packages/dialect/" },        to: { path: "^languages/typescript/packages/core/" } },
     { from: { path: "^languages/typescript/packages/operation/" },      to: { path: "^languages/typescript/packages/metamodel/" } },
@@ -1181,7 +1181,7 @@ below the facade.
 
 **`M11` maps to more than one package** (per the core
 [`language-spec-template.md`](../../../core/spec/language-spec-template.md) §9 rule
-and [`m11-dialect-seam.md`](../../../core/spec/m11-dialect-seam.md) →
+and [`m-db-port.md`](../../../core/spec/m-db-port.md) →
 *M11 decomposition*): the database seam is normatively decomposed into a **pure
 dialect / portability** module (`@parallax/dialect` — SQL strings +
 typed-bind normalization and type-parse functions to managed values; no I/O, no
@@ -1193,7 +1193,7 @@ native affected-row counts for writes), and **N concrete adapters**
 depending **only** on the port
 and the pure dialect layer. All three share the single `M11 --> M0` numbered edge
 — the decomposition is a rule *within* the module, not new DAG nodes, so
-[`dependency-graph.md`](../../../core/spec/dependency-graph.md) is unchanged and
+[`modules.md`](../../../core/spec/modules.md) is unchanged and
 `@parallax/db` / `@parallax/db-postgres` / `@parallax/db-mariadb` are
 **language-impl support edges** (like
 the `@parallax/serde` edges), documented in §9.3 but absent from the numbered-edge
@@ -1214,7 +1214,7 @@ work.
 ### 9.3 Legal-edge contract
 
 The numbered-module legal edges are transcribed **one-to-one** from
-[`dependency-graph.md`](../../../core/spec/dependency-graph.md), keyed by the same
+[`modules.md`](../../../core/spec/modules.md), keyed by the same
 `M`-numbers so the edge set is mechanically diff-able against core. Each edge
 `A --> B` reads "A depends on B"; the reverse is a spec violation. Combined with
 the mapping table, the two explicit `@parallax/serde` support-package edges, the
@@ -1345,7 +1345,7 @@ the M13 benchmark slice, it uses this contract:
 - **Nearest-rank percentile.** `wallTimeMs.p50` / `wallTimeMs.p95` are computed
   with the nearest-rank percentile, matching the Python harness.
 - **`report.json` schema.** The emitted report uses the schema fixed in
-  [`m13-performance.md`](../../../core/spec/m13-performance.md): `generatedAt`,
+  [`m-perf-bench.md`](../../../core/spec/m-perf-bench.md): `generatedAt`,
   `dialect`, `benchmarks[].{ fixture, model, datasetRows, workloads[] }` (each
   workload carrying `name`, `iterations`, `wallTimeMs.{ p50, p95 }`, `roundTrips`,
   and the optional `expectRoundTrips` / `roundTripsOk`), and
@@ -1354,7 +1354,7 @@ the M13 benchmark slice, it uses this contract:
   through the
   `parallax-conformance benchmark --benchmark <b.yaml> --dialect <d>` command of
   the [conformance adapter
-  contract](../../../core/spec/conformance-adapter-contract.md), against the
+  contract](../../../core/spec/m-conformance-adapter.md), against the
   Postgres provider seam of [§5](#5-test-double-integration-m12-dq15). The
   command writes the standard adapter envelope to stdout with the M13 report under
   `report`; for a single benchmark fixture invocation, `report.benchmarks`
@@ -1512,12 +1512,12 @@ This document satisfies the `language-spec-template.md` completion check:
 - **No contradiction with core.** The
   [§9](#9-build-time-dependency-enforcement-dq3-dependency-graph) legal-edge block
   is transcribed one-to-one from
-  [`dependency-graph.md`](../../../core/spec/dependency-graph.md) and keyed by the
+  [`modules.md`](../../../core/spec/modules.md) and keyed by the
   same `M`-numbers, while the `@parallax/serde` and `@parallax/typescript` edges
   are explicit TypeScript package-topology edges outside the core graph; the
   [§1](#1-conformance-slice-declaration) capability claim is byte-equal to the
   canonical `slice-mvp-1` claim in
-  [`scope-and-tiers.md`](../../../core/spec/scope-and-tiers.md); the
+  [`slices.md`](../../../core/spec/slices.md); the
   [§3](#3-metadata--model-input-format-dq5-dq6) metadata shapes are drawn
   one-to-one from
   [`metamodel.schema.json`](../../../core/schemas/metamodel.schema.json)'s eight

@@ -19,7 +19,7 @@ discharges them.
 ## Conformance Slice
 
 TypeScript V1 declares the canonical **`slice-mvp-1`** Conformance Slice defined
-in [`../../core/spec/scope-and-tiers.md`](../../core/spec/scope-and-tiers.md). It
+in [`../../core/spec/slices.md`](../../core/spec/slices.md). It
 claims the cases tagged `slice-mvp-1` across modules M0–M5, M7, M8, M10, M11, and
 M12, on the Postgres dialect, for the `read`, `writeSequence`, `scenario`, and
 `conflict` case shapes.
@@ -50,12 +50,12 @@ in the root README:
 
 - **Conformance-adapter grade.** The `parallax-conformance` CLI emits the wire
   envelope defined by
-  [`../../core/spec/conformance-adapter-contract.md`](../../core/spec/conformance-adapter-contract.md);
+  [`../../core/spec/m-conformance-adapter.md`](../../core/spec/m-conformance-adapter.md);
   its SQL and observations are compared against the corpus oracles.
 - **API Conformance Suite and Usage Guide.** The idiomatic `px.*` API is run
   through the shipped `@parallax/db-postgres` adapter against a real Postgres,
   reproducing the corpus results (contract:
-  [`../../core/spec/api-conformance-contract.md`](../../core/spec/api-conformance-contract.md)).
+  [`../../core/spec/m-api-conformance.md`](../../core/spec/m-api-conformance.md)).
   The suite lives in `packages/typescript/test/api-conformance/`, defaults to
   Postgres, and can select MariaDB with `PARALLAX_DATABASES=mariadb`. The
   developer [Usage Guide](docs/guide/index.md) is rendered from that suite's

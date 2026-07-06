@@ -12,7 +12,7 @@
  * propagation (`@parallax/relationships`, the `M4 -> M7` edge) reuse the identical
  * rule.
  *
- * The per-axis rules (m7-temporal.md §"As-of read predicates"):
+ * The per-axis rules (m-temporal-read.md §"As-of read predicates"):
  *
  *  | pin                         | predicate                         | binds        |
  *  |-----------------------------|-----------------------------------|--------------|

@@ -1,10 +1,10 @@
-# M2 — Query, Operation & Aggregation Algebra
+# m-op-algebra — Query & Operation Algebra
 
-`M2` defines the **operation algebra** — the framework's own query language — and
-its **canonical serialization**. The algebra *is* the protocol: the
-compatibility suite's queries are instances of it, and every implementation
-ships a serde module that round-trips them. `M2` depends on `M1` (operations are
-bound to metamodel attributes).
+`m-op-algebra` defines the **operation algebra** — the framework's own query
+language — and its **canonical serialization**. The algebra *is* the protocol: the
+compatibility suite's queries are instances of it, and every implementation ships
+a serde module that round-trips them. `m-op-algebra` depends on `m-descriptor`
+(operations are bound to metamodel attributes).
 
 The canonical schema is
 [`core/schemas/operation.schema.json`](../schemas/operation.schema.json).
@@ -22,9 +22,9 @@ algebra is deliberately *above* SQL:
 
 A SQL IR forces those joins and predicates to be explicit — the wrong
 abstraction level for a finder language. The algebra translates **down** to SQL
-(M3); a language **MAY** implement M3 by lowering this algebra onto an external
-SQL IR to get many dialects "for free", but that is a per-language decision
-behind the M3 seam, not a core mandate.
+(`m-sql`); a language **MAY** implement `m-sql` by lowering this algebra onto an
+external SQL IR to get many dialects "for free", but that is a per-language
+decision behind the `m-sql` seam, not a core mandate.
 
 ## Canonical operation encoding (serde seam)
 
@@ -32,7 +32,8 @@ An operation is a tree of **nodes** with a **format-agnostic canonical
 serialization**. This serialized form is the suite's normative encoding — one
 source of truth so every implementation tests the same operation. Concrete
 encodings exist in at least **JSON and YAML** (a format-agnostic core plus
-pluggable writers); the format set is consistent with metamodel serde (M1).
+pluggable writers); the format set is consistent with metamodel serde
+(`m-descriptor`).
 
 Every implementation **MUST** ship a serde module whose sole job is operation
 serialize/deserialize, with **round-trip** tests:
@@ -54,14 +55,16 @@ against the model. Examples:
 
 ## Operation set
 
-M2 is the canonical operation algebra. Its schema covers the single-entity
-predicate algebra, result-shaping directives, relationship navigation,
-aggregation, temporal read wrappers, and nested value-object predicates. Each
-node below carries a single canonical serialization; a conforming operation
-serde implementation **MUST** validate and round-trip every node in
-`operation.schema.json` unchanged. Executing a node may depend on other core
-modules: M1 supplies attributes, relationships, as-of attributes, and value
-objects; M3 owns SQL lowering; M7 owns temporal interval behavior.
+`m-op-algebra` is the canonical operation algebra. Its schema covers the
+single-entity predicate algebra, result-shaping directives, relationship
+navigation, temporal read wrappers, and nested value-object predicates.
+Aggregation (`groupBy` / aggregate functions / `having`) is a **deferred**
+extension of the same algebra — see `m-agg`. Each node below carries a single
+canonical serialization; a conforming operation serde implementation **MUST**
+validate and round-trip every node in `operation.schema.json` unchanged. Executing
+a node may depend on other core modules: `m-descriptor` supplies attributes,
+relationships, as-of attributes, and value objects; `m-sql` owns SQL lowering;
+`m-temporal-read` owns temporal interval behavior.
 
 ### Identities
 
@@ -118,8 +121,8 @@ pattern contains an escape sequence. `like`/`notLike` do **not** escape — thei
 
 **Case-insensitive rule.** When `caseInsensitive` is `true`, both the column and
 the pattern are folded with `lower(...)`: `lower(attr) like lower(?)`. (A language
-MAY use a dialect-native case-insensitive operator behind the M3 seam; the golden
-SQL fixes the portable `lower(...)` form.)
+MAY use a dialect-native case-insensitive operator behind the `m-sql` seam; the
+golden SQL fixes the portable `lower(...)` form.)
 
 ### Membership
 
@@ -129,7 +132,7 @@ not part of this schema revision.
 
 ### Nested value-object predicates
 
-Nested predicates read an inner field of an M1 `valueObject`, which core stores
+Nested predicates read an inner field of an `m-value-object`, which core stores
 as a single dialect-mapped `json` column. They use a dotted path of the form
 `Class.valueObject.segment[.segment...]`:
 
@@ -144,10 +147,10 @@ as a single dialect-mapped `json` column. They use a dotted path of the form
 | `nestedEq` | `{ "nestedEq": { "path", "value" } }` | the text extracted at `path` equals `value` |
 | `nestedNotEq` | `{ "nestedNotEq": { "path", "value" } }` | the text extracted at `path` does not equal `value` |
 
-The `value` is authored as a **string** because M3 lowers nested reads to a
+The `value` is authored as a **string** because `m-sql` lowers nested reads to a
 dialect-specific text extraction from the structured-document column. Postgres
 uses `jsonb_extract_path_text`; a Snowflake dialect could use `VARIANT` path
-extraction; other dialects use their M11 mapping. Path segments after the
+extraction; other dialects use their `m-dialect` mapping. Path segments after the
 value-object name become binds before the comparison value, in path order:
 `Customer.address.geo.country = "NO"` binds `["geo", "country", "NO"]`.
 
@@ -186,10 +189,10 @@ Directives wrap an inner operation rather than filtering:
 
 ### Temporal read wrappers
 
-Temporal read wrappers are M2 operation nodes. M7 defines the interval model,
-default-injection rule, and milestone behavior; M3 fixes the SQL fragments and
-bind order. These nodes are still part of M2 because operation serde must
-round-trip the temporal query tree exactly.
+Temporal read wrappers are operation nodes. `m-temporal-read` defines the interval
+model, default-injection rule, and milestone behavior; `m-sql` fixes the SQL
+fragments and bind order. These nodes are part of the algebra because operation
+serde must round-trip the temporal query tree exactly.
 
 | Operation | Encoding | Meaning |
 |---|---|---|
@@ -200,21 +203,22 @@ round-trip the temporal query tree exactly.
 `asOfAttr` is a metamodel as-of-attribute reference of the form
 `Class.asOfAttribute`. `date`, `from`, and `to` are temporal pin strings: either
 `now` or an ISO-8601 UTC instant. `now` means the current milestone on that axis,
-whose upper bound is the M0/M11 `infinity` sentinel.
+whose upper bound is the `m-core` / `m-dialect` `infinity` sentinel.
 
 Each temporal node wraps an `operand`. A single-axis temporal entity uses one
 wrapper. A bitemporal entity pins or unpins both axes by nesting one temporal
-wrapper per `asOfAttribute`; omitted axes follow the M7 default-injection rule
-and are read as `now`. The injected temporal term composes with the operand via
-`and`, after user predicates, so user binds precede temporal binds.
+wrapper per `asOfAttribute`; omitted axes follow the `m-temporal-read`
+default-injection rule and are read as `now`. The injected temporal term composes
+with the operand via `and`, after user predicates, so user binds precede temporal
+binds.
 
 ## Relationship algebra
 
-Relationships (M1) are traversed **by name** — never as a user-written join. A
-navigation node references a relationship as `Class.relationship` and (for the
-filter forms) carries an optional inner operation constraining the related
+Relationships (`m-descriptor`) are traversed **by name** — never as a user-written
+join. A navigation node references a relationship as `Class.relationship` and (for
+the filter forms) carries an optional inner operation constraining the related
 entity. These nodes lower to **correlated semi-joins** so a to-many traversal
-never multiplies the queried entity's rows (M3, M4).
+never multiplies the queried entity's rows (`m-sql`, `m-navigate`).
 
 ### Navigation filters
 
@@ -247,105 +251,15 @@ fetch — one hop (`["Order.items"]`) or multi-hop
 statement per relationship level** (N+1 elimination): the root query plus one
 statement per distinct relationship hop, regardless of how many parent rows fan
 out. Paths sharing a prefix fetch the shared hop **once**. This is specified in
-full in [M4](m4-relationships-deepfetch.md) and proven by the round-trip-count
-layer of the compatibility harness (M12).
-
-## Aggregation algebra (M2 sub-area)
-
-Aggregation is **part of the same operation algebra**, not a separate module
-(DQ13): a `groupBy` node groups an inner operation, names one or more **aggregate
-functions** over attributes, and optionally filters the *groups* with a `having`
-expression. It lowers to SQL via M3 exactly as the predicate algebra does — a
-`GROUP BY` / `HAVING` query rather than a per-attribute calculation. An
-aggregate query returns **aggregate rows** (group-key columns plus aggregate
-values), not entity rows.
-
-### Aggregate functions
-
-An aggregate function names a metamodel attribute (or, for `count`, optionally
-the group itself) and produces one output column per group. Each function node
-is `{ "<fn>": { "attr": "Class.attribute", "as": "<outputName>" } }`. The `as`
-field is the **result column name** — it is significant: it is the key under
-which the aggregate value appears in `expectedRows`, and it is fixed across
-languages so the suite is portable.
-
-| Function | Meaning | Domain |
-|---|---|---|
-| `sum` | sum of values | numeric |
-| `avg` | arithmetic mean | numeric |
-| `count` | row count | any (or the whole group — see below) |
-| `min` | minimum | numeric, string, date, time, timestamp |
-| `max` | maximum | numeric, string, date, time, timestamp |
-| `stdDevSample` | sample standard deviation (n − 1) | numeric |
-| `stdDevPop` | population standard deviation (n) | numeric |
-| `varianceSample` | sample variance (n − 1) | numeric |
-| `variancePop` | population variance (n) | numeric |
-
-`count` additionally accepts **no `attr`** — `{ "count": { "as": "n" } }` — to
-count whole rows in the group (`count(*)`); with an `attr` it counts non-NULL
-values of that attribute (`count(attr)`). `min`/`max` are defined over ordered
-types — **numeric, string, date/time/timestamp** — so the suite exercises
-min/max over each. The four `stdDev*`/`variance*` functions are numeric-only.
-
-> **Two-column read for `stdDev*` / `variance*`.** Reladomo's standard-deviation
-> and variance calculators read **two result columns** — the statistic itself and
-> the sample **count** — so a caller can distinguish "no rows" / "one row" (where
-> the sample statistic is undefined / NULL) from a real zero, and combine partial
-> aggregates. The core preserves this: a `stdDev*`/`variance*` aggregate emits its
-> statistic column **and** a companion `count` column in the golden SQL. M3 fixes
-> the exact emission (see m3-sql-contract.md).
-
-### `groupBy`
-
-`groupBy` is the aggregation node. It wraps an inner `operand` (the rows to
-aggregate — typically `all` or a predicate), a non-empty list of **aggregate
-functions**, an optional list of **group-by keys** (attribute references), and an
-optional **`having`** expression.
-
-| Operation | Encoding |
-|---|---|
-| `groupBy` | `{ "groupBy": { "operand", "keys"?, "aggregates": [ fn, … ], "having"? } }` |
-
-- `operand` — the inner operation whose result rows are aggregated.
-- `keys` — ordered attribute references to group by. **Omitting `keys`** (or an
-  empty list) is a single-group (whole-table) aggregate — `count`, global
-  `min`/`max`, a global `stdDev*` — with no `GROUP BY` clause.
-- `aggregates` — one or more aggregate-function nodes; their `as` names become the
-  aggregate result columns (the group-key columns project under their own column
-  names).
-- `having` — an optional boolean expression over **aggregate comparisons** that
-  filters the groups (below).
-
-### Having comparators
-
-`having` is a boolean expression whose leaves are **aggregate comparisons** — an
-aggregate function compared against a literal — composable with the same `and` /
-`or` combinators as the predicate algebra. A having comparison is
-`{ "<cmp>": { "agg": <aggregateFn>, "value": <literal> } }`, where `agg` is an
-aggregate-function node (it need not appear in the projected `aggregates`).
-
-| Comparator | SQL operator |
-|---|---|
-| `eq` | `=` |
-| `notEq` | `<>` |
-| `gt` | `>` |
-| `gte` | `>=` |
-| `lt` | `<` |
-| `lte` | `<=` |
-
-The comparators are **named for the having context** (`gt`/`gte`/`lt`/`lte`)
-rather than reusing the predicate algebra's `greaterThan…` tags, because they
-compare an *aggregate function applied to a group* — not a bare attribute. A
-`having` leaf and the predicate `and`/`or` junctions compose freely:
-`{ "and": { "operands": [ {"gt": {"agg": …, "value": …}}, {"lte": {"agg": …, "value": …}} ] } }`.
-
-The aggregate value in a having comparison becomes a **bind** in the golden SQL,
-appended after any `WHERE` binds, in left-to-right `HAVING`-clause order.
+full in [`m-deep-fetch.md`](m-deep-fetch.md) and proven by the round-trip-count
+layer of the compatibility harness (`m-case-format`).
 
 ## Forward map of the rest of the algebra
 
-For orientation, this schema revision still leaves membership `in(subquery)` out
-of the required operation set. The temporal (`asOf`, `asOfRange`, `history`) and
-nested value-object (`nestedEq`, `nestedNotEq`) nodes are not deferred; their
-canonical encodings are part of M2, with observable temporal behavior specified
-by M7 and SQL lowering specified by M3.
+For orientation, this schema revision leaves membership `in(subquery)` out of the
+required operation set. The temporal (`asOf`, `asOfRange`, `history`) and nested
+value-object (`nestedEq`, `nestedNotEq`) nodes are not deferred; their canonical
+encodings are part of the algebra, with observable temporal behavior specified by
+`m-temporal-read` and SQL lowering specified by `m-sql`. The aggregation nodes
+(`groupBy` and friends) are present in `operation.schema.json` but the aggregation
+feature is **deferred** — see `m-agg`.

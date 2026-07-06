@@ -14,7 +14,7 @@ conformance-adapter contract.
 Implement the canonical `slice-mvp-1` conformance slice first. It is
 an include-driven slice: a case is in scope only when it carries the
 `slice-mvp-1` tag and passes the broad claim filters in
-`core/spec/scope-and-tiers.md`.
+`core/spec/slices.md`.
 
 The TypeScript adapter's `describe` response must claim exactly the canonical
 slice capabilities, changing only the adapter identity:
