@@ -1,4 +1,4 @@
-# Wallet: a plain NON-VERSIONED transactional entity for the M8 batched-write
+# Wallet: a plain NON-VERSIONED transactional entity for the m-unit-work batched-write
 # cases (m-batch-write-001 / m-batch-write-002).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. Wallet is
@@ -6,7 +6,7 @@
 # readless set-based / batched UPDATE forms (a uniform `id in (?, ?)` update, one
 # keyed UPDATE per distinct key) are honest ONLY for a non-versioned entity: a
 # batched write cannot advance a per-row version without materializing to per-
-# object updates (M10, ADR 0031). So the batched-write cases live here, and the
+# object updates (m-opt-lock, ADR 0031). So the batched-write cases live here, and the
 # versioned Account carries the version-advancing / gated update cases instead.
 #
 # Same ids/owners/balances as Account so the batched-write expectations port

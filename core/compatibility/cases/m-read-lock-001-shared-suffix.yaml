@@ -1,8 +1,8 @@
-# Read-lock case (M8): an in-transaction read acquires a shared row lock.
+# Read-lock case (m-read-lock): an in-transaction read acquires a shared row lock.
 #
 # A read performed inside a unit of work that intends to write is made correct
 # automatically — the caller writes no locking SQL. The default in-transaction
-# read appends the dialect's shared-row-lock suffix (M8 / M11). For Postgres that
+# read appends the dialect's shared-row-lock suffix (m-read-lock / m-dialect). For Postgres that
 # is `for share of t0`, qualified by the root alias and appended AFTER every other
 # clause.
 #
@@ -13,7 +13,7 @@
 # same select WITHOUT the lock, which must return the same rows because the lock
 # does not change the result).
 #
-# `for share of t0` is fully lowercase — the canonical fixed point of the M3
+# `for share of t0` is fully lowercase — the canonical fixed point of the m-sql
 # normalizer, which lowercases the lock-clause keywords like any other keyword
 # even though sqlglot tokenizes them as values, so the golden SQL passes the
 # layer-3 canonical-form check.

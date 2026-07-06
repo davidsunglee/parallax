@@ -1,4 +1,4 @@
-"""Unit tests for the Phase 10 MariaDB dialect seam (M11), DB-free.
+"""Unit tests for the Phase 10 MariaDB dialect seam (m-dialect), DB-free.
 
 These pin the localization claim: adding MariaDB as the second dialect touches
 ONLY the dialect seam — the normalizer's dialect mapping + read-lock rendering,

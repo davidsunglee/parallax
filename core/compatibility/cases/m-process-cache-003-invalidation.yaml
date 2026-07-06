@@ -1,4 +1,4 @@
-# Query-cache invalidation scenario (M8): a committed write makes a re-issued
+# Query-cache invalidation scenario (m-process-cache): a committed write makes a re-issued
 # find re-resolve, never serve a stale cached row.
 #
 # m-process-cache-001 proves the cache HIT (two identical finds, the second free). This proves

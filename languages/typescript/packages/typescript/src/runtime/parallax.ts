@@ -4,7 +4,7 @@
  *
  * This is the thin typed surface over the SAME generic runtime the conformance
  * adapter uses (design Q1 Option B): a `find` builds a canonical operation with
- * the DSL, lowers it with the M3 `compile` visitor, executes it through an
+ * the DSL, lowers it with the m-sql `compile` visitor, executes it through an
  * injected `ParallaxDatabase` port, and returns a lazy `ParallaxList`. No new
  * package — the composition root wires the runtime packages together.
  *
@@ -42,7 +42,7 @@ import {
 } from "./writes.js";
 
 // The runtime consumes the abstract execution port (`ParallaxDatabase` +
-// `ParallaxRow`) from `@parallax/db` (M11 port/adapter decomposition); a concrete
+// `ParallaxRow`) from `@parallax/db` (m-db-port port/adapter decomposition); a concrete
 // adapter (the shippable `@parallax/db-postgres`, or an application's own driver)
 // is injected at the composition root. Re-exported below so the generated
 // `#parallax` barrel and applications reach the port types through one package.
@@ -61,7 +61,7 @@ export interface ParallaxOptions {
   /** The parsed canonical descriptor(s) the metamodel is read from. */
   readonly descriptor: unknown;
   /**
-   * The bound M11 {@link Dialect} — the single authority for identifier quoting,
+   * The bound m-dialect {@link Dialect} — the single authority for identifier quoting,
    * ORDER BY / NULL placement, the row-limit clause, read-lock application, and the
    * boundary value parsers. Injected so a MariaDB runtime swaps `mariadbDialect`
    * with no code edit; always supplied by the composition root.
@@ -89,7 +89,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     private readonly metamodel: Metamodel,
     private readonly entity: EntityMetadata,
     private readonly database: ParallaxDatabase,
-    /** The injected M11 dialect — threaded to `compile()` and the row materializer. */
+    /** The injected m-dialect dialect — threaded to `compile()` and the row materializer. */
     private readonly dialect: Dialect,
     /**
      * A hook awaited INSIDE the lazy resolver, just before a read executes. In a
@@ -99,8 +99,8 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
      */
     private readonly beforeLoad?: () => Promise<void>,
     /**
-     * The M8 correctness mode of the enclosing unit of work, threaded to the shared
-     * in-transaction read executor: a `locking`-mode read takes the M8 shared row
+     * The m-unit-work correctness mode of the enclosing unit of work, threaded to the shared
+     * in-transaction read executor: a `locking`-mode read takes the m-unit-work shared row
      * lock (`for share of t0`, `m-read-lock-001`) so a concurrent transaction cannot mutate the
      * row out from under a read-then-write; an `optimistic`-mode read takes none.
      * Absent on the root handle (an out-of-transaction read never locks).
@@ -108,7 +108,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     private readonly concurrency?: Concurrency,
     /**
      * A hook called with a fetched level's entity and its materialized rows, so the
-     * unit of work can record the version it OBSERVED for each versioned row (the M10
+     * unit of work can record the version it OBSERVED for each versioned row (the m-opt-lock
      * observed-version map a later gated / advancing update reads). A flat read calls
      * it once for this finder's entity; a deep fetch calls it once per fetched level
      * (root + each included child). Absent on the root handle.
@@ -154,7 +154,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
 
   /**
    * Run a pre-built canonical operation as a lazy list (the same wire form
-   * `find` produces). Convenience for callers that already hold the M2 operation —
+   * `find` produces). Convenience for callers that already hold the m-op-algebra operation —
    * the API Conformance Suite builds an operation once (for its `assertSameOperation`
    * drift check) and runs it here, so the executed read and the asserted operation
    * are provably the same object.
@@ -197,7 +197,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
       }, identity);
     }
     const schema = new RuntimeSchema(this.metamodel, this.entity, this.dialect);
-    // `compile()` applies the M8 shared read-lock in-line for a `locking`-mode object
+    // `compile()` applies the m-read-lock shared read-lock in-line for a `locking`-mode object
     // find (`for share of t0`, `m-read-lock-001`); the developer writes no locking SQL, so the
     // executor below just runs the already-locked statement.
     const { sql, binds } = compile(operation, schema, this.dialect, {
@@ -209,7 +209,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
       const rows = await executeRead(this.database, sql, binds as readonly unknown[]);
       const materialized = rows.map(materialize) as readonly T[];
       // Record the version this unit of work OBSERVED for each versioned row, so a
-      // later keyed update gates on / advances from it (M10 framework-owned versions).
+      // later keyed update gates on / advances from it (m-opt-lock framework-owned versions).
       this.onObserved?.(this.entity, materialized);
       return materialized;
     }, identity);
@@ -246,8 +246,8 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
   /**
    * Execute a deep-fetch operation, returning the decorated managed graph + round
    * trips. In a transaction EVERY fetched level — the root read AND each included
-   * child-level read — carries the SAME read context a flat read does: the M8 shared
-   * lock in `locking` mode and the M10 observed-version recording (keyed by each
+   * child-level read — carries the SAME read context a flat read does: the m-unit-work shared
+   * lock in `locking` mode and the m-opt-lock observed-version recording (keyed by each
    * level's own entity). So a versioned root OR a versioned included child can be
    * updated without a spurious `ParallaxReadBeforeWriteError`. On the root handle
    * both are inert (no lock, no recording).
@@ -272,7 +272,7 @@ export class Parallax {
   constructor(
     private readonly metamodel: Metamodel,
     private readonly database: ParallaxDatabase,
-    /** The injected M11 dialect, threaded to every finder + unit of work. */
+    /** The injected m-dialect dialect, threaded to every finder + unit of work. */
     private readonly dialect: Dialect,
     private readonly clock: ParallaxClock,
   ) {}
@@ -306,12 +306,12 @@ export class Parallax {
    * { … }, options)`. Returns the callback's resolved value after commit; a throw
    * rolls back. Requires a `transaction`-capable database adapter.
    *
-   * `options.concurrency` selects the M8 correctness strategy (default `locking`):
+   * `options.concurrency` selects the m-unit-work correctness strategy (default `locking`):
    * in `locking` mode in-transaction reads take the automatic shared row lock
-   * (M8); in `optimistic` mode reads take no lock and versioned updates gate on the
-   * observed version (M10).
+   * (m-unit-work); in `optimistic` mode reads take no lock and versioned updates gate on the
+   * observed version (m-opt-lock).
    *
-   * The boundary offers **bounded automatic retry** (M8/M10, ADR 0031/0065): on a
+   * The boundary offers **bounded automatic retry** (m-auto-retry/m-opt-lock, ADR 0031/0065): on a
    * retriable failure it rolls back, discards stale state, and re-executes the body
    * against fresh state, up to `options.retries` re-executions (default 10; `0`
    * disables the loop). Each attempt opens a **fresh** driver transaction and a
@@ -370,7 +370,7 @@ export class Parallax {
   }
 }
 
-/** The default bound on automatic unit-of-work re-executions (M8/M10; Reladomo parity). */
+/** The default bound on automatic unit-of-work re-executions (m-auto-retry/m-opt-lock; Reladomo parity). */
 const DEFAULT_RETRIES = 10;
 
 /**
@@ -389,17 +389,17 @@ function isRetriableFailure(error: unknown, retryOptimisticConflicts: boolean): 
   return false;
 }
 
-/** Options for a unit of work (spec §3 / M8 strategy selection + bounded retry). */
+/** Options for a unit of work (spec §3 / m-auto-retry strategy selection + bounded retry). */
 export interface TransactionOptions {
   /**
    * The correctness strategy for this unit of work. `locking` (the default) takes
-   * the M8 implicit shared read lock on in-transaction reads; `optimistic` (M10)
+   * the m-read-lock implicit shared read lock on in-transaction reads; `optimistic` (m-opt-lock)
    * takes no lock and gates versioned updates on the observed version.
    */
   readonly concurrency?: Concurrency;
   /**
    * The bound on automatic re-executions of the body after a retriable failure
-   * (M8/M10 bounded automatic retry). Default 10; `0` disables the loop, so even a
+   * (m-auto-retry/m-opt-lock bounded automatic retry). Default 10; `0` disables the loop, so even a
    * transient failure surfaces after the first attempt.
    */
   readonly retries?: number;
@@ -415,7 +415,7 @@ export interface TransactionOptions {
 /**
  * A per-entity in-transaction handle (`tx.<entity>`, spec §3, §3.1): the same
  * reads as the root finder PLUS the write surface (`create` / `update` /
- * `terminate` / `delete`). Reads take the automatic in-transaction read lock (M8)
+ * `terminate` / `delete`). Reads take the automatic in-transaction read lock (m-read-lock)
  * at the adapter boundary; writes buffer / chain through the shared
  * {@link TransactionWriter} (spec §3.1). The generated barrel wraps this with the
  * managed-object type `T`.
@@ -427,7 +427,7 @@ export class TransactionEntity<T extends ParallaxRow = ParallaxRow> {
     private readonly writer: TransactionWriter,
   ) {}
 
-  /** An in-transaction read (spec §1.3, §3): takes the automatic read lock (M8). */
+  /** An in-transaction read (spec §1.3, §3): takes the automatic read lock (m-read-lock). */
   find(predicate?: Predicate, options: FindOptions = {}): ParallaxList<T> {
     return this.finder.find(predicate, options);
   }
@@ -445,9 +445,9 @@ export class TransactionEntity<T extends ParallaxRow = ParallaxRow> {
    * `update` the selected row(s) (spec §3): explicit assignment array, not a partial.
    *
    * A versioned entity whose predicate is NOT a single primary-key equality is a
-   * SET-BASED versioned update, which MATERIALIZES (M10, ADR 0032): resolve the
+   * SET-BASED versioned update, which MATERIALIZES (m-opt-lock, ADR 0032): resolve the
    * predicate to rows through the OBSERVING finder — which records each row's
-   * observed version and, in `locking` mode, takes the M8 shared lock (satisfying
+   * observed version and, in `locking` mode, takes the m-read-lock shared lock (satisfying
    * read-before-write) — then emit one keyed per-object update per resolved row.
    * A keyed (single-pk) versioned update and EVERY non-versioned update keep the
    * direct write path (the latter's readless batched form is unchanged, ADR 0011).
@@ -489,18 +489,18 @@ export class ParallaxTransaction {
   /**
    * The per-unit-of-work observed-version map (`entity#pk → version`), shared with
    * the writer: a locking/optimistic keyed update reads the version a prior in-
-   * transaction find hydrated (M10 framework-owned versions).
+   * transaction find hydrated (m-opt-lock framework-owned versions).
    */
   private readonly observed: ObservedVersions = new Map();
 
   constructor(
     private readonly metamodel: Metamodel,
     private readonly database: ParallaxDatabase,
-    /** The injected M11 dialect, threaded to the in-transaction finders' reads. */
+    /** The injected m-dialect dialect, threaded to the in-transaction finders' reads. */
     private readonly dialect: Dialect,
     /** The processing instant captured when the transaction opened (spec §3.1). */
     readonly processingInstant: string,
-    /** The M8 correctness strategy for this unit of work (default `locking`). */
+    /** The m-unit-work correctness strategy for this unit of work (default `locking`). */
     readonly concurrency: Concurrency = "locking",
   ) {
     this.writer = new TransactionWriter(
@@ -524,9 +524,9 @@ export class ParallaxTransaction {
       // The in-transaction finder flushes the writer's buffered inserts before a
       // read executes (lazily, inside the list resolver), so a dependent find
       // observes the just-buffered write (read-your-own-writes, `m-unit-work-001`). In
-      // `locking` mode the read also takes the M8 shared lock (`m-read-lock-001`); either way
+      // `locking` mode the read also takes the m-read-lock shared lock (`m-read-lock-001`); either way
       // it records the versions it observed so a later versioned update can gate
-      // on / advance from them (M10).
+      // on / advance from them (m-opt-lock).
       const finder = new EntityFinder(
         this.metamodel,
         metadata,
@@ -553,7 +553,7 @@ export class ParallaxTransaction {
    *  - a VERSIONED entity records the observed `version` NUMBER;
    *  - a processing-axis TEMPORAL (audit-only) entity — which carries no version
    *    column — records the observed processing-from (`in_z`) as its wire STRING, the
-   *    version analogue an optimistic close gates on (M7/M10). Recording FILTERS to the
+   *    version analogue an optimistic close gates on (m-temporal-read/m-opt-lock). Recording FILTERS to the
    *    CURRENT (`out_z = infinity`) milestone: a multi-milestone as-of/history read
    *    returns both the current row AND closed rows for one pk, so recording every row
    *    (last-row-wins) could overwrite the current `in_z` with a stale closed one — the
@@ -616,7 +616,7 @@ export type { Assignment };
 
 /**
  * Create a configured Parallax handle (spec §1.2). Reads the bundled descriptor
- * into the M1 metamodel, binds the database adapter and clock, and returns the
+ * into the m-descriptor metamodel, binds the database adapter and clock, and returns the
  * `px` handle. The generated `parallax(...)` in the `#parallax` barrel calls this
  * with its bundled descriptor and wraps the result with typed accessors.
  */

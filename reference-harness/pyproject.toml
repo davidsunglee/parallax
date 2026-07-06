@@ -1,7 +1,7 @@
 [project]
 name = "reference-harness"
 version = "0.0.0"
-description = "The canonical M12 compatibility runner for parallax. Tooling, NOT an ORM: it never compiles operations to SQL — it proves the suite is internally consistent and that golden SQL is correct against real databases."
+description = "The canonical m-case-format compatibility runner for parallax. Tooling, NOT an ORM: it never compiles operations to SQL — it proves the suite is internally consistent and that golden SQL is correct against real databases."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

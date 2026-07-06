@@ -2,7 +2,7 @@
  * Descriptor serde, routed through the shared `@parallax/serde` seam.
  *
  * The metamodel and the operation algebra canonicalize through the *same* serde
- * seam (M1 §"Metamodel serde"; ADR-0056), so descriptor and operation encodings
+ * seam (m-descriptor §"Metamodel serde"; ADR-0056), so descriptor and operation encodings
  * canonicalize identically to the Python oracle. This module is the metamodel
  * side of that seam: `serialize(deserialize(descriptor)) == descriptor` must
  * hold in both JSON and YAML for every model a case references.
@@ -31,7 +31,7 @@ export function canonicalDescriptor(descriptor: unknown): unknown {
 }
 
 /**
- * Assert the descriptor round-trips losslessly through JSON and YAML — the M1
+ * Assert the descriptor round-trips losslessly through JSON and YAML — the m-descriptor
  * serde contract, proven for every model referenced by a compatibility case.
  */
 export function assertDescriptorRoundTrip(descriptor: unknown): void {

@@ -1,6 +1,6 @@
 /**
- * Build an executable **scenario plan** from a loaded case (M8 unit-of-work
- * cache / identity + M12).
+ * Build an executable **scenario plan** from a loaded case (m-unit-work unit-of-work
+ * cache / identity + m-case-format).
  *
  * A `scenario` case is an ordered list of steps that prove the cache / identity /
  * read-your-own-writes contract against a real database. Two step kinds:
@@ -34,7 +34,7 @@ export interface ScenarioStep {
   /** The declared round-trip cost of the step (0 for a cache hit). */
   readonly roundTrips: number;
   /**
-   * A write step's abort flag (M8 abort contract): when true its DML is applied
+   * A write step's abort flag (m-unit-work abort contract): when true its DML is applied
    * then ROLLED BACK, so a later find observes the ORIGINAL rows. Absent / false
    * for a committed write or a find step.
    */

@@ -1,4 +1,4 @@
-# PK generation `sequence` (M1) — three inserts, batch=1 (one allocation per id).
+# PK generation `sequence` (m-pk-gen) — three inserts, batch=1 (one allocation per id).
 #
 # batch=1 -> each row reserves its own block; badge_seq 1->2->3->4; ids 1,2,3.
 model: models/pk-sequence.yaml

@@ -1,4 +1,4 @@
-# Optimistic temporal close, FRESH observed in_z (M7 + M10): the close gates on the
+# Optimistic temporal close, FRESH observed in_z (m-temporal-read + m-opt-lock): the close gates on the
 # processing-from (in_z) the unit of work observed and affects EXACTLY one row.
 #
 # A processing-axis (audit-only) temporal entity carries NO version column, so the

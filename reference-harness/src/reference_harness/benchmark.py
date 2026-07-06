@@ -1,11 +1,11 @@
-"""Run the M13 benchmark fixtures and emit a well-formed ``report.json``.
+"""Run the m-perf-bench benchmark fixtures and emit a well-formed ``report.json``.
 
-This is the executable half of `M13` (performance & benchmark harness). Its job
+This is the executable half of `m-perf-bench` (performance & benchmark harness). Its job
 is to prove the **methodology runs end-to-end** and produces a comparable,
 machine-readable report — NOT to set numeric targets (those are per-language,
 DQ10). For each benchmark fixture under ``core/compatibility/benchmarks/`` it:
 
-1. provisions the fixture's model (derived DDL via the M11 seam);
+1. provisions the fixture's model (derived DDL via the m-dialect seam);
 2. loads a dataset — generated (a deterministic recipe + row count) or empty;
 3. runs each workload's golden SQL ``iterations`` times against the real
    database, timing every run;

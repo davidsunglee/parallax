@@ -1,4 +1,4 @@
-"""Unit tests for the M11 error-classification core (DB-free).
+"""Unit tests for the `m-db-error` error-classification core (DB-free).
 
 The pure category map + call-site predicates are pinned here. The DB-coupled
 parts (extracting the native code from a real driver exception, and triggering
@@ -186,7 +186,7 @@ def test_schema_accepts_single_connection_error_case() -> None:
             ]
         },
         "binds": [[1, "a"], [1, "b"]],
-        "tags": ["m11", "error-classification", "uniqueViolation"],
+        "tags": ["m-db-error", "error-classification", "uniqueViolation"],
     }
     assert list(_case_validator().iter_errors(case)) == []
 
@@ -221,7 +221,7 @@ def test_schema_accepts_two_connection_error_case() -> None:
                 },
             ]
         },
-        "tags": ["m11", "error-classification", "deadlock"],
+        "tags": ["m-db-error", "error-classification", "deadlock"],
     }
     assert list(_case_validator().iter_errors(case)) == []
 
@@ -313,8 +313,8 @@ def test_schema_accepts_read_lock_concurrency_error_case() -> None:
             ]
         },
         "tags": [
-            "m8",
-            "m11",
+            "m-read-lock",
+            "m-db-error",
             "read-lock",
             "concurrency",
             "error-classification",
@@ -359,7 +359,7 @@ def test_schema_rejects_triggerless_error_case() -> None:
         "model": "models/error-cases.yaml",
         "errorClass": "uniqueViolation",
         "expectedNativeCode": {"postgres": "23505", "mariadb": 1062},
-        "tags": ["m11", "error-classification", "uniqueViolation"],
+        "tags": ["m-db-error", "error-classification", "uniqueViolation"],
     }
     errors_found = list(_case_validator().iter_errors(case))
     assert errors_found, (
@@ -374,7 +374,7 @@ def test_schema_rejects_empty_round_concurrency_case() -> None:
         "errorClass": "deadlock",
         "expectedNativeCode": {"postgres": "40P01", "mariadb": 1213},
         "concurrency": {"rounds": [{}]},
-        "tags": ["m11", "error-classification", "deadlock"],
+        "tags": ["m-db-error", "error-classification", "deadlock"],
     }
     errors_found = list(_case_validator().iter_errors(case))
     assert errors_found, (

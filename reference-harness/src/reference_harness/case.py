@@ -152,16 +152,16 @@ class Case:
 
         A ``harness``-lane case executes as today; an ``api-conformance``-lane case
         (every boundary case, plus the read-lock matrix reads
-        ``m-read-lock-002``-``m-read-lock-005``) is schema-validated by the M12 harness but
-        NOT executed — each language's API
-        Conformance Suite satisfies it. :func:`case_runner.run_case` early-returns
-        for the api-conformance lane.
+        ``m-read-lock-002``-``m-read-lock-005``) is schema-validated by the
+        m-case-format harness but NOT executed — each language's API Conformance
+        Suite satisfies it. :func:`case_runner.run_case` early-returns for the
+        api-conformance lane.
         """
         return self.raw.get("lane", "harness")
 
     @property
     def uow(self) -> dict[str, Any]:
-        """The declared unit-of-work config (M8 strategy selection), or empty.
+        """The declared unit-of-work config (m-unit-work strategy selection), or empty.
 
         A case MAY carry a top-level ``uow`` block
         (``{"concurrency": "locking" | "optimistic"}``) declaring the mode its
@@ -186,7 +186,7 @@ class Case:
 
     @property
     def is_write_sequence(self) -> bool:
-        """True for a milestone-chaining write case (Phase 5, M7).
+        """True for a milestone-chaining write case (Phase 5, m-audit-write).
 
         A write-sequence case carries a ``writeSequence`` (ordered mutations) and
         an ``expectedTableState`` instead of an ``operation`` + ``expectedRows``.
@@ -205,8 +205,8 @@ class Case:
     def load_fixtures(self) -> bool:
         """Whether a writeSequence case loads the model's fixtures first (Phase 7).
 
-        Defaults to ``False`` (the M7 milestone-chaining and M8 batched-insert
-        cases build their own state from an empty schema). The M9 detached-update
+        Defaults to ``False`` (the m-audit-write milestone-chaining and m-unit-work batched-insert
+        cases build their own state from an empty schema). The m-detach detached-update
         merge-back case sets it ``True`` so the original persisted row exists
         before the merge-back DML mutates it.
         """
@@ -214,7 +214,7 @@ class Case:
 
     @property
     def is_conflict(self) -> bool:
-        """True for an M10 optimistic-lock conflict / success case (Phase 7).
+        """True for an m-opt-lock optimistic-lock conflict / success case (Phase 7).
 
         A conflict case carries ``expectedAffectedRows`` (the affected-row count a
         golden ``UPDATE`` leaves behind) and an OPTIONAL out-of-band
@@ -252,7 +252,7 @@ class Case:
 
     @property
     def is_scenario(self) -> bool:
-        """True for an M8 cache/identity scenario case (Phase 6).
+        """True for a scenario case (Phase 6 — unit-of-work / cache / identity shape).
 
         A scenario case carries a ``scenario`` (an ordered list of operation
         steps with per-step round-trip counts) instead of a single
@@ -266,11 +266,11 @@ class Case:
 
     @property
     def is_boundary(self) -> bool:
-        """True for an M8/M10 bounded-automatic-retry boundary case (Phase 4).
+        """True for an m-auto-retry/m-opt-lock bounded-automatic-retry boundary case (Phase 4).
 
         A boundary case carries a ``boundary`` (the portable unit-of-work actions)
         and an ``expect`` (the portable outcome) instead of an ``operation`` /
-        ``writeSequence`` / etc.; it is always ``lane: api-conformance`` (the M12
+        ``writeSequence`` / etc.; it is always ``lane: api-conformance`` (the m-case-format
         harness cannot provoke its injected-fault / retry-loop observable), so it is
         schema-validated but not executed.
         """
@@ -307,7 +307,7 @@ class Case:
 
     @property
     def is_error(self) -> bool:
-        """True for an M11 error-code classification case.
+        """True for an m-db-error error-code classification case.
 
         An error case carries an ``errorClass`` (the neutral category a triggered
         DB error MUST classify to) plus an ``expectedNativeCode`` witness keyed by
@@ -341,7 +341,7 @@ class Case:
 
     @property
     def is_concurrency_success(self) -> bool:
-        """True for an M8 behavioral read-lock concurrency-SUCCESS case.
+        """True for an m-read-lock behavioral read-lock concurrency-SUCCESS case.
 
         A concurrency-success case carries a ``concurrency`` choreography with NO
         ``errorClass`` (the discriminator that keeps it distinct from an

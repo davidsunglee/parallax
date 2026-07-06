@@ -15,7 +15,7 @@ import {
   POSTGRES_TEMPORAL_PROFILE_IDS,
   POSTGRES_TXN_PROFILE,
   POSTGRES_TXN_PROFILE_IDS,
-} from "./m12-profiles.js";
+} from "./conformance-profiles.js";
 
 function idsFor(profile: typeof POSTGRES_FULL_PROFILE): readonly string[] {
   return casesForProfile(profile)
@@ -23,7 +23,7 @@ function idsFor(profile: typeof POSTGRES_FULL_PROFILE): readonly string[] {
     .sort();
 }
 
-describe("M12 matrix profiles", () => {
+describe("m-case-format matrix profiles", () => {
   it("declares stable, unique profile names", () => {
     const names = MATRIX_PROFILES.map((profile) => profile.name);
     expect(new Set(names).size).toBe(names.length);

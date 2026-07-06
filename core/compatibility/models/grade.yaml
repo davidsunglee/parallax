@@ -4,9 +4,9 @@
 # `ordinal` attribute maps to a column literally named `order` — a SQL reserved
 # word in both Postgres and MariaDB — so every reference to it MUST be quoted:
 # `"order"` on Postgres, `` `order` `` on MariaDB (the divergent quote characters
-# of the M11 seam). The harness quotes the column in generated DDL / INSERT /
+# of the m-dialect seam). The harness quotes the column in generated DDL / INSERT /
 # table-state reads (a reserved word, so quoting is required), and the golden SQL
-# quotes it by hand; the M3 normalizer preserves quoted identifiers. Simple
+# quotes it by hand; the m-sql normalizer preserves quoted identifiers. Simple
 # lowercase columns (id, label) are not reserved and stay unquoted.
 #
 # Row data lives in the sibling fixtures/grade.yaml.

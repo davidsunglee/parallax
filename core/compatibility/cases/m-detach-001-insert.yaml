@@ -1,17 +1,17 @@
-# Detached-insert merge-back (M9): merging back a never-persisted detached object
+# Detached-insert merge-back (m-detach): merging back a never-persisted detached object
 # INSERTS it.
 #
 # A new Account is constructed in memory and detached (a deep copy decoupled from
-# the identity cache, M9). Editing it issues NO SQL — the database is untouched
+# the identity cache, m-detach). Editing it issues NO SQL — the database is untouched
 # until merge-back. At merge-back the original is looked up by primary key, NOT
 # found (the object was never persisted), so the copy is inserted as a new row:
 #   `copyDetachedValuesToOriginalOrInsertIfNew` => insert-if-new.
 #
 # This reuses the write-sequence machinery (apply the ordered golden DML to an
-# EMPTY table, then assert the resulting table state) for the non-temporal M9
+# EMPTY table, then assert the resulting table state) for the non-temporal m-detach
 # case. The observable contract of merge-back is the row it leaves behind — here a
 # single inserted Account — so it is verified against real data, not merely
-# asserted in prose. The version column is initialized to 1 on insert (the M10
+# asserted in prose. The version column is initialized to 1 on insert (the m-opt-lock
 # optimistic-lock baseline).
 model: models/account.yaml
 tags: [m-detach, m-sql, detached-insert, write-sequence]

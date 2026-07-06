@@ -1,6 +1,6 @@
-# Benchmark fixture (M13): the deep-fetch shapes workload.
+# Benchmark fixture (m-perf-bench): the deep-fetch shapes workload.
 #
-# Exercises M4's N+1 elimination at scale. The headline property is that a deep
+# Exercises m-deep-fetch's N+1 elimination at scale. The headline property is that a deep
 # fetch costs `1 + levels` round trips regardless of fan-out: a 1 -> N -> N fetch
 # over P parents is THREE statements (root + items + statuses), never 1 + N + N.
 # The benchmark measures the wall-time of each level AND records the round-trip

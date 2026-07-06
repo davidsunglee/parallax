@@ -1,4 +1,4 @@
-# Boundary case (M8): an injected TRANSIENT database failure is auto-retried
+# Boundary case (m-auto-retry): an injected TRANSIENT database failure is auto-retried
 # IDENTICALLY when `retryOptimisticConflicts` is SET — the flag has no bearing on
 # transients — `api-conformance` lane.
 #

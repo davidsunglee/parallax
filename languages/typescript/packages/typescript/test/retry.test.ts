@@ -1,5 +1,5 @@
 /**
- * Bounded automatic retry loop (M8/M10, ADR 0031 / TS ADR 0065) — Docker-free
+ * Bounded automatic retry loop (m-auto-retry/m-opt-lock, ADR 0031 / TS ADR 0065) — Docker-free
  * mechanics over a controlled `ParallaxDatabase` stub.
  *
  * These pin the retry-loop branches the `api-conformance`-lane boundary cases
@@ -111,7 +111,7 @@ async function findThenUpdate(
   }, options);
 }
 
-describe("bounded automatic retry (M8/M10)", () => {
+describe("bounded automatic retry (m-auto-retry/m-opt-lock)", () => {
   it("m-auto-retry-001: an injected transient is auto-retried by default (flag unset) and commits", async () => {
     const db = new ControlledDatabase((attempt) =>
       attempt === 0 ? { fault: transient() } : { affected: 1 },

@@ -1,4 +1,4 @@
-# PK generation `sequence` (M1) — single consume of a multi-id block (gap proof).
+# PK generation `sequence` (m-pk-gen) — single consume of a multi-id block (gap proof).
 #
 # pass_seq batch 3: reserve a block of 3 (next_val 1 -> 4) but insert only ONE row
 # (id 1). ids 2 and 3 are reserved-and-lost -> a GAP. Counter lands at 4 (the full

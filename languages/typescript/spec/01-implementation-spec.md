@@ -13,22 +13,22 @@ Every template section §1–§11 is specified in full here:
 - [§1](#1-conformance-slice-declaration) declares the Conformance Slice this
   build claims — the decision that scopes every other section.
 - [§2](#2-api-surface-non-normative--dq3) API surface,
-  [§4](#4-transaction-block-demarcation-m8) transaction-block demarcation,
-  [§7](#7-codegen-or-not-dq5) codegen, and [§8](#8-collection-idioms-m5)
+  [§4](#4-transaction-block-demarcation-m-unit-work) transaction-block demarcation,
+  [§7](#7-codegen-or-not-dq5) codegen, and [§8](#8-collection-idioms-m-op-list)
   collection idioms record the V1 API surface inline.
 - [§3](#3-metadata--model-input-format-dq5-dq6) metamodel introspection + serde,
-  [§5](#5-test-double-integration-m12-dq15) test-double integration,
+  [§5](#5-test-double-integration-m-case-format-dq15) test-double integration,
   [§6](#6-api-conformance-suite--usage-guide) the API Conformance Suite & Usage
   Guide, [§9](#9-build-time-dependency-enforcement-dq3-dependency-graph)
   build-time dependency enforcement,
-  [§10](#10-optional-optimized-data-structures-m13-dq10) optional optimized data
+  [§10](#10-optional-optimized-data-structures-m-perf-bench-dq10) optional optimized data
   structures, and
-  [§11](#11-per-language-performance-targets-m13-dq10) per-language performance
+  [§11](#11-per-language-performance-targets-m-perf-bench-dq10) per-language performance
   targets close the remaining decide-and-record items.
 
 Beyond the template skeleton, the spec also includes a supplementary
-[Object lifecycle: detach, snapshots, and entity inputs](#object-lifecycle-detach-snapshots-and-entity-inputs-m9)
-section (`M9`).
+[Object lifecycle: detach, snapshots, and entity inputs](#object-lifecycle-detach-snapshots-and-entity-inputs-m-detach)
+section (`m-detach`).
 
 The document is self-contained: no section defers its answer to another document.
 Links to `core/` files point at the authoritative source of truth, but the
@@ -45,7 +45,7 @@ future gap surfaces as an explicit marker rather than silent prose.
 **ANSWERED — see [TS-0064](../docs/adr/0064-adopt-first-implementation-mvp-slice.md).**
 The Conformance Slice this build claims leads the spec because it scopes every
 other section — the module → package map, the case/dialect matrix
-([§5](#5-test-double-integration-m12-dq15)), the conformance-adapter grade, and
+([§5](#5-test-double-integration-m-case-format-dq15)), the conformance-adapter grade, and
 the API Conformance Suite ([§6](#6-api-conformance-suite--usage-guide)) are all
 bounded by it. A Conformance Slice is a declared, **case-granular** subset of the
 compatibility corpus; its machine-readable form is a `describeOk` capability
@@ -63,9 +63,9 @@ so V1 claims precisely the 123 cases tagged for the slice and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads** + audit-only
 processing-temporal), and optimistic-locking surfaces but defers aggregation,
-identity-cache scenarios, query-cache scenarios, M9 detached merge-back, PK
+identity-cache scenarios, query-cache scenarios, m-detach detached merge-back, PK
 generation, value objects, inheritance, error classification, bitemporal
-rectangle-split writes, M13 benchmarks, and non-Postgres dialects claims
+rectangle-split writes, m-perf-bench benchmarks, and non-Postgres dialects claims
 capabilities in this shape:
 
 ```json
@@ -124,28 +124,28 @@ important V1 rule is the slice boundary:
   `mariadb` / `identity cache` tags).
 - Aggregation and projection are deferred by §2.8, so 04xx `aggregate` /
   `groupBy` / `having` cases and cases tagged `projection` are untagged and
-  therefore outside the claim even though basic M2 predicate reads are inside it.
-- The transaction/read-lock/batched-write slice of M8 is inside §4, but the M8
+  therefore outside the claim even though basic m-op-algebra predicate reads are inside it.
+- The transaction/read-lock/batched-write slice of m-read-lock is inside §4, but the m-read-lock
   identity-cache and query-cache scenario slice is deferred by TS-0054. Those
   cache/identity cases are untagged and outside the V1 claim.
 - The `scenario` shape is **inside** the claim: the read-your-own-writes scenario
   `m-unit-work-001-read-your-own-writes` is tagged `slice-mvp-1` and runs as
-  part of the M8 unit-of-work slice. The deferred M8 cache `scenario` cases
+  part of the m-unit-work unit-of-work slice. The deferred m-unit-work cache `scenario` cases
   (identity / query cache) are simply untagged, so they fall outside the claim
   without excluding the shape.
-- M9 detached merge-back is deferred by the lifecycle section, so the `detached` /
+- m-detach detached merge-back is deferred by the lifecycle section, so the `detached` /
   `lifecycle detach` cases are untagged and outside the V1 claim unless a later
   implementation explicitly adds that slice.
-- M13 benchmarks are **outside** the V1 claim: `m13` is not in `modules` and the
+- m-perf-bench benchmarks are **outside** the V1 claim: `m-perf-bench` is not in `modules` and the
   `benchmark` command is not in `commands` (TS-0062, TS-0064). TypeScript still
-  binds to the shared M13 methodology and report shape (§11), but the first build
+  binds to the shared m-perf-bench methodology and report shape (§11), but the first build
   does not *claim* benchmark execution in its conformance slice — the benchmark
   surface lands after the first slice.
 - MariaDB cases remain outside the V1 **conformance adapter claim** because
   `dialects` contains only `postgres`. Separately, TypeScript ships MariaDB as
-  the second concrete M11 dialect/adapter/provider and proves it through
-  first-class partial M12 and selectable API-conformance profiles described in
-  [§5](#5-test-double-integration-m12-dq15) and [§6](#6-api-conformance-suite--usage-guide).
+  the second concrete m-db-port dialect/adapter/provider and proves it through
+  first-class partial m-case-format and selectable API-conformance profiles described in
+  [§5](#5-test-double-integration-m-case-format-dq15) and [§6](#6-api-conformance-suite--usage-guide).
 
 For a case outside the claim, the adapter SHOULD return `status: "unsupported"`
 with a diagnostic such as `unsupported-case-tag` or `unsupported-dialect`.
@@ -189,7 +189,7 @@ No generated enum types or structured value-object interfaces are part of
 TypeScript V1. The canonical descriptor has no enum element, and a `valueObject`
 declares only its element name, logical type name, backing column, mapping, and
 nullability. Generated value-object properties therefore use the unstructured
-`ParallaxJsonValue` scalar mapping from [§3.2.1](#321-m0-scalar-runtime-mapping),
+`ParallaxJsonValue` scalar mapping from [§3.2.1](#321-m-core-scalar-runtime-mapping),
 and nested value-object predicates use untyped string paths after the declared
 value-object name. A future core descriptor extension that describes enum values
 or value-object fields may add generated types, but V1 codegen MUST NOT invent
@@ -212,7 +212,7 @@ TypeScript uses one generated fluent expression DSL for predicates,
 relationships, assignments, and sort keys — there is no second object-filter
 language. `find` is the only V1 read operation that returns managed domain
 objects; it always returns a `ParallaxList`
-([§8](#8-collection-idioms-m5)), which may resolve to zero, one,
+([§8](#8-collection-idioms-m-op-list)), which may resolve to zero, one,
 or many objects. `find()` without a predicate is shorthand for
 `find(Entity.all())`; entity symbols also expose `none()` for dynamic predicate
 construction.
@@ -233,13 +233,13 @@ const orders = px.orders.find(
 ### 2.4 Result types
 
 `find` returns a `ParallaxList` — an async, operation-backed list
-(`M5`, [§8](#8-collection-idioms-m5)). Single-object access is spelled through
+(`m-op-list`, [§8](#8-collection-idioms-m-op-list)). Single-object access is spelled through
 `ParallaxList` helpers (`first` / `firstOrNull` / `single` / `singleOrNull`):
 `first`/`single` throw `ParallaxNotFoundError` when empty and `single` throws
 `ParallaxTooManyResultsError` for more than one result. Full collection idioms
-are in [§8](#8-collection-idioms-m5).
+are in [§8](#8-collection-idioms-m-op-list).
 
-### 2.5 Predicates and the `group` operator (`M2`)
+### 2.5 Predicates and the `group` operator (`m-op-algebra`)
 
 Predicate methods use compact names: `eq`, `notEq`, `gt`, `gte`, `lt`, `lte`,
 `isNull`, `isNotNull`, `in`, `notIn`. `eq(null)` / `notEq(null)` are rejected in
@@ -259,7 +259,7 @@ Order.status.eq("Processing")
   .and(Order.priority.eq("High").or(Order.customer.region.eq("NA")).group());
 ```
 
-### 2.6 Relationship navigation and deep-fetch (`M4`)
+### 2.6 Relationship navigation and deep-fetch (`m-deep-fetch`)
 
 To-one relationships support direct path navigation
 (`Order.customer.region.eq("NA")`); to-many relationships require an explicit
@@ -279,7 +279,7 @@ Ordering uses generated sort keys (`orderBy: [Order.createdAt.desc(),
 Order.id.asc()]`). Sort keys are query expressions in V1, not JavaScript
 comparators.
 
-### 2.8 Aggregation spelling (`M2` sub-area) — deferred
+### 2.8 Aggregation spelling (`m-agg` sub-area) — deferred
 
 `find` never returns partial managed objects. Selective retrieval and grouped
 aggregate reads are reserved for `project(...)` (`where` / `groupBy` / `select` /
@@ -288,9 +288,9 @@ aggregate reads are reserved for `project(...)` (`where` / `groupBy` / `select` 
 choice is not re-opened). In-memory reuse of predicates as `Array.filter`
 callbacks and of sort keys as `Array.sort` comparators is likewise deferred.
 
-### 2.9 Temporal reads (`M7`)
+### 2.9 Temporal reads (`m-temporal-read`)
 
-TypeScript timestamps use `Temporal.Instant` and are constrained to the core M0
+TypeScript timestamps use `Temporal.Instant` and are constrained to the core m-core
 microsecond boundary: values with non-zero sub-microsecond precision are rejected
 at the Parallax API boundary rather than truncated. The explicit current-row
 token is the string literal `"now"`; in an `asOf` option it serializes to the
@@ -318,7 +318,7 @@ type TemporalReadOptions = {
 
 `TemporalReadOptions` is part of the second `find` argument. `find` still returns
 `ParallaxList<T>`; the temporal options only affect the operation serialized to
-M2 and the rows that resolve when the list is read.
+m-op-algebra and the rows that resolve when the list is read.
 
 ```ts
 const currentBalances = px.balances.find(Balance.acctNum.eq("A"));
@@ -354,7 +354,7 @@ entity, but `{ asOf: { business: t }, history: ["business"] }` is rejected.
 Range `start` is inclusive and `end` is exclusive; `start` must be strictly
 before `end`.
 
-The TypeScript adapter serializes explicit temporal reads to the core M2 nodes:
+The TypeScript adapter serializes explicit temporal reads to the core m-op-algebra nodes:
 
 - `asOf.processing` / `asOf.business` → `asOf`
 - `range.processing` / `range.business` → `asOfRange`
@@ -363,7 +363,7 @@ The TypeScript adapter serializes explicit temporal reads to the core M2 nodes:
 When both axes are present, serialization is deterministic: the business-axis
 wrapper is outside the processing-axis wrapper, matching the core bind order
 (business binds before processing binds). Omitted temporal axes are not
-serialized; the M7 default-injection rule still applies and reads them as
+serialized; the m-temporal-read default-injection rule still applies and reads them as
 current (`now`).
 
 ## 3. Metadata / model input format (DQ5, DQ6)
@@ -371,7 +371,7 @@ current (`now`).
 **ANSWERED — see [TS-0055](../docs/adr/0055-metamodel-introspection-api-has-generic-and-typed-layers.md),
 [TS-0056](../docs/adr/0056-one-canonical-serde-shared-by-metamodel-and-operations.md),
 [TS-0057](../docs/adr/0057-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md).**
-The metamodel (`M1`) is one artifact wearing two hats — an introspectable runtime
+The metamodel (`m-descriptor`) is one artifact wearing two hats — an introspectable runtime
 protocol and a serializable document — and this section specifies both hats so an
 implementer can build the metamodel layer without inferring its shape from
 `m-descriptor.md`.
@@ -430,7 +430,7 @@ types**, so every property in a descriptor is reachable from §3 alone:
 | Element type | Reader shape | Fields (← schema) |
 |---|---|---|
 | `entity` | `EntityMetadata` | `name`, `table`, `namespace?`, `mutability`, `temporal`, `attributes`, `asOfAttributes`, `relationships`, `indices`, `valueObjects`, `inheritance?`; plus derived `primaryKeyAttributes`, `attributeByName(name)`, `relationshipByName(name)`, `isTemporal` |
-| `attribute` | `AttributeMeta` | `name`, `type` (M0 neutral type, incl. `decimal(p,s)`), `column`, `primaryKey`, `nullable`, `maxLength?`, `readOnly`, `optimisticLocking`, `pkGenerator?`, `default?` |
+| `attribute` | `AttributeMeta` | `name`, `type` (m-core neutral type, incl. `decimal(p,s)`), `column`, `primaryKey`, `nullable`, `maxLength?`, `readOnly`, `optimisticLocking`, `pkGenerator?`, `default?` |
 | `relationship` | `RelationshipMeta` | `name`, `relatedEntity`, `cardinality` (`one-to-one`/`many-to-one`/`one-to-many`/`many-to-many`), `join`, `reverseName?`, `dependent`, `foreignKey?`, `orderBy?` (`{ attr, direction }[]`) |
 | `index` | `IndexMeta` | `name`, `attributes` (ordered attribute names), `unique` |
 | `asOfAttribute` | `AsOfAttributeMeta` | `name`, `fromColumn`, `toColumn`, `axis` (`processing`/`business`), `toIsInclusive`, `infinity` (`"infinity"`), `default` (`"now"`) |
@@ -446,9 +446,9 @@ Defaulting follows the schema: readers surface the schema defaults
 on every value. This mirrors the Python harness's `Entity` / `Model` accessors,
 which are the concrete generic reader over the raw parsed descriptor.
 
-### 3.2.1 M0 scalar runtime mapping
+### 3.2.1 m-core scalar runtime mapping
 
-Generated TypeScript code maps every M0 neutral scalar to one public runtime
+Generated TypeScript code maps every m-core neutral scalar to one public runtime
 representation. These choices are part of the compatibility boundary: generated
 managed objects, snapshots, input validators, assignment expressions, operation
 binds, and conformance adapter results all use the same mapping. Adapter-specific
@@ -465,7 +465,7 @@ library. `ParallaxJsonValue` is the structural JSON value type:
 `null | boolean | number | string | ParallaxJsonValue[] | { [key: string]:
 ParallaxJsonValue }`.
 
-| M0 scalar | Generated property / snapshot type | Create / update input type | Adapter bind type | Materialization rule |
+| m-core scalar | Generated property / snapshot type | Create / update input type | Adapter bind type | Materialization rule |
 |---|---|---|---|---|
 | `boolean` | `boolean` | `boolean` | `boolean` | Preserve the boolean value exactly. |
 | `int32` | `number` | `number` | `number` | Validate a signed 32-bit integer; reject non-integers and out-of-range values. |
@@ -495,10 +495,10 @@ not part of the public scalar surface.
 ### 3.3 Serde module
 
 A dedicated **`@parallax/serde`** package is the single canonical, format-agnostic
-serde seam, shared by the metamodel (`M1`) and the operation algebra (`M2`) — the
-same shared seam the Python harness realizes in `serde.py` and proves as `M12`
+serde seam, shared by the metamodel (`m-descriptor`) and the operation algebra (`m-op-algebra`) — the
+same shared seam the Python harness realizes in `serde.py` and proves as `m-case-format`
 layer 4a/4b (TS-0056). Giving serde its own package satisfies the template's
-"dedicated module" requirement; sharing it across `M1`/`M2` guarantees the adapter
+"dedicated module" requirement; sharing it across `m-descriptor`/`m-op-algebra` guarantees the adapter
 canonicalizes identically to the oracle.
 
 ```ts
@@ -521,7 +521,7 @@ from the Python harness so it canonicalizes identically to the oracle:
 - **Lossless JSON+YAML round-trip.** For each of JSON and YAML,
   `assertRoundTrip(value)` asserts serialization is idempotent
   (`serialize(canonical(value))` is a fixed point) and that re-parsing
-  canonicalizes back to the same value (no data loss). This realizes the `M1`
+  canonicalizes back to the same value (no data loss). This realizes the `m-descriptor`
   normative requirement `serialize(deserialize(descriptor)) == descriptor` in both
   formats, asserted for every model referenced by a compatibility case.
 
@@ -529,7 +529,7 @@ The `yaml` package (or `js-yaml`) plus built-in `JSON` is a **non-binding** sugg
 default with the canonicalizer written in-house; the round-trip contract above —
 not any named library — is the normative requirement (TS-0057).
 
-## 4. Transaction-block demarcation (M8)
+## 4. Transaction-block demarcation (m-unit-work)
 
 **ANSWERED — specified in full below.** All writes require an explicit
 transaction; reads may use `px`, writes are available only through `tx`.
@@ -540,10 +540,10 @@ transaction; reads may use `px`, writes are available only through `tx`.
   fails, the transaction rolls back and the returned promise rejects. A
   `ParallaxTransaction` is invalid after its callback completes.
 - **Strategy selection.** `TransactionOptions.concurrency` (`"locking" |
-  "optimistic"`, default `"locking"`) selects the M8 correctness strategy for the
+  "optimistic"`, default `"locking"`) selects the m-unit-work correctness strategy for the
   unit of work: `locking` takes the implicit shared read lock on in-transaction
   reads and advances a versioned entity's version with no gate; `optimistic` takes
-  no lock and gates a versioned update on the observed version (M10).
+  no lock and gates a versioned update on the observed version (m-opt-lock).
 
   ```ts
   await px.transaction(async tx => {
@@ -557,7 +557,7 @@ transaction; reads may use `px`, writes are available only through `tx`.
 
 - **Bounded automatic retry.** `TransactionOptions.retries` (default **10**; `0`
   disables the loop) and `TransactionOptions.retryOptimisticConflicts` (default
-  `false`) configure the M8/M10 retry contract (ADR 0031 / TS ADR 0065). On a
+  `false`) configure the m-auto-retry/m-opt-lock retry contract (ADR 0031 / TS ADR 0065). On a
   **retriable** failure the boundary rolls back, discards the unit of work's
   observed state, and re-executes the body against fresh state, up to `retries`
   re-executions — each attempt opens a **fresh** driver transaction and a **fresh**
@@ -605,7 +605,7 @@ transaction; reads may use `px`, writes are available only through `tx`.
   attribute issues no DML. Optimistic-lock conflicts are caller-driven and not
   auto-retried.
 
-### 4.1 Temporal writes (`M7`)
+### 4.1 Temporal writes (`m-temporal-read`)
 
 All temporal writes run through `ParallaxTransaction`; the root `px` handle has
 no write methods. Processing instants are never accepted as per-operation
@@ -616,7 +616,7 @@ clock.
 The canonical TypeScript V1 `slice-mvp-1` slice requires only the
 audit-only processing-temporal write surface below, plus the temporal read
 surface in §2.3. Business-temporal-only writes and bounded bitemporal
-rectangle-split writes are specified here as the post-slice M7 surface, but they
+rectangle-split writes are specified here as the post-slice m-bitemp-write surface, but they
 are not claimed by V1 until the canonical slice's case tags and capabilities are
 expanded.
 
@@ -722,7 +722,7 @@ uses half-open `[start, end)` semantics and requires `start < end`. Passing a
 processing axis, a processing instant, or a sub-microsecond instant is a
 validation error.
 
-## 5. Test-double integration (M12, DQ15)
+## 5. Test-double integration (m-case-format, DQ15)
 
 **ANSWERED — see [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md),
 [TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md),
@@ -766,7 +766,7 @@ Cases are **executed through the `parallax-conformance` adapter contract** (TS-0
   MUST NOT execute; the test compares the emitted statements and round-trip count.
 - `parallax-conformance run --case <c.yaml> --dialect <d>` provisions, executes, and
   returns observations; the test compares the JSON envelope using the **same
-  comparison rules `M12` uses**.
+  comparison rules `m-case-format` uses**.
 
 The adapter is the single behavioral boundary: the suite imports no finder builders,
 cache objects, or other internals. This decouples the suite from implementation
@@ -817,7 +817,7 @@ Python harness without coupling the suite to Testcontainers internals. The
 composition-root providers also expose the shipped `database` adapter,
 `dialectImpl`, and an independent `peer` connection for the API Conformance Suite
 and provider contract tests; those additions stay at the composition root and do
-not change the generic M12 runner port.
+not change the generic m-case-format runner port.
 
 The normative Postgres reset is drop-and-recreate of the active schema:
 `drop schema if exists public cascade; create schema public`. The MariaDB reset
@@ -831,12 +831,12 @@ require a portable Testcontainers snapshot API.
 
 The V1 `parallax-conformance describe` claim remains **Postgres-only**. That is
 the official adapter grade for `slice-mvp-1`. TypeScript nevertheless ships two
-database implementations behind the M11 seam:
+database implementations behind the m-dialect seam:
 
-- **Postgres full M12 profile** (`postgres-full-slice-mvp-1`): the 111
+- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 111
   harness-lane `slice-mvp-1` cases over `postgres:17`, included in
   `just ts-db`.
-- **MariaDB curated M12 profile** (`mariadb-curated-25`): a first-class partial
+- **MariaDB curated m-case-format profile** (`mariadb-curated-25`): a first-class partial
   profile over `mariadb:11.4`, included in `just ts-db-all`. It preserves the
   25-case set: 14
   harness-lane slice cases with `goldenSql.mariadb` plus 11 marquee MariaDB
@@ -866,16 +866,16 @@ TypeScript implements the portable database-provider test contract in
   selects providers from the same registry as API conformance
   (`PARALLAX_DATABASES`) and proves `reset`, `applyDdl`, `loadFixtures`, `query`,
   `exec`, `execRolledBack`, and peer visibility.
-- **Matrix profiles:** `packages/typescript/test/m12-profiles.ts` declares the
+- **Matrix profiles:** `packages/typescript/test/m-case-format-profiles.ts` declares the
   canonical Postgres full profile, the historical Postgres read/graph/txn/temporal
   subsets as named profiles, and the MariaDB curated partial profile. The
-  Docker-free `m12-profiles.test.ts` guards profile membership and explicit
+  Docker-free `m-case-format-profiles.test.ts` guards profile membership and explicit
   MariaDB exclusions.
 - **Commands:** `just ts-db-fast` runs the Docker-free dialect/provider/profile
   checks; `just ts-db` is the primary Docker-backed DB gate, covering adapter
-  smoke, the provider contract, the Postgres full M12 profile, and default
+  smoke, the provider contract, the Postgres full m-case-format profile, and default
   Postgres API conformance; `just ts-db-all` adds the MariaDB API Conformance
-  Suite and curated M12 profile. Docker-backed suites use a `docker info` gate
+  Suite and curated m-case-format profile. Docker-backed suites use a `docker info` gate
   and report skipped database checks when Docker is unavailable.
 
 ## 6. API Conformance Suite & Usage Guide
@@ -883,7 +883,7 @@ TypeScript implements the portable database-provider test contract in
 **ANSWERED — the suite lives at
 `packages/typescript/test/api-conformance/` and the Usage Guide at
 `languages/typescript/docs/guide/`.** Beyond the wire-level conformance adapter of
-[§5](#5-test-double-integration-m12-dq15), TypeScript proves that the idiomatic
+[§5](#5-test-double-integration-m-case-format-dq15), TypeScript proves that the idiomatic
 developer surface of [§2](#2-api-surface-non-normative--dq3) reproduces the
 claimed slice against a real Postgres through the shipped `@parallax/db-postgres`
 adapter by default (`just ts-db`), with a MariaDB fan-out lane (`just ts-db-all`)
@@ -1001,9 +1001,9 @@ language-local realization of the contract's guide drift-check requirement.
   would fail; since generated files are uncommitted, this is not a git drift
   check). Conformance is exposed through the **separate** `parallax-conformance`
   CLI, not the generated `#parallax` API. The canonical V1 command claim exposes
-  `describe` / `compile` / `run`; `benchmark` is the post-slice M13 command
+  `describe` / `compile` / `run`; `benchmark` is the post-slice m-perf-bench command
   described in §11 and is not claimed by the `slice-mvp-1` slice —
-  see [§5](#5-test-double-integration-m12-dq15).
+  see [§5](#5-test-double-integration-m-case-format-dq15).
 - **Where generated artifacts live / regeneration.** Generated output is derived
   code: gitignored by default, written to `./.parallax/generated` (outside
   `src/`, so it does not look like user-owned source), and regenerated during
@@ -1012,13 +1012,13 @@ language-local realization of the contract's guide drift-check requirement.
   and application-owned domain functions. Applications import the output through
   the package-local `#parallax` alias.
 
-## 8. Collection idioms (M5)
+## 8. Collection idioms (m-op-list)
 
 **ANSWERED — specified in full below.**
 
 - **Concrete collection type.** A list result is a `ParallaxList<T>`: an async,
   operation-backed result collection. It implements async iteration and resolves
-  its backing operation (`M5`) on first object-returning access — laziness and
+  its backing operation (`m-op-list`) on first object-returning access — laziness and
   query-backing are surfaced by deferring the fetch until results are read.
 - **Read helpers.** `toArray`, `toSnapshots`, `first`, `firstOrNull`, `single`,
   `singleOrNull`, `count`, `isEmpty`, `notEmpty`. `count` / `isEmpty` /
@@ -1032,21 +1032,21 @@ language-local realization of the contract's guide drift-check requirement.
 - **No array emulation.** `ParallaxList` does **not** trap `length`, numeric
   indexing, or synchronous iteration — normal JavaScript behavior is acceptable
   for those. Set-based `update` / `delete` accept an unresolved `ParallaxList` as
-  a bulk target ([§4](#4-transaction-block-demarcation-m8)).
+  a bulk target ([§4](#4-transaction-block-demarcation-m-unit-work)).
 
 ## 9. Build-time dependency enforcement (DQ3, dependency-graph)
 
-**ANSWERED — see [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m14-package-map.md).**
+**ANSWERED — see [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m-core-m-coherence-package-map.md).**
 The normative module-dependency graph
 ([`modules.md`](../../../core/spec/modules.md)) is the **only**
-legal dependency direction between numbered core modules, and each per-language
+legal dependency direction between core modules, and each per-language
 spec **SHOULD** prescribe a build-time mechanism that fails the build on any
 module-to-module dependency the graph does not declare. This section names the
-tool, maps every core module `M0`–`M14` onto a TypeScript package under
-`languages/typescript/packages/*`, records the non-numbered support packages
+tool, maps every core module `m-core`–`m-coherence` onto a TypeScript package under
+`languages/typescript/packages/*`, records the support packages
 `@parallax/serde` and `@parallax/typescript`, and transcribes the legal
-numbered-module edges one-to-one from the core graph so the TypeScript edge set
-is mechanically diff-able against it. The non-numbered package edges are explicit
+module edges one-to-one from the core graph so the TypeScript edge set
+is mechanically diff-able against it. The support-package edges are explicit
 package-topology edges, not additions to the core module DAG.
 
 ### 9.1 Enforcement tool
@@ -1069,7 +1069,7 @@ module.exports = {
   forbidden: [
     {
       name: "no-undeclared-module-dependency",
-      comment: "Only documented numbered-module, support, and composition edges are legal.",
+      comment: "Only documented module, support, and composition edges are legal.",
       severity: "error",
       from: { path: "^languages/typescript/packages/([^/]+)/" },
       to: {
@@ -1082,15 +1082,15 @@ module.exports = {
   ],
   // The legal edges are the allowlist; see the mapping table and edge block below.
   allowed: [
-    // Non-numbered support package edges.
+    // Support package edges.
     { from: { path: "^languages/typescript/packages/metamodel/" },     to: { path: "^languages/typescript/packages/serde/" } },
     { from: { path: "^languages/typescript/packages/operation/" },     to: { path: "^languages/typescript/packages/serde/" } },
 
-    // Non-numbered composition package edges. Numbered packages MUST NOT import
+    // Composition package edges. Implementation packages MUST NOT import
     // from @parallax/typescript; it is the CLI/generator/application facade.
     { from: { path: "^languages/typescript/packages/typescript/" },    to: { path: "^languages/typescript/packages/(core|metamodel|operation|sql|relationships|lists|bitemporal|transactions|lifecycle|locking|dialect|db|db-postgres|db-mariadb|conformance|benchmark|coherence|serde)/" } },
 
-    // M11 port/adapter support edges.
+    // m-db-port port/adapter support edges.
     { from: { path: "^languages/typescript/packages/db-postgres/" },   to: { path: "^languages/typescript/packages/db/" } },
     { from: { path: "^languages/typescript/packages/db-postgres/" },   to: { path: "^languages/typescript/packages/dialect/" } },
     { from: { path: "^languages/typescript/packages/db-mariadb/" },    to: { path: "^languages/typescript/packages/db/" } },
@@ -1128,61 +1128,61 @@ module.exports = {
 
 ### 9.2 Module → package mapping
 
-Each core module maps to one **pnpm-workspace package** under
-`languages/typescript/packages/`, named for its responsibility and tagged with
-its core `M`-number (TS-0061). Real workspace packages — rather than path-ruled
-directories — make the workspace graph itself participate in the layering: a
-package's `package.json` lists only the sibling packages it is permitted to
-depend on, and dependency-cruiser is the mechanical gate over the `import` graph.
-The `languages/typescript/` directory is the TypeScript language workspace root:
+Modules are language-neutral behavioral modules, not packages. Each
+**pnpm-workspace package** under `languages/typescript/packages/` implements one
+**or more** core modules and enforces the module-dependency graph internally
+(TS-0061). Real workspace packages — rather than path-ruled directories — make the
+workspace graph itself participate in the layering: a package's `package.json`
+lists only the sibling packages it is permitted to depend on, and
+dependency-cruiser is the mechanical gate over the `import` graph. The
+`languages/typescript/` directory is the TypeScript language workspace root:
 `languages/typescript/spec/` and `languages/typescript/docs/` are documentation,
 while `languages/typescript/packages/*` contains implementation source.
 
-| Core module | Responsibility | TS package | Tag |
-|---|---|---|---|
-| M0 | Core conventions (types · infinity · tz) | `@parallax/core` | M0 |
-| M1 | Domain model & metamodel | `@parallax/metamodel` | M1 |
-| M2 | Query/operation/aggregation algebra | `@parallax/operation` | M2 |
-| M3 | SQL generation contract | `@parallax/sql` | M3 |
-| M4 | Relationships & deep fetch | `@parallax/relationships` | M4 |
-| M5 | Lists & bulk/set operations | `@parallax/lists` | M5 |
-| M7 | Bitemporal / milestoning | `@parallax/bitemporal` | M7 |
-| M8 | Transactions, UoW & identity/query cache | `@parallax/transactions` | M8 |
-| M9 | Object lifecycle & detach | `@parallax/lifecycle` | M9 |
-| M10 | Optimistic locking | `@parallax/locking` | M10 |
-| M11 (portability) | Pure dialect / portability layer (SQL strings + typed-bind/type-parse fns; no I/O) | `@parallax/dialect` | M11 |
-| M11 (port) | Abstract runtime database port (`execute`/`executeWrite`/`transaction`; normalize-at-boundary) | `@parallax/db` | M11 |
-| M11 (adapter) | Concrete Postgres adapter over the `postgres` driver (one per DB type) | `@parallax/db-postgres` | M11 |
-| M11 (adapter) | Concrete MariaDB adapter over the `mysql2` driver (one per DB type) | `@parallax/db-mariadb` | M11 |
-| M12 | Compatibility harness | `@parallax/conformance` | M12 |
-| M13 | Performance & benchmark harness | `@parallax/benchmark` | M13 |
-| M14 | Cross-process cache coherence | `@parallax/coherence` | M14 |
-| Support | Canonical metamodel/operation serde | `@parallax/serde` | unnumbered |
-| Facade | CLI, generator config, public runtime facade, generated-barrel support | `@parallax/typescript` | unnumbered |
+| TS package | Modules implemented | Responsibility |
+|---|---|---|
+| `@parallax/core` | `m-core` | Core conventions (types · infinity · tz) |
+| `@parallax/metamodel` | `m-descriptor`, `m-pk-gen`, `m-inheritance`, `m-value-object` | Domain model & metamodel |
+| `@parallax/operation` | `m-op-algebra` (`m-agg` deferred) | Query / operation algebra |
+| `@parallax/sql` | `m-sql` (`m-sql-agg` deferred) | SQL generation contract |
+| `@parallax/relationships` | `m-navigate`, `m-deep-fetch` | Relationships & deep fetch |
+| `@parallax/lists` | `m-op-list`, `m-batch-write`, `m-cascade-delete` | Lists & bulk/set operations |
+| `@parallax/bitemporal` | `m-temporal-read`, `m-audit-write`, `m-bitemp-write` (`m-business-only` deferred) | Temporal reads & milestoning writes |
+| `@parallax/transactions` | `m-unit-work`, `m-read-lock`, `m-auto-retry` (`m-process-cache` deferred) | Transactions, unit of work, read lock & retry |
+| `@parallax/lifecycle` | `m-detach` | Object lifecycle & detach |
+| `@parallax/locking` | `m-opt-lock` | Optimistic locking |
+| `@parallax/dialect` | `m-dialect` | Pure dialect / portability layer (SQL strings + typed-bind/type-parse fns; no I/O) |
+| `@parallax/db` | `m-db-port`, `m-db-error` | Abstract runtime database port + portable error surface (`execute`/`executeWrite`/`transaction`; normalize-at-boundary) |
+| `@parallax/db-postgres` | `m-db-port` (Postgres adapter) | Concrete Postgres adapter over the `postgres` driver (one per DB type) |
+| `@parallax/db-mariadb` | `m-db-port` (MariaDB adapter) | Concrete MariaDB adapter over the `mysql2` driver (one per DB type) |
+| `@parallax/conformance` | `m-case-format`, `m-conformance-adapter`, `m-api-conformance` | Compatibility harness & conformance adapter |
+| `@parallax/benchmark` | `m-perf-bench` | Performance & benchmark harness |
+| `@parallax/coherence` | `m-coherence` (deferred) | Cross-process cache coherence |
+| `@parallax/serde` | serde seam (support) | Canonical metamodel / operation serde |
+| `@parallax/typescript` | — (composition root) | CLI, generator config, public runtime facade, generated-barrel support |
 
-**`M6` is deliberately absent** — aggregation is folded into `M2`, and the gap is
-preserved to keep cross-references to the core numbering stable. The shared
+The shared
 `@parallax/serde` package (the canonical serde seam of
 [§3.3](#33-serde-module)) is a public pnpm-workspace support package, not a
-numbered core module and not part of the generated `#parallax` application
+core-module package and not part of the generated `#parallax` application
 barrel. It has no sibling-package dependencies. The only legal direct imports to
 it are `@parallax/metamodel -> @parallax/serde` and `@parallax/operation ->
 @parallax/serde`, which the dependency-cruiser allowlist above encodes
 explicitly.
 
-The `@parallax/typescript` package is a non-numbered **composition package** at
+The `@parallax/typescript` package is a **composition package** at
 `languages/typescript/packages/typescript`. It owns the `parallax` CLI,
 `parallax-conformance` CLI entry point, generator configuration API
 (`@parallax/typescript/config`), public runtime facade, and generated-barrel
-support. It MAY depend on any numbered TypeScript package and on
-`@parallax/serde`, because it is the composition root. No numbered package or
+support. It MAY depend on any implementation package and on
+`@parallax/serde`, because it is the composition root. No implementation package or
 support package may depend on `@parallax/typescript`; implementation modules stay
 below the facade.
 
-**`M11` maps to more than one package** (per the core
+**`m-dialect` maps to more than one package** (per the core
 [`language-spec-template.md`](../../../core/spec/language-spec-template.md) §9 rule
 and [`m-db-port.md`](../../../core/spec/m-db-port.md) →
-*M11 decomposition*): the database seam is normatively decomposed into a **pure
+*m-dialect decomposition*): the database seam is normatively decomposed into a **pure
 dialect / portability** module (`@parallax/dialect` — SQL strings +
 typed-bind normalization and type-parse functions to managed values; no I/O, no
 driver), an **abstract runtime database port** (`@parallax/db` — the `execute(sql, binds)` /
@@ -1191,40 +1191,40 @@ normalize-at-boundary rule so an adapter returns managed scalars for reads and
 native affected-row counts for writes), and **N concrete adapters**
 (`@parallax/db-postgres` and `@parallax/db-mariadb`), one per database type, each
 depending **only** on the port
-and the pure dialect layer. All three share the single `M11 --> M0` numbered edge
+and the pure dialect layer. All three share the single `m-dialect --> m-core` edge
 — the decomposition is a rule *within* the module, not new DAG nodes, so
 [`modules.md`](../../../core/spec/modules.md) is unchanged and
 `@parallax/db` / `@parallax/db-postgres` / `@parallax/db-mariadb` are
 **language-impl support edges** (like
-the `@parallax/serde` edges), documented in §9.3 but absent from the numbered-edge
+the `@parallax/serde` edges), documented in §9.3 but absent from the module-edge
 block. `@parallax/db` is a leaf (it reaches only `@parallax/core`), and
 `@parallax/db-postgres` carries the `postgres` driver + porsager OID registration
 and `@parallax/db-mariadb` carries the `mysql2` driver + MariaDB type-cast
 registration, but neither contains wire/grading logic (*managed at the boundary,
 wire at the grader*). The two structural rules the core spec mandates hold:
 **only the composition root (`@parallax/typescript`) may depend on a concrete
-adapter** (concrete adapters appear nowhere in the numbered packages), and **the
+adapter** (concrete adapters appear nowhere in the implementation packages), and **the
 port depends on nothing application-specific**. The composition-root conformance
 providers retain provisioning (Testcontainers + `reset`/`applyDdl`/`loadFixtures`)
 but delegate SQL execution to concrete `@parallax/db-*` instances, then render
 managed scalars to the canonical wire form for the run envelope — so there is **no
-`M12 → M11` edge** and the claimed slice is continuous proof the shipped adapters
+`m-case-format → m-dialect` edge** and the claimed slice is continuous proof the shipped adapters
 work.
 
 ### 9.3 Legal-edge contract
 
-The numbered-module legal edges are transcribed **one-to-one** from
+The module legal edges are transcribed **one-to-one** from
 [`modules.md`](../../../core/spec/modules.md), keyed by the same
-`M`-numbers so the edge set is mechanically diff-able against core. Each edge
+module slugs so the edge set is mechanically diff-able against core. Each edge
 `A --> B` reads "A depends on B"; the reverse is a spec violation. Combined with
 the mapping table, the two explicit `@parallax/serde` support-package edges, the
-two **M11 port/adapter support edges** below, and the top-level
+two **m-db-port port/adapter support edges** below, and the top-level
 `@parallax/typescript` composition edge above, this block is the source the
 `.dependency-cruiser.js` allowlist encodes.
 
-Beyond the numbered edges, the M11 decomposition (§9.2) contributes two
-**support edges** that are *not* new numbered-DAG edges (the whole seam shares the
-one `M11 --> M0` edge above) but are enforced by the allowlist:
+Beyond the module edges, the m-dialect decomposition (§9.2) contributes two
+**support edges** that are *not* new DAG edges (the whole seam shares the
+one `m-dialect --> m-core` edge above) but are enforced by the allowlist:
 
 - `@parallax/db-postgres --> @parallax/db` and
   `@parallax/db-mariadb --> @parallax/db` — concrete adapters depend on the
@@ -1237,65 +1237,65 @@ one `M11 --> M0` edge above) but are enforced by the allowlist:
 `@parallax/db` (the port) depends only on `@parallax/core` (the universal leaf
 allowance), and `@parallax/db` + the concrete adapters are added to the
 composition-root `@parallax/typescript --> (…)` `to` set — the composition root is
-the only layer permitted to depend on a concrete adapter. No numbered package
+the only layer permitted to depend on a concrete adapter. No implementation package
 depends on a concrete adapter, and no above-seam module reaches a driver.
 
 ```dependency-graph
-M1 --> M0
-M11 --> M0
-M2 --> M1
-M3 --> M2
-M3 --> M11
-M8 --> M2
-M8 --> M11
-M5 --> M2
-M5 --> M8
-M4 --> M5
-M4 --> M8
-M4 --> M7
-M7 --> M8
-M9 --> M8
-M10 --> M8
-M12 --> M2
-M12 --> M3
-M12 --> M4
-M12 --> M7
-M12 --> M8
-M12 --> M9
-M12 --> M10
-M12 --> M11
-M13 --> M12
-M14 --> M8
+m-descriptor --> m-core
+m-dialect --> m-core
+m-op-algebra --> m-descriptor
+m-sql --> m-op-algebra
+m-sql --> m-dialect
+m-unit-work --> m-op-algebra
+m-unit-work --> m-dialect
+m-op-list --> m-op-algebra
+m-op-list --> m-unit-work
+m-navigate --> m-op-list
+m-navigate --> m-unit-work
+m-navigate --> m-temporal-read
+m-temporal-read --> m-unit-work
+m-detach --> m-unit-work
+m-opt-lock --> m-unit-work
+m-case-format --> m-op-algebra
+m-case-format --> m-sql
+m-case-format --> m-navigate
+m-case-format --> m-temporal-read
+m-case-format --> m-unit-work
+m-case-format --> m-detach
+m-case-format --> m-opt-lock
+m-case-format --> m-dialect
+m-perf-bench --> m-case-format
+m-coherence --> m-unit-work
 ```
 
-The non-obvious directions carry over verbatim from the core graph: `M8` depends
-on `M2` not `M3` (the transaction / unit-of-work layer is expressed over
-operations, not SQL); `M4` depends on `M5` (relationship navigation yields lists,
-the reverse of the obvious guess); `M4` depends on `M7` (a pinned as-of value
+The non-obvious directions carry over verbatim from the core graph: `m-unit-work` depends
+on `m-op-algebra` not `m-sql` (the transaction / unit-of-work layer is expressed over
+operations, not SQL); `m-navigate` depends on `m-op-list` (relationship navigation yields lists,
+the reverse of the obvious guess); `m-navigate` depends on `m-temporal-read` (a pinned as-of value
 propagates per relationship hop, so the relationship layer references the as-of
-model — the edge the claimed temporal deep-fetch 03xx cases require); and `M3`
-depends on `M11` (SQL generation routes through the portability seam). `M12`
-additionally depends on `M8` directly — the harness realizes M8 unit-of-work
+model — the edge the claimed temporal deep-fetch 03xx cases require); and `m-sql`
+depends on `m-dialect` (SQL generation routes through the portability seam). `m-case-format`
+additionally depends on `m-unit-work` directly — the harness realizes m-unit-work unit-of-work
 behavior itself (batched write-sequence flushes, read-your-own-writes scenarios),
-a direct edge that coexists with the transitive `M12 → M10 → M8` path, mirroring
-how `M4 → M8` coexists with `M4 → M5 → M8` — and on `M11` directly, since the
+a direct edge that coexists with the transitive `m-case-format → m-opt-lock → m-unit-work` path, mirroring
+how `m-navigate → m-unit-work` coexists with `m-navigate → m-op-list → m-unit-work` — and on `m-dialect` directly, since the
 harness applies the dialect's DDL / quoting / read-lock-application rules to
-assemble SQL (`applyReadLock`). M14's
-single legal direction `M14 → M8` is
+assemble SQL (`applyReadLock`). m-coherence's
+single legal direction `m-coherence → m-unit-work` is
 transcribed in the block above, keeping the TypeScript edge set one-to-one with
 the core graph; the `@parallax/coherence` package is a **fast-follow** capability
 that TypeScript V1 MAY defer implementing, but its boundary is documented here so
 the dependency-cruiser allowlist stays complete and mechanically diff-able against
 the core graph.
 
-## 10. Optional optimized data structures (M13, DQ10)
+## 10. Optional optimized data structures (m-perf-bench, DQ10)
 
 **DEFERRED-with-rationale — non-normative, no V1 decision; see
 [TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md).**
 This section is **non-normative**: the optional optimized data structures exist
-only to back the `M8` identity / query caches, and that cache/identity slice of
-M8 is deferred from TypeScript V1 (TS-0054,
-[§4](#4-transaction-block-demarcation-m8)). The transaction/read-lock/write
+only to back the `m-process-cache` identity / query caches, and that cache/identity slice of
+m-unit-work is deferred from TypeScript V1 (TS-0054,
+[§4](#4-transaction-block-demarcation-m-unit-work)). The transaction/read-lock/write
 slice specified in §4 still belongs to V1. There is nothing cache-specific to
 optimize for V1, so no V1 decision is recorded. The core itself marks these
 techniques optional and non-normative — a language may hit its targets any way it
@@ -1309,7 +1309,7 @@ is deliberate rather than an omission:
 - **Key-derived hashing analogue** (`HashingStrategy`) — index domain objects by
   a derived (e.g. composite-PK) key without allocating wrapper key objects.
 
-**Post-V1 note (non-binding):** when the M8 identity/query-cache slice lands, a
+**Post-V1 note (non-binding):** when the m-unit-work identity/query-cache slice lands, a
 built-in `Map` keyed by a canonical primary-key string is the idiomatic
 JavaScript baseline for both caches. The Java open-addressing /
 no-wrapper-key-allocation techniques have **no compelling direct JavaScript
@@ -1319,23 +1319,23 @@ benefit without a custom hashing strategy or an open-addressing table. This
 decision is deferred with the cache/identity slice and made when that slice is
 implemented.
 
-## 11. Per-language performance targets (M13, DQ10)
+## 11. Per-language performance targets (m-perf-bench, DQ10)
 
-**DEFERRED-with-rationale (M13 command and numeric targets) + the
+**DEFERRED-with-rationale (m-perf-bench command and numeric targets) + the
 `expectRoundTrips` invariant is binding for V1 compatibility cases — see
 [TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md).**
-TypeScript records the shared `M13` methodology now, but the canonical
-`slice-mvp-1` conformance slice does **not** claim module `m13` or
+TypeScript records the shared `m-perf-bench` methodology now, but the canonical
+`slice-mvp-1` conformance slice does **not** claim module `m-perf-bench` or
 the `benchmark` command. A V1 adapter adopting that slice may therefore return
 `unsupported` for `parallax-conformance benchmark`. The benchmark command and
-numeric targets are enabled by a later M13 slice, after a real implementation can
+numeric targets are enabled by a later m-perf-bench slice, after a real implementation can
 produce a baseline. Numbers invented against a non-existent implementation would
 be fabricated rather than measured.
 
 ### 11.1 Post-slice benchmark methodology
 
-The methodology is the durable, comparable part of `M13`. When TypeScript claims
-the M13 benchmark slice, it uses this contract:
+The methodology is the durable, comparable part of `m-perf-bench`. When TypeScript claims
+the m-perf-bench benchmark slice, it uses this contract:
 
 - **Shared fixtures.** The same benchmark fixtures under
   [`core/compatibility/benchmarks/`](../../../core/compatibility/benchmarks)
@@ -1350,13 +1350,13 @@ the M13 benchmark slice, it uses this contract:
   workload carrying `name`, `iterations`, `wallTimeMs.{ p50, p95 }`, `roundTrips`,
   and the optional `expectRoundTrips` / `roundTripsOk`), and
   `memory.{ peakBytes, steadyBytes }`.
-- **Execution hook.** Once the M13 benchmark command is claimed, benchmarks run
+- **Execution hook.** Once the m-perf-bench benchmark command is claimed, benchmarks run
   through the
   `parallax-conformance benchmark --benchmark <b.yaml> --dialect <d>` command of
   the [conformance adapter
   contract](../../../core/spec/m-conformance-adapter.md), against the
-  Postgres provider seam of [§5](#5-test-double-integration-m12-dq15). The
-  command writes the standard adapter envelope to stdout with the M13 report under
+  Postgres provider seam of [§5](#5-test-double-integration-m-case-format-dq15). The
+  command writes the standard adapter envelope to stdout with the m-perf-bench report under
   `report`; for a single benchmark fixture invocation, `report.benchmarks`
   contains one entry for the requested fixture. Writing the same object to
   `report.json` is allowed as a CI artifact, but stdout is the conformance
@@ -1372,7 +1372,7 @@ baseline run, with this tracking note:
 - **Memory targets** (peak / steady resident set) — **deferred (TODO: set from
   baseline).**
 
-**Tracking note.** Once the first TypeScript implementation claims M13, runs the
+**Tracking note.** Once the first TypeScript implementation claims m-perf-bench, runs the
 benchmark suite, and records a baseline, this section is updated with grading
 targets derived from that baseline. Until then there are no numeric ceilings to
 grade against and no V1 conformance requirement to run the benchmark suite
@@ -1385,24 +1385,24 @@ The compatibility `expectRoundTrips` invariant is **carved out of the deferral a
 is a hard, non-placeholder requirement** for V1 claimed cases: **a deep fetch
 costs `1 + levels` round trips regardless of fan-out, never N+1.** The TypeScript
 implementation **MUST** honor it for claimed compatibility cases. It is enforced
-in V1 through M12 and, once M13 is claimed, by the benchmark runner too:
+in V1 through m-conformance-adapter and, once m-perf-bench is claimed, by the benchmark runner too:
 
-- **`M12` round-trip-count layer** — for every compatibility case,
+- **`m-case-format` round-trip-count layer** — for every compatibility case,
   `len(goldenSql[dialect])` MUST equal the case's `roundTrips`
   ([§5.2](#52-case-discovery-and-execution-boundary) compares this via the
   `parallax-conformance` envelope's `roundTrips`).
-- **Post-slice `M13` benchmark runner** — when the benchmark command is claimed,
+- **Post-slice `m-perf-bench` benchmark runner** — when the benchmark command is claimed,
   a workload's actual round trips MUST equal its declared `expectRoundTrips`; a
   deep fetch that silently regresses to N+1 fails the benchmark run.
 
 This invariant is binding even though the wall-time and memory numbers are not.
 
-## Object lifecycle: detach, snapshots, and entity inputs (M9)
+## Object lifecycle: detach, snapshots, and entity inputs (m-detach)
 
 This section is supplementary to the template's §1–§11 (the template has no
 object-lifecycle slot). It records the TypeScript surface for getting data **out
 of** and **back into** managed objects — the TypeScript analogue of Reladomo's
-detach / merge-back lifecycle (`M9`, the `@parallax/lifecycle` package of
+detach / merge-back lifecycle (`m-detach`, the `@parallax/lifecycle` package of
 [§9.2](#92-module--package-mapping)). The decisions are recorded in
 [TS-0036](../docs/adr/0036-snapshots-are-the-typescript-detached-data-surface.md)
 and
@@ -1432,13 +1432,13 @@ since omitted relationships are already excluded), and value-object attributes
 are selected as whole `ParallaxJsonValue` properties rather than typed nested
 field paths. List-level snapshots batch-load requested relationships like
 includes
-([§2.6](#26-relationship-navigation-and-deep-fetch-m4)) to avoid N+1.
+([§2.6](#26-relationship-navigation-and-deep-fetch-m-deep-fetch)) to avoid N+1.
 (`JSON.stringify` over a managed object is scalar-only and synchronous and does
 not lazy-load relationships, so use a snapshot when relationship data is needed.)
 
 **Entity inputs are the create / reattach surface.** `OrderInput` is the
 generated input-validation namespace and type for data accepted by `create`
-([§4](#4-transaction-block-demarcation-m8)) — the surface for turning
+([§4](#4-transaction-block-demarcation-m-unit-work)) — the surface for turning
 external/detached data back into a managed object:
 
 ```ts
@@ -1470,9 +1470,9 @@ they do **not** create managed objects, parse detached entities, parse snapshots
 or replace `tx.entity.create(...)` (TS-0037).
 
 **Deferred from V1.** The full Reladomo-style detached-object lifecycle — the
-`M9` state machine (`persisted` → `detached` → `detached-deleted`) and merge-back
+`m-detach` state machine (`persisted` → `detached` → `detached-deleted`) and merge-back
 (`getDetachedCopy` / `copyDetachedValuesToOriginalOrInsertIfNew`) — is **deferred
-from TypeScript V1**. When `M9` merge-back lands it should be expressed through
+from TypeScript V1**. When `m-detach` merge-back lands it should be expressed through
 explicit snapshot apply / merge APIs that preserve the core observable semantics
 (TS-0036), not by introducing detached managed objects.
 
@@ -1482,22 +1482,22 @@ This table maps every `language-spec-template.md` section §1–§11 to its answ
 location in this document and an explicit status. Every section is specified
 inline here and is now resolved — `ANSWERED` or `DEFERRED-with-rationale` — with
 no decide-and-record debt remaining. The spec also carries a supplementary
-[Object lifecycle](#object-lifecycle-detach-snapshots-and-entity-inputs-m9)
-section (`M9`) beyond the template skeleton; it is not a template row.
+[Object lifecycle](#object-lifecycle-detach-snapshots-and-entity-inputs-m-detach)
+section (`m-detach`) beyond the template skeleton; it is not a template row.
 
 | Template section | Status | Answer location | ADRs |
 |---|---|---|---|
 | §1 Conformance Slice declaration | ANSWERED | [§1](#1-conformance-slice-declaration) | [TS-0064](../docs/adr/0064-adopt-first-implementation-mvp-slice.md) |
 | §2 API surface | ANSWERED | [§2](#2-api-surface-non-normative--dq3) | — |
 | §3 Metadata / introspection + serde | ANSWERED | [§3](#3-metadata--model-input-format-dq5-dq6) | [TS-0055](../docs/adr/0055-metamodel-introspection-api-has-generic-and-typed-layers.md), [TS-0056](../docs/adr/0056-one-canonical-serde-shared-by-metamodel-and-operations.md), [TS-0057](../docs/adr/0057-serde-states-roundtrip-contract-and-names-libraries-nonbindingly.md) |
-| §4 Transaction-block demarcation | ANSWERED | [§4](#4-transaction-block-demarcation-m8) | — |
-| §5 Test-double integration | ANSWERED | [§5](#5-test-double-integration-m12-dq15) | [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md), [TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md), [TS-0060](../docs/adr/0060-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md) |
+| §4 Transaction-block demarcation | ANSWERED | [§4](#4-transaction-block-demarcation-m-unit-work) | — |
+| §5 Test-double integration | ANSWERED | [§5](#5-test-double-integration-m-case-format-dq15) | [TS-0058](../docs/adr/0058-compatibility-suite-uses-vitest.md), [TS-0059](../docs/adr/0059-cases-discovered-by-glob-executed-through-conformance-adapter.md), [TS-0060](../docs/adr/0060-typescript-runs-postgres-only-in-ci-pinned-to-postgres-17.md) |
 | §6 API Conformance Suite & Usage Guide | ANSWERED | [§6](#6-api-conformance-suite--usage-guide) | — |
 | §7 Codegen-or-not | ANSWERED | [§7](#7-codegen-or-not-dq5) | — |
-| §8 Collection idioms | ANSWERED | [§8](#8-collection-idioms-m5) | — |
-| §9 Build-time dependency enforcement | ANSWERED | [§9](#9-build-time-dependency-enforcement-dq3-dependency-graph) | [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m0-m14-package-map.md) |
-| §10 Optional optimized data structures | DEFERRED-with-rationale | [§10](#10-optional-optimized-data-structures-m13-dq10) | [TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md) |
-| §11 Per-language performance targets | DEFERRED-with-rationale | [§11](#11-per-language-performance-targets-m13-dq10) | [TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md) |
+| §8 Collection idioms | ANSWERED | [§8](#8-collection-idioms-m-op-list) | — |
+| §9 Build-time dependency enforcement | ANSWERED | [§9](#9-build-time-dependency-enforcement-dq3-dependency-graph) | [TS-0061](../docs/adr/0061-module-dag-enforced-by-dependency-cruiser-with-m-core-m-coherence-package-map.md) |
+| §10 Optional optimized data structures | DEFERRED-with-rationale | [§10](#10-optional-optimized-data-structures-m-perf-bench-dq10) | [TS-0063](../docs/adr/0063-optimized-data-structures-non-normative-no-v1-decision.md) |
+| §11 Per-language performance targets | DEFERRED-with-rationale | [§11](#11-per-language-performance-targets-m-perf-bench-dq10) | [TS-0062](../docs/adr/0062-performance-methodology-bound-numeric-targets-deferred.md) |
 
 ### Completion check
 
@@ -1505,15 +1505,15 @@ This document satisfies the `language-spec-template.md` completion check:
 
 - **No remaining markers.** Every template section §1–§11 is resolved; no
   *decide-and-record* placeholder remains. Nine sections are `ANSWERED`;
-  [§10](#10-optional-optimized-data-structures-m13-dq10) and
-  [§11](#11-per-language-performance-targets-m13-dq10) are `DEFERRED-with-rationale`
+  [§10](#10-optional-optimized-data-structures-m-perf-bench-dq10) and
+  [§11](#11-per-language-performance-targets-m-perf-bench-dq10) are `DEFERRED-with-rationale`
   (deliberate, ADR-backed decisions, not omissions), and the §11 `expectRoundTrips`
   invariant stays binding.
 - **No contradiction with core.** The
   [§9](#9-build-time-dependency-enforcement-dq3-dependency-graph) legal-edge block
   is transcribed one-to-one from
   [`modules.md`](../../../core/spec/modules.md) and keyed by the
-  same `M`-numbers, while the `@parallax/serde` and `@parallax/typescript` edges
+  same module slugs, while the `@parallax/serde` and `@parallax/typescript` edges
   are explicit TypeScript package-topology edges outside the core graph; the
   [§1](#1-conformance-slice-declaration) capability claim is byte-equal to the
   canonical `slice-mvp-1` claim in
@@ -1521,9 +1521,9 @@ This document satisfies the `language-spec-template.md` completion check:
   [§3](#3-metadata--model-input-format-dq5-dq6) metadata shapes are drawn
   one-to-one from
   [`metamodel.schema.json`](../../../core/schemas/metamodel.schema.json)'s eight
-  element types; [§5](#5-test-double-integration-m12-dq15) pins the same
+  element types; [§5](#5-test-double-integration-m-case-format-dq15) pins the same
   `postgres:17` image the reference harness pins; and
-  [§11](#11-per-language-performance-targets-m13-dq10) binds the same `M13`
+  [§11](#11-per-language-performance-targets-m-perf-bench-dq10) binds the same `m-perf-bench`
   methodology, fixtures, and `report.json` schema.
 - **Self-sufficient for a fresh implementer.** This document specifies every
   template section §1–§11 inline; together with the cited ADRs it is sufficient to

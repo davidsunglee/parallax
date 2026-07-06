@@ -1,4 +1,4 @@
-# Error-cases model (M11 error-code classification). Three plain non-temporal
+# Error-cases model (m-db-error error-code classification). Three plain non-temporal
 # entities, each the subject of one error class:
 #   - Widget: a duplicate primary-key INSERT -> uniqueViolation (PK path).
 #   - Tag:    a duplicate value on a non-PK UNIQUE index -> uniqueViolation

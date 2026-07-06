@@ -27,7 +27,7 @@
  *    canonical neutral wire form with the core serializer (`toWire`). *Managed at
  *    the boundary, wire at the grader* — no wire/grading logic lives in the adapter.
  *
- * There is **no `M12 → M11` edge**: the provider lives at the `@parallax/typescript`
+ * There is **no `m-conformance-adapter` → `m-db-port` edge**: the provider lives at the `@parallax/typescript`
  * composition root, the only place allowed to depend on a concrete adapter.
  */
 import type { CompatibilityDatabaseProvider, ProviderRow } from "@parallax/conformance";
@@ -36,7 +36,7 @@ import { MariaDbDatabase, type MariaDbSession } from "@parallax/db-mariadb";
 import { type Dialect, MARIADB_DIALECT, mariadbDialect } from "@parallax/dialect";
 import { MySqlContainer, type StartedMySqlContainer } from "@testcontainers/mysql";
 
-/** Pinned at a current stable MariaDB major (M12/DQ15), matching the Python oracle. */
+/** Pinned at a current stable MariaDB major (m-case-format/DQ15), matching the Python oracle. */
 const MARIADB_IMAGE = "mariadb:11.4";
 
 /** Pause helper for the connect-retry loop. */
@@ -80,7 +80,7 @@ function renderRowToWire(row: ProviderRow): ProviderRow {
 }
 
 /**
- * Render the fixture `INSERT` for a table, quoting every identifier through the M11
+ * Render the fixture `INSERT` for a table, quoting every identifier through the m-dialect
  * `mariadbDialect.quoteIdentifier` seam the DDL uses (backticks), with native `?`
  * placeholders (MariaDB binds positionally). Mirrors the Postgres provider's
  * `renderFixtureInsert` but for the MariaDB dialect.
@@ -144,7 +144,7 @@ export class MariaDbProvider implements CompatibilityDatabaseProvider {
   readonly dialect = MARIADB_DIALECT;
 
   /**
-   * The concrete M11 {@link Dialect} the composition root injects — so the run lane
+   * The concrete m-dialect {@link Dialect} the composition root injects — so the run lane
    * compiles and materializes against the same strategy the shipped adapter parses
    * with (the MariaDB analogue of `PostgresProvider.dialectImpl`).
    */

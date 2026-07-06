@@ -1,4 +1,4 @@
-# PK generation `max` (M1) — allocate above an existing maximum.
+# PK generation `max` (m-pk-gen) — allocate above an existing maximum.
 #
 # Self-seed a baseline row (id 5) via an initial literal insert, then allocate:
 # max(id)+1 = 6. Empty-schema start; the case builds its own state (no fixtures).

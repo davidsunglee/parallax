@@ -91,7 +91,7 @@ export interface CompatibilityDatabaseProvider {
 
   /**
    * Apply a DML statement inside a transaction and then ROLL IT BACK, returning
-   * the affected-row count it reported before the rollback. This is the M8 abort
+   * the affected-row count it reported before the rollback. This is the m-unit-work abort
    * contract's execution seam: the write lands inside an atomic scope that is
    * discarded, so a subsequent `query` observes the ORIGINAL rows. Used by the
    * `rollback: true` scenario write step.

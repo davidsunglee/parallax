@@ -1,4 +1,4 @@
-# Optimistic temporal close RETRY after conflict (M7 + M10 retry contract): the
+# Optimistic temporal close RETRY after conflict (m-temporal-read + m-opt-lock retry contract): the
 # `attempts` 0-then-1 transition on the gated close (the m-opt-lock-007 analogue for a temporal
 # entity).
 #

@@ -1,4 +1,4 @@
-# Read-lock is SHARED, not exclusive (M8 / M11). Round 1: transaction A takes the
+# Read-lock is SHARED, not exclusive (m-read-lock / m-dialect). Round 1: transaction A takes the
 # in-transaction shared read lock (`for share of t0` / `lock in share mode`) on
 # account 2 and HOLDS (no commit). Round 2: transaction B takes the SAME shared read
 # lock on account 2 -- and, because a shared lock is compatible with another shared

@@ -1,4 +1,4 @@
-# Fixture rows for the Account model (models/account.yaml) — the data the M8
+# Fixture rows for the Account model (models/account.yaml) — the data the m-unit-work
 # read / scenario cases query, and the starting state the batched-update case
 # mutates on top of.
 #

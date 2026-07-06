@@ -197,7 +197,7 @@ function handleType(model: CodegenModel): string {
     "/** The configured, typed Parallax handle (`px`, spec §2.2). */",
     "export interface TypedParallax {",
     finders,
-    "  /** Closure-demarcated unit of work (spec §4); `options` selects the M8 strategy. */",
+    "  /** Closure-demarcated unit of work (spec §4); `options` selects the m-unit-work strategy. */",
     "  transaction<T>(",
     "    body: (tx: TypedParallaxTransaction) => Promise<T>,",
     "    options?: TransactionOptions,",

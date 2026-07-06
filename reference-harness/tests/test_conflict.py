@@ -1,10 +1,10 @@
-"""Unit tests for the Phase 7 (M9 / M10) machinery (no database).
+"""Unit tests for the Phase 7 (m-detach / m-opt-lock) machinery (no database).
 
-These pin the DB-free invariants of the lifecycle-detach (M9) write-sequence
-cases and the optimistic-lock (M10) conflict cases: a conflict case is
+These pin the DB-free invariants of the lifecycle-detach (m-detach) write-sequence
+cases and the optimistic-lock (m-opt-lock) conflict cases: a conflict case is
 discovered and self-describes (carries `expectedAffectedRows`, an optional
 `precondition`, and a single golden UPDATE); the conflict / success counts are 0
-/ 1; and the M9 detached-update case opts into `loadFixtures`. The full
+/ 1; and the m-detach detached-update case opts into `loadFixtures`. The full
 execute-and-assert behavior (precondition + golden UPDATE, affected-row count,
 merge-back table state) is exercised end-to-end against real Postgres by the
 compatibility suite.
@@ -66,7 +66,7 @@ def _temporal_conflict_close_cases():
 
 def test_conflict_cases_are_discovered_and_self_describe() -> None:
     cases = _conflict_cases()
-    assert cases, "no conflict (M10) cases discovered"
+    assert cases, "no conflict (m-opt-lock) cases discovered"
     for case in cases:
         # A conflict case carries expectedAffectedRows and no operation/scenario.
         assert "operation" not in case.raw
@@ -86,7 +86,7 @@ def test_conflict_cases_are_discovered_and_self_describe() -> None:
 
 def test_retry_conflict_sequence_self_describes() -> None:
     cases = [c for c in _conflict_cases() if c.attempts]
-    assert cases, "no M10 retry-conflict (attempts) case discovered"
+    assert cases, "no m-opt-lock retry-conflict (attempts) case discovered"
     for case in cases:
         # The retry contract: a stale-version attempt affects 0, then a fresh-
         # version retry affects 1. Both outcomes must appear, in that order.
@@ -114,7 +114,7 @@ def test_conflict_case_precondition_is_optional_but_present_for_the_conflict() -
 
 def test_conflict_input_holds_for_authored_versioned_cases() -> None:
     cases = _versioned_conflict_cases()
-    assert cases, "no versioned conflict (M10) case discovered"
+    assert cases, "no versioned conflict (m-opt-lock) case discovered"
     for case in cases:
         # Must not raise: each authored ① `write` (single form) / per-attempt `write`
         # (retry form) classifies against the model to the golden's SET column list
@@ -179,7 +179,7 @@ def test_temporal_conflict_close_retry_gates_each_attempt() -> None:
 
 def test_detached_update_loads_fixtures() -> None:
     detached_updates = [c for c in _cases() if c.is_write_sequence and "detached-update" in c.tags]
-    assert detached_updates, "no M9 detached-update write-sequence case discovered"
+    assert detached_updates, "no m-detach detached-update write-sequence case discovered"
     for case in detached_updates:
         # The original persisted row must exist before the merge-back UPDATE.
         assert case.load_fixtures

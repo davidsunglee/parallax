@@ -1,4 +1,4 @@
-# Table-per-hierarchy ROOT query: no discriminator predicate (M1 inheritance, M3).
+# Table-per-hierarchy ROOT query: no discriminator predicate (m-inheritance inheritance, m-sql).
 #
 # m-inheritance-001–m-inheritance-003 all query a SUBTYPE and inject a discriminator filter (`kind = ?` /
 # `kind in (?, ?)`). This pins the complementary rule: a query rooted at the

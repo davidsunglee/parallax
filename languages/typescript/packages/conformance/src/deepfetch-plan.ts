@@ -1,5 +1,5 @@
 /**
- * Build an executable **deep-fetch plan** from a loaded case (M4 + M12).
+ * Build an executable **deep-fetch plan** from a loaded case (m-deep-fetch + m-case-format).
  *
  * A deep-fetch operation is `{ deepFetch: { operand, paths } }`: a root predicate
  * plus a set of navigation paths. This module turns it into the inputs the pure
@@ -13,7 +13,7 @@
  *    and a `compileLevel(keys)` closure that compiles `… where <childCol> in (?,
  *    …) [order by …]` for a set of distinct parent keys.
  *
- * Compiling every level reuses the M3 `compile` visitor (via a child-rooted
+ * Compiling every level reuses the m-sql `compile` visitor (via a child-rooted
  * `MetamodelSchema`), so the canonical-by-construction guarantees (alias `t0`,
  * quoted columns, the relationship's `orderBy`) hold uniformly for child levels.
  * The projection each level emits is derived from the case's `expectedGraph`
@@ -82,9 +82,9 @@ export function buildDeepFetchPlan(loaded: LoadedCase, dialect: Dialect): DeepFe
     rootEntity === undefined
       ? schemaForRoot(loaded, operand, projection, dialect)
       : schemaForEntity(loaded, rootEntity, projection, dialect);
-  // The root statement compiles the (possibly temporal) operand directly — the M3
+  // The root statement compiles the (possibly temporal) operand directly — the m-sql
   // visitor injects the root's own as-of predicate. The pins collected off the
-  // operand also PROPAGATE per-hop into every temporal child level (M4 as-of
+  // operand also PROPAGATE per-hop into every temporal child level (m-navigate as-of
   // propagation), so gather them once here and seed each level's compile.
   const compiled = compile(operand, rootSchema, dialect);
   const rootPins = collectRootPins(rootSchema, operand);
@@ -197,7 +197,7 @@ interface NodeBuilder {
  * `compileLevel` closure that compiles the child IN-list query for a key set. The
  * child level is compiled with the root pins SEEDED, so a temporal child level
  * carries the propagated as-of predicate (matched by axis, defaulted to `now`)
- * appended after its IN list — the M4 as-of-propagation rule.
+ * appended after its IN list — the m-navigate as-of-propagation rule.
  */
 function materialize(
   loaded: LoadedCase,

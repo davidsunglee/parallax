@@ -1,5 +1,5 @@
 /**
- * `ParallaxList<T>` unit tests (Docker-free) — the M5 lazy, operation-backed list.
+ * `ParallaxList<T>` unit tests (Docker-free) — the m-op-list lazy, operation-backed list.
  *
  * The 03xx conformance corpus grades the assembled deep-fetch graph (plain
  * decorated rows), not this developer-facing API, so `ParallaxList` is otherwise

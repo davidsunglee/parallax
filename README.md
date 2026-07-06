@@ -19,13 +19,13 @@ prove conformance by running the same suite; the TypeScript implementation in
 
 ```text
 core/
-  spec/                 Normative modules, scope tiers, dependency graph
+  spec/                 Normative modules, dependency graph, and slices
   schemas/              JSON Schemas for descriptors, operations, and cases
   compatibility/
     models/             Canonical entity descriptors
     fixtures/           Input rows used by compatibility cases
     cases/              Read, write, scenario, conflict, and coherence cases
-    benchmarks/         M13 benchmark workloads and generated datasets
+    benchmarks/         Performance benchmark workloads and generated datasets
 reference-harness/      Python runner that validates and executes the suite
 languages/
   typescript/           First language implementation (idiomatic API + adapter)
@@ -39,30 +39,29 @@ package.json            Markdown, commit, and repo-level developer tooling
 
 ### 1. Start with the specification
 
-`core/spec/` is the behavioral contract. It is split into modules so an
-implementation can adopt functionality in a defensible order:
+`core/spec/` is the behavioral contract. It is split into **modules**, each named
+by a descriptive `m-<slug>` identifier and defined in its own file. Grouped by
+area:
 
-| Area | What it defines |
+| Area | Modules |
 | --- | --- |
-| M0 Core conventions | Neutral scalar types, UTC timestamps, JSON value objects, and temporal infinity handling |
-| M1 Metamodel | Entity descriptors, attributes, relationships, indices, inheritance, temporal dimensions, and primary-key generation |
-| M2 Operation algebra | A serialized query and mutation algebra above SQL |
-| M3 SQL contract | Canonical SQL shape, binds, aliases, per-dialect differences, and equivalence rules |
-| M4 Relationships/deep fetch | Relationship navigation, correlated `exists`, and bounded deep-fetch query plans |
-| M5 Lists/bulk behavior | Operation-backed lazy lists, deferred bulk work, and cascade behavior |
-| M7 Temporal behavior | Milestoned reads, audit-only writes, two-axis temporal writes, and business-temporal-only cases |
-| M8 Transactions/cache | Unit of work, identity cache, query cache, invalidation, batching, and shared read locks |
-| M9 Lifecycle/detach | Object states, detached copies, merge-back, detached inserts, and detached deletes |
-| M10 Optimistic locking | Version columns, conflict detection, affected-row checks, and retry contracts |
-| M11 Dialect seam | The boundary for Postgres, MariaDB, and future database providers |
-| M12 Compatibility harness | The executable case format and assertion model |
-| M13 Performance | Repeatable benchmark datasets, workloads, and report shape |
-| Coherence | Multi-process cache invalidation expectations over a shared database |
+| Core conventions | `m-core` |
+| Metamodel | `m-descriptor`, `m-pk-gen`, `m-inheritance`, `m-value-object` |
+| Query & SQL | `m-op-algebra`, `m-sql` (aggregation `m-agg` / `m-sql-agg` deferred) |
+| Relationships | `m-navigate`, `m-deep-fetch` |
+| Lists & bulk | `m-op-list`, `m-batch-write`, `m-cascade-delete` |
+| Transactions | `m-unit-work`, `m-read-lock`, `m-auto-retry` (`m-process-cache` deferred) |
+| Temporal | `m-temporal-read`, `m-audit-write`, `m-bitemp-write` (`m-business-only` deferred) |
+| Lifecycle & locking | `m-detach`, `m-opt-lock` |
+| Database seam | `m-dialect`, `m-db-port`, `m-db-error` |
+| Conformance & performance | `m-case-format`, `m-conformance-adapter`, `m-api-conformance`, `m-perf-bench` (`m-coherence` deferred) |
 
-`core/spec/modules.md` is the module catalog — each module's status
-(`active` / `deferred`) and the normative module DAG — checked by the harness
-tooling so coverage cannot drift away from the published catalog.
-`core/spec/slices.md` declares the slices that compose modules into deliverables.
+A module names a *behavior*, not a package: a language MAY group many modules into
+one package as long as it enforces the dependency graph. `core/spec/modules.md`
+is the authoritative catalog — every module's status (`active` / `deferred`), its
+coverage source, and the normative module dependency graph — checked by the
+harness tooling so coverage cannot drift. `core/spec/slices.md` declares the
+slices that compose modules into deliverables.
 
 ### 2. Describe the domain with models
 
@@ -100,19 +99,12 @@ same case data.
 a descriptor, an operation or write sequence, canonical SQL, expected rows or
 table state, and optional reference SQL.
 
-The case families are numbered by topic:
-
-- `00xx` and `02xx`: basic reads and predicate algebra.
-- `03xx`: relationship navigation and deep fetch.
-- `04xx`: aggregation and grouped results.
-- `05xx`: audit temporal reads and writes.
-- `06xx`: transactions, identity cache, query cache, read locks, and batched
-  writes.
-- `07xx`: detach/merge and optimistic-locking conflicts.
-- `08xx`: two-axis and business-temporal behavior.
-- `09xx`: inheritance and JSON value objects.
-- `10xx`: MariaDB dialect coverage.
-- `11xx`: cross-process coherence.
+Each case file is named `<module>-NNN-<slug>.yaml` and filed under the module it
+chiefly proves — e.g. `m-op-algebra-001-find-all.yaml`,
+`m-deep-fetch-007-shared-prefix.yaml`, `m-audit-write-001-insert.yaml`. A case
+also carries a module tag for every behavior it exercises, so the corpus is
+browsable by module and the coverage gate can map each active module to its
+cases.
 
 The compatibility case schema supports five top-level shapes:
 
@@ -136,9 +128,9 @@ an `expectedGraph`, not just flat rows.
 
 ### 5. Run cases through the reference harness
 
-`reference-harness/` is a Python implementation of the M12 harness. It is not an
-ORM and it does not compile operations into SQL. Its job is to verify that the
-spec artifacts are coherent.
+`reference-harness/` is a Python implementation of the compatibility harness
+(the `m-case-format` contract). It is not an ORM and it does not compile
+operations into SQL. Its job is to verify that the spec artifacts are coherent.
 
 The reference harness's internals are non-normative and
 MUST NOT be used as design input for a language implementation; the binding
@@ -164,7 +156,7 @@ connections for coherence cases.
 
 ### 6. Use benchmarks as executable performance contracts
 
-`core/compatibility/benchmarks/` contains M13 benchmark definitions. They reuse
+`core/compatibility/benchmarks/` contains `m-perf-bench` benchmark definitions. They reuse
 the same models, SQL conventions, and provider seam as cases, but report timing
 and resource measurements instead of pass/fail row equivalence alone.
 
@@ -229,9 +221,9 @@ Use this path when extending the repository:
    round trips, or memory use.
 7. Run `just verify` before relying on the change.
 
-When adding a dialect, implement a new provider behind the M11 seam and add a
-new `goldenSql.<dialect>` entry to cases and benchmarks that need dialect-
-specific SQL.
+When adding a dialect, implement a new provider behind the database seam
+(`m-dialect` / `m-db-port`) and add a new `goldenSql.<dialect>` entry to cases and
+benchmarks that need dialect-specific SQL.
 
 ## Building A Language Implementation
 

@@ -1,4 +1,4 @@
-# Boundary case (M10): with the opt-in SET, an optimistic-lock conflict is
+# Boundary case (m-opt-lock): with the opt-in SET, an optimistic-lock conflict is
 # AUTO-retried — the closure re-executes, re-reads, and succeeds — `api-conformance`
 # lane.
 #

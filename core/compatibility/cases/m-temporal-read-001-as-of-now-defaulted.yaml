@@ -1,4 +1,4 @@
-# Defaulted as-of read (the M7 default-injection rule, made observable).
+# Defaulted as-of read (the m-temporal-read default-injection rule, made observable).
 #
 # The operation is a plain `all` over Balance — the caller OMITS the
 # processingDate dimension. The temporal MVP rule is "an omitted as-of dimension

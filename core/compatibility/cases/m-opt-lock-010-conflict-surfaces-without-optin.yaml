@@ -1,4 +1,4 @@
-# Boundary case (M10): an optimistic-lock conflict SURFACES to the caller when the
+# Boundary case (m-opt-lock): an optimistic-lock conflict SURFACES to the caller when the
 # unit of work does NOT opt into conflict retry — `api-conformance` lane.
 #
 # The default retry posture (ADR 0031 / TS ADR 0065): transient database failures

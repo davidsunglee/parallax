@@ -1,7 +1,7 @@
-# Write sequence: business-temporal-only TERMINATE (milestone chaining, M7).
+# Write sequence: business-temporal-only TERMINATE (milestone chaining, m-business-only).
 #
 # Audit-only has insert/update/terminate (m-audit-write-001–m-audit-write-003) and business-only has insert
-# (m-business-only-003) and update (m-business-only-001) — but no terminate. M12 enumerates terminate for the
+# (m-business-only-003) and update (m-business-only-001) — but no terminate. m-case-format enumerates terminate for the
 # business-only profile, so this fills the asymmetry. A business terminate closes
 # the open business row (thru_z = the business instant the fact stops being true)
 # and chains NOTHING. The defining invariant is the ABSENCE of any current row

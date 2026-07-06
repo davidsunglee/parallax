@@ -4,15 +4,15 @@
  *
  * The typed `tx.<entity>.create / update / terminate / delete` methods let an
  * application author idiomatic, NAMED writes; this module lowers each to canonical
- * DML by reusing the pure M7 / M8 / M10 generators (no reinvented DML, no grader
+ * DML by reusing the pure m-temporal-read / m-unit-work / m-opt-lock generators (no reinvented DML, no grader
  * code):
  *
  *  - **non-temporal `create`** buffers an insert; the unit of work flushes buffered
- *    inserts through the M8 `combineWrites` planner — same-entity inserts collapse
+ *    inserts through the m-unit-work `combineWrites` planner — same-entity inserts collapse
  *    to one multi-row `INSERT`, a referenced parent's inserts precede a child's
  *    (`m-batch-write-001` / `m-unit-work-003`);
  *  - **non-temporal `update`** on a VERSIONED entity always advances the framework-
- *    owned version (M10, ADR 0029): in `optimistic` mode it issues the gated M10
+ *    owned version (m-opt-lock, ADR 0029): in `optimistic` mode it issues the gated m-opt-lock
  *    `UPDATE` (gate on the version the unit of work OBSERVED, advance it) and
  *    classifies the affected count (`m-opt-lock-005` / `m-opt-lock-006` / `m-opt-lock-007`); in the default
  *    `locking` mode it issues the ungated version-advancing `UPDATE` (`m-opt-lock-002`). Either
@@ -20,13 +20,13 @@
  *    (`m-opt-lock-001`). On a NON-versioned entity it is a plain keyed `UPDATE`, one per
  *    selected key (`m-batch-write-001` / `m-batch-write-002` on the non-versioned `Wallet`);
  *  - **audit-only (`unitemporal-processing`) writes** chain milestones through the
- *    M7 `auditWriteStatements` generator: `create` opens `[processingInstant,
+ *    m-temporal-read `auditWriteStatements` generator: `create` opens `[processingInstant,
  *    infinity)`, `update` closes the current row and chains a new one carrying the
  *    prior business columns with the assignments applied, `terminate` closes only
  *    (`m-audit-write-001` / `m-audit-write-002` / `m-audit-write-003`).
  *
  * Named inputs map to canonical `columnOrder` binds via the entity metamodel, and
- * scalar values normalize through the injected dialect with the target M0 type
+ * scalar values normalize through the injected dialect with the target m-core type
  * available. Processing instants come ONLY from the transaction clock (spec §4.1)
  * — never a per-operation option — so production code cannot rewrite audit history.
  *
@@ -67,7 +67,7 @@ export class ParallaxOptimisticLockError extends Error {
 
 /**
  * Thrown when a temporal (audit-only) milestone CLOSE affects zero rows in LOCKING
- * mode (M7/M10) — the current milestone was superseded or terminated concurrently,
+ * mode (m-temporal-read/m-opt-lock) — the current milestone was superseded or terminated concurrently,
  * so there is no current row to close. Distinct from {@link ParallaxOptimisticLockError}:
  * a locking-mode zero-row close is a stale/consistency error, NOT a conflict — it
  * must surface to the caller and MUST NOT join the retry loop (a retry would re-read
@@ -86,7 +86,7 @@ export class ParallaxTemporalCloseError extends Error {
 
 /**
  * Thrown when a BUSINESS-temporal-only entity is written under `concurrency:
- * "optimistic"` (M1/M7/M10). Optimistic participation derives its key from the
+ * "optimistic"` (m-descriptor/m-temporal-read/m-opt-lock). Optimistic participation derives its key from the
  * PROCESSING axis (`in_z` is the version analogue); a business-only entity has no
  * processing axis, so it cannot participate in optimistic mode. The invalid
  * combination surfaces at the unit-of-work write boundary (mode is not a static
@@ -106,7 +106,7 @@ export class ParallaxTemporalOptimisticError extends Error {
 
 /**
  * Thrown when a versioned entity's row is updated WITHOUT the unit of work having
- * observed it first (M10 read-before-write). Optimistic-lock version values are
+ * observed it first (m-opt-lock read-before-write). Optimistic-lock version values are
  * framework-owned (ADR 0029): the gate binds — and the advance is computed from —
  * the version a transaction-scoped read hydrated, so an update of an unobserved
  * row has no version to gate on or advance from and MUST be a read-before-write.
@@ -122,7 +122,7 @@ export class ParallaxReadBeforeWriteError extends Error {
   }
 }
 
-/** The per-unit-of-work concurrency strategy (M8 strategy selection). */
+/** The per-unit-of-work concurrency strategy (m-unit-work strategy selection). */
 export type Concurrency = "locking" | "optimistic";
 
 /**
@@ -131,7 +131,7 @@ export type Concurrency = "locking" | "optimistic";
  * unit of work tracks. For a VERSIONED entity the value is the observed `version`
  * NUMBER; for a processing-axis TEMPORAL (audit-only) entity — which carries no
  * version column — it is the observed processing-from (`in_z`) wire STRING, the
- * version analogue an optimistic close gates on (M7/M10). A gated write reads the
+ * version analogue an optimistic close gates on (m-temporal-read/m-opt-lock). A gated write reads the
  * observed value from it (the gate bind in optimistic mode; the base for the
  * framework-computed advance, for versioned entities). Keyed dialect-free so a
  * `bigint` pk and its numeric literal collide on the same normalized key.
@@ -182,7 +182,7 @@ interface BufferedInsert {
 
 /**
  * The developer-runtime writer for one transaction. Non-temporal inserts buffer so
- * the unit of work flushes them set-based + FK-safe (M8); audit-only writes and
+ * the unit of work flushes them set-based + FK-safe (m-unit-work); audit-only writes and
  * versioned updates issue their DML immediately (their observable contract is
  * per-statement). `flush()` runs at transaction commit; a dependent read forces an
  * insert flush first (read-your-own-writes, `m-unit-work-001`).
@@ -195,7 +195,7 @@ export class TransactionWriter {
     private readonly database: ParallaxDatabase,
     private readonly dialect: Dialect,
     private readonly processingInstant: string,
-    /** The unit-of-work concurrency strategy (default `locking`, M8). */
+    /** The unit-of-work concurrency strategy (default `locking`, m-unit-work). */
     private readonly concurrency: Concurrency = "locking",
     /**
      * The per-unit-of-work observed-version map (`entity#pk → version`), shared
@@ -237,7 +237,7 @@ export class TransactionWriter {
    * `update`. An audit-only entity chains milestones (close + new current row); a
    * VERSIONED entity advances its framework-owned version (gated in optimistic
    * mode, ungated in locking mode — throwing on a conflict / read-before-write,
-   * M10); a plain (non-versioned) entity issues one keyed UPDATE.
+   * m-opt-lock); a plain (non-versioned) entity issues one keyed UPDATE.
    */
   async update(
     entity: EntityMetadata,
@@ -257,7 +257,7 @@ export class TransactionWriter {
   }
 
   /**
-   * A KEYED versioned-entity `update` (M10). The version is FRAMEWORK-OWNED (ADR
+   * A KEYED versioned-entity `update` (m-opt-lock). The version is FRAMEWORK-OWNED (ADR
    * 0029): the write advances it in BOTH modes, and in `optimistic` mode also gates
    * on the version the unit of work OBSERVED for the row (a prior transaction-scoped
    * find populated the observed map). Three rules:
@@ -277,7 +277,7 @@ export class TransactionWriter {
     version: NormalizedAttribute,
   ): Promise<WriteResult> {
     const shape = this.versionedShape(entity, options, version);
-    // A no-op update (no domain attribute changes) issues NO DML (M10).
+    // A no-op update (no domain attribute changes) issues NO DML (m-opt-lock).
     if (shape === undefined) {
       return { affectedRows: 0 };
     }
@@ -290,12 +290,12 @@ export class TransactionWriter {
   }
 
   /**
-   * A SET-BASED versioned-entity `update` (M10 materialize, ADR 0032). A versioned
+   * A SET-BASED versioned-entity `update` (m-opt-lock materialize, ADR 0032). A versioned
    * set-based update has NO set-based template — the optimistic gate binds a
    * per-row observed version, so a single statement cannot carry it. The caller
    * (`TransactionEntity.update`) has already resolved the predicate to rows through
    * the OBSERVING finder — which recorded each row's observed version and, in
-   * `locking` mode, took the M8 shared lock — and passes their primary keys here;
+   * `locking` mode, took the m-read-lock shared lock — and passes their primary keys here;
    * this emits ONE keyed per-object `UPDATE` per resolved pk (gated in optimistic
    * mode, ungated version-advancing in locking mode), advancing the observed version
    * per row. A no-op `set` issues no DML; a mid-batch optimistic conflict (a
@@ -327,7 +327,7 @@ export class TransactionWriter {
   /**
    * Resolve the shared versioned-update shape — the physical {@link VersionedTarget},
    * the quoted DOMAIN `set` columns, and their binds — dropping the framework-owned
-   * version column (a caller assignment to it is ignored, M10). Returns `undefined`
+   * version column (a caller assignment to it is ignored, m-opt-lock). Returns `undefined`
    * when the `set` changes no domain attribute (a no-op update — the caller issues no
    * DML). Shared by the keyed update and the set-based materialize.
    */
@@ -361,7 +361,7 @@ export class TransactionWriter {
    * its affected-row count, advancing the framework-owned observed version. Gates on
    * the observed version in `optimistic` mode (a 0-row conflict throws
    * `ParallaxOptimisticLockError`, `m-opt-lock-005`); emits the ungated version-advancing form
-   * in `locking` mode (`m-opt-lock-002`). An unobserved row is a read-before-write error (M10).
+   * in `locking` mode (`m-opt-lock-002`). An unobserved row is a read-before-write error (m-opt-lock).
    * The single per-row emitter both the keyed update and the set-based materialize
    * (ADR 0032) share, so the two paths never drift.
    */
@@ -377,7 +377,7 @@ export class TransactionWriter {
     }
     // A versioned entity records a numeric version (a temporal in_z string never
     // reaches this per-object emitter — the composition rule forbids a versioned
-    // temporal entity, M1/M10).
+    // temporal entity, m-descriptor/m-opt-lock).
     if (typeof observed !== "number") {
       throw new Error(`observed value for '${key}' is not a version number`);
     }
@@ -400,7 +400,7 @@ export class TransactionWriter {
       this.observed.set(key, newVersion);
       return affectedRows;
     }
-    // Locking mode: the M8 shared read lock makes the write correct, so the version
+    // Locking mode: the m-read-lock shared read lock makes the write correct, so the version
     // advances WITHOUT a gate (the `m-detach-002` / `m-opt-lock-002` shape).
     const sql = versionAdvancingUpdate(shape.target, shape.setColumns);
     const affectedRows = await this.exec(sql, [...shape.domainBinds, newVersion, pk]);
@@ -443,7 +443,7 @@ export class TransactionWriter {
 
   // --- internals ------------------------------------------------------------
 
-  /** Flush buffered non-temporal inserts through the M8 combine planner (FK-safe). */
+  /** Flush buffered non-temporal inserts through the m-unit-work combine planner (FK-safe). */
   private async flushInserts(): Promise<void> {
     if (this.insertBuffer.length === 0) {
       return;
@@ -487,7 +487,7 @@ export class TransactionWriter {
   /**
    * An audit-only `update`: close the current row, then chain a new current row. In
    * OPTIMISTIC mode the close gates on the observed processing-from (`in_z`), so a
-   * concurrent supersession is caught (M10); a zero-row close raises BEFORE the
+   * concurrent supersession is caught (m-opt-lock); a zero-row close raises BEFORE the
    * chained insert in any mode (never silent).
    */
   private async auditUpdate(
@@ -509,15 +509,15 @@ export class TransactionWriter {
 
   /**
    * Execute an audit milestone CLOSE and return its affected-row count, enforcing
-   * the M7/M10 conflict contract:
+   * the m-temporal-read/m-opt-lock conflict contract:
    *
    *  - OPTIMISTIC mode (`gated`) binds the observed processing-from (`in_z`) as the
    *    optimistic gate — a temporal entity carries no version column, so the observed
    *    `in_z` is the version analogue. An unobserved row is a read-before-write error
-   *    (M10); a zero-row close (a concurrent writer superseded the milestone, leaving
+   *    (m-opt-lock); a zero-row close (a concurrent writer superseded the milestone, leaving
    *    a fresh `in_z`) throws `ParallaxOptimisticLockError` (retriable under the
    *    phase-4 flag).
-   *  - LOCKING mode closes UNGATED (the M8 shared read lock makes it correct), but a
+   *  - LOCKING mode closes UNGATED (the m-read-lock shared read lock makes it correct), but a
    *    zero-row close still raises a DISTINCT non-retriable `ParallaxTemporalCloseError`
    *    (a stale/consistency error). A zero-row close is never silent in ANY mode.
    */
@@ -553,7 +553,7 @@ export class TransactionWriter {
 
   /**
    * Reject a write to a BUSINESS-temporal-only entity under `optimistic` mode
-   * (M1/M7/M10): its optimistic key would derive from a processing axis it does not
+   * (m-descriptor/m-temporal-read/m-opt-lock): its optimistic key would derive from a processing axis it does not
    * have (`isAuditOnly` keys on the processing axis, so it does not cover business
    * only). The invalid combination surfaces at the write boundary — mode is a
    * per-unit-of-work property, not a static model one, so it cannot be a
@@ -707,7 +707,7 @@ export class TransactionWriter {
     return this.bindAttribute(pk, pkLiteral);
   }
 
-  /** Quote one physical identifier through the injected M11 dialect. */
+  /** Quote one physical identifier through the injected m-dialect dialect. */
   private quote(name: string): string {
     return this.dialect.quoteIdentifier(name);
   }
@@ -816,7 +816,7 @@ function requireProcessingTo(entity: EntityMetadata): NormalizedAttribute {
 /**
  * Resolve an entity's audit {@link WriteTarget} (table, columns, pk, out_z, in_z).
  * `fromColumn` (`in_z`) is the optimistic gate an OPTIMISTIC-mode close binds the
- * observed value on (M10); `toColumn` (`out_z`) is set + keyed by every close.
+ * observed value on (m-opt-lock); `toColumn` (`out_z`) is set + keyed by every close.
  */
 function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteTarget {
   const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
@@ -839,7 +839,7 @@ function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteTarget {
  * (the caller observed the row first, then updates it by pk); a versioned update on
  * ANY OTHER predicate — a range (`balance < ?`), a non-pk equality, `all` — has no
  * single pk to key on and MATERIALIZES instead: `TransactionEntity.update` resolves
- * the predicate to rows through the observing finder, then updates per object (M10,
+ * the predicate to rows through the observing finder, then updates per object (m-opt-lock,
  * ADR 0032). A non-versioned entity keeps its readless batched path either way.
  */
 export function isPkEqualityPredicate(entity: EntityMetadata, predicate: Predicate): boolean {

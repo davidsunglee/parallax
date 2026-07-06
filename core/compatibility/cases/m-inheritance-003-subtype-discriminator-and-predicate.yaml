@@ -1,4 +1,4 @@
-# Table-per-hierarchy subtype query with a user predicate (M1 inheritance, M3).
+# Table-per-hierarchy subtype query with a user predicate (m-inheritance inheritance, m-sql).
 #
 # Find CardPayments with amount > 60. The injected discriminator predicate
 # (`t0.kind = ?`) composes with the user predicate via `and` and is appended

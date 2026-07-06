@@ -1,6 +1,6 @@
 /**
  * API Conformance Suite — **boundary** family (Phase 4): the bounded automatic
- * retry loop mechanics (M8/M10, ADR 0031 / TS ADR 0065), driven the way a developer
+ * retry loop mechanics (m-auto-retry/m-opt-lock, ADR 0031 / TS ADR 0065), driven the way a developer
  * would (`px.transaction(body, { retries, retryOptimisticConflicts })`) over each
  * selected shipped `@parallax/db-*` adapter.
  *

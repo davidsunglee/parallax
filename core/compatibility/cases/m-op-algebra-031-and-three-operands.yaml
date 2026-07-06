@@ -1,4 +1,4 @@
-# and — n-ary conjunction of THREE operands (M2 §Boolean combinators).
+# and — n-ary conjunction of THREE operands (m-op-algebra §Boolean combinators).
 #
 # m-op-algebra-020 proves the two-operand junction; this pins the n-ary (>= 3) form: the
 # operands serialize in order and the binds follow left-to-right appearance, so

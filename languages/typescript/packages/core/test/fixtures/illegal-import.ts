@@ -1,8 +1,8 @@
 /**
  * Negative-test fixture: a deliberately illegal cross-package import.
  *
- * `@parallax/core` is the foundational leaf (M0); it MUST NOT depend on any
- * sibling. Importing `@parallax/operation` (M2) here is a wrong-direction edge
+ * `@parallax/core` is the foundational leaf (m-core); it MUST NOT depend on any
+ * sibling. Importing `@parallax/operation` (m-op-algebra) here is a wrong-direction edge
  * that `depcruise --validate` must flag as `not-in-allowed`.
  *
  * This file lives under `test/fixtures/` and is excluded from both the `tsc -b`

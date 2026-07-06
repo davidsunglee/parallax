@@ -1,4 +1,4 @@
-# PK generation `sequence` (M1) — single insert through a simulated sequence.
+# PK generation `sequence` (m-pk-gen) — single insert through a simulated sequence.
 #
 # Reserve a block (batch=1 -> advance next_val by 1*1=1, base=1), insert id 1.
 # Registry badge_seq: 1 -> 2. The advanced counter + allocated id are asserted by

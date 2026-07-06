@@ -1,4 +1,4 @@
-# Batched-write case (M8): buffered writes flush as set-based SQL.
+# Batched-write case (m-batch-write): buffered writes flush as set-based SQL.
 #
 # At the unit-of-work boundary the buffered writes are combined and flushed as
 # SET-BASED SQL, not one statement per row:
@@ -12,7 +12,7 @@
 # case. The subject is the NON-VERSIONED Wallet (models/wallet.yaml): the readless
 # batched forms are honest only for a non-versioned entity — a versioned entity's
 # set-based update MUST materialize into per-object version-advancing updates
-# (M10 / ADR 0031), so the batched forms cannot apply to it.
+# (m-opt-lock / ADR 0031), so the batched forms cannot apply to it.
 #
 # Resulting state: wallets 10/11/12 inserted; 10 and 11 then re-balanced to 500.00
 # by the batched update; 12 unchanged at 30.00.

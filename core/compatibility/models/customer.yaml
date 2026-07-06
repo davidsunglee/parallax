@@ -3,9 +3,9 @@
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. The
 # `address` element is a `valueObject`: an embedded composite (street / city /
-# geo) stored in ONE M0 `json` column (`address`), NOT column-flattened (a
+# geo) stored in ONE m-core `json` column (`address`), NOT column-flattened (a
 # deliberate deviation from Reladomo). Its inner fields are read / filtered with
-# the M2 nested-attribute access form (nestedEq / nestedNotEq over a dotted path
+# the m-op-algebra nested-attribute access form (nestedEq / nestedNotEq over a dotted path
 # `Customer.address.field`). Postgres golden SQL lowers that to a
 # `jsonb_extract_path_text` extraction whose path segments are carried as `?`
 # binds.

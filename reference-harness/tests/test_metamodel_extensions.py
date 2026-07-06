@@ -66,7 +66,7 @@ def test_value_object_model_validates_and_maps_to_dialect_json() -> None:
     (value_object,) = model.root_entity.value_objects
     assert value_object["mapping"] == "json"
     # The valueObject's neutral json column is part of the entity's column order
-    # + Postgres DDL, where M11 maps it to jsonb.
+    # + Postgres DDL, where m-dialect maps it to jsonb.
     assert value_object["column"] in column_order(model.root_entity)
     (create,) = ddl_for(model, "postgres")
     assert f"{value_object['column']} jsonb" in create
@@ -151,7 +151,7 @@ def test_shared_hierarchy_table_ddl_includes_later_subtype_columns() -> None:
 
 def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
     """A temporal (as-of) entity that ALSO declares an ``optimisticLocking``
-    attribute MUST fail metamodel validation (M1/M7/M10, COR-14).
+    attribute MUST fail metamodel validation (m-descriptor/m-temporal-read/m-opt-lock, COR-14).
 
     A processing-axis temporal entity DERIVES its optimistic key from the
     processing-from column (`in_z` is the version analogue), so it carries no

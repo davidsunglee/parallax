@@ -1,8 +1,8 @@
 # Cross-process cache coherence — identity preserved across an in-place update
-# (M14). The value-convergence cases (m-coherence-001) prove node B observes node A's new
+# (m-coherence). The value-convergence cases (m-coherence-001) prove node B observes node A's new
 # *value*; this proves node B observes it *at the same logical identity* — the
 # interned object is refreshed in place, not forked into a second object for the
-# same primary key. It is the cross-process lift of the M8 identity scenario
+# same primary key. It is the cross-process lift of the m-process-cache identity scenario
 # (m-process-cache-002): the same-PK-=>-same-object rule, holding across a peer write.
 #
 # `sameObjectAs: 0` on the final re-fetch ties it to the seed read: both observe

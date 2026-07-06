@@ -1,4 +1,4 @@
-"""The database-provider seam (M12 provisioning sub-part).
+"""The database-provider seam (m-case-format provisioning sub-part).
 
 A ``DatabaseProvider`` yields a clean, migrated, isolated database for a single
 dialect. The runner is written against this protocol only, so adding a dialect is
@@ -90,7 +90,7 @@ class DatabaseProvider(Protocol):
         ...
 
     def classify_error(self, exc: Exception) -> str:
-        """Map a raised driver error to a neutral M11 error category."""
+        """Map a raised driver error to a neutral m-db-error error category."""
         ...
 
     def native_error_code(self, exc: Exception) -> str | int | None:

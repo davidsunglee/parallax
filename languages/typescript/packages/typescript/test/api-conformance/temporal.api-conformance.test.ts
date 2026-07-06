@@ -7,7 +7,7 @@
  * The temporal read options serialize (business axis OUTSIDE processing) to the
  * corpus's canonical `operation` — the no-drift guard (`assertSameOperation`) — and
  * the returned MANAGED rows equal the corpus `expectedRows` (Phase-4 rules) with the
- * managed shapes (10b). An OMITTED axis is left unwrapped (M7 default-injection at
+ * managed shapes (10b). An OMITTED axis is left unwrapped (m-temporal-read default-injection at
  * the compiler); an explicit `now` still emits an `asOf … now` wrapper (`m-temporal-read-002`).
  */
 
@@ -209,7 +209,7 @@ it("the temporal suite covers exactly the TEMPORAL family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...TEMPORAL].sort());
 });
 
-// Temporal reads are dialect-agnostic (the M7 axis wrapping lowers through the M11 seam),
+// Temporal reads are dialect-agnostic (the m-temporal-read axis wrapping lowers through the m-dialect seam),
 // so the suite fans out over every database `PARALLAX_DATABASES` selects. `MARIADB_GUARDED_
 // READS` (`_providers.ts`) is currently empty — the bitemporal `Position` cases (m-temporal-read-013–m-temporal-read-017)
 // used to be guarded off MariaDB (a reserved-word gap), now fixed — but the guard mechanism

@@ -1,5 +1,5 @@
 /**
- * The MariaDB **curated M12 matrix profile** (Testcontainers `mariadb:11.4`) —
+ * The MariaDB **curated m-case-format matrix profile** (Testcontainers `mariadb:11.4`) —
  * the driver-bound corner that proves `typescript × mariadb` end-to-end for the
  * declared `mariadb-curated-25` partial profile.
  *
@@ -7,7 +7,7 @@
  * through an actual database: each case compiles against `mariadbDialect`, runs
  * through the shipped `@parallax/db-mariadb` adapter (via the composition-root
  * {@link MariaDbProvider}), and is graded on BOTH the observed result (rows / graph
- * / table state, under the shared M12 comparison rules) AND the emitted SQL
+ * / table state, under the shared m-case-format comparison rules) AND the emitted SQL
  * (`emission.sql === goldenSql.mariadb`). This is where MariaDB's divergences —
  * backtick quoting (`m-descriptor-001`), `is null,` NULL ordering (`m-deep-fetch-012`), ` lock in share
  * mode` (`m-read-lock-009`), max-sentinel infinity (`m-temporal-read-021` / `m-audit-write-001`), the scalar-type map +
@@ -61,7 +61,7 @@ import {
   MARIADB_UNIQUE_PROFILE_IDS,
   MARIADB_WRITE_PROFILE_IDS,
   POSTGRES_FULL_PROFILE,
-} from "./m12-profiles.js";
+} from "./conformance-profiles.js";
 
 /** Load a corpus case by its four-digit id (throws if the id is not discovered). */
 function loadedById(id: string): LoadedCase {

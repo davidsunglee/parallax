@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
-  "title": "Parallax Compatibility Case (M12)",
-  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of eight shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the M9 detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, M8 — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); a conflict case (Phase 7, M10 — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind); a coherence case (Phase 11, cross-process cache coherence — carries a `coherence` two-node operation sequence run over two connections to one database, asserting node B observes node A's committed write rather than a stale cached copy); an **error case** (carries `errorClass` + `expectedNativeCode`, M11 error-code classification — triggers a real DB error, single-connection for `uniqueViolation` or a two-connection `concurrency` choreography for `deadlock`/`lockWaitTimeout`, and asserts the neutral category the error classifies to plus the per-dialect native code); a **concurrency-success case** (M8 behavioral read-lock — carries a `concurrency` choreography with NO `errorClass`, running barrier-separated rounds on two held non-autocommit sessions that assert no error is raised; each present step declares an explicit `kind` (a `read` step carries `expectRows` observed on its HELD session, a `write` step omits it and asserts only that it did not block/raise); proves the shared read lock is COMPATIBLE with a second reader (`m-read-lock-007`) and that an unlocked projection ADMITS a writer (`m-read-lock-008`)); or a **boundary case** (M8/M10 bounded automatic retry — carries `boundary` ordered actions + `expect` portable outcome, optionally an injected fault `inject`, declaring the unit-of-work loop mechanics the single-connection M12 harness cannot provoke). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "title": "Parallax Compatibility Case (m-case-format)",
+  "description": "The case envelope. goldenSql is keyed by dialect from day one so the compatibility matrix grows without a redesign. A dialect's golden SQL is EITHER a single statement (single-statement read cases, Phases 1-2) OR an ordered list of statements — one per relationship/deep-fetch level (deep-fetch cases, Phase 3+), one per milestone-chaining DML step (writeSequence cases, Phase 5), or one per batched-write step (writeSequence cases, Phase 6). A case is one of eight shapes: a read case (carries an `operation`, asserts `expectedRows`/`expectedGraph`); a writeSequence case (carries a `writeSequence`, applies its ordered DML golden SQL, then asserts `expectedTableState` — and, for the m-detach detached merge-back cases, MAY first load the model's fixtures via `loadFixtures`); a scenario case (Phase 6, m-unit-work — carries a `scenario` of ordered operation steps with per-step round-trip counts + identity/cache assertions, whose declared counts MUST be internally consistent with the listed golden SQL); a conflict case (Phase 7, m-opt-lock — carries `expectedAffectedRows`, optionally an out-of-band `precondition`, and a golden `UPDATE`, asserting the affected-row count an optimistic-lock UPDATE leaves behind); a coherence case (Phase 11, cross-process cache coherence — carries a `coherence` two-node operation sequence run over two connections to one database, asserting node B observes node A's committed write rather than a stale cached copy); an **error case** (carries `errorClass` + `expectedNativeCode`, m-db-error error-code classification — triggers a real DB error, single-connection for `uniqueViolation` or a two-connection `concurrency` choreography for `deadlock`/`lockWaitTimeout`, and asserts the neutral category the error classifies to plus the per-dialect native code); a **concurrency-success case** (m-read-lock behavioral read-lock — carries a `concurrency` choreography with NO `errorClass`, running barrier-separated rounds on two held non-autocommit sessions that assert no error is raised; each present step declares an explicit `kind` (a `read` step carries `expectRows` observed on its HELD session, a `write` step omits it and asserts only that it did not block/raise); proves the shared read lock is COMPATIBLE with a second reader (`m-read-lock-007`) and that an unlocked projection ADMITS a writer (`m-read-lock-008`)); or a **boundary case** (m-auto-retry/m-opt-lock bounded automatic retry — carries `boundary` ordered actions + `expect` portable outcome, optionally an injected fault `inject`, declaring the unit-of-work loop mechanics the single-connection m-case-format harness cannot provoke). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags"],
@@ -16,15 +16,15 @@
       ]
     },
     {
-      "description": "A writeSequence case: ordered DML asserted by the resulting table state (milestone-chaining temporal writes, Phase 5; batched non-temporal writes, Phase 6; M9 detached insert/update merge-back, Phase 7).",
+      "description": "A writeSequence case: ordered DML asserted by the resulting table state (milestone-chaining temporal writes, Phase 5; batched non-temporal writes, Phase 6; m-detach detached insert/update merge-back, Phase 7).",
       "required": ["writeSequence", "expectedTableState", "goldenSql"]
     },
     {
-      "description": "A scenario case (M8): ordered operation steps with per-step round-trip counts proving the cache/identity contract. Golden SQL lives per step, so the top-level goldenSql is absent.",
+      "description": "A scenario case (m-unit-work): ordered operation steps with per-step round-trip counts proving the cache/identity contract. Golden SQL lives per step, so the top-level goldenSql is absent.",
       "required": ["scenario"]
     },
     {
-      "description": "A conflict case (M10): an optimistic-lock UPDATE asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `precondition` (e.g. a stale-version mutation by a concurrent transaction), then runs the golden UPDATE(s) and asserts the affected-row count. Two forms: a SINGLE attempt (`expectedAffectedRows` + `goldenSql` + the neutral write input `write`); or an ordered `attempts` retry sequence (each attempt carries its own goldenSql + expectedAffectedRows + write), which proves the M10 retry contract — a stale UPDATE affects 0 rows, then a retry that re-reads the fresh version affects 1. Every conflict sub-form carries the neutral write input (① `write`) so the golden UPDATE is an INDEPENDENT oracle rather than the only home for column intent: a versioned conflict's `write` (with `observedVersion`) or a temporal / bitemporal close's `write` (+ `at`, and `observedInZ` under optimistic concurrency) is REQUIRED.",
+      "description": "A conflict case (m-opt-lock): an optimistic-lock UPDATE asserted by the number of rows it affects. Loads the model's fixtures, OPTIONALLY runs an out-of-band `precondition` (e.g. a stale-version mutation by a concurrent transaction), then runs the golden UPDATE(s) and asserts the affected-row count. Two forms: a SINGLE attempt (`expectedAffectedRows` + `goldenSql` + the neutral write input `write`); or an ordered `attempts` retry sequence (each attempt carries its own goldenSql + expectedAffectedRows + write), which proves the m-opt-lock retry contract — a stale UPDATE affects 0 rows, then a retry that re-reads the fresh version affects 1. Every conflict sub-form carries the neutral write input (① `write`) so the golden UPDATE is an INDEPENDENT oracle rather than the only home for column intent: a versioned conflict's `write` (with `observedVersion`) or a temporal / bitemporal close's `write` (+ `at`, and `observedInZ` under optimistic concurrency) is REQUIRED.",
       "anyOf": [
         { "required": ["expectedAffectedRows", "goldenSql", "write"] },
         { "required": ["attempts"] }
@@ -35,7 +35,7 @@
       "required": ["coherence"]
     },
     {
-      "description": "An error-classification case (M11): triggers a real DB error and asserts the neutral category it classifies to (errorClass) plus the per-dialect native code (expectedNativeCode). A case MUST declare a trigger: top-level `goldenSql` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds).",
+      "description": "An error-classification case (m-db-error): triggers a real DB error and asserts the neutral category it classifies to (errorClass) plus the per-dialect native code (expectedNativeCode). A case MUST declare a trigger: top-level `goldenSql` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds).",
       "required": ["errorClass", "expectedNativeCode"],
       "anyOf": [
         { "required": ["goldenSql"] },
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "description": "A concurrency-success case (M8 behavioral read-lock): barrier-separated `concurrency` rounds on two held non-autocommit sessions asserting NO error is raised. Every PRESENT step declares an explicit `kind`: a read step (`kind: read`) carries `expectRows` (the rows it MUST return on its HELD session); a write step (`kind: write`) omits `expectRows` and asserts only that it did not block/raise. Proves lock COMPATIBILITY (`m-read-lock-007` — a second shared reader is admitted) and lock ABSENCE (`m-read-lock-008` — an unlocked projection admits a writer), the non-error counterpart to the error branch's lock CONTENTION (`m-read-lock-006`). The `not: errorClass` guard keeps the root oneOf mutually exclusive: an error/concurrency case carries `errorClass` and matches ONLY the error branch (and carries no `kind`). The nested `rounds.items.properties.{A,B}.required: [kind]` forces a PRESENT success step to declare its kind structurally, without forcing A/B to exist.",
+      "description": "A concurrency-success case (m-read-lock behavioral read-lock): barrier-separated `concurrency` rounds on two held non-autocommit sessions asserting NO error is raised. Every PRESENT step declares an explicit `kind`: a read step (`kind: read`) carries `expectRows` (the rows it MUST return on its HELD session); a write step (`kind: write`) omits `expectRows` and asserts only that it did not block/raise. Proves lock COMPATIBILITY (`m-read-lock-007` — a second shared reader is admitted) and lock ABSENCE (`m-read-lock-008` — an unlocked projection admits a writer), the non-error counterpart to the error branch's lock CONTENTION (`m-read-lock-006`). The `not: errorClass` guard keeps the root oneOf mutually exclusive: an error/concurrency case carries `errorClass` and matches ONLY the error branch (and carries no `kind`). The nested `rounds.items.properties.{A,B}.required: [kind]` forces a PRESENT success step to declare its kind structurally, without forcing A/B to exist.",
       "required": ["concurrency"],
       "not": { "required": ["errorClass"] },
       "properties": {
@@ -62,7 +62,7 @@
       }
     },
     {
-      "description": "A boundary case (M8/M10 bounded automatic retry): a unit-of-work loop-mechanics case the single-connection M12 harness cannot provoke (injected transient failures, retry counting, error surfacing). It carries `lane: api-conformance` and is satisfied by each language's API Conformance Suite; the harness schema-validates it but does not execute it. It declares the portable unit-of-work body (`boundary` ordered actions), the portable expected outcome (`expect`: `committed` or a surfaced error kind), an OPTIONAL injected fault (`inject`), and its retry configuration under `uow` (`retries` / `retryOptimisticConflicts`). It carries no golden SQL — the concrete DML and error types stay per-language. Both invariants are enforced here: `lane` is REQUIRED and pinned to `api-conformance` (a boundary case cannot silently default to the `harness` lane and fall into compile/run paths not shaped for it), and `goldenSql` is disallowed.",
+      "description": "A boundary case (m-auto-retry/m-opt-lock bounded automatic retry): a unit-of-work loop-mechanics case the single-connection m-case-format harness cannot provoke (injected transient failures, retry counting, error surfacing). It carries `lane: api-conformance` and is satisfied by each language's API Conformance Suite; the harness schema-validates it but does not execute it. It declares the portable unit-of-work body (`boundary` ordered actions), the portable expected outcome (`expect`: `committed` or a surfaced error kind), an OPTIONAL injected fault (`inject`), and its retry configuration under `uow` (`retries` / `retryOptimisticConflicts`). It carries no golden SQL — the concrete DML and error types stay per-language. Both invariants are enforced here: `lane` is REQUIRED and pinned to `api-conformance` (a boundary case cannot silently default to the `harness` lane and fall into compile/run paths not shaped for it), and `goldenSql` is disallowed.",
       "required": ["boundary", "expect", "lane"],
       "properties": {
         "lane": { "const": "api-conformance" }
@@ -98,32 +98,32 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "lane": {
-      "description": "Which executor satisfies this case (M12 lane routing). `harness` (the default) — the M12 compatibility harness executes it as today (golden-SQL / data observables). `api-conformance` — a runtime-loop or read-lock-matrix branch a single-connection harness cannot provoke (injected transient failures, retry counting, error surfacing, or the emitted read-lock proof): the harness schema-validates it but does NOT execute it, and each language's API Conformance Suite MUST satisfy it (coverage enforced the way `covered.ts` self-asserts). Every `boundary`-shape case is `api-conformance` by construction; the read-lock matrix reads (`m-read-lock-002`-`m-read-lock-005`) are `read`-shape `api-conformance` cases.",
+      "description": "Which executor satisfies this case (m-case-format lane routing). `harness` (the default) — the m-case-format compatibility harness executes it as today (golden-SQL / data observables). `api-conformance` — a runtime-loop or read-lock-matrix branch a single-connection harness cannot provoke (injected transient failures, retry counting, error surfacing, or the emitted read-lock proof): the harness schema-validates it but does NOT execute it, and each language's API Conformance Suite MUST satisfy it (coverage enforced the way `covered.ts` self-asserts). Every `boundary`-shape case is `api-conformance` by construction; the read-lock matrix reads (`m-read-lock-002`-`m-read-lock-005`) are `read`-shape `api-conformance` cases.",
       "enum": ["harness", "api-conformance"],
       "default": "harness"
     },
     "uow": {
-      "description": "The unit-of-work configuration a case runs under (M8 strategy selection + M8/M10 bounded automatic retry). Optional and descriptive: it declares the per-unit-of-work concurrency mode (so a case's mode-dependent golden SQL is self-describing) and the retry configuration a boundary case exercises. `concurrency`: `locking` — the default M8 implicit shared read lock, keyed updates advance the version with NO gate; `optimistic` — reads take no lock and every keyed update / temporal close GATES on the observed version. The harness executes the authored golden SQL either way; the block documents WHICH mode produced it. The retry keys drive a boundary case's api-conformance loop.",
+      "description": "The unit-of-work configuration a case runs under (m-unit-work strategy selection + m-auto-retry/m-opt-lock bounded automatic retry). Optional and descriptive: it declares the per-unit-of-work concurrency mode (so a case's mode-dependent golden SQL is self-describing) and the retry configuration a boundary case exercises. `concurrency`: `locking` — the default m-read-lock implicit shared read lock, keyed updates advance the version with NO gate; `optimistic` — reads take no lock and every keyed update / temporal close GATES on the observed version. The harness executes the authored golden SQL either way; the block documents WHICH mode produced it. The retry keys drive a boundary case's api-conformance loop.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "concurrency": {
-          "description": "The correctness strategy this unit of work selects: `locking` (default — M8 implicit shared read lock; version advances but no gate is emitted) or `optimistic` (M10 — reads take no lock; keyed updates and temporal closes gate on the observed version).",
+          "description": "The correctness strategy this unit of work selects: `locking` (default — m-read-lock implicit shared read lock; version advances but no gate is emitted) or `optimistic` (m-opt-lock — reads take no lock; keyed updates and temporal closes gate on the observed version).",
           "enum": ["locking", "optimistic"]
         },
         "retries": {
-          "description": "The bound on automatic re-executions of the unit-of-work body after a retriable failure (M8/M10 bounded automatic retry). Default 10; `0` disables the loop, so even a transient failure surfaces to the caller.",
+          "description": "The bound on automatic re-executions of the unit-of-work body after a retriable failure (m-auto-retry/m-opt-lock bounded automatic retry). Default 10; `0` disables the loop, so even a transient failure surfaces to the caller.",
           "type": "integer",
           "minimum": 0
         },
         "retryOptimisticConflicts": {
-          "description": "Whether an optimistic-lock conflict joins the retriable set for this unit of work (M10). Default false — a conflict surfaces to the caller after one attempt. Transient database failures (deadlock / serialization failure) are always retriable regardless of this flag.",
+          "description": "Whether an optimistic-lock conflict joins the retriable set for this unit of work (m-opt-lock). Default false — a conflict surfaces to the caller after one attempt. Transient database failures (deadlock / serialization failure) are always retriable regardless of this flag.",
           "type": "boolean"
         }
       }
     },
     "boundary": {
-      "description": "boundary cases only (M8/M10 bounded automatic retry). An ordered list of the actions the unit-of-work body performs, portably described so the case is self-documenting without carrying golden SQL. The M12 harness never executes these (the case is `api-conformance`-lane); each language's suite realizes them through its idiomatic public API.",
+      "description": "boundary cases only (m-auto-retry/m-opt-lock bounded automatic retry). An ordered list of the actions the unit-of-work body performs, portably described so the case is self-documenting without carrying golden SQL. The m-case-format harness never executes these (the case is `api-conformance`-lane); each language's suite realizes them through its idiomatic public API.",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -143,7 +143,7 @@
       }
     },
     "inject": {
-      "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the M11 `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `uow.retryOptimisticConflicts`). Absent when the case exercises only loop configuration (`retries: 0`, the callback-withheld-on-abort case).",
+      "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `uow.retryOptimisticConflicts`). Absent when the case exercises only loop configuration (`retries: 0`, the callback-withheld-on-abort case).",
       "enum": [
         "serialization-failure",
         "deadlock",
@@ -152,7 +152,7 @@
       ]
     },
     "expect": {
-      "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value — the M8 abort contract / ADR 0008), or a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled). The concrete per-language error type (e.g. `ParallaxOptimisticLockError`) stays language-local; this is the neutral kind the suite asserts.",
+      "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value — the m-unit-work abort contract / ADR 0008), or a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled). The concrete per-language error type (e.g. `ParallaxOptimisticLockError`) stays language-local; this is the neutral kind the suite asserts.",
       "enum": [
         "committed",
         "aborted",
@@ -163,11 +163,11 @@
       ]
     },
     "operation": {
-      "description": "A canonical M2 algebra node (validated separately against operation.schema.json). Present on read cases; absent on writeSequence cases.",
+      "description": "A canonical m-op-algebra algebra node (validated separately against operation.schema.json). Present on read cases; absent on writeSequence cases.",
       "type": "object"
     },
     "writeSequence": {
-      "description": "A writeSequence case: an ordered list of write steps the goldenSql DML realizes. Each step names a mutation kind on an entity; the goldenSql for the dialect is the matching ordered list of DML statements (one or more per step), applied in order, after which the harness asserts `expectedTableState`. The list documents the intent the DML must realize and lets the harness assert step count consistency. Used by milestone-chaining temporal writes (Phase 5, M7 — insert/update/terminate), batched non-temporal writes (Phase 6, M8 — a multi-row insert / a batched update), detached merge-back delete (M9), and the minimal dependent cascade-delete witness (M5/M8).",
+      "description": "A writeSequence case: an ordered list of write steps the goldenSql DML realizes. Each step names a mutation kind on an entity; the goldenSql for the dialect is the matching ordered list of DML statements (one or more per step), applied in order, after which the harness asserts `expectedTableState`. The list documents the intent the DML must realize and lets the harness assert step count consistency. Used by milestone-chaining temporal writes (Phase 5, m-audit-write — insert/update/terminate), batched non-temporal writes (Phase 6, m-batch-write — a multi-row insert / a batched update), detached merge-back delete (m-detach), and the minimal dependent cascade-delete witness (m-cascade-delete/m-unit-work).",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -196,7 +196,7 @@
         ],
         "properties": {
           "mutation": {
-            "description": "The mutation kind. insert / update / terminate are the M7 audit-only mutation surface and also cover the M8 batched non-temporal writes; delete covers ordinary non-temporal delete / detached-delete merge-back; cascadeDelete is the minimal dependent-delete witness over M1 dependent relationships; insertUntil / updateUntil / terminateUntil are the full-bitemporal `*Until` trio (DQ11, Phase 8) that bound a mutation to a business window — updateUntil/terminateUntil drive the rectangle split (inactivate the original on the processing axis, chain head/middle/tail business rows at fresh processing time).",
+            "description": "The mutation kind. insert / update / terminate are the m-audit-write audit-only mutation surface and also cover the m-batch-write batched non-temporal writes; delete covers ordinary non-temporal delete / detached-delete merge-back; cascadeDelete is the minimal dependent-delete witness over m-descriptor dependent relationships; insertUntil / updateUntil / terminateUntil are the full-bitemporal `*Until` trio (DQ11, Phase 8) that bound a mutation to a business window — updateUntil/terminateUntil drive the rectangle split (inactivate the original on the processing axis, chain head/middle/tail business rows at fresh processing time).",
             "enum": [
               "insert",
               "update",
@@ -226,7 +226,7 @@
             "items": { "$ref": "#/$defs/writeRow" }
           },
           "at": {
-            "description": "The transaction / processing instant a TEMPORAL (audit-only) write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it: a new milestone opens `in_z = at` with the open bound `out_z = infinity`, and a close binds `out_z = at` keyed on the still-open current row (`pk and out_z = infinity`). So `in_z`/`out_z`/`infinity` are never authored in `rows` — the M7 milestone discipline stays under test. Present on a processing-axis temporal step; absent on a non-temporal batched write (and replaced by `businessAt` on a business-only step). Required for a `*Until` step and for a `terminate` close (a `terminate` on a business-only entity carries `businessAt` instead); the schema cannot see an entity's temporality, so the required `at` on an audit-only `insert` / `update` is enforced by the reference-harness gate + the generating adapter.",
+            "description": "The transaction / processing instant a TEMPORAL (audit-only) write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it: a new milestone opens `in_z = at` with the open bound `out_z = infinity`, and a close binds `out_z = at` keyed on the still-open current row (`pk and out_z = infinity`). So `in_z`/`out_z`/`infinity` are never authored in `rows` — the m-audit-write milestone discipline stays under test. Present on a processing-axis temporal step; absent on a non-temporal batched write (and replaced by `businessAt` on a business-only step). Required for a `*Until` step and for a `terminate` close (a `terminate` on a business-only entity carries `businessAt` instead); the schema cannot see an entity's temporality, so the required `at` on an audit-only `insert` / `update` is enforced by the reference-harness gate + the generating adapter.",
             "type": "string",
             "minLength": 1
           },
@@ -248,7 +248,7 @@
       }
     },
     "scenario": {
-      "description": "A scenario (Phase 6, M8) case: an ordered list of steps proving the unit-of-work / identity / query-cache contract. A step is either a READ step (issues a `find`) or a WRITE step (commits DML via `write`). Golden SQL lives PER STEP (not at the top level): each find costs a declared number of database round trips, and an interleaved committed write lets a later step prove read-your-own-writes (a dependent find observes the buffered write after the unit of work flushes) or query-cache invalidation (a find re-issued after a committed write MUST re-resolve rather than serve a stale cached row). The harness asserts the round-trip counts are internally consistent with the golden SQL each step lists (a cache-hit step lists none and declares roundTrips 0), executes the listed golden SQL against the provisioned database to confirm result-correctness, and checks identity assertions (a step may declare it returns the SAME logical object — same primary key — as an earlier step). The harness NEVER compiles an operation to SQL: the round-trip contract is proven from the fixture's own declared counts plus golden SQL.",
+      "description": "A scenario (m-unit-work, Phase 6) case: an ordered list of steps proving the unit-of-work / identity / query-cache contract. A step is either a READ step (issues a `find`) or a WRITE step (commits DML via `write`). Golden SQL lives PER STEP (not at the top level): each find costs a declared number of database round trips, and an interleaved committed write lets a later step prove read-your-own-writes (a dependent find observes the buffered write after the unit of work flushes) or query-cache invalidation (a find re-issued after a committed write MUST re-resolve rather than serve a stale cached row). The harness asserts the round-trip counts are internally consistent with the golden SQL each step lists (a cache-hit step lists none and declares roundTrips 0), executes the listed golden SQL against the provisioned database to confirm result-correctness, and checks identity assertions (a step may declare it returns the SAME logical object — same primary key — as an earlier step). The harness NEVER compiles an operation to SQL: the round-trip contract is proven from the fixture's own declared counts plus golden SQL.",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -260,13 +260,13 @@
             "required": ["find", "roundTrips"]
           },
           {
-            "description": "A write step: applies golden DML between finds. Carries golden DML, not a find. By default the DML is COMMITTED so a later find observes it (read-your-own-writes / cache invalidation); with `rollback: true` the DML is applied and then ROLLED BACK, so a later find MUST observe the ORIGINAL rows (the M8 abort contract). A no-op write (a versioned UPDATE whose `set` changes no attribute — M10) issues NO DML: it declares `roundTrips: 0` and lists no `goldenSql`, mirroring a cache-hit read step.",
+            "description": "A write step: applies golden DML between finds. Carries golden DML, not a find. By default the DML is COMMITTED so a later find observes it (read-your-own-writes / cache invalidation); with `rollback: true` the DML is applied and then ROLLED BACK, so a later find MUST observe the ORIGINAL rows (the m-unit-work abort contract). A no-op write (a versioned UPDATE whose `set` changes no attribute — m-opt-lock) issues NO DML: it declares `roundTrips: 0` and lists no `goldenSql`, mirroring a cache-hit read step.",
             "required": ["write", "roundTrips"]
           }
         ],
         "properties": {
           "find": {
-            "description": "The operation a READ step issues (a canonical M2 algebra node). Validated against operation.schema.json by the harness. Present on read steps; absent on write steps.",
+            "description": "The operation a READ step issues (a canonical m-op-algebra algebra node). Validated against operation.schema.json by the harness. Present on read steps; absent on write steps.",
             "type": "object"
           },
           "write": {
@@ -275,11 +275,11 @@
             "minLength": 1
           },
           "rollback": {
-            "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the M8 abort contract. A later find MUST re-resolve (a cache miss) and observe the ORIGINAL rows, never the aborted write; the read-your-own-writes forced flush is safe only because it lands inside the atomic scope the abort discards. The rolled-back DML still executes, so the step's roundTrips count its statements exactly as a committed write does.",
+            "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the m-unit-work abort contract. A later find MUST re-resolve (a cache miss) and observe the ORIGINAL rows, never the aborted write; the read-your-own-writes forced flush is safe only because it lands inside the atomic scope the abort discards. The rolled-back DML still executes, so the step's roundTrips count its statements exactly as a committed write does.",
             "type": "boolean"
           },
           "roundTrips": {
-            "description": "How many database round trips this step costs. A READ cache HIT (an operation equal to an earlier step's) costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's round trips equal the committed DML statements it lists (a no-op M10 versioned update that issues no DML costs 0 and lists no goldenSql). MUST equal the number of golden SQL statements this step lists for each dialect.",
+            "description": "How many database round trips this step costs. A READ cache HIT (an operation equal to an earlier step's) costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's round trips equal the committed DML statements it lists (a no-op m-opt-lock versioned update that issues no DML costs 0 and lists no goldenSql). MUST equal the number of golden SQL statements this step lists for each dialect.",
             "type": "integer",
             "minimum": 0
           },
@@ -335,7 +335,7 @@
             "enum": ["read", "write"]
           },
           "find": {
-            "description": "The operation a `read` step issues (a canonical M2 algebra node, validated against operation.schema.json). Present on read steps; absent on write steps (which mutate rather than query).",
+            "description": "The operation a `read` step issues (a canonical m-op-algebra algebra node, validated against operation.schema.json). Present on read steps; absent on write steps (which mutate rather than query).",
             "type": "object"
           },
           "goldenSql": {
@@ -422,12 +422,12 @@
       }
     },
     "loadFixtures": {
-      "description": "writeSequence cases only. When true, the model's fixtures are loaded BEFORE the ordered DML is applied — so a sequence can mutate pre-existing persisted rows (the M9 detached-update merge-back case, where the original row already exists). Defaults to false: a writeSequence case starts from an empty schema and builds its own state (the M7 milestone-chaining and M8 batched-insert cases).",
+      "description": "writeSequence cases only. When true, the model's fixtures are loaded BEFORE the ordered DML is applied — so a sequence can mutate pre-existing persisted rows (the m-detach detached-update merge-back case, where the original row already exists). Defaults to false: a writeSequence case starts from an empty schema and builds its own state (the m-audit-write milestone-chaining and m-batch-write batched-insert cases).",
       "type": "boolean",
       "default": false
     },
     "precondition": {
-      "description": "conflict cases (M10) only. An out-of-band SQL statement (or ordered list) applied AFTER the fixtures load and BEFORE the golden UPDATE, simulating a concurrent transaction that mutated the row (e.g. bumping the optimistic-lock version) so the golden UPDATE's stale-version predicate now matches zero rows. Absent for the success case (the version is fresh, so the UPDATE affects one row).",
+      "description": "conflict cases (m-opt-lock) only. An out-of-band SQL statement (or ordered list) applied AFTER the fixtures load and BEFORE the golden UPDATE, simulating a concurrent transaction that mutated the row (e.g. bumping the optimistic-lock version) so the golden UPDATE's stale-version predicate now matches zero rows. Absent for the success case (the version is fresh, so the UPDATE affects one row).",
       "$ref": "#/$defs/dialectAgnosticSql"
     },
     "preconditionBinds": {
@@ -437,26 +437,26 @@
       "items": {}
     },
     "expectedAffectedRows": {
-      "description": "conflict cases (M10), single-attempt form. The number of rows the golden UPDATE must affect after any `precondition` is applied. A stale optimistic-lock version => 0 (conflict detected); a fresh version => 1 (success). This is the observable form of optimistic-lock conflict detection: `updatedRows != 1` is the conflict signal.",
+      "description": "conflict cases (m-opt-lock), single-attempt form. The number of rows the golden UPDATE must affect after any `precondition` is applied. A stale optimistic-lock version => 0 (conflict detected); a fresh version => 1 (success). This is the observable form of optimistic-lock conflict detection: `updatedRows != 1` is the conflict signal.",
       "type": "integer",
       "minimum": 0
     },
     "write": {
-      "description": "conflict cases (M10), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns), and the reserved `observedVersion` control key (the version the unit of work read). A VERSIONED conflict derives the emitted set columns + ORDER from `columnOrder(entity)`, the version advance (`observedVersion + 1`), the intrinsic optimistic gate (`and version = ?`), and the binds. A TEMPORAL / bitemporal close carries only the milestone pk (→ the `where` key) plus, on a bitemporal entity, the business discriminator (e.g. `businessFrom`, classified to the `from_z = ?` gate whose VALUE the metamodel cannot know); its close instant and observed gate ride in `at` / `observedInZ`. Either way the golden UPDATE + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. Single-attempt form only; the retry (`attempts`) form carries a `write` per attempt. REQUIRED on every single-attempt conflict sub-form (versioned or temporal / bitemporal close).",
+      "description": "conflict cases (m-opt-lock), single-attempt form. The neutral write input (①) for this conflict's versioned UPDATE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns), and the reserved `observedVersion` control key (the version the unit of work read). A VERSIONED conflict derives the emitted set columns + ORDER from `columnOrder(entity)`, the version advance (`observedVersion + 1`), the intrinsic optimistic gate (`and version = ?`), and the binds. A TEMPORAL / bitemporal close carries only the milestone pk (→ the `where` key) plus, on a bitemporal entity, the business discriminator (e.g. `businessFrom`, classified to the `from_z = ?` gate whose VALUE the metamodel cannot know); its close instant and observed gate ride in `at` / `observedInZ`. Either way the golden UPDATE + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. Single-attempt form only; the retry (`attempts`) form carries a `write` per attempt. REQUIRED on every single-attempt conflict sub-form (versioned or temporal / bitemporal close).",
       "$ref": "#/$defs/writeRow"
     },
     "at": {
-      "description": "conflict cases (M10), temporal-close form. The close instant a TEMPORAL / bitemporal optimistic conflict close records — the new `out_z` the milestone-closing UPDATE sets, keyed on the still-open current row (`pk and out_z = infinity`). A GENERATING adapter DERIVES the close binds from it (`out_z = at`, the open bound `infinity`), so `out_z` / `infinity` are never authored in ①; the metamodel fixes the single SET column (`out_z`), so it is NOT named in ① — the cross-check is binds-only. Single-attempt form only; the retry (`attempts`) form carries an `at` per attempt. Present on a temporal-conflict close; absent on a versioned conflict.",
+      "description": "conflict cases (m-opt-lock), temporal-close form. The close instant a TEMPORAL / bitemporal optimistic conflict close records — the new `out_z` the milestone-closing UPDATE sets, keyed on the still-open current row (`pk and out_z = infinity`). A GENERATING adapter DERIVES the close binds from it (`out_z = at`, the open bound `infinity`), so `out_z` / `infinity` are never authored in ①; the metamodel fixes the single SET column (`out_z`), so it is NOT named in ① — the cross-check is binds-only. Single-attempt form only; the retry (`attempts`) form carries an `at` per attempt. Present on a temporal-conflict close; absent on a versioned conflict.",
       "type": "string",
       "minLength": 1
     },
     "observedInZ": {
-      "description": "conflict cases (M10), temporal-close form. The processing-from (`in_z`) the unit of work observed — the optimistic-lock version analogue a TEMPORAL / bitemporal entity gates on, since it carries no version column (Reladomo's IN_Z rule). In optimistic mode the close gains the `and in_z = ?` gate bound to this value, so a concurrent writer that superseded the milestone matches 0 rows (the conflict signal); ABSENT in locking mode (the ungated close, `m-temporal-read-012`). It is the temporal analogue of a versioned write's `observedVersion`. Single-attempt form only; the retry (`attempts`) form carries an `observedInZ` per attempt.",
+      "description": "conflict cases (m-opt-lock), temporal-close form. The processing-from (`in_z`) the unit of work observed — the optimistic-lock version analogue a TEMPORAL / bitemporal entity gates on, since it carries no version column (Reladomo's IN_Z rule). In optimistic mode the close gains the `and in_z = ?` gate bound to this value, so a concurrent writer that superseded the milestone matches 0 rows (the conflict signal); ABSENT in locking mode (the ungated close, `m-temporal-read-012`). It is the temporal analogue of a versioned write's `observedVersion`. Single-attempt form only; the retry (`attempts`) form carries an `observedInZ` per attempt.",
       "type": "string",
       "minLength": 1
     },
     "attempts": {
-      "description": "conflict cases (M10), retry form. An ordered list of optimistic-lock UPDATE attempts applied (after any `precondition`) in sequence, each asserting its own affected-row count — proving the M10 retry contract end-to-end: the first (stale-version) attempt affects 0 rows (the conflict signal), then a retry that re-reads the now-fresh version and re-applies affects 1. When present, the top-level single-attempt `goldenSql` / `expectedAffectedRows` are absent and `expectedTableState` (when authored) asserts the retried write landed.",
+      "description": "conflict cases (m-opt-lock), retry form. An ordered list of optimistic-lock UPDATE attempts applied (after any `precondition`) in sequence, each asserting its own affected-row count — proving the m-opt-lock retry contract end-to-end: the first (stale-version) attempt affects 0 rows (the conflict signal), then a retry that re-reads the now-fresh version and re-applies affects 1. When present, the top-level single-attempt `goldenSql` / `expectedAffectedRows` are absent and `expectedTableState` (when authored) asserts the retried write landed.",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -481,12 +481,12 @@
             "$ref": "#/$defs/writeRow"
           },
           "at": {
-            "description": "conflict RETRY cases (M10), temporal-close form. THIS attempt's close instant (→ the new `out_z` the milestone-closing UPDATE sets). A GENERATING adapter derives the close binds from it (`out_z = at`, keyed on the still-open current row); the single SET column (`out_z`) stays metamodel-fixed, so it is never named in ①.",
+            "description": "conflict RETRY cases (m-opt-lock), temporal-close form. THIS attempt's close instant (→ the new `out_z` the milestone-closing UPDATE sets). A GENERATING adapter derives the close binds from it (`out_z = at`, keyed on the still-open current row); the single SET column (`out_z`) stays metamodel-fixed, so it is never named in ①.",
             "type": "string",
             "minLength": 1
           },
           "observedInZ": {
-            "description": "conflict RETRY cases (M10), temporal-close form. THIS attempt's observed processing-from (`in_z`) — the optimistic gate the attempt binds (`and in_z = ?`): the stale attempt's observed in_z, then the retry's refreshed one. Absent in locking mode.",
+            "description": "conflict RETRY cases (m-opt-lock), temporal-close form. THIS attempt's observed processing-from (`in_z`) — the optimistic gate the attempt binds (`and in_z = ?`): the stale attempt's observed in_z, then the retry's refreshed one. Absent in locking mode.",
             "type": "string",
             "minLength": 1
           },
@@ -514,7 +514,7 @@
       "exclusiveMinimum": 0
     },
     "errorClass": {
-      "description": "The neutral M11 error category a triggered DB error MUST classify to. uniqueViolation = duplicate-key; deadlock = deadlock or serialization failure (retriable); lockWaitTimeout = blocked past the lock-wait budget.",
+      "description": "The neutral m-db-error error category a triggered DB error MUST classify to. uniqueViolation = duplicate-key; deadlock = deadlock or serialization failure (retriable); lockWaitTimeout = blocked past the lock-wait budget.",
       "type": "string",
       "enum": ["uniqueViolation", "deadlock", "lockWaitTimeout"]
     },
@@ -553,7 +553,7 @@
       "type": "object",
       "properties": {
         "observedVersion": {
-          "description": "The optimistic-lock version the unit of work read (M10). A reserved control key, NOT an attribute/column: it is the gate/advance token (the advance `observedVersion + 1` and the `and version = ?` gate are DERIVED, never authored). Present on a versioned update; absent on a versioned insert (which derives the initial `1`) and on a non-versioned write.",
+          "description": "The optimistic-lock version the unit of work read (m-opt-lock). A reserved control key, NOT an attribute/column: it is the gate/advance token (the advance `observedVersion + 1` and the `and version = ?` gate are DERIVED, never authored). Present on a versioned update; absent on a versioned insert (which derives the initial `1`) and on a non-versioned write.",
           "type": "integer",
           "minimum": 0
         }

@@ -1,4 +1,4 @@
-"""The M11 error-code classification core (dialect-agnostic, DB-free).
+"""The m-db-error error-code classification core (dialect-agnostic, DB-free).
 
 Reladomo's `DatabaseType` exposes error classification not as one string map but
 as a set of neutral predicates interrogated at distinct call sites: the txn retry
@@ -44,7 +44,7 @@ _MARIADB_CODES: dict[int, str] = {
 
 
 def classify(dialect: str, code: str | int | None) -> str:
-    """Map a native DB error code to a neutral M11 category.
+    """Map a native DB error code to a neutral m-db-error category.
 
     *code* is the SQLSTATE string for ``postgres`` and the vendor errno (int) for
     ``mariadb`` -- the value each driver surfaces (see the providers). Returns

@@ -1,5 +1,5 @@
 /**
- * `@parallax/metamodel` — M1 domain model & metamodel introspection.
+ * `@parallax/metamodel` — domain model and metamodel (`m-descriptor`, `m-pk-gen`, `m-inheritance`, `m-value-object`).
  *
  * The generic descriptor reader (`Metamodel` / `EntityMetadata`), defaulting /
  * normalization, and ajv-validation against `metamodel.schema.json`. The reader

@@ -1,12 +1,12 @@
 /**
- * M7 as-of predicate injection + audit-write DML — in-isolation unit tests.
+ * m-temporal-read as-of predicate injection + audit-write DML — in-isolation unit tests.
  *
  * Pins the pure per-axis derivation (`asOfPredicate`), the deep-fetch propagation
  * suffix (`propagatedPredicate`), and the milestone-chaining write DML
  * (`auditWriteStatements`) against the corpus goldens they must reproduce —
  * Docker-free, no metamodel — so a lowering regression fails here before the
  * database run lane. The alias-qualified column expressions and infinity sentinel
- * come from the caller (the M3 resolver / M4 propagation), exactly as they do in
+ * come from the caller (the m-sql resolver / m-navigate propagation), exactly as they do in
  * production.
  */
 import { describe, expect, it } from "vitest";

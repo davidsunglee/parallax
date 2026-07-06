@@ -1,5 +1,5 @@
 /**
- * `@parallax/conformance` — M12 compatibility harness.
+ * `@parallax/conformance` — compatibility harness and conformance adapter (`m-case-format`, `m-conformance-adapter`, `m-api-conformance`, `m-perf-bench`).
  *
  * Exports the canonical `describe` claim, the ajv-backed envelope validator,
  * case discovery, the six-condition in-claim gate, the `CompatibilityDatabase`

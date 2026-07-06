@@ -1,7 +1,7 @@
 """Testcontainers-backed Postgres provider (dialect = "postgres").
 
 Boots a real Postgres in a container (clean / migrated / isolated) and satisfies
-the ``DatabaseProvider`` seam. Per M12/DQ15 the image is pinned at the latest
+the ``DatabaseProvider`` seam. Per m-case-format/DQ15 the image is pinned at the latest
 stable Postgres major; bump the tag as new majors ship.
 """
 
@@ -26,7 +26,7 @@ from . import register
 if TYPE_CHECKING:
     from . import Node
 
-# Pinned at the latest stable Postgres major (M12/DQ15). Refresh on new majors.
+# Pinned at the latest stable Postgres major (m-case-format/DQ15). Refresh on new majors.
 POSTGRES_IMAGE = "postgres:17"
 
 
@@ -52,7 +52,7 @@ class _IsoTimestamptzLoader(Loader):
 
     Two reasons the default datetime loader is unusable for the temporal suite:
 
-    1. **Native infinity.** Postgres' ``'infinity'::timestamptz`` (the M0 open
+    1. **Native infinity.** Postgres' ``'infinity'::timestamptz`` (the m-core open
        upper bound) has no Python ``datetime`` representation — the default
        loader raises ``DataError`` on read. We pass it through as the literal
        string ``"infinity"`` (and ``"-infinity"``).
@@ -132,7 +132,7 @@ class PostgresProvider:
             )
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
-        # The harness stores golden SQL with `?` placeholders (M3); psycopg uses
+        # The harness stores golden SQL with `?` placeholders (m-sql); psycopg uses
         # `%s`. Translate positional placeholders for execution. `?` never
         # appears literally in our SQL outside a placeholder position.
         with self._conn.cursor() as cur:
@@ -150,7 +150,7 @@ class PostgresProvider:
             return [dict(zip(column_names, row, strict=True)) for row in cur.fetchall()]
 
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
-        # Golden DML stores `?` placeholders (M3); psycopg uses `%s`. Translate
+        # Golden DML stores `?` placeholders (m-sql); psycopg uses `%s`. Translate
         # positional placeholders for execution, mirroring `query`.
         with self._conn.cursor() as cur:
             if binds:
@@ -164,7 +164,7 @@ class PostgresProvider:
         return getattr(exc, "sqlstate", None)
 
     def classify_error(self, exc: Exception) -> str:
-        """Map a raised psycopg error to a neutral M11 category (see errors.py)."""
+        """Map a raised psycopg error to a neutral m-db-error category (see errors.py)."""
         return errors.classify(self.dialect, self.native_error_code(exc))
 
     @contextmanager

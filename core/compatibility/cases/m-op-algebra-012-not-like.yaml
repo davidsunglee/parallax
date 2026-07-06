@@ -1,4 +1,4 @@
-# notLike — negated raw pattern. The M3 canonical form keeps the `not like`
+# notLike — negated raw pattern. The m-sql canonical form keeps the `not like`
 # keyword pair. A NULL sku yields NULL (not true), so id 4 is excluded — exactly
 # the SQL three-valued-logic the naive referenceSql also produces.
 model: models/orders.yaml

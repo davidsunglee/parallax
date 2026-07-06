@@ -1,5 +1,5 @@
 /**
- * `@parallax/lists` — M5 lists & bulk/set operations.
+ * `@parallax/lists` — lists and bulk/set operations (`m-op-list`, `m-batch-write`, `m-cascade-delete`).
  *
  * The lazy, operation-backed `ParallaxList` and the public error classes it
  * throws (`ParallaxError` / `ParallaxNotFoundError` / `ParallaxTooManyResultsError`).

@@ -1,5 +1,5 @@
 /**
- * The normative M11 **`Dialect` interface** — layer-1 of the dialect seam.
+ * The normative m-dialect **`Dialect` interface** — layer-1 of the dialect seam.
  *
  * `Dialect` is the single authority over the per-database decision catalog
  * (`core/spec/m-dialect.md`): identifier quoting, ORDER BY / NULL
@@ -8,7 +8,7 @@
  * the typed-bind normalization rules, the normalize-at-boundary value parsers,
  * the infinity representation, and error-code classification. A concrete database (`postgresDialect`,
  * `mariadbDialect`) is *an implementation of* this contract; nothing above the
- * seam imports a concrete dialect — M3 (`@parallax/sql`) compiles against this
+ * seam imports a concrete dialect — m-sql (`@parallax/sql`) compiles against this
  * **type**, and the composition roots inject the concrete instance.
  *
  * This module is type-only: it declares the contract and depends on `@parallax/core`
@@ -19,10 +19,10 @@ import type { Infinity as InfinitySentinel, ParallaxDecimal, Temporal } from "@p
 import type { ErrorCategory } from "./errors.js";
 
 /**
- * The normalize-at-boundary value parsers, keyed by **M0 neutral type** (not by a
+ * The normalize-at-boundary value parsers, keyed by **m-core neutral type** (not by a
  * driver's catalog code). An adapter maps its driver's type-codes → these neutral
  * keys and calls the matching parser, so the parse logic stays dialect-owned while
- * the code→key mapping stays adapter-owned (`m11:44-47`).
+ * the code→key mapping stays adapter-owned (`m-db-port`).
  */
 export interface DialectParsers {
   /** Raw `int8` text → native `bigint` (JS `number` cannot hold the full int64 range). */
@@ -55,7 +55,7 @@ export interface Dialect {
 
   // --- SQL-assembly decisions compile() consults ---
   /**
-   * One ORDER BY term with this dialect's NULL placement (`m11:153-167`): Postgres
+   * One ORDER BY term with this dialect's NULL placement (`m-dialect`): Postgres
    * `<col> asc` / `<col> desc nulls last`; MariaDB `is null, <col> asc` / `<col> desc`.
    */
   orderByTerm(qualifiedColumn: string, direction: "asc" | "desc"): string;
@@ -89,12 +89,12 @@ export interface Dialect {
   ): { readonly sql: string; readonly binds: readonly unknown[] };
 
   // --- schema / DDL vocabulary ---
-  /** Map an M0 neutral type (+ optional max length) to this dialect's column type. */
+  /** Map an m-core neutral type (+ optional max length) to this dialect's column type. */
   columnType(neutralType: string, maxLength?: number): string;
 
   /**
    * Normalize one managed runtime value for this dialect's driver boundary, with
-   * the logical M0 neutral type available. Most values render to the neutral wire
+   * the logical m-core neutral type available. Most values render to the neutral wire
    * form; dialects without native temporal infinity may keep timestamp values in
    * their managed carrier so the concrete adapter can bind them losslessly.
    */
@@ -104,10 +104,10 @@ export interface Dialect {
   /** Rewrite canonical `?` placeholders to the driver's syntax (`?`→`$n` on Postgres; identity on MariaDB). */
   toPositionalPlaceholders(sql: string): string;
 
-  // --- normalize-at-boundary value parsing (keyed by M0 neutral type) ---
+  // --- normalize-at-boundary value parsing (keyed by m-core neutral type) ---
   parsers: DialectParsers;
 
-  // --- infinity representation (M7) ---
+  // --- infinity representation (m-temporal-read) ---
   /** The bind value for temporal `infinity`: native `'infinity'` (Postgres) vs a max-sentinel datetime (MariaDB). */
   infinityBind(): unknown;
 

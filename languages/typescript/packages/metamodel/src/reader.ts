@@ -1,5 +1,5 @@
 /**
- * M1 generic metamodel reader — introspection over a parsed descriptor with no
+ * m-descriptor generic metamodel reader — introspection over a parsed descriptor with no
  * generated symbols.
  *
  * This is the conformance backbone (ADR-0055): the adapter reads arbitrary
@@ -85,7 +85,7 @@ export class EntityMetadata {
     return this.entity.attributes.filter((attr) => attr.primaryKey);
   }
 
-  /** The single `optimisticLocking` version attribute, if declared (M10). */
+  /** The single `optimisticLocking` version attribute, if declared (m-opt-lock). */
   versionAttribute(): NormalizedAttribute | undefined {
     return this.entity.attributes.find((attr) => attr.optimisticLocking);
   }
@@ -93,7 +93,7 @@ export class EntityMetadata {
   /**
    * The processing-axis `from` attribute (`in_z`), if this entity has a processing
    * axis. This is the DERIVED optimistic key for a processing-axis temporal entity
-   * (M7/M10): a temporal entity carries no version column, so the observed
+   * (m-temporal-read/m-opt-lock): a temporal entity carries no version column, so the observed
    * processing-from value is the optimistic-lock version analogue an optimistic
    * close gates on. `undefined` for a non-temporal or business-only entity.
    */
@@ -108,7 +108,7 @@ export class EntityMetadata {
   /**
    * The processing-axis `to` attribute (`out_z`), if this entity has a processing
    * axis. This is the CURRENT-MILESTONE marker for a processing-axis temporal entity
-   * (M7/M10): the current row is the one whose processing-to value is `infinity` (the
+   * (m-temporal-read/m-opt-lock): the current row is the one whose processing-to value is `infinity` (the
    * open upper bound). Recording the observed processing-from FILTERS on this so a
    * multi-milestone as-of/history read does not overwrite the current observation
    * with a closed milestone's `in_z`. `undefined` for a non-temporal or business-only

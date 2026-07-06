@@ -1,4 +1,4 @@
-# groupBy with COMPOSITE (multiple) keys (M2 groupBy, M3 group-by render).
+# groupBy with COMPOSITE (multiple) keys (m-agg groupBy, m-sql-agg group-by render).
 #
 # Every existing aggregate case groups by a single key; this pins the composite
 # key projection and the comma-separated `group by t0.order_id, t0.sku`. Each

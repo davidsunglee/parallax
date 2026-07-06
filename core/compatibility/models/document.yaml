@@ -1,4 +1,4 @@
-# Document: a TABLE-PER-LEAF inheritance model (M1, Phase 9).
+# Document: a TABLE-PER-LEAF inheritance model (m-inheritance, Phase 9).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. Each
 # concrete leaf maps to its OWN table (no shared table, no discriminator column):

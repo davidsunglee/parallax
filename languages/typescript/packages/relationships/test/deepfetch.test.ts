@@ -1,7 +1,7 @@
 /**
  * `deepFetch` orchestration unit tests (Docker-free, pure).
  *
- * Drives the M4 deep-fetch strategy directly with a FAKE `exec` and hand-built
+ * Drives the m-deep-fetch deep-fetch strategy directly with a FAKE `exec` and hand-built
  * `DeepFetchNode` trees — no metamodel, compiler, or database — to pin the
  * round-trip discipline the conformance suite grades:
  *

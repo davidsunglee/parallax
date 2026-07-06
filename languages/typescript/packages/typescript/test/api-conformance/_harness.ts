@@ -57,7 +57,7 @@ import { createParallax, type Parallax, type ParallaxRow } from "../../src/index
  * `loadFixtures`) PLUS the three composition-root additions the developer-surface
  * suite needs, which the runner-facing port deliberately omits:
  *
- *  - `dialectImpl` — the concrete M11 {@link Dialect} injected into `createParallax`
+ *  - `dialectImpl` — the concrete m-dialect {@link Dialect} injected into `createParallax`
  *    (and `ddlForDescriptor`), so the `px` handle compiles + materializes against the
  *    SAME strategy the shipped adapter parses with;
  *  - `database` — the shipped `ParallaxDatabase` adapter bound to the provisioned
@@ -71,7 +71,7 @@ import { createParallax, type Parallax, type ParallaxRow } from "../../src/index
  * keyed by `PARALLAX_DATABASES`).
  */
 export interface ApiConformanceProvider extends CompatibilityDatabaseProvider {
-  /** The concrete M11 dialect injected into `createParallax` + `ddlForDescriptor`. */
+  /** The concrete m-dialect dialect injected into `createParallax` + `ddlForDescriptor`. */
   readonly dialectImpl: Dialect;
   /** The shipped adapter bound to the provisioned container (the developer `px` path). */
   readonly database: ParallaxDatabase;
@@ -99,7 +99,7 @@ export interface CaseFixture {
   readonly db: ParallaxDatabase;
   /** The case's metamodel (for DSL entity symbols + managed-shape assertions). */
   readonly metamodel: Metamodel;
-  /** The injected M11 dialect (so assertions quote identifiers for the right database). */
+  /** The injected m-dialect dialect (so assertions quote identifiers for the right database). */
   readonly dialect: Dialect;
 }
 
@@ -352,7 +352,7 @@ export async function assertTableState(fixture: CaseFixture): Promise<void> {
 
 /**
  * Assert every scalar of a returned row is its MANAGED carrier (the 10b contract),
- * by `instanceof` / `typeof` per the entity's M0 types (null passes for a nullable
+ * by `instanceof` / `typeof` per the entity's m-core types (null passes for a nullable
  * column). This is what the grader deliberately does NOT check (it grades wire
  * values); the suite proves the developer receives managed objects.
  */
@@ -377,7 +377,7 @@ export function assertManagedShape(
   }
 }
 
-/** Assert one scalar is its managed carrier for its M0 type. */
+/** Assert one scalar is its managed carrier for its m-core type. */
 function assertScalarManaged(value: unknown, type: string, label: string): void {
   if (/^decimal\(\d+,\d+\)$/.test(type)) {
     expect(value instanceof ParallaxDecimal, `${label}: expected ParallaxDecimal`).toBe(true);
@@ -578,7 +578,7 @@ function translateGraphNode(
   return out;
 }
 
-/** A `DSL name -> M0 type` map merged across all entities (for row/graph grading). */
+/** A `DSL name -> m-core type` map merged across all entities (for row/graph grading). */
 function dslColumnTypes(metamodel: Metamodel): ColumnTypes {
   const types: Record<string, string> = {};
   for (const entity of metamodel.entities()) {
@@ -589,7 +589,7 @@ function dslColumnTypes(metamodel: Metamodel): ColumnTypes {
   return types;
 }
 
-/** A `physical column -> M0 type` map merged across all entities (for table state). */
+/** A `physical column -> m-core type` map merged across all entities (for table state). */
 function physicalColumnTypes(metamodel: Metamodel): ColumnTypes {
   const types: Record<string, string> = {};
   for (const entity of metamodel.entities()) {
@@ -614,7 +614,7 @@ async function readTableState(
     const columns = entity
       ? entity.attributes().map((attr) => attr.column)
       : Object.keys(expected[table]?.[0] ?? {});
-    // Quote through the injected M11 seam — double quotes on Postgres, backticks on
+    // Quote through the injected m-dialect seam — double quotes on Postgres, backticks on
     // MariaDB — so the read-back never diverges from the dialect the DDL created.
     const quoted = columns.map((c) => dialect.quoteIdentifier(c)).join(", ");
     const typeByColumn = new Map(entity?.attributes().map((attr) => [attr.column, attr.type]));
@@ -624,7 +624,7 @@ async function readTableState(
   return out;
 }
 
-/** Render a physical table-state row to wire, with M0 type context for booleans. */
+/** Render a physical table-state row to wire, with m-core type context for booleans. */
 function renderTableStateRow(
   row: ParallaxRow,
   typeByColumn: ReadonlyMap<string, string>,

@@ -1,6 +1,6 @@
 /**
  * The canonical, format-agnostic serde seam shared by `@parallax/metamodel`
- * (M1) and `@parallax/operation` (M2).
+ * (m-descriptor) and `@parallax/operation` (m-op-algebra).
  *
  * The canonical model is plain JSON-compatible data (objects / arrays /
  * scalars) — the identical in-memory shape descriptors and operations
@@ -9,7 +9,7 @@
  * (`reference-harness/src/reference_harness/serde.py`), including the
  * `equivalentEncodings` precedence check.
  *
- * The four-part contract (M1 §"Metamodel serde"; ADR-0057):
+ * The four-part contract (m-descriptor §"Metamodel serde"; ADR-0057):
  *  1. safe load (the `yaml` reader is safe by default — no custom tags);
  *  2. **recursive key-sort** so object-key authoring order is irrelevant;
  *  3. **list order preserved** — order is significant in the algebra and in
@@ -90,8 +90,8 @@ export function deserialize(text: string, format: SerdeFormat = JSON_FORMAT): un
 /**
  * Parse YAML, but preserve the **exact source text** of any numeric scalar whose
  * value cannot survive a JavaScript `number` round-trip — carried as a string so
- * downstream type-aware coercion (the M3 compiler resolving a literal against its
- * M0 neutral type) can recover the exact int64 / decimal value.
+ * downstream type-aware coercion (the m-sql compiler resolving a literal against its
+ * m-core neutral type) can recover the exact int64 / decimal value.
  *
  * Why this lives in the serde reader and not only the compiler: `yaml.parse`
  * (like `JSON.parse`) materializes a numeric scalar as a binary-float `number`
@@ -103,7 +103,7 @@ export function deserialize(text: string, format: SerdeFormat = JSON_FORMAT): un
  * authored number (`42`, `20.00`, `50.75`) keeps its JS-number form — exactly the
  * Phase-3 wire-form decision the corpus goldens assume (`binds: [42]` is a JSON
  * number) — and only a genuinely-unrepresentable token (`> 2^53`, or a decimal
- * the double cannot hold) is preserved as its source string. The M3 compiler then
+ * the double cannot hold) is preserved as its source string. The m-sql compiler then
  * normalizes it against the resolved attribute type into the canonical wire form.
  */
 export function parseYamlLossless(text: string): unknown {

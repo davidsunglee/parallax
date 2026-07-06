@@ -1,14 +1,14 @@
 # Read-lock divergence (Phase 10): the marquee cross-dialect case.
 #
 # An in-transaction read that intends to write appends the dialect's shared-row-
-# lock suffix (M8 / M11). This is the ONE place the two dialects diverge on
-# read-locking syntax, and it is fully localized to the M11 seam:
+# lock suffix (m-read-lock / m-dialect). This is the ONE place the two dialects diverge on
+# read-locking syntax, and it is fully localized to the m-dialect seam:
 #
 #   * Postgres : `for share of t0`     — `for share` qualified by the root alias.
 #   * MariaDB  : `lock in share mode`  — MariaDB has no `for share` (MDEV-17514);
 #                its shared lock is the unaliased `lock in share mode`.
 #
-# Both forms are the canonical fixed point of the M3 normalizer for their dialect
+# Both forms are the canonical fixed point of the m-sql normalizer for their dialect
 # (sqlglot parses both into the same Lock node; the seam renders each spelling),
 # so the goldenSql passes the layer-3 idempotence check per dialect.
 #

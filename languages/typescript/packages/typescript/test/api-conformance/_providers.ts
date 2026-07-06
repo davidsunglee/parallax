@@ -12,7 +12,7 @@
  * skipped — reported, never silently passed — when no Docker daemon is reachable.
  *
  * Developer writes run through the same selected provider set as reads. The runtime
- * writer receives the injected M11 dialect for identifier quoting and reports
+ * writer receives the injected m-dialect dialect for identifier quoting and reports
  * affected rows through `ParallaxDatabase.executeWrite`, so Postgres and MariaDB
  * both exercise the developer write surface when selected.
  */
@@ -116,7 +116,7 @@ export function writeProviders(): readonly SelectedProvider[] {
  *    `typeCast` doc) — that hex path is unaffected (still proven by
  *    `mariadb-run.test.ts`'s `m-core-004`).
  *  - `m-temporal-read-013`-`m-temporal-read-017` (the `Position` table, a MariaDB reserved word `POSITION()`) —
- *    both the DDL derivation's reserved-word set AND the M3 compiler's root/
+ *    both the DDL derivation's reserved-word set AND the m-sql compiler's root/
  *    EXISTS-child `from` clause (now routed through `dialect.quoteIdentifier`,
  *    same as every column) quote it.
  *

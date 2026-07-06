@@ -1,4 +1,4 @@
-# valueObject structured-column filter: a DEEP nested field (M1 valueObject, M3).
+# valueObject structured-column filter: a DEEP nested field (m-value-object valueObject, m-sql).
 #
 # The `address` valueObject nests a `geo` object. In Postgres golden SQL,
 # nestedEq(Customer.address.geo.country, 'US') lowers to a multi-segment

@@ -1,5 +1,5 @@
 /**
- * `@parallax/dialect` — M11 database seam & portability.
+ * `@parallax/dialect` — m-dialect database seam & portability.
  *
  * Layer-1 of the seam: the normative {@link Dialect} interface (the single
  * authority over the per-database decision catalog) plus its two conforming

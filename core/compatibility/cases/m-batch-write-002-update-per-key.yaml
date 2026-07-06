@@ -1,6 +1,6 @@
-# Batched UPDATE, per-distinct-key form (M8): non-uniform new values.
+# Batched UPDATE, per-distinct-key form (m-batch-write): non-uniform new values.
 #
-# M8 says batched updates collapse "executed once per distinct key, OR as a single
+# m-batch-write says batched updates collapse "executed once per distinct key, OR as a single
 # statement with an IN predicate when the new values are uniform." m-batch-write-001 proves the
 # uniform `id in (?, ?)` form (one statement, one shared value). This pins the
 # complementary per-key form: when each key gets a DIFFERENT new value, the batch
@@ -10,7 +10,7 @@
 # The subject is the NON-VERSIONED Wallet (models/wallet.yaml): a readless batched
 # UPDATE per key is honest only for a non-versioned entity — a versioned entity's
 # set-based update MUST materialize into per-object version-advancing updates
-# (M10 / ADR 0031).
+# (m-opt-lock / ADR 0031).
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, write-sequence, per-key, slice-mvp-1]
 loadFixtures: true

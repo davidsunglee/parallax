@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/metamodel.schema.json",
-  "title": "Parallax Model Descriptor (M1 metamodel)",
-  "description": "Canonical, serialized form of the M1 metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index + asOfAttribute (the M7 temporal dimension) + inheritance (table-per-hierarchy with a discriminator, or table-per-leaf; table-per-class is REJECTED, DQ9) + valueObject (an embedded composite element mapped to a single dialect-native structured-document column via the M0 `json` neutral type, a deliberate deviation from Reladomo's column-flattening), and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
+  "title": "Parallax Model Descriptor (m-descriptor)",
+  "description": "Canonical, serialized form of the m-descriptor metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index + asOfAttribute (the m-temporal-read temporal dimension) + inheritance (table-per-hierarchy with a discriminator, or table-per-leaf; table-per-class is REJECTED, DQ9) + valueObject (an embedded composite element mapped to a single dialect-native structured-document column via the m-core `json` neutral type, a deliberate deviation from Reladomo's column-flattening), and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
   "type": "object",
   "additionalProperties": false,
   "oneOf": [
@@ -20,7 +20,7 @@
   },
   "$defs": {
     "neutralType": {
-      "description": "M0 neutral data type. The decimal type carries precision/scale, e.g. decimal(18,2). The `json` type is the embedded-value type a valueObject element maps to; M11 maps it to each dialect's structured-document column type.",
+      "description": "m-core neutral data type. The decimal type carries precision/scale, e.g. decimal(18,2). The `json` type is the embedded-value type a valueObject element maps to; m-dialect maps it to each dialect's structured-document column type.",
       "type": "string",
       "pattern": "^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|json|decimal\\([0-9]+,[0-9]+\\))$"
     },
@@ -70,7 +70,7 @@
           "items": { "$ref": "#/$defs/index" }
         },
         "valueObjects": {
-          "description": "Embedded composite elements mapped to dialect-native structured-document columns via the M0 `json` neutral type (M1/M0; a deliberate deviation from Reladomo's column-flattening).",
+          "description": "Embedded composite elements mapped to dialect-native structured-document columns via the m-core `json` neutral type (m-value-object/m-core; a deliberate deviation from Reladomo's column-flattening).",
           "type": "array",
           "items": { "$ref": "#/$defs/valueObject" }
         },
@@ -78,7 +78,7 @@
       },
       "allOf": [
         {
-          "$comment": "Optimistic-lock composition (M1/M7/M10): a temporal (as-of) entity DERIVES its optimistic key from the processing-from column, so it MUST NOT also declare an explicit `optimisticLocking` version attribute. Combining `asOfAttributes` with an `optimisticLocking` attribute on one entity is invalid.",
+          "$comment": "Optimistic-lock composition (m-descriptor/m-temporal-read/m-opt-lock): a temporal (as-of) entity DERIVES its optimistic key from the processing-from column, so it MUST NOT also declare an explicit `optimisticLocking` version attribute. Combining `asOfAttributes` with an `optimisticLocking` attribute on one entity is invalid.",
           "if": { "required": ["asOfAttributes"] },
           "then": {
             "properties": {
@@ -113,7 +113,7 @@
       },
       "allOf": [
         {
-          "$comment": "Explicit optimistic-lock version (M10 / DQ8b): an attribute-level `optimisticLocking: true` version is derived — initialized to `1` on insert and advanced to `observed + 1` on every update, gated in optimistic mode with `and <col> = ?` — so it MUST be an integral type (`int32`/`int64`). A TEMPORAL (as-of) entity locks via its processing `in_z` TIMESTAMP instead and declares no explicit version attribute (the entity-level composition rule above forbids the combination), so this restriction never lands on a timestamp column.",
+          "$comment": "Explicit optimistic-lock version (m-opt-lock / DQ8b): an attribute-level `optimisticLocking: true` version is derived — initialized to `1` on insert and advanced to `observed + 1` on every update, gated in optimistic mode with `and <col> = ?` — so it MUST be an integral type (`int32`/`int64`). A TEMPORAL (as-of) entity locks via its processing `in_z` TIMESTAMP instead and declares no explicit version attribute (the entity-level composition rule above forbids the combination), so this restriction never lands on a timestamp column.",
           "if": {
             "required": ["optimisticLocking"],
             "properties": { "optimisticLocking": { "const": true } }
@@ -149,7 +149,7 @@
           "$ref": "#/$defs/identifier"
         },
         "dependent": {
-          "description": "True when the target is owned by this entity (participates in cascade, M5).",
+          "description": "True when the target is owned by this entity (participates in cascade, m-cascade-delete).",
           "type": "boolean",
           "default": false
         },
@@ -192,7 +192,7 @@
       }
     },
     "asOfAttribute": {
-      "description": "A temporal dimension (M7): a query-time virtual attribute backed by a [from, to) interval over a pair of timestamp columns. An entity with one asOfAttribute is unitemporal (processing or business); with two it is bitemporal. The open upper bound (`to`) is the database-native infinity (M0/M11). Phase 5 (temporal MVP) exercises the single-axis `processing` (audit-only) profile.",
+      "description": "A temporal dimension (m-temporal-read): a query-time virtual attribute backed by a [from, to) interval over a pair of timestamp columns. An entity with one asOfAttribute is unitemporal (processing or business); with two it is bitemporal. The open upper bound (`to`) is the database-native infinity (m-core/m-dialect). Phase 5 (temporal MVP) exercises the single-axis `processing` (audit-only) profile.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "fromColumn", "toColumn", "axis"],
@@ -218,7 +218,7 @@
           "default": false
         },
         "infinity": {
-          "description": "The open-bound sentinel = the database-native infinity (the M11 dialect owns the concrete representation). Always `infinity` in the canonical descriptor; a dialect lacking native infinity maps it to a documented max-sentinel.",
+          "description": "The open-bound sentinel = the database-native infinity (the m-dialect dialect owns the concrete representation). Always `infinity` in the canonical descriptor; a dialect lacking native infinity maps it to a documented max-sentinel.",
           "const": "infinity",
           "default": "infinity"
         },
@@ -230,7 +230,7 @@
       }
     },
     "valueObject": {
-      "description": "An embedded composite element stored as a single dialect-native structured-document column (DQ9 definitely-do). Unlike Reladomo's column-flattening, the whole value object is one M0 `json`-typed column; its inner fields are read/filtered with the M2 nested-attribute access form (`Class.valueObject.path`). The concrete storage type is owned by M11.",
+      "description": "An embedded composite element stored as a single dialect-native structured-document column (DQ9 definitely-do). Unlike Reladomo's column-flattening, the whole value object is one m-core `json`-typed column; its inner fields are read/filtered with the m-op-algebra nested-attribute access form (`Class.valueObject.path`). The concrete storage type is owned by m-dialect.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "type", "column"],
@@ -247,7 +247,7 @@
           "minLength": 1
         },
         "mapping": {
-          "description": "Neutral storage mapping. `json` is the only value-object mapping defined in core; M11 maps it to each dialect's concrete storage type, such as Postgres jsonb or Snowflake VARIANT.",
+          "description": "Neutral storage mapping. `json` is the only value-object mapping defined in core; m-dialect maps it to each dialect's concrete storage type, such as Postgres jsonb or Snowflake VARIANT.",
           "const": "json",
           "default": "json"
         },

@@ -1,4 +1,4 @@
-# PK generation `sequence` (M1) — batchSize block reservation, partial consume.
+# PK generation `sequence` (m-pk-gen) — batchSize block reservation, partial consume.
 #
 # pass_seq: init 1, inc 1, batch 3. ONE allocation reserves a block of 3
 # (next_val 1 -> 4, base 1). Inserting only 2 of the 3 hands out ids 1,2 and LOSES

@@ -6,7 +6,7 @@
 #
 # Cross-dialect (Phase 10): `order by ... limit ?` is identical SQL on Postgres
 # and MariaDB, so this case carries goldenSql for both dialects — the pagination
-# parity witness in the matrix (the row-limit decision point of the M11 seam).
+# parity witness in the matrix (the row-limit decision point of the m-dialect seam).
 model: models/orders.yaml
 tags: [m-op-algebra, orderBy, limit, directive, slice-mvp-1]
 operation:

@@ -1,5 +1,5 @@
 /**
- * M7 as-of predicate injection — the pure derivation the temporal read + deep-fetch
+ * m-temporal-read as-of predicate injection — the pure derivation the temporal read + deep-fetch
  * propagation paths share.
  *
  * The as-of predicate is **never written by the user**: it is derived from the
@@ -7,9 +7,9 @@
  * a pure, dialect-agnostic function over resolved axis metadata (the from/to
  * column expressions, `toIsInclusive`, and the `infinity` sentinel) — it emits no
  * table/alias itself, taking the already-qualified column expressions from its
- * caller, so both the M3 single-entity read lowering (through the injected
- * `SchemaResolver`, `@parallax/sql` staying M7-free) and the M4 deep-fetch
- * propagation (`@parallax/relationships`, the `M4 -> M7` edge) reuse the identical
+ * caller, so both the m-sql single-entity read lowering (through the injected
+ * `SchemaResolver`, `@parallax/sql` staying m-temporal-read-free) and the m-deep-fetch deep-fetch
+ * propagation (`@parallax/relationships`, the `m-navigate -> m-temporal-read` edge) reuse the identical
  * rule.
  *
  * The per-axis rules (m-temporal-read.md §"As-of read predicates"):
@@ -34,7 +34,7 @@ export const CANONICAL_AXIS_ORDER = ["business", "processing"] as const;
 /** A temporal axis identity. */
 export type Axis = (typeof CANONICAL_AXIS_ORDER)[number];
 
-/** The temporal-infinity sentinel (the open upper bound), M0's `"infinity"`. */
+/** The temporal-infinity sentinel (the open upper bound), m-core's `"infinity"`. */
 export const INFINITY = "infinity" as const;
 
 /** A bind value the as-of predicate contributes (an instant string or `infinity`). */
@@ -43,7 +43,7 @@ export type AsOfBind = string;
 /**
  * A resolved as-of axis: its axis identity plus the **already-qualified** column
  * expressions (e.g. `t0.from_z`), the half-open/closed flag, and the axis's
- * infinity sentinel. The caller (the M3 resolver or the M4 propagation) resolves
+ * infinity sentinel. The caller (the m-sql resolver or the m-navigate propagation) resolves
  * these from the metamodel; this module never touches an alias or a metamodel.
  */
 export interface ResolvedAxis {

@@ -1,6 +1,6 @@
-# Timestamp UTC normalization at the boundary (M0 timezone rule).
+# Timestamp UTC normalization at the boundary (m-core timezone rule).
 #
-# M0 mandates that a `timestamp` is stored as an instant normalized to UTC at the
+# m-core mandates that a `timestamp` is stored as an instant normalized to UTC at the
 # boundary. This inserts an offset-bearing instant — 2024-03-01T05:30:00 at
 # +05:30 — and asserts it is stored and read back as the SAME instant in UTC:
 # 2024-03-01T00:00:00+00:00. Postgres normalizes natively (timestamptz); the

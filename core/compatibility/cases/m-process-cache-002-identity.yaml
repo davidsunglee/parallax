@@ -1,4 +1,4 @@
-# Identity scenario (M8): two finds for the same primary key denote the SAME
+# Identity scenario (m-process-cache): two finds for the same primary key denote the SAME
 # logical object.
 #
 # The identity cache interns objects one-per-primary-key. Here two DIFFERENT

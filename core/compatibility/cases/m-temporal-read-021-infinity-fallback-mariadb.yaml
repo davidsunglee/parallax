@@ -2,7 +2,7 @@
 #
 # The as-of-now current-row predicate is `t0.out_z = ?` with `binds: [infinity]`
 # — IDENTICAL golden SQL on both dialects. The divergence is the PHYSICAL infinity
-# the `?` bind carries, owned entirely by the M11 seam:
+# the `?` bind carries, owned entirely by the m-dialect seam:
 #
 #   * Postgres : native `'infinity'::timestamptz`.
 #   * MariaDB  : no native timestamp infinity, so the seam maps the suite's

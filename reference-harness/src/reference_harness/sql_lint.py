@@ -7,8 +7,8 @@ Run as a module against the compatibility tree::
 For every case this checks, without touching a database:
 
 * each ``goldenSql[dialect]`` parses under that dialect (sqlglot);
-* each ``goldenSql[dialect]`` is already a **fixed point** of M3 normalization
-  (``normalize(goldenSql) == goldenSql``) — the M12 layer-3 property, enforced
+* each ``goldenSql[dialect]`` is already a **fixed point** of m-sql normalization
+  (``normalize(goldenSql) == goldenSql``) — the m-case-format layer-3 property, enforced
   statically so non-canonical golden SQL fails before any database run;
 * ``referenceSql`` (when present) parses (it is naive by design, so it is NOT
   required to be canonical).
@@ -36,10 +36,10 @@ def _load_yaml(path: Path) -> Any:
 
 
 def _lint_benchmarks(compatibility_root: Path, errors: list[str]) -> None:
-    """Lint every benchmark workload's golden SQL (M13, Phase 11).
+    """Lint every benchmark workload's golden SQL (m-perf-bench, Phase 11).
 
     Benchmark fixtures live under ``benchmarks/`` (not ``cases/``) and carry their
-    golden SQL per workload. Each statement must parse and be a fixed point of M3
+    golden SQL per workload. Each statement must parse and be a fixed point of m-sql
     normalization, exactly like a case's golden SQL — so a non-canonical benchmark
     query fails statically rather than only at run time.
     """
@@ -95,7 +95,7 @@ def lint_tree(compatibility_root: Path) -> list[str]:
                         name,
                         errors,
                     )
-        # An error case (M11) may carry its golden SQL inside a two-connection
+        # An error case (m-db-error) may carry its golden SQL inside a two-connection
         # `concurrency` choreography (deadlock / timeout); lint each node step's.
         concurrency = case.get("concurrency")
         if isinstance(concurrency, dict):
@@ -147,7 +147,7 @@ def _lint_golden(golden: Any, where: str, name: str, errors: list[str]) -> None:
 
     *golden* is a ``goldenSql`` mapping (dialect -> statement | [statements]),
     used both for a case's top-level golden SQL and for a scenario step's. Each
-    statement must parse under its dialect and be a fixed point of M3
+    statement must parse under its dialect and be a fixed point of m-sql
     normalization; *where* labels the source (``goldenSql`` or
     ``scenario[i].goldenSql``).
     """

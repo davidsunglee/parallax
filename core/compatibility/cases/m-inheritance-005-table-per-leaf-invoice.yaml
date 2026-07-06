@@ -1,4 +1,4 @@
-# Table-per-leaf leaf query: find all Invoices (M1 inheritance, M3).
+# Table-per-leaf leaf query: find all Invoices (m-inheritance inheritance, m-sql).
 #
 # Each concrete leaf maps to its OWN table, so an Invoice query is an ordinary
 # single-table read of the `invoice` table with NO discriminator predicate — the

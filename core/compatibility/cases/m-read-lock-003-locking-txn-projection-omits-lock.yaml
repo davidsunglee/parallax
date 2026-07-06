@@ -1,4 +1,4 @@
-# Read-lock matrix (M8 / M11): a projection/aggregation read inside a LOCKING unit
+# Read-lock matrix (m-read-lock / m-dialect): a projection/aggregation read inside a LOCKING unit
 # of work proceeds UNLOCKED — the D2 reversal — `api-conformance` lane.
 #
 # The complement to `m-read-lock-002`: a `distinct`/projection read inside `px.transaction(
@@ -12,7 +12,7 @@
 #
 # `lane: api-conformance`: the reversal (a projection proceeds unlocked instead of
 # throwing) is a runtime property the language's API Conformance Suite proves; the
-# M12 harness schema-validates the case.
+# m-case-format harness schema-validates the case.
 model: models/account.yaml
 tags: [m-read-lock, m-dialect, m-api-conformance, locking-mode, slice-mvp-1]
 lane: api-conformance

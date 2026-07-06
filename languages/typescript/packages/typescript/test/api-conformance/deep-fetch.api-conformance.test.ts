@@ -14,7 +14,7 @@
  * A developer's deep fetch returns FULL managed objects; the corpus `expectedGraph`
  * is a projection witness, so the harness compares only the columns the witness
  * names. Temporal deep fetch propagates the root's as-of pins per hop identically
- * to the graded runtime (same M3 compiler + M4 strategy).
+ * to the graded runtime (same m-sql compiler + m-navigate strategy).
  */
 
 import { Temporal } from "@parallax/core";
@@ -141,7 +141,7 @@ const CASES: readonly Row[] = [
         includes: [path("Order.itemsByShipDate")],
       }),
   },
-  // temporal deep fetch (03xx graph, m7)
+  // temporal deep fetch (03xx graph, m-temporal-read)
   {
     stem: "m-navigate-012-deepfetch-temporal-both-latest",
     entity: "Policy",
@@ -260,7 +260,7 @@ it("the deep-fetch suite covers exactly the DEEP_FETCH family", () => {
   expect(CASES.map((c) => c.stem).sort()).toEqual([...DEEP_FETCH].sort());
 });
 
-// Deep fetch is read-only (the dialect-aware M3 compiler + M4 assembly), so the suite
+// Deep fetch is read-only (the dialect-aware m-sql compiler + m-deep-fetch assembly), so the suite
 // fans out over every database `PARALLAX_DATABASES` selects (default Postgres).
 group.skipIf(!HAS_DOCKER).each(selectedProviders())("deep-fetch suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;

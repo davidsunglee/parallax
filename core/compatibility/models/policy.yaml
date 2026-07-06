@@ -2,7 +2,7 @@
 # temporal x relationships crossing (as-of propagation). Mirrors position.yaml's
 # bitemporal shape (two axes, half-open [from, to), open bound = infinity) but
 # adds relationships so an as-of read can navigate/deep-fetch across temporal
-# hops. Per M4's as-of-propagation rule, the root pin propagates per-hop, matched
+# hops. Per m-navigate's as-of-propagation rule, the root pin propagates per-hop, matched
 # by axis, to every temporal entity reached; the harness derives and enforces the
 # propagated child predicate (the propagation oracle).
 #
