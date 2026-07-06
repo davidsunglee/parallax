@@ -13,7 +13,7 @@
  *    (`sameObjectAs`), costing zero round trips.
  *
  * A scenario is NEVER compiled to SQL by the adapter (the golden per step is
- * authored, not derived — `m12-compatibility-harness.md`): read-your-own-writes,
+ * authored, not derived — `m-case-format.md`): read-your-own-writes,
  * cache reuse and identity are observable RUN properties. This module resolves the
  * ordered steps + their authored golden/binds so the runner can execute them; the
  * `m-unit-work-001` slice is the single read-your-own-writes scenario (a committed insert +

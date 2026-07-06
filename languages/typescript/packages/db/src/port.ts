@@ -1,6 +1,6 @@
 /**
  * `@parallax/db` — the abstract runtime **database port** (M11 decomposition,
- * core spec `m11-dialect-seam.md` → *M11 decomposition*, layer 2).
+ * core spec `m-db-port.md`, layer 2).
  *
  * This is the execution interface every layer above the seam calls to run
  * compiled SQL and demarcate transactions: `execute(sql, binds) → rows`,

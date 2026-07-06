@@ -59,10 +59,10 @@ implementation can adopt functionality in a defensible order:
 | M13 Performance | Repeatable benchmark datasets, workloads, and report shape |
 | Coherence | Multi-process cache invalidation expectations over a shared database |
 
-`core/spec/scope-and-tiers.md` marks each capability as MVP, fast-follow,
-definitely-do, might-do, or won't-do. `core/spec/dependency-graph.md` gives the
-normative module DAG and is checked by the harness tooling, so coverage cannot
-drift away from the published scope.
+`core/spec/modules.md` is the module catalog — each module's status
+(`active` / `deferred`) and the normative module DAG — checked by the harness
+tooling so coverage cannot drift away from the published catalog.
+`core/spec/slices.md` declares the slices that compose modules into deliverables.
 
 ### 2. Describe the domain with models
 
@@ -238,7 +238,7 @@ specific SQL.
 Building an idiomatic Parallax for a new language starts by declaring a
 **Conformance Slice**: the subset of the compatibility corpus this first build
 claims right now, captured as a machine-readable `describe` claim (see
-[`core/spec/scope-and-tiers.md`](core/spec/scope-and-tiers.md)). A slice is
+[`core/spec/slices.md`](core/spec/slices.md)). A slice is
 case-granular — it may claim some features of a module while deferring others,
 without redefining that module's boundary — so an early build can commit to
 exactly what it can honestly prove.
@@ -246,12 +246,12 @@ exactly what it can honestly prove.
 The declared slice is then proven two ways, and both are official deliverables:
 
 - the wire-level **conformance-adapter grade** in
-  [`core/spec/conformance-adapter-contract.md`](core/spec/conformance-adapter-contract.md)
+  [`core/spec/m-conformance-adapter.md`](core/spec/m-conformance-adapter.md)
   — the SQL and observations your adapter emits, compared against the corpus
   oracles; and
 - the developer-surface **API Conformance Suite** and its rendered **Usage
   Guide** in
-  [`core/spec/api-conformance-contract.md`](core/spec/api-conformance-contract.md)
+  [`core/spec/m-api-conformance.md`](core/spec/m-api-conformance.md)
   — the idiomatic code an application writes, run through the shipped adapter
   against a real database, reproducing the corpus's results.
 

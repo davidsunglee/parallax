@@ -1,12 +1,13 @@
-# M12 — Compatibility Harness & Test-Double Integration
+# m-case-format — Compatibility Case Format & Harness
 
-`M12` is the **compatibility-case contract** and the no-mock, real-database
-harness that proves it. It is **tooling, not an ORM**: it **never compiles
-operations to SQL** — that is exactly what a real implementation must do and
-prove against the golden SQL. The harness only proves the *suite itself* is
+`m-case-format` is the **compatibility-case contract** and the no-mock,
+real-database harness that proves it. It is **tooling, not an ORM**: it **never
+compiles operations to SQL** — that is exactly what a real implementation must do
+and prove against the golden SQL. The harness only proves the *suite itself* is
 internally consistent and that the golden SQL is correct for the data, across
-every database behind the provider seam. `M12` depends on `M2`, `M3`, `M4`,
-`M7`, `M8`, `M9`, and `M10`.
+every database behind the provider seam. As a conformance-family module,
+`m-case-format` declares only the structural edge `m-case-format --> m-core`; by
+construction it harnesses (references) every behavioral module it grades.
 
 The canonical reference implementation is `reference-harness/` (Python + uv +
 sqlglot). Its *contract* is language-neutral; another ecosystem can re-implement
@@ -41,30 +42,31 @@ identity is only ever resolved against the catalog, never inferred from a filena
 Its fields:
 
 A case is one of eight shapes: a **read case** (carries an `operation`), a
-**writeSequence case** (carries a `writeSequence`, Phase 5 / M7), a **scenario
-case** (carries a `scenario` of ordered read *and* committed-write steps, Phase
-6 / M8), a **conflict case** (carries `expectedAffectedRows` for a single
-attempt, or an `attempts` retry sequence, Phase 7 / M10), a **coherence
-case** (carries a `coherence` two-node sequence, Phase 11 / cross-process
-coherence), an **error case** (carries `errorClass` and
-`expectedNativeCode`, Phase 12 / M11 error-code classification — including the
+**writeSequence case** (carries a `writeSequence` — the temporal writes
+`m-audit-write` / `m-bitemp-write` / `m-business-only`, the set-based
+`m-batch-write`, `m-cascade-delete`, and `m-detach` merge-backs), a **scenario
+case** (carries a `scenario` of ordered read *and* committed-write steps,
+`m-unit-work`), a **conflict case** (carries `expectedAffectedRows` for a single
+attempt, or an `attempts` retry sequence, `m-opt-lock`), a **coherence case**
+(carries a `coherence` two-node sequence, `m-coherence`), an **error case**
+(carries `errorClass` and `expectedNativeCode`, `m-db-error` — including the
 two-connection `concurrency` deadlock / lock-wait choreography), a
 **concurrency-success case** (carries a `concurrency` choreography with **no**
-`errorClass`, M8 behavioral read-lock — barrier-separated rounds on two held
-sessions that assert no error is raised; every present step declares an explicit
-`kind` (a `read` step's `expectRows` is observed on its held session, a `write`
-step omits it and asserts only that it did not block/raise); proves the shared
-read lock is compatible with a second reader and that an unlocked projection
-admits a writer), or a **boundary case** (carries `boundary` + `expect`, M8/M10 bounded automatic retry — an
-`api-conformance`-lane case the harness schema-validates but does not execute).
-The fields:
+`errorClass`, `m-read-lock` behavioral read-lock — barrier-separated rounds on two
+held sessions that assert no error is raised; every present step declares an
+explicit `kind` (a `read` step's `expectRows` is observed on its held session, a
+`write` step omits it and asserts only that it did not block/raise); proves the
+shared read lock is compatible with a second reader and that an unlocked projection
+admits a writer), or a **boundary case** (carries `boundary` + `expect`,
+`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
+does not execute). The fields:
 
 | Field | Required | Meaning |
 |---|---|---|
 | `model` | yes | path (relative to `core/compatibility/`) to the model descriptor |
 | `tags` | yes | module/feature tags (e.g. `["m-op-algebra", "eq"]`); drive coverage + test selection |
-| `lane` | no | which executor satisfies the case (default `harness`): `harness` — the M12 harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
-| `operation` | read | a canonical M2 algebra node, validated against the operation schema (read cases) |
+| `lane` | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
+| `operation` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
 | `writeSequence` | write | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only + business-only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the full-bitemporal rectangle split |
 | `equivalentEncodings` | no | alternate surface encodings of `operation` (e.g. a prefix vs a fluent spelling); each MUST canonicalize to `operation` |
 | `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit — a single statement, or an **ordered list** of statements (one per deep-fetch level, or one per write-sequence DML step) |
@@ -121,7 +123,7 @@ the harness asserts:
    a `tolerance`, making the numeric comparison `abs(actual - expected) <=
    tolerance`. Booleans compare only to booleans (`true` is never `1`).
 3. **Normalization determinism** — `normalize(goldenSql[dialect]) ==
-   goldenSql[dialect]` via sqlglot, per the M3 rules (alias scheme `t0,t1,…`,
+   goldenSql[dialect]` via sqlglot, per the `m-sql` rules (alias scheme `t0,t1,…`,
    sorted binds, whitespace-collapsed, deterministic clause order).
 4. **Serde round-trip** — `serialize(deserialize(x)) == x` for **both** the
    `operation` encoding *and* the model descriptor (the descriptor **is** the
@@ -168,7 +170,7 @@ golden's hand-authored ids actually follow the declared strategy (block
 reservation, gap-on-unused, stride). `max` is pinned by its self-describing
 `coalesce(max(...),0)+1` golden and needs no oracle.
 
-### Write-sequence cases (M7 / M8 / M9 / M5)
+### Write-sequence cases
 
 A **writeSequence** case proves a write contract by *application*, not
 introspection. The harness provisions a table, **applies the ordered DML golden
@@ -184,12 +186,12 @@ SQL is normalized to a fixed point exactly like read SQL (layer 3).
 
 A writeSequence case MAY set **`loadFixtures: true`** to load the model's
 fixtures **before** the ordered DML (instead of starting empty) — so a sequence
-can mutate a *pre-existing* persisted row. This is the M9 detached-update
+can mutate a *pre-existing* persisted row. This is the `m-detach` detached-update
 or detached-delete merge-back case, and the minimal dependent cascade-delete
 witness: the original rows exist, the ordered DML mutates them, and the asserted
 table state shows which rows changed or were removed.
 
-### Conflict cases (M10)
+### Conflict cases (`m-opt-lock`)
 
 A **conflict** case proves optimistic-lock conflict detection by the **affected-
 row count** a golden `UPDATE` leaves behind. The harness loads the model's
@@ -206,14 +208,14 @@ round-trip and the golden-SQL normalization layers apply (there is no
 
 A conflict case MAY instead carry an **`attempts`** retry sequence — an ordered
 list of golden `UPDATE`s, each with its own `expectedAffectedRows` — proving the
-**M10 retry contract** end-to-end. After the `precondition`, the harness applies
-each attempt in order and asserts its affected-row count: the first (stale-
+**`m-opt-lock` retry contract** end-to-end. After the `precondition`, the harness
+applies each attempt in order and asserts its affected-row count: the first (stale-
 version) attempt affects `0` rows (the conflict signal), then a retry that re-
 reads the now-fresh version and re-applies affects `1`. The final
 `expectedTableState` confirms the retried write — not the concurrent writer's —
 landed. (Golden SQL lives per attempt, so there is no top-level `goldenSql`.)
 
-### Scenario cases (M8)
+### Scenario cases (`m-unit-work`)
 
 A **scenario** case proves the unit-of-work / identity / query-cache contract as
 an ordered list of steps over one provisioned database. A **read step** issues a
@@ -225,23 +227,23 @@ it (and cannot be modeled as a cache hit, since reusing the stale pre-write rows
 would fail the post-write `expectRows`). A write step defaults to **committing**
 its DML; with **`rollback: true`** the harness applies the DML then **rolls it
 back** (through the provider's manual-commit session seam) — the observable form
-of the M8 **abort contract**: a later find MUST re-resolve and observe the
-ORIGINAL rows, never the aborted write. A write step with **`roundTrips: 0`** and
+of the `m-unit-work` **abort contract**: a later find MUST re-resolve and observe
+the ORIGINAL rows, never the aborted write. A write step with **`roundTrips: 0`** and
 no golden SQL is a **no-op** write — a versioned `UPDATE` whose `set` changes no
-attribute issues no DML (`M10`) — and executes nothing, exactly like a cache-hit
-read step. The rolled-back DML still executes, so it counts its statements as
-round trips exactly as a committed write does. The harness asserts per-step
-round-trip / golden-SQL count consistency, executes each step, and checks
+attribute issues no DML (`m-opt-lock`) — and executes nothing, exactly like a
+cache-hit read step. The rolled-back DML still executes, so it counts its
+statements as round trips exactly as a committed write does. The harness asserts
+per-step round-trip / golden-SQL count consistency, executes each step, and checks
 `sameObjectAs` identity assertions; it never compiles an operation to SQL.
 
 A case MAY carry a top-level **`uow`** block (`{ concurrency: locking |
-optimistic }`) declaring the unit-of-work strategy its golden SQL runs under (`M8`
-strategy selection). The block is **descriptive**: the harness executes the
-authored golden SQL either way — the block records which mode produced it, so an
-optimistic conflict case's gated `UPDATE` and a locking-mode case's ungated
-version-advancing `UPDATE` are self-describing. Its default is `locking`.
+optimistic }`) declaring the unit-of-work strategy its golden SQL runs under
+(`m-unit-work` strategy selection). The block is **descriptive**: the harness
+executes the authored golden SQL either way — the block records which mode produced
+it, so an optimistic conflict case's gated `UPDATE` and a locking-mode case's
+ungated version-advancing `UPDATE` are self-describing. Its default is `locking`.
 
-### Coherence cases (M14 cross-process coherence)
+### Coherence cases (`m-coherence`)
 
 A **coherence** case proves the cross-process cache-coherence contract (one node
 observes another's committed write) by running a two-node operation sequence over
@@ -257,19 +259,19 @@ descriptor survive serde (layer 4). The harness contains no cache and no
 notification bus; it proves the suite's post-write golden SQL is correct against
 real, committed, cross-connection data — the observable contract any conforming
 invalidation mechanism (full-cache re-fetch or partial-cache mark-dirty) must
-satisfy. See [`m14-cross-process-coherence.md`](m14-cross-process-coherence.md).
+satisfy. See [`m-coherence.md`](m-coherence.md).
 
 A read step MAY additionally declare `sameObjectAs` (with an optional
 `identityAttr`): the harness asserts its observed rows carry the same primary-key
-identity as an earlier same-node read, exercising M14's identity-preservation
-contract (the refresh updates the interned object in place rather than forking a
-new one for the same primary key).
+identity as an earlier same-node read, exercising `m-coherence`'s
+identity-preservation contract (the refresh updates the interned object in place
+rather than forking a new one for the same primary key).
 
-### Error cases (M11 error-code classification)
+### Error cases (`m-db-error`)
 
-- **error** (M11 error-code classification) — triggers a *real* database error and
-  asserts the neutral category it classifies to (`errorClass`) plus the per-dialect
-  native code (`expectedNativeCode`). `uniqueViolation` cases trigger
+- **error** (`m-db-error` error-code classification) — triggers a *real* database
+  error and asserts the neutral category it classifies to (`errorClass`) plus the
+  per-dialect native code (`expectedNativeCode`). `uniqueViolation` cases trigger
   single-connection: ordered golden DML whose final statement raises (a duplicate
   insert / a colliding update). `deadlock` and `lockWaitTimeout` cases trigger
   two-connection: a `concurrency` choreography of barrier-separated rounds, each
@@ -284,18 +286,18 @@ new one for the same primary key).
   partition, so the harness exercises the interface the language implementations
   build, not a harness-only shortcut.
 
-### Boundary cases (M8 / M10 bounded automatic retry)
+### Boundary cases (`m-auto-retry`)
 
 A **boundary** case proves the unit-of-work **bounded automatic retry** contract
-(`M8` *Bounded automatic retry*, `M10` *Retry contract*): a loop-mechanics branch
+(`m-auto-retry`, `m-opt-lock` *Retry contract*): a loop-mechanics branch
 whose observable — a retriable failure auto-retried away, a conflict surfaced
 without the opt-in, a disabled loop (`retries: 0`), an exhausted bound, a callback
 value withheld on abort — a **single-connection** harness cannot provoke, because
 it needs an **injected transient failure** and a re-executed closure. It carries a
 portable `boundary` (the ordered unit-of-work actions), an OPTIONAL `inject` (a
 portable fault kind — `serialization-failure` / `deadlock` / `lock-wait-timeout` /
-`optimistic-lock-conflict`, aligned with the `M11` `errorClass` vocabulary), an
-`expect` (the portable outcome — `committed`, or a surfaced error kind), and its
+`optimistic-lock-conflict`, aligned with the `m-db-error` `errorClass` vocabulary),
+an `expect` (the portable outcome — `committed`, or a surfaced error kind), and its
 retry configuration under `uow` (`retries` / `retryOptimisticConflicts`). It
 carries **no** golden SQL — the concrete DML and error types stay per-language.
 Every boundary case is on the `api-conformance` lane.
@@ -305,7 +307,7 @@ Every boundary case is on the `api-conformance` lane.
 Every case declares a **lane** (`lane`, default `harness`) naming which executor
 satisfies it:
 
-- **`harness`** — the M12 harness executes the case as today: it runs the golden
+- **`harness`** — the harness executes the case as today: it runs the golden
   SQL / data observables against a provisioned database.
 - **`api-conformance`** — the harness **schema-validates** the case (layer 1) but
   does **not** execute it: its observable is a runtime-loop or read-lock-matrix
@@ -330,7 +332,7 @@ seam so provisioning can be swapped without touching the assertion layer:
   `dialect` identifier. **Testcontainers** is the default mechanism, pinned at
   the latest stable Postgres major; a language **MAY** substitute an embedded
   binary that satisfies the same reset/isolation contract. An **optional**
-  `open_peer` capability (Phase 11) yields a second, independent connection to the
+  `open_peer` capability yields a second, independent connection to the
   **same** database — modeling a peer application server (node B) for coherence
   cases; a provider that omits it simply cannot run coherence cases.
 - **Runner + assertions.** The case runner applies the four (later five) layers
@@ -351,8 +353,8 @@ per-language unit tests. Each per-language spec specifies how its test runner
 ## Language implementation conformance adapter
 
 The reference harness proves the corpus itself is coherent. A concrete language
-implementation proves conformance through the M12-adjacent adapter contract in
-[`conformance-adapter-contract.md`](conformance-adapter-contract.md).
+implementation proves conformance through the adjacent adapter contract in
+[`m-conformance-adapter.md`](m-conformance-adapter.md).
 
 That adapter is the external seam between a corpus runner and a language
 implementation. It exposes a small command surface (`describe`, `compile`,

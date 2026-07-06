@@ -133,7 +133,7 @@ then fails if generation would fail. Since generated files are not committed,
 Conformance is exposed through the separate `parallax-conformance` CLI adapter,
 not through the generated `#parallax` API. Each conformance command writes the
 JSON envelope required by
-[`../../../core/spec/conformance-adapter-contract.md`](../../../core/spec/conformance-adapter-contract.md)
+[`../../../core/spec/m-conformance-adapter.md`](../../../core/spec/m-conformance-adapter.md)
 to stdout.
 
 The M13 benchmark command is a post-slice conformance command:
@@ -626,7 +626,7 @@ The implementation should enforce module dependency boundaries mechanically with
 a TypeScript ecosystem tool such as `dependency-cruiser` or
 `eslint-plugin-boundaries`, mapping implementation modules to the core
 dependency graph in
-[`../../../core/spec/dependency-graph.md`](../../../core/spec/dependency-graph.md).
+[`../../../core/spec/modules.md`](../../../core/spec/modules.md).
 Implementation source lives under `languages/typescript/packages/*`; the
 surrounding `languages/typescript/spec` and `languages/typescript/docs`
 directories are documentation. The non-numbered `@parallax/typescript` package is

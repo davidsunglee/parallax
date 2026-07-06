@@ -2,7 +2,7 @@
 /**
  * `parallax-conformance` — the conformance adapter CLI.
  *
- * Contract (`core/spec/conformance-adapter-contract.md`): each command writes
+ * Contract (`core/spec/m-conformance-adapter.md`): each command writes
  * exactly one JSON document to stdout that validates against
  * `conformance-adapter.schema.json`; stderr is free-form diagnostics; exit codes
  * are `0` ok, `10` unsupported, `1` error, `2` CLI usage error.

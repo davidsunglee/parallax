@@ -12,7 +12,7 @@
  * mechanism: if a concurrent transaction advanced the row's version since the
  * unit of work observed it, the stale gate matches ZERO rows and the `UPDATE`
  * affects none — the `updatedRows != 1` conflict signal
- * (`m10-optimistic-locking.md`). A fresh version matches exactly ONE row
+ * (`m-opt-lock.md`). A fresh version matches exactly ONE row
  * (success) and the advance moves the gate forward so the next writer's check
  * stays meaningful. In LOCKING mode the M8 shared read lock makes the write
  * correct, so the version advances WITHOUT a gate ({@link versionAdvancingUpdate},
