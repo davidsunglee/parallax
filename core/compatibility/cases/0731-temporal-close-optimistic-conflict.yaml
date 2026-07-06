@@ -17,7 +17,7 @@
 # expectedTableState is the fixtures + the precondition's two id-2 rows (our stale
 # close applied nothing).
 model: models/balance.yaml
-tags: [m7, m10, m3, temporal, conflict, optimistic, slice-mvp-1]
+tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1]
 uow:
   concurrency: optimistic
 # A concurrent writer fully chained id 2: close the old current row at 2024-09-01,

@@ -20,7 +20,7 @@
 # chain (value corrected, in_z = 2024-10-01, out_z = infinity — a plain ungated INSERT
 # whose fresh in_z is the version advance) is NOT inserted here.
 model: models/balance.yaml
-tags: [m7, m10, m3, temporal, conflict, optimistic, slice-mvp-1]
+tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1]
 uow:
   concurrency: optimistic
 write: { id: 2 }

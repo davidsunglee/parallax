@@ -1,6 +1,6 @@
 # not — logical negation wrapping a single inner operation.
 model: models/orders.yaml
-tags: [m2, not, boolean, slice-mvp-1]
+tags: [m-op-algebra, not, boolean, slice-mvp-1]
 operation:
   not:
     operand:

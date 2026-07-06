@@ -11,7 +11,7 @@
 # (total 2). The point of this scenario is not round-trip elimination (that is the
 # cache-hit scenario) but identity: same PK => same object.
 model: models/account.yaml
-tags: [m8, transactions cache, identity cache, identity, scenario]
+tags: [m-process-cache, identity cache, identity, scenario]
 roundTrips: 2
 scenario:
   - find:

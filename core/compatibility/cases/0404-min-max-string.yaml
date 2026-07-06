@@ -5,7 +5,7 @@
 # is `ada` and the maximum is `Margaret`. The independent referenceSql oracle
 # runs the same min/max so the ordering is proven against real data, not assumed.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, min, max, string]
+tags: [m-agg, m-sql-agg, min, max, string]
 operation:
   groupBy:
     operand:

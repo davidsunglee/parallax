@@ -20,7 +20,7 @@
 #   2  read  on B : B's re-fetch observes the POST-WRITE balance 999.00, proving the
 #                   cache converged on A's committed write rather than serving 250.00.
 model: models/account.yaml
-tags: [coherence, cross-process, m14, full-cache-refetch]
+tags: [m-coherence, full-cache-refetch]
 coherence:
   - node: B
     kind: read

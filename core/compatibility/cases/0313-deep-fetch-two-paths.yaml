@@ -11,7 +11,7 @@
 # semantics for the order's status events. Orders 3, 4, 5 have neither items nor
 # statuses ⇒ both lists empty.
 model: models/orders.yaml
-tags: [m4, m5, deepFetch, to-many, relationship, slice-mvp-1]
+tags: [m-deep-fetch, m-op-list, to-many, relationship, slice-mvp-1]
 operation:
   deepFetch:
     operand:

@@ -110,7 +110,7 @@ const OUT_OF_CLAIM: readonly {
     code: "unsupported-dialect",
   },
   {
-    label: "an unclaimed module tag (m9)",
+    label: "an unclaimed module tag (m-detach)",
     casePath: "core/compatibility/cases/0702-detached-update.yaml",
     dialect: "postgres",
     code: "unsupported-case-tag",
@@ -123,7 +123,7 @@ const OUT_OF_CLAIM: readonly {
   },
   {
     label: "an untagged in-claim-module read",
-    casePath: "core/compatibility/cases/0401-sum-group-by-having.yaml",
+    casePath: "core/compatibility/cases/0820-business-as-of-now-defaulted.yaml",
     dialect: "postgres",
     code: "missing-include-tag",
   },

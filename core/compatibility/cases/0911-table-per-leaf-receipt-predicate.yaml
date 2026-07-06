@@ -4,7 +4,7 @@
 # injected (the leaf is selected by its table); the user predicate is the only
 # WHERE clause. The single authored receipt (paidAmount 120.00) qualifies.
 model: models/document.yaml
-tags: [m1, m3, inheritance, table-per-leaf]
+tags: [m-inheritance, m-sql, table-per-leaf]
 operation:
   greaterThanEquals: { attr: Receipt.paidAmount, value: 120.00 }
 goldenSql:

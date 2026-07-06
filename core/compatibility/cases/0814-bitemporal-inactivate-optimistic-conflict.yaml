@@ -18,7 +18,7 @@
 #
 # Harness-only (bitemporal writes are outside slice-mvp-1).
 model: models/position.yaml
-tags: [m7, m10, m3, bitemporal, temporal, conflict, optimistic]
+tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict]
 uow:
   concurrency: optimistic
 # A concurrent writer re-chained R3: inactivate it on the processing axis at 2024-05-01,

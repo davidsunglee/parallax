@@ -13,7 +13,7 @@
 # contract is asserted from the declared counts plus the listed golden SQL, then
 # the listed statement is executed to confirm it returns the expected row.
 model: models/account.yaml
-tags: [m8, transactions cache, query cache, cache-hit, scenario]
+tags: [m-process-cache, query cache, cache-hit, scenario]
 roundTrips: 1
 scenario:
   - find:

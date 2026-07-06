@@ -21,7 +21,7 @@
 # the same current rows on both dialects (native infinity and the max-sentinel are
 # both far above the year-9000 floor, while every finite milestone is below it).
 model: models/balance.yaml
-tags: [m7, m11, m3, temporal mvp, as-of, audit-only, infinity-fallback, dialect]
+tags: [m-temporal-read, m-dialect, m-sql, as-of, audit-only, infinity-fallback]
 operation:
   all: {}
 goldenSql:

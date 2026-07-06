@@ -23,7 +23,7 @@
 # extra observed-version bind — the version is framework-owned (ADR 0029), never a
 # caller number. roundTrips = 4 (materialize read + two per-object updates + verify read).
 model: models/account.yaml
-tags: [m10, m3, m8, optimistic-locking, materialize, set-based, scenario, slice-mvp-1]
+tags: [m-opt-lock, m-sql, m-unit-work, materialize, set-based, scenario, slice-mvp-1]
 uow:
   concurrency: optimistic
 roundTrips: 4

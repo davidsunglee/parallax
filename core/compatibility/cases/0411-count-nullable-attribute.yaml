@@ -1,7 +1,7 @@
 # count(*) versus count(nullable_attr): grouped by active flag, Order.sku proves
 # count(attr) skips NULL while count(*) counts every row.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, count, nullable, groupBy]
+tags: [m-agg, m-sql-agg, count, nullable, groupBy]
 operation:
   groupBy:
     operand:

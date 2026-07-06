@@ -8,7 +8,7 @@
 # (schema conformance + golden-SQL equivalence + normalization + operation/
 # metamodel serde round-trip) end-to-end, hence the `m12` tag.
 model: models/orders.yaml
-tags: [m2, m12, all, slice-mvp-1]
+tags: [m-op-algebra, m-conformance-adapter, m-case-format, all, slice-mvp-1]
 operation:
   all: {}
 goldenSql:

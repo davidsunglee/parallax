@@ -11,7 +11,7 @@
 # (one per relationship level) with one bind list per statement — the child levels
 # keyed by the parent IN-list. The generated dataset builds P orders, each with K
 # items, each item with K statuses, so the fan-out is real.
-tags: [m13, benchmark, deep-fetch]
+tags: [m-perf-bench, deep-fetch]
 model: models/orders.yaml
 dataset:
   generate:

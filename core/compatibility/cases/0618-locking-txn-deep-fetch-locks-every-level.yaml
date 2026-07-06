@@ -15,7 +15,7 @@
 # expected emitted SQL — the ordinary `0310` deep fetch with the lock appended to
 # each level.
 model: models/orders.yaml
-tags: [m8, m11, m4, m5, read-lock, locking-mode, deepFetch, slice-mvp-1]
+tags: [m-read-lock, m-dialect, m-deep-fetch, m-op-list, m-api-conformance, locking-mode, slice-mvp-1]
 lane: api-conformance
 uow:
   concurrency: locking

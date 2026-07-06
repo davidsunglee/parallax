@@ -4,7 +4,7 @@
 # stride 10 -> next_val advances by 2*10=20 (100 -> 120), base 100; ids 100,110.
 model: models/pk-sequence.yaml
 loadFixtures: true
-tags: [m1, m8, pk-generation, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
 writeSequence:
   - mutation: update
     entity: PkSequence

@@ -17,7 +17,7 @@
 #   2  read  on B : B re-fetches PK 2; observes the new 777.00 AND the SAME object
 #                   identity as step 0 (sameObjectAs 0).
 model: models/account.yaml
-tags: [coherence, cross-process, m14, identity, identity-preservation]
+tags: [m-coherence, identity, identity-preservation]
 coherence:
   - node: B
     kind: read

@@ -1,6 +1,6 @@
 # notEq — inequality predicate. Lowers to `<>` with one bind.
 model: models/orders.yaml
-tags: [m2, notEq, slice-mvp-1]
+tags: [m-op-algebra, notEq, slice-mvp-1]
 operation:
   notEq:
     attr: Order.qty

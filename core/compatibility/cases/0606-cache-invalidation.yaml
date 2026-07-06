@@ -14,7 +14,7 @@
 # (777.00) — so a conforming query cache MUST invalidate on the committed write.
 # roundTrips = 2 (the two finds; the committed write is one more).
 model: models/account.yaml
-tags: [m8, transactions cache, query cache, cache-invalidation, freshness, scenario]
+tags: [m-process-cache, query cache, cache-invalidation, freshness, scenario]
 roundTrips: 3
 scenario:
   - find:

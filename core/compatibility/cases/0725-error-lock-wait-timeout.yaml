@@ -3,7 +3,7 @@
 # lowered lock-wait budget (lock_timeout / innodb_lock_wait_timeout) -- raises a
 # timeout. Neutral category lockWaitTimeout; native PG 55P03 / MariaDB 1205.
 model: models/error-cases.yaml
-tags: [m11, error-classification, lockWaitTimeout]
+tags: [m-db-error, lockWaitTimeout]
 loadFixtures: true
 errorClass: lockWaitTimeout
 expectedNativeCode:

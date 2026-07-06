@@ -14,7 +14,7 @@
 # is compared with `tolerance` (abs(actual - expected) <= 1e-9); count and the
 # var_*/exact aggregates elsewhere compare exactly.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, stdDev, stdDevPop, twoColumn]
+tags: [m-agg, m-sql-agg, stdDev, stdDevPop, twoColumn]
 operation:
   groupBy:
     operand:

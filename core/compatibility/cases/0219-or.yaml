@@ -1,6 +1,6 @@
 # or — disjunction of two atomic predicates.
 model: models/orders.yaml
-tags: [m2, or, boolean, slice-mvp-1]
+tags: [m-op-algebra, or, boolean, slice-mvp-1]
 operation:
   or:
     operands:

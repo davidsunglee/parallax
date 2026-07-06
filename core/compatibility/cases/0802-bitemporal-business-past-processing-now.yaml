@@ -11,7 +11,7 @@
 # R1 is superseded on processing (out_z finite), excluded. The business and
 # processing binds read business-axis-first (the outer pin), then processing.
 model: models/position.yaml
-tags: [m7, m3, bitemporal, temporal, as-of, both-axes, past, slice-mvp-1]
+tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, both-axes, past, slice-mvp-1]
 operation:
   asOf:
     operand:

@@ -8,7 +8,7 @@
 # and MariaDB, so this case carries goldenSql for both dialects — the pagination
 # parity witness in the matrix (the row-limit decision point of the M11 seam).
 model: models/orders.yaml
-tags: [m2, orderBy, limit, directive, dialect, slice-mvp-1]
+tags: [m-op-algebra, orderBy, limit, directive, slice-mvp-1]
 operation:
   limit:
     count: 2

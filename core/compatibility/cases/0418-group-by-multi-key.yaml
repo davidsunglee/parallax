@@ -6,7 +6,7 @@
 # line's quantity — proving both keys project under their own names and the
 # multi-key GROUP BY is emitted in order.
 model: models/orders.yaml
-tags: [m2, m3, aggregate, sum, groupBy, multi-key]
+tags: [m-agg, m-sql-agg, sum, groupBy, multi-key]
 operation:
   groupBy:
     operand:

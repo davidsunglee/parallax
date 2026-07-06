@@ -11,7 +11,7 @@
 # here, because B would then block on A and time out. No error is raised; the
 # concurrency-success shape asserts NO node blocked/raised and each read's expectRows.
 model: models/account.yaml
-tags: [m8, m11, read-lock, concurrency, shared-lock-compatible, slice-mvp-1]
+tags: [m-read-lock, m-dialect, concurrency, shared-lock-compatible, slice-mvp-1]
 loadFixtures: true
 concurrency:
   rounds:

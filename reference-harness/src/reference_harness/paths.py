@@ -15,7 +15,7 @@ def find_core_root(start: Path) -> Path:
     """Walk up from *start* to the ``core/`` directory that contains it.
 
     Works whether the caller passes ``core``, ``core/compatibility``,
-    ``core/spec/dependency-graph.md``, or any descendant.
+    ``core/spec/modules.md``, or any descendant.
     """
     start = start.resolve()
     candidates = [start, *start.parents]

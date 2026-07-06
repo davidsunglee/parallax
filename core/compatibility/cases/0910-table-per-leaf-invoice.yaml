@@ -8,7 +8,7 @@
 #
 # Trivial single-table read => referenceSql optional, but supplied as the oracle.
 model: models/document.yaml
-tags: [m1, m3, inheritance, table-per-leaf]
+tags: [m-inheritance, m-sql, table-per-leaf]
 operation:
   all: {}
 goldenSql:

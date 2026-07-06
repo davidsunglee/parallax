@@ -19,7 +19,7 @@
 # write moves the version forward) even though M9 alone does not require it — the
 # Account model carries the optimisticLocking version column from Phase 6.
 model: models/account.yaml
-tags: [m9, m3, detached, detached-update, write-sequence, lifecycle detach]
+tags: [m-detach, m-sql, detached-update, write-sequence]
 loadFixtures: true
 writeSequence:
   - mutation: update

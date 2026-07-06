@@ -1,6 +1,6 @@
 # Lock-wait timeout on the other row: A holds row 2, B blocks on row 2.
 model: models/error-cases.yaml
-tags: [m11, error-classification, lockWaitTimeout]
+tags: [m-db-error, lockWaitTimeout]
 loadFixtures: true
 errorClass: lockWaitTimeout
 expectedNativeCode:

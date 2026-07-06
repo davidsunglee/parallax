@@ -3,7 +3,7 @@
 # id 7 in the SAME case collides -- the violation is against committed data, not
 # an in-flight batch.
 model: models/error-cases.yaml
-tags: [m11, error-classification, uniqueViolation]
+tags: [m-db-error, uniqueViolation]
 errorClass: uniqueViolation
 expectedNativeCode:
   postgres: "23505"

@@ -9,7 +9,7 @@
 # inequality and the null VO (4) is excluded by 3VL. This is the structured-
 # column parity of the scalar NULL exclusion (0227/0228).
 model: models/customer.yaml
-tags: [m1, m3, nested, value-object, json, "null", three-valued-logic]
+tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic]
 operation:
   nestedNotEq: { path: Customer.address.city, value: Boston }
 goldenSql:

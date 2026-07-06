@@ -12,7 +12,7 @@
 # oracle, spelling the same Postgres extraction with the native `->>` operator
 # and inline key.
 model: models/customer.yaml
-tags: [m1, m3, nested, value-object, json]
+tags: [m-value-object, m-sql, nested, json]
 operation:
   nestedEq: { path: Customer.address.city, value: Oslo }
 goldenSql:
