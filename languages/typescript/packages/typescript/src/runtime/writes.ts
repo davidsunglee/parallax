@@ -10,20 +10,20 @@
  *  - **non-temporal `create`** buffers an insert; the unit of work flushes buffered
  *    inserts through the M8 `combineWrites` planner — same-entity inserts collapse
  *    to one multi-row `INSERT`, a referenced parent's inserts precede a child's
- *    (`0604` / `0612`);
+ *    (`m-batch-write-001` / `m-unit-work-003`);
  *  - **non-temporal `update`** on a VERSIONED entity always advances the framework-
  *    owned version (M10, ADR 0029): in `optimistic` mode it issues the gated M10
  *    `UPDATE` (gate on the version the unit of work OBSERVED, advance it) and
- *    classifies the affected count (`0703` / `0704` / `0708`); in the default
- *    `locking` mode it issues the ungated version-advancing `UPDATE` (`0611`). Either
+ *    classifies the affected count (`m-opt-lock-005` / `m-opt-lock-006` / `m-opt-lock-007`); in the default
+ *    `locking` mode it issues the ungated version-advancing `UPDATE` (`m-opt-lock-002`). Either
  *    way an unobserved row read-before-writes and a no-op `set` issues no DML
- *    (`0609`). On a NON-versioned entity it is a plain keyed `UPDATE`, one per
- *    selected key (`0604` / `0613` on the non-versioned `Wallet`);
+ *    (`m-opt-lock-001`). On a NON-versioned entity it is a plain keyed `UPDATE`, one per
+ *    selected key (`m-batch-write-001` / `m-batch-write-002` on the non-versioned `Wallet`);
  *  - **audit-only (`unitemporal-processing`) writes** chain milestones through the
  *    M7 `auditWriteStatements` generator: `create` opens `[processingInstant,
  *    infinity)`, `update` closes the current row and chains a new one carrying the
  *    prior business columns with the assignments applied, `terminate` closes only
- *    (`0510` / `0511` / `0512`).
+ *    (`m-audit-write-001` / `m-audit-write-002` / `m-audit-write-003`).
  *
  * Named inputs map to canonical `columnOrder` binds via the entity metamodel, and
  * scalar values normalize through the injected dialect with the target M0 type
@@ -185,7 +185,7 @@ interface BufferedInsert {
  * the unit of work flushes them set-based + FK-safe (M8); audit-only writes and
  * versioned updates issue their DML immediately (their observable contract is
  * per-statement). `flush()` runs at transaction commit; a dependent read forces an
- * insert flush first (read-your-own-writes, `0607`).
+ * insert flush first (read-your-own-writes, `m-unit-work-001`).
  */
 export class TransactionWriter {
   private readonly insertBuffer: BufferedInsert[] = [];
@@ -262,12 +262,12 @@ export class TransactionWriter {
    * on the version the unit of work OBSERVED for the row (a prior transaction-scoped
    * find populated the observed map). Three rules:
    *
-   *  - a `set` that changes NO domain attribute issues no DML (`0609`);
+   *  - a `set` that changes NO domain attribute issues no DML (`m-opt-lock-001`);
    *  - an unobserved row is a read-before-write error (there is no observed version
    *    to gate on or advance from);
    *  - `optimistic` mode emits the gated form and throws `ParallaxOptimisticLockError`
-   *    on a 0-row conflict (`0703`); `locking` mode emits the ungated version-
-   *    advancing form (`0611`). The advanced version (`observed + 1`) is never
+   *    on a 0-row conflict (`m-opt-lock-005`); `locking` mode emits the ungated version-
+   *    advancing form (`m-opt-lock-002`). The advanced version (`observed + 1`) is never
    *    caller-supplied.
    */
   private async versionedEntityUpdate(
@@ -360,8 +360,8 @@ export class TransactionWriter {
    * Emit ONE keyed versioned `UPDATE` for a single resolved primary key and return
    * its affected-row count, advancing the framework-owned observed version. Gates on
    * the observed version in `optimistic` mode (a 0-row conflict throws
-   * `ParallaxOptimisticLockError`, `0703`); emits the ungated version-advancing form
-   * in `locking` mode (`0611`). An unobserved row is a read-before-write error (M10).
+   * `ParallaxOptimisticLockError`, `m-opt-lock-005`); emits the ungated version-advancing form
+   * in `locking` mode (`m-opt-lock-002`). An unobserved row is a read-before-write error (M10).
    * The single per-row emitter both the keyed update and the set-based materialize
    * (ADR 0032) share, so the two paths never drift.
    */
@@ -401,7 +401,7 @@ export class TransactionWriter {
       return affectedRows;
     }
     // Locking mode: the M8 shared read lock makes the write correct, so the version
-    // advances WITHOUT a gate (the `0702` / `0611` shape).
+    // advances WITHOUT a gate (the `m-detach-002` / `m-opt-lock-002` shape).
     const sql = versionAdvancingUpdate(shape.target, shape.setColumns);
     const affectedRows = await this.exec(sql, [...shape.domainBinds, newVersion, pk]);
     this.observed.set(key, newVersion);
@@ -466,7 +466,7 @@ export class TransactionWriter {
     // `combineWrites` flushes steps in DECLARED order — it does NOT infer FK
     // dependencies (uow.ts) — so a referenced parent's insert must be handed to it
     // BEFORE a dependent child's. Topologically sort the grouped entities so a
-    // parent precedes a child that points at it (`0612`), regardless of the order
+    // parent precedes a child that points at it (`m-unit-work-003`), regardless of the order
     // the developer authored the `create` calls in.
     const sorted = fkSortInsertOrder(order);
     const steps: WriteStep[] = sorted.map((entity) => ({
@@ -725,7 +725,7 @@ export class TransactionWriter {
 
 /**
  * Order the grouped insert entities FK-safe: a referenced parent precedes a
- * dependent child (`0612`). A `many-to-one` relationship is the FK-holding side,
+ * dependent child (`m-unit-work-003`). A `many-to-one` relationship is the FK-holding side,
  * so an entity that declares one depends on that `relatedEntity` — but only when
  * that parent is ALSO in this insert set (an out-of-set reference is already
  * present, so it imposes no ordering here). The sort is STABLE: among entities

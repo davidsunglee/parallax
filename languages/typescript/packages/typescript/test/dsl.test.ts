@@ -89,42 +89,51 @@ interface Row {
 
 const CASES: readonly Row[] = [
   // --- identity + comparison ---
-  { case: "0002-eq", operation: () => Order.id.eq(42).toOperation() },
-  { case: "0201-not-eq", operation: () => Order.qty.notEq(20).toOperation() },
-  { case: "0202-greater-than", operation: () => Order.qty.gt(20).toOperation() },
-  { case: "0203-greater-than-equals", operation: () => Order.qty.gte(20).toOperation() },
-  { case: "0204-less-than", operation: () => Order.qty.lt(15).toOperation() },
-  { case: "0205-less-than-equals", operation: () => Order.qty.lte(15).toOperation() },
-  { case: "0206-between", operation: () => Order.price.between(20.0, 50.75).toOperation() },
-  // --- null ---
-  { case: "0207-is-null", operation: () => Order.sku.isNull().toOperation() },
-  { case: "0208-is-not-null", operation: () => Order.sku.isNotNull().toOperation() },
-  // --- string (incl. case-insensitive) ---
-  { case: "0210-not-like", operation: () => Order.sku.notLike("A-%").toOperation() },
-  { case: "0211-starts-with", operation: () => Order.sku.startsWith("A-").toOperation() },
-  { case: "0212-ends-with", operation: () => Order.sku.endsWith("00").toOperation() },
+  { case: "m-op-algebra-002-eq", operation: () => Order.id.eq(42).toOperation() },
+  { case: "m-op-algebra-003-not-eq", operation: () => Order.qty.notEq(20).toOperation() },
+  { case: "m-op-algebra-004-greater-than", operation: () => Order.qty.gt(20).toOperation() },
   {
-    case: "0214-like-case-insensitive",
+    case: "m-op-algebra-005-greater-than-equals",
+    operation: () => Order.qty.gte(20).toOperation(),
+  },
+  { case: "m-op-algebra-006-less-than", operation: () => Order.qty.lt(15).toOperation() },
+  { case: "m-op-algebra-007-less-than-equals", operation: () => Order.qty.lte(15).toOperation() },
+  {
+    case: "m-op-algebra-008-between",
+    operation: () => Order.price.between(20.0, 50.75).toOperation(),
+  },
+  // --- null ---
+  { case: "m-op-algebra-009-is-null", operation: () => Order.sku.isNull().toOperation() },
+  { case: "m-op-algebra-010-is-not-null", operation: () => Order.sku.isNotNull().toOperation() },
+  // --- string (incl. case-insensitive) ---
+  { case: "m-op-algebra-012-not-like", operation: () => Order.sku.notLike("A-%").toOperation() },
+  {
+    case: "m-op-algebra-013-starts-with",
+    operation: () => Order.sku.startsWith("A-").toOperation(),
+  },
+  { case: "m-op-algebra-014-ends-with", operation: () => Order.sku.endsWith("00").toOperation() },
+  {
+    case: "m-op-algebra-016-like-case-insensitive",
     operation: () => Order.name.like("ada", { caseInsensitive: true }).toOperation(),
   },
   // --- membership ---
-  { case: "0216-in", operation: () => Order.id.in([1, 2, 42]).toOperation() },
+  { case: "m-op-algebra-018-in", operation: () => Order.id.in([1, 2, 42]).toOperation() },
   // --- boolean (left-associative + group precedence) ---
   {
-    case: "0218-and",
+    case: "m-op-algebra-020-and",
     operation: () => Order.active.eq(true).and(Order.qty.gt(10)).toOperation(),
   },
   {
-    case: "0229-and-three-operands",
+    case: "m-op-algebra-031-and-three-operands",
     operation: () => Order.active.eq(true).and(Order.qty.gt(5), Order.qty.lt(30)).toOperation(),
   },
   {
-    case: "0222-group-precedence-grouped",
+    case: "m-op-algebra-024-group-precedence-grouped",
     operation: () =>
       Order.qty.gte(25).or(Order.qty.lte(5)).group().and(Order.active.eq(true)).toOperation(),
   },
   {
-    case: "0223-group-precedence-ungrouped",
+    case: "m-op-algebra-025-group-precedence-ungrouped",
     operation: () =>
       Order.qty
         .gte(25)
@@ -133,29 +142,38 @@ const CASES: readonly Row[] = [
   },
   // --- directives ---
   {
-    case: "0224-order-by-limit",
+    case: "m-op-algebra-026-order-by-limit",
     operation: () => buildFindOperation(all(), { orderBy: [Order.qty.desc()], limit: 2 }),
   },
-  { case: "0226-distinct", operation: () => buildFindOperation(all(), { distinct: true }) },
-  // --- navigation ---
-  { case: "0303-not-exists-items", operation: () => Order.items.notExists().toOperation() },
   {
-    case: "0308-exists-multi-hop-items-status",
+    case: "m-op-algebra-028-distinct",
+    operation: () => buildFindOperation(all(), { distinct: true }),
+  },
+  // --- navigation ---
+  {
+    case: "m-navigate-003-not-exists-items",
+    operation: () => Order.items.notExists().toOperation(),
+  },
+  {
+    case: "m-navigate-008-exists-multi-hop-items-status",
     operation: () =>
       Order.items.exists(OrderItem.statuses.exists(OrderStatus.code.eq("PACKED"))).toOperation(),
   },
   // --- deep fetch ---
   {
-    case: "0312-deep-fetch-multi-hop",
+    case: "m-deep-fetch-003-multi-hop",
     operation: () =>
       buildFindOperation(Order.id.in([1, 42]), {
         includes: [new NavigationPath(["Order.items", "OrderItem.statuses"])],
       }),
   },
   // --- temporal reads ---
-  { case: "0501-as-of-now-defaulted", operation: () => buildFindOperation(Balance.all()) },
   {
-    case: "0502-as-of-now-explicit",
+    case: "m-temporal-read-001-as-of-now-defaulted",
+    operation: () => buildFindOperation(Balance.all()),
+  },
+  {
+    case: "m-temporal-read-002-as-of-now-explicit",
     operation: () =>
       buildFindOperation(Balance.all(), {
         temporal: { asOf: { processing: "now" } },
@@ -163,7 +181,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    case: "0503-as-of-past-instant",
+    case: "m-temporal-read-003-as-of-past-instant",
     operation: () =>
       buildFindOperation(Balance.all(), {
         temporal: { asOf: { processing: at("2024-04-01T00:00:00+00:00") } },
@@ -171,7 +189,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    case: "0504-history",
+    case: "m-temporal-read-004-history",
     operation: () =>
       buildFindOperation(Balance.id.eq(1), {
         temporal: { history: ["processing"] },
@@ -179,7 +197,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    case: "0506-as-of-range",
+    case: "m-temporal-read-006-as-of-range",
     operation: () =>
       buildFindOperation(Balance.all(), {
         temporal: {
@@ -195,7 +213,7 @@ const CASES: readonly Row[] = [
   },
   // --- bitemporal (both-axis ordering: business outside processing) ---
   {
-    case: "0801-bitemporal-as-of-now-both-axes",
+    case: "m-temporal-read-013-bitemporal-as-of-now-both-axes",
     operation: () =>
       buildFindOperation(Position.all(), {
         temporal: { asOf: { processing: "now", business: "now" } },
@@ -203,7 +221,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    case: "0803-bitemporal-both-axes-past",
+    case: "m-temporal-read-015-bitemporal-both-axes-past",
     operation: () =>
       buildFindOperation(Position.all(), {
         temporal: {
@@ -216,7 +234,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    case: "0804-bitemporal-history",
+    case: "m-temporal-read-016-bitemporal-history",
     operation: () =>
       buildFindOperation(Position.id.eq(1), {
         temporal: { history: ["processing", "business"] },
@@ -224,7 +242,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    case: "0805-bitemporal-omitted-processing-default",
+    case: "m-temporal-read-017-bitemporal-omitted-processing-default",
     operation: () =>
       buildFindOperation(Position.all(), {
         temporal: { asOf: { business: at("2024-03-01T00:00:00+00:00") } },
@@ -233,7 +251,7 @@ const CASES: readonly Row[] = [
   },
   // --- temporal deep fetch (both axes latest, propagated per hop) ---
   {
-    case: "0324-deepfetch-temporal-both-latest",
+    case: "m-navigate-012-deepfetch-temporal-both-latest",
     operation: () =>
       buildFindOperation(Policy.all(), {
         temporal: { asOf: { processing: "now", business: "now" } },

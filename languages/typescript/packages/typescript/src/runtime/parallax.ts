@@ -94,14 +94,14 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     /**
      * A hook awaited INSIDE the lazy resolver, just before a read executes. In a
      * transaction this flushes the writer's buffered inserts so a dependent read
-     * observes them (read-your-own-writes, `0607`) — a lazy flush that runs only
+     * observes them (read-your-own-writes, `m-unit-work-001`) — a lazy flush that runs only
      * when the list actually resolves, never eagerly. Absent on the root handle.
      */
     private readonly beforeLoad?: () => Promise<void>,
     /**
      * The M8 correctness mode of the enclosing unit of work, threaded to the shared
      * in-transaction read executor: a `locking`-mode read takes the M8 shared row
-     * lock (`for share of t0`, `0603`) so a concurrent transaction cannot mutate the
+     * lock (`for share of t0`, `m-read-lock-001`) so a concurrent transaction cannot mutate the
      * row out from under a read-then-write; an `optimistic`-mode read takes none.
      * Absent on the root handle (an out-of-transaction read never locks).
      */
@@ -198,7 +198,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
     }
     const schema = new RuntimeSchema(this.metamodel, this.entity, this.dialect);
     // `compile()` applies the M8 shared read-lock in-line for a `locking`-mode object
-    // find (`for share of t0`, `0603`); the developer writes no locking SQL, so the
+    // find (`for share of t0`, `m-read-lock-001`); the developer writes no locking SQL, so the
     // executor below just runs the already-locked statement.
     const { sql, binds } = compile(operation, schema, this.dialect, {
       locking: this.concurrency === "locking",
@@ -221,7 +221,7 @@ export class EntityFinder<T extends ParallaxRow = ParallaxRow> {
    * single PK value spans many milestone rows (a `history` read returns them all),
    * so the identity is the FULL logical key — the primary key PLUS each as-of axis's
    * `from` attribute (the milestone start). Keying on the bare PK would collapse
-   * distinct milestones to one object (the `0504` / `0804` history bug).
+   * distinct milestones to one object (the `m-temporal-read-004` / `m-temporal-read-016` history bug).
    */
   private identityOption(): { identity?: (row: T) => string | number | bigint | null | undefined } {
     const keyNames = this.identityKeyNames();
@@ -523,8 +523,8 @@ export class ParallaxTransaction {
       const metadata = this.metamodel.entity(name);
       // The in-transaction finder flushes the writer's buffered inserts before a
       // read executes (lazily, inside the list resolver), so a dependent find
-      // observes the just-buffered write (read-your-own-writes, `0607`). In
-      // `locking` mode the read also takes the M8 shared lock (`0603`); either way
+      // observes the just-buffered write (read-your-own-writes, `m-unit-work-001`). In
+      // `locking` mode the read also takes the M8 shared lock (`m-read-lock-001`); either way
       // it records the versions it observed so a later versioned update can gate
       // on / advance from them (M10).
       const finder = new EntityFinder(

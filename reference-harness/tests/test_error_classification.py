@@ -108,7 +108,7 @@ def test_mariadb_provider_classifies_via_errno() -> None:
 def _error_case(raw: dict) -> Case:
     descriptor = {"entity": {"name": "W", "table": "w", "attributes": []}}
     model = Model(path=Path("m.yaml"), descriptor=descriptor)
-    return Case(path=Path("0720-x.yaml"), raw=raw, model=model)
+    return Case(path=Path("m-db-error-001-x.yaml"), raw=raw, model=model)
 
 
 def test_case_recognizes_single_connection_error_shape() -> None:
@@ -227,7 +227,7 @@ def test_schema_accepts_two_connection_error_case() -> None:
 
 
 def test_case_recognizes_read_lock_concurrency_error_shape() -> None:
-    # 0728: a behavioral read-lock case whose round-1 A step is a locking SELECT
+    # m-read-lock-006: a behavioral read-lock case whose round-1 A step is a locking SELECT
     # (not a write) that HOLDS the shared lock while B's round-2 UPDATE blocks and
     # times out. The runner runs A's round-1 statement verbatim and is agnostic
     # about statement kind, so a round-1 read is a first-class concurrency step.
@@ -277,7 +277,7 @@ def test_case_recognizes_read_lock_concurrency_error_shape() -> None:
 
 
 def test_schema_accepts_read_lock_concurrency_error_case() -> None:
-    # The 0728 shape validates against the existing error + concurrency branch as-is:
+    # The m-read-lock-006 shape validates against the existing error + concurrency branch as-is:
     # a round-1 A locking SELECT plus a round-2 B UPDATE needs no schema change.
     case = {
         "model": "models/account.yaml",

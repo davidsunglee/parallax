@@ -84,7 +84,7 @@ export function casePath(stem: string): string {
   return `core/compatibility/cases/${stem}.yaml`;
 }
 
-/** Load a corpus case by stem (`0002-eq`). */
+/** Load a corpus case by stem (`m-op-algebra-002-eq`). */
 export function suiteCase(stem: string): LoadedCase {
   return loadCase(casePath(stem));
 }
@@ -137,7 +137,7 @@ export async function provisionCase(
  * Whether a case loads its model fixtures before running. Read cases and scenarios
  * read fixtures; write-sequence cases construct their own state from an empty
  * table (the corpus authors them self-contained), unless they opt in
- * (`loadFixtures: true`, e.g. `0613`). Conflict cases load fixtures.
+ * (`loadFixtures: true`, e.g. `m-batch-write-002`). Conflict cases load fixtures.
  */
 function shouldLoadFixtures(loaded: LoadedCase): boolean {
   if (loaded.shape === "writeSequence") {
@@ -192,13 +192,13 @@ export function assertSameOperation(operation: unknown, loaded: LoadedCase): voi
  * comparison rules.
  *
  * A developer `find` returns FULL managed objects, but the corpus `expectedRows` is
- * projection-specific — it names only the columns the case asserts (`0002` is
- * `{ id, name }`, `0603` omits `version`). So the observed rows are PROJECTED DOWN
+ * projection-specific — it names only the columns the case asserts (`m-op-algebra-002` is
+ * `{ id, name }`, `m-read-lock-001` omits `version`). So the observed rows are PROJECTED DOWN
  * to the keys the expected row names before comparison: the developer's extra
  * columns are irrelevant to what the case proves. Managed rows are keyed by DSL
  * name and rendered to the neutral wire form; the corpus rows (keyed by physical
- * column) are translated to DSL names first. When a case authors NO rows (`0221`,
- * `0315`), the observed row set must be empty too (the comparator checks the count).
+ * column) are translated to DSL names first. When a case authors NO rows (`m-op-algebra-023`,
+ * `m-deep-fetch-006`), the observed row set must be empty too (the comparator checks the count).
  */
 export function assertRows(
   rows: readonly ParallaxRow[],
@@ -239,7 +239,7 @@ function projectRow(
  * Assert an assembled deep-fetch graph matches the corpus `expectedGraph`. A
  * developer `find(..., { includes })` returns FULL managed objects; the corpus
  * `expectedGraph` is a projection-specific witness naming only the columns its
- * golden projects (`0311` root shows `id, name, price`). So the observed graph is
+ * golden projects (`m-deep-fetch-002` root shows `id, name, price`). So the observed graph is
  * PROJECTED DOWN to the keys the expected node names (per node), then compared with
  * the shared graph comparator — the developer's extra columns are irrelevant to the
  * graph shape the case proves (relationship structure + the projected values). The
@@ -269,7 +269,7 @@ export function assertGraph(
  * names, recursively for relationship-valued keys. Uses the FIRST expected node for
  * the key set (the corpus authors a uniform node shape per level), but derives each
  * relationship key's SHAPE witness from the first expected node that populates it —
- * a nullable to-one (`0314`) leaves it `null` on some rows, so the first node's
+ * a nullable to-one (`m-deep-fetch-005`) leaves it `null` on some rows, so the first node's
  * shape for that key can be `null`; the full expected list carries the populated
  * shape elsewhere. When a level is empty in the expected graph, the observed list
  * must be empty too, so nothing is projected.
@@ -514,7 +514,7 @@ function translateToDslNames(
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) {
     // A corpus key may be a physical column, a DSL name (fixtures), or the `_hex`
-    // computed output the `bytes` scalar projects (`0003`: `payload_hex` names the
+    // computed output the `bytes` scalar projects (`m-core-001`: `payload_hex` names the
     // `payload` bytes attribute the developer receives as a `Uint8Array` → hex).
     const direct = nameByColumn.get(key);
     if (direct !== undefined) {

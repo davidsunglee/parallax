@@ -161,5 +161,5 @@ function sortedEntries<T extends Record<string, number> | Partial<Record<string,
 }
 
 function caseId(casePath: string): string {
-  return /(\d{4})-[^/]*\.ya?ml$/.exec(casePath)?.[1] ?? casePath;
+  return /(m-[a-z0-9-]+-\d{3})-[^/]*\.ya?ml$/.exec(casePath)?.[1] ?? casePath;
 }

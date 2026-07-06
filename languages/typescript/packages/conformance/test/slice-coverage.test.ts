@@ -34,11 +34,11 @@ describe("conformance slice coverage report", () => {
   it("counts claimed cases and out-of-claim reasons by command", () => {
     const report = buildConformanceSliceCoverageReport(
       [
-        loaded("0001", "read", ["m-core", "slice"]),
-        loaded("0002", "writeSequence", ["m-op-algebra", "slice"]),
-        loaded("0003", "read", ["m-sql", "slice"]),
-        loaded("0004", "read", ["m-core"]),
-        loaded("0005", "coherence", ["m-core", "slice"]),
+        loaded("m-core-001", "read", ["m-core", "slice"]),
+        loaded("m-op-algebra-001", "writeSequence", ["m-op-algebra", "slice"]),
+        loaded("m-sql-001", "read", ["m-sql", "slice"]),
+        loaded("m-core-002", "read", ["m-core"]),
+        loaded("m-coherence-001", "coherence", ["m-core", "slice"]),
       ],
       SYNTHETIC_CAPABILITIES,
     );
@@ -46,7 +46,7 @@ describe("conformance slice coverage report", () => {
     expect(report.sliceTag).toBe("slice");
     expect(report.totalCorpusCases).toBe(5);
     expect(report.claimedCases).toBe(2);
-    expect(report.claimedCaseIds).toEqual(["0001", "0002"]);
+    expect(report.claimedCaseIds).toEqual(["m-core-001", "m-op-algebra-001"]);
     expect(report.byShape).toEqual({ read: 1, writeSequence: 1 });
     expect(report.byModule).toEqual({ "m-core": 1, "m-op-algebra": 1 });
 
@@ -60,7 +60,7 @@ describe("conformance slice coverage report", () => {
 
   it("renders a GitHub-summary friendly markdown table", () => {
     const report = buildConformanceSliceCoverageReport(
-      [loaded("0001", "read", ["m-core", "slice"])],
+      [loaded("m-core-001", "read", ["m-core", "slice"])],
       SYNTHETIC_CAPABILITIES,
     );
 

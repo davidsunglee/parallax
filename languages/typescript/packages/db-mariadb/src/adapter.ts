@@ -23,7 +23,7 @@
  *    (un-wrapped) `bytes` column is the one exception: it is read as the driver's
  *    raw `Buffer` (`field.buffer()`) and copied into a `Uint8Array` directly, NOT
  *    through `mariadbDialect.parsers.bytes` — see `typeCast`'s doc for how a raw
- *    blob is told apart from the dialect's `hex(col)` projection (`1005`) by the
+ *    blob is told apart from the dialect's `hex(col)` projection (`m-core-004`) by the
  *    codebase-owned `_hex` output-alias convention.
  *  - **binds** — the `infinity` sentinel maps to MariaDB's max-sentinel
  *    `DATETIME` (`mariadbDialect.infinityBind()`), and a TYPED `Temporal.Instant`
@@ -104,10 +104,10 @@ interface TypeCastField {
  * function via TWO different SQL shapes —
  *
  *  1. a RAW (un-wrapped) select `t0.<col>` — the runtime `find`'s VERBATIM `bytes`
- *     projection (`RuntimeSchema.rootProjection`, case `0003`) — whose wire bytes
+ *     projection (`RuntimeSchema.rootProjection`, case `m-core-001`) — whose wire bytes
  *     ARE the actual byte payload, so it must be read via `field.buffer()`;
  *  2. the dialect's `hex(t0.<col>) <col>_hex` projection (`mariadbDialect.
- *     bytesProjection`, cases like `1005`) — whose wire bytes are HEX TEXT, so it
+ *     bytesProjection`, cases like `m-core-004`) — whose wire bytes are HEX TEXT, so it
  *     must be read via `field.string()` and hex-decoded by `mariadbDialect.
  *     parsers.bytes` (`bytesFromHex`); reading the raw buffer here would yield the
  *     hex text's OWN byte encoding, not the decoded payload.
@@ -213,7 +213,7 @@ function nativeErrno(error: unknown): number | undefined {
 /**
  * Classify a `mysql2` driver error to a neutral M11 {@link ErrorCategory} via the
  * dialect's errno map. Exposed so the composition root's error-round-trip proofs
- * (`0720`-`0727`) can assert a raised error's category without inspecting a driver
+ * (`m-db-error-001`-`m-db-error-008`) can assert a raised error's category without inspecting a driver
  * `.errno` themselves.
  */
 export function classifyMariaError(error: unknown): ErrorCategory {
@@ -276,7 +276,7 @@ export type MariaDbDatabaseOptions = Partial<PoolOptions>;
 
 /**
  * A manual-commit MariaDB connection with a lowered lock-wait budget, for the
- * two-connection lock-contention proofs (`0723`-`0729`, `0734`). Each `execute` runs
+ * two-connection lock-contention proofs (`m-db-error-004`-`m-read-lock-007`, `m-read-lock-008`). Each `execute` runs
  * inside the session's open transaction (no auto-commit) so locks are held until
  * {@link commit} / {@link rollback}; a blocked lock raises errno `1205` within the
  * 1-second budget, and InnoDB victimizes a deadlock immediately (errno `1213`).
@@ -296,7 +296,7 @@ export class MariaDbSession {
 
   /**
    * Fetch rows INSIDE the session's held transaction — the concurrency-success seam
-   * (`0729` / `0734`): a `lock in share mode` SELECT both takes its shared lock AND
+   * (`m-read-lock-007` / `m-read-lock-008`): a `lock in share mode` SELECT both takes its shared lock AND
    * returns its rows, and an unlocked projection reads under the open unit of work.
    * Returns **managed** scalars (§3.2.1) via the registered `typeCast`, exactly like
    * {@link MariaDbDatabase.execute}.

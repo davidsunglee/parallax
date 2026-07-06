@@ -8,7 +8,7 @@
  * valid kind AND that every `kind: read` step carries `expectRows` (defense-in-depth
  * over the schema's structural requirements, mirroring the Python harness's
  * `_assert_concurrency_success_step_kinds`); this pins that guard directly, in isolation
- * from the Docker-gated `0729` / `0734` run-lane proof (`slice-run`). The schema's
+ * from the Docker-gated `m-read-lock-007` / `m-read-lock-008` run-lane proof (`slice-run`). The schema's
  * read⇒`expectRows` / write⇒no-`expectRows` if/then is pinned here too, against
  * `compatibility-case.schema.json` directly.
  */
@@ -31,7 +31,7 @@ const SHARED_READ = {
 } as const;
 
 describe("concurrencySuccessStepProblems — every success step MUST declare a valid kind + a read carries expectRows", () => {
-  it("accepts 0729's shape: both shared reads declare kind: read", () => {
+  it("accepts m-read-lock-007's shape: both shared reads declare kind: read", () => {
     const rounds = [
       { A: { kind: "read", goldenSql: SHARED_READ, binds: [2], expectRows: [{ id: 2 }] } },
       { B: { kind: "read", goldenSql: SHARED_READ, binds: [2], expectRows: [{ id: 2 }] } },
@@ -39,7 +39,7 @@ describe("concurrencySuccessStepProblems — every success step MUST declare a v
     expect(concurrencySuccessStepProblems(rounds)).toEqual([]);
   });
 
-  it("accepts 0734's shape: a kind: read projection and a kind: write UPDATE", () => {
+  it("accepts m-read-lock-008's shape: a kind: read projection and a kind: write UPDATE", () => {
     const rounds = [
       {
         A: {
@@ -110,7 +110,7 @@ const CONCURRENCY_TAGS = ["m-read-lock", "m-dialect", "concurrency", "slice-mvp-
 describe("compatibility-case.schema.json — the concurrency-step kind if/then", () => {
   const validate = caseValidator();
 
-  it("accepts 0729's shape (two kind: read steps carrying expectRows)", () => {
+  it("accepts m-read-lock-007's shape (two kind: read steps carrying expectRows)", () => {
     const valid = validate({
       model: "models/account.yaml",
       tags: CONCURRENCY_TAGS,
@@ -125,7 +125,7 @@ describe("compatibility-case.schema.json — the concurrency-step kind if/then",
     expect(valid).toBe(true);
   });
 
-  it("accepts 0734's shape (kind: read + kind: write, the write omitting expectRows)", () => {
+  it("accepts m-read-lock-008's shape (kind: read + kind: write, the write omitting expectRows)", () => {
     const valid = validate({
       model: "models/account.yaml",
       tags: CONCURRENCY_TAGS,

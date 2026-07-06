@@ -51,10 +51,10 @@ import { casesForProfile, POSTGRES_FULL_PROFILE } from "./m12-profiles.js";
  * `api-conformance`-lane cases (boundary retry cases + the read-lock matrix reads)
  * are excluded — they have no harness-executable golden (the API Conformance Suite
  * proves them) — so the run sweep covers the 111 harness-lane cases (101 pre-Phase-4
- * cases + the harness-lane auto-retry case `0710` + the two Phase-5 versioned
- * set-based materialize scenarios `0614`/`0615` + the four Phase-6 optimistic ×
- * temporal close cases `0730`-`0733` + the COR-12 behavioral read-lock cases `0728`
- * (blocks-writer), `0729` (shared-compatible), and `0734` (projection-omits-lock-
+ * cases + the harness-lane auto-retry case `m-opt-lock-009` + the two Phase-5 versioned
+ * set-based materialize scenarios `m-opt-lock-003`/`m-opt-lock-004` + the four Phase-6 optimistic ×
+ * temporal close cases `m-temporal-read-009`-`m-temporal-read-012` + the COR-12 behavioral read-lock cases `m-read-lock-006`
+ * (blocks-writer), `m-read-lock-007` (shared-compatible), and `m-read-lock-008` (projection-omits-lock-
  * admits-writer)).
  */
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */

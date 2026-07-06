@@ -29,13 +29,12 @@ function loadCase(name: string): CaseDoc {
 }
 
 /**
- * The `slice-mvp-1` cases that carry an `operation` (the read
- * shape) from the 0001 / 0002 / 02xx families — exactly the operations the
- * compile path will consume.
+ * The `slice-mvp-1` cases that carry an `operation` (the read shape) from the
+ * `m-op-algebra` family — exactly the operations the compile path will consume.
  */
 function claimedReadCases(): readonly { name: string; doc: CaseDoc }[] {
   return readdirSync(CASES_DIR)
-    .filter((name) => /^(0001|0002|02\d\d)-.*\.ya?ml$/.test(name))
+    .filter((name) => /^m-op-algebra-\d{3}-.*\.ya?ml$/.test(name))
     .sort()
     .map((name) => ({ name, doc: loadCase(name) }))
     .filter(({ doc }) => doc.operation !== undefined && (doc.tags ?? []).includes("slice-mvp-1"));
@@ -44,9 +43,9 @@ function claimedReadCases(): readonly { name: string; doc: CaseDoc }[] {
 const READ_CASES = claimedReadCases();
 
 group("operation round-trip", () => {
-  it("discovers the claimed 0001/0002/02xx read operations", () => {
+  it("discovers the claimed m-op-algebra read operations", () => {
     // Sanity: the corpus carries the families we expect (find-all, eq, and the
-    // 02xx single-entity algebra).
+    // single-entity algebra).
     expect(READ_CASES.length).toBeGreaterThanOrEqual(20);
   });
 
@@ -76,8 +75,8 @@ group("operation round-trip", () => {
   });
 });
 
-group("0222 equivalentEncodings collapse to the canonical operation", () => {
-  const NAME = "0222-group-precedence-grouped.yaml";
+group("m-op-algebra-024 equivalentEncodings collapse to the canonical operation", () => {
+  const NAME = "m-op-algebra-024-group-precedence-grouped.yaml";
 
   it("the case carries a prefix and a fluent equivalent encoding", () => {
     const doc = loadCase(NAME);

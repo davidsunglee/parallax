@@ -81,7 +81,7 @@ export interface Dialect {
    * to hex): Postgres `encode(<col>, ?) <out>` carrying a `'hex'` format bind;
    * MariaDB the argument-less `hex(<col>) <out>` carrying no bind. Returns the SQL
    * fragment plus any binds it introduces (spliced in projection order). This is
-   * the one genuinely dialect-divergent projection shape (`0003`/`1005`).
+   * the one genuinely dialect-divergent projection shape (`m-core-001`/`m-core-004`).
    */
   bytesProjection(
     qualifiedColumn: string,

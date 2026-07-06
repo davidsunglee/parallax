@@ -11,7 +11,7 @@
  *  - a SINGLE attempt (`expectedAffectedRows` + `goldenSql` + `binds`); and
  *  - an ordered `attempts` RETRY sequence (each attempt carries its own
  *    `goldenSql` + `binds` + `expectedAffectedRows`) — a stale UPDATE affects 0
- *    rows, then a fresh-version retry affects 1 (`0708`).
+ *    rows, then a fresh-version retry affects 1 (`m-opt-lock-007`).
  *
  * The golden `UPDATE` text is authored in the case (`update … set … , version = ?
  * where id = ? and version = ?`). This module DERIVES it — text AND binds — from
@@ -307,7 +307,7 @@ function preconditionStatements(loaded: LoadedCase): readonly PreconditionStatem
  * The single entity a conflict case targets: a VERSIONED entity (the M10 optimistic
  * gate on a version column) if one is declared, else a processing-axis TEMPORAL
  * (audit-only) entity (the M7 milestone close gated on the observed `in_z`,
- * `0730`-`0733`), else the first entity.
+ * `m-temporal-read-009`-`m-temporal-read-012`), else the first entity.
  */
 function conflictEntity(metamodel: Metamodel): EntityMetadata {
   for (const entity of metamodel.entities()) {

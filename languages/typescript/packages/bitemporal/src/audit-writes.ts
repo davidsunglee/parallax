@@ -25,7 +25,7 @@
  *
  * A **non-temporal** entity's `insert` lowers to the same plain
  * `insert into <table>(<cols>) values (?, …)` (no `out_z` axis to close), so the
- * timestamp-shape write cases (`0004` / `0005`) reuse this generator.
+ * timestamp-shape write cases (`m-core-002` / `m-core-003`) reuse this generator.
  */
 
 /** The physical write target the DML generation needs, resolved from the metamodel. */
@@ -83,7 +83,7 @@ export function auditWriteStatements(
   options: AuditWriteOptions = {},
 ): WriteStatement[] {
   // Resolve the close LAZILY — only `update`/`terminate` close a milestone, so a
-  // non-temporal `insert` (`0004`/`0005`, no processing axis) never demands one.
+  // non-temporal `insert` (`m-core-002`/`m-core-003`, no processing axis) never demands one.
   const close = (): WriteStatement =>
     options.gated ? gatedCloseStatement(target) : closeStatement(target);
   switch (kind) {

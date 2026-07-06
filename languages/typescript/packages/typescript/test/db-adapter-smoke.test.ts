@@ -251,7 +251,7 @@ async function provePostgresLockTimeout(
   // M8 shared read lock has locking EFFECT. Session A holds a `for share` read on
   // row 1; session B's UPDATE of the same row blocks and — with the session's
   // lowered `lock_timeout` — raises `55P03`, surfaced as `lockWaitTimeout`. This is
-  // the exact behavior the harness-lane `0728` case grades through `runRun`.
+  // the exact behavior the harness-lane `m-read-lock-006` case grades through `runRun`.
   if (!(db instanceof PostgresDatabase)) {
     throw new Error("expected PostgresDatabase");
   }

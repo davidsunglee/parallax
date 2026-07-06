@@ -1,0 +1,38 @@
+# Optimistic-lock success (M10): a fresh-version UPDATE affects exactly ONE row.
+#
+# The companion to the conflict case (m-opt-lock-005): with NO concurrent writer (no
+# `precondition`), Account id 2 (Linus) still carries the version we read (1), so
+# the golden UPDATE's version gate matches:
+#   update account set balance = ?, version = ? where id = ? and version = ?
+# The `... and version = ?` predicate (bind 1) matches the row, so the UPDATE
+# affects EXACTLY ONE row — success — and advances the version to 2 (every
+# successful versioned write moves the gate forward, so the next writer's check is
+# meaningful).
+#
+# The harness asserts the affected-row count is 1 and the resulting table state:
+# id 2's balance is now 500.00 and its version is 2; the other rows are untouched.
+# Together with m-opt-lock-005 this proves `updatedRows != 1` is the conflict signal — a
+# fresh version provably touches one row, a stale version provably touches zero.
+model: models/account.yaml
+tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-mvp-1]
+uow:
+  concurrency: optimistic
+write: { id: 2, balance: 500.00, observedVersion: 1 }
+expectedAffectedRows: 1
+goldenSql:
+  postgres: update account set balance = ?, version = ? where id = ? and version = ?
+binds: [500.00, 2, 2, 1]
+expectedTableState:
+  account:
+    - id: 1
+      owner: Ada
+      balance: 100.00
+      version: 1
+    - id: 2
+      owner: Linus
+      balance: 500.00
+      version: 2
+    - id: 3
+      owner: Grace
+      balance: 10.00
+      version: 1

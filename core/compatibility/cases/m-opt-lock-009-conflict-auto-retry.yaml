@@ -1,0 +1,54 @@
+# Optimistic-lock conflict AUTO-retried by the boundary (M8/M10 bounded automatic
+# retry) — the `m-opt-lock-007` analogue with NO caller retry code.
+#
+# `m-opt-lock-007` proves a CALLER-driven retry closes the loop (the developer catches the
+# conflict and re-reads). This case proves the SAME 0-then-1 transition when the
+# unit of work opts into automatic retry (`retryOptimisticConflicts: true`): the
+# boundary re-executes the closure, which re-reads the fresh version and succeeds —
+# the developer writes no retry loop at all.
+#
+# The harness observable is identical to `m-opt-lock-007` (this is a `harness`-lane conflict
+# `attempts` case — the golden UPDATEs the retry loop issues are the same 0-then-1
+# sequence), so the M12 harness runs it against real Postgres exactly as it runs
+# `m-opt-lock-007`. What differs is the `uow` block: the loop is automatic, not caller-driven.
+# The API Conformance Suite additionally proves the auto-retry-via-flag path (no
+# caller catch/re-read), registered against this id in `covered.ts`.
+#
+# Account 2 (Linus) is read at version 1. A concurrent transaction commits first
+# (the `precondition`: balance 999.00, version 2). Then the automatic loop:
+#   attempt 0 (stale) : UPDATE gates on the observed version (1) => 0 rows — conflict.
+#   attempt 1 (retry) : the loop re-reads the fresh version (2), re-applies => 1 row,
+#                       advancing the version to 3.
+model: models/account.yaml
+tags: [m-opt-lock, m-auto-retry, m-sql, conflict, success, slice-mvp-1]
+uow:
+  concurrency: optimistic
+  retryOptimisticConflicts: true
+precondition: update account set balance = 999.00, version = 2 where id = 2
+attempts:
+  - note: stale-version UPDATE — gates on version 1, which no longer matches => 0 rows
+    goldenSql:
+      postgres: update account set balance = ?, version = ? where id = ? and version = ?
+    write: { id: 2, balance: 250.00, observedVersion: 1 }
+    binds: [250.00, 2, 2, 1]
+    expectedAffectedRows: 0
+  - note: automatic retry — the loop re-reads the fresh version (2) and re-applies => 1 row
+    goldenSql:
+      postgres: update account set balance = ?, version = ? where id = ? and version = ?
+    write: { id: 2, balance: 250.00, observedVersion: 2 }
+    binds: [250.00, 3, 2, 2]
+    expectedAffectedRows: 1
+expectedTableState:
+  account:
+    - id: 1
+      owner: Ada
+      balance: 100.00
+      version: 1
+    - id: 2
+      owner: Linus
+      balance: 250.00
+      version: 3
+    - id: 3
+      owner: Grace
+      balance: 10.00
+      version: 1

@@ -1,10 +1,10 @@
 /**
  * API Conformance Suite — **locking** family (Phase 10c): the automatic in-
- * transaction read lock (`0603`), the no-op versioned update (`0609`), the
- * locking-mode version-advancing update (`0611`), the versioned set-based
- * materialize scenarios (`0614` / `0615` — a set-based update on a versioned entity
+ * transaction read lock (`m-read-lock-001`), the no-op versioned update (`m-opt-lock-001`), the
+ * locking-mode version-advancing update (`m-opt-lock-002`), the versioned set-based
+ * materialize scenarios (`m-opt-lock-003` / `m-opt-lock-004` — a set-based update on a versioned entity
  * resolves the predicate, then updates per object), and optimistic-mode version-
- * column locking (`0703` / `0704` / `0708`), written as a developer would and run
+ * column locking (`m-opt-lock-005` / `m-opt-lock-006` / `m-opt-lock-007`), written as a developer would and run
  * against each selected shipped `@parallax/db-*` adapter.
  *
  * **Strategy is a per-unit-of-work mode (M8 / M10).** `px.transaction(body, {
@@ -46,7 +46,7 @@ const accountPk = (id: number): Predicate =>
 const all = (): Predicate => new Predicate({ all: {} });
 
 // Balance — the audit-only (processing-temporal) model the optimistic × temporal
-// close cases (`0730`-`0733`) drive: the observed processing-from (`in_z`) is the
+// close cases (`m-temporal-read-009`-`m-temporal-read-012`) drive: the observed processing-from (`in_z`) is the
 // optimistic-lock version analogue (M7/M10).
 const Balance = { id: attr("Balance.id"), value: attr("Balance.value") };
 const balancePk = (id: number): Predicate =>
@@ -54,31 +54,31 @@ const balancePk = (id: number): Predicate =>
 
 it("the locking suite covers exactly the LOCKING family", () => {
   const covered = [
-    "0603-read-lock",
-    "0609-no-op-update-no-dml",
-    "0611-versioned-update-locking-mode",
-    // the versioned set-based materialize scenarios (0614/0615)
-    "0614-versioned-set-based-materialize-optimistic",
-    "0615-versioned-set-based-materialize-locking",
-    // the read-lock matrix (0616-0619, api-conformance lane)
-    "0616-locking-txn-object-find-locks",
-    "0617-locking-txn-projection-omits-lock",
-    "0618-locking-txn-deep-fetch-locks-every-level",
-    "0619-optimistic-txn-reads-omit-lock",
-    "0703-optimistic-lock-conflict",
-    "0704-optimistic-lock-success",
-    "0708-optimistic-lock-retry-after-conflict",
-    // the optimistic x temporal close cases (0730-0733)
-    "0730-temporal-close-optimistic-success",
-    "0731-temporal-close-optimistic-conflict",
-    "0732-temporal-close-retry-after-conflict",
-    "0733-temporal-close-zero-rows-error",
+    "m-read-lock-001-shared-suffix",
+    "m-opt-lock-001-no-op-update-no-dml",
+    "m-opt-lock-002-versioned-update-locking-mode",
+    // the versioned set-based materialize scenarios (m-opt-lock-003/m-opt-lock-004)
+    "m-opt-lock-003-versioned-set-based-materialize-optimistic",
+    "m-opt-lock-004-versioned-set-based-materialize-locking",
+    // the read-lock matrix (m-read-lock-002–m-read-lock-005, api-conformance lane)
+    "m-read-lock-002-locking-txn-object-find-locks",
+    "m-read-lock-003-locking-txn-projection-omits-lock",
+    "m-read-lock-004-locking-txn-deep-fetch-locks-every-level",
+    "m-read-lock-005-optimistic-txn-reads-omit-lock",
+    "m-opt-lock-005-conflict",
+    "m-opt-lock-006-success",
+    "m-opt-lock-007-retry-after-conflict",
+    // the optimistic x temporal close cases (m-temporal-read-009–m-temporal-read-012)
+    "m-temporal-read-009-close-optimistic-success",
+    "m-temporal-read-010-close-optimistic-conflict",
+    "m-temporal-read-011-close-retry-after-conflict",
+    "m-temporal-read-012-close-zero-rows-error",
   ];
   expect(covered.sort()).toEqual([...LOCKING].sort());
 });
 
-// The locking suite is MIXED: the read-lock cases (0603 / 0616-0619) and the no-op update
-// (0609 — it issues no DML) are dialect-agnostic; DML-emitting cases run when the selected
+// The locking suite is MIXED: the read-lock cases (m-read-lock-001 / m-read-lock-002–m-read-lock-005) and the no-op update
+// (m-opt-lock-001 — it issues no DML) are dialect-agnostic; DML-emitting cases run when the selected
 // provider supports the developer write surface.
 group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (dbp) => {
   const BOOT_TIMEOUT = 600_000;
@@ -95,9 +95,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   });
 
   it(
-    "0603: a transaction-scoped read takes the automatic shared lock and returns the row",
+    "m-read-lock-001: a transaction-scoped read takes the automatic shared lock and returns the row",
     async () => {
-      const f = await provisionCase(provider, "0603-read-lock");
+      const f = await provisionCase(provider, "m-read-lock-001-shared-suffix");
       // A read-then-write pattern: the read holds the shared row lock automatically
       // (no developer lock call), so the row cannot be changed under us before we act.
       const account = await f.px.transaction((tx) =>
@@ -111,7 +111,7 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   it(
     "a distinct/projection read in a locking transaction proceeds unlocked and returns rows",
     async () => {
-      const f = await provisionCase(provider, "0603-read-lock");
+      const f = await provisionCase(provider, "m-read-lock-001-shared-suffix");
       // A `distinct`/projection read cannot carry a row lock (no base row to lock),
       // so inside a locking transaction it proceeds UNLOCKED — no `for share`, and it
       // is never rejected (the D2 reversal; ADR 0030) — and returns its rows.
@@ -123,7 +123,7 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
     BOOT_TIMEOUT,
   );
 
-  // --- read-lock matrix (0616-0619, api-conformance lane) -------------------
+  // --- read-lock matrix (m-read-lock-002–m-read-lock-005, api-conformance lane) -------------------
   // These register the Phase-3 read-lock behaviors against portable core case ids.
   // Property 6 (golden SQL out of scope): the suite proves the developer-observable
   // BEHAVIOR (the read returns rows / graph, unlocked reads are never rejected); the
@@ -131,9 +131,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   // (`packages/typescript/test/writes.test.ts`, `packages/dialect/test/read-lock.test.ts`).
 
   it(
-    "0616: an object find inside a locking transaction returns the row (it takes the shared lock)",
+    "m-read-lock-002: an object find inside a locking transaction returns the row (it takes the shared lock)",
     async () => {
-      const f = await provisionCase(provider, "0616-locking-txn-object-find-locks");
+      const f = await provisionCase(provider, "m-read-lock-002-locking-txn-object-find-locks");
       const account = await f.px.transaction(
         (tx) => tx.entity("Account").find(Account.id.eq(2)).single(),
         { concurrency: "locking" },
@@ -144,9 +144,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   it(
-    "0617: a projection read inside a locking transaction proceeds unlocked and returns rows",
+    "m-read-lock-003: a projection read inside a locking transaction proceeds unlocked and returns rows",
     async () => {
-      const f = await provisionCase(provider, "0617-locking-txn-projection-omits-lock");
+      const f = await provisionCase(provider, "m-read-lock-003-locking-txn-projection-omits-lock");
       // A distinct/projection read cannot carry a row lock, so it proceeds UNLOCKED
       // and is never rejected (the D2 reversal, ADR 0030) — it returns its rows.
       const rows = await f.px.transaction(
@@ -159,9 +159,12 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   it(
-    "0618: a deep fetch inside a locking transaction locks every level and returns the graph",
+    "m-read-lock-004: a deep fetch inside a locking transaction locks every level and returns the graph",
     async () => {
-      const f = await provisionCase(provider, "0618-locking-txn-deep-fetch-locks-every-level");
+      const f = await provisionCase(
+        provider,
+        "m-read-lock-004-locking-txn-deep-fetch-locks-every-level",
+      );
       // Root + each child level flow through the ONE shared in-transaction read path,
       // so every level takes the shared lock; the developer-observable is the graph.
       const rows = await f.px.transaction(
@@ -178,9 +181,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   it(
-    "0619: reads inside an optimistic transaction take no lock and return rows",
+    "m-read-lock-005: reads inside an optimistic transaction take no lock and return rows",
     async () => {
-      const f = await provisionCase(provider, "0619-optimistic-txn-reads-omit-lock");
+      const f = await provisionCase(provider, "m-read-lock-005-optimistic-txn-reads-omit-lock");
       const account = await f.px.transaction(
         (tx) => tx.entity("Account").find(Account.id.eq(2)).single(),
         { concurrency: "optimistic" },
@@ -191,9 +194,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   it(
-    "0609: a versioned update that changes no attribute issues no DML",
+    "m-opt-lock-001: a versioned update that changes no attribute issues no DML",
     async () => {
-      const f = await provisionCase(provider, "0609-no-op-update-no-dml");
+      const f = await provisionCase(provider, "m-opt-lock-001-no-op-update-no-dml");
       const observed = await f.px.transaction(async (tx) => {
         const accounts = tx.entity("Account");
         // Read account 2 (records the observed version).
@@ -210,9 +213,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   writeCase(
-    "0611: a locking-mode update advances the version with no gate",
+    "m-opt-lock-002: a locking-mode update advances the version with no gate",
     async () => {
-      const f = await provisionCase(provider, "0611-versioned-update-locking-mode");
+      const f = await provisionCase(provider, "m-opt-lock-002-versioned-update-locking-mode");
       // Default `locking` mode: the read takes the shared lock and records version 1;
       // the update advances the version to 2 with no `and version = ?` gate.
       const result = await f.px.transaction(async (tx) => {
@@ -227,9 +230,12 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   writeCase(
-    "0615: a versioned set-based update materializes into per-object version-advancing updates",
+    "m-opt-lock-004: a versioned set-based update materializes into per-object version-advancing updates",
     async () => {
-      const f = await provisionCase(provider, "0615-versioned-set-based-materialize-locking");
+      const f = await provisionCase(
+        provider,
+        "m-opt-lock-004-versioned-set-based-materialize-locking",
+      );
       // A set-based update on a VERSIONED entity with NO explicit prior find: the
       // update MATERIALIZES — it resolves `balance < 200` to rows (recording their
       // versions + taking the locking lock), then updates per object (ungated).
@@ -252,9 +258,12 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   writeCase(
-    "0614: a versioned set-based update materializes into per-object GATED updates",
+    "m-opt-lock-003: a versioned set-based update materializes into per-object GATED updates",
     async () => {
-      const f = await provisionCase(provider, "0614-versioned-set-based-materialize-optimistic");
+      const f = await provisionCase(
+        provider,
+        "m-opt-lock-003-versioned-set-based-materialize-optimistic",
+      );
       // The optimistic companion: the materialize read takes no lock, and each
       // per-object UPDATE gates on that row's observed version (framework-owned).
       const observed = await f.px.transaction(
@@ -274,9 +283,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   writeCase(
-    "0703: a stale-version update conflicts (affects 0 rows) — the row is unchanged",
+    "m-opt-lock-005: a stale-version update conflicts (affects 0 rows) — the row is unchanged",
     async () => {
-      const f = await provisionCase(provider, "0703-optimistic-lock-conflict");
+      const f = await provisionCase(provider, "m-opt-lock-005-conflict");
       let conflicted = false;
       try {
         await f.px.transaction(
@@ -302,9 +311,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   writeCase(
-    "0704: an update on the fresh version succeeds (affects 1 row)",
+    "m-opt-lock-006: an update on the fresh version succeeds (affects 1 row)",
     async () => {
-      const f = await provisionCase(provider, "0704-optimistic-lock-success");
+      const f = await provisionCase(provider, "m-opt-lock-006-success");
       const result = await f.px.transaction(
         async (tx) => {
           const accounts = tx.entity("Account");
@@ -321,9 +330,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   writeCase(
-    "0708: a retry re-reads the fresh version after the conflict and succeeds",
+    "m-opt-lock-007: a retry re-reads the fresh version after the conflict and succeeds",
     async () => {
-      const f = await provisionCase(provider, "0708-optimistic-lock-retry-after-conflict");
+      const f = await provisionCase(provider, "m-opt-lock-007-retry-after-conflict");
       // Attempt 1 (gate on the observed version 1) conflicts; the retry re-reads the
       // fresh version and re-applies — a caller-driven retry loop with NO raw version.
       const result = await f.px.transaction(
@@ -352,7 +361,7 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
     BOOT_TIMEOUT,
   );
 
-  // --- optimistic x temporal close (0730-0733) ------------------------------
+  // --- optimistic x temporal close (m-temporal-read-009–m-temporal-read-012) ------------------------------
   // A processing-axis (audit-only) temporal entity carries NO version column, so the
   // observed processing-from (in_z) is the optimistic-lock version analogue (M7/M10).
   // The developer reads the current milestone (which records its in_z), then closes
@@ -362,9 +371,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   // thrown conflict (the golden close text is pinned by the harness compile lane).
 
   writeCase(
-    "0730: an optimistic close on a fresh observed in_z closes exactly the current milestone",
+    "m-temporal-read-009: an optimistic close on a fresh observed in_z closes exactly the current milestone",
     async () => {
-      const f = await provisionCase(provider, "0730-temporal-close-optimistic-success");
+      const f = await provisionCase(provider, "m-temporal-read-009-close-optimistic-success");
       const result = await f.px.transaction(
         async (tx) => {
           const balances = tx.entity("Balance");
@@ -382,9 +391,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   writeCase(
-    "0731: an optimistic close on a STALE observed in_z conflicts (a current row still exists)",
+    "m-temporal-read-010: an optimistic close on a STALE observed in_z conflicts (a current row still exists)",
     async () => {
-      const f = await provisionCase(provider, "0731-temporal-close-optimistic-conflict");
+      const f = await provisionCase(provider, "m-temporal-read-010-close-optimistic-conflict");
       let conflicted = false;
       try {
         await f.px.transaction(
@@ -409,9 +418,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   writeCase(
-    "0732: a retry re-reads the fresh current in_z after the temporal conflict and succeeds",
+    "m-temporal-read-011: a retry re-reads the fresh current in_z after the temporal conflict and succeeds",
     async () => {
-      const f = await provisionCase(provider, "0732-temporal-close-retry-after-conflict");
+      const f = await provisionCase(provider, "m-temporal-read-011-close-retry-after-conflict");
       const result = await f.px.transaction(
         async (tx) => {
           const balances = tx.entity("Balance");
@@ -438,9 +447,9 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
   );
 
   writeCase(
-    "0733: a locking-mode close that finds no current row raises (never silent)",
+    "m-temporal-read-012: a locking-mode close that finds no current row raises (never silent)",
     async () => {
-      const f = await provisionCase(provider, "0733-temporal-close-zero-rows-error");
+      const f = await provisionCase(provider, "m-temporal-read-012-close-zero-rows-error");
       // A concurrent writer TERMINATED id 2's current row out of band (committed BEFORE
       // our transaction opens, so our locking read takes no lock on an already-closed row).
       await applyPrecondition(provider, f);
@@ -476,8 +485,8 @@ async function applyPrecondition(
   if (precondition === undefined) {
     return;
   }
-  // A precondition may be a single statement (`0703`) or an ORDERED LIST — the
-  // temporal-close conflict cases (`0731`/`0732`) chain a full new current row
+  // A precondition may be a single statement (`m-opt-lock-005`) or an ORDERED LIST — the
+  // temporal-close conflict cases (`m-temporal-read-010`/`m-temporal-read-011`) chain a full new current row
   // (close the old milestone, then insert a fresh one). Apply each in order.
   const statements = Array.isArray(precondition) ? precondition : [precondition as string];
   for (const statement of statements) {

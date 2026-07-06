@@ -1,0 +1,54 @@
+# Temporal close hits ZERO rows in LOCKING mode (M7 + M10): a zero-row close is an
+# error in ANY mode — it MUST NOT silently succeed, even under the default pessimistic
+# strategy.
+#
+# In locking mode the close is UNGATED (the M8 shared read lock makes the write
+# correct, so no `and in_z = ?` gate is emitted) — the locking-mode counterpart of
+# m-temporal-read-009's gated close. But correctness still requires the close to find the current
+# milestone: a concurrent writer TERMINATED id 2 (closed its current row at 2024-09-01,
+# chaining NOTHING), so no current row (out_z = infinity) remains. The ungated close:
+#   update balance set out_z = ? where bal_id = ? and out_z = ?
+#   binds [2024-10-01, 2, infinity]  ->  0 rows.
+# A zero-row close is never silent: it surfaces (a stale/consistency error, distinct
+# from an optimistic conflict, and NOT retried — a retry would re-read the same absent
+# current row and loop).
+#
+# The case runs the precondition (the concurrent terminate) + the SINGLE ungated close
+# and asserts affectedRows 0. expectedTableState is the fixtures with id 2 terminated
+# (our close applied nothing).
+model: models/balance.yaml
+tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, locking, slice-mvp-1]
+uow:
+  concurrency: locking
+# A concurrent writer TERMINATED id 2: close the current row at 2024-09-01, chain nothing.
+precondition: update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'
+write: { id: 2 }
+at: "2024-10-01T00:00:00+00:00"
+expectedAffectedRows: 0
+goldenSql:
+  postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+binds: ["2024-10-01T00:00:00+00:00", 2, infinity]
+expectedTableState:
+  balance:
+    - bal_id: 1
+      acct_num: A
+      val: 100.00
+      in_z: "2024-01-01T00:00:00+00:00"
+      out_z: "2024-06-01T00:00:00+00:00"
+    - bal_id: 1
+      acct_num: A
+      val: 150.00
+      in_z: "2024-06-01T00:00:00+00:00"
+      out_z: infinity
+    # id 2's current milestone, TERMINATED by the concurrent writer at 2024-09-01 — no
+    # current row remains, so our ungated close found nothing (0 rows) and applied nothing.
+    - bal_id: 2
+      acct_num: B
+      val: 200.00
+      in_z: "2024-02-01T00:00:00+00:00"
+      out_z: "2024-09-01T00:00:00+00:00"
+    - bal_id: 3
+      acct_num: C
+      val: 50.00
+      in_z: "2024-03-01T00:00:00+00:00"
+      out_z: "2024-08-01T00:00:00+00:00"

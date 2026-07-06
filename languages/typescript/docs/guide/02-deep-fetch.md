@@ -6,21 +6,21 @@
 
 Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/deep-fetch.api-conformance.test.ts`).
 
-## 0310-deep-fetch-to-one
+## m-deep-fetch-001-to-one
 
 ```ts
 buildFindOperation(all(), { includes: [path("OrderItem.order")] })
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0311-deep-fetch-to-many
+## m-deep-fetch-002-to-many
 
 ```ts
 buildFindOperation(all(), { includes: [path("Order.items")] })
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0312-deep-fetch-multi-hop
+## m-deep-fetch-003-multi-hop
 
 ```ts
 buildFindOperation(inList("Order.id", [1, 42]), {
@@ -28,21 +28,21 @@ includes: [path("Order.items", "OrderItem.statuses")]
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0313-deep-fetch-two-paths
+## m-deep-fetch-004-two-paths
 
 ```ts
 buildFindOperation(all(), { includes: [path("Order.items"), path("Order.statuses")] })
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0314-deep-fetch-null-to-one
+## m-deep-fetch-005-null-to-one
 
 ```ts
 buildFindOperation(all(), { includes: [path("OrderStatus.orderItem")] })
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0315-deep-fetch-empty-root
+## m-deep-fetch-006-empty-root
 
 ```ts
 buildFindOperation(eq("Order.id", 999), {
@@ -50,7 +50,7 @@ includes: [path("Order.items", "OrderItem.statuses")]
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0316-deep-fetch-shared-prefix
+## m-deep-fetch-007-shared-prefix
 
 ```ts
 buildFindOperation(all(), {
@@ -58,7 +58,7 @@ includes: [path("Order.items"), path("Order.items", "OrderItem.statuses")]
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0318-deep-fetch-empty-intermediate
+## m-deep-fetch-008-empty-intermediate
 
 ```ts
 buildFindOperation(eq("Order.id", 4), {
@@ -66,28 +66,28 @@ includes: [path("Order.items", "OrderItem.statuses")]
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0319-deep-fetch-ordered-items-desc
+## m-deep-fetch-009-ordered-items-desc
 
 ```ts
 buildFindOperation(eq("Order.id", 1), { includes: [path("Order.items")] })
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0320-deep-fetch-one-to-one
+## m-deep-fetch-010-one-to-one
 
 ```ts
 buildFindOperation(all(), { includes: [path("Person.passport")] })
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0322-deep-fetch-ordered-tags-multikey
+## m-deep-fetch-011-ordered-tags-multikey
 
 ```ts
 buildFindOperation(eq("Order.id", 1), { includes: [path("Order.tags")] })
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0323-deep-fetch-ordered-nullable-nulls-last
+## m-deep-fetch-012-ordered-nullable-nulls-last
 
 ```ts
 buildFindOperation(inList("Order.id", [1, 42]), {
@@ -95,7 +95,7 @@ includes: [path("Order.itemsByShipDate")]
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0324-deepfetch-temporal-both-latest
+## m-navigate-012-deepfetch-temporal-both-latest
 
 ```ts
 buildFindOperation(all(), {
@@ -104,7 +104,7 @@ temporal: { asOf: { processing: "now", business: "now" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0325-deepfetch-temporal-business-past
+## m-navigate-013-deepfetch-temporal-business-past
 
 ```ts
 buildFindOperation(all(), {
@@ -113,7 +113,7 @@ temporal: { asOf: { processing: "now", business: at("2024-03-01T00:00:00+00:00")
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0326-deepfetch-temporal-processing-past
+## m-navigate-014-deepfetch-temporal-processing-past
 
 ```ts
 buildFindOperation(all(), {
@@ -122,7 +122,7 @@ temporal: { asOf: { processing: at("2024-02-01T00:00:00+00:00"), business: "now"
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0327-deepfetch-temporal-both-past
+## m-navigate-015-deepfetch-temporal-both-past
 
 ```ts
 buildFindOperation(all(), {
@@ -134,7 +134,7 @@ temporal: {
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0328-deepfetch-temporal-multihop
+## m-navigate-016-deepfetch-temporal-multihop
 
 ```ts
 buildFindOperation(all(), {
@@ -143,7 +143,7 @@ temporal: { asOf: { processing: "now", business: "now" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0329-deepfetch-temporal-to-one
+## m-navigate-017-deepfetch-temporal-to-one
 
 ```ts
 buildFindOperation(all(), {
@@ -152,7 +152,7 @@ temporal: { asOf: { processing: "now", business: "now" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0331-deepfetch-processing-only-latest
+## m-navigate-019-deepfetch-processing-only-latest
 
 ```ts
 buildFindOperation(all(), {
@@ -161,7 +161,7 @@ temporal: { asOf: { processing: "now" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0332-deepfetch-processing-only-instant
+## m-navigate-020-deepfetch-processing-only-instant
 
 ```ts
 buildFindOperation(all(), {
@@ -170,14 +170,14 @@ temporal: { asOf: { processing: at("2024-02-01T00:00:00+00:00") }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0333-deepfetch-nontemporal-to-temporal
+## m-navigate-021-deepfetch-nontemporal-to-temporal
 
 ```ts
 buildFindOperation(all(), { includes: [path("Tenant.leases")] })
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0334-deepfetch-temporal-to-nontemporal
+## m-navigate-022-deepfetch-temporal-to-nontemporal
 
 ```ts
 buildFindOperation(all(), {
@@ -186,7 +186,7 @@ temporal: { asOf: { processing: "now" }
 const { rows, roundTrips } = await px.entity(entity).findGraph(base, options);
 ```
 
-## 0336-deepfetch-temporal-ordered-root
+## m-navigate-024-deepfetch-temporal-ordered-root
 
 ```ts
 buildFindOperation(all(), {

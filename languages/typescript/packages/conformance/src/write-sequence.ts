@@ -12,13 +12,13 @@
  *  - a **non-temporal** entity's step is the M8 set-based batched flush generated
  *    by `@parallax/transactions`'s unit-of-work planner
  *    (`combineWrites`) — buffered inserts collapse into one multi-row `INSERT`
- *    (`0604`/`0612`), and a batched update is uniform `pk in (…)` (`0604`) or one
- *    keyed `UPDATE` per distinct key (`0613`, `statements: 2`).
+ *    (`m-batch-write-001`/`m-unit-work-003`), and a batched update is uniform `pk in (…)` (`m-batch-write-001`) or one
+ *    keyed `UPDATE` per distinct key (`m-batch-write-002`, `statements: 2`).
  *
  * Each generated statement is paired, in order, with the authored bind row — the
  * write input the case declares. The statement count equals the sum of the steps'
- * declared counts, which the harness asserts equals `roundTrips`. The `0004` /
- * `0005` timestamp-shape single-row inserts fall out of the non-temporal `insert`
+ * declared counts, which the harness asserts equals `roundTrips`. The `m-core-002` /
+ * `m-core-003` timestamp-shape single-row inserts fall out of the non-temporal `insert`
  * path (a one-row multi-row insert).
  */
 import { auditWriteStatements, type MutationKind, type WriteTarget } from "@parallax/bitemporal";
@@ -235,7 +235,7 @@ function auditStatementsForStep(
  *
  * Column identity + order + binds are DERIVED from the neutral write input (①,
  * `step.rows`) classified against the metamodel — the emitted column list is
- * `columnOrder(entity)` filtered to the present attributes (`0612` omits the
+ * `columnOrder(entity)` filtered to the present attributes (`m-unit-work-003` omits the
  * nullable `shippedOn`, so `shipped_on` is dropped from the INSERT), never parsed
  * out of the golden. `goldenSql` + `binds` stay an independent oracle the compile
  * lane cross-checks the emission against.
@@ -257,7 +257,7 @@ function batchStatementsForStep(
   // set-based update MUST materialize per object, M10 / ADR 0031). Columns, the
   // advance, and the binds are DERIVED from the neutral write input (①) and routed
   // by `(versionAttribute, uow.concurrency)`: locking mode ⇒ ungated advance
-  // (`0611`), optimistic ⇒ gated advance — mirroring the runtime's own routing.
+  // (`m-opt-lock-002`), optimistic ⇒ gated advance — mirroring the runtime's own routing.
   if (mutation === "update" && entity.versionAttribute() !== undefined) {
     return versionedUpdateStatements(
       entity,
@@ -282,11 +282,11 @@ function batchStatementsForStep(
  * Plan a NON-temporal `insert` step from its classified ① rows: the emitted column
  * list is `columnOrder(entity)` filtered to the domain columns any row supplies (in
  * model order — an unset nullable attribute is absent, so its column is omitted,
- * `0612`), and the flat binds are each row's values pulled in that same column
+ * `m-unit-work-003`), and the flat binds are each row's values pulled in that same column
  * order. A multi-row insert collapses every row into one statement (`combineWrites`).
  *
  * A VERSIONED entity's insert appends the framework-owned version column with the
- * DERIVED initial value `1` (the M10 optimistic-lock baseline, `0701`) — never
+ * DERIVED initial value `1` (the M10 optimistic-lock baseline, `m-detach-001`) — never
  * authored in ① (`observedVersion` is absent on an insert), so it is neither in the
  * row's columns nor its binds. This mirrors the reference harness's
  * `_assert_insert_input` gate.
@@ -317,8 +317,8 @@ function insertStatements(
  * column(s) are `columnOrder(entity)` filtered to the domain columns present (model
  * order, not key order); the pk of each row is the `where` key. Uniform-vs-per-key
  * is decided by value equality across the rows — a shared new value collapses to
- * one `where pk in (…)` statement (`0604`), non-uniform values flush one keyed
- * `UPDATE` per row (`0613`).
+ * one `where pk in (…)` statement (`m-batch-write-001`), non-uniform values flush one keyed
+ * `UPDATE` per row (`m-batch-write-002`).
  */
 function updateStatements(
   entity: EntityMetadata,
@@ -356,7 +356,7 @@ function tuplesEqual(left: readonly unknown[], right: readonly unknown[]): boole
  *  - the framework-owned version advances `observedVersion + 1` (derived, never
  *    authored), appended to the `set`;
  *  - the mode routes the gate: `locking` ⇒ an ungated advance
- *    (`versionAdvancingUpdate`, the M8 shared-read-lock `0611` / `0702` shape),
+ *    (`versionAdvancingUpdate`, the M8 shared-read-lock `m-opt-lock-002` / `m-detach-002` shape),
  *    `optimistic` ⇒ a gated advance (`versionedUpdate`, `... and version = ?`);
  *  - the binds are `[…set values…, newVersion, pk]` (locking) or
  *    `[…set values…, newVersion, pk, observedVersion]` (optimistic).

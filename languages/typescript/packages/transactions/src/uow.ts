@@ -49,7 +49,7 @@ export interface PlannedStatement {
  * Combine the declared write steps into the ordered set-based flush. Steps are
  * flushed in declared order: the write-sequence plan builder feeds them in the
  * case's authored order, which places a referenced parent's `insert` step before
- * the child's that points at it (`0612`), so this preserves that FK-safe order.
+ * the child's that points at it (`m-unit-work-003`), so this preserves that FK-safe order.
  */
 export function combineWrites(steps: readonly WriteStep[]): readonly PlannedStatement[] {
   const planned: PlannedStatement[] = [];
@@ -85,7 +85,7 @@ function planInsert(step: WriteStep): PlannedStatement {
 /**
  * Plan an `update` step. A single-statement step is the UNIFORM form (`set <col> =
  * ? where pk in (?, …)`) — one shared new value over `keyCount` keys, its binds
- * `[value, ...keys]`. A multi-statement step is the PER-KEY form (`0613`): one
+ * `[value, ...keys]`. A multi-statement step is the PER-KEY form (`m-batch-write-002`): one
  * keyed `update … where pk = ?` per distinct key, each paired with its own bind
  * row `[value, key]`.
  */

@@ -324,8 +324,8 @@ def _case_shape(doc: dict) -> str | None:
     if "errorClass" in doc:
         return "error"
     # A concurrency choreography with NO `errorClass` is the concurrency-success shape
-    # (behavioral read-lock: 0729/0734). Checked AFTER `errorClass` so an
-    # error/concurrency case (0728) still resolves to `error`.
+    # (behavioral read-lock: m-read-lock-007/m-read-lock-008). Checked AFTER `errorClass` so an
+    # error/concurrency case (m-read-lock-006) still resolves to `error`.
     if "concurrency" in doc:
         return "concurrencySuccess"
     if "coherence" in doc:

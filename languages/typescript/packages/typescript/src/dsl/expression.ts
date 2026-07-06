@@ -46,7 +46,7 @@ export class Predicate {
   /**
    * Left-associative conjunction. `a.and(b).and(c)` flattens to a single
    * three-operand `and`, matching the corpus's flattened junction encoding
-   * (`0229`); nesting is introduced only by an explicit `.group()`.
+   * (`m-op-algebra-031`); nesting is introduced only by an explicit `.group()`.
    */
   and(...others: readonly Predicate[]): Predicate {
     return new Predicate(junction("and", this, others));
@@ -101,7 +101,7 @@ export class OrderKeyExpression {
  * A typed attribute reference (`Order.id`). Every predicate method serializes to
  * the matching single-key M2 node with `attr` set to this ref; the value is
  * carried as a bind by the compiler, so the literal passes straight through
- * (`0002`: `Order.id.eq(42)` → `{ eq: { attr: "Order.id", value: 42 } }`).
+ * (`m-op-algebra-002`: `Order.id.eq(42)` → `{ eq: { attr: "Order.id", value: 42 } }`).
  */
 export class AttributeExpression {
   constructor(readonly ref: AttributeRef) {}
@@ -111,78 +111,78 @@ export class AttributeExpression {
     return new Predicate({ [tag]: body } as unknown as Operation);
   }
 
-  /** `= ?` (`0002`). `eq(null)` is rejected in favor of {@link isNull} (spec §2.5). */
+  /** `= ?` (`m-op-algebra-002`). `eq(null)` is rejected in favor of {@link isNull} (spec §2.5). */
   eq(value: Exclude<Literal, null>): Predicate {
     return this.cmp("eq", value);
   }
 
-  /** `<> ?` (`0201`). `notEq(null)` is rejected in favor of {@link isNotNull}. */
+  /** `<> ?` (`m-op-algebra-003`). `notEq(null)` is rejected in favor of {@link isNotNull}. */
   notEq(value: Exclude<Literal, null>): Predicate {
     return this.cmp("notEq", value);
   }
 
-  /** `> ?` (`0202`). */
+  /** `> ?` (`m-op-algebra-004`). */
   gt(value: Exclude<Literal, null>): Predicate {
     return this.cmp("greaterThan", value);
   }
 
-  /** `>= ?` (`0203`). */
+  /** `>= ?` (`m-op-algebra-005`). */
   gte(value: Exclude<Literal, null>): Predicate {
     return this.cmp("greaterThanEquals", value);
   }
 
-  /** `< ?` (`0204`). */
+  /** `< ?` (`m-op-algebra-006`). */
   lt(value: Exclude<Literal, null>): Predicate {
     return this.cmp("lessThan", value);
   }
 
-  /** `<= ?` (`0205`). */
+  /** `<= ?` (`m-op-algebra-007`). */
   lte(value: Exclude<Literal, null>): Predicate {
     return this.cmp("lessThanEquals", value);
   }
 
-  /** `between ? and ?` (`0206`), lower → upper. */
+  /** `between ? and ?` (`m-op-algebra-008`), lower → upper. */
   between(lower: Exclude<Literal, null>, upper: Exclude<Literal, null>): Predicate {
     return new Predicate({ between: { attr: this.ref, lower, upper } });
   }
 
-  /** `is null` (`0207`). */
+  /** `is null` (`m-op-algebra-009`). */
   isNull(): Predicate {
     return new Predicate({ isNull: { attr: this.ref } });
   }
 
-  /** `is not null` (`0208`). */
+  /** `is not null` (`m-op-algebra-010`). */
   isNotNull(): Predicate {
     return new Predicate({ isNotNull: { attr: this.ref } });
   }
 
-  /** `like ?` (`0209` / `0214` case-insensitive). */
+  /** `like ?` (`m-op-algebra-011` / `m-op-algebra-016` case-insensitive). */
   like(value: string, options?: StringPredicateOptions): Predicate {
     return this.stringMatch("like", value, options);
   }
 
-  /** `not like ?` (`0210`). */
+  /** `not like ?` (`m-op-algebra-012`). */
   notLike(value: string, options?: StringPredicateOptions): Predicate {
     return this.stringMatch("notLike", value, options);
   }
 
-  /** Prefix match (`0211` / `0231` escape). */
+  /** Prefix match (`m-op-algebra-013` / `m-op-algebra-033` escape). */
   startsWith(value: string, options?: StringPredicateOptions): Predicate {
     return this.stringMatch("startsWith", value, options);
   }
 
-  /** Suffix match (`0212`). */
+  /** Suffix match (`m-op-algebra-014`). */
   endsWith(value: string, options?: StringPredicateOptions): Predicate {
     return this.stringMatch("endsWith", value, options);
   }
 
-  /** Substring match (`0213` escape). */
+  /** Substring match (`m-op-algebra-015` escape). */
   contains(value: string, options?: StringPredicateOptions): Predicate {
     return this.stringMatch("contains", value, options);
   }
 
   /**
-   * `in (?, …)` (`0216`). Empty membership normalizes before serialization:
+   * `in (?, …)` (`m-op-algebra-018`). Empty membership normalizes before serialization:
    * `in([])` → `none` (spec §2.5).
    */
   in(values: readonly Exclude<Literal, null>[]): Predicate {
@@ -192,7 +192,7 @@ export class AttributeExpression {
     return new Predicate({ in: { attr: this.ref, values } });
   }
 
-  /** `not in (?, …)` (`0217`). Empty membership → `all` (spec §2.5). */
+  /** `not in (?, …)` (`m-op-algebra-019`). Empty membership → `all` (spec §2.5). */
   notIn(values: readonly Exclude<Literal, null>[]): Predicate {
     if (values.length === 0) {
       return new Predicate({ all: {} });
@@ -216,7 +216,7 @@ export class AttributeExpression {
     return new OrderKeyExpression({ attr: this.ref, direction: "asc" });
   }
 
-  /** Descending sort key (`orderBy` option, `0224`). */
+  /** Descending sort key (`orderBy` option, `m-op-algebra-026`). */
   desc(): OrderKeyExpression {
     return new OrderKeyExpression({ attr: this.ref, direction: "desc" });
   }
@@ -257,7 +257,7 @@ type StringTags = {
 /**
  * A to-many relationship reference (`Order.items`). To-many relationships
  * require an explicit quantifier (spec §2.6): `exists` / `notExists`, optionally
- * filtered by an inner predicate over the child entity (`0308` multi-hop).
+ * filtered by an inner predicate over the child entity (`m-navigate-008` multi-hop).
  */
 export class ToManyRelationshipExpression {
   constructor(readonly ref: RelationshipRef) {}
@@ -269,7 +269,7 @@ export class ToManyRelationshipExpression {
     });
   }
 
-  /** `not exists (select 1 …)` (`0303`). */
+  /** `not exists (select 1 …)` (`m-navigate-003`). */
   notExists(inner?: Predicate): Predicate {
     return new Predicate({
       notExists: { rel: this.ref, ...(inner ? { op: inner.toOperation() } : {}) },
@@ -278,10 +278,10 @@ export class ToManyRelationshipExpression {
 
   /**
    * Navigate the relationship, filtering the root by an inner predicate over the
-   * related entity (`0301` `Order.items.navigate(OrderItem.sku.eq("A-100"))`). A
+   * related entity (`m-navigate-001` `Order.items.navigate(OrderItem.sku.eq("A-100"))`). A
    * `navigate` lowers to the same correlated-EXISTS semi-join as `exists`, but is a
    * distinct algebra node that always carries an inner predicate (spec §2.6). Used
-   * for both to-many and to-one navigations (`0307` / `0321`).
+   * for both to-many and to-one navigations (`m-navigate-007` / `m-navigate-011`).
    */
   navigate(inner: Predicate): Predicate {
     return new Predicate({ navigate: { rel: this.ref, op: inner.toOperation() } });

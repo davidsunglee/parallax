@@ -1,0 +1,33 @@
+# Read-lock matrix (M8 / M11): a projection/aggregation read inside a LOCKING unit
+# of work proceeds UNLOCKED — the D2 reversal — `api-conformance` lane.
+#
+# The complement to `m-read-lock-002`: a `distinct`/projection read inside `px.transaction(
+# body, { concurrency: "locking" })` takes NO lock and is NEVER rejected. Its
+# result rows have no identifiable base row to lock (the database rejects a
+# row-lock clause on a projection), and per ADR 0024 a projection returns plain
+# unmanaged data that never enters the observed-version map or the write path — so
+# there is nothing for a lock to protect. Omitting the lock is both necessary and
+# safe (ADR 0030, delta 09 D2). The golden is the plain projection with NO
+# `for share of t0` suffix.
+#
+# `lane: api-conformance`: the reversal (a projection proceeds unlocked instead of
+# throwing) is a runtime property the language's API Conformance Suite proves; the
+# M12 harness schema-validates the case.
+model: models/account.yaml
+tags: [m-read-lock, m-dialect, m-api-conformance, locking-mode, slice-mvp-1]
+lane: api-conformance
+uow:
+  concurrency: locking
+operation:
+  distinct:
+    operand:
+      all: {}
+goldenSql:
+  postgres: select distinct t0.id, t0.owner, t0.balance, t0.version from account t0
+binds: []
+referenceSql: select distinct id, owner, balance, version from account
+expectedRows:
+  - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+  - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+  - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+roundTrips: 1

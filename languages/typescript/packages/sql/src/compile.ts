@@ -169,7 +169,7 @@ export type Bind = string | number | boolean | null;
  * verbatim (`<alias>.<column>`); a `bytes` column lowers through Postgres
  * `encode(<alias>.<column>, ?) <outputName>` with the `'hex'` format bound in the
  * projection position, so the byte payload materializes as stable hex text (M0
- * scalar-serde projection — case `0003`). The projection binds land BEFORE any
+ * scalar-serde projection — case `m-core-001`). The projection binds land BEFORE any
  * `where` binds, matching left-to-right placeholder order.
  */
 export interface ProjectionColumn {
@@ -375,7 +375,7 @@ export function compile(
 /**
  * Render the SELECT projection list, alias-qualifying each column and lowering a
  * `bytes` column to the Postgres `encode(<alias>.<column>, ?) <column>_hex` hex
- * form (the M0 scalar-serde projection — `0003`). A lowered column pushes its
+ * form (the M0 scalar-serde projection — `m-core-001`). A lowered column pushes its
  * `'hex'` format bind onto the accumulator IN projection order (before the `where`
  * binds); a plain scalar column projects verbatim and pushes nothing.
  */
@@ -808,7 +808,7 @@ function existsSemiJoin(
   // predicate. The root's pins propagate into it matched by axis, and any axis the
   // root left unpinned defaults to `now` (the per-entity default-injection rule), so
   // the EXISTS subquery reads the child as of the same instant(s) even when the root
-  // omitted its as-of entirely (the default-now case `0335`). The child's as-of binds
+  // omitted its as-of entirely (the default-now case `m-navigate-023`). The child's as-of binds
   // land after its inner user bind and before the outer root as-of (left-to-right
   // placeholder order). A non-temporal child yields an empty fragment.
   const childAsOf = propagateChildAsOf(ctx, body.rel, childAlias);
@@ -833,7 +833,7 @@ function existsSemiJoin(
  * any pins** — M7's default-injection rule is entity-local (each temporal read
  * derives its own as-of predicate), so a temporal child in the semi-join carries
  * its current-row predicate even when the root omitted its as-of (the default-now
- * case `0335`) or the root is non-temporal (a temporal child of a non-temporal root
+ * case `m-navigate-023`) or the root is non-temporal (a temporal child of a non-temporal root
  * defaults every axis to `now`, per M4). A non-temporal child resolves to no axes
  * and so yields an empty fragment, which the caller drops. `undefined` only when the
  * resolver is non-temporal (no `asOfPredicate` / `relatedEntityName`).

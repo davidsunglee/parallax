@@ -6,7 +6,7 @@
  * The dialect owns the whole lock decision — whether, where, and how it attaches:
  *
  *  - a `locking`-mode **object find** gets `for share of t0` appended after every
- *    other clause (the `0603` regression proof that object finds still lock);
+ *    other clause (the `m-read-lock-001` regression proof that object finds still lock);
  *  - a `locking`-mode **projection / aggregation** (the `select distinct` shape) is
  *    returned **unchanged** — no suffix, and crucially **no throw** (the reversal of
  *    the former `ParallaxUnlockableReadError`: no base row to lock, unmanaged data
@@ -16,7 +16,7 @@
 import { applyReadLock } from "@parallax/dialect";
 import { describe, expect, it } from "vitest";
 
-describe("applyReadLock (M8 read-lock application, 0603)", () => {
+describe("applyReadLock (M8 read-lock application, m-read-lock-001)", () => {
   it("appends the Postgres shared-row-lock suffix to a locking object find", () => {
     const read = "select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?";
     expect(applyReadLock(read, { locking: true, projection: false })).toBe(

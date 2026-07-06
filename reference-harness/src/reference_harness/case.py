@@ -151,8 +151,9 @@ class Case:
         """Which executor satisfies this case (``harness`` default | ``api-conformance``).
 
         A ``harness``-lane case executes as today; an ``api-conformance``-lane case
-        (every boundary case, plus the read-lock matrix reads ``0616``-``0619``) is
-        schema-validated by the M12 harness but NOT executed — each language's API
+        (every boundary case, plus the read-lock matrix reads
+        ``m-read-lock-002``-``m-read-lock-005``) is schema-validated by the M12 harness but
+        NOT executed — each language's API
         Conformance Suite satisfies it. :func:`case_runner.run_case` early-returns
         for the api-conformance lane.
         """
@@ -347,9 +348,9 @@ class Case:
         error/concurrency case). It runs the barrier-separated rounds on two held
         non-autocommit sessions and asserts that NO error is raised — each read
         step's optional ``expectRows`` observed on its HELD session. Proves the
-        shared read lock is COMPATIBLE with a second reader (``0729``) and that an
-        unlocked projection ADMITS a writer (``0734``), the non-error counterpart to
-        the error branch's lock CONTENTION (``0728``).
+        shared read lock is COMPATIBLE with a second reader (``m-read-lock-007``) and that an
+        unlocked projection ADMITS a writer (``m-read-lock-008``), the non-error counterpart to
+        the error branch's lock CONTENTION (``m-read-lock-006``).
         """
         return self.concurrency is not None and "errorClass" not in self.raw
 

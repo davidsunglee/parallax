@@ -2,7 +2,7 @@
  * `@parallax/transactions` unit tests (Docker-free, pure) — the M8 set-based
  * batched-flush SQL discipline, in isolation from the metamodel and a database.
  *
- * Pins the exact canonical DML each batched form emits — the `0604` / `0613`
+ * Pins the exact canonical DML each batched form emits — the `m-batch-write-001` / `m-batch-write-002`
  * wallet-shaped goldens (plus the single-row insert form):
  *
  *  - buffered inserts collapse into ONE multi-row `INSERT` (row count from the
@@ -29,7 +29,7 @@ import {
 } from "@parallax/transactions";
 import { describe, expect, it } from "vitest";
 
-/** The `wallet` batched-write target (id/owner/balance, pk id) — the corpus 0604/0613 shape. */
+/** The `wallet` batched-write target (id/owner/balance, pk id) — the corpus m-batch-write-001/m-batch-write-002 shape. */
 const WALLET: BatchTarget = {
   table: "wallet",
   columns: ["id", "owner", "balance"],
@@ -37,7 +37,7 @@ const WALLET: BatchTarget = {
 };
 
 describe("batched insert (multi-row INSERT)", () => {
-  it("collapses three buffered inserts into one 3-tuple INSERT (0604)", () => {
+  it("collapses three buffered inserts into one 3-tuple INSERT (m-batch-write-001)", () => {
     expect(multiRowInsert(WALLET, 3)).toBe(
       "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)",
     );
@@ -55,19 +55,19 @@ describe("batched insert (multi-row INSERT)", () => {
 });
 
 describe("batched update forms", () => {
-  it("renders the uniform `pk in (…)` form over two keys (0604 step 2)", () => {
+  it("renders the uniform `pk in (…)` form over two keys (m-batch-write-001 step 2)", () => {
     expect(uniformUpdate(WALLET, "balance", 2)).toBe(
       "update wallet set balance = ? where id in (?, ?)",
     );
   });
 
-  it("renders one keyed UPDATE for the per-key form (0613)", () => {
+  it("renders one keyed UPDATE for the per-key form (m-batch-write-002)", () => {
     expect(keyedUpdate(WALLET, "balance")).toBe("update wallet set balance = ? where id = ?");
   });
 });
 
 describe("combineWrites — the unit-of-work planner", () => {
-  it("plans 0604: one multi-row insert then one uniform update, in order", () => {
+  it("plans m-batch-write-001: one multi-row insert then one uniform update, in order", () => {
     const steps: WriteStep[] = [
       {
         mutation: "insert",
@@ -91,7 +91,7 @@ describe("combineWrites — the unit-of-work planner", () => {
     expect(planned[1]?.binds).toEqual(["500.00", 10, 11]);
   });
 
-  it("plans 0613: one keyed UPDATE per distinct key (statements: 2)", () => {
+  it("plans m-batch-write-002: one keyed UPDATE per distinct key (statements: 2)", () => {
     const step: WriteStep = {
       mutation: "update",
       target: WALLET,

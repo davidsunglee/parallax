@@ -18,7 +18,7 @@ import { expect, describe as group, it } from "vitest";
 import { renderFixtureInsert } from "../src/conformance/postgres-provider.js";
 
 group("renderFixtureInsert quoting", () => {
-  it("leaves simple lowercase non-reserved identifiers unquoted (0002 orders)", () => {
+  it("leaves simple lowercase non-reserved identifiers unquoted (m-op-algebra-002 orders)", () => {
     expect(renderFixtureInsert("orders", ["id", "name"])).toBe(
       "insert into orders (id, name) values ($1, $2)",
     );

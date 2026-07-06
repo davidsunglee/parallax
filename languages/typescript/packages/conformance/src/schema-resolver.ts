@@ -16,7 +16,7 @@
  * `expectedGraph` child object (minus that node's own relationship names). When a
  * level carries no `expectedGraph` witness (an empty intermediate), the projection
  * falls back to the child entity's non-nullable columns plus any nullable
- * `orderBy` key — the documented `0318` path.
+ * `orderBy` key — the documented `m-deep-fetch-008` path.
  */
 import {
   type AsOfPredicate,
@@ -180,17 +180,18 @@ export class MetamodelSchema implements SchemaResolver {
 /**
  * Resolve a flat read case's projection — the ordered output columns the SELECT
  * projects — **from the case**, matching the golden by construction (the Phase-3
- * `[pk, firstNonPk]` heuristic could not express `0226`'s `distinct active` nor a
+ * `[pk, firstNonPk]` heuristic could not express `m-op-algebra-028`'s `distinct active` nor a
  * wider `orders` read).
  *
  * The case's `expectedRows` keys ARE the SQL output column names the golden
  * projects and the harness compares against. Each key resolves back to its
  * physical attribute so the compiler can lower a `bytes` column to the
- * `encode(t0.<col>, ?) <col>_hex` hex form (M0 scalar-serde projection — `0003`):
- * a direct column match projects verbatim; an output ending `_hex` whose stripped
- * name is a `bytes` attribute projects through `encode(...)`. A key that names no
- * attribute (a computed output) projects verbatim as a plain quoted column, as
- * before. When `expectedRows` is empty (e.g. `0221-none`), the case provides no
+ * `encode(t0.<col>, ?) <col>_hex` hex form (M0 scalar-serde projection —
+ * `m-core-001`): a direct column match projects verbatim; an output ending `_hex`
+ * whose stripped name is a `bytes` attribute projects through `encode(...)`. A key
+ * that names no attribute (a computed output) projects verbatim as a plain quoted
+ * column, as before. When `expectedRows` is empty (e.g. `m-op-algebra-023-none`),
+ * the case provides no
  * key witness, so we fall back to the metamodel default — the primary key plus
  * the first non-key attribute.
  */
@@ -215,9 +216,9 @@ export function readProjection(
  *     alias would still lower — belt-and-braces, though the corpus always uses the
  *     `_hex` form);
  *  2. an output ending `_hex` whose stripped name is a `bytes` attribute's column
- *     → project through `encode(t0.<col>, ?) <output>` (the `0003` hex form);
+ *     → project through `encode(t0.<col>, ?) <output>` (the `m-core-001` hex form);
  *  3. otherwise a plain quoted column named by the output (a computed/derived
- *     output the model does not declare — the pre-0003 behavior).
+ *     output the model does not declare — the pre-m-core-001 behavior).
  */
 function projectionForOutput(
   output: string,
@@ -253,7 +254,7 @@ function attributeProjection(attr: NormalizedAttribute, dialect: Dialect): Proje
  * Resolve a deep-fetch **root** projection from the case's `expectedGraph` root
  * object: its keys minus the top-level relationship names (the relationships are
  * attached in memory, not projected). When the root resolves to no rows (e.g.
- * `0315`, an empty-root deep fetch whose `expectedGraph` is `{ Order: [] }`),
+ * `m-deep-fetch-006`, an empty-root deep fetch whose `expectedGraph` is `{ Order: [] }`),
  * there is no witness, so we fall back to the metamodel default projection for the
  * root entity — the primary key plus the first non-key attribute, which
  * reproduces the golden root `select id, name from orders …`. An empty projection
@@ -297,7 +298,7 @@ function classOf(ref: string | undefined): string | undefined {
  * Resolve a deep-fetch **child-level** projection from the `expectedGraph` child
  * object found under this node's relationship name: its keys minus this node's
  * own child-relationship names. When no witness exists anywhere (an empty
- * intermediate — `0318`), fall back to the child entity's non-nullable columns
+ * intermediate — `m-deep-fetch-008`), fall back to the child entity's non-nullable columns
  * plus any nullable `orderBy` key (so a nullable ordering column stays projected).
  */
 export function childProjection(
@@ -318,7 +319,7 @@ export function childProjection(
  * The fallback child projection when no `expectedGraph` witness exists: the
  * entity's non-nullable columns, plus any nullable column named by a declared
  * `orderBy` key (the order key MUST be projected for the ordering oracle). Quoted
- * for SQL. Exercised only by the empty-intermediate case (`0318`).
+ * for SQL. Exercised only by the empty-intermediate case (`m-deep-fetch-008`).
  */
 function fallbackChildProjection(
   childEntity: EntityMetadata,

@@ -1,0 +1,23 @@
+# and — n-ary conjunction of THREE operands (M2 §Boolean combinators).
+#
+# m-op-algebra-020 proves the two-operand junction; this pins the n-ary (>= 3) form: the
+# operands serialize in order and the binds follow left-to-right appearance, so
+# the conjunction renders as `a = ? and b > ? and c < ?` with binds in that
+# order. active=true AND qty>5 AND qty<30 keeps orders 2 (qty 10) and 4 (qty 20);
+# order 42 (qty 30) fails qty<30 and the inactive rows fail active=true.
+model: models/orders.yaml
+tags: [m-op-algebra, and, boolean, n-ary, slice-mvp-1]
+operation:
+  and:
+    operands:
+      - eq: { attr: Order.active, value: true }
+      - greaterThan: { attr: Order.qty, value: 5 }
+      - lessThan: { attr: Order.qty, value: 30 }
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.active = ? and t0.qty > ? and t0.qty < ?
+binds: [true, 5, 30]
+referenceSql: select id, name from orders where active = true and qty > 5 and qty < 30
+expectedRows:
+  - { id: 2, name: Linus }
+  - { id: 4, name: Margaret }
+roundTrips: 1

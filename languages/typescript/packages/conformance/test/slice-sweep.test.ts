@@ -44,15 +44,16 @@ import {
  * `api-conformance`-lane cases (boundary retry cases + the read-lock matrix reads)
  * are excluded: they have no harness-executable golden — their observable is proven
  * by the API Conformance Suite — so this sweep covers the 111 harness-lane cases
- * (101 pre-Phase-4 cases + the harness-lane auto-retry case `0710` + the two
- * Phase-5 versioned set-based materialize scenarios `0614`/`0615` + the four
- * Phase-6 optimistic × temporal close cases `0730`-`0733` + the COR-12 behavioral
- * read-lock cases `0728` (blocks-writer), `0729` (shared-compatible), and `0734`
+ * (101 pre-Phase-4 cases + the harness-lane auto-retry case `m-opt-lock-009` + the
+ * two Phase-5 versioned set-based materialize scenarios `m-opt-lock-003`/`-004` + the
+ * four Phase-6 optimistic × temporal close cases `m-temporal-read-009`–`-012` + the
+ * COR-12 behavioral read-lock cases `m-read-lock-006` (blocks-writer),
+ * `m-read-lock-007` (shared-compatible), and `m-read-lock-008`
  * (projection-omits-lock-admits-writer)).
  */
 function taggedCases(): readonly { id: string; loaded: LoadedCase }[] {
   return discoverCasePaths()
-    .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
+    .map((path) => ({ id: path.replace(/^.*\/(m-[a-z0-9-]+-\d{3})-.*$/, "$1"), path }))
     .map(({ id, path }) => ({ id, loaded: loadCase(path) }))
     .filter(({ loaded }) => loaded.tags.includes("slice-mvp-1"))
     .filter(({ loaded }) => loaded.lane !== "api-conformance")
@@ -85,7 +86,7 @@ group("full-slice compile sweep (Docker-free)", () => {
     }
 
     // A single-statement read golden is compared exactly (`emitted === golden`);
-    // this includes `0003`'s `bytes` `encode(t0.payload, ?) payload_hex`
+    // this includes `m-core-001`'s `bytes` `encode(t0.payload, ?) payload_hex`
     // projection (the scalar-projection residual this phase closes).
     const golden = loaded.shape === "read" ? readGolden(loaded) : undefined;
     if (golden !== undefined && envelope.emissions.length === 1) {
@@ -105,25 +106,25 @@ const OUT_OF_CLAIM: readonly {
 }[] = [
   {
     label: "a non-Postgres dialect",
-    casePath: "core/compatibility/cases/0002-eq.yaml",
+    casePath: "core/compatibility/cases/m-op-algebra-002-eq.yaml",
     dialect: "mariadb",
     code: "unsupported-dialect",
   },
   {
     label: "an unclaimed module tag (m-detach)",
-    casePath: "core/compatibility/cases/0702-detached-update.yaml",
+    casePath: "core/compatibility/cases/m-detach-002-update.yaml",
     dialect: "postgres",
     code: "unsupported-case-tag",
   },
   {
     label: "an excluded case shape (coherence)",
-    casePath: "core/compatibility/cases/1104-coherence-insert-refetch.yaml",
+    casePath: "core/compatibility/cases/m-coherence-004-insert-refetch.yaml",
     dialect: "postgres",
     code: "unsupported-shape",
   },
   {
     label: "an untagged in-claim-module read",
-    casePath: "core/compatibility/cases/0820-business-as-of-now-defaulted.yaml",
+    casePath: "core/compatibility/cases/m-temporal-read-018-business-as-of-now-defaulted.yaml",
     dialect: "postgres",
     code: "missing-include-tag",
   },
