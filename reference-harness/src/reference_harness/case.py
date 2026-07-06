@@ -142,6 +142,50 @@ class Case:
     raw: dict[str, Any]
     model: Model
 
+    # --- groups (given / when / then) --------------------------------------
+
+    @property
+    def given(self) -> dict[str, Any]:
+        """The setup group: ambient world-state established before the action.
+
+        Holds ``fixtures`` (whether to load the model's fixtures), ``apply`` (naive
+        statement entries a conflict case runs verbatim before the golden UPDATE),
+        and ``fault`` (a boundary case's injected fault). Absent for a case that
+        starts from the model's default fixtures and injects nothing.
+        """
+        return self.raw.get("given", {})
+
+    @property
+    def when(self) -> dict[str, Any]:
+        """The action group: the action under test and how the client performs it.
+
+        Holds exactly one action member per shape (``operation`` | ``writeSequence``
+        | ``scenario`` | ``coherence`` | ``concurrency`` | ``boundary`` | ``attempts``
+        | ``write``) plus the context members ``uow`` / ``at`` / ``observedInZ`` /
+        ``equivalentEncodings``.
+        """
+        return self.raw.get("when", {})
+
+    @property
+    def then(self) -> dict[str, Any]:
+        """The assertions group: everything the case asserts after the action runs.
+
+        Holds ``statements`` (the golden SQL entries), ``referenceSql``, the observed
+        data (``rows`` / ``graph`` / ``tableState``), the counts/codes (``affectedRows``
+        / ``errorClass`` / ``nativeCode`` / ``roundTrips``), the boundary ``outcome``,
+        and the comparison ``tolerance``.
+        """
+        return self.raw.get("then", {})
+
+    @property
+    def shape(self) -> str | None:
+        """The explicit case-shape discriminator (top-level ``shape``).
+
+        Cases are self-describing: the ``is_*`` booleans read this field directly
+        rather than sniffing which action keys happen to be present.
+        """
+        return self.raw.get("shape")
+
     @property
     def tags(self) -> list[str]:
         return self.raw.get("tags", [])
@@ -163,13 +207,13 @@ class Case:
     def uow(self) -> dict[str, Any]:
         """The declared unit-of-work config (m-unit-work strategy selection), or empty.
 
-        A case MAY carry a top-level ``uow`` block
+        A case MAY carry a ``when.uow`` block
         (``{"concurrency": "locking" | "optimistic"}``) declaring the mode its
         golden SQL runs under. The block is DESCRIPTIVE — the harness executes the
         authored golden SQL either way — so this accessor exists for
         self-description / tooling, not to change execution.
         """
-        return self.raw.get("uow", {})
+        return self.when.get("uow", {})
 
     @property
     def concurrency_mode(self) -> str:
@@ -182,169 +226,184 @@ class Case:
 
     @property
     def operation(self) -> dict[str, Any]:
-        return self.raw["operation"]
+        return self.when["operation"]
 
     @property
     def is_write_sequence(self) -> bool:
         """True for a milestone-chaining write case (Phase 5, m-audit-write).
 
-        A write-sequence case carries a ``writeSequence`` (ordered mutations) and
-        an ``expectedTableState`` instead of an ``operation`` + ``expectedRows``.
+        A write-sequence case carries ``when.writeSequence`` (ordered mutations) and
+        a ``then.tableState`` instead of an operation + ``then.rows``.
         """
-        return "writeSequence" in self.raw
+        return self.shape == "writeSequence"
 
     @property
     def write_sequence(self) -> list[dict[str, Any]]:
-        return self.raw.get("writeSequence", [])
+        return self.when.get("writeSequence", [])
 
     @property
     def expected_table_state(self) -> dict[str, list[dict[str, Any]]]:
-        return self.raw.get("expectedTableState", {})
+        return self.then.get("tableState", {})
 
     @property
     def load_fixtures(self) -> bool:
-        """Whether a writeSequence case loads the model's fixtures first (Phase 7).
+        """Whether the case loads the model's fixtures first (``given.fixtures``).
 
         Defaults to ``False`` (the m-audit-write milestone-chaining and m-unit-work batched-insert
         cases build their own state from an empty schema). The m-detach detached-update
         merge-back case sets it ``True`` so the original persisted row exists
         before the merge-back DML mutates it.
         """
-        return bool(self.raw.get("loadFixtures", False))
+        return bool(self.given.get("fixtures", False))
 
     @property
     def is_conflict(self) -> bool:
         """True for an m-opt-lock optimistic-lock conflict / success case (Phase 7).
 
-        A conflict case carries ``expectedAffectedRows`` (the affected-row count a
-        golden ``UPDATE`` leaves behind) and an OPTIONAL out-of-band
-        ``precondition`` (a concurrent mutation, e.g. a version bump) instead of an
-        ``operation`` + ``expectedRows`` — OR an ordered ``attempts`` retry
-        sequence (each attempt carrying its own golden UPDATE + affected-row
-        count) that proves the stale-then-retry contract.
+        A single-attempt conflict carries ``when.write`` + ``then.affectedRows`` (the
+        affected-row count a golden ``UPDATE`` leaves behind) and an OPTIONAL out-of-band
+        ``given.apply`` (a concurrent mutation, e.g. a version bump) instead of an
+        operation + ``then.rows`` — OR an ordered ``when.attempts`` retry sequence
+        (each attempt carrying its own golden UPDATE + affected-row count) that
+        proves the stale-then-retry contract.
         """
-        return "expectedAffectedRows" in self.raw or "attempts" in self.raw
+        return self.shape == "conflict"
 
     @property
     def attempts(self) -> list[dict[str, Any]]:
         """The ordered optimistic-lock UPDATE attempts of a retry conflict case.
 
         Empty for the single-attempt conflict form. Each attempt carries its own
-        dialect-keyed ``goldenSql``, ``binds``, and ``expectedAffectedRows``.
+        golden ``statements`` entry, its ``write``, and its ``affectedRows`` count.
         """
-        return self.raw.get("attempts", [])
+        return self.when.get("attempts", [])
 
     @property
-    def precondition(self) -> list[str]:
-        """The out-of-band SQL a conflict case applies before the golden UPDATE."""
-        raw = self.raw.get("precondition")
-        if raw is None:
-            return []
-        return [raw] if isinstance(raw, str) else list(raw)
+    def apply(self) -> list[dict[str, Any]]:
+        """The out-of-band naive statement entries a conflict case applies before
+        the golden UPDATE (``given.apply``).
+
+        Each entry is a ``{sql, binds}`` statement whose ``sql`` is a plain string
+        (dialect-agnostic naive SQL, run verbatim on every dialect); ``binds`` is
+        authored once and defaults to ``[]``.
+        """
+        return self.given.get("apply", [])
 
     @property
-    def precondition_binds(self) -> list[Any]:
-        return self.raw.get("preconditionBinds", [])
+    def write(self) -> dict[str, Any] | None:
+        """The single-attempt conflict's neutral write input (``when.write``)."""
+        return self.when.get("write")
+
+    @property
+    def at(self) -> Any:
+        """A single-form temporal conflict close's instant (``when.at``)."""
+        return self.when.get("at")
+
+    @property
+    def observed_in_z(self) -> Any:
+        """A single-form temporal conflict close's observed in_z (``when.observedInZ``)."""
+        return self.when.get("observedInZ")
 
     @property
     def expected_affected_rows(self) -> int | None:
-        return self.raw.get("expectedAffectedRows")
+        return self.then.get("affectedRows")
 
     @property
     def is_scenario(self) -> bool:
         """True for a scenario case (Phase 6 — unit-of-work / cache / identity shape).
 
-        A scenario case carries a ``scenario`` (an ordered list of operation
-        steps with per-step round-trip counts) instead of a single
-        ``operation`` + ``goldenSql``; golden SQL lives per step.
+        A scenario case carries ``when.scenario`` (an ordered list of operation
+        steps with per-step round-trip counts) instead of a single operation;
+        golden SQL lives per step (as each step's ``statements``).
         """
-        return "scenario" in self.raw
+        return self.shape == "scenario"
 
     @property
     def scenario(self) -> list[dict[str, Any]]:
-        return self.raw.get("scenario", [])
+        return self.when.get("scenario", [])
 
     @property
     def is_boundary(self) -> bool:
         """True for an m-auto-retry/m-opt-lock bounded-automatic-retry boundary case (Phase 4).
 
-        A boundary case carries a ``boundary`` (the portable unit-of-work actions)
-        and an ``expect`` (the portable outcome) instead of an ``operation`` /
-        ``writeSequence`` / etc.; it is always ``lane: api-conformance`` (the m-case-format
+        A boundary case carries ``when.boundary`` (the portable unit-of-work actions)
+        and a ``then.outcome`` (the portable outcome) instead of an operation /
+        writeSequence / etc.; it is always ``lane: api-conformance`` (the m-case-format
         harness cannot provoke its injected-fault / retry-loop observable), so it is
         schema-validated but not executed.
         """
-        return "boundary" in self.raw
+        return self.shape == "boundary"
 
     @property
     def boundary(self) -> list[dict[str, Any]]:
-        return self.raw.get("boundary", [])
+        return self.when.get("boundary", [])
 
     @property
-    def inject(self) -> str | None:
+    def fault(self) -> str | None:
         """The portable fault a boundary case injects at the DB-port seam, or None."""
-        return self.raw.get("inject")
+        return self.given.get("fault")
 
     @property
-    def expect(self) -> str | None:
+    def outcome(self) -> str | None:
         """The portable outcome a boundary case asserts (``committed`` / error kind)."""
-        return self.raw.get("expect")
+        return self.then.get("outcome")
 
     @property
     def is_coherence(self) -> bool:
         """True for a cross-process cache-coherence case (Phase 11).
 
-        A coherence case carries a ``coherence`` two-node operation sequence (run
-        over two connections to one database) instead of a single
-        ``operation`` + ``goldenSql``; golden SQL lives per step, and the final
-        node-B re-fetch asserts ``observeRows`` (node A's committed write).
+        A coherence case carries ``when.coherence`` — a two-node operation sequence
+        (run over two connections to one database) instead of a single operation;
+        golden SQL lives per step, and the final node-B re-fetch asserts
+        ``observeRows`` (node A's committed write).
         """
-        return "coherence" in self.raw
+        return self.shape == "coherence"
 
     @property
     def coherence(self) -> list[dict[str, Any]]:
-        return self.raw.get("coherence", [])
+        return self.when.get("coherence", [])
 
     @property
     def is_error(self) -> bool:
         """True for an m-db-error error-code classification case.
 
-        An error case carries an ``errorClass`` (the neutral category a triggered
-        DB error MUST classify to) plus an ``expectedNativeCode`` witness keyed by
-        dialect, instead of an ``operation``/``expectedRows``. It triggers a real
-        error EITHER single-connection (ordered ``goldenSql`` whose last statement
-        raises -- ``uniqueViolation``) OR two-connection (a ``concurrency``
-        choreography -- ``deadlock`` / ``lockWaitTimeout``).
+        An error case carries ``then.errorClass`` (the neutral category a triggered
+        DB error MUST classify to) plus a ``then.nativeCode`` witness keyed by
+        dialect. It triggers a real error EITHER single-connection (ordered
+        ``then.statements`` whose last statement raises -- ``uniqueViolation``) OR
+        two-connection (a ``when.concurrency`` choreography -- ``deadlock`` /
+        ``lockWaitTimeout``).
         """
-        return "errorClass" in self.raw
+        return self.shape == "error"
 
     @property
     def error_class(self) -> str | None:
-        return self.raw.get("errorClass")
+        return self.then.get("errorClass")
 
     @property
     def expected_native_code(self) -> dict[str, Any]:
         """Per-dialect native code the trigger MUST raise (SQLSTATE / errno)."""
-        return self.raw.get("expectedNativeCode", {})
+        return self.then.get("nativeCode", {})
 
     @property
     def concurrency(self) -> dict[str, Any] | None:
         """The two-connection choreography for deadlock / timeout cases (else None).
 
-        ``{"rounds": [ {"A": step, "B": step}, ... ]}`` where each ``step`` is
-        ``{"goldenSql": {dialect: stmt}, "binds": [...], "expectRows": [...]}``.
-        Rounds are barrier-separated; a node absent from a round does nothing that
-        round. Shared by the error/concurrency shape (``deadlock`` / ``lockWaitTimeout``)
-        and the concurrency-success shape (:attr:`is_concurrency_success`).
+        ``{"rounds": [ {"A": step, "B": step}, ... ]}`` where each ``step`` carries
+        ``statements`` ({sql, binds} entries), an optional ``kind``, and an optional
+        ``expectRows``. Rounds are barrier-separated; a node absent from a round does
+        nothing that round. Shared by the error/concurrency shape (``deadlock`` /
+        ``lockWaitTimeout``) and the concurrency-success shape
+        (:attr:`is_concurrency_success`).
         """
-        return self.raw.get("concurrency")
+        return self.when.get("concurrency")
 
     @property
     def is_concurrency_success(self) -> bool:
         """True for an m-read-lock behavioral read-lock concurrency-SUCCESS case.
 
-        A concurrency-success case carries a ``concurrency`` choreography with NO
-        ``errorClass`` (the discriminator that keeps it distinct from an
+        A concurrency-success case carries a ``when.concurrency`` choreography with NO
+        ``then.errorClass`` (the discriminator that keeps it distinct from an
         error/concurrency case). It runs the barrier-separated rounds on two held
         non-autocommit sessions and asserts that NO error is raised — each read
         step's optional ``expectRows`` observed on its HELD session. Proves the
@@ -352,7 +411,7 @@ class Case:
         unlocked projection ADMITS a writer (``m-read-lock-008``), the non-error counterpart to
         the error branch's lock CONTENTION (``m-read-lock-006``).
         """
-        return self.concurrency is not None and "errorClass" not in self.raw
+        return self.shape == "concurrencySuccess"
 
     @property
     def equivalent_encodings(self) -> list[dict[str, Any]]:
@@ -364,36 +423,60 @@ class Case:
         ``operation`` via the serde seam, proving precedence/serialization
         fidelity without a database.
         """
-        return self.raw.get("equivalentEncodings", [])
+        return self.when.get("equivalentEncodings", [])
 
-    @property
-    def golden_sql(self) -> dict[str, str | list[str]]:
-        return self.raw["goldenSql"]
+    def golden_entries(self) -> list[dict[str, Any]]:
+        """The ordered golden statement entries (``then.statements``).
+
+        Each entry is a ``{sql, binds}`` object whose ``sql`` is a dialect-keyed map
+        (``postgres`` / ``mariadb``) and whose ``binds`` are authored once
+        (dialect-agnostic), defaulting to ``[]``.
+        """
+        return self.then.get("statements", [])
 
     def golden_statements(self, dialect: str) -> list[str]:
-        """The ordered golden SQL statements for *dialect* (1+ per case)."""
-        value = self.golden_sql[dialect]
-        return [value] if isinstance(value, str) else list(value)
+        """The ordered golden SQL statements for *dialect* (1+ per case).
+
+        The single statement-entry normalization point: reads each entry's per-dialect
+        ``sql`` text in authored order.
+        """
+        return [entry["sql"][dialect] for entry in self.golden_entries()]
+
+    def statement_binds(self, index: int) -> list[Any]:
+        """The authored binds for golden statement *index* (default ``[]``)."""
+        entries = self.golden_entries()
+        if index >= len(entries):
+            return []
+        return list(entries[index].get("binds", []))
 
     @property
-    def binds(self) -> list[Any]:
-        return self.raw.get("binds", [])
+    def golden_dialects(self) -> set[str]:
+        """The dialects every golden statement entry declares (empty if none).
+
+        Computed as the intersection across entries, so ``golden_statements(d)`` is
+        defined for every ``d`` this returns.
+        """
+        entries = self.golden_entries()
+        dialect_sets = [set(e["sql"]) for e in entries if isinstance(e.get("sql"), dict)]
+        if not dialect_sets:
+            return set()
+        return set.intersection(*dialect_sets)
 
     @property
     def reference_sql(self) -> str | None:
-        return self.raw.get("referenceSql")
+        return self.then.get("referenceSql")
 
     @property
     def expected_rows(self) -> list[dict[str, Any]]:
-        return self.raw.get("expectedRows", [])
+        return self.then.get("rows", [])
 
     @property
     def expected_graph(self) -> dict[str, list[dict[str, Any]]] | None:
-        return self.raw.get("expectedGraph")
+        return self.then.get("graph")
 
     @property
     def round_trips(self) -> int:
-        return self.raw.get("roundTrips", 1)
+        return self.then.get("roundTrips", 1)
 
     @property
     def tolerance(self) -> Decimal | None:
@@ -404,7 +487,7 @@ class Case:
         Authored as a plain number; parsed through ``str`` so a YAML ``1.0e-9``
         becomes ``Decimal('1.0E-9')`` without float noise.
         """
-        raw = self.raw.get("tolerance")
+        raw = self.then.get("tolerance")
         return None if raw is None else Decimal(str(raw))
 
 

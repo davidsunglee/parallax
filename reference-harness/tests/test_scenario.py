@@ -34,7 +34,7 @@ def test_scenario_cases_are_discovered_and_self_describe() -> None:
     for case in cases:
         # Each carries a scenario (ordered steps) and no top-level operation.
         assert case.scenario
-        assert "operation" not in case.raw
+        assert "operation" not in case.when
         for step in case.scenario:
             assert "roundTrips" in step
             # A step is EITHER a read step (carries `find`) or a write step
@@ -45,9 +45,9 @@ def test_scenario_cases_are_discovered_and_self_describe() -> None:
                 # (a versioned UPDATE that changes no attribute, m-opt-lock) issues no DML,
                 # so it declares roundTrips 0 and lists none — like a cache hit.
                 if step["roundTrips"] == 0:
-                    assert not step.get("goldenSql"), "a no-op write step lists no golden DML"
+                    assert not step.get("statements"), "a no-op write step lists no golden DML"
                 else:
-                    assert step.get("goldenSql"), (
+                    assert step.get("statements"), (
                         "a write step with round trips must list golden DML"
                     )
 
@@ -59,7 +59,7 @@ def test_cache_hit_scenario_has_a_zero_round_trip_step() -> None:
     hits = [s for s in case.scenario if s["roundTrips"] == 0]
     assert hits, "cache-hit scenario has no zero-round-trip (hit) step"
     for hit in hits:
-        assert not hit.get("goldenSql"), "a cache-hit step must list no golden SQL"
+        assert not hit.get("statements"), "a cache-hit step must list no golden SQL"
 
 
 def test_rollback_scenario_step_is_discovered_and_self_describes() -> None:
@@ -73,7 +73,7 @@ def test_rollback_scenario_step_is_discovered_and_self_describes() -> None:
         # An ABORTED write step is still a write step that lists golden DML (it is
         # applied then rolled back) and declares its round trips (the DML executes).
         assert "write" in step
-        assert step.get("goldenSql"), "a rollback write step must list golden DML"
+        assert step.get("statements"), "a rollback write step must list golden DML"
         assert step["roundTrips"] >= 1
     # The rolled-back step's statements are counted as round trips exactly like a
     # committed write, so the count-consistency check MUST still hold.
@@ -95,7 +95,7 @@ def test_no_op_write_scenario_step_is_discovered_and_self_describes() -> None:
         # A NO-OP write (a versioned UPDATE that changes no attribute, m-opt-lock) issues
         # NO DML: it lists no golden SQL and costs zero round trips, mirroring a
         # cache-hit read step.
-        assert not step.get("goldenSql"), "a no-op write step must list no golden DML"
+        assert not step.get("statements"), "a no-op write step must list no golden DML"
     # The zero-round-trip write step keeps the count-consistency check green.
     _assert_scenario_count_consistency(case, "postgres")
 
@@ -110,7 +110,7 @@ def test_scenario_step_count_mismatch_is_rejected() -> None:
     case = next(iter(_scenario_cases()))
     # Corrupt a step's declared roundTrips so it no longer matches the golden SQL
     # statement count it lists; the consistency check MUST fail.
-    case.raw["scenario"][0]["roundTrips"] += 1
+    case.when["scenario"][0]["roundTrips"] += 1
     with pytest.raises(CaseFailure):
         _assert_scenario_count_consistency(case, "postgres")
 
@@ -118,6 +118,6 @@ def test_scenario_step_count_mismatch_is_rejected() -> None:
 def test_scenario_total_mismatch_is_rejected() -> None:
     case = next(iter(_scenario_cases()))
     # Corrupt the case-level roundTrips so it no longer equals the per-step sum.
-    case.raw["roundTrips"] += 1
+    case.then["roundTrips"] += 1
     with pytest.raises(CaseFailure):
         _assert_scenario_count_consistency(case, "postgres")

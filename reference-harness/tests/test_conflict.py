@@ -2,10 +2,10 @@
 
 These pin the DB-free invariants of the lifecycle-detach (m-detach) write-sequence
 cases and the optimistic-lock (m-opt-lock) conflict cases: a conflict case is
-discovered and self-describes (carries `expectedAffectedRows`, an optional
-`precondition`, and a single golden UPDATE); the conflict / success counts are 0
-/ 1; and the m-detach detached-update case opts into `loadFixtures`. The full
-execute-and-assert behavior (precondition + golden UPDATE, affected-row count,
+discovered and self-describes (carries `then.affectedRows`, an optional
+`given.apply`, and a single golden UPDATE); the conflict / success counts are 0
+/ 1; and the m-detach detached-update case opts into `given.fixtures`. The full
+execute-and-assert behavior (given.apply + golden UPDATE, affected-row count,
 merge-back table state) is exercised end-to-end against real Postgres by the
 compatibility suite.
 """
@@ -68,19 +68,19 @@ def test_conflict_cases_are_discovered_and_self_describe() -> None:
     cases = _conflict_cases()
     assert cases, "no conflict (m-opt-lock) cases discovered"
     for case in cases:
-        # A conflict case carries expectedAffectedRows and no operation/scenario.
-        assert "operation" not in case.raw
+        # A conflict case carries then.affectedRows and no operation/scenario.
+        assert "operation" not in case.when
         assert not case.is_scenario
         assert not case.is_write_sequence
         if case.attempts:
             # Retry form: the golden UPDATE + affected count live per attempt.
             for attempt in case.attempts:
-                assert attempt["expectedAffectedRows"] is not None
-                assert attempt["goldenSql"]
+                assert attempt["affectedRows"] is not None
+                assert attempt["statements"]
         else:
-            # Single form: one golden UPDATE per dialect + a top-level count.
+            # Single form: one golden UPDATE per dialect + a then.affectedRows count.
             assert case.expected_affected_rows is not None
-            for dialect in case.golden_sql:
+            for dialect in case.golden_dialects:
                 assert len(case.golden_statements(dialect)) == 1
 
 
@@ -90,7 +90,7 @@ def test_retry_conflict_sequence_self_describes() -> None:
     for case in cases:
         # The retry contract: a stale-version attempt affects 0, then a fresh-
         # version retry affects 1. Both outcomes must appear, in that order.
-        outcomes = [a["expectedAffectedRows"] for a in case.attempts]
+        outcomes = [a["affectedRows"] for a in case.attempts]
         assert 0 in outcomes and 1 in outcomes
         assert outcomes.index(0) < outcomes.index(1)
 
@@ -103,13 +103,13 @@ def test_conflict_and_success_counts_present() -> None:
     assert 1 in counts, "no optimistic-lock success case (expectedAffectedRows 1)"
 
 
-def test_conflict_case_precondition_is_optional_but_present_for_the_conflict() -> None:
+def test_conflict_case_apply_is_optional_but_present_for_the_conflict() -> None:
     conflict = next(c for c in _conflict_cases() if c.expected_affected_rows == 0)
-    # The conflict case simulates a concurrent writer via an out-of-band precondition.
-    assert conflict.precondition, "conflict case must carry a precondition"
+    # The conflict case simulates a concurrent writer via an out-of-band given.apply.
+    assert conflict.apply, "conflict case must carry a given.apply"
     success = next(c for c in _conflict_cases() if c.expected_affected_rows == 1)
     # The success case has no concurrent writer.
-    assert not success.precondition
+    assert not success.apply
 
 
 def test_conflict_input_holds_for_authored_versioned_cases() -> None:
@@ -127,12 +127,12 @@ def test_conflict_input_observed_version_corruption_is_rejected() -> None:
     case = next(
         c
         for c in _versioned_conflict_cases()
-        if isinstance(c.raw.get("write"), dict) and "observedVersion" in c.raw["write"]
+        if isinstance(c.write, dict) and "observedVersion" in c.write
     )
     # Corrupt the observed version in ①: the derived advance (`observedVersion + 1`)
     # AND the trailing gate bind no longer agree with the authored golden binds, so
     # the ① ↔ ② consistency gate MUST fail (it no longer rests on a golden parse).
-    case.raw["write"]["observedVersion"] = case.raw["write"]["observedVersion"] + 5
+    case.when["write"]["observedVersion"] = case.when["write"]["observedVersion"] + 5
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 
@@ -160,7 +160,7 @@ def test_temporal_conflict_close_observed_in_z_corruption_is_rejected() -> None:
     # Corrupt the observed in_z gate token: the DERIVED `and in_z = ?` gate bind no
     # longer matches the golden gate bind, so the ① ↔ ② temporal-close gate MUST fail
     # (the gate value is derived from `observedInZ`, never read from the golden).
-    case.raw["observedInZ"] = "1999-12-31T00:00:00+00:00"
+    case.when["observedInZ"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 
@@ -172,7 +172,7 @@ def test_temporal_conflict_close_retry_gates_each_attempt() -> None:
     # The retry form carries a close ① per attempt; corrupting the retry attempt's
     # observed in_z desyncs its derived gate bind from the golden, so the per-attempt
     # ① ↔ ② gate MUST fail.
-    case.raw["attempts"][1]["observedInZ"] = "1999-12-31T00:00:00+00:00"
+    case.when["attempts"][1]["observedInZ"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 

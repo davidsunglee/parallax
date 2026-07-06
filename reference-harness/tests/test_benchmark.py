@@ -76,17 +76,25 @@ def test_iteration_substitution_replaces_sentinel() -> None:
     assert _substitute_iteration(binds, 7)[1:] == binds[1:]
 
 
-def test_binds_per_statement_pads_to_count() -> None:
-    workload = {"binds": [[5], [1, 2, 3]]}
-    per = _binds_per_statement(workload, 3)
-    assert per == [[5], [1, 2, 3], []]
-    # A flat list is the single statement's binds.
-    assert _binds_per_statement({"binds": [5]}, 1) == [[5]]
+def test_binds_per_statement_reads_each_entry() -> None:
+    # Each statement entry carries its own binds inline (default []); the reader
+    # returns one list per entry, aligned with `_statements`.
+    workload = {
+        "statements": [
+            {"sql": {"postgres": "select 1"}, "binds": [5]},
+            {"sql": {"postgres": "select 2"}, "binds": [1, 2, 3]},
+            {"sql": {"postgres": "select 3"}},
+        ]
+    }
+    assert _binds_per_statement(workload, "postgres") == [[5], [1, 2, 3], []]
+    single = {"statements": [{"sql": {"postgres": "select 1"}, "binds": [5]}]}
+    assert _binds_per_statement(single, "postgres") == [[5]]
 
 
 def test_statements_single_and_list() -> None:
-    assert _statements({"goldenSql": {"postgres": "select 1"}}, "postgres") == ["select 1"]
-    multi = {"goldenSql": {"postgres": ["select 1", "select 2"]}}
+    single = {"statements": [{"sql": {"postgres": "select 1"}}]}
+    assert _statements(single, "postgres") == ["select 1"]
+    multi = {"statements": [{"sql": {"postgres": "select 1"}}, {"sql": {"postgres": "select 2"}}]}
     assert _statements(multi, "postgres") == ["select 1", "select 2"]
 
 

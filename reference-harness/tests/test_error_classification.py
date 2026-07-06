@@ -111,18 +111,40 @@ def _error_case(raw: dict) -> Case:
     return Case(path=Path("m-db-error-001-x.yaml"), raw=raw, model=model)
 
 
+_SHARE_LOCK_READ = {
+    "postgres": (
+        "select t0.id, t0.owner, t0.balance, t0.version "
+        "from account t0 where t0.id = ? for share of t0"
+    ),
+    "mariadb": (
+        "select t0.id, t0.owner, t0.balance, t0.version "
+        "from account t0 where t0.id = ? lock in share mode"
+    ),
+}
+
+_ACCOUNT_UPDATE = {
+    "postgres": "update account set balance = ? where id = ?",
+    "mariadb": "update account set balance = ? where id = ?",
+}
+
+
+def _node(sql: dict, binds: list) -> dict:
+    """One concurrency node step carrying a single {sql, binds} golden entry."""
+    return {"statements": [{"sql": sql, "binds": binds}]}
+
+
 def test_case_recognizes_single_connection_error_shape() -> None:
     case = _error_case(
         {
-            "errorClass": "uniqueViolation",
-            "expectedNativeCode": {"postgres": "23505", "mariadb": 1062},
-            "goldenSql": {
-                "postgres": [
-                    "insert into w (id) values (?)",
-                    "insert into w (id) values (?)",
-                ]
+            "shape": "error",
+            "then": {
+                "errorClass": "uniqueViolation",
+                "nativeCode": {"postgres": "23505", "mariadb": 1062},
+                "statements": [
+                    {"sql": {"postgres": "insert into w (id) values (?)"}, "binds": [1]},
+                    {"sql": {"postgres": "insert into w (id) values (?)"}, "binds": [1]},
+                ],
             },
-            "binds": [[1], [1]],
         }
     )
     assert case.is_error
@@ -133,34 +155,20 @@ def test_case_recognizes_single_connection_error_shape() -> None:
 
 
 def test_case_recognizes_two_connection_error_shape() -> None:
+    rounds = [{"A": {"statements": [{"sql": {"postgres": "x"}, "binds": [1]}]}}]
     case = _error_case(
         {
-            "errorClass": "deadlock",
-            "expectedNativeCode": {"postgres": "40P01", "mariadb": 1213},
-            "concurrency": {
-                "rounds": [
-                    {
-                        "A": {
-                            "goldenSql": {"postgres": "x"},
-                            "binds": [1],
-                        }
-                    }
-                ]
+            "shape": "error",
+            "then": {
+                "errorClass": "deadlock",
+                "nativeCode": {"postgres": "40P01", "mariadb": 1213},
             },
+            "when": {"concurrency": {"rounds": rounds}},
         }
     )
     assert case.is_error
     assert case.error_class == "deadlock"
-    assert case.concurrency == {
-        "rounds": [
-            {
-                "A": {
-                    "goldenSql": {"postgres": "x"},
-                    "binds": [1],
-                }
-            }
-        ]
-    }
+    assert case.concurrency == {"rounds": rounds}
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -177,51 +185,51 @@ def _case_validator() -> Draft202012Validator:
 def test_schema_accepts_single_connection_error_case() -> None:
     case = {
         "model": "models/error-cases.yaml",
-        "errorClass": "uniqueViolation",
-        "expectedNativeCode": {"postgres": "23505", "mariadb": 1062},
-        "goldenSql": {
-            "postgres": [
-                "insert into widget (id, label) values (?, ?)",
-                "insert into widget (id, label) values (?, ?)",
-            ]
-        },
-        "binds": [[1, "a"], [1, "b"]],
+        "shape": "error",
         "tags": ["m-db-error", "error-classification", "uniqueViolation"],
+        "then": {
+            "errorClass": "uniqueViolation",
+            "nativeCode": {"postgres": "23505", "mariadb": 1062},
+            "statements": [
+                {
+                    "sql": {"postgres": "insert into widget (id, label) values (?, ?)"},
+                    "binds": [1, "a"],
+                },
+                {
+                    "sql": {"postgres": "insert into widget (id, label) values (?, ?)"},
+                    "binds": [1, "b"],
+                },
+            ],
+        },
     }
     assert list(_case_validator().iter_errors(case)) == []
 
 
 def test_schema_accepts_two_connection_error_case() -> None:
+    def _gauge(binds: list) -> dict:
+        return {
+            "statements": [
+                {"sql": {"postgres": "update gauge set v = ? where id = ?"}, "binds": binds}
+            ]
+        }
+
     case = {
         "model": "models/error-cases.yaml",
-        "errorClass": "deadlock",
-        "loadFixtures": True,
-        "expectedNativeCode": {"postgres": "40P01", "mariadb": 1213},
-        "concurrency": {
-            "rounds": [
-                {
-                    "A": {
-                        "goldenSql": {"postgres": "update gauge set v = ? where id = ?"},
-                        "binds": [10, 1],
-                    },
-                    "B": {
-                        "goldenSql": {"postgres": "update gauge set v = ? where id = ?"},
-                        "binds": [20, 2],
-                    },
-                },
-                {
-                    "A": {
-                        "goldenSql": {"postgres": "update gauge set v = ? where id = ?"},
-                        "binds": [11, 2],
-                    },
-                    "B": {
-                        "goldenSql": {"postgres": "update gauge set v = ? where id = ?"},
-                        "binds": [21, 1],
-                    },
-                },
-            ]
-        },
+        "shape": "error",
+        "given": {"fixtures": True},
         "tags": ["m-db-error", "error-classification", "deadlock"],
+        "when": {
+            "concurrency": {
+                "rounds": [
+                    {"A": _gauge([10, 1]), "B": _gauge([20, 2])},
+                    {"A": _gauge([11, 2]), "B": _gauge([21, 1])},
+                ]
+            }
+        },
+        "then": {
+            "errorClass": "deadlock",
+            "nativeCode": {"postgres": "40P01", "mariadb": 1213},
+        },
     }
     assert list(_case_validator().iter_errors(case)) == []
 
@@ -235,35 +243,18 @@ def test_case_recognizes_read_lock_concurrency_error_shape() -> None:
     # statements as writes.
     case = _error_case(
         {
-            "errorClass": "lockWaitTimeout",
-            "expectedNativeCode": {"postgres": "55P03", "mariadb": 1205},
-            "concurrency": {
-                "rounds": [
-                    {
-                        "A": {
-                            "goldenSql": {
-                                "postgres": (
-                                    "select t0.id, t0.owner, t0.balance, t0.version "
-                                    "from account t0 where t0.id = ? for share of t0"
-                                ),
-                                "mariadb": (
-                                    "select t0.id, t0.owner, t0.balance, t0.version "
-                                    "from account t0 where t0.id = ? lock in share mode"
-                                ),
-                            },
-                            "binds": [2],
-                        }
-                    },
-                    {
-                        "B": {
-                            "goldenSql": {
-                                "postgres": "update account set balance = ? where id = ?",
-                                "mariadb": "update account set balance = ? where id = ?",
-                            },
-                            "binds": [999.00, 2],
-                        }
-                    },
-                ]
+            "shape": "error",
+            "then": {
+                "errorClass": "lockWaitTimeout",
+                "nativeCode": {"postgres": "55P03", "mariadb": 1205},
+            },
+            "when": {
+                "concurrency": {
+                    "rounds": [
+                        {"A": _node(_SHARE_LOCK_READ, [2])},
+                        {"B": _node(_ACCOUNT_UPDATE, [999.00, 2])},
+                    ]
+                }
             },
         }
     )
@@ -272,8 +263,8 @@ def test_case_recognizes_read_lock_concurrency_error_shape() -> None:
     assert case.concurrency is not None
     rounds = case.concurrency["rounds"]
     # Round 1 is a locking read on A; round 2 is a write on B.
-    assert "for share of t0" in rounds[0]["A"]["goldenSql"]["postgres"]
-    assert rounds[1]["B"]["goldenSql"]["postgres"].startswith("update account")
+    assert "for share of t0" in rounds[0]["A"]["statements"][0]["sql"]["postgres"]
+    assert rounds[1]["B"]["statements"][0]["sql"]["postgres"].startswith("update account")
 
 
 def test_schema_accepts_read_lock_concurrency_error_case() -> None:
@@ -281,37 +272,8 @@ def test_schema_accepts_read_lock_concurrency_error_case() -> None:
     # a round-1 A locking SELECT plus a round-2 B UPDATE needs no schema change.
     case = {
         "model": "models/account.yaml",
-        "loadFixtures": True,
-        "errorClass": "lockWaitTimeout",
-        "expectedNativeCode": {"postgres": "55P03", "mariadb": 1205},
-        "concurrency": {
-            "rounds": [
-                {
-                    "A": {
-                        "goldenSql": {
-                            "postgres": (
-                                "select t0.id, t0.owner, t0.balance, t0.version "
-                                "from account t0 where t0.id = ? for share of t0"
-                            ),
-                            "mariadb": (
-                                "select t0.id, t0.owner, t0.balance, t0.version "
-                                "from account t0 where t0.id = ? lock in share mode"
-                            ),
-                        },
-                        "binds": [2],
-                    }
-                },
-                {
-                    "B": {
-                        "goldenSql": {
-                            "postgres": "update account set balance = ? where id = ?",
-                            "mariadb": "update account set balance = ? where id = ?",
-                        },
-                        "binds": [999.00, 2],
-                    }
-                },
-            ]
-        },
+        "shape": "error",
+        "given": {"fixtures": True},
         "tags": [
             "m-read-lock",
             "m-db-error",
@@ -320,12 +282,32 @@ def test_schema_accepts_read_lock_concurrency_error_case() -> None:
             "error-classification",
             "lockWaitTimeout",
         ],
+        "when": {
+            "concurrency": {
+                "rounds": [
+                    {"A": _node(_SHARE_LOCK_READ, [2])},
+                    {"B": _node(_ACCOUNT_UPDATE, [999.00, 2])},
+                ]
+            }
+        },
+        "then": {
+            "errorClass": "lockWaitTimeout",
+            "nativeCode": {"postgres": "55P03", "mariadb": 1205},
+        },
     }
     assert list(_case_validator().iter_errors(case)) == []
 
 
 def test_schema_rejects_error_case_without_native_code() -> None:
-    case = {"model": "m.yaml", "errorClass": "uniqueViolation", "goldenSql": {"postgres": ["x"]}}
+    case = {
+        "model": "models/error-cases.yaml",
+        "shape": "error",
+        "tags": ["m-db-error", "uniqueViolation"],
+        "then": {
+            "errorClass": "uniqueViolation",
+            "statements": [{"sql": {"postgres": "insert into tag(id) values (?)"}, "binds": [1]}],
+        },
+    }
     assert list(_case_validator().iter_errors(case)) != []
 
 
@@ -354,16 +336,19 @@ def test_gauge_seeded_with_two_lockable_rows() -> None:
 
 
 def test_schema_rejects_triggerless_error_case() -> None:
-    """An error case with no goldenSql and no concurrency MUST fail schema validation."""
+    """An error case with no then.statements and no when.concurrency MUST fail validation."""
     case = {
         "model": "models/error-cases.yaml",
-        "errorClass": "uniqueViolation",
-        "expectedNativeCode": {"postgres": "23505", "mariadb": 1062},
+        "shape": "error",
         "tags": ["m-db-error", "error-classification", "uniqueViolation"],
+        "then": {
+            "errorClass": "uniqueViolation",
+            "nativeCode": {"postgres": "23505", "mariadb": 1062},
+        },
     }
     errors_found = list(_case_validator().iter_errors(case))
     assert errors_found, (
-        "Schema should reject an error case with no goldenSql or concurrency trigger"
+        "Schema should reject an error case with no then.statements or when.concurrency trigger"
     )
 
 
@@ -371,10 +356,13 @@ def test_schema_rejects_empty_round_concurrency_case() -> None:
     """A concurrency case with an empty round ({}) MUST fail schema validation."""
     case = {
         "model": "models/error-cases.yaml",
-        "errorClass": "deadlock",
-        "expectedNativeCode": {"postgres": "40P01", "mariadb": 1213},
-        "concurrency": {"rounds": [{}]},
+        "shape": "error",
         "tags": ["m-db-error", "error-classification", "deadlock"],
+        "when": {"concurrency": {"rounds": [{}]}},
+        "then": {
+            "errorClass": "deadlock",
+            "nativeCode": {"postgres": "40P01", "mariadb": 1213},
+        },
     }
     errors_found = list(_case_validator().iter_errors(case))
     assert errors_found, (
@@ -386,8 +374,11 @@ def test_runner_assert_schema_raises_for_triggerless_error_case() -> None:
     """_assert_schema must raise CaseFailure for an error case with no trigger."""
     case = _error_case(
         {
-            "errorClass": "uniqueViolation",
-            "expectedNativeCode": {"postgres": "23505", "mariadb": 1062},
+            "shape": "error",
+            "then": {
+                "errorClass": "uniqueViolation",
+                "nativeCode": {"postgres": "23505", "mariadb": 1062},
+            },
         }
     )
     import pytest

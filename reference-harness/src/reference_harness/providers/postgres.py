@@ -58,7 +58,7 @@ class _IsoTimestamptzLoader(Loader):
        string ``"infinity"`` (and ``"-infinity"``).
     2. **Stable comparison.** Finite instants are re-rendered to canonical
        ISO-8601 with an explicit ``+00:00`` offset, so a milestone column
-       compares to an ISO-string ``expectedTableState`` value deterministically
+       compares to an ISO-string ``then.tableState`` value deterministically
        regardless of Postgres' own text rendering, and never routes through a
        ``datetime`` object whose equality semantics differ from the fixture.
     """

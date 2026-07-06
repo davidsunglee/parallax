@@ -373,7 +373,8 @@ def test_deep_fetch_enforces_propagated_asof_suffix(tmp_path):
             COMPATIBILITY_ROOT / "cases" / "m-navigate-012-deepfetch-temporal-both-latest.yaml"
         ).read_text()
     )
-    src["binds"][1][-1] = "2099-01-01T00:00:00+00:00"  # not the propagated `infinity`
+    # not the propagated `infinity` (level-1 child statement's authored binds)
+    src["then"]["statements"][1]["binds"][-1] = "2099-01-01T00:00:00+00:00"
     bad = tmp_path / "bad.yaml"
     bad.write_text(yaml.safe_dump(src))
     case = load_case(COMPATIBILITY_ROOT, bad)

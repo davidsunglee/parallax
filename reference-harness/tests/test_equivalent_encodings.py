@@ -18,9 +18,10 @@ from reference_harness.case_runner import CaseFailure, _assert_equivalent_encodi
 
 
 def _case(operation: dict, equivalent_encodings: list[dict] | None = None) -> Case:
-    raw: dict = {"operation": operation, "goldenSql": {}}
+    when: dict = {"operation": operation}
     if equivalent_encodings is not None:
-        raw["equivalentEncodings"] = equivalent_encodings
+        when["equivalentEncodings"] = equivalent_encodings
+    raw: dict = {"shape": "read", "when": when}
     model = Model(path=Path("models/none.yaml"), descriptor={}, fixtures={})
     return Case(path=Path("cases/none.yaml"), raw=raw, model=model)
 

@@ -150,28 +150,29 @@ def _provision(model: Model, rows: dict[str, list[dict[str, Any]]], db: Database
 # --- workload execution + timing ---------------------------------------------
 
 
+def _statement_entries(workload: dict[str, Any], dialect: str) -> list[dict[str, Any]]:
+    """The workload's golden statement entries that declare *dialect*."""
+    return [
+        entry
+        for entry in workload.get("statements", [])
+        if isinstance(entry, dict)
+        and isinstance(entry.get("sql"), dict)
+        and dialect in entry["sql"]
+    ]
+
+
 def _statements(workload: dict[str, Any], dialect: str) -> list[str]:
-    golden = workload.get("goldenSql", {})
-    value = golden.get(dialect)
-    if value is None:
-        return []
-    return [value] if isinstance(value, str) else list(value)
+    """The per-dialect golden SQL texts of a workload's ``{sql, binds}`` entries."""
+    return [entry["sql"][dialect] for entry in _statement_entries(workload, dialect)]
 
 
-def _binds_per_statement(workload: dict[str, Any], count: int) -> list[list[Any]]:
-    """One bind list per statement.
+def _binds_per_statement(workload: dict[str, Any], dialect: str) -> list[list[Any]]:
+    """One authored bind list per statement entry, aligned with :func:`_statements`.
 
-    A flat list is the binds for a single statement; a list-of-lists carries one
-    per statement. Returned padded to ``count`` so each statement has a bind list.
+    Each statement's binds ride inline on its own entry (default ``[]``) — there is
+    no positional pairing to interpret.
     """
-    raw = workload.get("binds", [])
-    if raw and isinstance(raw[0], list):
-        per = [list(b) for b in raw]
-    else:
-        per = [list(raw)]
-    while len(per) < count:
-        per.append([])
-    return per
+    return [list(entry.get("binds", [])) for entry in _statement_entries(workload, dialect)]
 
 
 def _substitute_iteration(binds: list[Any], iteration: int) -> list[Any]:
@@ -207,9 +208,9 @@ def _run_workload(workload: dict[str, Any], db: DatabaseProvider) -> dict[str, A
         statements = _statements(workload, dialect)
         if not statements:
             raise BenchmarkError(
-                f"workload {workload.get('name')!r} has no goldenSql for {dialect}"
+                f"workload {workload.get('name')!r} has no statements for {dialect}"
             )
-    binds = _binds_per_statement(workload, len(statements)) if statements else []
+    binds = _binds_per_statement(workload, dialect) if statements else []
     iterations = int(workload.get("iterations", 1))
 
     durations_ms: list[float] = []
