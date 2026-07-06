@@ -27,7 +27,7 @@ def _case_validator() -> Draft202012Validator:
 
 
 def _valid_boundary_case() -> dict:
-    """A minimal well-formed boundary case (models the `0718` abort case)."""
+    """A minimal well-formed boundary case (models the `m-unit-work-004` abort case)."""
     return {
         "model": "models/account.yaml",
         "tags": ["m8", "abort", "slice-mvp-1"],

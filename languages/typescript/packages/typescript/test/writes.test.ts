@@ -3,7 +3,7 @@
  *
  * Write-surface guarantees the conformance slice does not exercise directly:
  *
- *  1. FK-safe insert ordering (spec §4, `0612`): buffered inserts flush with a
+ *  1. FK-safe insert ordering (spec §4, `m-unit-work-003`): buffered inserts flush with a
  *     referenced parent's INSERT before a dependent child's, EVEN WHEN the
  *     developer authored the child `create` first (`combineWrites` does not infer
  *     FK dependencies, so the runtime must topologically order them itself).
@@ -93,18 +93,24 @@ class StubDatabase implements ParallaxDatabase {
   }
 }
 
-/** The orders descriptor (`Order` / `OrderItem`, the `0612` FK-ordering model). */
-const ORDERS = loadCase("core/compatibility/cases/0612-fk-insert-ordering.yaml").descriptor;
+/** The orders descriptor (`Order` / `OrderItem`, the `m-unit-work-003` FK-ordering model). */
+const ORDERS = loadCase(
+  "core/compatibility/cases/m-unit-work-003-fk-insert-ordering.yaml",
+).descriptor;
 
 /** The non-versioned `Wallet` descriptor (two updatable plain columns owner/balance). */
-const WALLET = loadCase("core/compatibility/cases/0604-batched-write.yaml").descriptor;
+const WALLET = loadCase(
+  "core/compatibility/cases/m-batch-write-001-set-based-flush.yaml",
+).descriptor;
 
 /** The reserved-column `Grade` descriptor (ordinal maps to physical column `order`). */
-const GRADE = loadCase("core/compatibility/cases/0006-quoted-reserved-identifier.yaml").descriptor;
+const GRADE = loadCase(
+  "core/compatibility/cases/m-descriptor-001-quoted-reserved-identifier.yaml",
+).descriptor;
 
 /** The versioned `Account` descriptor (carries the optimistic-lock `version` column). */
 const ACCOUNT = loadCase(
-  "core/compatibility/cases/0611-versioned-update-locking-mode.yaml",
+  "core/compatibility/cases/m-opt-lock-002-versioned-update-locking-mode.yaml",
 ).descriptor;
 
 /** A physical Account row the stub returns for an in-transaction find (version 1). */
@@ -112,12 +118,12 @@ const ACCOUNT_ROW: ParallaxRow = { id: 2, owner: "Linus", balance: "250.00", ver
 
 /** The audit-only (processing-temporal) `Balance` descriptor — no version column. */
 const BALANCE = loadCase(
-  "core/compatibility/cases/0730-temporal-close-optimistic-success.yaml",
+  "core/compatibility/cases/m-temporal-read-009-close-optimistic-success.yaml",
 ).descriptor;
 
 /** The business-temporal-only `Reservation` descriptor (a business axis, no processing). */
 const RESERVATION = loadCase(
-  "core/compatibility/cases/0820-business-as-of-now-defaulted.yaml",
+  "core/compatibility/cases/m-temporal-read-018-business-as-of-now-defaulted.yaml",
 ).descriptor;
 
 /**
@@ -219,7 +225,7 @@ function indexOf(queries: readonly RecordedQuery[], needle: string): number {
   return queries.findIndex((q) => q.sql.includes(needle));
 }
 
-describe("TransactionWriter FK-safe insert ordering (spec §4, 0612)", () => {
+describe("TransactionWriter FK-safe insert ordering (spec §4, m-unit-work-003)", () => {
   it("orders a parent INSERT before a child even when the child was created first", async () => {
     const db = new StubDatabase([]);
     const px = createParallax({ descriptor: ORDERS, database: db, dialect: postgresDialect });
@@ -344,7 +350,7 @@ describe("TransactionWriter versioned update (M10 framework-owned versions)", ()
       return accounts.update(accountPk(2), { set: [{ attr: "balance", value: "500.00" }] });
     });
 
-    // The locking-mode read appends the M8 shared-row-lock suffix (0603).
+    // The locking-mode read appends the M8 shared-row-lock suffix (m-read-lock-001).
     const read = db.queries.find((q) => q.sql.startsWith("select"));
     expect(read?.sql.endsWith("for share of t0")).toBe(true);
     // The versioned update advances the version (observed 1 -> 2) with NO gate.
@@ -551,7 +557,7 @@ describe("deep-fetch in-transaction read carries the M8/M10 read context", () =>
       return vaults.update(vaultPk(2), { set: [{ attr: "balance", value: "500.00" }] });
     });
 
-    // (a) the ROOT deep-fetch read took the M8 shared row lock (0603), like a flat read.
+    // (a) the ROOT deep-fetch read took the M8 shared row lock (m-read-lock-001), like a flat read.
     const rootRead = db.queries.find(
       (q) => q.sql.startsWith("select") && q.sql.includes("from vault t0"),
     );

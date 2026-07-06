@@ -37,7 +37,7 @@ an implementation **MUST**:
 - **gate** on **in optimistic mode only** — include `and <version> = ?` in the
   `where` clause binding the version the unit of work *observed* for that row. In
   `locking` mode the shared read lock makes the write correct, so no gate is
-  emitted (the `UPDATE` still advances the version — the `0702` / locking-mode
+  emitted (the `UPDATE` still advances the version — the `m-detach-002` / locking-mode
   shape).
 
 ### Version values are framework-owned

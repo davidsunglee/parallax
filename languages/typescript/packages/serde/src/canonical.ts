@@ -45,7 +45,7 @@ export type JsonValue =
  * Object keys are sorted recursively; **arrays keep their order** (order is
  * significant). Scalars pass through unchanged. Two authored encodings that
  * canonicalize to the same value denote the same node — the property the
- * `equivalentEncodings` check (e.g. `0222`) relies on: a prefix surface and a
+ * `equivalentEncodings` check (e.g. `m-op-algebra-024`) relies on: a prefix surface and a
  * fluent surface differing only in object-key order both collapse here.
  */
 export function canonical<T>(value: T): T {

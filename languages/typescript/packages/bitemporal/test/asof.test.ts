@@ -57,19 +57,19 @@ const D1 = "2024-03-01T00:00:00+00:00";
 const D2 = "2024-02-01T00:00:00+00:00";
 
 describe("asOfPredicate — single-axis (audit-only)", () => {
-  it("0501 defaulted-now injects the current-row equality `out_z = ?` [infinity]", () => {
+  it("m-temporal-read-001 defaulted-now injects the current-row equality `out_z = ?` [infinity]", () => {
     const p = asOfPredicate([BALANCE_PROCESSING], {});
     expect(p.sql).toBe("t0.out_z = ?");
     expect(p.binds).toEqual(["infinity"]);
   });
 
-  it("0502 explicit now lowers to the identical current-row equality", () => {
+  it("m-temporal-read-002 explicit now lowers to the identical current-row equality", () => {
     const p = asOfPredicate([BALANCE_PROCESSING], { processing: { kind: "now" } });
     expect(p.sql).toBe("t0.out_z = ?");
     expect(p.binds).toEqual(["infinity"]);
   });
 
-  it("0503 past instant injects the half-open containment `in_z <= ? and out_z > ?` [d,d]", () => {
+  it("m-temporal-read-003 past instant injects the half-open containment `in_z <= ? and out_z > ?` [d,d]", () => {
     const p = asOfPredicate([BALANCE_PROCESSING], {
       processing: { kind: "instant", date: "2024-04-01T00:00:00+00:00" },
     });
@@ -77,14 +77,14 @@ describe("asOfPredicate — single-axis (audit-only)", () => {
     expect(p.binds).toEqual(["2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]);
   });
 
-  it("0508 inclusive upper bound injects `out_z >= ?` (not `>`)", () => {
+  it("m-temporal-read-008 inclusive upper bound injects `out_z >= ?` (not `>`)", () => {
     const p = asOfPredicate([LEDGER_PROCESSING], {
       processing: { kind: "instant", date: "2024-06-01T00:00:00+00:00" },
     });
     expect(p.sql).toBe("t0.in_z <= ? and t0.out_z >= ?");
   });
 
-  it("0506 asOfRange injects the overlap `in_z < ? and out_z > ?` [to, from]", () => {
+  it("m-temporal-read-006 asOfRange injects the overlap `in_z < ? and out_z > ?` [to, from]", () => {
     const p = asOfPredicate([BALANCE_PROCESSING], {
       processing: {
         kind: "range",
@@ -96,7 +96,7 @@ describe("asOfPredicate — single-axis (audit-only)", () => {
     expect(p.binds).toEqual(["2024-07-01T00:00:00+00:00", "2024-06-15T00:00:00+00:00"]);
   });
 
-  it("0504 history injects no predicate for the axis", () => {
+  it("m-temporal-read-004 history injects no predicate for the axis", () => {
     const p = asOfPredicate([BALANCE_PROCESSING], { processing: { kind: "history" } });
     expect(p.sql).toBe("");
     expect(p.binds).toEqual([]);
@@ -104,7 +104,7 @@ describe("asOfPredicate — single-axis (audit-only)", () => {
 });
 
 describe("asOfPredicate — bitemporal (both axes, business-first composition)", () => {
-  it("0801 both-axes-now composes `thru_z = ? and out_z = ?` [infinity, infinity]", () => {
+  it("m-temporal-read-013 both-axes-now composes `thru_z = ? and out_z = ?` [infinity, infinity]", () => {
     const p = asOfPredicate(POSITION_AXES, {
       business: { kind: "now" },
       processing: { kind: "now" },
@@ -113,7 +113,7 @@ describe("asOfPredicate — bitemporal (both axes, business-first composition)",
     expect(p.binds).toEqual(["infinity", "infinity"]);
   });
 
-  it("0802 business-past / processing-now — business range first, then processing eq", () => {
+  it("m-temporal-read-014 business-past / processing-now — business range first, then processing eq", () => {
     const p = asOfPredicate(POSITION_AXES, {
       business: { kind: "instant", date: D1 },
       processing: { kind: "now" },
@@ -122,7 +122,7 @@ describe("asOfPredicate — bitemporal (both axes, business-first composition)",
     expect(p.binds).toEqual([D1, D1, "infinity"]);
   });
 
-  it("0803 both-axes-past — business binds first, then processing (each [d,d])", () => {
+  it("m-temporal-read-015 both-axes-past — business binds first, then processing (each [d,d])", () => {
     const p = asOfPredicate(POSITION_AXES, {
       business: { kind: "instant", date: D1 },
       processing: { kind: "instant", date: D2 },
@@ -131,13 +131,13 @@ describe("asOfPredicate — bitemporal (both axes, business-first composition)",
     expect(p.binds).toEqual([D1, D1, D2, D2]);
   });
 
-  it("0805 business-past / processing OMITTED defaults processing to now", () => {
+  it("m-temporal-read-017 business-past / processing OMITTED defaults processing to now", () => {
     const p = asOfPredicate(POSITION_AXES, { business: { kind: "instant", date: D1 } });
     expect(p.sql).toBe("t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?");
     expect(p.binds).toEqual([D1, D1, "infinity"]);
   });
 
-  it("0804 double-history injects nothing on either axis", () => {
+  it("m-temporal-read-016 double-history injects nothing on either axis", () => {
     const p = asOfPredicate(POSITION_AXES, {
       business: { kind: "history" },
       processing: { kind: "history" },
@@ -154,7 +154,7 @@ describe("asOfPredicate — bitemporal (both axes, business-first composition)",
 });
 
 describe("propagatedPredicate — deep-fetch as-of suffix (business-first, ordered)", () => {
-  it("0324 both-latest → child `thru_z = ? and out_z = ?` [infinity, infinity]", () => {
+  it("m-navigate-012 both-latest → child `thru_z = ? and out_z = ?` [infinity, infinity]", () => {
     const p = propagatedPredicate(POSITION_AXES, {
       business: { kind: "now" },
       processing: { kind: "now" },
@@ -163,7 +163,7 @@ describe("propagatedPredicate — deep-fetch as-of suffix (business-first, order
     expect(p.binds).toEqual(["infinity", "infinity"]);
   });
 
-  it("0326 business-latest / processing-past → `thru_z = ? and in_z <= ? and out_z > ?`", () => {
+  it("m-navigate-014 business-latest / processing-past → `thru_z = ? and in_z <= ? and out_z > ?`", () => {
     const p = propagatedPredicate(POSITION_AXES, {
       business: { kind: "now" },
       processing: { kind: "instant", date: D2 },
@@ -172,13 +172,13 @@ describe("propagatedPredicate — deep-fetch as-of suffix (business-first, order
     expect(p.binds).toEqual(["infinity", D2, D2]);
   });
 
-  it("0333 non-temporal root (no pins) → temporal child defaults every axis to now", () => {
+  it("m-navigate-021 non-temporal root (no pins) → temporal child defaults every axis to now", () => {
     const p = propagatedPredicate([BALANCE_PROCESSING], {});
     expect(p.sql).toBe("t0.out_z = ?");
     expect(p.binds).toEqual(["infinity"]);
   });
 
-  it("0334 non-temporal child → NO as-of term (empty)", () => {
+  it("m-navigate-022 non-temporal child → NO as-of term (empty)", () => {
     const p = propagatedPredicate([], { processing: { kind: "now" } });
     expect(p.sql).toBe("");
     expect(p.binds).toEqual([]);
@@ -207,26 +207,26 @@ describe("auditWriteStatements — milestone-chaining DML (audit-only)", () => {
     pkColumn: "id",
   };
 
-  it("0510 insert opens one current milestone row (1 statement)", () => {
+  it("m-audit-write-001 insert opens one current milestone row (1 statement)", () => {
     expect(auditWriteStatements("insert", BALANCE)).toEqual([
       "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
     ]);
   });
 
-  it("0511 update closes the current row (keyed pk AND out_z), then chains a new row (2)", () => {
+  it("m-audit-write-002 update closes the current row (keyed pk AND out_z), then chains a new row (2)", () => {
     expect(auditWriteStatements("update", BALANCE)).toEqual([
       "update balance set out_z = ? where bal_id = ? and out_z = ?",
       "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
     ]);
   });
 
-  it("0512 terminate closes the current row only — inserts nothing (1)", () => {
+  it("m-audit-write-003 terminate closes the current row only — inserts nothing (1)", () => {
     expect(auditWriteStatements("terminate", BALANCE)).toEqual([
       "update balance set out_z = ? where bal_id = ? and out_z = ?",
     ]);
   });
 
-  it("0004/0005 non-temporal insert lowers to a plain single-row insert", () => {
+  it("m-core-002/m-core-003 non-temporal insert lowers to a plain single-row insert", () => {
     expect(auditWriteStatements("insert", EVENT)).toEqual([
       "insert into event(id, occurred_at) values (?, ?)",
     ]);

@@ -124,8 +124,8 @@ export function renderMatrixReport(report: MatrixReport): string {
   return lines.join("\n");
 }
 
-/** The four-digit case ID (`0003`) from a repo-relative case path, else the path. */
+/** The per-module case ID (`m-deep-fetch-001`) from a repo-relative case path, else the path. */
 function caseId(casePath: string): string {
-  const match = /(\d{4})-[^/]*\.ya?ml$/.exec(casePath);
+  const match = /(m-[a-z0-9-]+-\d{3})-[^/]*\.ya?ml$/.exec(casePath);
   return match?.[1] ?? casePath;
 }

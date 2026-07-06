@@ -4,7 +4,7 @@
  * The operation algebra and the metamodel canonicalize through the *same* serde
  * seam (ADR-0056), so the adapter canonicalizes byte-for-byte like the Python
  * oracle. This module is the operation side of that seam: it decides node
- * identity for the `equivalentEncodings` precedence check (e.g. `0222`), where a
+ * identity for the `equivalentEncodings` precedence check (e.g. `m-op-algebra-024`), where a
  * prefix surface and a fluent surface differing only in object-key order must
  * collapse to one canonical `operation`.
  */

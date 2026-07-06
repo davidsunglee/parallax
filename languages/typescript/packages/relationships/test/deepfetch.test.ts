@@ -5,14 +5,14 @@
  * `DeepFetchNode` trees — no metamodel, compiler, or database — to pin the
  * round-trip discipline the conformance suite grades:
  *
- *  - `0312` (1 -> N -> N): three statements (root + items + statuses), NOT
+ *  - `m-deep-fetch-003` (1 -> N -> N): three statements (root + items + statuses), NOT
  *    `1 + N + N`, so `roundTrips === 3` and the item-level IN list is the DISTINCT
  *    item ids gathered from the items level.
- *  - `0316` (shared prefix): `[items]` and `[items, statuses]` share the `items`
+ *  - `m-deep-fetch-007` (shared prefix): `[items]` and `[items, statuses]` share the `items`
  *    hop, which is fetched ONCE — three statements, not four.
- *  - `0315` (empty root): the root gathered no parent keys, so every child level
+ *  - `m-deep-fetch-006` (empty root): the root gathered no parent keys, so every child level
  *    is elided — one statement (`roundTrips === 1`), no child `exec`.
- *  - `0318` (empty intermediate): the items level executes but returns NO items,
+ *  - `m-deep-fetch-008` (empty intermediate): the items level executes but returns NO items,
  *    so the grandchild `statuses` level issues no statement — `roundTrips === 2`.
  *
  * The fake `exec` records every `(sql, binds)` it is called with, so the test
@@ -70,7 +70,7 @@ function node(
 }
 
 describe("deepFetch — round-trip discipline (1 + L, never N+1)", () => {
-  it("0312: 1 -> N -> N resolves in exactly THREE statements (roundTrips === 3)", async () => {
+  it("m-deep-fetch-003: 1 -> N -> N resolves in exactly THREE statements (roundTrips === 3)", async () => {
     // Root: orders {1, 42}. items keyed by order_id, statuses keyed by
     // order_item_id — one bulk query per level.
     const rootRows: Row[] = [
@@ -120,7 +120,7 @@ describe("deepFetch — round-trip discipline (1 + L, never N+1)", () => {
     expect((item421.statuses as Row[]).map((s) => s.id)).toEqual([204]);
   });
 
-  it("0316: a SHARED prefix hop is fetched ONCE (three statements, not four)", async () => {
+  it("m-deep-fetch-007: a SHARED prefix hop is fetched ONCE (three statements, not four)", async () => {
     // Two paths, [items] and [items, statuses], share the `items` hop.
     const rootRows: Row[] = [
       { id: 1, name: "Ada" },
@@ -146,7 +146,7 @@ describe("deepFetch — round-trip discipline (1 + L, never N+1)", () => {
     expect(issued.filter((s) => s.sql === "level:items")).toHaveLength(1);
   });
 
-  it("0315: an EMPTY root elides all child levels (roundTrips === 1, no child exec)", async () => {
+  it("m-deep-fetch-006: an EMPTY root elides all child levels (roundTrips === 1, no child exec)", async () => {
     const rootRows: Row[] = [];
     const { exec, issued } = fakeExec({
       items: { childColumn: "order_id", rows: [] },
@@ -161,7 +161,7 @@ describe("deepFetch — round-trip discipline (1 + L, never N+1)", () => {
     expect(result.rows).toEqual([]);
   });
 
-  it("0318: an EMPTY intermediate elides the grandchild (roundTrips === 2)", async () => {
+  it("m-deep-fetch-008: an EMPTY intermediate elides the grandchild (roundTrips === 2)", async () => {
     // Root pins order 4, which has NO items; the items level executes (keyed by
     // {4}) and returns zero rows, so the statuses grandchild issues no statement.
     const rootRows: Row[] = [{ id: 4, name: "Margaret" }];

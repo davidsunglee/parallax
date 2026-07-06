@@ -7,7 +7,7 @@
 # rather than Balance's half-open [from, to). The injected as-of predicate
 # therefore reads `out_z >= ?` instead of `out_z > ?`, and a pin exactly on a
 # milestone boundary includes BOTH the row ending at the boundary and the row
-# beginning there. This is the opposite normative branch from 0507 (which proves
+# beginning there. This is the opposite normative branch from m-temporal-read-007 (which proves
 # the exclusive boundary on Balance).
 #
 # Row data lives in the sibling fixtures/ledger.yaml (same milestone history as

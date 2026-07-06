@@ -219,17 +219,17 @@ def test_parse_profile_claim_extracts_the_embedded_claim() -> None:
 
 def test_profile_gate_passes_on_a_consistent_slice(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
-    _write_case(cases, "0002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
     # an untagged case with a stray module must be ignored entirely.
-    _write_case(cases, "0003.yaml", _clean_read_case(["m-ghost", "other"]))
+    _write_case(cases, "m-core-001.yaml", _clean_read_case(["m-ghost", "other"]))
     assert profile_errors(_synthetic_slices(), tmp_path) == []
 
 
 def test_profile_gate_requires_the_canonical_single_include_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
-    _write_case(cases, "0002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
 
     for case_tags in (
         "{}",
@@ -243,28 +243,32 @@ def test_profile_gate_requires_the_canonical_single_include_tag(tmp_path: Path) 
 def test_profile_gate_fails_when_a_claimed_module_is_uncovered(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     # only m-core is carried; the claim also lists m-op-algebra -> uncovered.
-    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
     errors = profile_errors(_synthetic_slices(), tmp_path)
     assert any("m-op-algebra" in e and "no tagged case" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
     # m-detach is on a tagged case but not in the claim's modules.
-    _write_case(cases, "0002.yaml", _clean_read_case(["m-op-algebra", "m-detach", "slice-mvp-1"]))
+    _write_case(
+        cases,
+        "m-op-algebra-002.yaml",
+        _clean_read_case(["m-op-algebra", "m-detach", "slice-mvp-1"]),
+    )
     errors = profile_errors(_synthetic_slices(), tmp_path)
-    assert any("0002.yaml" in e and "'m-detach'" in e for e in errors)
+    assert any("m-op-algebra-002.yaml" in e and "'m-detach'" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
-    _write_case(cases, "0002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
     # a conflict-shaped tagged case while the claim allows only read/writeSequence.
     _write_case(
         cases,
-        "0003.yaml",
+        "m-core-001.yaml",
         {
             "model": "models/account.yaml",
             "tags": ["m-op-algebra", "slice-mvp-1"],
@@ -273,42 +277,44 @@ def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None
         },
     )
     errors = profile_errors(_synthetic_slices(), tmp_path)
-    assert any("0003.yaml" in e and "conflict" in e and "outside" in e for e in errors)
+    assert any("m-core-001.yaml" in e and "conflict" in e and "outside" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_missing_postgres_golden(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
     no_golden = _clean_read_case(["m-op-algebra", "slice-mvp-1"])
     no_golden["goldenSql"] = {"mariadb": "select t0.id from orders t0"}
-    _write_case(cases, "0002.yaml", no_golden)
+    _write_case(cases, "m-op-algebra-002.yaml", no_golden)
     errors = profile_errors(_synthetic_slices(), tmp_path)
-    assert any("0002.yaml" in e and "Postgres golden" in e for e in errors)
+    assert any("m-op-algebra-002.yaml" in e and "Postgres golden" in e for e in errors)
 
 
 def test_profile_gate_fails_on_an_excluded_tag_when_the_claim_lists_exclude(
     tmp_path: Path,
 ) -> None:
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
     _write_case(
         cases,
-        "0002.yaml",
+        "m-op-algebra-002.yaml",
         _clean_read_case(["m-op-algebra", "aggregate", "slice-mvp-1"]),
     )
     slices = _synthetic_slices(case_tags='{ "include": ["slice-mvp-1"], "exclude": ["aggregate"] }')
     errors = profile_errors(slices, tmp_path)
-    assert any("0002.yaml" in e and "excluded" in e and "aggregate" in e for e in errors)
+    assert any(
+        "m-op-algebra-002.yaml" in e and "excluded" in e and "aggregate" in e for e in errors
+    )
 
 
 def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) -> None:
     # The scenario shape carries Postgres golden SQL per step, not at the top
     # level; the shape-aware golden check must accept it.
     cases = tmp_path / "cases"
-    _write_case(cases, "0001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
     _write_case(
         cases,
-        "0002.yaml",
+        "m-op-algebra-002.yaml",
         {
             "model": "models/account.yaml",
             "tags": ["m-core", "m-op-algebra", "m-unit-work", "slice-mvp-1"],

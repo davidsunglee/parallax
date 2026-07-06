@@ -11,7 +11,7 @@
 #
 # Row data lives in the sibling fixtures/person.yaml; person 3 has NO passport,
 # so the to-one deep fetch attaches a null peer for that root (the 1:1 analogue
-# of the nullable many-to-one case 0314).
+# of the nullable many-to-one case m-deep-fetch-005).
 entities:
   - name: Person
     namespace: parallax.compatibility

@@ -211,8 +211,8 @@ concurrency property; the suite asserts the locking read is well-formed and
 result-correct, which is the observable contract a single-connection harness can
 verify). The **behavioral** counterpart — that the emitted lock actually *behaves
 as a lock* — is proven by the two-connection concurrency cases: it **excludes a
-writer** (`0728`, `error`/`concurrency`), is **shared, not exclusive** (`0729`, a
-second reader is admitted), and an **unlocked projection admits a writer** (`0734`,
+writer** (`m-read-lock-006`, `error`/`concurrency`), is **shared, not exclusive** (`m-read-lock-007`, a
+second reader is admitted), and an **unlocked projection admits a writer** (`m-read-lock-008`,
 the behavioral counterpart to the projection-omits-lock emission case) — the last
 two carrying the `concurrencySuccess` shape (two held sessions, no error raised).
 The object-find-vs-aggregation split is recorded in ADR 0030 (which

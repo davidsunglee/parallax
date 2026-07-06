@@ -242,7 +242,7 @@ default) is application-assigned; `max` allocates `max(col)+1`; `sequence` is a
 by `batchSize x incrementSize` per allocation, reserving a block of ids the
 application hands out (a partially-consumed block leaves a gap). All three are
 exercised by the compatibility suite (`max` and `sequence` via writeSequence
-cases `0620`-`0632`); the simulated sequence is realized in portable SQL (a table
+cases `m-pk-gen-001`-`m-pk-gen-013`); the simulated sequence is realized in portable SQL (a table
 plus an `UPDATE`), so it carries no dialect seam.
 
 | Strategy | Meaning |

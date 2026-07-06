@@ -3,8 +3,8 @@
  * discipline and the `updatedRows != 1` conflict signal, in isolation.
  *
  * Pins the exact canonical versioned UPDATE forms — the OPTIMISTIC-mode gated
- * `0703`/`0704`/`0708` golden and the LOCKING-mode ungated version-advancing
- * `0611` golden — and the outcome classification (1 → success, 0 → conflict,
+ * `m-opt-lock-005`/`m-opt-lock-006`/`m-opt-lock-007` golden and the LOCKING-mode ungated version-advancing
+ * `m-opt-lock-002` golden — and the outcome classification (1 → success, 0 → conflict,
  * anything else → error).
  */
 import {
@@ -23,7 +23,7 @@ const ACCOUNT: VersionedTarget = {
 };
 
 describe("versionedUpdate — optimistic mode: gate on the observed version, advance it", () => {
-  it("writes a domain column AND the version, gating on pk + version (0703/0704)", () => {
+  it("writes a domain column AND the version, gating on pk + version (m-opt-lock-005/m-opt-lock-006)", () => {
     expect(versionedUpdate(ACCOUNT, ["balance"])).toBe(
       "update account set balance = ?, version = ? where id = ? and version = ?",
     );
@@ -36,7 +36,7 @@ describe("versionedUpdate — optimistic mode: gate on the observed version, adv
 });
 
 describe("versionAdvancingUpdate — locking mode: advance the version WITHOUT a gate", () => {
-  it("writes a domain column AND the version, keyed on pk ONLY (0611)", () => {
+  it("writes a domain column AND the version, keyed on pk ONLY (m-opt-lock-002)", () => {
     expect(versionAdvancingUpdate(ACCOUNT, ["balance"])).toBe(
       "update account set balance = ?, version = ? where id = ?",
     );
@@ -50,11 +50,11 @@ describe("versionAdvancingUpdate — locking mode: advance the version WITHOUT a
 });
 
 describe("classifyOutcome — the affected-row conflict signal", () => {
-  it("classifies exactly one affected row as success (0704)", () => {
+  it("classifies exactly one affected row as success (m-opt-lock-006)", () => {
     expect(classifyOutcome(1)).toBe("success");
   });
 
-  it("classifies zero affected rows as a conflict (0703)", () => {
+  it("classifies zero affected rows as a conflict (m-opt-lock-005)", () => {
     expect(classifyOutcome(0)).toBe("conflict");
   });
 

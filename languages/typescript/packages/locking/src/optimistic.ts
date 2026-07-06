@@ -16,7 +16,7 @@
  * (success) and the advance moves the gate forward so the next writer's check
  * stays meaningful. In LOCKING mode the M8 shared read lock makes the write
  * correct, so the version advances WITHOUT a gate ({@link versionAdvancingUpdate},
- * the `0702` / detached-merge-back shape). A versioned update that changes no
+ * the `m-detach-002` / detached-merge-back shape). A versioned update that changes no
  * domain column issues no DML at all (the version is framework-owned, not bumped
  * for nothing).
  *
@@ -63,7 +63,7 @@ export function versionedUpdate(target: VersionedTarget, setColumns: readonly st
  * Render the LOCKING-mode versioned `UPDATE`: like {@link versionedUpdate} but
  * WITHOUT the `and <version> = ?` gate — the version still advances in the `set`,
  * but the `M8` shared read lock (not the version) makes the write correct (the
- * `0702` / detached-merge-back / `0611` shape). Binds order (caller-supplied): the
+ * `m-detach-002` / detached-merge-back / `m-opt-lock-002` shape). Binds order (caller-supplied): the
  * domain set values, then the new version, then the pk.
  */
 export function versionAdvancingUpdate(

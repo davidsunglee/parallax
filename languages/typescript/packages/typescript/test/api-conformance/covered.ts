@@ -17,8 +17,8 @@
  *  - **transactions** — audit-only writes (05xx-write) + batched / FK-ordered / per-key
  *    writes + read-your-own-writes (06xx);
  *  - **locking** — the automatic in-transaction read lock (06xx read) + the read-lock
- *    matrix (`0616`-`0619`, `api-conformance` lane) + optimistic locking happy + retry (07xx);
- *  - **boundary** — bounded automatic retry loop mechanics (`0710`-`0718`,
+ *    matrix (`m-read-lock-002`-`m-read-lock-005`, `api-conformance` lane) + optimistic locking happy + retry (07xx);
+ *  - **boundary** — bounded automatic retry loop mechanics (`m-opt-lock-009`-`m-unit-work-004`,
  *    `api-conformance` lane): auto-retry, conflict surfacing, transient retry,
  *    `retries: 0`, bound exhaustion, callback-withheld-on-abort.
  */
@@ -26,163 +26,163 @@
 /** Non-temporal single-entity + flat navigate/exists reads (`reads.api-conformance.test.ts`). */
 export const READS: readonly string[] = [
   // 00xx scalars / identity / quoting
-  "0001-find-all",
-  "0002-eq",
-  "0003-scalar-types-roundtrip",
-  "0006-quoted-reserved-identifier",
-  // 02xx single-entity read algebra (0222 is skip-manifest'd — equivalentEncodings)
-  "0201-not-eq",
-  "0202-greater-than",
-  "0203-greater-than-equals",
-  "0204-less-than",
-  "0205-less-than-equals",
-  "0206-between",
-  "0207-is-null",
-  "0208-is-not-null",
-  "0209-like",
-  "0210-not-like",
-  "0211-starts-with",
-  "0212-ends-with",
-  "0213-contains-escape",
-  "0214-like-case-insensitive",
-  "0215-contains-case-insensitive",
-  "0216-in",
-  "0217-not-in",
-  "0218-and",
-  "0219-or",
-  "0220-not",
-  "0221-none",
-  "0223-group-precedence-ungrouped",
-  "0224-order-by-limit",
-  "0225-order-by-asc-limit",
-  "0227-not-eq-null-excluded",
-  "0228-not-in-null-excluded",
-  "0229-and-three-operands",
-  "0230-order-by-multi-key",
-  "0231-starts-with-escape",
-  "0232-ends-with-escape",
+  "m-op-algebra-001-find-all",
+  "m-op-algebra-002-eq",
+  "m-core-001-scalar-types-roundtrip",
+  "m-descriptor-001-quoted-reserved-identifier",
+  // 02xx single-entity read algebra (m-op-algebra-024 is skip-manifest'd — equivalentEncodings)
+  "m-op-algebra-003-not-eq",
+  "m-op-algebra-004-greater-than",
+  "m-op-algebra-005-greater-than-equals",
+  "m-op-algebra-006-less-than",
+  "m-op-algebra-007-less-than-equals",
+  "m-op-algebra-008-between",
+  "m-op-algebra-009-is-null",
+  "m-op-algebra-010-is-not-null",
+  "m-op-algebra-011-like",
+  "m-op-algebra-012-not-like",
+  "m-op-algebra-013-starts-with",
+  "m-op-algebra-014-ends-with",
+  "m-op-algebra-015-contains-escape",
+  "m-op-algebra-016-like-case-insensitive",
+  "m-op-algebra-017-contains-case-insensitive",
+  "m-op-algebra-018-in",
+  "m-op-algebra-019-not-in",
+  "m-op-algebra-020-and",
+  "m-op-algebra-021-or",
+  "m-op-algebra-022-not",
+  "m-op-algebra-023-none",
+  "m-op-algebra-025-group-precedence-ungrouped",
+  "m-op-algebra-026-order-by-limit",
+  "m-op-algebra-027-order-by-asc-limit",
+  "m-op-algebra-029-not-eq-null-excluded",
+  "m-op-algebra-030-not-in-null-excluded",
+  "m-op-algebra-031-and-three-operands",
+  "m-op-algebra-032-order-by-multi-key",
+  "m-op-algebra-033-starts-with-escape",
+  "m-op-algebra-034-ends-with-escape",
   // 03xx flat navigate / exists reads (non-temporal)
-  "0301-navigate-items-sku",
-  "0302-exists-items",
-  "0303-not-exists-items",
-  "0304-exists-items-quantity",
-  "0305-navigate-statuses-code",
-  "0306-not-exists-items-and-active",
-  "0307-navigate-to-one-parent-predicate",
-  "0308-exists-multi-hop-items-status",
-  "0309-exists-to-one",
-  "0317-not-exists-multi-hop",
-  "0321-navigate-one-to-one",
+  "m-navigate-001-items-sku",
+  "m-navigate-002-exists-items",
+  "m-navigate-003-not-exists-items",
+  "m-navigate-004-exists-items-quantity",
+  "m-navigate-005-statuses-code",
+  "m-navigate-006-not-exists-items-and-active",
+  "m-navigate-007-to-one-parent-predicate",
+  "m-navigate-008-exists-multi-hop-items-status",
+  "m-navigate-009-exists-to-one",
+  "m-navigate-010-not-exists-multi-hop",
+  "m-navigate-011-one-to-one",
 ];
 
 /** Deep-fetch graph assembly (`deep-fetch.api-conformance.test.ts`), incl. temporal deep fetch. */
 export const DEEP_FETCH: readonly string[] = [
-  "0310-deep-fetch-to-one",
-  "0311-deep-fetch-to-many",
-  "0312-deep-fetch-multi-hop",
-  "0313-deep-fetch-two-paths",
-  "0314-deep-fetch-null-to-one",
-  "0315-deep-fetch-empty-root",
-  "0316-deep-fetch-shared-prefix",
-  "0318-deep-fetch-empty-intermediate",
-  "0319-deep-fetch-ordered-items-desc",
-  "0320-deep-fetch-one-to-one",
-  "0322-deep-fetch-ordered-tags-multikey",
-  "0323-deep-fetch-ordered-nullable-nulls-last",
-  "0324-deepfetch-temporal-both-latest",
-  "0325-deepfetch-temporal-business-past",
-  "0326-deepfetch-temporal-processing-past",
-  "0327-deepfetch-temporal-both-past",
-  "0328-deepfetch-temporal-multihop",
-  "0329-deepfetch-temporal-to-one",
-  "0331-deepfetch-processing-only-latest",
-  "0332-deepfetch-processing-only-instant",
-  "0333-deepfetch-nontemporal-to-temporal",
-  "0334-deepfetch-temporal-to-nontemporal",
-  "0336-deepfetch-temporal-ordered-root",
+  "m-deep-fetch-001-to-one",
+  "m-deep-fetch-002-to-many",
+  "m-deep-fetch-003-multi-hop",
+  "m-deep-fetch-004-two-paths",
+  "m-deep-fetch-005-null-to-one",
+  "m-deep-fetch-006-empty-root",
+  "m-deep-fetch-007-shared-prefix",
+  "m-deep-fetch-008-empty-intermediate",
+  "m-deep-fetch-009-ordered-items-desc",
+  "m-deep-fetch-010-one-to-one",
+  "m-deep-fetch-011-ordered-tags-multikey",
+  "m-deep-fetch-012-ordered-nullable-nulls-last",
+  "m-navigate-012-deepfetch-temporal-both-latest",
+  "m-navigate-013-deepfetch-temporal-business-past",
+  "m-navigate-014-deepfetch-temporal-processing-past",
+  "m-navigate-015-deepfetch-temporal-both-past",
+  "m-navigate-016-deepfetch-temporal-multihop",
+  "m-navigate-017-deepfetch-temporal-to-one",
+  "m-navigate-019-deepfetch-processing-only-latest",
+  "m-navigate-020-deepfetch-processing-only-instant",
+  "m-navigate-021-deepfetch-nontemporal-to-temporal",
+  "m-navigate-022-deepfetch-temporal-to-nontemporal",
+  "m-navigate-024-deepfetch-temporal-ordered-root",
 ];
 
 /** Temporal reads: exists-temporal flat reads + processing (05xx) + bitemporal (08xx). */
 export const TEMPORAL: readonly string[] = [
-  "0330-exists-temporal-hop",
-  "0335-exists-temporal-hop-defaulted",
-  "0501-as-of-now-defaulted",
-  "0502-as-of-now-explicit",
-  "0503-as-of-past-instant",
-  "0504-history",
-  "0505-as-of-now-with-predicate",
-  "0506-as-of-range",
-  "0507-as-of-boundary-exclusive",
-  "0508-as-of-boundary-inclusive",
-  "0801-bitemporal-as-of-now-both-axes",
-  "0802-bitemporal-business-past-processing-now",
-  "0803-bitemporal-both-axes-past",
-  "0804-bitemporal-history",
-  "0805-bitemporal-omitted-processing-default",
+  "m-navigate-018-exists-temporal-hop",
+  "m-navigate-023-exists-temporal-hop-defaulted",
+  "m-temporal-read-001-as-of-now-defaulted",
+  "m-temporal-read-002-as-of-now-explicit",
+  "m-temporal-read-003-as-of-past-instant",
+  "m-temporal-read-004-history",
+  "m-temporal-read-005-as-of-now-with-predicate",
+  "m-temporal-read-006-as-of-range",
+  "m-temporal-read-007-as-of-boundary-exclusive",
+  "m-temporal-read-008-as-of-boundary-inclusive",
+  "m-temporal-read-013-bitemporal-as-of-now-both-axes",
+  "m-temporal-read-014-bitemporal-business-past-processing-now",
+  "m-temporal-read-015-bitemporal-both-axes-past",
+  "m-temporal-read-016-bitemporal-history",
+  "m-temporal-read-017-bitemporal-omitted-processing-default",
 ];
 
 /** Transactions: timestamp-shape inserts (00xx write) + audit writes (05xx-write) + batched (06xx). */
 export const TRANSACTIONS: readonly string[] = [
-  "0004-timestamp-utc-normalization",
-  "0005-timestamp-microsecond-precision",
-  "0510-write-insert",
-  "0511-write-update-chaining",
-  "0512-write-terminate",
-  "0604-batched-write",
-  "0607-read-your-own-writes",
-  "0608-rollback-discards-writes",
-  "0612-fk-insert-ordering",
-  "0613-batched-update-per-key",
+  "m-core-002-timestamp-utc-normalization",
+  "m-core-003-timestamp-microsecond-precision",
+  "m-audit-write-001-insert",
+  "m-audit-write-002-update-chaining",
+  "m-audit-write-003-terminate",
+  "m-batch-write-001-set-based-flush",
+  "m-unit-work-001-read-your-own-writes",
+  "m-unit-work-002-rollback-discards-writes",
+  "m-unit-work-003-fk-insert-ordering",
+  "m-batch-write-002-update-per-key",
 ];
 
 /**
- * Locking: the automatic in-transaction read lock (`0603`), the no-op versioned
- * update (`0609`), the locking-mode version-advancing update (`0611`), the
- * versioned set-based materialize scenarios (`0614`/`0615` — a set-based update on
+ * Locking: the automatic in-transaction read lock (`m-read-lock-001`), the no-op versioned
+ * update (`m-opt-lock-001`), the locking-mode version-advancing update (`m-opt-lock-002`), the
+ * versioned set-based materialize scenarios (`m-opt-lock-003`/`m-opt-lock-004` — a set-based update on
  * a versioned entity resolves the predicate, then updates per object, gated in
  * optimistic mode / ungated version-advancing in locking mode), the read-lock
- * matrix (`0616`-`0619`, `api-conformance` lane — object find locks, projection
+ * matrix (`m-read-lock-002`-`m-read-lock-005`, `api-conformance` lane — object find locks, projection
  * omits, deep fetch locks every level, optimistic omits), optimistic-mode
  * version-column locking (07xx), and the optimistic × temporal close cases
- * (`0730`-`0733` — the observed processing-from `in_z` is the version analogue:
+ * (`m-temporal-read-009`-`m-temporal-read-012` — the observed processing-from `in_z` is the version analogue:
  * a gated close on a fresh `in_z` succeeds, a stale `in_z` conflicts, a retry
  * re-reads and succeeds, and a locking-mode zero-row close raises).
  */
 export const LOCKING: readonly string[] = [
-  "0603-read-lock",
-  "0609-no-op-update-no-dml",
-  "0611-versioned-update-locking-mode",
-  "0614-versioned-set-based-materialize-optimistic",
-  "0615-versioned-set-based-materialize-locking",
-  "0616-locking-txn-object-find-locks",
-  "0617-locking-txn-projection-omits-lock",
-  "0618-locking-txn-deep-fetch-locks-every-level",
-  "0619-optimistic-txn-reads-omit-lock",
-  "0703-optimistic-lock-conflict",
-  "0704-optimistic-lock-success",
-  "0708-optimistic-lock-retry-after-conflict",
-  "0730-temporal-close-optimistic-success",
-  "0731-temporal-close-optimistic-conflict",
-  "0732-temporal-close-retry-after-conflict",
-  "0733-temporal-close-zero-rows-error",
+  "m-read-lock-001-shared-suffix",
+  "m-opt-lock-001-no-op-update-no-dml",
+  "m-opt-lock-002-versioned-update-locking-mode",
+  "m-opt-lock-003-versioned-set-based-materialize-optimistic",
+  "m-opt-lock-004-versioned-set-based-materialize-locking",
+  "m-read-lock-002-locking-txn-object-find-locks",
+  "m-read-lock-003-locking-txn-projection-omits-lock",
+  "m-read-lock-004-locking-txn-deep-fetch-locks-every-level",
+  "m-read-lock-005-optimistic-txn-reads-omit-lock",
+  "m-opt-lock-005-conflict",
+  "m-opt-lock-006-success",
+  "m-opt-lock-007-retry-after-conflict",
+  "m-temporal-read-009-close-optimistic-success",
+  "m-temporal-read-010-close-optimistic-conflict",
+  "m-temporal-read-011-close-retry-after-conflict",
+  "m-temporal-read-012-close-zero-rows-error",
 ];
 
 /**
  * Boundary: the bounded automatic retry loop mechanics (`api-conformance` lane),
- * driven by a fault-injecting decorator wrapped around the shipped adapter. `0710`
+ * driven by a fault-injecting decorator wrapped around the shipped adapter. `m-opt-lock-009`
  * is dual-covered — the harness runs its `attempts` golden AND the suite drives the
  * auto-retry-via-flag path here.
  */
 export const BOUNDARY: readonly string[] = [
-  "0710-optimistic-conflict-auto-retry",
-  "0711-conflict-surfaces-without-optin",
-  "0712-transient-retried-flag-unset",
-  "0713-transient-retried-flag-set",
-  "0714-conflict-auto-retry-loop",
-  "0715-retry-flag-locking-mode",
-  "0716-retries-zero-disables-loop",
-  "0717-retry-bound-exhausted",
-  "0718-callback-value-withheld-on-abort",
+  "m-opt-lock-009-conflict-auto-retry",
+  "m-opt-lock-010-conflict-surfaces-without-optin",
+  "m-auto-retry-001-transient-retried-flag-unset",
+  "m-auto-retry-002-transient-retried-flag-set",
+  "m-opt-lock-011-conflict-auto-retry-loop",
+  "m-auto-retry-003-retry-flag-locking-mode",
+  "m-auto-retry-004-retries-zero-disables-loop",
+  "m-auto-retry-005-retry-bound-exhausted",
+  "m-unit-work-004-callback-value-withheld-on-abort",
 ];
 
 /** Every exercised case stem across all families. */
@@ -195,7 +195,7 @@ export const EXERCISED: readonly string[] = [
   ...BOUNDARY,
 ];
 
-/** The four-digit id of a case stem (`0002-eq` → `0002`). */
+/** The per-module id of a case stem (`m-op-algebra-002-eq` → `m-op-algebra-002`). */
 export function idOf(stem: string): string {
-  return stem.slice(0, 4);
+  return /^(m-[a-z0-9-]+-\d{3})/.exec(stem)?.[1] ?? stem;
 }

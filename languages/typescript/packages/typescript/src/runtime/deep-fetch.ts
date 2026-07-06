@@ -101,7 +101,7 @@ export async function executeDeepFetch(
   const rootSchema = new RuntimeSchema(metamodel, rootEntity, dialect);
   // The ROOT read AND each CHILD level are compiled against the injected dialect with
   // the unit of work's `locking` mode, so `compile()` applies the M8 shared read-lock
-  // in-line (`for share of t0` in `locking`, `0603`) — the developer writes no lock
+  // in-line (`for share of t0` in `locking`, `m-read-lock-001`) — the developer writes no lock
   // SQL — and child locking falls out structurally rather than being re-plumbed.
   const locking = readContext.concurrency === "locking";
   const { sql, binds } = compile(body.operand, rootSchema, dialect, { locking });

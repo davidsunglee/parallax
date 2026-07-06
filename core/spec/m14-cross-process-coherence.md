@@ -70,7 +70,7 @@ same interned identity on the next find. Both keep one-object-per-primary-key
 intact while converging on node A's committed value.
 
 The suite pins this with a `sameObjectAs` assertion on a coherence step — the same
-mechanism the `M8` identity scenario uses (`0602`), lifted to the two-node setting.
+mechanism the `M8` identity scenario uses (`m-process-cache-002`), lifted to the two-node setting.
 A read step **MAY** declare `sameObjectAs: <earlier-step-index>` (with an optional
 `identityAttr`, defaulting to the entity's primary-key column); the harness asserts
 that step's observed rows carry the **same primary-key identity** as the named
@@ -86,8 +86,8 @@ preservation.
 | re-fetch | B | B re-resolves and observes A's new value **at the same identity** (`sameObjectAs` the seed read) — the interned object was refreshed, not replaced |
 
 The corpus exercises both surfacings: an update re-fetched by the same primary key
-(`1105`), and an object first surfaced by a non-key predicate then re-fetched by
-primary key (`1106`, the cross-process lift of `0602`).
+(`m-coherence-005`), and an object first surfaced by a non-key predicate then re-fetched by
+primary key (`m-coherence-006`, the cross-process lift of `m-process-cache-002`).
 
 ## What the suite pins down
 

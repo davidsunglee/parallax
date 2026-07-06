@@ -1,0 +1,35 @@
+# A projection read takes NO lock, so it ADMITS a concurrent writer (M8 / M11).
+# Round 1: transaction A holds a `select distinct ... from account t0` -- a projection
+# read, which takes no shared row lock (its result rows have no identifiable base row
+# to lock; the D2 reversal of m-read-lock-003) -- inside an open unit of work, observing all three
+# rows. Round 2: transaction B UPDATEs account 2 and, because A's projection holds no
+# lock, is ADMITTED and succeeds without blocking.
+#
+# Behavioral counterpart to m-read-lock-003 (which proves a projection OMITS the lock in emitted
+# SQL): this proves the omission has real effect -- an unlocked projection does not
+# exclude a writer. An adapter that WRONGLY attached `for share` to the projection
+# fails here, because B's UPDATE would then block on A's lock and time out. No error is
+# raised; B's write step declares no expectRows (it asserts only that it did not
+# block/raise). m-read-lock-008, not m-temporal-read-009: m-temporal-read-009–m-temporal-read-012 are the Phase-6 temporal-close-optimistic
+# family.
+model: models/account.yaml
+tags: [m-read-lock, m-dialect, concurrency, projection-omits-lock, slice-mvp-1]
+loadFixtures: true
+concurrency:
+  rounds:
+    - A:
+        kind: read
+        goldenSql:
+          postgres: select distinct t0.id, t0.owner, t0.balance, t0.version from account t0
+          mariadb: select distinct t0.id, t0.owner, t0.balance, t0.version from account t0
+        binds: []
+        expectRows:
+          - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+          - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+          - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+    - B:
+        kind: write
+        goldenSql:
+          postgres: update account set balance = ? where id = ?
+          mariadb: update account set balance = ? where id = ?
+        binds: [999.00, 2]

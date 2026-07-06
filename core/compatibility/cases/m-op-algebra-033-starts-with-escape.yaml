@@ -1,0 +1,21 @@
+# startsWith + wildcard escape — affix escaping (M2 §Wildcard/escape rule).
+#
+# m-op-algebra-015 escapes only the `contains` form; the affix forms wrap the escaped literal
+# differently. `startsWith 'C_'` appends a trailing `%` but MUST first escape the
+# literal `_` (a single-char wildcard) so it matches a real underscore:
+# `like 'C\_%' escape '\'`. A fat-fingered escape would let `_` match any char
+# and over-match; the independent `left(sku, 2)` oracle catches that. Only
+# `C_50%` starts with a literal `C_`.
+model: models/orders.yaml
+tags: [m-op-algebra, startsWith, string, escape, slice-mvp-1]
+operation:
+  startsWith:
+    attr: Order.sku
+    value: C_
+goldenSql:
+  postgres: select t0.id, t0.name from orders t0 where t0.sku like ? escape ?
+binds: ["C\\_%", "\\"]
+referenceSql: select id, name from orders where left(sku, 2) = 'C_'
+expectedRows:
+  - { id: 5, name: Alan }
+roundTrips: 1

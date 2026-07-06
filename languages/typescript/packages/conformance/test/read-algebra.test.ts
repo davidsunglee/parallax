@@ -1,8 +1,9 @@
 /**
- * M3 read-algebra **compile lane** over the real corpus (Docker-free).
+ * Read-algebra **compile lane** over the real corpus (Docker-free).
  *
  * Drives the adapter's `runCompile` — the same path the CLI exercises — over
- * every `read`-shaped `00xx` + `02xx` case tagged `slice-mvp-1`,
+ * every `read`-shaped single-entity predicate-algebra case tagged `slice-mvp-1`
+ * (the `m-op-algebra` / `m-core` / `m-descriptor` reads),
  * asserting the emitted SQL equals `goldenSql.postgres` and the emitted binds
  * equal the case's authored `binds`. This proves the compiler against the real
  * metamodel-backed resolver (projection resolved from the case, attribute types
@@ -19,22 +20,34 @@ import { discoverCasePaths } from "../src/discover.js";
 import { loadCase, runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
 
 /**
- * Cases this phase does not target, with the reason. `0003` is read-shaped but
- * exercises NO predicate algebra (`all: {}`); its golden projects a `bytes`
+ * Cases this phase does not target, with the reason. `m-core-001` is read-shaped
+ * but exercises NO predicate algebra (`all: {}`); its golden projects a `bytes`
  * column through `encode(t0.payload, ?) payload_hex` — a scalar-serde projection
  * concern (the case is tagged `scalar`, not part of the single-entity predicate
  * algebra Phase 4 broadens). It lands with the scalar-projection work; tracked
  * here so the exclusion is explicit, not a silent gap.
  */
 const OUT_OF_PHASE: ReadonlyMap<string, string> = new Map([
-  ["0003", "scalar bytes encode(...) projection — not predicate algebra"],
+  ["m-core-001", "scalar bytes encode(...) projection — not predicate algebra"],
 ]);
 
-/** The `00xx` + `02xx` read cases tagged `slice-mvp-1`, in scope. */
+/** The module slug of a per-module case id (`m-op-algebra-003` → `m-op-algebra`). */
+function moduleOf(id: string): string {
+  return id.replace(/-\d{3}$/, "");
+}
+
+/** The single-entity predicate-algebra modules whose read cases this lane compiles. */
+const READ_ALGEBRA_MODULES: ReadonlySet<string> = new Set([
+  "m-op-algebra",
+  "m-core",
+  "m-descriptor",
+]);
+
+/** The single-entity read-algebra cases tagged `slice-mvp-1`, in scope. */
 function readAlgebraCases(): readonly { id: string; path: string }[] {
   return discoverCasePaths()
-    .map((path) => ({ id: path.replace(/^.*\/(\d{4})-.*$/, "$1"), path }))
-    .filter(({ id }) => /^(00|02)\d\d$/.test(id) && !OUT_OF_PHASE.has(id))
+    .map((path) => ({ id: path.replace(/^.*\/(m-[a-z0-9-]+-\d{3})-.*$/, "$1"), path }))
+    .filter(({ id }) => READ_ALGEBRA_MODULES.has(moduleOf(id)) && !OUT_OF_PHASE.has(id))
     .map(({ id, path }) => ({ id, path, loaded: loadCase(path) }))
     .filter(({ loaded }) => loaded.shape === "read" && loaded.tags.includes("slice-mvp-1"))
     .map(({ id, path }) => ({ id, path }));
@@ -49,27 +62,28 @@ function goldenSql(loaded: ReturnType<typeof loadCase>): string {
 const CASES = readAlgebraCases();
 
 /**
- * The exact in-scope ID set Phase 4 contracts: `0001`/`0002`/`0006` plus the
- * full `0201`–`0232` read family (32 cases) = 35. `0003` is excluded
- * (`OUT_OF_PHASE`, scalar bytes projection); `0004`/`0005` are `writeSequence`
- * and naturally filtered by shape. Asserting the EXACT set — not a `>= N`
- * lower bound — makes a discovery regression that silently drops a 02xx case
- * fail loudly instead of passing vacuously.
+ * The exact in-scope ID set Phase 4 contracts: `m-op-algebra-001`/`-002` and the
+ * `m-descriptor-001` identifier read, plus the full `m-op-algebra-003`–`-034`
+ * predicate-algebra family (32 cases) = 35. `m-core-001` is excluded
+ * (`OUT_OF_PHASE`, scalar bytes projection); `m-core-002`/`-003` are
+ * `writeSequence` and naturally filtered by shape. Asserting the EXACT set — not a
+ * `>= N` lower bound — makes a discovery regression that silently drops an algebra
+ * case fail loudly instead of passing vacuously.
  */
 const EXPECTED_IDS: readonly string[] = [
-  "0001",
-  "0002",
-  "0006",
-  ...Array.from({ length: 32 }, (_, i) => String(201 + i).padStart(4, "0")),
+  "m-op-algebra-001",
+  "m-op-algebra-002",
+  "m-descriptor-001",
+  ...Array.from({ length: 32 }, (_, i) => `m-op-algebra-${String(3 + i).padStart(3, "0")}`),
 ];
 
 describe("read-algebra compile lane — emitted === golden over the corpus", () => {
-  it("discovers exactly the in-scope 00xx + 02xx read cases", () => {
+  it("discovers exactly the in-scope single-entity read-algebra cases", () => {
     const discovered = CASES.map(({ id }) => id).sort();
     expect(discovered).toEqual([...EXPECTED_IDS].sort());
-    // `0003` is read-shaped + mvp-tagged but a documented exclusion (scalar
+    // `m-core-001` is read-shaped + mvp-tagged but a documented exclusion (scalar
     // bytes `encode(...)` projection); it must NOT leak into the in-scope set.
-    expect(discovered).not.toContain("0003");
+    expect(discovered).not.toContain("m-core-001");
   });
 
   it.each(CASES)("$id compiles to the golden Postgres SQL + binds", ({ path }) => {

@@ -67,7 +67,7 @@ def test_rollback_scenario_step_is_discovered_and_self_describes() -> None:
         (c for c in _scenario_cases() if any(step.get("rollback") for step in c.scenario)),
         None,
     )
-    assert case is not None, "no rollback scenario case discovered (0608)"
+    assert case is not None, "no rollback scenario case discovered (m-unit-work-002)"
     rollback_steps = [step for step in case.scenario if step.get("rollback")]
     for step in rollback_steps:
         # An ABORTED write step is still a write step that lists golden DML (it is
@@ -89,7 +89,7 @@ def test_no_op_write_scenario_step_is_discovered_and_self_describes() -> None:
         ),
         None,
     )
-    assert case is not None, "no no-op-write scenario case discovered (0609)"
+    assert case is not None, "no no-op-write scenario case discovered (m-opt-lock-001)"
     no_op_steps = [s for s in case.scenario if "write" in s and s["roundTrips"] == 0]
     for step in no_op_steps:
         # A NO-OP write (a versioned UPDATE that changes no attribute, M10) issues

@@ -129,7 +129,7 @@ important V1 rule is the slice boundary:
   identity-cache and query-cache scenario slice is deferred by TS-0054. Those
   cache/identity cases are untagged and outside the V1 claim.
 - The `scenario` shape is **inside** the claim: the read-your-own-writes scenario
-  `0607-read-your-own-writes` is tagged `slice-mvp-1` and runs as
+  `m-unit-work-001-read-your-own-writes` is tagged `slice-mvp-1` and runs as
   part of the M8 unit-of-work slice. The deferred M8 cache `scenario` cases
   (identity / query cache) are simply untagged, so they fall outside the claim
   without excluding the shape.
@@ -840,7 +840,7 @@ database implementations behind the M11 seam:
   profile over `mariadb:11.4`, included in `just ts-db-all`. It preserves the
   25-case set: 14
   harness-lane slice cases with `goldenSql.mariadb` plus 11 marquee MariaDB
-  dialect/error-classification proofs (`1001`, `1002`, `1005`, `0720`-`0727`).
+  dialect/error-classification proofs (`m-read-lock-009`, `m-temporal-read-021`, `m-core-004`, `m-db-error-001`-`m-db-error-008`).
 
 Per-dialect golden SQL is selected by the provider's own `dialect` identifier,
 which is the `goldenSql` key on the case. The MariaDB profile does not silently
@@ -929,29 +929,29 @@ partition below.
 Five of the 123 cases are reason-skipped because what they prove is serde/harness
 machinery a developer never authors, not a developer-facing surface:
 
-- **`0222`** — an `equivalentEncodings` serde-canonicalization check (two surface
+- **`m-op-algebra-024`** — an `equivalentEncodings` serde-canonicalization check (two surface
   spellings collapse to one canonical operation). Its query semantics are
-  exercised through the developer surface elsewhere; its ungrouped sibling `0223`
+  exercised through the developer surface elsewhere; its ungrouped sibling `m-op-algebra-025`
   runs in `reads.api-conformance.test.ts`.
-- **`0226`** — `distinct` on a single *projected* column, whose witness result is
+- **`m-op-algebra-028`** — `distinct` on a single *projected* column, whose witness result is
   projection-specific. V1 `find` returns whole managed objects, so a
   projected-column result needs the out-of-V1 aggregation/projection surface
   (deferred by §2.8).
-- **`0728`** — read-lock-blocks-writer, a HARNESS-lane two-connection concurrency
+- **`m-read-lock-006`** — read-lock-blocks-writer, a HARNESS-lane two-connection concurrency
   case (a held `for share` read excludes a concurrent writer → `lockWaitTimeout`).
   Its behavioral proof is discharged by the reference harness and the TypeScript
   conformance runner's two-session run lane (`slice-run` / `mariadb-run` drive
   `@parallax/conformance`'s `runRun`), not the developer surface — a developer
   never authors the barrier + lowered-lock-budget choreography (the read lock's
-  developer-observable behavior is exercised by `0603`/`0616`).
-- **`0729`** — read-lock-shared-compatible, a HARNESS-lane two-connection
+  developer-observable behavior is exercised by `m-read-lock-001`/`m-read-lock-002`).
+- **`m-read-lock-007`** — read-lock-shared-compatible, a HARNESS-lane two-connection
   concurrency-success case (A and B both take `for share` and both succeed — the
-  lock is shared, not exclusive). Like `0728`, discharged by the reference harness
+  lock is shared, not exclusive). Like `m-read-lock-006`, discharged by the reference harness
   and the conformance runner's two-session `runRun`, not the developer surface.
-- **`0734`** — projection-omits-lock-admits-writer, a HARNESS-lane two-connection
+- **`m-read-lock-008`** — projection-omits-lock-admits-writer, a HARNESS-lane two-connection
   concurrency-success case (A holds an unlocked `distinct` projection, B's UPDATE is
   admitted). Discharged by the same two-session `runRun`; the projection-omits-lock
-  emission is exercised by `0617`.
+  emission is exercised by `m-read-lock-003`.
 
 ### 6.4 Usage Guide rendering and drift check
 

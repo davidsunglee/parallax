@@ -106,7 +106,7 @@ export function writeProviders(): readonly SelectedProvider[] {
  * (developer-WRITE cases guard separately via {@link supportsDeveloperWrites}).
  *
  * Currently EMPTY — the two gaps that used to live here are both fixed:
- *  - `0003` (a RAW `bytes` read) — the shipped MariaDB adapter's `typeCast` now
+ *  - `m-core-001` (a RAW `bytes` read) — the shipped MariaDB adapter's `typeCast` now
  *    reads a raw (un-wrapped) `bytes` column via the driver's raw `Buffer`
  *    (`field.buffer()`) instead of parsing `field.string()` through the hex-text
  *    parser, so the runtime `find`'s VERBATIM `bytes` projection
@@ -114,8 +114,8 @@ export function writeProviders(): readonly SelectedProvider[] {
  *    from the dialect's `hex(col)` projection by the codebase-owned `_hex`
  *    output-alias convention (`mysql2`'s `Field.name`; see `adapter.ts`'s
  *    `typeCast` doc) — that hex path is unaffected (still proven by
- *    `mariadb-run.test.ts`'s `1005`).
- *  - `0801`-`0805` (the `Position` table, a MariaDB reserved word `POSITION()`) —
+ *    `mariadb-run.test.ts`'s `m-core-004`).
+ *  - `m-temporal-read-013`-`m-temporal-read-017` (the `Position` table, a MariaDB reserved word `POSITION()`) —
  *    both the DDL derivation's reserved-word set AND the M3 compiler's root/
  *    EXISTS-child `from` clause (now routed through `dialect.quoteIdentifier`,
  *    same as every column) quote it.

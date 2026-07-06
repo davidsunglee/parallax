@@ -213,7 +213,7 @@ Example:
     "name": "@parallax/typescript",
     "version": "0.1.0"
   },
-  "case": "core/compatibility/cases/0002-eq.yaml",
+  "case": "core/compatibility/cases/m-op-algebra-002-eq.yaml",
   "dialect": "postgres",
   "caseShape": "read",
   "emissions": [
@@ -268,7 +268,7 @@ Example:
     "name": "@parallax/typescript",
     "version": "0.1.0"
   },
-  "case": "core/compatibility/cases/0002-eq.yaml",
+  "case": "core/compatibility/cases/m-op-algebra-002-eq.yaml",
   "dialect": "postgres",
   "caseShape": "read",
   "emissions": [

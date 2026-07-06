@@ -6,28 +6,28 @@ All writes run inside `px.transaction(async tx => …)`. `create` / `update` / `
 
 Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/transactions.api-conformance.test.ts`).
 
-## 0004: a timestamp insert stores as UTC
+## m-core-002: a timestamp insert stores as UTC
 
 ```ts
 await f.px.transaction(async (tx) => {
 await tx.entity("Event").create({ id: 1n, occurredAt: at("2024-03-01T05:30:00+05:30") });
 ```
 
-## 0005: a timestamp insert keeps microsecond precision
+## m-core-003: a timestamp insert keeps microsecond precision
 
 ```ts
 await f.px.transaction(async (tx) => {
   .create({ id: 1n, occurredAt: at("2024-03-01T12:00:00.123456+00:00") });
 ```
 
-## 0510: create opens an audit milestone [txInstant, infinity)
+## m-audit-write-001: create opens an audit milestone [txInstant, infinity)
 
 ```ts
 await f.px.transaction(async (tx) => {
 await tx.entity("Balance").create({ id: 1n, acctNum: "A", value: dec("100.00") });
 ```
 
-## 0511: update closes the current milestone and chains a new one (audit trail)
+## m-audit-write-002: update closes the current milestone and chains a new one (audit trail)
 
 ```ts
 await f.px.transaction(async (tx) => {
@@ -36,7 +36,7 @@ await later.transaction(async (tx) => {
   .update(Balance.id.eq(1), { set: [Balance.value.set(dec("150.00"))] });
 ```
 
-## 0512: terminate closes the current milestone and inserts nothing
+## m-audit-write-003: terminate closes the current milestone and inserts nothing
 
 ```ts
 await f.px.transaction(async (tx) => {
@@ -45,7 +45,7 @@ await later.transaction(async (tx) => {
 await tx.entity("Balance").terminate(Balance.id.eq(1));
 ```
 
-## 0604: buffered inserts + updates flush as set-based SQL
+## m-batch-write-001: buffered inserts + updates flush as set-based SQL
 
 ```ts
 await f.px.transaction(async (tx) => {
@@ -57,7 +57,7 @@ await wallets.update(Wallet.id.eq(10), { set: [Wallet.balance.set(dec("500.00"))
 await wallets.update(Wallet.id.eq(11), { set: [Wallet.balance.set(dec("500.00"))] });
 ```
 
-## 0607: a dependent find observes the buffered insert (read-your-own-writes)
+## m-unit-work-001: a dependent find observes the buffered insert (read-your-own-writes)
 
 ```ts
 const observed = await f.px.transaction(async (tx) => {
@@ -66,7 +66,7 @@ await accounts.create({ id: 7n, owner: "Newton", balance: dec("5.00"), version: 
 return accounts.find(Account.id.eq(7)).toArray();
 ```
 
-## 0608: an aborted transaction discards its writes (rollback)
+## m-unit-work-002: an aborted transaction discards its writes (rollback)
 
 ```ts
 f.px.transaction(async (tx) => {
@@ -78,7 +78,7 @@ const observed = await f.px.transaction(async (tx) =>
 tx.entity("Account").find(Account.id.eq(1)).toArray(),
 ```
 
-## 0612: a referenced parent is inserted before its child (FK ordering)
+## m-unit-work-003: a referenced parent is inserted before its child (FK ordering)
 
 ```ts
 await f.px.transaction(async (tx) => {
@@ -86,7 +86,7 @@ await tx.entity("Order").create({
 await tx.entity("OrderItem").create({ id: 200n, orderId: 100n, sku: "X-1", quantity: 3 });
 ```
 
-## 0613: distinct new values flush as one keyed UPDATE per key
+## m-batch-write-002: distinct new values flush as one keyed UPDATE per key
 
 ```ts
 await f.px.transaction(async (tx) => {

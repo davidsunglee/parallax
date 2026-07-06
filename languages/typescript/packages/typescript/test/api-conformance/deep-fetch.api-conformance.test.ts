@@ -66,17 +66,17 @@ interface Row {
 const CASES: readonly Row[] = [
   // non-temporal deep fetch (03xx graph)
   {
-    stem: "0310-deep-fetch-to-one",
+    stem: "m-deep-fetch-001-to-one",
     entity: "OrderItem",
     build: () => buildFindOperation(all(), { includes: [path("OrderItem.order")] }),
   },
   {
-    stem: "0311-deep-fetch-to-many",
+    stem: "m-deep-fetch-002-to-many",
     entity: "Order",
     build: () => buildFindOperation(all(), { includes: [path("Order.items")] }),
   },
   {
-    stem: "0312-deep-fetch-multi-hop",
+    stem: "m-deep-fetch-003-multi-hop",
     entity: "Order",
     build: () =>
       buildFindOperation(inList("Order.id", [1, 42]), {
@@ -84,18 +84,18 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0313-deep-fetch-two-paths",
+    stem: "m-deep-fetch-004-two-paths",
     entity: "Order",
     build: () =>
       buildFindOperation(all(), { includes: [path("Order.items"), path("Order.statuses")] }),
   },
   {
-    stem: "0314-deep-fetch-null-to-one",
+    stem: "m-deep-fetch-005-null-to-one",
     entity: "OrderStatus",
     build: () => buildFindOperation(all(), { includes: [path("OrderStatus.orderItem")] }),
   },
   {
-    stem: "0315-deep-fetch-empty-root",
+    stem: "m-deep-fetch-006-empty-root",
     entity: "Order",
     build: () =>
       buildFindOperation(eq("Order.id", 999), {
@@ -103,7 +103,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0316-deep-fetch-shared-prefix",
+    stem: "m-deep-fetch-007-shared-prefix",
     entity: "Order",
     build: () =>
       buildFindOperation(all(), {
@@ -111,7 +111,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0318-deep-fetch-empty-intermediate",
+    stem: "m-deep-fetch-008-empty-intermediate",
     entity: "Order",
     build: () =>
       buildFindOperation(eq("Order.id", 4), {
@@ -119,22 +119,22 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0319-deep-fetch-ordered-items-desc",
+    stem: "m-deep-fetch-009-ordered-items-desc",
     entity: "Order",
     build: () => buildFindOperation(eq("Order.id", 1), { includes: [path("Order.items")] }),
   },
   {
-    stem: "0320-deep-fetch-one-to-one",
+    stem: "m-deep-fetch-010-one-to-one",
     entity: "Person",
     build: () => buildFindOperation(all(), { includes: [path("Person.passport")] }),
   },
   {
-    stem: "0322-deep-fetch-ordered-tags-multikey",
+    stem: "m-deep-fetch-011-ordered-tags-multikey",
     entity: "Order",
     build: () => buildFindOperation(eq("Order.id", 1), { includes: [path("Order.tags")] }),
   },
   {
-    stem: "0323-deep-fetch-ordered-nullable-nulls-last",
+    stem: "m-deep-fetch-012-ordered-nullable-nulls-last",
     entity: "Order",
     build: () =>
       buildFindOperation(inList("Order.id", [1, 42]), {
@@ -143,7 +143,7 @@ const CASES: readonly Row[] = [
   },
   // temporal deep fetch (03xx graph, m7)
   {
-    stem: "0324-deepfetch-temporal-both-latest",
+    stem: "m-navigate-012-deepfetch-temporal-both-latest",
     entity: "Policy",
     build: () =>
       buildFindOperation(all(), {
@@ -153,7 +153,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0325-deepfetch-temporal-business-past",
+    stem: "m-navigate-013-deepfetch-temporal-business-past",
     entity: "Policy",
     build: () =>
       buildFindOperation(all(), {
@@ -163,7 +163,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0326-deepfetch-temporal-processing-past",
+    stem: "m-navigate-014-deepfetch-temporal-processing-past",
     entity: "Policy",
     build: () =>
       buildFindOperation(all(), {
@@ -173,7 +173,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0327-deepfetch-temporal-both-past",
+    stem: "m-navigate-015-deepfetch-temporal-both-past",
     entity: "Policy",
     build: () =>
       buildFindOperation(all(), {
@@ -188,7 +188,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0328-deepfetch-temporal-multihop",
+    stem: "m-navigate-016-deepfetch-temporal-multihop",
     entity: "Policy",
     build: () =>
       buildFindOperation(all(), {
@@ -198,7 +198,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0329-deepfetch-temporal-to-one",
+    stem: "m-navigate-017-deepfetch-temporal-to-one",
     entity: "Coverage",
     build: () =>
       buildFindOperation(all(), {
@@ -208,7 +208,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0331-deepfetch-processing-only-latest",
+    stem: "m-navigate-019-deepfetch-processing-only-latest",
     entity: "Invoice",
     build: () =>
       buildFindOperation(all(), {
@@ -218,7 +218,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0332-deepfetch-processing-only-instant",
+    stem: "m-navigate-020-deepfetch-processing-only-instant",
     entity: "Invoice",
     build: () =>
       buildFindOperation(all(), {
@@ -228,12 +228,12 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0333-deepfetch-nontemporal-to-temporal",
+    stem: "m-navigate-021-deepfetch-nontemporal-to-temporal",
     entity: "Tenant",
     build: () => buildFindOperation(all(), { includes: [path("Tenant.leases")] }),
   },
   {
-    stem: "0334-deepfetch-temporal-to-nontemporal",
+    stem: "m-navigate-022-deepfetch-temporal-to-nontemporal",
     entity: "Lease",
     build: () =>
       buildFindOperation(all(), {
@@ -243,7 +243,7 @@ const CASES: readonly Row[] = [
       }),
   },
   {
-    stem: "0336-deepfetch-temporal-ordered-root",
+    stem: "m-navigate-024-deepfetch-temporal-ordered-root",
     entity: "Policy",
     build: () =>
       buildFindOperation(all(), {

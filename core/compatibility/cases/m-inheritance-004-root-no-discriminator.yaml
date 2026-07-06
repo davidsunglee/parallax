@@ -1,0 +1,21 @@
+# Table-per-hierarchy ROOT query: no discriminator predicate (M1 inheritance, M3).
+#
+# m-inheritance-001–m-inheritance-003 all query a SUBTYPE and inject a discriminator filter (`kind = ?` /
+# `kind in (?, ?)`). This pins the complementary rule: a query rooted at the
+# hierarchy root (Payment) injects NO discriminator predicate and so sees EVERY
+# row across the shared table — the two card rows, the cash row, and the plain
+# root-kind row. The golden SQL has no WHERE clause; its absence is the contract.
+model: models/payment.yaml
+tags: [m-inheritance, m-sql, table-per-hierarchy, root, no-discriminator]
+operation:
+  all: {}
+goldenSql:
+  postgres: select t0.id, t0.kind, t0.amount from payment t0
+binds: []
+referenceSql: select id, kind, amount from payment
+expectedRows:
+  - { id: 1, kind: card, amount: 100.00 }
+  - { id: 2, kind: card, amount: 50.00 }
+  - { id: 3, kind: cash, amount: 20.00 }
+  - { id: 4, kind: payment, amount: 10.00 }
+roundTrips: 1

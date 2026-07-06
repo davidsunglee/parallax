@@ -8,7 +8,7 @@ The boundary also offers **bounded automatic retry**: `px.transaction(body, { re
 
 Every snippet below is extracted from a test that runs it against a real Postgres through `@parallax/db-postgres` and asserts the shown result (`packages/typescript/test/api-conformance/locking.api-conformance.test.ts`).
 
-## 0603: a transaction-scoped read takes the automatic shared lock and returns the row
+## m-read-lock-001: a transaction-scoped read takes the automatic shared lock and returns the row
 
 ```ts
 const account = await f.px.transaction((tx) =>
@@ -22,21 +22,21 @@ const rows = await f.px.transaction((tx) =>
 tx.entity("Account").find(Account.id.eq(2), { distinct: true }).toArray(),
 ```
 
-## 0616: an object find inside a locking transaction returns the row (it takes the shared lock)
+## m-read-lock-002: an object find inside a locking transaction returns the row (it takes the shared lock)
 
 ```ts
 const account = await f.px.transaction(
 (tx) => tx.entity("Account").find(Account.id.eq(2)).single(),
 ```
 
-## 0617: a projection read inside a locking transaction proceeds unlocked and returns rows
+## m-read-lock-003: a projection read inside a locking transaction proceeds unlocked and returns rows
 
 ```ts
 const rows = await f.px.transaction(
 (tx) => tx.entity("Account").find(all(), { distinct: true }).toArray(),
 ```
 
-## 0618: a deep fetch inside a locking transaction locks every level and returns the graph
+## m-read-lock-004: a deep fetch inside a locking transaction locks every level and returns the graph
 
 ```ts
 const rows = await f.px.transaction(
@@ -44,14 +44,14 @@ const rows = await f.px.transaction(
     .toArray(),
 ```
 
-## 0619: reads inside an optimistic transaction take no lock and return rows
+## m-read-lock-005: reads inside an optimistic transaction take no lock and return rows
 
 ```ts
 const account = await f.px.transaction(
 (tx) => tx.entity("Account").find(Account.id.eq(2)).single(),
 ```
 
-## 0609: a versioned update that changes no attribute issues no DML
+## m-opt-lock-001: a versioned update that changes no attribute issues no DML
 
 ```ts
 const observed = await f.px.transaction(async (tx) => {
@@ -61,7 +61,7 @@ const result = await accounts.update(accountPk(2), { set: [] });
 return accounts.find(Account.id.eq(2)).toArray();
 ```
 
-## 0611: a locking-mode update advances the version with no gate
+## m-opt-lock-002: a locking-mode update advances the version with no gate
 
 ```ts
 const result = await f.px.transaction(async (tx) => {
@@ -70,7 +70,7 @@ await accounts.find(Account.id.eq(2)).single();
 return accounts.update(accountPk(2), { set: [Account.balance.set(dec("500.00"))] });
 ```
 
-## 0615: a versioned set-based update materializes into per-object version-advancing updates
+## m-opt-lock-004: a versioned set-based update materializes into per-object version-advancing updates
 
 ```ts
 const observed = await f.px.transaction(
@@ -79,7 +79,7 @@ const observed = await f.px.transaction(
   return accounts.find(Account.balance.lt(200)).toArray();
 ```
 
-## 0614: a versioned set-based update materializes into per-object GATED updates
+## m-opt-lock-003: a versioned set-based update materializes into per-object GATED updates
 
 ```ts
 const observed = await f.px.transaction(
@@ -88,7 +88,7 @@ const observed = await f.px.transaction(
   return accounts.find(Account.balance.lt(200)).toArray();
 ```
 
-## 0703: a stale-version update conflicts (affects 0 rows) — the row is unchanged
+## m-opt-lock-005: a stale-version update conflicts (affects 0 rows) — the row is unchanged
 
 ```ts
 await f.px.transaction(
@@ -97,7 +97,7 @@ await f.px.transaction(
     await accounts.update(accountPk(2), { set: [Account.balance.set(dec("250.00"))] });
 ```
 
-## 0704: an update on the fresh version succeeds (affects 1 row)
+## m-opt-lock-006: an update on the fresh version succeeds (affects 1 row)
 
 ```ts
 const result = await f.px.transaction(
@@ -106,7 +106,7 @@ const result = await f.px.transaction(
   return accounts.update(accountPk(2), { set: [Account.balance.set(dec("500.00"))] });
 ```
 
-## 0708: a retry re-reads the fresh version after the conflict and succeeds
+## m-opt-lock-007: a retry re-reads the fresh version after the conflict and succeeds
 
 ```ts
 const result = await f.px.transaction(
@@ -117,7 +117,7 @@ const result = await f.px.transaction(
     return accounts.update(accountPk(2), { set: [Account.balance.set(dec("250.00"))] });
 ```
 
-## 0730: an optimistic close on a fresh observed in_z closes exactly the current milestone
+## m-temporal-read-009: an optimistic close on a fresh observed in_z closes exactly the current milestone
 
 ```ts
 const result = await f.px.transaction(
@@ -126,7 +126,7 @@ const result = await f.px.transaction(
   return balances.update(balancePk(2), { set: [Balance.value.set(dec("250.00"))] });
 ```
 
-## 0731: an optimistic close on a STALE observed in_z conflicts (a current row still exists)
+## m-temporal-read-010: an optimistic close on a STALE observed in_z conflicts (a current row still exists)
 
 ```ts
 await f.px.transaction(
@@ -135,7 +135,7 @@ await f.px.transaction(
     await balances.update(balancePk(2), { set: [Balance.value.set(dec("250.00"))] });
 ```
 
-## 0732: a retry re-reads the fresh current in_z after the temporal conflict and succeeds
+## m-temporal-read-011: a retry re-reads the fresh current in_z after the temporal conflict and succeeds
 
 ```ts
 const result = await f.px.transaction(
@@ -146,7 +146,7 @@ const result = await f.px.transaction(
     return balances.update(balancePk(2), { set: [Balance.value.set(dec("250.00"))] });
 ```
 
-## 0733: a locking-mode close that finds no current row raises (never silent)
+## m-temporal-read-012: a locking-mode close that finds no current row raises (never silent)
 
 ```ts
 await f.px.transaction((tx) => tx.entity("Balance").terminate(balancePk(2)), {
