@@ -213,8 +213,11 @@ element** of that array satisfies it. Each such predicate is evaluated
 "home"), nestedEq(phones.number, "555-9999"))`) means "some element has
 `type = home` **and** some — *possibly different* — element has
 `number = 555-9999`". The absence-collapse rule still holds: a null column, a
-missing array, an empty array, or an element whose leaf is not present contributes
-no matching element.
+missing array, an empty array, a **non-array value** (an explicit JSON `null`, a
+JSON scalar, or a JSON object — anything that is not a JSON array collapses to
+**zero elements**), or an element whose leaf is not present contributes no matching
+element. A non-array value is read as not-present even when its own scalar value or
+object content would match the predicate.
 
 **`nestedExists` / `nestedNotExists` test the member itself**, over a
 **value-object-terminated** path (`Class.valueObject(.valueObject)*`, ending at a
@@ -226,10 +229,11 @@ value object rather than at an inner attribute):
 | `nestedNotExists` | `{ "nestedNotExists": { "path", "where"? } }` | the complement — the value object is **absent** (`one`) or the array is **empty or absent** (`many`); with `where`, **no** element satisfies the compound sub-predicate |
 
 Without `where`, `nestedExists` on a `many` path is a pure non-empty test (an empty
-array, a missing key, a JSON `null`, and a SQL `NULL` column all read as
-not-present, so `nestedNotExists` matches every one of them — an empty array and a
-NULL column are **indistinguishable** to the algebra, exactly as the scalar
-absence-collapse rule folds them).
+array, a missing key, a JSON `null`, a SQL `NULL` column, **and any non-array value
+— a JSON scalar or a JSON object** — all read as not-present, so `nestedNotExists`
+matches every one of them — an empty array, a NULL column, and a non-array value are
+**indistinguishable** to the algebra, exactly as the scalar absence-collapse rule
+folds them).
 
 **The scoped `where` expresses same-element matching.** With `where`, one element
 must satisfy the **whole** compound sub-predicate — so `nestedExists` with `where`

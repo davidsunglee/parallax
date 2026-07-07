@@ -3,9 +3,10 @@
 #
 # nestedIsNull(Customer.address.city) matches the rows whose city extraction is
 # 'not present'. THREE distinct storage states collapse here: the null column (4),
-# the missing `city` key (5), and the explicit JSON `null` leaf (7, `city: null`)
-# all extract SQL NULL, so all three match. Present cities — Oslo (1, 2), Boston
-# (3), Berlin (6) — are excluded. Postgres
+# the missing `city` key (5, and likewise the non-array-`phones` rows 8/9/10 that
+# carry no `city`), and the explicit JSON `null` leaf (7, `city: null`) all extract
+# SQL NULL, so all match. Present cities — Oslo (1, 2), Boston (3), Berlin (6) —
+# are excluded. Postgres
 # `jsonb_extract_path_text(t0.address, ?) is null`; MariaDB
 # `json_value(t0.address, ?) is null`. Because MariaDB json_value maps a JSON
 # `null` leaf to SQL NULL, id 7 collapses identically on both dialects.
@@ -30,4 +31,7 @@ then:
     - { id: 4, name: Mary }
     - { id: 5, name: Kavi }
     - { id: 7, name: Nils }
+    - { id: 8, name: Iris }
+    - { id: 9, name: Omar }
+    - { id: 10, name: Priya }
   roundTrips: 1

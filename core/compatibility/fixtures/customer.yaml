@@ -38,13 +38,34 @@
 #   id 4 Mary   (address null)                            NULL column — no phones
 #   id 5 Kavi / id 6 Rin  (address present, no `phones`)  MISSING phones key
 #
+# Absence collapse for a `many` member (m-op-algebra to-many / m-dialect
+# array-traversal): a `phones` value that is NOT a JSON array collapses to "not
+# present" — zero elements — exactly like a missing key or a NULL column. Three
+# distinguishable NON-ARRAY storage states instantiate that, and they are the
+# rows the guarded golden SQL exists to handle (an UNguarded traversal would ERROR
+# on Postgres and MIS-COUNT on MariaDB — see cases 015-022):
+#
+#   id 8  Iris   phones null                              explicit JSON `null`
+#   id 9  Omar   phones "555-0000" (a JSON string)        NON-ARRAY scalar
+#   id 10 Priya  phones {type:home, number:'555-9999'}    NON-ARRAY object
+#
+# Each of these three is EXCLUDED by nestedExists / any-element / same-element and
+# INCLUDED by nestedNotExists, indistinguishable from the empty array (3) and the
+# NULL column (4). id 9's scalar VALUE ("555-0000") equals a real element's number
+# (id 7), and id 10's OBJECT content matches the same-element candidate; both still
+# collapse to not-present because they are not arrays (cases 021, 019/020). Rows
+# 8-10 also carry no `city`/`geo`, so — like Kavi (5) — they read as not-present
+# for the scalar nested predicates (projected null in 003, matched by isNull in
+# 007 / 013).
+#
 # The discriminating pair: ANDing two flat any-element predicates
 # (nestedEq(phones.type, home) AND nestedEq(phones.number, '555-9999')) matches
 # BOTH id 1 (home in element 0, 555-9999 in element 1 — DIFFERENT elements) and id
 # 2; the scoped form nestedExists(phones, where: type=home AND number=555-9999)
 # requires ONE element to satisfy both, so it matches ONLY id 2. id 1 is the row
 # that tells the two apart. exists = non-empty {1,2,7}; notExists (empty-or-absent)
-# {3,4,5,6} distinguishes the empty array (3) from the NULL column (4).
+# folds the empty array (3), the NULL column (4), the missing key (5,6) and every
+# non-array state (8,9,10) together.
 Customer:
   - id: 1
     name: Ada
@@ -134,3 +155,33 @@ Customer:
           lon: null
       phones:
         - { type: work, number: '555-0000' }
+  # id 8 (Iris): `address` is present but `phones` is an explicit JSON `null` — a
+  # non-array `many` value. The array traversal must read it as ZERO elements (not
+  # present), never as a scalar to unnest. Excluded by exists / any-element,
+  # included by notExists.
+  - id: 8
+    name: Iris
+    address:
+      street: 8 Null Way
+      phones: null
+  # id 9 (Omar): `phones` is a NON-ARRAY JSON scalar (a string). Its value
+  # "555-0000" deliberately equals a real element's `number` (Nils, id 7), yet it
+  # still collapses to not-present because it is not an array — an unguarded
+  # any-element read must NOT match it (case 021).
+  - id: 9
+    name: Omar
+    address:
+      street: 9 Scalar Rd
+      phones: "555-0000"
+  # id 10 (Priya): `phones` is a NON-ARRAY JSON object. Its content matches the
+  # same-element candidate {type:home, number:'555-9999'}, so an UNguarded MariaDB
+  # `json_contains` would wrongly match it and Postgres `jsonb_array_elements`
+  # would ERROR; the array-type guard collapses it to not-present on both dialects
+  # (cases 017-020).
+  - id: 10
+    name: Priya
+    address:
+      street: 10 Object Ct
+      phones:
+        type: home
+        number: '555-9999'

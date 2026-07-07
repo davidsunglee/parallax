@@ -1,14 +1,19 @@
-# valueObject to-many absence: nestedNotExists folds the EMPTY array and the NULL
-# column together (m-value-object to-many, m-op-algebra absence collapse, m-dialect
+# valueObject to-many absence: nestedNotExists folds every not-present state
+# together (m-value-object to-many, m-op-algebra absence collapse, m-dialect
 # array-traversal form), on Postgres AND MariaDB.
 #
 # nestedNotExists(Customer.address.phones) matches every row whose `phones` array
-# is empty OR absent. Grace's empty array (3), Mary's NULL column (4) and the two
-# missing-`phones` rows (5, 6) all match — an empty array and a NULL column are
-# INDISTINGUISHABLE to the algebra, the whole point of this case. Ada, Linus, Nils
-# (non-empty) are excluded. Postgres `not exists (...)` over zero unnested elements
-# is true; MariaDB wraps the length in `coalesce(..., 0)` so a NULL/missing path
-# lands on the matching side of the leading `not`.
+# is empty OR absent OR not an array. Grace's empty array (3), Mary's NULL column
+# (4), the two missing-`phones` rows (5, 6), AND the three NON-ARRAY states — the
+# JSON `null` (8), the scalar (9) and the object (10) — all match: an empty array,
+# a NULL column and a non-array value are INDISTINGUISHABLE to the algebra, the
+# whole point of this case. Ada, Linus, Nils (non-empty arrays) are excluded.
+#
+# Postgres `not exists (...)` over zero unnested elements is true; the same
+# `case when jsonb_typeof(...) = 'array'` guard as case 015 keeps the strict
+# `jsonb_array_elements` from erroring on a non-array. MariaDB wraps the
+# array-type-guarded length test in `coalesce(..., 0)` so a NULL/missing/non-array
+# `phones` lands on the matching side of the leading `not`.
 model: models/customer.yaml
 tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, absence-collapse, array-traversal]
 shape: read
@@ -18,17 +23,20 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from customer t0 where not exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1)
-        mariadb: select t0.id, t0.name from customer t0 where not coalesce(json_length(t0.address, ?), ?) > ?
+        postgres: select t0.id, t0.name from customer t0 where not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1)
+        mariadb: select t0.id, t0.name from customer t0 where not coalesce(json_type(json_extract(t0.address, ?)) = ? and json_length(t0.address, ?) > ?, ?)
       binds:
-        postgres: [phones]
-        mariadb: ['$.phones', 0, 0]
+        postgres: [phones, 'array', phones, '[]']
+        mariadb: ['$.phones', 'ARRAY', '$.phones', 0, 0]
   referenceSql:
-    postgres: select id, name from customer where coalesce(jsonb_array_length(address -> 'phones'), 0) = 0
-    mariadb: select id, name from customer where coalesce(json_contains_path(address, 'one', '$.phones[0]'), 0) = 0
+    postgres: select id, name from customer where case when jsonb_typeof(address -> 'phones') = 'array' then jsonb_array_length(address -> 'phones') = 0 else true end
+    mariadb: select id, name from customer where json_type(json_extract(address, '$.phones')) is null or json_type(json_extract(address, '$.phones')) <> 'ARRAY' or not exists (select 1 from json_table(address, '$.phones[*]' columns (v json path '$')) jt)
   rows:
     - { id: 3, name: Grace }
     - { id: 4, name: Mary }
     - { id: 5, name: Kavi }
     - { id: 6, name: Rin }
+    - { id: 8, name: Iris }
+    - { id: 9, name: Omar }
+    - { id: 10, name: Priya }
   roundTrips: 1
