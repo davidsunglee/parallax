@@ -39,6 +39,47 @@ def _is_valid(descriptor: dict) -> bool:
     return not list(_metamodel_validator().iter_errors(descriptor))
 
 
+def _emitted_columns(create_table_sql: str) -> list[str]:
+    """The column identifiers a ``create table`` statement declares, in order.
+
+    Each column / constraint clause is emitted on its own indented line; this
+    returns the leading identifier of every *column* clause (skipping the
+    ``primary key`` / ``unique`` constraint clauses), so a test can assert exactly
+    which columns the DDL emits.
+    """
+    columns: list[str] = []
+    for raw_line in create_table_sql.splitlines():
+        line = raw_line.strip().rstrip(",")
+        if not line or line.startswith("create table") or line == ")":
+            continue
+        token = line.split()[0]
+        if token in {"primary", "unique", "foreign", "constraint", "check"}:
+            continue
+        columns.append(token)
+    return columns
+
+
+# The members declared INSIDE the `address` value object (nested value objects and
+# inner attributes at every depth) — none of which may ever surface as a physical
+# column: they all live in the one `address` document column. Kept in sync with
+# models/customer.yaml.
+_NESTED_MEMBER_NAMES = frozenset(
+    {
+        "street",
+        "city",
+        "geo",
+        "country",
+        "elevation",
+        "point",
+        "lat",
+        "lon",
+        "phones",
+        "type",
+        "number",
+    }
+)
+
+
 # --- positive: the legal strategies + valueObject validate -------------------
 
 
@@ -65,11 +106,62 @@ def test_value_object_model_validates_and_maps_to_dialect_json() -> None:
     assert _is_valid(model.descriptor)
     (value_object,) = model.root_entity.value_objects
     assert value_object["mapping"] == "json"
-    # The valueObject's neutral json column is part of the entity's column order
-    # + Postgres DDL, where m-dialect maps it to jsonb.
+    assert value_object["cardinality"] == "one"
+    # The recursive shape does not change column order: scalar attributes first,
+    # then the ONE structured-document column per top-level value object.
+    assert list(column_order(model.root_entity)) == ["id", "name", "address"]
     assert value_object["column"] in column_order(model.root_entity)
     (create,) = ddl_for(model, "postgres")
     assert f"{value_object['column']} jsonb" in create
+
+
+def test_value_object_declares_recursive_typed_structure() -> None:
+    """The `address` value object declares typed attributes, nested value objects
+    to arbitrary depth (geo -> point), and a to-many member (phones) — and no
+    nested value object or inner attribute carries a storage `column`/`mapping`."""
+    model = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
+    (address,) = model.root_entity.value_objects
+    assert [attribute["name"] for attribute in address["attributes"]] == ["street", "city"]
+
+    nested = {vo["name"]: vo for vo in address["valueObjects"]}
+    assert set(nested) == {"geo", "phones"}
+    # geo is to-one (defaulted), phones is to-many.
+    assert nested["geo"].get("cardinality", "one") == "one"
+    assert nested["phones"]["cardinality"] == "many"
+
+    # Third-level nesting: geo -> point, with numeric lat/lon attributes.
+    (point,) = nested["geo"]["valueObjects"]
+    assert point["name"] == "point"
+    assert {attribute["name"] for attribute in point["attributes"]} == {"lat", "lon"}
+
+    # No nested value object and no inner attribute, at any depth, carries a
+    # storage property — the whole composite lives in the one document column.
+    def _assert_no_storage_props(vo: dict) -> None:
+        for attribute in vo.get("attributes", []):
+            assert "column" not in attribute, f"attribute {attribute['name']} must not carry a column"
+        for child in vo.get("valueObjects", []):
+            assert "column" not in child, f"nested {child['name']} must not carry a column"
+            assert "mapping" not in child, f"nested {child['name']} must not carry a mapping"
+            _assert_no_storage_props(child)
+
+    _assert_no_storage_props(address)
+
+
+def test_value_object_ddl_emits_one_document_column_and_no_nested_columns() -> None:
+    """DDL emits exactly ONE structured-document column per top-level value object
+    and NEVER a column for any nested value object or inner attribute — on every
+    dialect. The two-loop ddl_builder shape never walks the nested structure."""
+    model = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
+    for dialect, document_type in {"postgres": "jsonb", "mariadb": "json"}.items():
+        (create,) = ddl_for(model, dialect)
+        emitted = _emitted_columns(create)
+        # Exactly the scalar attributes plus the one document column, in order.
+        assert emitted == ["id", "name", "address"]
+        # Exactly one document column, mapped to the dialect's structured type.
+        assert f"address {document_type}" in create
+        assert create.count(f" {document_type}") == 1
+        # No nested member (value object or inner attribute) becomes a column.
+        assert _NESTED_MEMBER_NAMES.isdisjoint(emitted)
 
 
 # --- negative: table-per-class is rejected (the Phase 9 negative test) --------
