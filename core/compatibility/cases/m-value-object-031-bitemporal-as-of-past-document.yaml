@@ -1,0 +1,54 @@
+# valueObject on a FULL BITEMPORAL owner: the originally-BELIEVED document — an audit
+# read (both axes in the past) (m-value-object "Inherited temporality",
+# m-temporal-read), on Postgres AND MariaDB.
+#
+# Pin businessDate = 2024-03-01 AND processingDate = 2024-02-01: as the system BELIEVED
+# on 2024-02-01, what address was true in the world on 2024-03-01? Both pins are past
+# instants, so each axis injects its [from, to) containment predicate (four binds,
+# business-axis-first then processing). Over branch id 1's history that returns R1 — the
+# original belief D1 (Helsinki, one phone). R2/R3 were not yet known on 2024-02-01
+# (their processing starts 2024-04-01), so the audit read reconstructs the superseded
+# document — distinct from the D3 (Tampere) the system knows now (case 030). The SAME
+# owner read at a different (business x processing) point returns a DIFFERENT address
+# document: the document rides the bitemporal milestone like a scalar column.
+#
+# The golden SQL is IDENTICAL on both dialects (a bare column projection + the four
+# injected containment predicates); the two past instants ride as four shared binds, so
+# `binds` is one flat array. The referenceSql is per-dialect only because the inline
+# timestamp-literal spelling diverges (Postgres `'…'::timestamptz`, MariaDB a
+# space-separated DATETIME); both select the same then-believed rectangle.
+model: models/branch.yaml
+tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, bitemporal, as-of, both-axes, past, audit, materialization, graph]
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        asOf:
+          operand:
+            all: {}
+          asOfAttr: Branch.processingDate
+          date: "2024-02-01T00:00:00+00:00"
+      asOfAttr: Branch.businessDate
+      date: "2024-03-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: select t0.br_id, t0.name, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+        mariadb: select t0.br_id, t0.name, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+      binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+  referenceSql:
+    postgres: select br_id, name from branch where from_z <= '2024-03-01T00:00:00+00:00'::timestamptz and thru_z > '2024-03-01T00:00:00+00:00'::timestamptz and in_z <= '2024-02-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz
+    mariadb: select br_id, name from branch where from_z <= '2024-03-01 00:00:00' and thru_z > '2024-03-01 00:00:00' and in_z <= '2024-02-01 00:00:00' and out_z > '2024-02-01 00:00:00'
+  graph:
+    Branch:
+      - br_id: 1
+        name: Central Branch
+        address:
+          street: 10 Old Road
+          city: Helsinki
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-1000' }
+  roundTrips: 1

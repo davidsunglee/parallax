@@ -13,8 +13,11 @@ database:
   (never a silent ``None``) for a dialect a map does not carry;
 * ``_assert_binds_dialect_keys`` and ``_assert_reference_sql_dialect_keys`` enforce
   the keys-match invariant for ``binds`` and ``referenceSql`` respectively; and
-* the frozen ``m-value-object-*`` corpus is authored with the divergent per-dialect
-  binds on both dialects.
+* the frozen ``m-value-object-*`` corpus authors its binds by whether the golden SQL
+  DIVERGES per dialect: a per-dialect binds map exactly when the SQL diverges (the
+  nested-extraction reads), and the flat shared-hole form when it is dialect-identical
+  (every atomic-document write, and the temporal projection reads whose bare-column SQL
+  is the same on both dialects).
 """
 
 from __future__ import annotations
@@ -271,21 +274,30 @@ def test_value_object_cases_carry_both_dialects_and_per_dialect_binds() -> None:
             binds = entry.get("binds")
             if binds is None:
                 continue
-            if case.is_write_sequence:
-                # A value-object WRITE binds the whole document as ONE shared value in
-                # its columnOrder position (m-value-object): the bind HOLE structure
-                # does not diverge per dialect — only the document's ADAPTATION does,
-                # at the provider (Postgres Jsonb / MariaDB json.dumps) — so binds are
-                # the authored flat-array (shared-hole) form (resolved Q12), NOT a map.
+            sql = entry.get("sql")
+            # The bind HOLES diverge per dialect EXACTLY when the golden SQL text does,
+            # so that — not the read/write axis — is what decides flat vs. map binds:
+            #
+            #  * DIVERGENT golden SQL → a per-dialect binds map. A value-object nested
+            #    EXTRACTION read diverges (Postgres per-segment JSON keys
+            #    `jsonb_extract_path_text(col, ?, …)` vs. a MariaDB single `'$.a.b'`
+            #    path `json_value(col, ?)`), so its holes — and its binds — are keyed.
+            #  * DIALECT-IDENTICAL golden SQL → a flat, shared binds array. A value-object
+            #    WRITE binds the whole document as ONE shared hole in columnOrder position
+            #    (only the provider ADAPTATION differs — Postgres `Jsonb` / MariaDB
+            #    `json.dumps`), and a TEMPORAL projection read (`m-value-object-028..031`)
+            #    projects the bare document column and filters on the owner's as-of axis
+            #    with the SAME SQL on both dialects — so both carry the authored flat
+            #    (shared-hole) form (resolved Q12: flat wherever the hole is shared).
+            texts = set(sql.values()) if isinstance(sql, dict) else {sql}
+            if len(texts) == 1:
                 assert isinstance(binds, list), (
-                    f"{case.path.name}: statement {index} is a value-object write bind; "
-                    f"the document hole is shared, so binds MUST be a flat array, not a "
+                    f"{case.path.name}: statement {index} has dialect-identical golden SQL, "
+                    f"so its bind hole is shared and binds MUST be a flat array, not a "
                     f"per-dialect map"
                 )
             else:
-                # A value-object READ's extraction holes diverge (Postgres per-segment
-                # JSON keys vs a MariaDB single '$.a.b' path), so its binds are a map.
                 assert isinstance(binds, dict), (
-                    f"{case.path.name}: statement {index} binds diverge per dialect, "
-                    f"so binds MUST be a per-dialect map"
+                    f"{case.path.name}: statement {index} has per-dialect golden SQL whose "
+                    f"bind holes diverge, so binds MUST be a per-dialect map"
                 )

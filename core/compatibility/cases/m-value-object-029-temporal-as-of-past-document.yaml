@@ -1,0 +1,58 @@
+# valueObject on a UNITEMPORAL (processing) owner: the SUPERSEDED document is visible
+# as-of a PAST instant — the discriminating half of the milestone proof
+# (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
+#
+# Pinning processingDate to a past instant (2024-04-01) injects the [from, to)
+# containment predicate (toIsInclusive = false => `in_z <= ? and out_z > ?`, the pin as
+# TWO binds), NOT the current-row form. Over supplier id 1's history that returns the
+# THEN-KNOWN milestone D1a (Oslo, home phone) — the document superseded on 2024-06-01
+# — distinct from the current D1b (Bergen) case 028 returns as-of now. id 2's single
+# milestone [2024-02-01, infinity) contains 2024-04-01, so it returns its D2 unchanged.
+# Reading the SAME owner at different processing instants returns a DIFFERENT address
+# document: the document rides the milestone exactly like a scalar column.
+#
+# The golden SQL is IDENTICAL on both dialects (a bare column projection + the injected
+# containment predicate); the past instant rides as two shared binds (the m-dialect seam
+# maps the ISO instant to each dialect's native form), so `binds` is one flat array. The
+# referenceSql is per-dialect only because the naive spelling of an inline timestamp
+# literal diverges (Postgres `'…'::timestamptz`, MariaDB a space-separated DATETIME);
+# both select the same then-known owners and pin the matched identities.
+model: models/supplier.yaml
+tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, as-of, audit-only, past, materialization, graph]
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        all: {}
+      asOfAttr: Supplier.processingDate
+      date: "2024-04-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: select t0.sup_id, t0.name, t0.address from supplier t0 where t0.in_z <= ? and t0.out_z > ?
+        mariadb: select t0.sup_id, t0.name, t0.address from supplier t0 where t0.in_z <= ? and t0.out_z > ?
+      binds: ["2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+  referenceSql:
+    postgres: select sup_id, name from supplier where in_z <= '2024-04-01T00:00:00+00:00'::timestamptz and out_z > '2024-04-01T00:00:00+00:00'::timestamptz
+    mariadb: select sup_id, name from supplier where in_z <= '2024-04-01 00:00:00' and out_z > '2024-04-01 00:00:00'
+  graph:
+    Supplier:
+      - sup_id: 1
+        name: Nordic Foods
+        address:
+          street: 1 Old Street
+          city: Oslo
+          geo:
+            country: "NO"
+          phones:
+            - { type: home, number: '555-0100' }
+      - sup_id: 2
+        name: Baltic Traders
+        address:
+          street: 5 Port Road
+          city: Riga
+          geo:
+            country: LV
+          phones: []
+  roundTrips: 1

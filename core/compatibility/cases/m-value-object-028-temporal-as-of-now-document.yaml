@@ -1,0 +1,56 @@
+# valueObject on a UNITEMPORAL (processing) owner: the document is visible per
+# milestone — an as-of-NOW read returns each supplier's CURRENT address document
+# (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
+#
+# `address` declares NO asOfAttributes of its own — it rides the Supplier's single
+# `processing` dimension. Reading as-of now injects the current-row predicate
+# (out_z = infinity, one bind), and the golden projects the whole structured-document
+# `address` column with the owner; the graph materializer decodes it per row. Only the
+# CURRENT milestone of each supplier is returned, so id 1 materializes D1b (Bergen,
+# work phone) — NOT the superseded D1a (Oslo) that case 029 sees as-of a past instant.
+# This proves the document rides the owner's milestone exactly like a scalar column,
+# with no value-object-specific temporal machinery.
+#
+# The golden SQL is IDENTICAL on both dialects (a bare column projection + the
+# injected current-row predicate); the infinity bind is owned by the m-dialect seam
+# (Postgres native `'infinity'::timestamptz`, MariaDB the max-sentinel), so `binds` is
+# one shared flat array. The dialect-neutral referenceSql ranges `out_z > '9000-01-01'`
+# (a different formulation selecting the same current rows on both dialects) and pins
+# the matched owner identities; `then.graph`'s to-many `phones` compares order-insensitively.
+model: models/supplier.yaml
+tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, as-of, audit-only, materialization, graph]
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        all: {}
+      asOfAttr: Supplier.processingDate
+      date: now
+then:
+  statements:
+    - sql:
+        postgres: select t0.sup_id, t0.name, t0.address from supplier t0 where t0.out_z = ?
+        mariadb: select t0.sup_id, t0.name, t0.address from supplier t0 where t0.out_z = ?
+      binds: [infinity]
+  referenceSql: select sup_id, name from supplier where out_z > '9000-01-01'
+  graph:
+    Supplier:
+      - sup_id: 1
+        name: Nordic Foods
+        address:
+          street: 2 New Avenue
+          city: Bergen
+          geo:
+            country: "NO"
+          phones:
+            - { type: work, number: '555-0200' }
+      - sup_id: 2
+        name: Baltic Traders
+        address:
+          street: 5 Port Road
+          city: Riga
+          geo:
+            country: LV
+          phones: []
+  roundTrips: 1
