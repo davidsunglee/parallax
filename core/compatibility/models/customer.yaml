@@ -1,17 +1,24 @@
-# Customer: a valueObject model — an embedded composite mapped to a single
-# structured-document column (Phase 9).
+# Customer: a valueObject model — a recursive, typed embedded composite mapped to
+# a single structured-document column (m-value-object).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. The
-# `address` element is a `valueObject`: an embedded composite (street / city /
-# geo) stored in ONE m-core `json` column (`address`), NOT column-flattened (a
-# deliberate deviation from Reladomo). Its inner fields are read / filtered with
-# the m-op-algebra nested-attribute access form (nestedEq / nestedNotEq over a dotted path
-# `Customer.address.field`). Postgres golden SQL lowers that to a
-# `jsonb_extract_path_text` extraction whose path segments are carried as `?`
-# binds.
+# `address` element is a top-level `valueObject`: an embedded composite stored in
+# ONE m-core `json` column (`address`), NOT column-flattened (a deliberate
+# deviation from Reladomo). It declares typed inner `attributes` (street / city),
+# nested `valueObjects` to arbitrary depth (`geo` one -> `point` one), and a
+# to-many nested member (`phones` many). Every nested value object and inner
+# attribute lives inside that SAME `address` column — never an extra column, row,
+# or join — so only `address` carries `column`/`mapping`.
+#
+# Its inner fields are read / filtered with the m-op-algebra nested-attribute
+# access form (a dotted path `Customer.address.field` / `Customer.address.geo.…`).
+# Postgres golden SQL lowers that to a `jsonb_extract_path_text` extraction whose
+# path segments are carried as `?` binds.
 #
 # Row data lives in the sibling fixtures/customer.yaml; each `address` fixture
-# value is a nested mapping loaded into the structured-document column.
+# value is a nested mapping loaded into the structured-document column. Nested
+# members not yet present in every fixture row are `nullable: true` so the current
+# fixtures stay valid; fixtures/cases are enriched in later phases.
 entity:
   name: Customer
   namespace: parallax.compatibility
@@ -30,10 +37,46 @@ entity:
       maxLength: 64
   valueObjects:
     - name: address
-      type: Address
       column: address
       mapping: json
+      cardinality: one
       nullable: true
+      attributes:
+        - name: street
+          type: string
+        - name: city
+          type: string
+      valueObjects:
+        - name: geo
+          cardinality: one
+          nullable: true
+          attributes:
+            - name: country
+              type: string
+            - name: elevation
+              type: float64
+              nullable: true
+          valueObjects:
+            - name: point
+              cardinality: one
+              nullable: true
+              attributes:
+                - name: lat
+                  type: float64
+                  nullable: true
+                - name: lon
+                  type: float64
+                  nullable: true
+        - name: phones
+          cardinality: many
+          nullable: true
+          attributes:
+            - name: type
+              type: string
+              nullable: true
+            - name: number
+              type: string
+              nullable: true
   indices:
     - name: customer_pk
       attributes: [id]

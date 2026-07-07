@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/metamodel.schema.json",
   "title": "Parallax Model Descriptor (m-descriptor)",
-  "description": "Canonical, serialized form of the m-descriptor metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index + asOfAttribute (the m-temporal-read temporal dimension) + inheritance (table-per-hierarchy with a discriminator, or table-per-leaf; table-per-class is REJECTED, DQ9) + valueObject (an embedded composite element mapped to a single dialect-native structured-document column via the m-core `json` neutral type, a deliberate deviation from Reladomo's column-flattening), and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
+  "description": "Canonical, serialized form of the m-descriptor metamodel. A model descriptor is an instance of this schema. Grown one metamodel phase at a time; this revision covers entity + attribute + pkGenerator + relationship + index + asOfAttribute (the m-temporal-read temporal dimension) + inheritance (table-per-hierarchy with a discriminator, or table-per-leaf; table-per-class is REJECTED, DQ9) + valueObject (a recursive, typed embedded composite — typed attributes, nested value objects to arbitrary depth, and one|many cardinality — mapped to a single dialect-native structured-document column per top-level value object via the m-core `json` neutral type, a deliberate deviation from Reladomo's column-flattening), and admits multiple entities per descriptor (a single `entity` for one-entity models, or an `entities` array for multi-entity models with relationships between them).",
   "type": "object",
   "additionalProperties": false,
   "oneOf": [
@@ -230,27 +230,73 @@
       }
     },
     "valueObject": {
-      "description": "An embedded composite element stored as a single dialect-native structured-document column (DQ9 definitely-do). Unlike Reladomo's column-flattening, the whole value object is one m-core `json`-typed column; its inner fields are read/filtered with the m-op-algebra nested-attribute access form (`Class.valueObject.path`). The concrete storage type is owned by m-dialect.",
+      "description": "A top-level embedded composite element declared on an entity and stored as a single dialect-native structured-document column (DQ9 definitely-do). Unlike Reladomo's column-flattening, the WHOLE value object — its typed `attributes` AND any nested `valueObjects`, to arbitrary depth — is stored in one m-core `json`-typed column; the concrete storage type is owned by m-dialect. Only a top-level value object carries storage (`column`/`mapping`); nested value objects (`nestedValueObject`) share the same column and carry none. Inner fields are read/filtered with the m-op-algebra nested-attribute access form (`Class.valueObject.path`).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type", "column"],
+      "required": ["name", "column"],
       "properties": {
         "name": { "$ref": "#/$defs/identifier" },
-        "type": {
-          "description": "The value-object's logical (struct) type name; documentary, not a neutral scalar type.",
-          "type": "string",
-          "minLength": 1
-        },
         "column": {
-          "description": "The single structured-document column the whole value object is stored in.",
+          "description": "The single structured-document column the whole value object (attributes + nested value objects) is stored in. Top-level only — a nested value object never declares a column.",
           "type": "string",
           "minLength": 1
         },
         "mapping": {
-          "description": "Neutral storage mapping. `json` is the only value-object mapping defined in core; m-dialect maps it to each dialect's concrete storage type, such as Postgres jsonb or Snowflake VARIANT.",
+          "description": "Neutral storage mapping. `json` is the only value-object mapping defined in core; m-dialect maps it to each dialect's concrete storage type, such as Postgres jsonb, MariaDB json, or Snowflake VARIANT. Top-level only.",
           "const": "json",
           "default": "json"
         },
+        "nullable": { "type": "boolean", "default": false },
+        "cardinality": {
+          "description": "The member's own cardinality: `one` for a single embedded document (the default), `many` for a JSON array of documents in the SAME column. Describes containment, not a relationship traversal — deliberately distinct from `relationship.cardinality`'s hyphenated join forms.",
+          "enum": ["one", "many"],
+          "default": "one"
+        },
+        "attributes": {
+          "description": "Typed fields of this value object. Unlike entity attributes they carry no per-field column: every attribute lives inside the one structured-document column.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/valueObjectAttribute" }
+        },
+        "valueObjects": {
+          "description": "Value objects nested inside this one, to arbitrary depth. Stored in the SAME structured-document column — never extra columns, rows, or joins.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/nestedValueObject" }
+        }
+      }
+    },
+    "nestedValueObject": {
+      "description": "A value object nested inside another value object. It shares its top-level ancestor's single structured-document column — never an extra column, row, or join — so it declares NO `column`/`mapping` storage properties (the closed object rejects them). Otherwise identical to a top-level value object: typed `attributes`, its own `one`/`many` cardinality, and further nested `valueObjects` to arbitrary depth.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "nullable": { "type": "boolean", "default": false },
+        "cardinality": {
+          "description": "The nested member's own cardinality: `one` (default) for a single embedded document, `many` for a JSON array of documents inside the same column.",
+          "enum": ["one", "many"],
+          "default": "one"
+        },
+        "attributes": {
+          "description": "Typed fields of this nested value object; no per-field column.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/valueObjectAttribute" }
+        },
+        "valueObjects": {
+          "description": "Further-nested value objects, to arbitrary depth, in the same column.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/nestedValueObject" }
+        }
+      }
+    },
+    "valueObjectAttribute": {
+      "description": "A typed field of a value object. Unlike an entity `attribute` it carries NO per-field `column`: the whole value object (all attributes plus nested value objects) is stored in one structured-document column, so an inner field has no column of its own. Its declared m-core neutral type is normative for nested-predicate literal typing and casting (m-op-algebra/m-sql).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "type": { "$ref": "#/$defs/neutralType" },
         "nullable": { "type": "boolean", "default": false }
       }
     },
