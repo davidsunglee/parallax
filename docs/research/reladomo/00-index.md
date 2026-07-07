@@ -91,6 +91,15 @@ metadata is exposed on the `RelatedFinder` and every `Attribute`.
 | [13-excluded-feature-entanglement.md](13-excluded-feature-entanglement.md) | Entanglement check: remote and XML are cleanly separable; off-heap is medium-coupled; source-attribute/sharding is highly coupled |
 | [14-metamodel-introspection.md](14-metamodel-introspection.md) | A runtime metamodel-introspection seam (`RelatedFinder` + `ReladomoClassMetaData`) lets non-core modules map the model without XML |
 | [15-architecture-synthesis.md](15-architecture-synthesis.md) | Architecture synthesis: the cross-cutting design decisions and how the seams compose |
+| [16-computed-attributes.md](16-computed-attributes.md) | Calculated attributes: expression methods wrap `AttributeCalculator`s that render SQL text and also evaluate in memory against cached objects |
+| [17-identity-columns.md](17-identity-columns.md) | Identity columns: `identity="true"` omits the PK from INSERT and reads it back post-insert via a per-dialect `getLastIdentitySql` query — never JDBC `getGeneratedKeys` |
+| [18-temporal-repair-and-recovery.md](18-temporal-repair-and-recovery.md) | Temporal repair and recovery: overlap detection is in-memory rectangle intersection; `OverlapFixer` delete-and-reinserts merged rectangles; `insertForRecovery` writes rows with caller-supplied milestones verbatim |
+| [19-cache-operations.md](19-cache-operations.md) | Cache administration is per-class through `MithraRuntimeCacheController`; the cacheloader XML declares bulk loads; master-cache replication streams off-heap pages |
+| [20-change-callbacks-and-telemetry.md](20-change-callbacks-and-telemetry.md) | Committed-change callbacks are list- or class-scoped notification listeners; telemetry is per-portal performance data, per-class SQL loggers, and a pluggable stats listener |
+| [21-bulk-data-operations.md](21-bulk-data-operations.md) | Bulk data flows through four seams: key-matched `merge()`, in-memory `applyOperation`, streaming `DatabaseCursor`, and BCP `BulkLoader`s |
+| [22-source-routing-and-parallel-deep-fetch.md](22-source-routing-and-parallel-deep-fetch.md) | Source attributes route one operation across per-shard connections; deep fetch parallelizes per relationship node and degrades to IN-clause queries across databases |
+| [23-transaction-integration.md](23-transaction-integration.md) | Nesting joins the outer transaction (no savepoints); JTA/XA integration spans container TMs, pooled XA connections, and JMS two-phase commit |
+| [24-pure-temp-objects-and-extraction.md](24-pure-temp-objects-and-extraction.md) | Pure objects are cache-only (no-op persister), temp objects are real temp tables with scoped contexts, and extractor/reverse-engineering tools round-trip data and schema |
 
 ## Research questions
 
@@ -115,43 +124,31 @@ the pieces interact:
 Question 14 arose during the research (how `reladomoserial`/`reladomographql` map the model without
 XML) and is answered in [14](14-metamodel-introspection.md).
 
+**Second pass (2026-07-07, same commit).** A follow-up gap-research pass covered the capabilities
+the 13 questions missed, prioritized by `docs/misc/reladomo-gap-priority.md`: computed attributes
+([16](16-computed-attributes.md)), identity columns ([17](17-identity-columns.md)), temporal
+repair/recovery ([18](18-temporal-repair-and-recovery.md)), cache operations
+([19](19-cache-operations.md)), change callbacks and telemetry
+([20](20-change-callbacks-and-telemetry.md)), list merge / cursors / bulk load
+([21](21-bulk-data-operations.md)), source-routing semantics and parallel deep fetch
+([22](22-source-routing-and-parallel-deep-fetch.md)), nested/XA transactions
+([23](23-transaction-integration.md)), and pure/temp objects plus extraction tooling
+([24](24-pure-temp-objects-and-extraction.md)).
+
 ## Scope — what this research does not cover
 
-Coverage is bounded by the 13 questions above. The following Reladomo capabilities exist but are
-**not documented here** (or only named in passing). Ranks refer to
-`docs/misc/reladomo-gap-priority.md`.
+Coverage spans the 13 original questions plus the second-pass gap files (16–24). Against the
+capability inventory in `docs/misc/reladomo-gap-priority.md`, every rank is now documented except
+the following, which remain shallow by choice:
 
-**Not covered at all:**
-
-- Calculated/computed attributes and SQL scalar expressions — `mithra/attribute/calculator/` beyond
-  the aggregate functions (rank 3)
-- DB-native identity / auto-increment primary keys — the XSD `identity` flag is named once; runtime
-  behavior, generated-key retrieval, and dialect support are undocumented (rank 4)
-- Bitemporal overlap detection / repair — the `OverlapFixer` tooling (its test is cited only as
-  evidence for XML-free config) (rank 6)
-- Runtime cache administration and the declarative cache-loader framework — warm-up, reload,
-  clear/renew, `MithraRuntimeCacheController` admin surface, dependent loaders (rank 10)
-- Application-level data-change callbacks — user-facing subscriptions on committed changes, as
-  distinct from cache-invalidation notification (rank 13)
-- Query/SQL introspection and telemetry hooks — explain/analyze surfaces, performance stats
-  listeners, SQL snooping (rank 16)
-- Object-graph extraction and DB-to-model reverse engineering (rank 20)
-- Multi-threaded deep fetch and cross-database adhoc deep fetch (rank 21)
-- Temporal `insertForRecovery` (rank 22) and `incrementUntil` (rank 23)
-
-**Named but not explained:**
-
-- Source-attribute/sharding *semantics* — [13](13-excluded-feature-entanglement.md) documents the
-  coupling footprint, not how routing behaves for users (rank 2)
-- List diff/merge API — bulk operations are covered in [07](07-lists-aggregation.md); merge is not
-  (rank 7)
-- Nested-transaction *semantics* — `MithraNestedTransaction` is named in
-  [09](09-transactions-locking.md) without commit/rollback behavior (rank 11)
-- `MasterCacheReplicationServer` (rank 12), streaming cursors beyond one line on
-  `forEachWithCursor()` (rank 14), vendor bulk-load mechanics (rank 15), operations applied to
-  in-memory lists (rank 17), pure-object runtime behavior (rank 18), the remaining MAY-tier
-  temporal ops' semantics (rank 23), XA/JMS two-phase commit (rank 24), and the cache-monitoring
-  UI (rank 28)
+- Cache-monitoring UI (rank 28) — the `reladomoui` GWT module is named in
+  [01](01-runtime-architecture.md) only; it is a product layer over the
+  [19](19-cache-operations.md) admin surface.
+- GS-internal transport adapters (`reladomogs`/`reladomogsi` beyond the bulk loader, Tibco RV/LDAP
+  integration) — named in the module map in [01](01-runtime-architecture.md); enterprise
+  infrastructure specific to Goldman Sachs deployments.
+- The serialization/GraphQL module test suites — noted as not enumerated in depth in
+  [14](14-metamodel-introspection.md).
 
 ## Methodology (verbatim)
 
