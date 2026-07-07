@@ -39,70 +39,180 @@ catalog in [`modules.md`](modules.md); every other tag is a free-form feature ta
 case ID (`m-pk-gen-001`) also matches that grammar — a harmless overlap, since module
 identity is only ever resolved against the catalog, never inferred from a filename.
 
-Its fields:
+### Its fields — grouped `given` / `when` / `then`
 
-A case is one of eight shapes: a **read case** (carries an `operation`), a
-**writeSequence case** (carries a `writeSequence` — the temporal writes
-`m-audit-write` / `m-bitemp-write` / `m-business-only`, the set-based
-`m-batch-write`, `m-cascade-delete`, and `m-detach` merge-backs), a **scenario
-case** (carries a `scenario` of ordered read *and* committed-write steps,
-`m-unit-work`), a **conflict case** (carries `expectedAffectedRows` for a single
-attempt, or an `attempts` retry sequence, `m-opt-lock`), a **coherence case**
-(carries a `coherence` two-node sequence, `m-coherence`), an **error case**
-(carries `errorClass` and `expectedNativeCode`, `m-db-error` — including the
-two-connection `concurrency` deadlock / lock-wait choreography), a
-**concurrency-success case** (carries a `concurrency` choreography with **no**
-`errorClass`, `m-read-lock` behavioral read-lock — barrier-separated rounds on two
-held sessions that assert no error is raised; every present step declares an
-explicit `kind` (a `read` step's `expectRows` is observed on its held session, a
-`write` step omits it and asserts only that it did not block/raise); proves the
-shared read lock is compatible with a second reader and that an unlocked projection
-admits a writer), or a **boundary case** (carries `boundary` + `expect`,
-`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
-does not execute). The fields:
+A case reads top-to-bottom as a behavioral sentence — **given** an ambient
+world-state, **when** an action is performed, **then** these things hold. Identity
+and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator stay
+**top-level**; everything else buckets into three closed groups:
 
-| Field | Required | Meaning |
-|---|---|---|
-| `model` | yes | path (relative to `core/compatibility/`) to the model descriptor |
-| `tags` | yes | module/feature tags (e.g. `["m-op-algebra", "eq"]`); drive coverage + test selection |
-| `lane` | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
-| `operation` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
-| `writeSequence` | write | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only + business-only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the full-bitemporal rectangle split |
-| `equivalentEncodings` | no | alternate surface encodings of `operation` (e.g. a prefix vs a fluent spelling); each MUST canonicalize to `operation` |
-| `goldenSql` | yes | **keyed by dialect** (`postgres: …`); the optimized SQL an impl must emit — a single statement, or an **ordered list** of statements (one per deep-fetch level, or one per write-sequence DML step) |
-| `binds` | no | bind values for the `?` placeholders (default `[]`): a flat list for a single statement, or a list-of-lists for a multi-statement case. A deep-fetch level's `IN`-list binds are an **unordered set** — authored sorted for readability, but compared order-insensitively (see the fifth assertion layer); an implementation MAY emit them in any order and MUST NOT sort at runtime to match the fixture |
-| `referenceSql` | conditional | an independent naive oracle (see below); for a deep fetch it is the naive single-statement oracle for the **root** row set |
-| `expectedRows` | read | the rows the query must return (single-statement / flat-result cases) |
-| `expectedGraph` | read | the assembled object graph a deep fetch must produce (one of `expectedRows` / `expectedGraph` is REQUIRED for a read case) |
-| `expectedTableState` | write | the resulting table state a writeSequence case asserts, keyed by table name (REQUIRED for a write case) |
-| `roundTrips` | no | declared statement count (default `1`); for a deep-fetch case it MUST equal the authored/executed goldenSql statement count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count |
-| `tolerance` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
+- **`given`** — the world-state established BEFORE the action: `fixtures` (whether
+  the model's rows are pre-loaded), `apply` (out-of-band naive SQL run verbatim),
+  and `fault` (an injected fault kind). Optional — a case that starts from the
+  model's default fixtures and injects nothing omits `given` entirely.
+- **`when`** — the action under test and how the client performs it. Exactly one
+  **action** member per shape (`operation` | `writeSequence` | `scenario` |
+  `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt
+  conflict's `write`); the **context** members (`uow`, `at`, `observedInZ`,
+  `equivalentEncodings`) describe the unit-of-work mode, transaction instant,
+  observed version, and alternate surface encodings.
+- **`then`** — everything the case asserts: the golden `statements`, the naive
+  `referenceSql`, the observed data (`rows` / `graph` / `tableState`), the counts
+  and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the
+  portable boundary `outcome`, and the numeric-comparison `tolerance`.
 
-### goldenSql, referenceSql, expectedRows (the oracle question)
+`model` / `tags` / `lane` stay top-level because they are routing/discovery fields
+read by the coverage gate and the language gate; grouping them buys no readability.
+
+#### Case shapes
+
+A case is one of **eight shapes**, named by the required top-level `shape`:
+
+- **`read`** — a queryable `when.operation`, asserting `then.rows` or a deep-fetch
+  `then.graph`.
+- **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
+  resulting `then.tableState` (the temporal writes `m-audit-write` /
+  `m-bitemp-write` / `m-business-only`, the set-based `m-batch-write`,
+  `m-cascade-delete`, and `m-detach` merge-backs).
+- **`scenario`** — a `when.scenario` of ordered read *and* committed-write steps,
+  golden SQL per step (`m-unit-work`).
+- **`conflict`** — an optimistic-lock `UPDATE` asserted by `then.affectedRows` for
+  a single attempt, or an ordered `when.attempts` retry sequence (`m-opt-lock`).
+- **`coherence`** — a `when.coherence` two-node sequence (`m-coherence`).
+- **`error`** — asserts `then.errorClass` + `then.nativeCode` (`m-db-error`),
+  triggered by top-level `then.statements` (single-connection `uniqueViolation`) or
+  a `when.concurrency` deadlock / lock-wait choreography.
+- **`concurrencySuccess`** — a `when.concurrency` choreography with **no**
+  `then.errorClass` (`m-read-lock` behavioral read-lock — barrier-separated rounds
+  on two held sessions that assert no error is raised; every present step declares
+  an explicit `kind`, a `read` step's `expectRows` observed on its held session, a
+  `write` step asserting only that it did not block/raise). Proves the shared read
+  lock is compatible with a second reader and that an unlocked projection admits a
+  writer.
+- **`boundary`** — `when.boundary` ordered actions + `then.outcome`
+  (`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
+  does not execute, carrying no golden SQL).
+
+#### The statement entry
+
+Every SQL statement in a case — golden or naive — is a **statement entry**: a
+closed `{sql, binds}` object carrying one logical statement together with its own
+binds. This is the single most load-bearing structure in the format: one shared
+vocabulary everywhere SQL appears (`then.statements`, every per-step `statements`
+list, and `given.apply`), so there is **no positional pairing convention** to learn
+— each statement's binds are attached to it structurally.
+
+At **golden locations** (`then.statements`, the per-step `statements` lists in
+scenario / coherence / attempts / concurrency) `sql` is a **dialect-keyed map**
+(`postgres` / `mariadb`), the dialect texts side by side, and `binds` is authored
+once (bind order is identical across dialects), defaulting to `[]`:
+
+```yaml
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)
+        mariadb: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)   # optional
+      binds: [1, 2, 42]
+```
+
+At the **naive location** (`given.apply`) `sql` is a plain, dialect-agnostic
+**string** run verbatim on every dialect:
+
+```yaml
+given:
+  apply:
+    - sql: update account set balance = 999.00, version = 2 where id = 2
+```
+
+A multi-statement (deep fetch) golden is an ordered list of entries — one per
+deep-fetch level or write-sequence DML step; each entry carries only its own
+`binds`, and a statement with no binds omits the `binds` key entirely:
+
+```yaml
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)
+      binds: [1, 2, 42]
+```
+
+A deep-fetch child level's `IN`-list binds are an **unordered set** — authored
+sorted for readability, but compared order-insensitively (see the fifth assertion
+layer); an implementation MAY emit them in any order and MUST NOT sort at runtime
+to match the fixture.
+
+#### Row and table-state style
+
+An expected row (`then.rows`, `then.graph` leaves, a `then.tableState` row) is
+authored as an **inline flow map** whenever the rendered line fits the file's
+line-length norm (~120 characters), and as a **block map** otherwise. Result rows
+are almost always inline (`- { order_id: 2, total_quantity: 4 }`); wide bitemporal
+table-state rows, which do not fit, stay readable as block maps. Timestamp columns
+in `then.tableState` are ISO-8601 UTC strings at core microsecond precision, with
+the open-bound `infinity` as the literal string `infinity`.
+
+#### Field table
+
+| Field | Group | Required | Meaning |
+|---|---|---|---|
+| `model` | top-level | yes | path (relative to `core/compatibility/`) to the model descriptor |
+| `tags` | top-level | yes | module/feature tags (e.g. `["m-op-algebra", "eq"]`); drive coverage + test selection |
+| `lane` | top-level | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
+| `shape` | top-level | yes | the explicit shape discriminator — one of the eight shapes above; the schema `oneOf` keys on this `const` |
+| `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
+| `given.apply` | `given` | conflict | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after fixtures load and before the golden `UPDATE` — a concurrent transaction's stale-version mutation |
+| `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
+| `when.operation` | `when` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
+| `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only + business-only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the full-bitemporal rectangle split |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write steps, each carrying its own per-step golden `statements` |
+| `when.coherence` | `when` | coherence | a two-node (A / B) operation sequence, each step carrying its node, kind, and per-step golden `statements` |
+| `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
+| `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`) |
+| `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
+| `when.write` | `when` | conflict | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` (or temporal close) operates on |
+| `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
+| `when.at` / `when.observedInZ` | `when` | conflict | a temporal-close conflict's close instant (→ new `out_z`) and observed processing-from (`in_z`) the optimistic gate binds |
+| `when.equivalentEncodings` | `when` | no | alternate surface encodings of `when.operation`; each MUST canonicalize to it |
+| `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on a boundary case |
+| `then.referenceSql` | `then` | conditional | an independent naive oracle (see below); for a deep fetch it is the naive single-statement oracle for the **root** row set |
+| `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
+| `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` is REQUIRED for a read case) |
+| `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence (or conflict) case asserts, keyed by table name (REQUIRED for a write case) |
+| `then.affectedRows` | `then` | conflict | the number of rows the golden `UPDATE` must affect (`0` = stale-version conflict, `1` = success) |
+| `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
+| `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
+| `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
+| `then.roundTrips` | `then` | no | declared statement count (default `1`); for a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count; for a scenario the SUM of per-step round trips |
+| `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
+
+### `then.statements`, `then.referenceSql`, `then.rows` (the oracle question)
 
 Each case carries **three independent things**, and the harness cross-checks all
 three:
 
-- **`goldenSql`** — the *optimized* SQL an implementation is **expected to
-  emit**. This is the normative, per-dialect SQL contract a real ORM is graded
-  against.
-- **`expectedRows`** — the result the query must return, authored against the
-  small fixture dataset.
-- **`referenceSql`** — a deliberately *naive, obviously-correct* second
+- **`then.statements`** — the *optimized* golden SQL an implementation is
+  **expected to emit** (the per-dialect `sql` inside each statement entry). This is
+  the normative, per-dialect SQL contract a real ORM is graded against.
+- **`then.rows`** — the result the query must return, authored against the small
+  fixture dataset.
+- **`then.referenceSql`** — a deliberately *naive, obviously-correct* second
   formulation of the same query (e.g. a plain `IN (subquery)` instead of an
   optimized `EXISTS` join). An **independent oracle**.
 
-Why the oracle matters: if a human hand-authors `goldenSql` and `expectedRows`,
-both can be wrong *in the same way*, and a harness that only runs `goldenSql` and
-compares to `expectedRows` would still pass — self-consistent but incorrect. The
-independent `referenceSql`, written naively, is unlikely to share the bug; if
-both return identical rows against real data, we have high confidence the golden
-SQL is correct. (This is Reladomo's own `validateMithraResult(op, rawSql)`
-discipline, made portable.)
+Why the oracle matters: if a human hand-authors the golden `then.statements` and
+`then.rows`, both can be wrong *in the same way*, and a harness that only runs the
+golden SQL and compares to `then.rows` would still pass — self-consistent but
+incorrect. The independent `then.referenceSql`, written naively, is unlikely to
+share the bug; if both return identical rows against real data, we have high
+confidence the golden SQL is correct. (This is Reladomo's own
+`validateMithraResult(op, rawSql)` discipline, made portable.)
 
-**Policy.** `referenceSql` is **REQUIRED for non-trivial cases** (joins, deep
+**Policy.** `then.referenceSql` is **REQUIRED for non-trivial cases** (joins, deep
 fetch, aggregation, temporal predicates) and **OPTIONAL for trivial single-table
-predicate cases** where `expectedRows` is obviously verifiable by eye.
+predicate cases** where `then.rows` is obviously verifiable by eye.
 
 ## The layered assertion model
 
@@ -113,8 +223,9 @@ the harness asserts:
    schema; the `operation` against the operation schema; the case against the
    compatibility-case schema.
 2. **Triple equivalence** — load the database from the descriptor + fixture data,
-   then assert `exec(goldenSql[dialect]) == exec(referenceSql) == expectedRows`
-   (the `referenceSql` term is included only when present). Row comparison is
+   then assert `exec(then.statements[].sql[dialect]) == exec(then.referenceSql) ==
+   then.rows` (the `then.referenceSql` term is included only when present). Row
+   comparison is
    order-insensitive, and **numerics compare exactly in decimal space** (never
    through binary `float`), so a `decimal(p,s)` money column matches to the cent
    and a value's type never depends on whether it is whole. A case whose result
@@ -122,8 +233,8 @@ the harness asserts:
    cannot be authored exactly and differs in scale across dialects — MAY declare
    a `tolerance`, making the numeric comparison `abs(actual - expected) <=
    tolerance`. Booleans compare only to booleans (`true` is never `1`).
-3. **Normalization determinism** — `normalize(goldenSql[dialect]) ==
-   goldenSql[dialect]` via sqlglot, per the `m-sql` rules (alias scheme `t0,t1,…`,
+3. **Normalization determinism** — `normalize(then.statements[].sql[dialect]) ==
+   then.statements[].sql[dialect]` via sqlglot, per the `m-sql` rules (alias scheme `t0,t1,…`,
    sorted binds, whitespace-collapsed, deterministic clause order).
 4. **Serde round-trip** — `serialize(deserialize(x)) == x` for **both** the
    `operation` encoding *and* the model descriptor (the descriptor **is** the
@@ -135,7 +246,7 @@ the harness asserts:
 
 A fifth layer — **round-trip-count consistency** — applies to relationship /
 deep-fetch cases: the number of authored/executed golden SQL statements equals
-the declared `roundTrips`, each non-empty child level executes keyed by the
+the declared `then.roundTrips`, each non-empty child level executes keyed by the
 distinct parent keys gathered from the previous level (an **unordered set** — the
 `IN`-list bind order is *not* part of the contract, since it never changes which
 children match, and child result order is fixed by the level's own `orderBy`; the
@@ -143,12 +254,12 @@ harness therefore compares each level's binds order-insensitively, consistent wi
 the order-insensitive row comparison of layer 2, and an implementation MUST NOT
 sort these keys at runtime to match the fixture), empty parent-key levels execute
 no child SQL, and the in-memory-assembled object graph equals the case's
-`expectedGraph`. This is what proves N+1 elimination automatically (a 1 → N → N
+`then.graph`. This is what proves N+1 elimination automatically (a 1 → N → N
 deep fetch with non-empty levels must run in exactly 3 statements, not 1 + N +
 N; a deep fetch whose root is empty runs only the root statement). For these
-cases a dialect's `goldenSql` is an **ordered list** of statements (root plus
-the child levels that execute) rather than a single string, and `expectedGraph`
-replaces (or accompanies) `expectedRows`.
+cases `then.statements` is an **ordered list** of statement entries (root plus
+the child levels that execute) rather than a single entry, and `then.graph`
+replaces (or accompanies) `then.rows`.
 
 For each deep-fetch level whose child entity is temporal, the harness derives the
 **propagated as-of binds independently** (an oracle, parallel to the ordering
@@ -174,17 +285,18 @@ reservation, gap-on-unused, stride). `max` is pinned by its self-describing
 
 A **writeSequence** case proves a write contract by *application*, not
 introspection. The harness provisions a table, **applies the ordered DML golden
-SQL in order** (with each statement's binds), then asserts the resulting rows
-equal `expectedTableState`. This covers milestone-chaining temporal writes
-(`insert` / `update` / `terminate` and the bitemporal `*Until` trio), batched
-non-temporal writes, ordinary `delete`, and the minimal `cascadeDelete` witness
-over dependent relationships. The DML statement count MUST equal the sum of the
-`writeSequence` steps' declared statement counts and the case's `roundTrips`.
-The model descriptor's serde round-trip (layer 4b) still runs; there is no
-`operation` to serde (layer 4a) and no normalization difference — the DML golden
-SQL is normalized to a fixed point exactly like read SQL (layer 3).
+SQL in order** (each `then.statements` entry with its own `binds`), then asserts
+the resulting rows equal `then.tableState`. This covers milestone-chaining
+temporal writes (`insert` / `update` / `terminate` and the bitemporal `*Until`
+trio), batched non-temporal writes, ordinary `delete`, and the minimal
+`cascadeDelete` witness over dependent relationships. The DML statement count MUST
+equal the sum of the `when.writeSequence` steps' declared statement counts and the
+case's `then.roundTrips`. The model descriptor's serde round-trip (layer 4b) still
+runs; there is no `when.operation` to serde (layer 4a) and no normalization
+difference — the DML golden SQL is normalized to a fixed point exactly like read
+SQL (layer 3).
 
-A writeSequence case MAY set **`loadFixtures: true`** to load the model's
+A writeSequence case MAY set **`given.fixtures: true`** to load the model's
 fixtures **before** the ordered DML (instead of starting empty) — so a sequence
 can mutate a *pre-existing* persisted row. This is the `m-detach` detached-update
 or detached-delete merge-back case, and the minimal dependent cascade-delete
@@ -196,24 +308,24 @@ table state shows which rows changed or were removed.
 A **conflict** case proves optimistic-lock conflict detection by the **affected-
 row count** a golden `UPDATE` leaves behind. The harness loads the model's
 fixtures (the versioned row exists), applies an OPTIONAL out-of-band
-**`precondition`** (a naive SQL statement simulating a concurrent transaction
+**`given.apply`** (naive statement entries simulating a concurrent transaction
 that bumped the version), runs the golden `UPDATE` (which gates on the version
-the caller read earlier), and asserts the affected-row count equals
-**`expectedAffectedRows`** — `0` for a stale version (conflict; the
-`updatedRows != 1` signal) and `1` for a fresh version (success). When
-`expectedTableState` is authored it is asserted too, confirming a conflicting
+the caller read earlier, its neutral write input in `when.write`), and asserts the
+affected-row count equals **`then.affectedRows`** — `0` for a stale version
+(conflict; the `updatedRows != 1` signal) and `1` for a fresh version (success).
+When `then.tableState` is authored it is asserted too, confirming a conflicting
 write did not apply. As with writeSequence cases, only the descriptor serde
 round-trip and the golden-SQL normalization layers apply (there is no
-`operation`).
+`when.operation`).
 
-A conflict case MAY instead carry an **`attempts`** retry sequence — an ordered
-list of golden `UPDATE`s, each with its own `expectedAffectedRows` — proving the
-**`m-opt-lock` retry contract** end-to-end. After the `precondition`, the harness
-applies each attempt in order and asserts its affected-row count: the first (stale-
-version) attempt affects `0` rows (the conflict signal), then a retry that re-
-reads the now-fresh version and re-applies affects `1`. The final
-`expectedTableState` confirms the retried write — not the concurrent writer's —
-landed. (Golden SQL lives per attempt, so there is no top-level `goldenSql`.)
+A conflict case MAY instead carry a **`when.attempts`** retry sequence — an ordered
+list of golden `UPDATE`s, each with its own `statements` + `affectedRows` + `write`
+— proving the **`m-opt-lock` retry contract** end-to-end. After `given.apply`, the
+harness applies each attempt in order and asserts its affected-row count: the first
+(stale-version) attempt affects `0` rows (the conflict signal), then a retry that
+re-reads the now-fresh version and re-applies affects `1`. The final
+`then.tableState` confirms the retried write — not the concurrent writer's —
+landed. (Golden SQL lives per attempt, so there is no top-level `then.statements`.)
 
 ### Scenario cases (`m-unit-work`)
 
@@ -236,7 +348,7 @@ statements as round trips exactly as a committed write does. The harness asserts
 per-step round-trip / golden-SQL count consistency, executes each step, and checks
 `sameObjectAs` identity assertions; it never compiles an operation to SQL.
 
-A case MAY carry a top-level **`uow`** block (`{ concurrency: locking |
+A case MAY carry a **`when.uow`** block (`{ concurrency: locking |
 optimistic }`) declaring the unit-of-work strategy its golden SQL runs under
 (`m-unit-work` strategy selection). The block is **descriptive**: the harness
 executes the authored golden SQL either way — the block records which mode produced
@@ -270,12 +382,13 @@ rather than forking a new one for the same primary key).
 ### Error cases (`m-db-error`)
 
 - **error** (`m-db-error` error-code classification) — triggers a *real* database
-  error and asserts the neutral category it classifies to (`errorClass`) plus the
-  per-dialect native code (`expectedNativeCode`). `uniqueViolation` cases trigger
-  single-connection: ordered golden DML whose final statement raises (a duplicate
-  insert / a colliding update). `deadlock` and `lockWaitTimeout` cases trigger
-  two-connection: a `concurrency` choreography of barrier-separated rounds, each
-  naming the statements nodes A and B run that round. The harness runs each node on
+  error and asserts the neutral category it classifies to (`then.errorClass`) plus
+  the per-dialect native code (`then.nativeCode`). `uniqueViolation` cases trigger
+  single-connection: ordered golden DML (top-level `then.statements`) whose final
+  statement raises (a duplicate insert / a colliding update). `deadlock` and
+  `lockWaitTimeout` cases trigger two-connection: a `when.concurrency` choreography
+  of barrier-separated rounds, each naming the statements nodes A and B run that
+  round. The harness runs each node on
   its own **non-autocommit session** (the provider seam's `open_session`, with the
   dialect's lock-contention tuning — Postgres `deadlock_timeout`/`lock_timeout`,
   MariaDB `innodb_lock_wait_timeout` — applied so a blocked lock fails fast), drives
@@ -294,13 +407,48 @@ whose observable — a retriable failure auto-retried away, a conflict surfaced
 without the opt-in, a disabled loop (`retries: 0`), an exhausted bound, a callback
 value withheld on abort — a **single-connection** harness cannot provoke, because
 it needs an **injected transient failure** and a re-executed closure. It carries a
-portable `boundary` (the ordered unit-of-work actions), an OPTIONAL `inject` (a
-portable fault kind — `serialization-failure` / `deadlock` / `lock-wait-timeout` /
-`optimistic-lock-conflict`, aligned with the `m-db-error` `errorClass` vocabulary),
-an `expect` (the portable outcome — `committed`, or a surfaced error kind), and its
-retry configuration under `uow` (`retries` / `retryOptimisticConflicts`). It
-carries **no** golden SQL — the concrete DML and error types stay per-language.
-Every boundary case is on the `api-conformance` lane.
+portable `when.boundary` (the ordered unit-of-work actions), an OPTIONAL
+`given.fault` (a portable fault kind — `serialization-failure` / `deadlock` /
+`lock-wait-timeout` / `optimistic-lock-conflict`, aligned with the `m-db-error`
+`errorClass` vocabulary), a `then.outcome` (the portable outcome — `committed`, or
+a surfaced error kind), and its retry configuration under `when.uow` (`retries` /
+`retryOptimisticConflicts`). It carries **no** golden SQL — the concrete DML and
+error types stay per-language. Every boundary case is on the `api-conformance`
+lane.
+
+## Case-header house style
+
+Every case opens with a **header comment** — the only comments a case carries.
+Comments are **header-only**: no comment sits mid-document, because the grouped
+`given` / `when` / `then` structure now shows what old comments used to narrate.
+The header follows a fixed house style:
+
+- **First line** states, in one sentence, **what the case proves** — the contract
+  or behavior, not the mechanics. (`sum + groupBy + having — the canonical
+  aggregate case (m-agg sub-area).`)
+- **A short paragraph** gives the **why / mechanism** and the key numbers a reader
+  needs to trust the assertions (the group totals, the version that goes stale, the
+  distinct parent keys a deep-fetch level gathers).
+- It uses the **new field names only** (`given.apply`, `then.affectedRows`,
+  `then.statements`) — no legacy vocabulary, no "formerly known as" prose.
+- It does **not narrate mechanics the structure now shows** — no describing
+  positional binds, key-presence shape sniffing, or field pairings that no longer
+  exist.
+- It stays **roughly a dozen lines at most**; a case that needs more explanation
+  than that is usually two cases.
+
+```yaml
+# Optimistic-lock conflict (m-opt-lock): a stale-version UPDATE affects ZERO rows.
+#
+# Account id 2 (Linus) is read at version 1. Before our UPDATE flushes, a
+# concurrent transaction commits a change to the same row, bumping its version to
+# 2 — modeled here by the out-of-band `given.apply` (a naive UPDATE the harness
+# applies verbatim after loading the fixtures, simulating the other writer). Our
+# golden UPDATE gates on the version we read EARLIER (1), so its `... and version =
+# ?` predicate matches NO row: it affects ZERO rows — the `updatedRows != 1`
+# conflict signal. The harness asserts `then.affectedRows` is 0, and the resulting
+# `then.tableState` confirms our stale write never applied.
+```
 
 ## Case lanes
 

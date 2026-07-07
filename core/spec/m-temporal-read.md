@@ -105,8 +105,8 @@ A **business-temporal-only** read injects the single-axis fragment over
 
 ## How the harness verifies as-of reads (`m-case-format`)
 
-As-of read cases carry an `operation` (defaulted `all`, explicit `asOf`, or
-`history`) and assert `expectedRows`. The defaulted-as-of case asserts the
+As-of read cases carry a `when.operation` (defaulted `all`, explicit `asOf`, or
+`history`) and assert `then.rows`. The defaulted-as-of case asserts the
 **injected** `out_z = ?` golden SQL + the expected current rows, so the
 default-injection rule is proven automatically. Native infinity actually executes
 (the current-row predicate binds `infinity` and the `history` projection reads

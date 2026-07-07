@@ -15,12 +15,15 @@ fixed by `m-sql`.
   **batched `UPDATE`** — executed once per distinct key, or as a single statement
   with an `IN` predicate when the new value is uniform across the keys.
 
-The canonical Postgres golden SQL (`m-sql`):
+The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
 
-```text
-insert into account(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
-
-update account set balance = ? where id in (?, ?)
+```yaml
+# m-batch-write-001 (set-based flush) then.statements:
+- sql:
+    postgres: insert into account(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
+# m-batch-write-002 (update per key) then.statements:
+- sql:
+    postgres: update account set balance = ? where id in (?, ?)
 ```
 
 The suite proves the batched forms against real data by **applying** the golden

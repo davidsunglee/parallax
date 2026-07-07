@@ -30,10 +30,12 @@ mode`) and a projection/aggregation read unchanged. `m-unit-work` contains no
 dialect-specific SQL shaping.
 
 The canonical Postgres golden SQL for an object find appends the suffix to the
-otherwise-ordinary read (`m-sql`):
+otherwise-ordinary read (`m-sql`), as a `then.statements` entry:
 
-```text
-select t0.id, t0.balance from account t0 where t0.id = ? for share of t0
+```yaml
+- sql:
+    postgres: select t0.id, t0.balance from account t0 where t0.id = ? for share of t0
+  binds: [<pk>]
 ```
 
 > The lock-suffix keywords (`share`, `of`) are lowercased in the canonical form

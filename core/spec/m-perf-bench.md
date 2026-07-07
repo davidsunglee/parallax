@@ -47,21 +47,23 @@ out:
 | **milestone workloads** (insert / update / terminate chains) | `m-audit-write` milestone-chaining write cost | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | `m-agg` aggregate path | folded into `read-mix.yaml` |
 
-Each workload declares the SQL it runs (per dialect, like a compatibility case),
-its bind values, and an **`iterations`** count (how many times the harness repeats
-it to gather a stable timing sample). A workload **MAY** declare an
+Each workload declares its golden SQL as an ordered list of `{sql, binds}`
+**statement entries** (`statements`, per dialect, exactly like a compatibility
+case's `then.statements` — each entry's `sql` is a dialect-keyed map and its
+`binds` are authored inline) and an **`iterations`** count (how many times the
+harness repeats it to gather a stable timing sample). A workload **MAY** declare an
 **`expectRoundTrips`** count — the database round trips it should cost — so the
 benchmark doubles as a *round-trip regression check* (a deep-fetch workload that
 silently regressed to N+1 would blow its declared round-trip count). A workload
 **MAY** instead declare **`kind: cache-hit`** — a repeated find an implementation
 serves from its query cache at **zero** round trips (`expectRoundTrips: 0`),
-listing no SQL — so the operation-mix fixture measures the query-cache hit/miss
-distinction, not only the miss.
+listing no `statements` — so the operation-mix fixture measures the query-cache
+hit/miss distinction, not only the miss.
 
 ### Dataset scale
 
 Benchmark datasets are larger than the tiny correctness fixtures (which have a
-handful of rows so `expectedRows` is eyeball-verifiable). A benchmark fixture
+handful of rows so `then.rows` is eyeball-verifiable). A benchmark fixture
 declares a **`dataset`** — either inline rows or a **generated** dataset (a row
 count + a generator recipe) — so the same workload can be measured at a meaningful
 scale without hand-authoring thousands of rows. The reference harness ships a

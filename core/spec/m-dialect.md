@@ -169,13 +169,15 @@ both forms yield the identical observable order (case `m-deep-fetch-012`).
   dialect seam — the normalizer's dialect mapping + read-lock rendering, the
   `m-core` type table's MariaDB column, and the MariaDB provider's infinity /
   instant adapters. **No spec prose outside this file and no fixture was
-  MariaDB-specific** beyond the additive per-dialect `goldenSql.mariadb` keys
-  (which are the seam's output, not a leak). This is the "equivalent SQL per
-  database, optimized per dialect" promise made good.
-- **The matrix.** `goldenSql` is **keyed by dialect from day one**
-  (`goldenSql.postgres`, `goldenSql.mariadb`), and the database-provider seam in
+  MariaDB-specific** beyond the additive per-dialect `mariadb` keys in the
+  affected cases' `then.statements` entries (which are the seam's output, not a
+  leak). This is the "equivalent SQL per database, optimized per dialect" promise
+  made good.
+- **The matrix.** A golden statement's `sql` is **keyed by dialect from day one**
+  (a `postgres` key, a `mariadb` key), and the database-provider seam in
   the harness selects a provider per dialect — so a third database is a new
-  provider + a new `goldenSql.<dialect>` key, **not** a redesign.
+  provider + a new per-dialect `sql` key in each statement entry, **not** a
+  redesign.
 - **Not a one-way door (DQ9).** The seam **MUST** stay open enough that
   per-source / per-tenant connection routing could be added later without
   re-plumbing. Source-attribute sharding is out of scope for round 1, but

@@ -161,7 +161,7 @@ failures (deadlock / serialization failure) are always retriable regardless of
 that flag. A retry that exhausts its bound surfaces the conflict to the caller.
 
 The suite proves the retriable half observably with a conflict case's
-**`attempts`** sequence (`m-case-format`): a stale-version `UPDATE` affects `0`
+**`when.attempts`** sequence (`m-case-format`): a stale-version `UPDATE` affects `0`
 rows, then a retry that re-reads the fresh version and re-applies affects `1` — the
 `0`-then-`1` transition, asserted against real data. The loop-mechanics branches a
 single-connection harness cannot provoke (a conflict surfacing without the opt-in,
@@ -178,11 +178,11 @@ interim — exactly the same `updatedRows != 1` rule.
 
 `m-opt-lock` is proven by a **conflict case** (`m-case-format`): the golden
 `UPDATE` is applied to a loaded table and the **affected-row count** is asserted.
-The case carries an optional out-of-band **`precondition`** — a naive SQL statement
-that simulates a concurrent transaction mutating the row — and an
-**`expectedAffectedRows`** count:
+The case carries an optional out-of-band **`given.apply`** — naive statement
+entries that simulate a concurrent transaction mutating the row — and a
+**`then.affectedRows`** count:
 
-| Case | Mode | Precondition | Golden UPDATE version | Affected rows |
+| Case | Mode | given.apply | Golden UPDATE version | Affected rows |
 |---|---|---|---|---|
 | optimistic-lock conflict | optimistic | bump the row's version out of band | the now-stale observed version | **0** (conflict detected) |
 | optimistic-lock success | optimistic | none | the observed version | **1** (write applied) |
@@ -192,18 +192,19 @@ A companion **scenario** case pins the no-op rule: a versioned update whose `set
 changes no attribute declares `roundTrips: 0` and lists no golden DML (no
 statement issued). A pair of **scenario** cases pins the set-based materialize (one
 per mode): a `find` step (the materialize read, `roundTrips: 1`), a `write` step
-listing the ordered **per-object** `UPDATE`s (`roundTrips: N`, its golden a list
-and its binds a list-of-lists — the gated form in optimistic mode, the ungated
-version-advancing form in locking mode), and a verify `find` re-resolving the
-mutated rows — the declared `roundTrips` (`1 + N + 1`) is the honest materialize
-cost. Optimistic corpus cases carry a `uow: { concurrency: optimistic }` block so
-their gated goldens are self-describing; the locking-mode cases carry
-`uow: { concurrency: locking }`.
+listing the ordered **per-object** `UPDATE`s (`roundTrips: N`, its golden a list of
+statement entries each carrying its own `binds` — the gated form in optimistic
+mode, the ungated version-advancing form in locking mode), and a verify `find`
+re-resolving the mutated rows — the declared `roundTrips` (`1 + N + 1`) is the
+honest materialize cost. Optimistic corpus cases carry a
+`when.uow: { concurrency: optimistic }` block so their gated goldens are
+self-describing; the locking-mode cases carry
+`when.uow: { concurrency: locking }`.
 
 The harness loads the model's fixtures (the row exists with its current
-version), applies the precondition (a concurrent version bump, for the conflict
+version), applies `given.apply` (a concurrent version bump, for the conflict
 case), runs the golden `UPDATE`, and asserts the affected-row count equals
-`expectedAffectedRows` — and, when authored, the resulting table state. This
+`then.affectedRows` — and, when authored, the resulting table state. This
 proves conflict detection against **real data**: the stale-version `UPDATE`
 provably touches zero rows, the fresh-version one provably touches exactly one,
 so `updatedRows != 1` is verified as the conflict signal rather than merely

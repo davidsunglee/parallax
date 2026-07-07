@@ -91,10 +91,10 @@ latest) is owned by `m-navigate` and applies inside each per-level child query.
 
 For each deep-fetch case the compatibility harness (`m-case-format`) asserts, in
 addition to the standard layers: the golden SQL statement count equals the
-declared `roundTrips`; each non-empty child level executes keyed by the parents
+declared `then.roundTrips`; each non-empty child level executes keyed by the parents
 gathered from the previous level (with the authored `IN` binds matching the
 gathered keys); empty parent-key levels execute no child SQL; and the
-in-memory-assembled object graph equals the case's `expectedGraph`. Additionally,
+in-memory-assembled object graph equals the case's `then.graph`. Additionally,
 for each to-many level whose relationship declares `orderBy`, the harness derives
 the expected child order from the declared keys/directions (an independent oracle)
 and asserts the rows the golden SQL returned obey it, so a dropped or wrong

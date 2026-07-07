@@ -63,10 +63,10 @@ required parity surface, and they are excluded from the coverage gate.
 
 ## How the harness verifies (`m-case-format`)
 
-Write-sequence cases carry a `writeSequence` (the `insertUntil` / `updateUntil` /
-`terminateUntil` trio) and `expectedTableState`. The harness **applies** the
-ordered DML golden SQL to a freshly-provisioned (empty) table, then asserts the
-resulting rows — the inactivated original (`out_z` finite) plus the `head` /
-`middle` / `tail` rectangles current on processing (`out_z = infinity`). The DML
-statement count must equal the sum of the steps' declared statement counts and the
-case's `roundTrips`.
+Write-sequence cases carry a `when.writeSequence` (the `insertUntil` /
+`updateUntil` / `terminateUntil` trio) and `then.tableState`. The harness
+**applies** the ordered DML golden SQL (`then.statements`) to a freshly-provisioned
+(empty) table, then asserts the resulting rows — the inactivated original (`out_z`
+finite) plus the `head` / `middle` / `tail` rectangles current on processing
+(`out_z = infinity`). The DML statement count must equal the sum of the steps'
+declared statement counts and the case's `then.roundTrips`.

@@ -71,6 +71,6 @@ business axis first).
 
 For each navigation-filter case the compatibility harness (`m-case-format`)
 asserts the standard read layers: the semi-join golden SQL returns exactly
-`expectedRows`, and the naive `key in (select fk …)` oracle returns the same rows.
+`then.rows`, and the naive `key in (select fk …)` oracle returns the same rows.
 The round-trip and object-graph assertions specific to eager loading are
 `m-deep-fetch`.

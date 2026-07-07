@@ -8,22 +8,24 @@ that decides the concrete SQL).
 The core does **not** mandate *how* an implementation produces SQL (a language
 MAY lower the algebra onto an external SQL IR inside `m-sql`). The core mandates
 the **output**: for each case, the SQL an implementation emits, after
-normalization, **MUST** equal the case's `goldenSql` for that dialect, and
-**MUST** return the case's `expectedRows`.
+normalization, **MUST** equal the case's golden `then.statements` for that
+dialect, and **MUST** return the case's `then.rows`.
 
 ## The equivalence contract (DQ1)
 
 The contract is layered. For a given dialect, an implementation is correct iff:
 
-1. **Result equivalence.** The query returns exactly `expectedRows`. The suite
-   cross-checks this with an independent `referenceSql` oracle (`m-case-format`).
+1. **Result equivalence.** The query returns exactly `then.rows`. The suite
+   cross-checks this with an independent `then.referenceSql` oracle
+   (`m-case-format`).
 2. **Golden-SQL equivalence.** The SQL the implementation emits, **after
-   normalization**, equals `goldenSql[dialect]`.
+   normalization**, equals the per-dialect `sql` in `then.statements`.
 
 Round 1 shipped golden SQL for **Postgres only**; the contract is per-dialect, so
-additional dialects add `goldenSql.<dialect>` without changing the rules.
-**MariaDB** is the second concrete dialect (a representative subset of cases now
-carries `goldenSql.mariadb`), proving the per-dialect contract beyond Postgres.
+additional dialects add a per-dialect `sql` key in each `then.statements` entry
+(e.g. `mariadb`) without changing the rules. **MariaDB** is the second concrete
+dialect (a representative subset of cases now carries a `mariadb` key in their
+`then.statements` entries), proving the per-dialect contract beyond Postgres.
 
 ## Canonical normalization rules
 
@@ -39,15 +41,15 @@ makes the comparison deterministic and language-neutral. The rules:
 3. **Whitespace collapsed.** Runs of whitespace collapse to a single space;
    no leading/trailing whitespace; canonical single-space token separation.
 4. **Bind placeholders, sorted.** Literal parameters are represented as bind
-   placeholders (`?`), and the case's `binds` list is the ordered set of values.
-   The placeholder ordering follows left-to-right appearance in the normalized
-   statement.
+   placeholders (`?`), and each statement entry's `binds` list is the ordered set
+   of values. The placeholder ordering follows left-to-right appearance in the
+   normalized statement.
 5. **Deterministic clause order.** Clauses appear in the fixed order
    `select … from … [where …] [group by …] [having …] [order by …] [limit …]`.
 
 The normative implementation of these rules is
 `reference-harness/src/reference_harness/sql_normalize.py` (sqlglot-based). A
-golden SQL string is valid only if `normalize(goldenSql) == goldenSql` — i.e. the
+golden statement's `sql` text is valid only if `normalize(sql) == sql` — i.e. the
 stored form is already a fixed point of normalization. The harness asserts this
 per case (`m-case-format`, layer 3).
 
@@ -70,7 +72,7 @@ applies to reads only.
 
 ## What is normative vs. dialect-local
 
-- **Normative:** the **result** (`expectedRows`) — every dialect MUST return the
+- **Normative:** the **result** (`then.rows`) — every dialect MUST return the
   same logical rows for an operation — and, **per dialect**, the golden SQL after
   normalization. The result is the cross-dialect invariant; the golden SQL is the
   per-dialect contract.
@@ -82,9 +84,9 @@ applies to reads only.
 ### The cross-dialect cases (Postgres + MariaDB)
 
 The MariaDB dialect (`m-dialect`) exercises two genuine divergences; a
-representative subset of cases carries `goldenSql.mariadb` and the harness runs
-them against **both** databases, proving the result invariant while each dialect
-emits its own optimized SQL:
+representative subset of cases carries a `mariadb` key in their `then.statements`
+entries and the harness runs them against **both** databases, proving the result
+invariant while each dialect emits its own optimized SQL:
 
 - **Identical SQL, different physical binds — the infinity fallback.** For most
   operations (`eq`, `in`, the `exists` semi-join, the as-of-now read, the
@@ -109,7 +111,7 @@ emits its own optimized SQL:
 The table below fixes the **canonical Postgres golden SQL** each `m-op-algebra`
 node lowers to. The golden form is what the `m-sql` normalizer (and the harness,
 layer 3) treats as the fixed point; an implementation's emitted SQL must equal it
-after normalization. The `?` placeholders consume the case's `binds`
+after normalization. The `?` placeholders consume the statement entry's `binds`
 left-to-right.
 
 | Operation | Canonical predicate fragment |
@@ -190,7 +192,7 @@ notExists(Order.items)
     where not exists (select 1 from order_item t1 where t1.order_id = t0.id)
 ```
 
-The independent `referenceSql` oracle for a navigation filter is the naive
+The independent `then.referenceSql` oracle for a navigation filter is the naive
 `id in (select fk from child where <op>)` subquery form — a different
 formulation that must return the same rows (`m-case-format`).
 
@@ -239,10 +241,11 @@ literal `infinity`, carried as a `?` bind exactly like every other literal
 `binds: [infinity]`. The injected term composes with a user predicate via `and`
 and is appended **after** it (binds read user-first, then the as-of bind):
 
-```text
-asOf(eq(Balance.acctNum,'A'), Balance.processingDate, now)
-  → select t0.bal_id, t0.val from balance t0 where t0.acct_num = ? and t0.out_z = ?
-    binds: ['A', infinity]
+```yaml
+# asOf(eq(Balance.acctNum,'A'), Balance.processingDate, now) lowers to the entry:
+- sql:
+    postgres: select t0.bal_id, t0.val from balance t0 where t0.acct_num = ? and t0.out_z = ?
+  binds: ['A', infinity]
 ```
 
 `history(operand, asOfAttr)` injects **no** as-of predicate — it returns every
@@ -266,7 +269,7 @@ all), the range can return **several** milestones per key — every one the wind
 straddles — while still excluding milestones that closed before, or opened
 after, it.
 
-The independent `referenceSql` oracle for a temporal read spells the infinity /
+The independent `then.referenceSql` oracle for a temporal read spells the infinity /
 instant literals inline (`out_z = 'infinity'::timestamptz`) — a different
 formulation the harness asserts returns the same rows (`m-case-format`).
 
@@ -291,7 +294,7 @@ statement. Let `txInstant` be the processing instant. The canonical Postgres DML
 The close `update` is keyed by the **current-row predicate** (`pk and
 out_z = ?` / `infinity`), so only the open milestone is closed. The harness
 **applies** this DML in order to an empty table and asserts the resulting
-`expectedTableState` — including the `out_z = infinity` current row — so the
+`then.tableState` — including the `out_z = infinity` current row — so the
 chaining contract is proven against real data, not merely asserted. The full
 milestone-write semantics are `m-audit-write`.
 
@@ -343,7 +346,7 @@ DML sequence over **both** axes. Let `txInstant` be the processing instant and
 The inactivate `update` is keyed by the **current-on-processing** predicate
 (`pk and out_z = ?` / `infinity`), so only the open rectangle is closed; the new
 rows are inserted **after** it. The harness **applies** this DML in order to an
-empty table and asserts the resulting `expectedTableState` — the inactivated
+empty table and asserts the resulting `then.tableState` — the inactivated
 original (`out_z` finite) plus the `head` / `middle` / `tail` rectangles current
 on processing (`out_z = infinity`) — so the rectangle split is proven against real
 data, not merely asserted. The same multi-row physical primary key (business key
@@ -382,9 +385,10 @@ For Postgres the suffix is `for share of t0` — `for share` qualified by the ro
 alias — appended **after** every other clause (it is the last thing in the
 statement, after any `where`):
 
-```text
-select t0.id, t0.balance from account t0 where t0.id = ? for share of t0
-binds: [<pk>]
+```yaml
+- sql:
+    postgres: select t0.id, t0.balance from account t0 where t0.id = ? for share of t0
+  binds: [<pk>]
 ```
 
 > **The lock-clause keywords are lowercased like any other keyword.** sqlglot
@@ -398,9 +402,10 @@ For **MariaDB** the same in-transaction read appends `lock in share mode` instea
 MariaDB dialect — the normalizer renders it through the seam, not through
 sqlglot's MySQL generator (which would rewrite it to `for share`):
 
-```text
-select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? lock in share mode
-binds: [<pk>]
+```yaml
+- sql:
+    mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? lock in share mode
+  binds: [<pk>]
 ```
 
 The lock is a concurrency property; a single-connection harness proves the
@@ -414,18 +419,20 @@ The unit of work flushes buffered writes as set-based SQL (`m-batch-write`). A
 batched **insert** of N rows of one entity is a **single multi-row `INSERT`** —
 one statement, N value tuples — not N statements:
 
-```text
-insert into account(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
-binds: [<row1…>, <row2…>, <row3…>]
+```yaml
+- sql:
+    postgres: insert into account(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
+  binds: [<row1…>, <row2…>, <row3…>]
 ```
 
 A batched **update** of the same column over several keys is one keyed `UPDATE`
 per distinct key (or a single statement with an `IN` predicate when the new value
 is uniform across the keys):
 
-```text
-update account set balance = ? where id in (?, ?)
-binds: [<new-balance>, <key1>, <key2>]
+```yaml
+- sql:
+    postgres: update account set balance = ? where id in (?, ?)
+  binds: [<new-balance>, <key1>, <key2>]
 ```
 
 The harness proves the batched forms against real data by **applying** the golden
@@ -443,9 +450,10 @@ golden form is therefore **mode-dependent** (`m-unit-work` strategy selection).
 
 **Optimistic mode** appends the version check to the primary-key predicate:
 
-```text
-update account set balance = ?, version = ? where id = ? and version = ?
-binds: [<new-balance>, <new-version>, <pk>, <observed-version>]
+```yaml
+- sql:
+    postgres: update account set balance = ?, version = ? where id = ? and version = ?
+  binds: [<new-balance>, <new-version>, <pk>, <observed-version>]
 ```
 
 The `where id = ? and version = ?` predicate is the conflict gate: the
@@ -459,9 +467,10 @@ success exactly **one** row is affected and its version advances.
 shared read lock (`m-read-lock`), not the version, makes it correct — but still
 advances the version (the `m-detach-002` / detached-merge-back shape):
 
-```text
-update account set balance = ?, version = ? where id = ?
-binds: [<new-balance>, <new-version>, <pk>]
+```yaml
+- sql:
+    postgres: update account set balance = ?, version = ? where id = ?
+  binds: [<new-balance>, <new-version>, <pk>]
 ```
 
 In either mode the new version is carried as a `?` bind like every other literal
@@ -484,8 +493,8 @@ resolves the predicate to rows (a read that records each row's observed version
 and, in `locking` mode, takes the shared lock), then **lowers to one keyed
 per-object `UPDATE` per resolved row** — the gated optimistic form or the ungated
 locking form above. The scenario golden lists those per-object statements in order
-(one per matched row) with a list-of-lists of binds, and the declared round trips
-are `1` read + `N` updates. For a **non-versioned** entity the readless batched
+(one per matched row), each statement entry carrying its own `binds`, and the
+declared round trips are `1` read + `N` updates. For a **non-versioned** entity the readless batched
 forms above stand (ADR 0014); materialization applies only where a framework-owned
 version must ride each write.
 
@@ -517,16 +526,17 @@ any user predicate via `and`, with the discriminator value(s) carried as `?` bin
 | a family of subtypes | `t0.kind in (?, ?)` | `[<value1>, <value2>]` |
 | the root (all rows) | *(no discriminator predicate)* | — |
 
-```text
-find Card-payments  (Payment table-per-hierarchy, discriminator `kind`, value 'card')
-  → select t0.id, t0.amount, t0.kind from payment t0 where t0.kind = ?
-    binds: ['card']
+```yaml
+# find Card-payments (Payment table-per-hierarchy, discriminator `kind`, value 'card'):
+- sql:
+    postgres: select t0.id, t0.amount, t0.kind from payment t0 where t0.kind = ?
+  binds: ['card']
 ```
 
 A `table-per-leaf` subtype query injects **no** discriminator at all — the leaf
 is selected by querying its **own** table — so its golden SQL is an ordinary
-single-table read of that leaf's table. The independent `referenceSql` oracle for
-a discriminator query spells the value inline (`where kind = 'card'`).
+single-table read of that leaf's table. The independent `then.referenceSql` oracle
+for a discriminator query spells the value inline (`where kind = 'card'`).
 
 ### valueObject — structured-column read and filter
 
@@ -549,20 +559,21 @@ SQL a normalizer fixed point):
 
 The path binds precede the comparison bind, in `path`-segment order then value:
 
-```text
-nestedEq(Customer.address.city, 'Oslo')
-  → select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
-    binds: ['city', 'Oslo']
-
-nestedEq(Customer.address.geo.country, 'NO')
-  → select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
-    binds: ['geo', 'country', 'NO']
+```yaml
+# nestedEq(Customer.address.city, 'Oslo'):
+- sql:
+    postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
+  binds: ['city', 'Oslo']
+# nestedEq(Customer.address.geo.country, 'NO'):
+- sql:
+    postgres: select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
+  binds: ['geo', 'country', 'NO']
 ```
 
 The extraction yields **text**, so the compared value is authored as a string and
 matched textually. Other dialects use their equivalent structured-column
 extraction, such as a `VARIANT` path expression, while preserving the same
-path order and result semantics. The independent `referenceSql` oracle spells
+path order and result semantics. The independent `then.referenceSql` oracle spells
 the Postgres extraction with the native `->>` operator and inline keys
 (`t0.address ->> 'city' = 'Oslo'`), a different formulation the harness asserts
 returns the same rows (`m-case-format`).

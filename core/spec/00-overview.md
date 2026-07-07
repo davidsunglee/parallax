@@ -73,21 +73,22 @@ a model descriptor, a canonical **operation** (an instance of the `m-op-algebra`
 algebra), and the expected outcome. It carries **three independent things** the
 harness cross-checks against a freshly-provisioned real database:
 
-- **`goldenSql`** — the *optimized* SQL an implementation is **expected to
-  emit** for the operation. This is the normative SQL contract a real ORM is
-  graded against, and it is **keyed by dialect** (`postgres:`, with more behind
-  the `m-dialect` seam over time).
-- **`expectedRows`** — the result the query must return, authored against the
+- **`then.statements`** — the *optimized* golden SQL an implementation is
+  **expected to emit** for the operation, as an ordered list of `{sql, binds}`
+  statement entries. This is the normative SQL contract a real ORM is graded
+  against; each entry's `sql` is **keyed by dialect** (`postgres:`, with more
+  behind the `m-dialect` seam over time) and its `binds` are authored inline.
+- **`then.rows`** — the result the query must return, authored against the
   small fixture dataset.
-- **`referenceSql`** — a deliberately *naive, obviously-correct* second
+- **`then.referenceSql`** — a deliberately *naive, obviously-correct* second
   formulation of the same query, written so it is unlikely to share a bug with
-  `goldenSql`. It is an **independent oracle**. It is **REQUIRED for non-trivial
-  cases** (joins, deep fetch, aggregation, temporal predicates) and **OPTIONAL
-  for trivial single-table predicate cases** where `expectedRows` is obviously
-  verifiable by eye.
+  the golden `then.statements`. It is an **independent oracle**. It is **REQUIRED
+  for non-trivial cases** (joins, deep fetch, aggregation, temporal predicates)
+  and **OPTIONAL for trivial single-table predicate cases** where `then.rows` is
+  obviously verifiable by eye.
 
 The harness asserts, per case:
-`rows(goldenSql[dialect]) == rows(referenceSql) == expectedRows`,
+`rows(then.statements[].sql[dialect]) == rows(then.referenceSql) == then.rows`,
 that the golden SQL is already in canonical normalized form, and that both the
 operation and the model descriptor survive a serde round-trip. See
 [`m-case-format.md`](m-case-format.md) for the full
