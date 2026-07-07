@@ -16,6 +16,11 @@
 # `referenceSql` oracle re-selects the matched row SET a different way (a naive
 # native extraction), verifying the filter without routing the JSON document
 # through row comparison.
+#
+# The `phones` arrays below are authored in a readable order, but element order
+# in a to-many value-object member is UNSPECIFIED (m-value-object): `then.graph`
+# array comparison is order-insensitive (a multiset — element multiplicity is
+# still enforced, only order is not), so a reordered `phones` array still passes.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many]
 shape: read

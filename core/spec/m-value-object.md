@@ -90,7 +90,13 @@ rather than left true by omission:
    `valueObject`, at every depth — reachable from the owning entity (owner →
    top-level value object → nested value object → … → leaf attribute). A `one`
    member's getter yields a single value (or null); a `many` member's getter
-   yields the ordered list of element values.
+   yields the collection of element values. **Element order within a `many`
+   member is unspecified** — an implementation MAY preserve the
+   document/storage order, but that order is NOT guaranteed and consumers MUST
+   NOT rely on it. Accordingly the compatibility `then.graph` comparison for
+   value-object arrays is **order-insensitive**: a multiset comparison in which
+   element multiplicity still matters (duplicate elements are distinguished),
+   only order does not.
 2. **They materialize with the owner in one round trip.** A value object
    materializes **with its owning entity in the same read**: the owner's single
    statement projects the whole structured-document column, and every nested

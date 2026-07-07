@@ -21,6 +21,11 @@
 # golden SQL is identical on both dialects (a bare column projection); MariaDB
 # returns the `json` column as text and Postgres the `jsonb` column parsed, but
 # both decode to the same composite.
+#
+# The `phones` arrays below are authored in a readable order, but element order
+# in a to-many value-object member is UNSPECIFIED (m-value-object): `then.graph`
+# array comparison is order-insensitive (a multiset — element multiplicity is
+# still enforced, only order is not), so a reordered `phones` array still passes.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many]
 shape: read
