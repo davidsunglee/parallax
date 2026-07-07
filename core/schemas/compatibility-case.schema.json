@@ -566,7 +566,7 @@
           "items": { "type": "object" }
         },
         "graph": {
-          "description": "The assembled object graph a deep fetch must produce: the root rows, each carrying its eager-fetched related rows under the relationship name. Keyed by the root class name, whose value is a list of root objects; a related set appears under its relationship name (a list for to-many, a single object or null for to-one).",
+          "description": "The assembled object graph a read must produce. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name. For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class name, whose value is a list of root objects; a related set appears under its relationship name (a list for to-many, a single object or null for to-one), and a value-object member under its declared name.",
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
