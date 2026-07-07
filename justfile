@@ -24,7 +24,7 @@ default:
 # ===========================================================================
 
 # Full merge gate: repo lint + core gates + primary TS lanes + the harness suite (Docker).
-verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-lint ts-package-check ts-conformance-compile ts-db oracle-test
+verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-typecheck-tests ts-lint ts-package-check ts-conformance-compile ts-db oracle-test
 
 # Every static check that needs no database: harness ruff, markdown, core schema/SQL.
 lint: oracle-lint lint-md core-schemas
@@ -91,6 +91,10 @@ ts-lint:
 # TypeScript typecheck across project references (tsc -b, no emit drift).
 ts-typecheck:
     pnpm run ts:typecheck
+
+# Typecheck test files too (tsc --noEmit per package after the build; catches test/** errors).
+ts-typecheck-tests:
+    pnpm run ts:typecheck-tests
 
 # TypeScript unit / adapter tests (vitest) across the workspace.
 ts-test:

@@ -53,7 +53,7 @@ function ordersResolver(projection: readonly string[] = ["id", "name"]): SchemaR
         table: "orders",
         column: quoteIdentifier(attr.column),
         type: attr.type,
-        nullable: attr.nullable,
+        nullable: attr.nullable ?? false,
       };
     },
     resolveRelationship(ref: string): ResolvedRelationship {

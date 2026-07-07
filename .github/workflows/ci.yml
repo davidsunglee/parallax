@@ -65,6 +65,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Typecheck (tsc -b)
         run: pnpm run ts:typecheck
+      - name: Typecheck test files (tsc --noEmit per package)
+        run: pnpm run ts:typecheck-tests
       - name: Lint (biome + dependency-cruiser)
         run: pnpm run ts:lint
       - name: Package-export health (publint + attw + knip)
