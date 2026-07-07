@@ -1,0 +1,57 @@
+# valueObject NULL-OUT: writing a nullable valueObject absent binds SQL NULL — the
+# whole column, not a document of nulls (m-value-object write, m-sql), on Postgres
+# AND MariaDB.
+#
+# Self-contained (from an empty table): step 1 inserts a Customer with an address
+# document; step 2 nulls the nullable `address` valueObject out. The update binds
+# `null` in columnOrder position (`set address = ?`, binds [null, pk]), which stores
+# SQL NULL for the whole structured-document column — the same null a scalar column
+# would take. The resulting row's `address` reads back as SQL NULL (Postgres and
+# MariaDB alike), decoded to `null` and pinned by `then.tableState`; the scalar
+# `name` is untouched.
+model: models/customer.yaml
+tags: [m-value-object, m-sql, write-sequence, update, json, "null"]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Customer
+      statements: 1
+      note: seed a Customer with an address document
+      rows:
+        - id: 300
+          name: Bjorn
+          address:
+            street: 7 Fjord Vei
+            city: Alesund
+            geo:
+              country: "NO"
+    - mutation: update
+      entity: Customer
+      statements: 1
+      note: null out the nullable address valueObject → SQL NULL (the whole column)
+      rows:
+        - id: 300
+          address: null
+then:
+  statements:
+    - sql:
+        postgres: insert into customer(id, name, address) values (?, ?, ?)
+        mariadb: insert into customer(id, name, address) values (?, ?, ?)
+      binds:
+        - 300
+        - Bjorn
+        - street: 7 Fjord Vei
+          city: Alesund
+          geo:
+            country: "NO"
+    - sql:
+        postgres: update customer set address = ? where id = ?
+        mariadb: update customer set address = ? where id = ?
+      binds: [null, 300]
+  tableState:
+    customer:
+      - id: 300
+        name: Bjorn
+        address: null
+  roundTrips: 2

@@ -79,6 +79,44 @@ nested-attribute access form over a dotted path (`Class.valueObject.path`), whic
 has no identity of its own, it is accessed by value only and is never a
 relationship target.
 
+## Writing — one atomic document bind
+
+A top-level value object is **written atomically as one document**. On an insert
+or an update its backing column takes **exactly one bind** in the entity's
+`columnOrder` position (after the scalar attributes), carrying the whole embedded
+composite — every inner attribute and every nested `one` / `many` value object,
+at every depth — as a single structured-document value. The write path **MUST
+NOT** decompose the document into path-level binds: a value-object column
+participates in insert/update DML **exactly like a scalar column** (one `?` in
+`columnOrder` position), and the concrete document value is adapted to the
+dialect's structured-document type at bind time (`m-dialect` — e.g. Postgres
+`jsonb`, MariaDB `json`). This mirrors Reladomo's embedded value riding the
+owner's row, expressed as one atomic document rather than flattened columns.
+
+A **null** value object (`nullable: true`, written absent) binds SQL `NULL` — the
+whole column is null, not a document of nulls. A `nullable: false` value object
+MUST be present at write time (`m-op-algebra` / the `rejected` write-validation
+cases).
+
+There are **no partial-document (path-level) writes**. A whole-document update
+**replaces** the entire column value with the newly bound document; there is no
+`UPDATE` of a path *inside* the document and no merge with the prior value. This
+matches the single-column storage model (`m-value-object` [one
+column](#one-column--never-extra-columns-rows-or-joins)): the document is the unit
+of write exactly as it is the unit of storage. On a temporal owner the same
+atomic document rides milestone chaining like any scalar column (see [Inherited
+temporality](#inherited-temporality)); there is no value-object-specific write
+machinery.
+
+Atomic writes are proven by `writeSequence` cases whose golden DML binds the
+document in `columnOrder` position and whose `then.tableState` reads it back
+(`m-case-format`): `m-value-object-025` inserts a Customer whose whole
+nested-plus-to-many `address` document binds as one value; `m-value-object-026`
+replaces that whole document with an update (`set address = ?`), proving no
+path-level merge; `m-value-object-027` nulls a nullable value object out to SQL
+`NULL`. A required-member-missing write is refused pre-SQL as a `rejected` case
+(`m-case-format`).
+
 ## Materialization and navigation contract
 
 A value object is reached **only by value, through its owner** — never as a

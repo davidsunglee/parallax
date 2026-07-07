@@ -31,11 +31,14 @@ POSTGRES_IMAGE = "postgres:17"
 
 
 def _adapt(value: Any) -> Any:
-    """Adapt a fixture value for binding.
+    """Adapt a fixture / bind value for binding.
 
-    A ``dict`` / ``list`` fixture value is a valueObject destined for a JSONB
-    column (Phase 9); psycopg does not auto-adapt a plain mapping, so wrap it in
-    ``Jsonb``. Every scalar passes through unchanged.
+    A ``dict`` / ``list`` value is a valueObject document destined for a JSONB
+    column (m-value-object) — a fixture row's stored document, or a golden
+    write-sequence bind that carries the whole document atomically in its
+    columnOrder position; psycopg does not auto-adapt a plain mapping, so wrap it
+    in ``Jsonb``. ``None`` (a null nullable value object) and every scalar pass
+    through unchanged (binding SQL ``NULL`` / the literal).
     """
     if isinstance(value, (dict, list)):
         return Jsonb(value)
@@ -151,10 +154,14 @@ class PostgresProvider:
 
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
         # Golden DML stores `?` placeholders (m-sql); psycopg uses `%s`. Translate
-        # positional placeholders for execution, mirroring `query`.
+        # positional placeholders for execution, mirroring `query`. A value-object
+        # document bind (dict/list) is wrapped in `Jsonb` via `_adapt` so a
+        # whole-document write binds correctly (m-value-object); scalars pass through.
         with self._conn.cursor() as cur:
             if binds:
-                cur.execute(_trusted_query(sql.replace("?", "%s")), tuple(binds))
+                cur.execute(
+                    _trusted_query(sql.replace("?", "%s")), tuple(_adapt(value) for value in binds)
+                )
             else:
                 cur.execute(_trusted_query(sql))
             return cur.rowcount

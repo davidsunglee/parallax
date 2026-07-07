@@ -271,7 +271,21 @@ def test_value_object_cases_carry_both_dialects_and_per_dialect_binds() -> None:
             binds = entry.get("binds")
             if binds is None:
                 continue
-            assert isinstance(binds, dict), (
-                f"{case.path.name}: statement {index} binds diverge per dialect, "
-                f"so binds MUST be a per-dialect map"
-            )
+            if case.is_write_sequence:
+                # A value-object WRITE binds the whole document as ONE shared value in
+                # its columnOrder position (m-value-object): the bind HOLE structure
+                # does not diverge per dialect — only the document's ADAPTATION does,
+                # at the provider (Postgres Jsonb / MariaDB json.dumps) — so binds are
+                # the authored flat-array (shared-hole) form (resolved Q12), NOT a map.
+                assert isinstance(binds, list), (
+                    f"{case.path.name}: statement {index} is a value-object write bind; "
+                    f"the document hole is shared, so binds MUST be a flat array, not a "
+                    f"per-dialect map"
+                )
+            else:
+                # A value-object READ's extraction holes diverge (Postgres per-segment
+                # JSON keys vs a MariaDB single '$.a.b' path), so its binds are a map.
+                assert isinstance(binds, dict), (
+                    f"{case.path.name}: statement {index} binds diverge per dialect, "
+                    f"so binds MUST be a per-dialect map"
+                )

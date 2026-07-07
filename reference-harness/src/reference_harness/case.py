@@ -72,6 +72,18 @@ class Entity:
                 return relationship
         raise KeyError(f"{self.name} has no relationship {name!r}")
 
+    def value_object_by_name(self, name: str) -> dict[str, Any]:
+        """The top-level value object named *name* (m-value-object), else KeyError.
+
+        A neutral write input (①) names a value object like a scalar attribute; it
+        resolves to the single structured-document column the whole composite binds
+        into (columnOrder position), never to its inner members.
+        """
+        for value_object in self.value_objects:
+            if value_object["name"] == name:
+                return value_object
+        raise KeyError(f"{self.name} has no value object {name!r}")
+
 
 @dataclass(frozen=True)
 class Model:
