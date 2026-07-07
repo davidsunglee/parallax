@@ -1,10 +1,11 @@
 # valueObject structured-column filter: nested field inequality (m-value-object valueObject,
-# m-sql).
+# m-sql), on Postgres AND MariaDB.
 #
-# In Postgres golden SQL, nestedNotEq(Customer.address.city, 'Oslo') lowers to a
-# negated extraction `not jsonb_extract_path_text(t0.address, ?) = ?` (the
-# normalizer renders the negation as a leading `not`, mirroring
-# `isNotNull`/`notIn`). Only Grace (Boston) does NOT live in Oslo.
+# nestedNotEq(Customer.address.city, 'Oslo') lowers to a negated extraction — a
+# leading `not` (the normalizer renders the negation that way, mirroring
+# `isNotNull`/`notIn`): Postgres `not jsonb_extract_path_text(t0.address, ?) = ?`,
+# MariaDB `not json_unquote(json_extract(t0.address, ?)) = ?`. Only Grace (Boston)
+# does NOT live in Oslo; the null-address customer (4) is excluded by 3VL.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json]
 shape: read
@@ -15,8 +16,13 @@ then:
   statements:
     - sql:
         postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
-      binds: [city, Oslo]
-  referenceSql: select id, name from customer where address ->> 'city' <> 'Oslo'
+        mariadb: select t0.id, t0.name from customer t0 where not json_unquote(json_extract(t0.address, ?)) = ?
+      binds:
+        postgres: [city, Oslo]
+        mariadb: ['$.city', Oslo]
+  referenceSql:
+    postgres: select id, name from customer where address ->> 'city' <> 'Oslo'
+    mariadb: select id, name from customer where json_value(address, '$.city') <> 'Oslo'
   rows:
     - { id: 3, name: Grace }
   roundTrips: 1

@@ -442,12 +442,33 @@ class Case:
         """
         return [entry["sql"][dialect] for entry in self.golden_entries()]
 
-    def statement_binds(self, index: int) -> list[Any]:
-        """The authored binds for golden statement *index* (default ``[]``)."""
+    def statement_binds(self, index: int, dialect: str | None = None) -> list[Any]:
+        """The authored binds for golden statement *index* (default ``[]``).
+
+        ``binds`` follows the same scalar-or-dialect-keyed polymorphism as ``sql``:
+        a flat list when the bind holes are shared across dialects, OR a
+        dialect-keyed map (``postgres`` / ``mariadb``) when the hole structure
+        diverges (a Postgres per-segment JSON key list vs a MariaDB single
+        ``'$.a.b'`` path bind). When a map, this resolves the list for *dialect*;
+        *dialect* is REQUIRED in that case (a flat list ignores it).
+        """
         entries = self.golden_entries()
         if index >= len(entries):
             return []
-        return list(entries[index].get("binds", []))
+        raw = entries[index].get("binds", [])
+        if isinstance(raw, dict):
+            if dialect is None:
+                raise KeyError(
+                    f"{self.path.name}: statement {index} has dialect-keyed binds; "
+                    f"a dialect is required to resolve them"
+                )
+            if dialect not in raw:
+                raise KeyError(
+                    f"{self.path.name}: statement {index} binds map has no key "
+                    f"{dialect!r} (keys: {sorted(raw)})"
+                )
+            return list(raw[dialect])
+        return list(raw)
 
     @property
     def golden_dialects(self) -> set[str]:
@@ -462,9 +483,19 @@ class Case:
             return set()
         return set.intersection(*dialect_sets)
 
-    @property
-    def reference_sql(self) -> str | None:
-        return self.then.get("referenceSql")
+    def reference_sql_for(self, dialect: str) -> str | None:
+        """The independent naive oracle for *dialect*, or ``None`` if unauthored.
+
+        ``referenceSql`` is a plain string when one naive spelling runs verbatim on
+        every dialect (the authored default), OR a dialect-keyed map when the naive
+        spelling itself is dialect-specific (the structured-document extraction:
+        Postgres ``->>`` takes a bare key, MariaDB ``->>`` takes a ``'$.path'``).
+        A map with no entry for *dialect* yields ``None`` (no oracle to run there).
+        """
+        raw = self.then.get("referenceSql")
+        if isinstance(raw, dict):
+            return raw.get(dialect)
+        return raw
 
     @property
     def expected_rows(self) -> list[dict[str, Any]]:

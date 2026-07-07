@@ -549,9 +549,16 @@
           "$ref": "#/$defs/goldenStatements"
         },
         "referenceSql": {
-          "description": "Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases.",
-          "type": "string",
-          "minLength": 1
+          "description": "Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases. Authored dialect-neutrally as a plain string wherever one naive spelling runs verbatim on every dialect; a dialect-keyed map (`postgres` / `mariadb`) when the naive spelling itself is dialect-specific (e.g. the structured-document extraction, where Postgres `->>` takes a bare key and MariaDB `->>` takes a `'$.path'`). The harness runs the entry matching the executing dialect.",
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            {
+              "type": "object",
+              "propertyNames": { "enum": ["postgres", "mariadb"] },
+              "additionalProperties": { "type": "string", "minLength": 1 },
+              "minProperties": 1
+            }
+          ]
         },
         "rows": {
           "description": "The rows the query must return against the fixture data (single-statement / flat-result cases).",
@@ -637,10 +644,20 @@
           ]
         },
         "binds": {
-          "description": "Bind values for the `?` placeholders in this statement's `sql`. One flat ordered list (dialect-agnostic — positional order is identical across dialects). Defaults to empty.",
-          "type": "array",
-          "default": [],
-          "items": {}
+          "description": "Bind values for the `?` placeholders in this statement's `sql`. Follows the same scalar-or-dialect-keyed polymorphism as `sql`: a flat ordered array when the bind holes are shared across dialects (the authored default), OR a dialect-keyed map of arrays when the hole structure diverges (e.g. Postgres carries per-segment JSON keys while MariaDB carries one `'$.a.b'` path bind). When a map, its keys MUST equal this entry's `sql` map's keys (harness-asserted). Defaults to empty.",
+          "oneOf": [
+            {
+              "type": "array",
+              "default": [],
+              "items": {}
+            },
+            {
+              "type": "object",
+              "propertyNames": { "enum": ["postgres", "mariadb"] },
+              "additionalProperties": { "type": "array", "items": {} },
+              "minProperties": 1
+            }
+          ]
         }
       }
     },

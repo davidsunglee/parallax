@@ -1,14 +1,12 @@
 # valueObject structured-column read: project an inner field (m-value-object valueObject,
-# m-sql).
+# m-sql), on Postgres AND MariaDB.
 #
-# Read a nested field of the `address` valueObject into the result set. The
-# Postgres extraction `jsonb_extract_path_text(t0.address, ?)` is aliased `city`
-# in the projection; the JSON key is the only bind ['city']. Every customer is
-# returned with its extracted city. This proves the structured-column READ form
-# (projection), the complement of the structured-column FILTER cases.
+# Read a nested attribute of the `address` valueObject into the result set. The
+# extraction is aliased `city` in the projection; the JSON key is the only bind
+# (Postgres 'city', MariaDB '$.city'). Every customer is returned with its
+# extracted city. This proves the structured-column READ form (projection), the
+# complement of the structured-column FILTER cases.
 #
-# A whole-row read of an extracted field is obvious by eye, but referenceSql is
-# supplied as the independent oracle (native `->>` projection).
 # id 4 has a null address valueObject, so the extracted city projects as null —
 # the structured-column read of an absent value object.
 model: models/customer.yaml
@@ -21,8 +19,13 @@ then:
   statements:
     - sql:
         postgres: select t0.id, jsonb_extract_path_text(t0.address, ?) city from customer t0
-      binds: [city]
-  referenceSql: select id, address ->> 'city' as city from customer
+        mariadb: select t0.id, json_unquote(json_extract(t0.address, ?)) city from customer t0
+      binds:
+        postgres: [city]
+        mariadb: ['$.city']
+  referenceSql:
+    postgres: select id, address ->> 'city' as city from customer
+    mariadb: select id, json_value(address, '$.city') as city from customer
   rows:
     - { id: 1, city: Oslo }
     - { id: 2, city: Oslo }

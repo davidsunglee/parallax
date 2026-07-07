@@ -33,6 +33,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 |---|---|---|
 | `dialect` identifier | `postgres` | `mariadb` |
 | type mapping (neutral type → column type) | per the `m-core` Postgres column | per the `m-core` MariaDB column (see below) |
+| **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_unquote(json_extract(col, ?))` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
@@ -70,6 +71,27 @@ mappings that **differ** from Postgres:
 Future dialects with a different document type, such as Snowflake `VARIANT`,
 map the same `m-core` `json` neutral type behind this seam; the metamodel does not
 name the concrete storage type.
+
+### Nested extraction form (`m-value-object`)
+
+Reading or filtering an inner attribute of a `valueObject` (`m-value-object`,
+`m-op-algebra`'s `nested*` predicates) is a text/value extraction from the
+structured-document column, and its **spelling and bind shape are a dialect
+decision** owned here — the algebra fixes only the path, not the SQL:
+
+| Aspect | Postgres | MariaDB |
+|---|---|---|
+| extraction function | `jsonb_extract_path_text(col, ?, …)` | `json_unquote(json_extract(col, ?))` |
+| path binds | one `?` per path segment, in path order (`?, ?` for `geo.country`) | one `?` for the whole JSON-path string (`'$.geo.country'`) |
+
+So the same nested read binds differently per dialect: Postgres carries the path
+segments as *separate* key binds (`['geo', 'country']`), MariaDB carries a *single*
+`'$.a.b'` path bind (`['$.geo.country']`). This is why a nested case's `binds`
+are authored as a **per-dialect map** (`m-case-format`). The comparison value bind
+follows the path binds in both. A future dialect with a different document type —
+Snowflake `VARIANT` — slots its own extraction (`GET_PATH(col, '…')` / the `:`
+path operator) behind this same decision point; nothing above the seam names the
+extraction function.
 
 ### `NULL` ordering
 
