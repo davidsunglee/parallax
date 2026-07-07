@@ -1,15 +1,17 @@
 # valueObject nested predicate over a NULL value object — 3VL exclusion
 # (m-op-algebra), on Postgres AND MariaDB.
 #
-# m-op-algebra mandates that when the value-object column is NULL (the path is
-# absent, or the selected value is null) the extraction yields NULL and the row is
-# EXCLUDED. Customer 4 has a null address, so its extraction yields NULL. A
-# nestedNotEq(city, 'Boston') therefore must NOT return customer 4 even though it
-# is intuitively "not Boston" — `not (NULL = 'Boston')` is NULL, not true. Only
-# the present, non-Boston cities (Oslo: 1, 2) survive; Boston (3) fails the
-# inequality and the null VO (4) is excluded by 3VL. This is the structured-column
-# parity of the scalar NULL exclusion (m-op-algebra-029/m-op-algebra-030), proven
-# identically on both dialects.
+# m-op-algebra mandates that when the extraction yields NULL — the value-object
+# column is NULL, the path is absent, the selected value is an explicit JSON
+# `null`, or an intermediate is a non-object — the row is EXCLUDED. Customer 4
+# (null column), customer 5 (missing `city` key) and customer 7 (city an explicit
+# JSON `null`) all extract NULL, so a nestedNotEq(city, 'Boston') must NOT return
+# them even though they are intuitively "not Boston" — `not (NULL = 'Boston')` is
+# NULL, not true. The present, non-Boston cities survive: Oslo (1, 2) and Berlin
+# (6); Boston (3) fails the inequality; the not-present rows (4, 5, 7) are excluded
+# by the absence collapse. This is the structured-column parity of the scalar NULL
+# exclusion (m-op-algebra-029/m-op-algebra-030), proven identically on both
+# dialects (MariaDB json_value collapses the JSON-`null` leaf like Postgres).
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic]
 shape: read
@@ -20,14 +22,15 @@ then:
   statements:
     - sql:
         postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
-        mariadb: select t0.id, t0.name from customer t0 where not json_unquote(json_extract(t0.address, ?)) = ?
+        mariadb: select t0.id, t0.name from customer t0 where not json_value(t0.address, ?) = ?
       binds:
         postgres: [city, Boston]
         mariadb: ['$.city', Boston]
   referenceSql:
     postgres: select id, name from customer where address ->> 'city' <> 'Boston'
-    mariadb: select id, name from customer where json_value(address, '$.city') <> 'Boston'
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') <> 'Boston'
   rows:
     - { id: 1, name: Ada }
     - { id: 2, name: Linus }
+    - { id: 6, name: Rin }
   roundTrips: 1

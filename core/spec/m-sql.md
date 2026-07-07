@@ -552,10 +552,15 @@ differ per dialect (`m-dialect`):
 | Operation | Postgres canonical fragment | MariaDB canonical fragment |
 |---|---|---|
 | project the whole object | `t0.address` (in the `select` list) | `t0.address` (identical) |
-| project an inner field | `jsonb_extract_path_text(t0.address, ?) <as>` | `json_unquote(json_extract(t0.address, ?)) <as>` |
-| `nestedEq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` | `json_unquote(json_extract(t0.address, ?)) = ?` |
-| `nestedNotEq(Class.vo.field, v)` | `not jsonb_extract_path_text(t0.address, ?) = ?` | `not json_unquote(json_extract(t0.address, ?)) = ?` |
-| nested deeper (`vo.a.b`) | `jsonb_extract_path_text(t0.address, ?, ?) = ?` | `json_unquote(json_extract(t0.address, ?)) = ?` |
+| project an inner field | `jsonb_extract_path_text(t0.address, ?) <as>` | `json_value(t0.address, ?) <as>` |
+| `nestedEq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` | `json_value(t0.address, ?) = ?` |
+| `nestedNotEq(Class.vo.field, v)` | `not jsonb_extract_path_text(t0.address, ?) = ?` | `not json_value(t0.address, ?) = ?` |
+| nested deeper (`vo.a.b`) | `jsonb_extract_path_text(t0.address, ?, ?) = ?` | `json_value(t0.address, ?) = ?` |
+| `nestedGt(vo.geo.num, v)` (numeric) | `cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) > ?` | `cast(json_value(t0.address, ?) as double) > ?` |
+| `nestedGte` / `nestedLt` / `nestedLte` | as `nestedGt`, with `>=` / `<` / `<=` | as `nestedGt`, with `>=` / `<` / `<=` |
+| `nestedIn(vo.field, [v, …])` | `jsonb_extract_path_text(t0.address, ?) in (?, …)` | `json_value(t0.address, ?) in (?, …)` |
+| `nestedIsNull(vo.field)` | `jsonb_extract_path_text(t0.address, ?) is null` | `json_value(t0.address, ?) is null` |
+| `nestedIsNotNull(vo.field)` | `not jsonb_extract_path_text(t0.address, ?) is null` | `not json_value(t0.address, ?) is null` |
 
 The path bind(s) precede the comparison bind. **The bind order and count are
 per-dialect** (`m-dialect`): Postgres carries **one bind per path segment** (in
@@ -568,14 +573,14 @@ hole structure diverges, the `binds` are authored as a **per-dialect map**
 # nestedEq(Customer.address.city, 'Oslo'):
 - sql:
     postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
-    mariadb: select t0.id, t0.name from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?
+    mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) = ?
   binds:
     postgres: ['city', 'Oslo']
     mariadb: ['$.city', 'Oslo']
 # nestedEq(Customer.address.geo.country, 'US'):
 - sql:
     postgres: select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
-    mariadb: select t0.id from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?
+    mariadb: select t0.id from customer t0 where json_value(t0.address, ?) = ?
   binds:
     postgres: ['geo', 'country', 'US']
     mariadb: ['$.geo.country', 'US']
@@ -589,7 +594,53 @@ document type — Snowflake `VARIANT` — uses its own extraction (a `VARIANT` p
 expression) behind the same seam while preserving the path order and result
 semantics. The independent `then.referenceSql` oracle spells the extraction a
 **different** way per dialect, authored as a **per-dialect map** — Postgres uses the
-native `->>` operator with an inline bare key (`t0.address ->> 'city'`), MariaDB
-uses the `json_value(t0.address, '$.city')` function (MariaDB has no `->>` operator)
-— each a different formulation from its golden extraction that the harness asserts
-returns the same rows (`m-case-format`).
+native `->>` operator with an inline bare key (`t0.address ->> 'city'`), MariaDB uses
+`nullif(json_unquote(json_extract(t0.address, '$.city')), 'null')` (a different
+function family from the `json_value` golden; the `nullif(…, 'null')` restores the
+absence collapse the `json_unquote(json_extract(…))` pair would otherwise lose on a
+JSON `null` leaf) — each a different formulation from its golden extraction that the
+harness asserts returns the same rows (`m-case-format`).
+
+#### The flat `nested*` operator family
+
+The range operators (`nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`) apply
+the **typed cast** (`m-dialect`) to the extraction before the SQL comparison, since
+the extraction is text and the attribute is numeric. `nestedIn` lowers the
+membership to `<extraction> in (?, …)` — the JSON path bind(s) first, then one
+bind per list value in `values` order. `nestedIsNull` lowers to
+`<extraction> is null` and `nestedIsNotNull` to a **leading `not`**
+(`not <extraction> is null`) — the same negation normalization the scalar
+`isNotNull`/`notIn`/`nestedNotEq` forms use. Because every not-present state casts
+or compares SQL `NULL` (the absence-collapse rule, `m-op-algebra`), all of these
+exclude the four not-present states identically, and `nestedIsNull` matches
+exactly them:
+
+```yaml
+# nestedGt(Customer.address.geo.elevation, 8) — a float64 two-level path, cast:
+- sql:
+    postgres: select t0.id, t0.name from customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) > ?
+    mariadb: select t0.id, t0.name from customer t0 where cast(json_value(t0.address, ?) as double) > ?
+  binds:
+    postgres: ['geo', 'elevation', 8]
+    mariadb: ['$.geo.elevation', 8]
+# nestedIsNull(Customer.address.geo.country) — the not-present collapse:
+- sql:
+    postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) is null
+    mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) is null
+  binds:
+    postgres: ['geo', 'country']
+    mariadb: ['$.geo.country']
+```
+
+The `then.referenceSql` oracle for a numeric predicate coerces a **different** way
+per dialect (Postgres `(t0.address -> 'geo' ->> 'elevation')::double precision`,
+MariaDB `nullif(json_unquote(json_extract(t0.address, '$.geo.elevation')), 'null') + 0`
+— arithmetic coercion of an independent extraction rather than the golden's explicit
+`cast(json_value(…) as double)`), each an independent formulation returning the same
+rows. **All four not-present states collapse identically on both dialects.** The
+MariaDB golden extraction is `json_value` precisely because it maps an explicit JSON
+`null` leaf — like a missing key, a non-object intermediate, and a SQL `NULL` column
+— to SQL `NULL` (as Postgres `jsonb_extract_path_text` does), so every not-present
+state casts or compares SQL `NULL` and the absence-collapse rule (`m-op-algebra`)
+holds portably. The compatibility corpus pins all four states on Postgres **and**
+MariaDB (`m-value-object-013` asserts all four at `geo.country`).

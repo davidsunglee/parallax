@@ -1,0 +1,37 @@
+# valueObject absence collapse: FOUR storage states, one 'not present'
+# (m-value-object, m-op-algebra), on Postgres AND MariaDB.
+#
+# nestedIsNull(Customer.address.geo.country) matches every row whose two-level
+# geo.country extraction is not present — and ALL FOUR distinct storage states
+# collapse to exactly that: the null column (4), the missing-key row (5, `geo`
+# present but no `country`), the non-object intermediate (6, `geo` is the scalar
+# "unknown", which blocks descent), and the explicit JSON `null` leaf (7,
+# `geo.country: null`). All four extract SQL NULL identically on both dialects —
+# MariaDB json_value maps a JSON `null` leaf (and a missing path, and a non-object
+# descent) to SQL NULL, exactly as Postgres jsonb_extract_path_text does. The
+# present countries — NO (1, 2) and US (3) — are excluded. Postgres
+# `jsonb_extract_path_text(t0.address, ?, ?) is null`; MariaDB
+# `json_value(t0.address, ?) is null`.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, nested, json, "null", absence-collapse]
+shape: read
+when:
+  operation:
+    nestedIsNull: { path: Customer.address.geo.country }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) is null
+        mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) is null
+      binds:
+        postgres: [geo, country]
+        mariadb: ['$.geo.country']
+  referenceSql:
+    postgres: select id, name from customer where address -> 'geo' ->> 'country' is null
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.geo.country')), 'null') is null
+  rows:
+    - { id: 4, name: Mary }
+    - { id: 5, name: Kavi }
+    - { id: 6, name: Rin }
+    - { id: 7, name: Nils }
+  roundTrips: 1

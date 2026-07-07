@@ -1,0 +1,29 @@
+# valueObject numeric filter: nestedLte over a THREE-level path with a typed cast
+# (m-value-object, m-sql, m-dialect), on Postgres AND MariaDB.
+#
+# nestedLte(Customer.address.geo.point.lat, 50) casts the three-level float64
+# extraction and compares with `<=`: Postgres `cast(jsonb_extract_path_text(
+# t0.address, ?, ?, ?) as double precision) <= ?` (four binds), MariaDB
+# `cast(json_value(t0.address, ?) as double) <= ?` (two binds). Only Grace (lat
+# 42.3) is at or below 50; Ada and Linus (59.9) are above; the not-present rows
+# (4/5/6/7) cast SQL NULL and are excluded.
+model: models/customer.yaml
+tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric]
+shape: read
+when:
+  operation:
+    nestedLte: { path: Customer.address.geo.point.lat, value: 50 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?, ?) as double precision) <= ?
+        mariadb: select t0.id, t0.name from customer t0 where cast(json_value(t0.address, ?) as double) <= ?
+      binds:
+        postgres: [geo, point, lat, 50]
+        mariadb: ['$.geo.point.lat', 50]
+  referenceSql:
+    postgres: select id, name from customer where (address -> 'geo' -> 'point' ->> 'lat')::double precision <= 50
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.geo.point.lat')), 'null') + 0 <= 50
+  rows:
+    - { id: 3, name: Grace }
+  roundTrips: 1

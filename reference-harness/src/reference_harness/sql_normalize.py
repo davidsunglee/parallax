@@ -68,8 +68,20 @@ _VALUE_TOKENS = frozenset(
 )
 
 # The alias keyword (``AS``) is dropped entirely: the canonical form writes
-# ``orders t0`` and ``t0.id`` projections, never ``orders AS t0``.
+# ``orders t0`` and ``t0.id`` projections, never ``orders AS t0``. The one
+# exception is the ``AS`` inside a ``cast(expr AS type)`` — there it is required
+# syntax, not an alias — which :func:`_render_tokens` preserves (see below).
 _DROP_TOKENS = frozenset({TokenType.ALIAS})
+
+# Function names whose parenthesised body uses ``AS`` as required syntax rather
+# than as an alias introducer. A ``valueObject`` numeric nested predicate lowers
+# to a typed cast of the document extraction (``cast(extract as double precision)``
+# on Postgres, ``cast(extract as double)`` on MariaDB — the m-dialect *typed cast
+# form*), so the cast's ``AS`` MUST survive normalization even though a table /
+# column alias ``AS`` is dropped. sqlglot renders both a ``::`` cast and a
+# ``convert(expr, type)`` as ``CAST(expr AS type)``, so matching ``CAST`` covers
+# every surface; ``CONVERT`` is matched too for defensiveness.
+_CAST_FUNCTIONS = frozenset({"CAST", "CONVERT"})
 
 # A private spacing sentinel used by the renderer to mark a VAR token that is a
 # function name (``lower(…)``). It is never a real sqlglot token type; it only
@@ -106,9 +118,25 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
     """Reassemble a token stream into canonical single-space-separated SQL."""
     quote_char = _QUOTE_CHAR.get(dialect, '"')
     parts: list[tuple[_RenderTokenType, str]] = []
+    # Whether each currently-open paren was opened by a cast function. The `AS`
+    # directly inside a `cast(… as type)` is required syntax and preserved; every
+    # other alias `AS` (table / column) is dropped.
+    cast_paren_stack: list[bool] = []
     for index, token in enumerate(tokens):
+        if token.token_type is TokenType.L_PAREN:
+            previous = tokens[index - 1] if index > 0 else None
+            cast_paren_stack.append(
+                previous is not None
+                and previous.token_type is TokenType.VAR
+                and previous.text.upper() in _CAST_FUNCTIONS
+            )
+        elif token.token_type is TokenType.R_PAREN and cast_paren_stack:
+            cast_paren_stack.pop()
         if token.token_type in _DROP_TOKENS:
-            continue
+            # Keep the `AS` when the innermost open paren is a cast's; drop it
+            # (an alias introducer) everywhere else.
+            if not (cast_paren_stack and cast_paren_stack[-1]):
+                continue
         text = token.text
         # A quoted identifier (reserved word / non-simple name) tokenizes to an
         # IDENTIFIER whose text has the quotes stripped; re-wrap it in the

@@ -128,7 +128,7 @@ then:
   statements:
     - sql:
         postgres: select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
-        mariadb: select t0.id from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?
+        mariadb: select t0.id from customer t0 where json_value(t0.address, ?) = ?
       binds:
         postgres: ['geo', 'country', 'US']
         mariadb: ['$.geo.country', 'US']
@@ -138,8 +138,9 @@ then:
 spelling runs verbatim on every dialect (the authored default), or a dialect-keyed
 map — whose keys **MUST** equal the golden `sql` map's keys (harness-asserted, exactly
 as for a `binds` map) — where the naive spelling itself is dialect-specific (Postgres
-reads the JSON with the `->>` operator and a bare key, MariaDB — which has no `->>`
-operator — with the `json_value(col, '$.path')` function). The harness runs the entry
+reads the JSON with the `->>` operator and a bare key, MariaDB — a **different**
+function family from its `json_value` golden — with
+`nullif(json_unquote(json_extract(col, '$.path')), 'null')`). The harness runs the entry
 matching the executing dialect; a map that omits a dialect its golden `sql` declares is
 a **loud failure**, never a silently skipped oracle (which would let that dialect's
 golden SQL go unchecked by the independent oracle).

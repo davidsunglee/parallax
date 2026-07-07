@@ -1,13 +1,30 @@
 # Fixture rows for the Customer valueObject model (models/customer.yaml).
 #
 # Each `address` value is a nested mapping loaded into the single m-core `json`
-# column. The nested-field filter cases extract `address.city` and
-# `address.geo.country` and match them as text. Postgres golden SQL uses
-# jsonb_extract_path_text, which yields text.
+# column. The nested-field cases extract declared attributes at shallow
+# (`address.city`), two-level (`address.geo.country`, `address.geo.elevation`) and
+# three-level (`address.geo.point.lat`) depth. Postgres golden SQL uses
+# jsonb_extract_path_text (text, cast per m-dialect for the numeric attributes);
+# MariaDB uses json_value (which maps a JSON `null` leaf and a missing path alike
+# to SQL NULL, so the absence collapse holds on both dialects — m-dialect).
 #
-#   id 1 Ada    city Oslo   geo.country NO
-#   id 2 Linus  city Oslo   geo.country NO
-#   id 3 Grace  city Boston geo.country US
+# The rows instantiate the distinguishable presence / absence states the
+# absence-collapse rule (m-op-algebra) folds to "not present":
+#
+#   id 1 Ada    city Oslo   geo NO  elevation 10.5  point (59.9, 10.7)  present object + scalars
+#   id 2 Linus  city Oslo   geo NO  elevation 20.0  point (59.9, 10.8)  present object + scalars
+#   id 3 Grace  city Boston geo US  elevation  5.0  point (42.3,-71.0)  present object + scalars
+#   id 4 Mary   address null                                            SQL-NULL column
+#   id 5 Kavi   (no city)   geo has only zip                            MISSING key (city, geo.country, geo.elevation, geo.point)
+#   id 6 Rin    city Berlin geo "unknown" (a scalar)                    NON-OBJECT intermediate (geo.country / geo.elevation / geo.point block descent)
+#   id 7 Nils   city null   geo.country/elevation/point.* all null      explicit JSON `null` LEAF at every extracted leaf
+#
+# All four not-present states — SQL-NULL column (4), missing key (5), non-object
+# intermediate (6), and explicit JSON `null` leaf (7) — collapse to a SQL-NULL
+# extraction and are excluded by every nested predicate; isNull matches exactly
+# them. Because the MariaDB golden extraction is json_value (JSON `null` -> SQL
+# NULL) all four collapse IDENTICALLY on Postgres AND MariaDB, and are what the
+# cases pin on both dialects.
 Customer:
   - id: 1
     name: Ada
@@ -17,6 +34,10 @@ Customer:
       geo:
         country: NO
         zip: "0150"
+        elevation: 10.5
+        point:
+          lat: 59.9
+          lon: 10.7
   - id: 2
     name: Linus
     address:
@@ -25,6 +46,10 @@ Customer:
       geo:
         country: NO
         zip: "0151"
+        elevation: 20.0
+        point:
+          lat: 59.9
+          lon: 10.8
   - id: 3
     name: Grace
     address:
@@ -33,9 +58,51 @@ Customer:
       geo:
         country: US
         zip: "02108"
-  # id 4 (Mary) has NO address: the nullable valueObject column is null. A nested
-  # extraction over it yields null, so it reads back as a null projected field
-  # (0922) and is EXCLUDED by every nested predicate via 3VL (0925).
+        elevation: 5.0
+        point:
+          lat: 42.3
+          lon: -71.0
+  # id 4 (Mary) has NO address: the nullable valueObject column is SQL NULL. A
+  # nested extraction over it yields null, so it reads back as a null projected
+  # field and is EXCLUDED by every nested predicate via the absence collapse.
   - id: 4
     name: Mary
     address: null
+  # id 5 (Kavi): `address` is present but the `city` key and every `geo` inner
+  # attribute (country / elevation / point) are MISSING keys — the missing-key
+  # not-present state. Extraction yields SQL NULL on both dialects.
+  - id: 5
+    name: Kavi
+    address:
+      street: 5 Harbour Rd
+      geo:
+        zip: "3000"
+  # id 6 (Rin): `city` is present (Berlin) but `geo` is a SCALAR string, not an
+  # object — a non-object intermediate that blocks descent, so geo.country /
+  # geo.elevation / geo.point.lat all extract SQL NULL on both dialects.
+  - id: 6
+    name: Rin
+    address:
+      street: 6 Kastanien Allee
+      city: Berlin
+      geo: unknown
+  # id 7 (Nils): `address` and `geo` are present objects, but the extracted leaves
+  # are explicit JSON `null` — `city` is null, and `geo.country`, `geo.elevation`,
+  # `geo.point.lat` are null. This is the JSON-`null`-LEAF not-present state,
+  # distinct from the missing key (5) and the non-object intermediate (6): the keys
+  # are present with a null value. The MariaDB golden json_value maps JSON `null` to
+  # SQL NULL (as Postgres jsonb_extract_path_text does), so this row collapses to
+  # "not present" identically on both dialects — matched by isNull, excluded by
+  # every comparison.
+  - id: 7
+    name: Nils
+    address:
+      street: 7 Fjord Vei
+      city: null
+      geo:
+        country: null
+        zip: "0152"
+        elevation: null
+        point:
+          lat: null
+          lon: null

@@ -1,0 +1,31 @@
+# valueObject presence test: nestedIsNotNull over a two-level path (m-value-object,
+# m-op-algebra), on Postgres AND MariaDB.
+#
+# nestedIsNotNull(Customer.address.geo.country) is the complement of the collapse
+# case: it matches only the rows whose geo.country is present — NO (1, 2) and US
+# (3). All four not-present states — null column (4), missing key (5), non-object
+# intermediate (6), and explicit JSON `null` leaf (7) — are excluded. It normalizes
+# to a leading `not`: Postgres `not jsonb_extract_path_text(t0.address, ?, ?) is
+# null`, MariaDB `not json_value(t0.address, ?) is null`.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, nested, json, absence-collapse]
+shape: read
+when:
+  operation:
+    nestedIsNotNull: { path: Customer.address.geo.country }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?, ?) is null
+        mariadb: select t0.id, t0.name from customer t0 where not json_value(t0.address, ?) is null
+      binds:
+        postgres: [geo, country]
+        mariadb: ['$.geo.country']
+  referenceSql:
+    postgres: select id, name from customer where address -> 'geo' ->> 'country' is not null
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.geo.country')), 'null') is not null
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+    - { id: 3, name: Grace }
+  roundTrips: 1
