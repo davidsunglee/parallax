@@ -1212,8 +1212,13 @@ def _is_computed_marker(value: Any) -> bool:
     ``coalesce(max(col), ?) + ?`` (its binds are the strategy's coalesce base +
     increment), so the attribute carries no literal ① bind of its own — the
     cross-check skips the bind at that position (DQ-D / R5).
+
+    Matches the EXACT ``writeComputedMarker`` schema shape: a dict with exactly
+    one key ``computed`` whose value is exactly ``"maxPlusOne"``. A multi-key
+    dict or a different ``computed`` value is not a marker the schema accepts, so
+    it is not treated as one here either (it binds as an ordinary literal ①).
     """
-    return isinstance(value, dict) and "computed" in value
+    return isinstance(value, dict) and len(value) == 1 and value.get("computed") == "maxPlusOne"
 
 
 def _increment_marker(value: Any) -> Any:
@@ -1221,9 +1226,18 @@ def _increment_marker(value: Any) -> Any:
 
     The column is emitted as ``col = col + ?`` (e.g. a sequence registry's
     ``next_val``); the marker's integer is the value bound at that ``?``.
+
+    Matches the EXACT ``writeComputedMarker`` schema shape: a dict with exactly
+    one key ``increment`` whose value is a JSON ``integer``. A multi-key dict, a
+    non-integer ``increment`` (a string, a float), or a JSON ``boolean`` (schema
+    type ``boolean``, not ``integer`` — and Python's ``bool`` is an ``int``
+    subclass, so it is excluded explicitly) is not a marker the schema accepts,
+    so it returns ``None`` and the value binds as an ordinary literal ①.
     """
-    if isinstance(value, dict) and "increment" in value:
-        return value["increment"]
+    if isinstance(value, dict) and len(value) == 1 and "increment" in value:
+        amount = value["increment"]
+        if isinstance(amount, int) and not isinstance(amount, bool):
+            return amount
     return None
 
 
