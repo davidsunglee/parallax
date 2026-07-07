@@ -669,24 +669,24 @@
       "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$"
     },
     "nestedComparison": {
-      "description": "A nested-field comparison: a valueObject inner field (referenced by a dotted path) compared against a literal. The value is compared as text (the dialect-specific document extraction yields text), so authored values are strings.",
+      "description": "A nested-field comparison: a valueObject inner attribute (referenced by a dotted path) compared against a TYPED literal. The `path` resolves against the model's declared valueObject structure (first segment a declared valueObject on the entity, intermediates nested valueObjects, leaf a declared attribute); the `value` is a polymorphic `literal` whose type MUST match the leaf attribute's declared type (m-op-algebra). The dialect-specific document extraction (m-sql/m-dialect) casts to that declared type before comparing.",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "value"],
       "properties": {
         "path": { "$ref": "#/$defs/nestedRef" },
-        "value": { "type": "string" }
+        "value": { "$ref": "#/$defs/literal" }
       }
     },
     "nestedEq": {
-      "description": "nestedEq(path, value): filter by an embedded valueObject field's extracted text value.",
+      "description": "nestedEq(path, value): filter where an embedded valueObject attribute equals a typed literal.",
       "type": "object",
       "additionalProperties": false,
       "required": ["nestedEq"],
       "properties": { "nestedEq": { "$ref": "#/$defs/nestedComparison" } }
     },
     "nestedNotEq": {
-      "description": "nestedNotEq(path, value): filter where an embedded valueObject field's extracted text value differs.",
+      "description": "nestedNotEq(path, value): filter where an embedded valueObject attribute differs from a typed literal.",
       "type": "object",
       "additionalProperties": false,
       "required": ["nestedNotEq"],

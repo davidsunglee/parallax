@@ -125,13 +125,25 @@ def lint_tree(compatibility_root: Path) -> list[str]:
 
         reference = then.get("referenceSql")
         if isinstance(reference, str):
-            # referenceSql is dialect-neutral naive SQL; parse with the first
-            # declared golden dialect (or postgres) just to confirm it is valid.
+            # A plain-string referenceSql is dialect-neutral naive SQL; parse with
+            # the first declared golden dialect (or postgres) just to confirm it is
+            # valid.
             dialect = _first_golden_dialect(then.get("statements"))
             try:
                 sqlglot.parse_one(reference, read=sqlglot_dialect(dialect))
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"case {name}: referenceSql does not parse: {exc}")
+        elif isinstance(reference, dict):
+            # A dialect-keyed referenceSql (the structured-document extraction, whose
+            # naive spelling itself diverges) — parse EACH dialect's text under its
+            # own dialect.
+            for dialect, text in reference.items():
+                if not isinstance(text, str):
+                    continue
+                try:
+                    sqlglot.parse_one(text, read=sqlglot_dialect(dialect))
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"case {name}: referenceSql.{dialect} does not parse: {exc}")
 
     return errors
 
@@ -165,7 +177,6 @@ def _lint_golden(entries: Any, where: str, name: str, errors: list[str]) -> None
             continue
         sql = entry.get("sql")
         binds = entry.get("binds", [])
-        bind_count = len(binds) if isinstance(binds, list) else 0
         # A naive entry's sql is a plain string (parse-only); a golden entry's is a
         # dialect-keyed map, each text of which must be canonical.
         if isinstance(sql, str):
@@ -195,6 +206,14 @@ def _lint_golden(entries: Any, where: str, name: str, errors: list[str]) -> None
                         f"      stored:     {text!r}\n"
                         f"      normalized: {canonical!r}"
                     )
+            # A dialect-keyed binds map carries a per-dialect list (Postgres
+            # per-segment JSON keys vs a MariaDB single '$.a.b' path bind), so the
+            # ? count is checked against THIS dialect's binds; a flat list is shared.
+            if isinstance(binds, dict):
+                dialect_binds = binds.get(dialect, [])
+                bind_count = len(dialect_binds) if isinstance(dialect_binds, list) else 0
+            else:
+                bind_count = len(binds) if isinstance(binds, list) else 0
             placeholders = text.count("?")
             if placeholders != bind_count:
                 errors.append(

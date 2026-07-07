@@ -543,37 +543,53 @@ for a discriminator query spells the value inline (`where kind = 'card'`).
 A `valueObject` is stored in **one structured-document column** (`m-core` /
 `m-value-object`), not column-flattened. Reading the whole value object projects
 that backing column directly (`t0.address`). Reading or filtering an **inner
-field** uses the `m-op-algebra` nested-attribute access form and lowers through
-the `m-dialect` seam to a text extraction. For Postgres golden SQL this is
-**`jsonb_extract_path_text`**, whose **path segments are carried as `?` binds**
-(rule 4 — the JSON keys are parameters, never inlined, which also keeps the golden
-SQL a normalizer fixed point):
+attribute** uses the `m-op-algebra` nested-attribute access form and lowers through
+the `m-dialect` **nested-extraction** seam to a per-dialect extraction. The JSON
+path is always carried as `?` bind(s) (rule 4 — never inlined, which keeps the
+golden SQL a normalizer fixed point); the extraction function and the bind shape
+differ per dialect (`m-dialect`):
 
-| Operation | Postgres canonical fragment |
-|---|---|
-| project the whole object | `t0.address` (in the `select` list) |
-| project an inner field | `jsonb_extract_path_text(t0.address, ?) <as>` |
-| `nestedEq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` |
-| `nestedNotEq(Class.vo.field, v)` | `not jsonb_extract_path_text(t0.address, ?) = ?` |
-| nested deeper (`vo.a.b`) | `jsonb_extract_path_text(t0.address, ?, ?) = ?` |
+| Operation | Postgres canonical fragment | MariaDB canonical fragment |
+|---|---|---|
+| project the whole object | `t0.address` (in the `select` list) | `t0.address` (identical) |
+| project an inner field | `jsonb_extract_path_text(t0.address, ?) <as>` | `json_unquote(json_extract(t0.address, ?)) <as>` |
+| `nestedEq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` | `json_unquote(json_extract(t0.address, ?)) = ?` |
+| `nestedNotEq(Class.vo.field, v)` | `not jsonb_extract_path_text(t0.address, ?) = ?` | `not json_unquote(json_extract(t0.address, ?)) = ?` |
+| nested deeper (`vo.a.b`) | `jsonb_extract_path_text(t0.address, ?, ?) = ?` | `json_unquote(json_extract(t0.address, ?)) = ?` |
 
-The path binds precede the comparison bind, in `path`-segment order then value:
+The path bind(s) precede the comparison bind. **The bind order and count are
+per-dialect** (`m-dialect`): Postgres carries **one bind per path segment** (in
+`path` order) then the value; MariaDB carries **one `'$.a.b'` path bind** then the
+value — so a deeper path is three binds on Postgres but two on MariaDB. Because the
+hole structure diverges, the `binds` are authored as a **per-dialect map**
+(`m-case-format`):
 
 ```yaml
 # nestedEq(Customer.address.city, 'Oslo'):
 - sql:
     postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
-  binds: ['city', 'Oslo']
-# nestedEq(Customer.address.geo.country, 'NO'):
+    mariadb: select t0.id, t0.name from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?
+  binds:
+    postgres: ['city', 'Oslo']
+    mariadb: ['$.city', 'Oslo']
+# nestedEq(Customer.address.geo.country, 'US'):
 - sql:
     postgres: select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
-  binds: ['geo', 'country', 'NO']
+    mariadb: select t0.id from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?
+  binds:
+    postgres: ['geo', 'country', 'US']
+    mariadb: ['$.geo.country', 'US']
 ```
 
-The extraction yields **text**, so the compared value is authored as a string and
-matched textually. Other dialects use their equivalent structured-column
-extraction, such as a `VARIANT` path expression, while preserving the same
-path order and result semantics. The independent `then.referenceSql` oracle spells
-the Postgres extraction with the native `->>` operator and inline keys
-(`t0.address ->> 'city' = 'Oslo'`), a different formulation the harness asserts
+The compared `value` is a **typed** `m-op-algebra` literal; the extraction is cast
+to the attribute's declared neutral type before comparing (the typed-cast form is a
+per-dialect `m-dialect` decision). For a `string`-typed attribute the extraction is
+already text and compares directly, as above. A future dialect with a different
+document type — Snowflake `VARIANT` — uses its own extraction (a `VARIANT` path
+expression) behind the same seam while preserving the path order and result
+semantics. The independent `then.referenceSql` oracle spells the extraction a
+**different** way per dialect, authored as a **per-dialect map** — Postgres uses the
+native `->>` operator with an inline bare key (`t0.address ->> 'city'`), MariaDB
+uses the `json_value(t0.address, '$.city')` function (MariaDB has no `->>` operator)
+— each a different formulation from its golden extraction that the harness asserts
 returns the same rows (`m-case-format`).

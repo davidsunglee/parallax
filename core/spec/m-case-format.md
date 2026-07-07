@@ -116,6 +116,31 @@ then:
       binds: [1, 2, 42]
 ```
 
+**`binds` follows the same scalar-or-dialect-keyed form as `sql`.** The flat array
+above is the authored form wherever the bind holes are shared across dialects
+(every ordinary case). Where the hole structure *diverges* — the structured-document
+extraction, where Postgres carries one bind per JSON path segment while MariaDB
+carries a single `'$.a.b'` path bind (`m-dialect`) — `binds` is a **dialect-keyed
+map** whose keys **MUST** equal that statement's `sql` map's keys (harness-asserted):
+
+```yaml
+then:
+  statements:
+    - sql:
+        postgres: select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
+        mariadb: select t0.id from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?
+      binds:
+        postgres: ['geo', 'country', 'US']
+        mariadb: ['$.geo.country', 'US']
+```
+
+`then.referenceSql` is polymorphic the same way: a plain string wherever one naive
+spelling runs verbatim on every dialect (the authored default), or a dialect-keyed
+map where the naive spelling itself is dialect-specific (Postgres reads the JSON with
+the `->>` operator and a bare key, MariaDB — which has no `->>` operator — with the
+`json_value(col, '$.path')` function). The harness runs the entry matching the
+executing dialect.
+
 At the **naive location** (`given.apply`) `sql` is a plain, dialect-agnostic
 **string** run verbatim on every dialect:
 
@@ -177,7 +202,7 @@ the open-bound `infinity` as the literal string `infinity`.
 | `when.at` / `when.observedInZ` | `when` | conflict | a temporal-close conflict's close instant (→ new `out_z`) and observed processing-from (`in_z`) the optimistic gate binds |
 | `when.equivalentEncodings` | `when` | no | alternate surface encodings of `when.operation`; each MUST canonicalize to it |
 | `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on a boundary case |
-| `then.referenceSql` | `then` | conditional | an independent naive oracle (see below); for a deep fetch it is the naive single-statement oracle for the **root** row set |
+| `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
 | `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
 | `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` is REQUIRED for a read case) |
 | `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence (or conflict) case asserts, keyed by table name (REQUIRED for a write case) |

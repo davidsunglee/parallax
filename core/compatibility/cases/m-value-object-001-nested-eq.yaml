@@ -1,16 +1,17 @@
 # valueObject structured-column filter: nested field equality (m-value-object valueObject,
-# m-core json, m-sql).
+# m-core json, m-sql), on Postgres AND MariaDB.
 #
-# Filter Customers by an inner field of the `address` valueObject (stored as one
-# structured-document column). In Postgres golden SQL,
-# nestedEq(Customer.address.city, 'Oslo') lowers to a
-# `jsonb_extract_path_text(t0.address, ?) = ?` extraction; the JSON key is the
-# first bind, the compared value the second ['city', 'Oslo']. Customers 1 and
-# 2 live in Oslo; Grace (Boston) is excluded.
+# Filter Customers by an inner attribute of the `address` valueObject (stored as
+# one structured-document column). nestedEq(Customer.address.city, 'Oslo') lowers
+# per the m-dialect nested-extraction seam: Postgres
+# `jsonb_extract_path_text(t0.address, ?) = ?` carries the JSON key then the value
+# as per-segment binds ['city', 'Oslo']; MariaDB
+# `json_unquote(json_extract(t0.address, ?)) = ?` carries one '$.city' path bind
+# then the value. Customers 1 and 2 live in Oslo; Grace (Boston) is excluded.
 #
-# Non-trivial structured extraction case => referenceSql is the independent
-# oracle, spelling the same Postgres extraction with the native `->>` operator
-# and inline key.
+# The bind hole structure diverges, so `binds` is a dialect-keyed map; the
+# independent `referenceSql` oracle is likewise per dialect (native `->>` spelling
+# — a bare key on Postgres, a '$.path' on MariaDB).
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json]
 shape: read
@@ -21,8 +22,13 @@ then:
   statements:
     - sql:
         postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
-      binds: [city, Oslo]
-  referenceSql: select id, name from customer where address ->> 'city' = 'Oslo'
+        mariadb: select t0.id, t0.name from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?
+      binds:
+        postgres: [city, Oslo]
+        mariadb: ['$.city', Oslo]
+  referenceSql:
+    postgres: select id, name from customer where address ->> 'city' = 'Oslo'
+    mariadb: select id, name from customer where json_value(address, '$.city') = 'Oslo'
   rows:
     - { id: 1, name: Ada }
     - { id: 2, name: Linus }

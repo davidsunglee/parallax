@@ -132,27 +132,38 @@ not part of this schema revision.
 
 ### Nested value-object predicates
 
-Nested predicates read an inner field of an `m-value-object`, which core stores
-as a single dialect-mapped `json` column. They use a dotted path of the form
-`Class.valueObject.segment[.segment...]`:
+Nested predicates read an inner attribute of an `m-value-object`, which core
+stores as a single dialect-mapped `json` column. They use a dotted path of the
+form `Class.valueObject.segment[.segment...]` that resolves against the entity's
+**declared** value-object structure (`m-value-object` — a recursive, typed
+composite), never against opaque JSON keys:
 
 - `Class` is the queried entity.
-- `valueObject` **MUST** name a `valueObject` declared on that entity.
-- The remaining one or more segments are JSON object keys inside the embedded
-  value. They are opaque to the metamodel; core does not require a descriptor for
-  the value object's internal field schema.
+- The first segment **MUST** name a `valueObject` declared on that entity.
+- Each intermediate segment **MUST** name a nested `valueObject` declared on the
+  preceding member.
+- The final (leaf) segment **MUST** name an `attribute` declared on the
+  preceding member.
+
+A resolver **MUST** validate every segment against the declared structure and
+**MUST** reject a path whose first segment is not a declared value object, whose
+intermediate segment is not a declared nested value object, or whose leaf is not a
+declared attribute. Because the structure is declared, the leaf attribute has a
+neutral type, and the comparison is **typed**.
 
 | Operation | Encoding | Meaning |
 |---|---|---|
-| `nestedEq` | `{ "nestedEq": { "path", "value" } }` | the text extracted at `path` equals `value` |
-| `nestedNotEq` | `{ "nestedNotEq": { "path", "value" } }` | the text extracted at `path` does not equal `value` |
+| `nestedEq` | `{ "nestedEq": { "path", "value" } }` | the value at `path` equals `value` |
+| `nestedNotEq` | `{ "nestedNotEq": { "path", "value" } }` | the value at `path` does not equal `value` |
 
-The `value` is authored as a **string** because `m-sql` lowers nested reads to a
-dialect-specific text extraction from the structured-document column. Postgres
-uses `jsonb_extract_path_text`; a Snowflake dialect could use `VARIANT` path
-extraction; other dialects use their `m-dialect` mapping. Path segments after the
-value-object name become binds before the comparison value, in path order:
-`Customer.address.geo.country = "NO"` binds `["geo", "country", "NO"]`.
+The `value` is a polymorphic `literal` (`string` / `number` / `boolean` /
+`null`), and its type **MUST** match the leaf attribute's declared neutral type; a
+resolver **MUST** reject a type-mismatched literal (e.g. a `number` compared
+against a `string`-typed attribute). `m-sql` lowers a nested read to a
+dialect-specific extraction from the structured-document column and **casts** it
+to the declared type before comparing; the extraction spelling, the typed-cast
+form, and the **bind order** (per-segment JSON keys vs a single path bind) are all
+`m-dialect` decisions (`m-sql`, `m-dialect`), not fixed by this algebra.
 
 If the value-object column is SQL `NULL`, the path is absent, or the selected JSON
 value is `null`, the extraction yields SQL `NULL`. In that case neither

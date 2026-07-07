@@ -1,12 +1,14 @@
-# valueObject structured-column filter: a DEEP nested field (m-value-object valueObject, m-sql).
+# valueObject structured-column filter: a DEEP nested field (m-value-object valueObject,
+# m-sql), on Postgres AND MariaDB.
 #
-# The `address` valueObject nests a `geo` object. In Postgres golden SQL,
-# nestedEq(Customer.address.geo.country, 'US') lowers to a multi-segment
-# extraction `jsonb_extract_path_text(t0.address, ?, ?)` — one bind per path
-# segment ('geo', 'country') then the compared value ('US'). Only Grace
-# (Boston, US) qualifies; the two Oslo (NO) customers are excluded.
-#
-# referenceSql spells the same path with native operators (`-> 'geo' ->> 'country'`).
+# The `address` valueObject nests a `geo` valueObject. nestedEq(
+# Customer.address.geo.country, 'US') lowers per the m-dialect nested-extraction
+# seam: Postgres `jsonb_extract_path_text(t0.address, ?, ?) = ?` carries one bind
+# per path segment ('geo', 'country') then the value ('US') — three binds; MariaDB
+# `json_unquote(json_extract(t0.address, ?)) = ?` carries a single '$.geo.country'
+# path bind then the value — two binds. The hole COUNT diverges here, which is
+# exactly why `binds` is a dialect-keyed map. Only Grace (Boston, US) qualifies;
+# the two Oslo (NO) customers are excluded.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json]
 shape: read
@@ -17,8 +19,13 @@ then:
   statements:
     - sql:
         postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) = ?
-      binds: [geo, country, US]
-  referenceSql: select id, name from customer where address -> 'geo' ->> 'country' = 'US'
+        mariadb: select t0.id, t0.name from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?
+      binds:
+        postgres: [geo, country, US]
+        mariadb: ['$.geo.country', US]
+  referenceSql:
+    postgres: select id, name from customer where address -> 'geo' ->> 'country' = 'US'
+    mariadb: select id, name from customer where json_value(address, '$.geo.country') = 'US'
   rows:
     - { id: 3, name: Grace }
   roundTrips: 1

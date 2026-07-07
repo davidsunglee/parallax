@@ -138,7 +138,9 @@ def test_value_object_declares_recursive_typed_structure() -> None:
     # storage property — the whole composite lives in the one document column.
     def _assert_no_storage_props(vo: dict) -> None:
         for attribute in vo.get("attributes", []):
-            assert "column" not in attribute, f"attribute {attribute['name']} must not carry a column"
+            assert "column" not in attribute, (
+                f"attribute {attribute['name']} must not carry a column"
+            )
         for child in vo.get("valueObjects", []):
             assert "column" not in child, f"nested {child['name']} must not carry a column"
             assert "mapping" not in child, f"nested {child['name']} must not carry a mapping"

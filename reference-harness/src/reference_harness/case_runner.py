@@ -239,6 +239,28 @@ def _assert_schema(case: Case) -> None:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:
         raise CaseFailure(f"{case.path.name}: model has no class name")
+    _assert_binds_dialect_keys(case)
+
+
+def _assert_binds_dialect_keys(case: Case) -> None:
+    """A golden entry's dialect-keyed ``binds`` map MUST cover the same dialects as
+    its ``sql`` map (m-case-format resolved question 12). A flat-array ``binds`` is
+    dialect-agnostic and imposes no constraint. This is the cross-field invariant
+    JSON Schema alone cannot express — resolve-per-dialect would otherwise silently
+    miss a dialect whose binds were never authored.
+    """
+    for index, entry in enumerate(case.golden_entries()):
+        binds = entry.get("binds")
+        if not isinstance(binds, dict):
+            continue
+        sql = entry.get("sql")
+        sql_keys = set(sql) if isinstance(sql, dict) else set()
+        if set(binds) != sql_keys:
+            raise CaseFailure(
+                f"{case.path.name}: then.statements[{index}] binds map keys "
+                f"{sorted(binds)} != sql map keys {sorted(sql_keys)}; a dialect-keyed "
+                f"binds map MUST cover exactly the dialects its sql map declares."
+            )
 
 
 def _assert_normalization(case: Case, dialect: str) -> None:
@@ -649,7 +671,7 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     dialect = db.dialect
     (golden,) = case.golden_statements(dialect)
 
-    golden_rows = _query_rows(db, golden, case.statement_binds(0))
+    golden_rows = _query_rows(db, golden, case.statement_binds(0, dialect))
     expected = case.expected_rows
     tolerance = case.tolerance
 
@@ -660,8 +682,9 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
             f"  expected: {expected!r}"
         )
 
-    if case.reference_sql is not None:
-        reference_rows = db.query(case.reference_sql)
+    reference_sql = case.reference_sql_for(dialect)
+    if reference_sql is not None:
+        reference_rows = db.query(reference_sql)
         if not _rows_equal(reference_rows, expected, tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != then.rows.\n"
@@ -768,7 +791,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     root_pins = _root_asof_pins(case)
 
     # Level 0: the root query.
-    root_binds = case.statement_binds(0)
+    root_binds = case.statement_binds(0, dialect)
     root_rows = _query_rows(db, statements[0], root_binds)
 
     # rows_by_entity[entity_name] -> list of result-rows fetched for that entity.
@@ -796,7 +819,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
                 f"keys {parent_keys!r}."
             )
 
-        raw_authored = case.statement_binds(statement_index)
+        raw_authored = case.statement_binds(statement_index, dialect)
         in_slice = raw_authored[: len(parent_keys)]
         asof_suffix = list(raw_authored[len(parent_keys) :])
         if sorted(_coerce_identity_key(b) for b in in_slice) != parent_keys:
@@ -861,8 +884,9 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
 
     # referenceSql (a single naive statement) is the independent oracle for the
     # ROOT row set of the deep fetch.
-    if case.reference_sql is not None:
-        reference_rows = db.query(case.reference_sql)
+    reference_sql = case.reference_sql_for(db.dialect)
+    if reference_sql is not None:
+        reference_rows = db.query(reference_sql)
         root_projection = [_project_like(r, root_rows) for r in reference_rows]
         if not _rows_equal(root_projection, root_rows, case.tolerance):
             raise CaseFailure(

@@ -1,0 +1,217 @@
+"""DB-free tests for the per-dialect binds / referenceSql polymorphism (COR-10).
+
+Value-object cases carry Postgres AND MariaDB golden SQL whose bind holes diverge
+(Postgres per-segment JSON keys vs a MariaDB single ``'$.a.b'`` path bind), so
+``binds`` — like ``sql`` — may be a dialect-keyed map. These tests pin, without a
+database:
+
+* the compatibility-case schema accepts the map form for both ``binds`` and
+  ``referenceSql`` (and rejects a non-array / unknown-dialect binds map);
+* ``Case.statement_binds`` resolves the right list per dialect (and errors when a
+  map is asked for without a dialect);
+* ``Case.reference_sql_for`` picks the right oracle per dialect;
+* ``_assert_binds_dialect_keys`` enforces the keys-match invariant; and
+* the frozen ``m-value-object-*`` corpus is authored with the divergent per-dialect
+  binds on both dialects.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+from jsonschema import Draft202012Validator
+
+from reference_harness.case import Case, Model, discover_cases
+from reference_harness.case_runner import CaseFailure, _assert_binds_dialect_keys
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
+_CASE_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema.json"
+
+
+_PG_NESTED = "select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?"
+_MDB_NESTED = "select t0.id from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?"
+
+
+def _case_validator() -> Draft202012Validator:
+    return Draft202012Validator(json.loads(_CASE_SCHEMA_PATH.read_text(encoding="utf-8")))
+
+
+def _make_case(statements: list[dict[str, Any]], reference_sql: Any = None) -> Case:
+    then: dict[str, Any] = {"statements": statements, "rows": [], "roundTrips": 1}
+    if reference_sql is not None:
+        then["referenceSql"] = reference_sql
+    raw = {
+        "model": "models/customer.yaml",
+        "tags": ["m-value-object"],
+        "shape": "read",
+        "when": {"operation": {"all": {}}},
+        "then": then,
+    }
+    model = Model(
+        path=Path("models/customer.yaml"),
+        descriptor={"entity": {"name": "Customer", "table": "customer", "attributes": []}},
+    )
+    return Case(path=Path("m-value-object-999-x.yaml"), raw=raw, model=model)
+
+
+# --- schema fidelity --------------------------------------------------------
+
+
+def _read_case_doc() -> dict[str, Any]:
+    return {
+        "model": "models/customer.yaml",
+        "tags": ["m-value-object"],
+        "shape": "read",
+        "when": {"operation": {"all": {}}},
+        "then": {
+            "statements": [
+                {
+                    "sql": {"postgres": _PG_NESTED, "mariadb": _MDB_NESTED},
+                    "binds": {"postgres": ["city", "Oslo"], "mariadb": ["$.city", "Oslo"]},
+                }
+            ],
+            "referenceSql": {
+                "postgres": "select id from customer where address ->> 'city' = 'Oslo'",
+                "mariadb": "select id from customer where address ->> '$.city' = 'Oslo'",
+            },
+            "rows": [{"id": 1}],
+            "roundTrips": 1,
+        },
+    }
+
+
+def test_schema_accepts_dialect_keyed_binds_and_reference_sql() -> None:
+    errors = list(_case_validator().iter_errors(_read_case_doc()))
+    assert errors == [], [e.message for e in errors]
+
+
+def test_schema_still_accepts_flat_binds() -> None:
+    doc = _read_case_doc()
+    doc["then"]["statements"][0]["binds"] = ["city", "Oslo"]
+    doc["then"]["statements"][0]["sql"] = {"postgres": "select t0.id from customer t0"}
+    doc["then"]["referenceSql"] = "select id from customer"
+    assert next(_case_validator().iter_errors(doc), None) is None
+
+
+def test_schema_rejects_binds_map_with_non_array_value() -> None:
+    doc = _read_case_doc()
+    doc["then"]["statements"][0]["binds"] = {"postgres": "city"}
+    assert next(_case_validator().iter_errors(doc), None) is not None
+
+
+def test_schema_rejects_binds_map_with_unknown_dialect() -> None:
+    doc = _read_case_doc()
+    doc["then"]["statements"][0]["binds"] = {"snowflake": ["city", "Oslo"]}
+    assert next(_case_validator().iter_errors(doc), None) is not None
+
+
+# --- Case accessors ---------------------------------------------------------
+
+
+def test_statement_binds_flat_ignores_dialect() -> None:
+    case = _make_case([{"sql": {"postgres": "select 1"}, "binds": [1, 2]}])
+    assert case.statement_binds(0) == [1, 2]
+    assert case.statement_binds(0, "postgres") == [1, 2]
+    assert case.statement_binds(0, "mariadb") == [1, 2]
+
+
+def test_statement_binds_map_resolves_per_dialect() -> None:
+    case = _make_case(
+        [
+            {
+                "sql": {"postgres": "select 1", "mariadb": "select 1"},
+                "binds": {"postgres": ["city", "Oslo"], "mariadb": ["$.city", "Oslo"]},
+            }
+        ]
+    )
+    assert case.statement_binds(0, "postgres") == ["city", "Oslo"]
+    assert case.statement_binds(0, "mariadb") == ["$.city", "Oslo"]
+
+
+def test_statement_binds_map_without_dialect_errors() -> None:
+    case = _make_case(
+        [
+            {
+                "sql": {"postgres": "select 1", "mariadb": "select 1"},
+                "binds": {"postgres": [1], "mariadb": [2]},
+            }
+        ]
+    )
+    with pytest.raises(KeyError):
+        case.statement_binds(0)
+
+
+def test_reference_sql_for_string_is_dialect_neutral() -> None:
+    case = _make_case([{"sql": {"postgres": "select 1"}}], reference_sql="select id from customer")
+    assert case.reference_sql_for("postgres") == "select id from customer"
+    assert case.reference_sql_for("mariadb") == "select id from customer"
+
+
+def test_reference_sql_for_map_resolves_per_dialect() -> None:
+    case = _make_case(
+        [{"sql": {"postgres": "select 1"}}],
+        reference_sql={"postgres": "pg oracle", "mariadb": "maria oracle"},
+    )
+    assert case.reference_sql_for("postgres") == "pg oracle"
+    assert case.reference_sql_for("mariadb") == "maria oracle"
+    assert case.reference_sql_for("snowflake") is None
+
+
+# --- keys-match invariant ---------------------------------------------------
+
+
+def test_assert_binds_dialect_keys_accepts_matching_map() -> None:
+    case = _make_case(
+        [
+            {
+                "sql": {"postgres": "select 1", "mariadb": "select 1"},
+                "binds": {"postgres": [1], "mariadb": [2]},
+            }
+        ]
+    )
+    _assert_binds_dialect_keys(case)  # no raise
+
+
+def test_assert_binds_dialect_keys_rejects_missing_dialect() -> None:
+    case = _make_case(
+        [{"sql": {"postgres": "select 1", "mariadb": "select 1"}, "binds": {"postgres": [1]}}]
+    )
+    with pytest.raises(CaseFailure):
+        _assert_binds_dialect_keys(case)
+
+
+def test_assert_binds_dialect_keys_ignores_flat_binds() -> None:
+    case = _make_case([{"sql": {"postgres": "select 1", "mariadb": "select 1"}, "binds": [1]}])
+    _assert_binds_dialect_keys(case)  # flat binds impose no key constraint
+
+
+# --- the frozen value-object corpus ----------------------------------------
+
+
+def _value_object_cases() -> list[Case]:
+    return [
+        c for c in discover_cases(_COMPATIBILITY_ROOT) if c.path.name.startswith("m-value-object-")
+    ]
+
+
+def test_value_object_cases_carry_both_dialects_and_per_dialect_binds() -> None:
+    cases = _value_object_cases()
+    assert cases, "no m-value-object cases discovered"
+    for case in cases:
+        assert case.golden_dialects == {"postgres", "mariadb"}, (
+            f"{case.path.name}: expected postgres+mariadb golden, got {case.golden_dialects}"
+        )
+        # The keys-match invariant holds for every value-object case.
+        _assert_binds_dialect_keys(case)
+        for index, entry in enumerate(case.golden_entries()):
+            binds = entry.get("binds")
+            if binds is None:
+                continue
+            assert isinstance(binds, dict), (
+                f"{case.path.name}: statement {index} binds diverge per dialect, "
+                f"so binds MUST be a per-dialect map"
+            )
