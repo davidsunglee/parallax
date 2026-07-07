@@ -12,6 +12,7 @@
     "markdownlint": "markdownlint-cli2 \"core/spec/**/*.md\" \"*.md\"",
     "commitlint": "commitlint",
     "ts:typecheck": "tsc -b languages/typescript/tsconfig.json",
+    "ts:typecheck-tests": "pnpm run ts:typecheck && node languages/typescript/scripts/typecheck-tests.mjs",
     "ts:test": "vitest run --root languages/typescript",
     "ts:coverage": "vitest run --root languages/typescript --coverage",
     "ts:conformance-coverage": "pnpm run ts:typecheck && node languages/typescript/scripts/conformance-slice-coverage.mjs --json coverage/conformance-slice.json --markdown coverage/conformance-slice.md",
