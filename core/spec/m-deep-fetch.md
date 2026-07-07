@@ -6,6 +6,12 @@ depends on `m-navigate` (deep fetch traverses relationships) and `m-op-list` (de
 fetch *populates* lists). The `deepFetch` **algebra node** is `m-op-algebra`; the
 **SQL emission** is `m-sql`. This module ties them to observable behavior.
 
+Every `deepFetch` path segment names a **relationship** between identity-bearing
+entities; a **value-object segment is invalid** in the path grammar and MUST be
+rejected. Value objects have no identity, no correlation columns, and no
+deep-fetch statement — they materialize *with* their owning entity in the owner's
+own read (`m-value-object`, "Materialization and navigation contract").
+
 ## Deep fetch: one query per non-empty relationship level
 
 `deepFetch(operand, paths)` resolves `operand` (the root query), then eagerly

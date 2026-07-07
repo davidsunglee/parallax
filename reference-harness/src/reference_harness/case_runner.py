@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import json
 import re
 import threading
 from decimal import Decimal
@@ -1026,6 +1027,135 @@ def _graphs_equal(
         return _scalars_equal(a, b, None)
 
     return equal_value(left, right)
+
+
+# --- value-object materialization (m-value-object graph read) ---------------
+
+
+def _decode_document(raw: Any) -> Any:
+    """Decode a structured-document column value to a Python object.
+
+    The single value-object column materializes with the owning entity in one
+    round trip (m-value-object). Postgres returns a ``jsonb`` column already
+    parsed (a ``dict`` / ``list``); MariaDB returns its ``json`` column as the raw
+    JSON text (``str`` / ``bytes``). Both collapse to the same Python structure
+    here, so the projection below is dialect-agnostic. A SQL-NULL column is
+    ``None``.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, bytearray, memoryview)):
+        raw = bytes(raw).decode()
+    if isinstance(raw, str):
+        return json.loads(raw)
+    return raw
+
+
+def _project_value_object(vo: dict[str, Any], decoded: Any) -> Any:
+    """Project a decoded document slot to its DECLARED value-object shape.
+
+    The projection mirrors the typed getter surface (m-value-object): only
+    declared members appear (undeclared JSON keys are dropped), every declared
+    member is always present (null where the document does not supply it), and the
+    absence states collapse exactly as the read predicates do (m-op-algebra,
+    resolved Q5):
+
+    * a ``one`` member is a nested object when the slot is a JSON object, else
+      ``None`` (a SQL-NULL column, a missing key, a JSON ``null``, or a non-object
+      intermediate all read as "not present");
+    * a ``many`` member is the ordered list of its element projections when the
+      slot is a JSON array, else ``[]`` (a null / missing / non-array ``many``
+      value collapses to zero elements).
+    """
+    if vo.get("cardinality", "one") == "many":
+        if isinstance(decoded, list):
+            return [_project_members(vo, element) for element in decoded]
+        return []
+    if isinstance(decoded, dict):
+        return _project_members(vo, decoded)
+    return None
+
+
+def _project_members(vo: dict[str, Any], obj: Any) -> dict[str, Any]:
+    """Build the declared-member projection of one value-object document object.
+
+    Each declared ``attribute`` contributes its leaf value (``None`` for a missing
+    key or a JSON ``null``); each declared nested ``valueObject`` recurses. A
+    non-object element (e.g. a scalar inside a ``many`` array) yields all-null
+    declared members. Undeclared keys are omitted, so the projected node's key set
+    is exactly the declared members — the shape the typed getters expose.
+    """
+    source = obj if isinstance(obj, dict) else {}
+    node: dict[str, Any] = {}
+    for attribute in vo.get("attributes", []):
+        node[attribute["name"]] = source.get(attribute["name"])
+    for nested in vo.get("valueObjects", []):
+        node[nested["name"]] = _project_value_object(nested, source.get(nested["name"]))
+    return node
+
+
+def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, Any]:
+    """A read row with its top-level value-object columns decoded + projected.
+
+    Scalar columns pass through under their result-column name; each declared
+    top-level value object's document column is decoded and replaced by its
+    declared projection, keyed by the value-object name. A value-object column
+    the golden SELECT did not project is left untouched (no synthetic null).
+    """
+    node = _normalize_row(row)
+    for vo in entity.value_objects:
+        column = vo["column"]
+        if column not in node:
+            continue
+        node[vo["name"]] = _project_value_object(vo, _decode_document(node.pop(column)))
+    return node
+
+
+def _assert_value_object_graph(case: Case, db: DatabaseProvider) -> None:
+    """Assert a value object materializes WITH its owner in one round trip.
+
+    A value-object graph read carries a single golden statement (``roundTrips: 1``
+    — enforced by :func:`_assert_round_trip_count`) that projects the owning
+    entity including its structured-document column(s); there is **no** child
+    statement. The harness executes that one statement, decodes each row's
+    value-object column into its declared nested to-one / to-many projection, and
+    asserts the assembled ``{Class: [node, …]}`` graph equals ``then.graph`` — the
+    proof that nested values arrive with the owner, never via a deep fetch
+    (m-value-object, "Materialization and navigation contract").
+
+    When a ``referenceSql`` oracle is present it independently pins the matched
+    row SET (identity columns only, the value-object columns stripped), so the
+    filter that selected the owners is checked by a different formulation without
+    routing the JSON document through row comparison.
+    """
+    dialect = db.dialect
+    (golden,) = case.golden_statements(dialect)
+    entity = case.model.root_entity
+
+    rows = _query_rows(db, golden, case.statement_binds(0, dialect))
+    assembled = {entity.name: [_materialize_owner_node(entity, row) for row in rows]}
+
+    expected = case.expected_graph or {}
+    if not _graphs_equal(assembled, expected):
+        raise CaseFailure(
+            f"{case.path.name}: materialized value-object graph != then.graph.\n"
+            f"  assembled: {assembled!r}\n"
+            f"  expected:  {expected!r}"
+        )
+
+    reference_sql = case.reference_sql_for(dialect)
+    if reference_sql is not None:
+        vo_columns = {vo["column"] for vo in entity.value_objects}
+        identity_rows = [
+            {key: value for key, value in row.items() if key not in vo_columns} for row in rows
+        ]
+        reference_rows = db.query(reference_sql)
+        if not _rows_equal(reference_rows, identity_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: referenceSql rows != golden owner rows (identity).\n"
+                f"  reference: {reference_rows!r}\n"
+                f"  expected:  {identity_rows!r}"
+            )
 
 
 # --- write sequences (Phase 5, m-audit-write) ------------------------------------------
@@ -2736,5 +2866,10 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     _provision(case, db)
     if _is_deep_fetch(case):
         _assert_deep_fetch(case, db)  # layer 2 + 5 (graph)
+    elif case.expected_graph is not None:
+        # A value-object materialization read (m-value-object): the single owner
+        # statement carries the document column; nested values are decoded from it
+        # (no deep-fetch child statement).
+        _assert_value_object_graph(case, db)  # layer 2 + 5 (graph)
     else:
         _assert_flat_equivalence(case, db)  # layer 2

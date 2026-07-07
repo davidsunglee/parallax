@@ -27,6 +27,12 @@ filters the queried entity by the *existence* of a related row without joining
 the related columns into the projection, so a to-many traversal **MUST NOT**
 multiply the queried entity's rows. `notExists` is the negated semi-join.
 
+A navigation path segment names a **relationship**; a **value-object segment is
+invalid** here and MUST be rejected. A value object has no identity to correlate
+on — its inner fields are queried *through* the owner with the `m-op-algebra`
+nested-attribute form, never navigated to (`m-value-object`, "Materialization and
+navigation contract").
+
 The independent `referenceSql` oracle for every navigation filter is the naive
 `key in (select fk from child where <inner op>)` subquery — an obviously-correct
 different formulation that the harness asserts returns the same rows

@@ -1,0 +1,137 @@
+# valueObject materialization: the whole nested composite arrives WITH the owner
+# in ONE round trip (m-value-object "Materialization and navigation contract"),
+# on Postgres AND MariaDB.
+#
+# Reading the owning Customer projects the single structured-document `address`
+# column; every nested value — the to-one `geo` (and its to-one `point`, three
+# levels deep) and the to-many `phones` array — is decoded from that ONE column.
+# There is NO deep-fetch statement and NO per-value-object fetch: roundTrips is 1,
+# a single golden statement, and `then.graph` carries the fully materialized
+# composite for every row. This is the positive proof of the getter-navigation
+# contract — getters to arbitrary depth, materialized with the owner, no child
+# round trip.
+#
+# The graph is the DECLARED projection (what the typed getters expose): only
+# declared members appear (the undeclared `zip` inside `geo` is dropped), every
+# declared member is present (null where the document does not supply it), and the
+# absence states collapse exactly as the read predicates do (m-op-algebra Q5) —
+# a null / missing / JSON-null / non-object `one` member materializes as null
+# (address on id 4; geo on ids 6/8/9/10; point on id 5), and a null / missing /
+# non-array `many` member materializes as [] (phones on ids 3/5/6/8/9/10). The
+# golden SQL is identical on both dialects (a bare column projection); MariaDB
+# returns the `json` column as text and Postgres the `jsonb` column parsed, but
+# both decode to the same composite.
+model: models/customer.yaml
+tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many]
+shape: read
+when:
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.address from customer t0
+        mariadb: select t0.id, t0.name, t0.address from customer t0
+  referenceSql: select id, name from customer
+  graph:
+    Customer:
+      - id: 1
+        name: Ada
+        address:
+          street: 1 Park Ave
+          city: Oslo
+          geo:
+            country: NO
+            elevation: 10.5
+            point: { lat: 59.9, lon: 10.7 }
+          phones:
+            - { type: home, number: '555-1234' }
+            - { type: work, number: '555-9999' }
+      - id: 2
+        name: Linus
+        address:
+          street: 2 Main St
+          city: Oslo
+          geo:
+            country: NO
+            elevation: 20.0
+            point: { lat: 59.9, lon: 10.8 }
+          phones:
+            - { type: home, number: '555-9999' }
+      - id: 3
+        name: Grace
+        address:
+          street: 9 Beacon St
+          city: Boston
+          geo:
+            country: US
+            elevation: 5.0
+            point: { lat: 42.3, lon: -71.0 }
+          phones: []
+      # id 4: SQL-NULL address column -> the whole value object materializes null.
+      - id: 4
+        name: Mary
+        address: null
+      # id 5: address present, but city + every geo inner key MISSING -> city null,
+      # geo present-but-all-null, point (a missing nested one) null, phones (missing
+      # many) [].
+      - id: 5
+        name: Kavi
+        address:
+          street: 5 Harbour Rd
+          city: null
+          geo:
+            country: null
+            elevation: null
+            point: null
+          phones: []
+      # id 6: geo is a NON-OBJECT scalar -> the nested one collapses to null;
+      # phones missing -> [].
+      - id: 6
+        name: Rin
+        address:
+          street: 6 Kastanien Allee
+          city: Berlin
+          geo: null
+          phones: []
+      # id 7: present objects with explicit JSON-null leaves -> city null, geo
+      # present with null country/elevation, point present with null lat/lon; a
+      # real single-element phones array materializes.
+      - id: 7
+        name: Nils
+        address:
+          street: 7 Fjord Vei
+          city: null
+          geo:
+            country: null
+            elevation: null
+            point: { lat: null, lon: null }
+          phones:
+            - { type: work, number: '555-0000' }
+      # id 8: phones an explicit JSON null (non-array many) -> [].
+      - id: 8
+        name: Iris
+        address:
+          street: 8 Null Way
+          city: null
+          geo: null
+          phones: []
+      # id 9: phones a non-array scalar -> [] (its value collides with a real
+      # element's number, but it is not an array).
+      - id: 9
+        name: Omar
+        address:
+          street: 9 Scalar Rd
+          city: null
+          geo: null
+          phones: []
+      # id 10: phones a non-array object -> [] (its content matches the
+      # same-element candidate, but it is not an array).
+      - id: 10
+        name: Priya
+        address:
+          street: 10 Object Ct
+          city: null
+          geo: null
+          phones: []
+  roundTrips: 1
