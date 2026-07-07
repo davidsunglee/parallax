@@ -1,13 +1,10 @@
 # sum + groupBy + having — the canonical aggregate case (m-agg sub-area).
 #
-# Group OrderItem rows by their owning order and sum the quantities, then keep
-# only the groups whose summed quantity exceeds 3. The group totals are:
-#   order 1  -> 2 + 1       = 3   (dropped: not > 3)
-#   order 2  -> 4           = 4   (kept)
-#   order 42 -> 3 + 5       = 8   (kept)
-# The having literal (3) becomes a bind appended after the (absent) WHERE binds.
-# The aggregate result columns are the group key (order_id) and the sum aliased
-# `total_quantity`; these are the keys in expectedRows.
+# Group OrderItem rows by their owning order and sum the quantities, keeping only
+# groups whose summed quantity exceeds the having threshold of 3. The group totals
+# are order 1 -> 3 (dropped, not > 3), order 2 -> 4 (kept), and order 42 -> 8
+# (kept), so `then.rows` holds exactly the two surviving groups. Each result row is
+# the group key (order_id) and the sum aliased `total_quantity`.
 model: models/orders.yaml
 tags: [m-agg, m-sql-agg, sum, groupBy, having]
 shape: read

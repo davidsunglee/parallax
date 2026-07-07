@@ -1,10 +1,10 @@
 # PK generation `max` (m-pk-gen) — allocate into an EMPTY table.
 #
-# `max` strategy: the next id is max(col)+1, expressed portably as an
-# INSERT ... SELECT computing coalesce(max(id), 0) + 1. From an empty table the
-# first allocated id is 1. The strategy lives in the golden SQL; the harness
-# applies the DML and asserts the resulting row. (No oracle: `max` is pinned by its
-# self-describing golden + expectedTableState against the real DB.)
+# The `max` strategy computes the next id as max(col)+1, expressed portably as an
+# INSERT ... SELECT of coalesce(max(id), 0) + 1; from an empty table the first
+# allocated id is 1. The strategy lives in the golden SQL, so the harness applies
+# the DML and asserts the resulting row. There is no oracle — `max` is pinned by its
+# self-describing statement plus `then.tableState` against the real database.
 model: models/pk-max.yaml
 tags: [m-pk-gen, m-unit-work, max, write-sequence]
 shape: writeSequence

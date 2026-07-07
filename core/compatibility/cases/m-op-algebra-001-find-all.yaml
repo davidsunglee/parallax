@@ -1,12 +1,11 @@
 # Walking-skeleton case: all() — no WHERE clause.
 #
 # `all` is the identity of the operation algebra; it lowers to a SELECT over the
-# single aliased table with no predicate. Trivial single-table case, so
-# referenceSql is omitted (expectedRows is verifiable by eye).
-#
-# This is the walking-skeleton case: it exercises the full m-case-format case contract
-# (schema conformance + golden-SQL equivalence + normalization + operation/
-# metamodel serde round-trip) end-to-end, hence the `m-case-format` tag.
+# single aliased table with no predicate. This trivial single-table read omits
+# `then.referenceSql` (its `then.rows` are verifiable by eye) yet exercises the full
+# m-case-format contract end-to-end — schema conformance, golden-SQL equivalence,
+# normalization, and the operation/metamodel serde round-trip — hence the
+# `m-case-format` tag.
 model: models/orders.yaml
 tags: [m-op-algebra, m-conformance-adapter, m-case-format, all, slice-mvp-1]
 shape: read

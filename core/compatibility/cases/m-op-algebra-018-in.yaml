@@ -1,9 +1,8 @@
-# in(values) — set membership against a literal list. Each value becomes a bind,
-# in list order.
+# in(values) — set membership against a literal list.
 #
-# Cross-dialect (Phase 10): `in (?, ?, ?)` is identical SQL on Postgres and
-# MariaDB, so this case carries goldenSql for both dialects (a membership matrix
-# row alongside the `eq` one).
+# `in (?, ?, ?)` is identical SQL on Postgres and MariaDB, so both dialects share
+# one `then.statements` entry — a membership matrix row alongside the `eq` one. The
+# value list {1, 2, 42} returns the three matching orders.
 model: models/orders.yaml
 tags: [m-op-algebra, in, membership, slice-mvp-1]
 shape: read

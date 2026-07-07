@@ -1,18 +1,14 @@
-# Write sequence: INSERT a new audit-only balance (milestone-chaining, m-audit-write).
+# Audit-only INSERT opens a single current milestone [txInstant, infinity) with no
+# prior row to close — the simplest write contract (m-audit-write).
 #
-# An insert in audit-only mode is a single milestone row opened at the
-# transaction instant with the open upper bound infinity: in_z = txInstant,
-# out_z = infinity. There is no prior row to close. This is the simplest write
-# contract — the harness APPLIES the golden DML and asserts the resulting current
-# row, including the native-infinity open bound.
-#
-# Cross-dialect infinity fallback on a WRITE (Phase 10): the insert DML is
-# identical SQL on both dialects, and the open upper bound `out_z = infinity` is
-# carried as a `?` bind. Postgres writes native `'infinity'::timestamptz`; the
-# MariaDB seam writes the max-sentinel `9999-12-31 23:59:59.999999` and reads it
-# back as `infinity` for the table-state comparison — so the asserted
-# `expectedTableState` (authored once, with `out_z: infinity`) holds on both. A
-# writeSequence case has no referenceSql, so it runs cleanly against both dialects.
+# An insert in audit-only mode writes one milestone row opened at the transaction
+# instant with the open upper bound infinity (in_z = txInstant, out_z = infinity);
+# the harness applies the golden DML and asserts the resulting current row. The
+# insert is identical SQL on both dialects and its open bound rides as a bind, so
+# there is no `then.referenceSql` and the case runs cleanly on both. Postgres writes
+# native `'infinity'::timestamptz` while the MariaDB seam writes the max-sentinel
+# `9999-12-31 23:59:59.999999` and reads it back as infinity, so the single authored
+# `then.tableState` (out_z: infinity) holds on each.
 model: models/balance.yaml
 tags: [m-audit-write, m-sql, write-sequence, insert, audit-only, slice-mvp-1]
 shape: writeSequence

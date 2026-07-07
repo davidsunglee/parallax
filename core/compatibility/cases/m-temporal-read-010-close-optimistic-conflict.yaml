@@ -1,26 +1,15 @@
-# Optimistic temporal close, STALE observed in_z (m-temporal-read + m-opt-lock): the close affects ZERO
-# rows even though a CURRENT row exists — the lost-update the in_z gate exists to catch.
+# Optimistic temporal close with a STALE observed in_z affects ZERO rows even though
+# a CURRENT row exists — the lost update the in_z gate catches (m-temporal-read +
+# m-opt-lock).
 #
-# This is why the current-row predicate (out_z = infinity) ALONE is not a gate. A
-# concurrent writer fully chained id 2: it closed the old current milestone at
-# 2024-09-01 AND opened a new current row (value 999.00, in_z 2024-09-01). So a current
-# row (out_z = infinity) still exists — but it is a DIFFERENT milestone than the one we
-# read. Our gated close binds the STALE in_z we observed (2024-02-01):
-#   update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
-#   binds [2024-10-01, 2, infinity, 2024-02-01]  ->  0 rows (no current milestone
-#   carries in_z 2024-02-01 anymore).
-# Without the in_z gate this close would have silently re-closed the concurrent writer's
-# fresh current row — an undetectable lost update (Reladomo's IN_Z rationale).
-#
-# The conflict case runs the precondition (the concurrent chain) + the SINGLE gated
-# close and asserts affectedRows 0; it does NOT run any replacement INSERT. So
-# expectedTableState is the fixtures + the precondition's two id-2 rows (our stale
-# close applied nothing).
-# A concurrent writer fully chained id 2: close the old current row at 2024-09-01,
-# then open a fresh current row (value 999.00, in_z 2024-09-01).
-# id 2's original current milestone, CLOSED by the concurrent writer at 2024-09-01.
-# id 2's NEW current milestone from the concurrent writer (still open) — our stale
-# close did NOT touch it (its in_z is 2024-09-01, not the observed 2024-02-01).
+# This is why the current-row predicate (out_z = infinity) alone is not a gate.
+# `given.apply` fully chains id 2: it closes the old current milestone at 2024-09-01
+# and opens a new current row (value 999.00, in_z 2024-09-01), so a current row still
+# exists but is a DIFFERENT milestone than the one we read. Our close bound to the
+# stale observed in_z (2024-02-01) matches no current milestone and affects 0 rows;
+# without the in_z gate it would silently re-close the concurrent writer's fresh row,
+# an undetectable lost update (Reladomo's IN_Z rationale). `then.tableState` is the
+# fixtures plus the two id-2 rows `given.apply` left behind.
 model: models/balance.yaml
 tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1]
 shape: conflict

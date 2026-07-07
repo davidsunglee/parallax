@@ -1,29 +1,17 @@
-# Optimistic BITEMPORAL inactivation, STALE observed in_z (m-bitemp-write + m-opt-lock): the inactivating
-# close affects ZERO rows even though a current row for the same business window exists.
+# Optimistic bitemporal inactivation with a STALE observed in_z affects ZERO rows
+# even though a current row for the same business window exists — the bitemporal
+# lost update the in_z gate catches (m-bitemp-write + m-opt-lock).
 #
-# As in m-bitemp-write-004 the gate carries both the business discriminator `from_z = ?` and the
-# processing gate `in_z = ?`. Here a concurrent writer re-chained R3: it inactivated R3
-# (closed its processing axis at 2024-05-01) and opened a fresh current milestone for the
-# SAME business window [2024-06-01, infinity) at in_z 2024-05-01. So a current row for
-# that business window still exists — but it is a DIFFERENT processing milestone than the
-# one we observed. Our gated close binds the STALE observed in_z (2024-04-01):
-#   update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
-#   binds [2024-10-01, 1, infinity, 2024-06-01, 2024-04-01]  ->  0 rows.
-# Without the in_z gate this close would have silently re-inactivated the concurrent
-# writer's fresh current milestone — the bitemporal lost update the gate exists to catch.
-#
-# The case runs the precondition (the concurrent re-chain) + the SINGLE gated close and
-# asserts affectedRows 0; it runs no replacement INSERT of our own. expectedTableState is
-# the fixtures + the precondition (R3 inactivated at 2024-05-01, the fresh milestone).
-#
-# Harness-only (bitemporal writes are outside slice-mvp-1).
-# A concurrent writer re-chained R3: inactivate it on the processing axis at 2024-05-01,
-# then open a fresh current milestone for the same business window at in_z 2024-05-01.
-# R1 — superseded on the processing axis, untouched.
-# R2 — the head, still current, untouched.
-# R3 — INACTIVATED by the concurrent writer at 2024-05-01 (out_z now finite).
-# the concurrent writer's fresh current milestone for the same business window —
-# our stale close did NOT touch it (its in_z is 2024-05-01, not the observed 2024-04-01).
+# As in m-bitemp-write-004 the close gates on both the business discriminator
+# `from_z = ?` and the processing `in_z = ?`. Here `given.apply` re-chains R3: a
+# concurrent writer inactivated it (processing axis closed at 2024-05-01) and opened
+# a fresh current milestone for the SAME business window at in_z 2024-05-01. A
+# current row for that window still exists, but it is a different processing
+# milestone than the one we observed, so our close bound to the stale in_z
+# (2024-04-01) matches nothing and affects 0 rows — without the in_z gate it would
+# silently re-inactivate the concurrent writer's fresh milestone. `then.tableState`
+# is the fixtures plus that re-chain. Harness-only (bitemporal writes are outside
+# slice-mvp-1).
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict]
 shape: conflict
