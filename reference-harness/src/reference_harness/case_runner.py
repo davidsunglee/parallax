@@ -1063,9 +1063,17 @@ def _project_value_object(vo: dict[str, Any], decoded: Any) -> Any:
     * a ``one`` member is a nested object when the slot is a JSON object, else
       ``None`` (a SQL-NULL column, a missing key, a JSON ``null``, or a non-object
       intermediate all read as "not present");
-    * a ``many`` member is the ordered list of its element projections when the
+    * a ``many`` member is the collection of its element projections when the
       slot is a JSON array, else ``[]`` (a null / missing / non-array ``many``
       value collapses to zero elements).
+
+    Element order within a ``many`` member is UNSPECIFIED (m-value-object): this
+    projection walks the JSON array in document order for readability, but that
+    order is not part of the contract. ``then.graph`` comparison of value-object
+    arrays reuses :func:`_graphs_equal`'s order-insensitive list comparison (a
+    multiset compare — element multiplicity still matters, only order does not),
+    so a reordered array still matches. That reuse is INTENTIONAL here, not an
+    oversight.
     """
     if vo.get("cardinality", "one") == "many":
         if isinstance(decoded, list):
@@ -1122,6 +1130,12 @@ def _assert_value_object_graph(case: Case, db: DatabaseProvider) -> None:
     asserts the assembled ``{Class: [node, …]}`` graph equals ``then.graph`` — the
     proof that nested values arrive with the owner, never via a deep fetch
     (m-value-object, "Materialization and navigation contract").
+
+    The comparison reuses :func:`_graphs_equal`, whose list comparison is
+    order-insensitive (a multiset compare). For value-object ``many`` members that
+    reuse is INTENTIONAL, not an oversight: element order within a ``many`` member
+    is unspecified (m-value-object), so a reordered ``phones`` array still matches
+    while element multiplicity is still enforced.
 
     When a ``referenceSql`` oracle is present it independently pins the matched
     row SET (identity columns only, the value-object columns stripped), so the

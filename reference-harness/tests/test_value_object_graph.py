@@ -8,6 +8,11 @@ projection logic and the runner wiring OFFLINE (a fake DB serving the Customer
 fixtures the way each driver would), so they also pin that the authored
 `then.graph` of cases 023 / 024 equals the materializer's projection of the real
 fixtures.
+
+The graph comparison of a to-many value-object member (`phones`) is
+order-insensitive (a multiset compare): element order in a `many` member is
+unspecified (m-value-object), so the authored arrays match regardless of order
+while element multiplicity is still enforced.
 """
 
 from __future__ import annotations
