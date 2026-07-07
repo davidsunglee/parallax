@@ -14,11 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from reference_harness.case import discover_cases, load_model
+from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_write_input_columns,
     _assert_write_step_count,
+    _increment_marker,
+    _is_computed_marker,
 )
 from reference_harness.ddl_builder import ddl_for
 
@@ -28,6 +30,15 @@ COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
 def _balance_model():
     return load_model(COMPATIBILITY_ROOT, "models/balance.yaml")
+
+
+def _customer_model():
+    return load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
+
+
+def _synthetic_case(raw: dict) -> Case:
+    """A DB-free Case bound to the customer (value-object) model."""
+    return Case(path=Path("synthetic.yaml"), raw=raw, model=_customer_model())
 
 
 def test_write_sequence_cases_are_discovered_and_self_describe() -> None:
@@ -89,6 +100,119 @@ def test_write_input_column_corruption_is_rejected() -> None:
     row["not_an_attribute"] = row.pop(key)
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
+
+
+# --- role-aware DB-computed marker interpretation (COR-10) ------------------
+#
+# A DB-computed marker (`{computed}` / `{increment}`) is a SCALAR-ATTRIBUTE-only
+# interpretation: a value-object (document) column ALWAYS binds its WHOLE literal
+# document, even when that document is shaped like a marker. The role is resolved
+# from `columnOrder(entity)`, never from the value's shape (m-value-object).
+
+
+def _customer_insert_case(address, sql: str, binds: list) -> Case:
+    return _synthetic_case(
+        {
+            "model": "models/customer.yaml",
+            "tags": ["m-value-object"],
+            "shape": "writeSequence",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "insert",
+                        "entity": "Customer",
+                        "rows": [{"id": 1, "name": "Ada", "address": address}],
+                    }
+                ]
+            },
+            "then": {
+                "statements": [{"sql": {"postgres": sql}, "binds": binds}],
+                "tableState": {"customer": [{"id": 1, "name": "Ada", "address": address}]},
+            },
+        }
+    )
+
+
+def _customer_update_case(address, sql: str, binds: list) -> Case:
+    return _synthetic_case(
+        {
+            "model": "models/customer.yaml",
+            "tags": ["m-value-object"],
+            "shape": "writeSequence",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "update",
+                        "entity": "Customer",
+                        "rows": [{"id": 1, "address": address}],
+                    }
+                ]
+            },
+            "then": {
+                "statements": [{"sql": {"postgres": sql}, "binds": binds}],
+                "tableState": {"customer": [{"id": 1, "name": "Ada", "address": address}]},
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"computed": "maxPlusOne"},
+        {"increment": 1},
+        {"computed": "x", "street": "Main"},
+    ],
+)
+def test_marker_shaped_value_object_insert_binds_the_whole_document(document) -> None:
+    # The `address` value-object column binds its whole document literally in
+    # columnOrder position — the golden's third `?` carries it verbatim, so ① ↔ ②
+    # agrees. (Before role-aware gating, the marker-shaped document was mistaken for
+    # a DB-computed column and its literal bind was skipped, misaligning the binds.)
+    case = _customer_insert_case(
+        document,
+        "insert into customer(id, name, address) values (?, ?, ?)",
+        [1, "Ada", document],
+    )
+    _assert_write_input_columns(case, "postgres")
+
+
+@pytest.mark.parametrize("document", [{"increment": 1}, {"computed": "maxPlusOne"}])
+def test_marker_shaped_value_object_update_replaces_whole_document(document) -> None:
+    # A whole-document UPDATE sets the value-object column exactly like a scalar
+    # (`set address = ?`), binding the literal document — never the marker's
+    # `col = col + ?` self-advance.
+    case = _customer_update_case(
+        document,
+        "update customer set address = ? where id = ?",
+        [document, 1],
+    )
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_scalar_attribute_marker_still_classifies_as_computed() -> None:
+    # No regression: a SCALAR pk attribute carrying `{computed: maxPlusOne}` is still
+    # a DB-computed column — its literal bind is skipped (the golden emits
+    # `coalesce(max(id), ?) + ?`), and only the trailing literal columns (name +
+    # the address document) supply binds.
+    case = _customer_insert_case(
+        {"street": "Main"},
+        "insert into customer(id, name, address) values (coalesce(max(id), ?) + ?, ?, ?)",
+        [0, 1, "Ada", {"street": "Main"}],
+    )
+    case.raw["when"]["writeSequence"][0]["rows"][0]["id"] = {"computed": "maxPlusOne"}
+    # Must not raise: the scalar marker branch is taken (id's bind skipped), while
+    # the value-object `address` still binds as one literal document.
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_marker_helpers_are_shape_predicates_over_raw_values() -> None:
+    # The low-level predicates still recognize a marker by shape; role-awareness
+    # lives in the callers, which never invoke them on a value-object column.
+    assert _is_computed_marker({"computed": "maxPlusOne"}) is True
+    assert _increment_marker({"increment": 3}) == 3
+    assert _is_computed_marker({"street": "Main"}) is False
+    assert _increment_marker({"street": "Main"}) is None
 
 
 def test_temporal_ddl_primary_key_spans_the_as_of_from_column() -> None:

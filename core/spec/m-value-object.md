@@ -98,6 +98,19 @@ whole column is null, not a document of nulls. A `nullable: false` value object
 MUST be present at write time (`m-op-algebra` / the `rejected` write-validation
 cases).
 
+A value-object column's write value is **always the literal document** — the
+object, the array, or the `NULL` above — and is **never** interpreted as a
+DB-computed write marker. The `m-case-format` neutral write input (①) admits, on a
+**scalar attribute** column, a one-key DB-computed marker (the pk-generation
+`{computed: "maxPlusOne"}` and the self-advance `{increment: n}` forms) whose bind
+the database derives; those marker semantics apply **only to scalar attribute
+columns**. A value object binds its whole document even when that document is
+*shaped* like a marker (its sole field happening to be `computed` or `increment`).
+The two are disambiguated by the field's declared **metamodel role** — resolved
+from the entity's `columnOrder` (scalar attribute vs value object) — **not** by the
+value's shape. This keeps the atomic-document guarantee total: a value object is
+bound as one document value regardless of what that value happens to look like.
+
 There are **no partial-document (path-level) writes**. A whole-document update
 **replaces** the entire column value with the newly bound document; there is no
 `UPDATE` of a path *inside* the document and no merge with the prior value. This

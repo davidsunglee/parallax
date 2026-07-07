@@ -1233,6 +1233,33 @@ def _increment_or_value(value: Any) -> Any:
     return increment if increment is not None else value
 
 
+def _document_columns(entity: Entity) -> set[str]:
+    """The physical columns of *entity*'s value objects (m-value-object).
+
+    A value-object column holds the WHOLE embedded composite as one document; its
+    write value is ALWAYS literal document content (a JSON object / array / SQL
+    NULL), NEVER a DB-computed marker. DB-computed marker interpretation
+    (``computed`` / ``increment``) is gated on this set so the marker branch is only
+    ever taken for a SCALAR ATTRIBUTE column — the role is resolved from the
+    metamodel (``columnOrder(entity)`` position), not from the value's shape, so a
+    marker-SHAPED document (``{computed: …}`` / ``{increment: n}``) still binds as
+    one literal document.
+    """
+    return {value_object["column"] for value_object in entity.value_objects}
+
+
+def _set_bind_value(column: str, value: Any, document_columns: set[str]) -> Any:
+    """The bind a set-column's ① value implies, gated on the column's model role.
+
+    A value-object (document) column ALWAYS binds its whole literal document
+    (m-value-object), never a marker; a scalar attribute's self-referential
+    ``{increment: n}`` marker binds its amount.
+    """
+    if column in document_columns:
+        return value
+    return _increment_or_value(value)
+
+
 def _is_self_increment(statement: str, column: str) -> bool:
     """Whether *statement* assigns *column* as a self-referential ``col = col + ?``."""
     pattern = rf"\b{re.escape(column)}\s*=\s*{re.escape(column)}\s*\+\s*\?"
@@ -1252,7 +1279,12 @@ def _classify_write_row(
     the domain ``set`` — all keyed by physical column. A value object resolves to
     its single structured-document column and its value is the WHOLE document
     (m-value-object): it binds atomically as one document value in columnOrder
-    position, never decomposed into path-level binds.
+    position, never decomposed into path-level binds. Because that role is resolved
+    HERE (from ``columnOrder(entity)``), a value-object column's value is ALWAYS
+    literal document content downstream — never a DB-computed marker
+    (``computed`` / ``increment``), even when the document is marker-SHAPED; marker
+    interpretation applies only to a scalar-attribute column (see
+    :func:`_document_columns`).
     """
     pk_columns = {a["column"] for a in entity.attributes if a.get("primaryKey")}
     columns: dict[str, Any] = {}
@@ -1452,8 +1484,17 @@ def _assert_insert_statement(
             f"present attributes"
             f"{' + derived version' if version_col is not None else ''})."
         )
+    # A DB-computed marker is a SCALAR-ATTRIBUTE-only interpretation (m-value-object):
+    # a value-object (document) column ALWAYS binds its whole literal document in
+    # columnOrder position, so it is excluded here even when the authored document is
+    # marker-SHAPED (`{computed: …}`) — the role is resolved from the metamodel, never
+    # from the value's shape.
+    document_columns = _document_columns(entity)
     computed = [
-        c for c in domain if any(_is_computed_marker(cols.get(c)) for cols, *_ in classified)
+        c
+        for c in domain
+        if c not in document_columns
+        and any(_is_computed_marker(cols.get(c)) for cols, *_ in classified)
     ]
     if computed:
         # pk-gen `max`: a DB-COMPUTED column (`coalesce(max(id), ?) + ?`) contributes
@@ -1527,12 +1568,17 @@ def _assert_update_input(
     ]
     # Columns whose ① value is a self-referential `{ increment: <n> }` marker (a
     # sequence registry's `next_val`): the golden assigns `col = col + ?` and the bind
-    # at that `?` is the increment amount, not a plain literal (DQ-D / R5).
+    # at that `?` is the increment amount, not a plain literal (DQ-D / R5). This is a
+    # SCALAR-ATTRIBUTE-only interpretation (m-value-object): a value-object (document)
+    # column ALWAYS binds its whole literal document, so a marker-SHAPED document
+    # (`{increment: n}`) is never read as a self-advance — the role is resolved from
+    # the metamodel, never from the value's shape.
+    document_columns = _document_columns(entity)
     increment_columns = {
         column
         for _, _, set_cols, _ in classified
         for column in set_cols
-        if _increment_marker(set_cols[column]) is not None
+        if column not in document_columns and _increment_marker(set_cols[column]) is not None
     }
     for statement in step_statements:
         golden_set = _parse_set_columns(case, statement)
@@ -1554,11 +1600,16 @@ def _assert_update_input(
         for (_, _, set_cols, _), binds, statement in zip(
             classified, step_binds, step_statements, strict=True
         ):
-            expected = [_increment_or_value(set_cols[column]) for column in set_present]
+            expected = [
+                _set_bind_value(column, set_cols[column], document_columns)
+                for column in set_present
+            ]
             _assert_write_values(case, expected, binds[:width], statement)
         return
     first_set = classified[0][2] if classified else {}
-    expected = [_increment_or_value(first_set[column]) for column in set_present]
+    expected = [
+        _set_bind_value(column, first_set[column], document_columns) for column in set_present
+    ]
     binds = step_binds[0] if step_binds else []
     statement = step_statements[0] if step_statements else ""
     _assert_write_values(case, expected, binds[:width], statement)
