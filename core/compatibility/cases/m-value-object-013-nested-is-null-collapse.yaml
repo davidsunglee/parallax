@@ -4,7 +4,8 @@
 # nestedIsNull(Customer.address.geo.country) matches every row whose two-level
 # geo.country extraction is not present — and ALL FOUR distinct storage states
 # collapse to exactly that: the null column (4), the missing-key row (5, `geo`
-# present but no `country`), the non-object intermediate (6, `geo` is the scalar
+# present but no `country`; likewise the non-array-`phones` rows 8/9/10, which
+# carry no `geo` at all), the non-object intermediate (6, `geo` is the scalar
 # "unknown", which blocks descent), and the explicit JSON `null` leaf (7,
 # `geo.country: null`). All four extract SQL NULL identically on both dialects —
 # MariaDB json_value maps a JSON `null` leaf (and a missing path, and a non-object
@@ -34,4 +35,7 @@ then:
     - { id: 5, name: Kavi }
     - { id: 6, name: Rin }
     - { id: 7, name: Nils }
+    - { id: 8, name: Iris }
+    - { id: 9, name: Omar }
+    - { id: 10, name: Priya }
   roundTrips: 1

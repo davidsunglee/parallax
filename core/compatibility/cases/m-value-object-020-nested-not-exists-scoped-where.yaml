@@ -6,10 +6,16 @@
 # '555-9999') is the exact complement of the scoped exists (m-value-object-019):
 # every row where NO single element carries both fields. Linus (his one element has
 # both) is the only exclusion; everyone else matches — Ada (fields in different
-# elements), Nils (neither field), the empty array (3), the NULL column (4) and the
-# missing-`phones` rows (5, 6) all vacuously have no satisfying element. Postgres
-# negates the same-element `exists`; MariaDB negates the `json_contains`, wrapped in
-# `coalesce(..., 0)` so a NULL/empty/missing array still counts as "no element".
+# elements), Nils (neither field), the empty array (3), the NULL column (4), the
+# missing-`phones` rows (5, 6) and the three NON-ARRAY states (8, 9, 10) all
+# vacuously have no satisfying element.
+#
+# Postgres negates the same-element `exists` (behind the `case`/`jsonb_typeof`
+# array guard of case 015); MariaDB negates the array-type-guarded `json_contains`,
+# wrapped in `coalesce(..., 0)` so a NULL/empty/missing/non-array `phones` still
+# counts as "no element". The object row (10), whose content matches the candidate,
+# is INCLUDED here (its non-array `phones` collapses to not-present), the negation
+# of the 019 trap.
 model: models/customer.yaml
 tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal]
 shape: read
@@ -25,14 +31,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from customer t0 where not exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)
-        mariadb: select t0.id, t0.name from customer t0 where not coalesce(json_contains(t0.address, ?, ?), ?)
+        postgres: select t0.id, t0.name from customer t0 where not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)
+        mariadb: select t0.id, t0.name from customer t0 where not coalesce(json_type(json_extract(t0.address, ?)) = ? and json_contains(t0.address, ?, ?), ?)
       binds:
-        postgres: [phones, type, home, number, '555-9999']
-        mariadb: ['{"type":"home", "number":"555-9999"}', '$.phones', 0]
+        postgres: [phones, 'array', phones, '[]', type, home, number, '555-9999']
+        mariadb: ['$.phones', 'ARRAY', '{"type":"home", "number":"555-9999"}', '$.phones', 0]
   referenceSql:
     postgres: select id, name from customer where coalesce(address -> 'phones' @> '[{"type":"home", "number":"555-9999"}]', false) = false
-    mariadb: select id, name from customer where not exists (select 1 from json_table(address, '$.phones[*]' columns (type varchar(64) path '$.type', number varchar(64) path '$.number')) jt where jt.type = 'home' and jt.number = '555-9999')
+    mariadb: select id, name from customer where json_type(json_extract(address, '$.phones')) is null or json_type(json_extract(address, '$.phones')) <> 'ARRAY' or not exists (select 1 from json_table(address, '$.phones[*]' columns (type varchar(64) path '$.type', number varchar(64) path '$.number')) jt where jt.type = 'home' and jt.number = '555-9999')
   rows:
     - { id: 1, name: Ada }
     - { id: 3, name: Grace }
@@ -40,4 +46,7 @@ then:
     - { id: 5, name: Kavi }
     - { id: 6, name: Rin }
     - { id: 7, name: Nils }
+    - { id: 8, name: Iris }
+    - { id: 9, name: Omar }
+    - { id: 10, name: Priya }
   roundTrips: 1

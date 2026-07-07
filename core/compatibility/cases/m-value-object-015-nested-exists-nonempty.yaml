@@ -4,12 +4,20 @@
 #
 # nestedExists(Customer.address.phones) is true for a row whose `phones` array (a
 # `many` nested value object in the address column) has at least one element. Ada
-# (2 phones), Linus (1) and Nils (1) qualify; Grace's EMPTY array (3), Mary's NULL
-# column (4) and the missing-`phones` rows (5, 6) are all excluded — the four
-# not-present states collapse identically. The array-traversal spelling diverges:
-# Postgres unnests with the strict `jsonb_array_elements` inside a correlated
-# `exists`; MariaDB counts with `json_length(...) > 0` (a NULL/missing path yields
-# NULL, excluded). The independent oracle is a different formulation per dialect.
+# (2 phones), Linus (1) and Nils (1) qualify. Every not-present state is excluded:
+# Grace's EMPTY array (3), Mary's NULL column (4), the missing-`phones` rows (5, 6),
+# AND the three NON-ARRAY `phones` states — the JSON `null` (8), the scalar (9) and
+# the object (10) — all collapse to zero elements.
+#
+# The array-traversal spelling diverges. Postgres unnests with the strict
+# `jsonb_array_elements`, but that function ERRORS on a non-array argument, so the
+# array is first reached through a `case` that yields the extracted value only when
+# `jsonb_typeof(...) = 'array'` and an empty `[]` otherwise (the path binds twice).
+# MariaDB counts with `json_length(...) > 0`, but `json_length` of a scalar/object
+# is >= 1, so an `json_type(json_extract(...)) = 'ARRAY'` guard precedes it. Both
+# guards make a non-array `phones` read as zero elements. The independent oracle is
+# a different formulation per dialect (Postgres `jsonb_array_length`, MariaDB a
+# `json_table` unnest), each itself array-type-guarded.
 model: models/customer.yaml
 tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, array-traversal]
 shape: read
@@ -19,14 +27,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1)
-        mariadb: select t0.id, t0.name from customer t0 where json_length(t0.address, ?) > ?
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1)
+        mariadb: select t0.id, t0.name from customer t0 where json_type(json_extract(t0.address, ?)) = ? and json_length(t0.address, ?) > ?
       binds:
-        postgres: [phones]
-        mariadb: ['$.phones', 0]
+        postgres: [phones, 'array', phones, '[]']
+        mariadb: ['$.phones', 'ARRAY', '$.phones', 0]
   referenceSql:
-    postgres: select id, name from customer where jsonb_array_length(address -> 'phones') > 0
-    mariadb: select id, name from customer where json_contains_path(address, 'one', '$.phones[0]') = 1
+    postgres: select id, name from customer where case when jsonb_typeof(address -> 'phones') = 'array' then jsonb_array_length(address -> 'phones') > 0 else false end
+    mariadb: select id, name from customer where json_type(json_extract(address, '$.phones')) = 'ARRAY' and exists (select 1 from json_table(address, '$.phones[*]' columns (v json path '$')) jt)
   rows:
     - { id: 1, name: Ada }
     - { id: 2, name: Linus }
