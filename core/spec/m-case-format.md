@@ -66,7 +66,7 @@ read by the coverage gate and the language gate; grouping them buys no readabili
 
 #### Case shapes
 
-A case is one of **eight shapes**, named by the required top-level `shape`:
+A case is one of **nine shapes**, named by the required top-level `shape`:
 
 - **`read`** — a queryable `when.operation`, asserting `then.rows` or a deep-fetch
   `then.graph`.
@@ -92,6 +92,10 @@ A case is one of **eight shapes**, named by the required top-level `shape`:
 - **`boundary`** — `when.boundary` ordered actions + `then.outcome`
   (`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
   does not execute, carrying no golden SQL).
+- **`rejected`** — a schema-valid `when.operation` **or** a `when.write` a
+  model-aware validator MUST refuse **before any SQL**, naming the violated
+  normative rule in `then.rejectedRule` (`m-value-object` / `m-op-algebra` negative
+  validation, carrying no golden SQL — see *Rejected cases*, below).
 
 #### The statement entry
 
@@ -214,6 +218,7 @@ the open-bound `infinity` as the literal string `infinity`.
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
+| `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
 | `then.roundTrips` | `then` | no | declared statement count (default `1`); for a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count; for a scenario the SUM of per-step round trips |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
@@ -451,6 +456,59 @@ a surfaced error kind), and its retry configuration under `when.uow` (`retries` 
 `retryOptimisticConflicts`). It carries **no** golden SQL — the concrete DML and
 error types stay per-language. Every boundary case is on the `api-conformance`
 lane.
+
+### Rejected cases (`m-value-object` / `m-op-algebra`)
+
+A **rejected** case proves a **negative**: that a model-aware validator refuses an
+invalid input **before any SQL is emitted** (resolved question 7). It carries the
+invalid input under `when` — **either** an `operation` (a schema-valid
+`m-op-algebra` node) **or** a `write` (a neutral write row, ①) — and a
+`then.rejectedRule` naming the violated normative rule. It carries **no** golden SQL
+(`then.statements` is disallowed): the assertion is that the input never *reaches*
+SQL. The harness (and every language implementation) resolves the input against the
+queried entity's **declared** value-object structure and asserts the refusal happens
+pre-SQL with **exactly** the named rule; a run that accepts the input, or rejects it
+with a different rule, **fails**. Rejection is **dialect-agnostic** — no dialect,
+provisioning, or execution — so a rejected case is checked once, with no database.
+This is the portable analogue of Reladomo refusing a structurally-invalid
+embedded-value use (an embedded value is not a relationship target and cannot be
+reverse-navigated); Parallax pins the same "these operations are structurally
+invalid" semantics as a language-neutral pre-SQL rejection.
+
+`then.rejectedRule` is a **closed vocabulary**, each identifier naming a normative
+MUST — the `m-op-algebra` nested-predicate resolver rules and the `m-value-object`
+materialization/navigation and write-validation contracts. **Operation** rules:
+
+- `nested-path-first-segment-not-value-object` — a nested path's first segment names
+  no value object declared on the queried entity (`m-op-algebra`).
+- `nested-path-unknown-member` — an intermediate segment names no declared nested
+  value object, or the leaf names no declared attribute (`m-op-algebra`).
+- `nested-literal-type-mismatch` — a nested comparison / membership literal's type
+  differs from the leaf attribute's declared neutral type (`m-op-algebra` typed
+  literals).
+- `deep-fetch-value-object-segment` — a `deepFetch` path segment names a value
+  object (`m-value-object` contract 4, `m-deep-fetch`).
+- `navigate-value-object-target` — a `navigate` / `exists` / `notExists` targets a
+  value object (`m-value-object` contract 4, `m-navigate`).
+- `find-root-value-object` — a `find()` is rooted at a value object
+  (`m-value-object` contract 5).
+
+**Write** rules (`m-value-object` write validation — a value object is written
+atomically as one whole document):
+
+- `write-required-attribute-missing` — a required (`nullable: false`) attribute is
+  absent (or null) at any depth.
+- `write-required-value-object-missing` — a required nested value object is absent
+  (or null), or a required `many` array is absent (an **empty** array is fine —
+  emptiness is not a nullability violation).
+- `write-value-type-mismatch` — a document field value's type differs from the
+  attribute's declared neutral type.
+
+Purely **regex-level** negatives — an empty path after the value-object name, a
+bad-cased segment — are the operation schema's job (the `nestedRef` grammar) and
+stay **schema-validation unit tests**, never `rejected` cases: a syntactically
+malformed operation is refused at layer 1 (schema conformance) before a model-aware
+resolver ever runs.
 
 ## Case-header house style
 

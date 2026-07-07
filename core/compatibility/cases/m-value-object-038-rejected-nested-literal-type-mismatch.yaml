@@ -1,0 +1,17 @@
+# Negative (m-op-algebra typed-literal MUST, resolved Q7): a nested comparison whose
+# literal type mismatches the declared attribute is refused PRE-SQL.
+#
+# Because a value object's structure is DECLARED, the leaf attribute has a neutral
+# type and the comparison is TYPED. `Customer.address.city` is a `string` attribute,
+# so comparing it against the NUMBER `42` is a type mismatch a model-aware resolver
+# MUST reject before any SQL (m-op-algebra: "a resolver MUST reject a type-mismatched
+# literal"). The node is schema-valid — the polymorphic `literal` admits a number —
+# so only model-aware validation, resolving the leaf's declared `string` type, catches it.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, rejected, negative, nested]
+shape: rejected
+when:
+  operation:
+    nestedEq: { path: Customer.address.city, value: 42 }
+then:
+  rejectedRule: nested-literal-type-mismatch

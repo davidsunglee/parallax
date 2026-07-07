@@ -1,0 +1,21 @@
+# Negative (m-value-object contract 4 / m-deep-fetch, resolved Q7): a deepFetch path
+# containing a value-object segment is refused PRE-SQL.
+#
+# `deepFetch` eager-fetches relationship levels between identity-bearing entities. A
+# value object has no identity, no correlation column, and materializes WITH its
+# owner in the same read (m-value-object "Materialization and navigation contract" 2),
+# so it is NOT a deep-fetch target: `["Customer.address"]` names the `address` value
+# object, which is invalid in a path grammar. A model-aware resolver MUST reject it
+# before any SQL. The node is schema-valid (`address` matches the relationship-ref regex).
+model: models/customer.yaml
+tags: [m-value-object, m-deep-fetch, rejected, negative, materialization]
+shape: rejected
+when:
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [Customer.address]
+then:
+  rejectedRule: deep-fetch-value-object-segment

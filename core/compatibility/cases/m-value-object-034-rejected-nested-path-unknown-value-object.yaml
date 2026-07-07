@@ -1,0 +1,17 @@
+# Negative (m-value-object / m-op-algebra, resolved Q7): a nested path whose first
+# segment is not a declared value object is refused PRE-SQL.
+#
+# `nestedEq(Customer.address.city, …)` resolves against Customer's DECLARED
+# value-object structure, never against opaque JSON keys. Here the first segment is
+# `contact`, which Customer does not declare as a value object, so a model-aware
+# resolver MUST reject the operation before emitting any SQL (m-op-algebra
+# nested-predicate resolver MUST). The path is schema-VALID (`nestedRef` regex), so
+# only model-aware validation catches it — exactly the gap the `rejected` shape closes.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, rejected, negative, nested]
+shape: rejected
+when:
+  operation:
+    nestedEq: { path: Customer.contact.city, value: Oslo }
+then:
+  rejectedRule: nested-path-first-segment-not-value-object

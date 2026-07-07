@@ -1,0 +1,23 @@
+# Negative (m-value-object write validation, resolved Q7): a write missing a required
+# DEPTH-3 attribute is refused PRE-SQL.
+#
+# Required-ness reaches the deepest nested value object. Contact's
+# `address.geo.point.lat` is a required (`nullable: false`) attribute at depth 3; this
+# write supplies address (street/city) and geo (country) and a present `point` — but
+# that `point` omits `lat` (only `lon` is present), so model-aware write validation
+# MUST reject it before any DML (m-value-object writes).
+model: models/contact.yaml
+tags: [m-value-object, rejected, negative, write, nested]
+shape: rejected
+when:
+  write:
+    id: 3
+    name: Cairn
+    address:
+      street: 2 Fjord Vei
+      city: Bergen
+      geo:
+        country: "NO"
+        point: { lon: 5.3 }
+then:
+  rejectedRule: write-required-attribute-missing

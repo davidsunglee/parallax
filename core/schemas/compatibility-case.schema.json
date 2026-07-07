@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedInZ` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of eight shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); or a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedInZ` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags", "shape"],
@@ -139,6 +139,24 @@
           "not": { "required": ["statements"] }
         }
       }
+    },
+    {
+      "description": "A rejected case (m-value-object / m-op-algebra negative validation, resolved Q7): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries the invalid input — EITHER an `operation` (a SCHEMA-VALID m-op-algebra node that violates a resolver MUST or the m-value-object materialization/navigation contract: a nested path whose first segment is not a declared value object, a nested comparison whose literal type mismatches the declared attribute, a `deepFetch` path or a relationship navigation aimed at a value-object segment, or a find() rooted at a value object) OR a `write` (a neutral write row whose value-object document omits a required attribute / required nested value object at any depth, or carries a type-mismatched value). It carries NO golden SQL — `then.statements` is disallowed — because rejection is asserted pre-SQL, on no dialect. Purely regex-level negatives (an empty path after the value-object name, a bad-cased segment) are the operation schema's job and stay schema-validation unit tests, NOT rejected cases.",
+      "required": ["shape", "when", "then"],
+      "properties": {
+        "shape": { "const": "rejected" },
+        "when": {
+          "propertyNames": { "enum": ["operation", "write"] }
+        },
+        "then": {
+          "required": ["rejectedRule"],
+          "not": { "required": ["statements"] }
+        }
+      },
+      "anyOf": [
+        { "properties": { "when": { "required": ["operation"] } } },
+        { "properties": { "when": { "required": ["write"] } } }
+      ]
     }
   ],
   "allOf": [
@@ -190,7 +208,8 @@
         "coherence",
         "error",
         "concurrencySuccess",
-        "boundary"
+        "boundary",
+        "rejected"
       ]
     },
     "given": {
@@ -609,6 +628,20 @@
             "deadlock",
             "serialization-failure",
             "lock-wait-timeout"
+          ]
+        },
+        "rejectedRule": {
+          "description": "rejected cases (m-value-object / m-op-algebra negative validation, resolved Q7). The normative rule the input violates, from a small closed vocabulary a model-aware PRE-SQL validator (and every language implementation) MUST enforce, asserted BEFORE any SQL is emitted. OPERATION rules: `nested-path-first-segment-not-value-object` (a nested path's first segment names no declared value object on the queried entity — m-op-algebra nested-predicate resolver MUST); `nested-path-unknown-member` (an intermediate segment names no declared nested value object, or a leaf names no declared attribute); `nested-literal-type-mismatch` (a nested comparison/membership literal's type differs from the leaf attribute's declared neutral type — m-op-algebra typed-literal MUST); `deep-fetch-value-object-segment` (a `deepFetch` path segment names a value object — m-value-object materialization/navigation contract 4, m-deep-fetch); `navigate-value-object-target` (a `navigate`/`exists`/`notExists` targets a value object — m-value-object contract 4, m-navigate); `find-root-value-object` (a find() is rooted at a value object — m-value-object contract 5). WRITE rules: `write-required-attribute-missing` (a required `nullable:false` attribute is absent at some depth — m-value-object write validation); `write-required-value-object-missing` (a required `nullable:false` nested value object is absent, or a required `many` array is absent — emptiness is fine); `write-value-type-mismatch` (a document field value's type differs from the declared attribute's neutral type).",
+          "enum": [
+            "nested-path-first-segment-not-value-object",
+            "nested-path-unknown-member",
+            "nested-literal-type-mismatch",
+            "deep-fetch-value-object-segment",
+            "navigate-value-object-target",
+            "find-root-value-object",
+            "write-required-attribute-missing",
+            "write-required-value-object-missing",
+            "write-value-type-mismatch"
           ]
         },
         "roundTrips": {

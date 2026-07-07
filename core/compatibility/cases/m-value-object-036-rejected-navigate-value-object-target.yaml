@@ -1,0 +1,19 @@
+# Negative (m-value-object contract 4 / m-navigate, resolved Q7): relationship
+# navigation aimed at a value object is refused PRE-SQL.
+#
+# `navigate(rel)` filters by traversing a RELATIONSHIP to another identity-bearing
+# entity, lowering to a correlated EXISTS semi-join. `address` is a value object, not
+# a relationship — it has no identity to correlate and no reverse relationship to
+# navigate (m-value-object "Materialization and navigation contract" 4) — so a
+# model-aware resolver MUST reject `navigate(Customer.address)` before any SQL. The
+# node is schema-valid (`address` matches the relationship-ref regex); only
+# model-aware validation catches the misuse.
+model: models/customer.yaml
+tags: [m-value-object, m-navigate, rejected, negative]
+shape: rejected
+when:
+  operation:
+    navigate:
+      rel: Customer.address
+then:
+  rejectedRule: navigate-value-object-target

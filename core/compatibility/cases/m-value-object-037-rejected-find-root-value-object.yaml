@@ -1,0 +1,18 @@
+# Negative (m-value-object contract 5, resolved Q7): a find() rooted at a value
+# object is refused PRE-SQL.
+#
+# A value object is not a queryable root entity — it is queried only THROUGH its
+# owner (a nested-attribute predicate on the owner). Here the operation roots the
+# query at the value object itself: the attribute reference `address.city` names the
+# `address` VALUE OBJECT as the class segment (rather than the `Customer` entity), so
+# a model-aware resolver MUST reject it before any SQL (m-value-object "Materialization
+# and navigation contract" 5). The reference is schema-valid (`address.city` matches
+# the attribute-ref regex); only model-aware validation knows `address` is a value object.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, rejected, negative]
+shape: rejected
+when:
+  operation:
+    isNotNull: { attr: address.city }
+then:
+  rejectedRule: find-root-value-object

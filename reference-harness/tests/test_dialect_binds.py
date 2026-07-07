@@ -254,8 +254,13 @@ def test_assert_reference_sql_dialect_keys_ignores_string() -> None:
 
 
 def _value_object_cases() -> list[Case]:
+    # The `rejected`-shape value-object cases (m-value-object negative validation)
+    # assert a PRE-SQL refusal and carry NO golden SQL, so the per-dialect-binds
+    # invariant (which is about golden extraction / write DML) does not apply to them.
     return [
-        c for c in discover_cases(_COMPATIBILITY_ROOT) if c.path.name.startswith("m-value-object-")
+        c
+        for c in discover_cases(_COMPATIBILITY_ROOT)
+        if c.path.name.startswith("m-value-object-") and c.shape != "rejected"
     ]
 
 
