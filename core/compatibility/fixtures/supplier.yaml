@@ -1,0 +1,54 @@
+# Fixture rows for the Supplier model (models/supplier.yaml) — the audit-only
+# (processing-temporal) milestone history the as-of READ cases query. Each `address`
+# fixture value is a whole embedded-composite document loaded into the one structured
+# document column; it rides the milestoned row exactly like the scalar columns.
+#
+# Keyed by class name; each row is a map of attribute-name -> value. Instant columns
+# are authored as ISO-8601 UTC strings; the open upper bound is the literal
+# `infinity`. The data loader resolves attribute names to columns via the descriptor
+# (processingFrom/processingTo -> in_z/out_z) and stores `address` as one document.
+#
+# The history is shaped so as-of reads return a DIFFERENT document per milestone:
+#   id 1 (Nordic Foods): address D1a known [2024-01-01, 2024-06-01) — SUPERSEDED,
+#                        then address D1b known [2024-06-01, infinity) — CURRENT.
+#                        D1a and D1b differ (city Oslo->Bergen, a different phone),
+#                        so the document visibly rides the milestone.
+#   id 2 (Baltic Traders): address D2 known [2024-02-01, infinity) — CURRENT
+#                          (a single milestone; its phones array is empty).
+#
+# Reads:
+#   as-of now (default)  -> current rows: (1, D1b), (2, D2).
+#   as-of 2024-04-01     -> then-known rows: (1, D1a), (2, D2).
+Supplier:
+  - id: 1
+    name: Nordic Foods
+    processingFrom: "2024-01-01T00:00:00+00:00"
+    processingTo: "2024-06-01T00:00:00+00:00"
+    address:
+      street: 1 Old Street
+      city: Oslo
+      geo:
+        country: "NO"
+      phones:
+        - { type: home, number: '555-0100' }
+  - id: 1
+    name: Nordic Foods
+    processingFrom: "2024-06-01T00:00:00+00:00"
+    processingTo: infinity
+    address:
+      street: 2 New Avenue
+      city: Bergen
+      geo:
+        country: "NO"
+      phones:
+        - { type: work, number: '555-0200' }
+  - id: 2
+    name: Baltic Traders
+    processingFrom: "2024-02-01T00:00:00+00:00"
+    processingTo: infinity
+    address:
+      street: 5 Port Road
+      city: Riga
+      geo:
+        country: LV
+      phones: []

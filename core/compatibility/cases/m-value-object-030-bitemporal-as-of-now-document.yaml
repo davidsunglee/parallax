@@ -1,0 +1,51 @@
+# valueObject on a FULL BITEMPORAL owner: the fully-current document (both axes now)
+# (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
+#
+# `address` declares NO asOfAttributes of its own — it inherits BOTH of the Branch's
+# dimensions. Pinning businessDate = now AND processingDate = now injects each axis's
+# current-row equality (thru_z = infinity AND out_z = infinity, two infinity binds), so
+# the read returns the rectangle current on both axes. Over branch id 1's history that
+# is R3 — the corrected address D3 (Tampere, two phones), true in the world now and
+# known now. R1 is superseded on the processing axis; R2 (the head) is current on
+# processing but its business thru_z is finite, so business=now excludes it. Only R3's
+# document materializes, decoded from the one structured-document column with the owner.
+#
+# The golden SQL is IDENTICAL on both dialects (a bare column projection + the two
+# injected current-row predicates); both infinity binds are owned by the m-dialect seam,
+# so `binds` is one shared flat array. The dialect-neutral referenceSql ranges both
+# `to` columns above the year-9000 floor (selecting the fully-current rectangle on both
+# dialects) and pins the matched owner identity.
+model: models/branch.yaml
+tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, bitemporal, as-of, both-axes, materialization, graph]
+shape: read
+when:
+  operation:
+    asOf:
+      operand:
+        asOf:
+          operand:
+            all: {}
+          asOfAttr: Branch.processingDate
+          date: now
+      asOfAttr: Branch.businessDate
+      date: now
+then:
+  statements:
+    - sql:
+        postgres: select t0.br_id, t0.name, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
+        mariadb: select t0.br_id, t0.name, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
+      binds: [infinity, infinity]
+  referenceSql: select br_id, name from branch where thru_z > '9000-01-01' and out_z > '9000-01-01'
+  graph:
+    Branch:
+      - br_id: 1
+        name: Central Branch
+        address:
+          street: 30 New Road
+          city: Tampere
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-3000' }
+            - { type: fax, number: '555-3001' }
+  roundTrips: 1

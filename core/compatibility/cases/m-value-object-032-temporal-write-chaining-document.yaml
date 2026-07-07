@@ -1,0 +1,124 @@
+# valueObject on a UNITEMPORAL (processing) owner: the document RIDES milestone
+# chaining exactly like a scalar column (m-value-object "Inherited temporality",
+# m-audit-write), on Postgres AND MariaDB.
+#
+# An audit-only update NEVER mutates in place. It (1) closes the current row
+# (out_z = the transaction instant) and (2) chains a NEW current row carrying the new
+# value. The `address` value object participates with NO value-object-specific write
+# machinery: it is one document bind in columnOrder position ([sup_id, name, in_z,
+# out_z, address]) in every full-row INSERT, and it is ABSENT from the close UPDATE
+# (which sets only out_z, keyed on the current-row predicate). So the golden DML treats
+# the document column exactly like the scalar `name` column — copied verbatim onto the
+# chained milestone — proving the composite rides the owner's row.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert : open [2024-01-01, infinity) with address document D1     (1 statement)
+#   step 2 update : close the current row (out_z = 2024-06-01) and chain a new
+#                   current row [2024-06-01, infinity) with a DIFFERENT document D2
+#                   (a different city + an extra phone — proving the WHOLE new
+#                   document is carried, never a path-level merge)             (2 statements)
+#
+# Resulting state: the superseded D1 row (out_z finite) AND the current D2 row
+# (out_z = infinity) — the audit trail of the address over processing time. The INSERT
+# DML is identical on both dialects (a plain column bind, no JSON function); only the
+# document VALUE is adapted at bind time (Postgres `jsonb`, MariaDB `json` text), so the
+# hole structure is shared and `binds` is one flat array with the document riding as one
+# element. `then.tableState` decodes the document column so the authored documents
+# compare identically on both dialects.
+model: models/supplier.yaml
+tags: [m-value-object, m-audit-write, m-sql, write-sequence, update, temporal, audit-only, json, nested, to-many]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Supplier
+      statements: 1
+      note: open a current milestone [2024-01-01, infinity) carrying the address document D1
+      rows:
+        - id: 1
+          name: Nordic Foods
+          address:
+            street: 1 Old Street
+            city: Oslo
+            geo:
+              country: "NO"
+            phones:
+              - { type: home, number: '555-0100' }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: update
+      entity: Supplier
+      statements: 2
+      note: close the current row, then chain a new current milestone carrying the new document D2
+      rows:
+        - id: 1
+          name: Nordic Foods
+          address:
+            street: 2 New Avenue
+            city: Bergen
+            geo:
+              country: "NO"
+            phones:
+              - { type: work, number: '555-0200' }
+              - { type: home, number: '555-0201' }
+      at: "2024-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into supplier(sup_id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)
+        mariadb: insert into supplier(sup_id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - Nordic Foods
+        - "2024-01-01T00:00:00+00:00"
+        - infinity
+        - street: 1 Old Street
+          city: Oslo
+          geo:
+            country: "NO"
+          phones:
+            - { type: home, number: '555-0100' }
+    - sql:
+        postgres: update supplier set out_z = ? where sup_id = ? and out_z = ?
+        mariadb: update supplier set out_z = ? where sup_id = ? and out_z = ?
+      binds: ["2024-06-01T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into supplier(sup_id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)
+        mariadb: insert into supplier(sup_id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - Nordic Foods
+        - "2024-06-01T00:00:00+00:00"
+        - infinity
+        - street: 2 New Avenue
+          city: Bergen
+          geo:
+            country: "NO"
+          phones:
+            - { type: work, number: '555-0200' }
+            - { type: home, number: '555-0201' }
+  tableState:
+    supplier:
+      - sup_id: 1
+        name: Nordic Foods
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-06-01T00:00:00+00:00"
+        address:
+          street: 1 Old Street
+          city: Oslo
+          geo:
+            country: "NO"
+          phones:
+            - { type: home, number: '555-0100' }
+      - sup_id: 1
+        name: Nordic Foods
+        in_z: "2024-06-01T00:00:00+00:00"
+        out_z: infinity
+        address:
+          street: 2 New Avenue
+          city: Bergen
+          geo:
+            country: "NO"
+          phones:
+            - { type: work, number: '555-0200' }
+            - { type: home, number: '555-0201' }
+  roundTrips: 3

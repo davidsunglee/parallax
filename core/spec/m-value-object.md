@@ -69,7 +69,25 @@ no timeline. Its backing column is part of the owning entity's column order, so 
 rides the owner's (possibly milestoned) row and inherits whatever temporal
 classification the entity declares (`m-temporal-read`). On a temporal owner the
 document is carried across milestone chaining exactly like any scalar column;
-there is no value-object-specific temporal machinery.
+there is **no value-object-specific temporal machinery** — the as-of read predicate
+and the milestone-chaining write are the *owner's*, and the document is simply the
+value in one more column.
+
+This is proven end to end on a **unitemporal** (audit-only, processing) owner and a
+**bitemporal** owner, each declaring the same nested-plus-to-many value object. As-of
+`read` cases show the document is visible **per milestone** — reading the *same* owner
+at different processing / business instants returns a *different* document:
+`m-value-object-028` returns each supplier's current-milestone document while
+`m-value-object-029` returns a superseded processing milestone's; `m-value-object-030`
+returns the fully-current (both-axes) document while `m-value-object-031` reconstructs
+the originally-believed document of a past audit read. `writeSequence` cases show the
+document is **carried across the chain** exactly like a scalar column: an audit-only
+update closes the current row and chains a new milestone whose golden DML binds the
+whole document in `columnOrder` position (`m-value-object-032`, `m-audit-write`), and a
+bitemporal `updateUntil` rectangle split carries the document verbatim onto the
+head / middle / tail rectangles (`m-value-object-033`, `m-bitemp-write`) — in both, the
+close / inactivating `UPDATE` sets only the interval bound and never touches the
+document column.
 
 ## Reading and filtering inner fields
 
@@ -118,8 +136,10 @@ matches the single-column storage model (`m-value-object` [one
 column](#one-column--never-extra-columns-rows-or-joins)): the document is the unit
 of write exactly as it is the unit of storage. On a temporal owner the same
 atomic document rides milestone chaining like any scalar column (see [Inherited
-temporality](#inherited-temporality)); there is no value-object-specific write
-machinery.
+temporality](#inherited-temporality)): an audit-only update chains it onto the new
+current milestone (`m-value-object-032`) and a bitemporal `updateUntil` carries it
+across the rectangle split (`m-value-object-033`); there is no
+value-object-specific write machinery.
 
 Atomic writes are proven by `writeSequence` cases whose golden DML binds the
 document in `columnOrder` position and whose `then.tableState` reads it back

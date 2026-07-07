@@ -1,0 +1,69 @@
+# Fixture rows for the Branch model (models/branch.yaml) — the full bitemporal
+# milestone history the both-axis as-of READ cases query. Each `address` fixture
+# value is a whole embedded-composite document loaded into the one structured
+# document column; it rides the milestoned rectangle exactly like the scalar columns.
+#
+# Keyed by class name; each row is a map of attribute-name -> value. Instant columns
+# are authored as ISO-8601 UTC strings; the open upper bound is the literal
+# `infinity`. The loader resolves attribute names to columns via the descriptor
+# (businessFrom/businessTo -> from_z/thru_z, processingFrom/processingTo -> in_z/out_z)
+# and stores `address` as one document.
+#
+# The history of branch id 1 (Central Branch) records ONE business address that was
+# first BELIEVED to be D1, then CORRECTED (known as of processing 2024-04-01) via a
+# rectangle split into D2 before business 2024-06-01 and D3 from 2024-06-01 on. All
+# three documents differ (city Helsinki -> Espoo -> Tampere, distinct phones), so the
+# document visibly rides each bitemporal milestone:
+#
+#   R1  address D1  business [2024-01-01, infinity)     processing [2024-01-01, 2024-04-01)
+#       — the original belief, SUPERSEDED on the processing axis (out_z finite).
+#   R2  address D2  business [2024-01-01, 2024-06-01)   processing [2024-04-01, infinity)
+#       — the rectangle-split HEAD: still D2 before the business window, CURRENT.
+#   R3  address D3  business [2024-06-01, infinity)     processing [2024-04-01, infinity)
+#       — the corrected address from business 2024-06-01 onward, CURRENT.
+#
+# Both-axis reads discriminate, each returning a DISTINCT document:
+#   business=now  & processing=now        -> R3 (D3): true now AND known now.
+#   business=2024-03-01 & proc=2024-02-01 -> R1 (D1): what the system BELIEVED on
+#       2024-02-01 about business 2024-03-01 — the audit (processing) axis.
+Branch:
+  - id: 1
+    name: Central Branch
+    businessFrom: "2024-01-01T00:00:00+00:00"
+    businessTo: infinity
+    processingFrom: "2024-01-01T00:00:00+00:00"
+    processingTo: "2024-04-01T00:00:00+00:00"
+    address:
+      street: 10 Old Road
+      city: Helsinki
+      geo:
+        country: FI
+      phones:
+        - { type: main, number: '555-1000' }
+  - id: 1
+    name: Central Branch
+    businessFrom: "2024-01-01T00:00:00+00:00"
+    businessTo: "2024-06-01T00:00:00+00:00"
+    processingFrom: "2024-04-01T00:00:00+00:00"
+    processingTo: infinity
+    address:
+      street: 20 Mid Road
+      city: Espoo
+      geo:
+        country: FI
+      phones:
+        - { type: main, number: '555-2000' }
+  - id: 1
+    name: Central Branch
+    businessFrom: "2024-06-01T00:00:00+00:00"
+    businessTo: infinity
+    processingFrom: "2024-04-01T00:00:00+00:00"
+    processingTo: infinity
+    address:
+      street: 30 New Road
+      city: Tampere
+      geo:
+        country: FI
+      phones:
+        - { type: main, number: '555-3000' }
+        - { type: fax, number: '555-3001' }

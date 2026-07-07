@@ -1,0 +1,95 @@
+# Supplier: an audit-only (processing-temporal) OWNER of a value object — the
+# unitemporal half of the m-value-object "inherited temporality" proof (Phase 7).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is the
+# temporal analogue of models/customer.yaml: the SAME recursive `address` value
+# object (street/city, a nested `geo` one, a to-many `phones`) rides a
+# `unitemporal-processing` (audit-only) owner instead of a non-temporal one. A
+# value object declares NO asOfAttributes of its own (the schema forbids them) — it
+# inherits the owner's single `processing` dimension and its backing `address`
+# column rides the milestoned row exactly like the scalar `name` column.
+#
+# A row's [in_z, out_z) interval records WHEN THE SYSTEM KNEW this supplier's
+# contact address; out_z = infinity marks the current row. Milestone-chaining
+# writes (insert / update / terminate) never mutate in place — they close the
+# current row (out_z = the transaction instant) and, for an update, chain a new
+# current row carrying the NEW address document. The document is copied/updated
+# across the chain exactly like any scalar column; there is no value-object-specific
+# temporal machinery (m-value-object "Inherited temporality", m-audit-write).
+#
+# `address` is the ONE m-core `json` column the whole embedded composite is stored
+# in (never column-flattened); geo/phones and every inner attribute live inside it,
+# so only `address` carries `column`/`mapping`. columnOrder is the scalar attributes
+# (id, name, in_z, out_z) then the single document column (address).
+#
+# Read row data lives in the sibling fixtures/supplier.yaml (the as-of READ cases);
+# the write-sequence cases construct their own milestone history from their ordered
+# DML, so they start from an empty table and ignore the fixtures.
+entity:
+  name: Supplier
+  namespace: parallax.compatibility
+  table: supplier
+  mutability: transactional
+  temporal: unitemporal-processing
+  attributes:
+    - name: id
+      type: int64
+      column: sup_id
+      primaryKey: true
+      pkGenerator: none
+    - name: name
+      type: string
+      column: name
+      maxLength: 64
+    - name: processingFrom
+      type: timestamp
+      column: in_z
+    - name: processingTo
+      type: timestamp
+      column: out_z
+  asOfAttributes:
+    - name: processingDate
+      fromColumn: in_z
+      toColumn: out_z
+      axis: processing
+      toIsInclusive: false
+      infinity: infinity
+      default: now
+  valueObjects:
+    - name: address
+      column: address
+      mapping: json
+      cardinality: one
+      nullable: true
+      attributes:
+        - name: street
+          type: string
+          nullable: true
+        - name: city
+          type: string
+          nullable: true
+      valueObjects:
+        - name: geo
+          cardinality: one
+          nullable: true
+          attributes:
+            - name: country
+              type: string
+              nullable: true
+        - name: phones
+          cardinality: many
+          nullable: true
+          attributes:
+            - name: type
+              type: string
+              nullable: true
+            - name: number
+              type: string
+              nullable: true
+  indices:
+    - name: supplier_pk
+      attributes: [id, processingFrom]
+      unique: true
+    - name: supplier_name
+      attributes: [name]
+      unique: false

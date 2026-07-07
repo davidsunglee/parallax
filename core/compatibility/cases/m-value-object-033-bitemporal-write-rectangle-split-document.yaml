@@ -1,0 +1,200 @@
+# valueObject on a FULL BITEMPORAL owner: the document RIDES the rectangle split
+# exactly like a scalar column (m-value-object "Inherited temporality",
+# m-bitemp-write), on Postgres AND MariaDB.
+#
+# The signature bitemporal write is the RECTANGLE SPLIT: an `updateUntil` over a
+# bounded business window inactivates the original current rectangle (closes its
+# PROCESSING axis at the transaction instant) and chains THREE new rows at fresh
+# processing time [txInstant, infinity):
+#   head   : business [from_z, businessFrom)     — the OLD address D1 before the window
+#   middle : business [businessFrom, businessTo) — the NEW address D2, for the window
+#   tail   : business [businessTo, infinity)     — the OLD address D1 after the window
+# so the address changes ONLY inside the window. The `address` value object carries NO
+# value-object-specific write machinery: it is one document bind in columnOrder position
+# ([br_id, name, from_z, thru_z, in_z, out_z, address]) in every full-row INSERT, and it
+# is ABSENT from the inactivating close (which sets only out_z). The document column is
+# treated exactly like the scalar `name` column — copied verbatim onto head/tail (old
+# D1) and middle (new D2) — proving the composite rides every chained rectangle.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert      : open the current rectangle, address D1,
+#                        business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
+#   step 2 updateUntil : set address D2 for business window [2024-03-01, 2024-09-01)
+#                        at txInstant 2024-02-15 — inactivate the original
+#                        (out_z = 2024-02-15) and chain head / middle / tail
+#                        at processing [2024-02-15, infinity)                    (4 statements)
+#
+# Resulting state (4 rows): the inactivated original (out_z finite, address D1) + head
+# (D1) + middle (D2) + tail (D1), the three new rows current on processing. The INSERT
+# DML is identical on both dialects (a plain column bind, no JSON function); only the
+# document VALUE is adapted at bind time (Postgres `jsonb`, MariaDB `json` text), so the
+# hole structure is shared and `binds` is one flat array with the document riding as one
+# element. `then.tableState` decodes the document column so the authored documents
+# compare identically on both dialects.
+model: models/branch.yaml
+tags: [m-value-object, m-bitemp-write, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, nested, to-many]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Branch
+      statements: 1
+      note: open the original current rectangle carrying the address document D1
+      rows:
+        - id: 1
+          name: Central Branch
+          businessFrom: "2024-01-01T00:00:00+00:00"
+          businessTo: infinity
+          address:
+            street: 10 Old Road
+            city: Helsinki
+            geo:
+              country: FI
+            phones:
+              - { type: main, number: '555-1000' }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: updateUntil
+      entity: Branch
+      statements: 4
+      note: inactivate the original on the processing axis, then chain head / middle / tail carrying D1 / D2 / D1
+      rows:
+        - id: 1
+          name: Central Branch
+          businessFrom: "2024-03-01T00:00:00+00:00"
+          address:
+            street: 30 New Road
+            city: Tampere
+            geo:
+              country: FI
+            phones:
+              - { type: main, number: '555-3000' }
+              - { type: fax, number: '555-3001' }
+      at: "2024-02-15T00:00:00+00:00"
+      until: "2024-09-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - Central Branch
+        - "2024-01-01T00:00:00+00:00"
+        - infinity
+        - "2024-01-01T00:00:00+00:00"
+        - infinity
+        - street: 10 Old Road
+          city: Helsinki
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-1000' }
+    - sql:
+        postgres: update branch set out_z = ? where br_id = ? and out_z = ?
+        mariadb: update branch set out_z = ? where br_id = ? and out_z = ?
+      binds: ["2024-02-15T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - Central Branch
+        - "2024-01-01T00:00:00+00:00"
+        - "2024-03-01T00:00:00+00:00"
+        - "2024-02-15T00:00:00+00:00"
+        - infinity
+        - street: 10 Old Road
+          city: Helsinki
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-1000' }
+    - sql:
+        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - Central Branch
+        - "2024-03-01T00:00:00+00:00"
+        - "2024-09-01T00:00:00+00:00"
+        - "2024-02-15T00:00:00+00:00"
+        - infinity
+        - street: 30 New Road
+          city: Tampere
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-3000' }
+            - { type: fax, number: '555-3001' }
+    - sql:
+        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - Central Branch
+        - "2024-09-01T00:00:00+00:00"
+        - infinity
+        - "2024-02-15T00:00:00+00:00"
+        - infinity
+        - street: 10 Old Road
+          city: Helsinki
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-1000' }
+  tableState:
+    branch:
+      - br_id: 1
+        name: Central Branch
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-02-15T00:00:00+00:00"
+        address:
+          street: 10 Old Road
+          city: Helsinki
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-1000' }
+      - br_id: 1
+        name: Central Branch
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-03-01T00:00:00+00:00"
+        in_z: "2024-02-15T00:00:00+00:00"
+        out_z: infinity
+        address:
+          street: 10 Old Road
+          city: Helsinki
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-1000' }
+      - br_id: 1
+        name: Central Branch
+        from_z: "2024-03-01T00:00:00+00:00"
+        thru_z: "2024-09-01T00:00:00+00:00"
+        in_z: "2024-02-15T00:00:00+00:00"
+        out_z: infinity
+        address:
+          street: 30 New Road
+          city: Tampere
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-3000' }
+            - { type: fax, number: '555-3001' }
+      - br_id: 1
+        name: Central Branch
+        from_z: "2024-09-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-02-15T00:00:00+00:00"
+        out_z: infinity
+        address:
+          street: 10 Old Road
+          city: Helsinki
+          geo:
+            country: FI
+          phones:
+            - { type: main, number: '555-1000' }
+  roundTrips: 5
