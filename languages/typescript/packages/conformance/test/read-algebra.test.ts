@@ -4,8 +4,8 @@
  * Drives the adapter's `runCompile` — the same path the CLI exercises — over
  * every `read`-shaped single-entity predicate-algebra case tagged `slice-mvp-1`
  * (the `m-op-algebra` / `m-core` / `m-descriptor` reads),
- * asserting the emitted SQL equals `goldenSql.postgres` and the emitted binds
- * equal the case's authored `binds`. This proves the compiler against the real
+ * asserting the emitted SQL + binds equal the case's golden Postgres statement entry
+ * (`then.statements`). This proves the compiler against the real
  * metamodel-backed resolver (projection resolved from the case, attribute types
  * resolved from the descriptor), complementing the in-isolation compiler unit
  * test in `@parallax/sql`.
@@ -16,6 +16,7 @@
  * comparison is exact today and stays exact when unsafe values are added.
  */
 import { describe, expect, it } from "vitest";
+import { dialectStatements, goldenEntries } from "../src/case-format.js";
 import { discoverCasePaths } from "../src/discover.js";
 import { loadCase, runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
 
@@ -53,10 +54,9 @@ function readAlgebraCases(): readonly { id: string; path: string }[] {
     .map(({ id, path }) => ({ id, path }));
 }
 
-/** The Postgres golden SQL a case pins (read shape ⇒ a single string). */
-function goldenSql(loaded: ReturnType<typeof loadCase>): string {
-  const golden = loaded.raw.goldenSql as { postgres?: string } | undefined;
-  return golden?.postgres ?? "";
+/** The Postgres golden `{sql, binds}` a case pins (read shape ⇒ one statement entry). */
+function golden(loaded: ReturnType<typeof loadCase>): { sql: string; binds: readonly unknown[] } {
+  return dialectStatements(goldenEntries(loaded.raw), "postgres")[0] ?? { sql: "", binds: [] };
 }
 
 const CASES = readAlgebraCases();
@@ -94,8 +94,9 @@ describe("read-algebra compile lane — emitted === golden over the corpus", () 
       throw new Error("expected an ok compile envelope");
     }
     const [emission] = envelope.emissions;
+    const { sql, binds } = golden(loaded);
     expect(emission?.casePointer).toBe("/operation");
-    expect(emission?.sql).toBe(goldenSql(loaded));
-    expect(emission?.binds).toEqual(loaded.raw.binds ?? []);
+    expect(emission?.sql).toBe(sql);
+    expect(emission?.binds).toEqual(binds);
   });
 });

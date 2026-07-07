@@ -4,8 +4,8 @@
  *
  * Phase 3 adds `mariadbDialect` and proves the abstraction earns its keep at the
  * SQL/value-rule level: for the corpus cases that genuinely DIVERGE in SQL text,
- * compiling the operation against `mariadbDialect` must emit `goldenSql.mariadb`
- * byte-for-byte. The three witnesses:
+ * compiling the operation against `mariadbDialect` must emit the case's MariaDB
+ * golden (`then.statements[].sql.mariadb`) byte-for-byte. The three witnesses:
  *
  *  - `m-descriptor-001` — the quote CHARACTER: MariaDB backticks (`` t0.`order` ``)
  *    vs Postgres double-quotes, applied per identifier (the standalone read-projection
@@ -24,6 +24,7 @@ import { mariadbDialect } from "@parallax/dialect";
 import { parseOperation } from "@parallax/operation";
 import { compile } from "@parallax/sql";
 import { describe, expect, it } from "vitest";
+import { dialectStatements, goldenEntries } from "../src/case-format.js";
 import { buildDeepFetchPlan } from "../src/deepfetch-plan.js";
 import { discoverCasePaths, type LoadedCase, loadCase } from "../src/discover.js";
 import { schemaForReadCase } from "../src/schema-resolver.js";
@@ -37,19 +38,18 @@ function caseById(id: string): LoadedCase {
   return loadCase(path);
 }
 
-/** The MariaDB golden a case pins (a single string, or the per-level array). */
-function mariadbGolden(loaded: LoadedCase): string | readonly string[] {
-  const golden = (loaded.raw.goldenSql as { mariadb?: string | readonly string[] } | undefined)
-    ?.mariadb;
-  if (golden === undefined) {
-    throw new Error(`${loaded.casePath} carries no goldenSql.mariadb`);
+/** The MariaDB golden SQL a case pins (one text per `then.statements` entry). */
+function mariadbGolden(loaded: LoadedCase): readonly string[] {
+  const statements = dialectStatements(goldenEntries(loaded.raw), "mariadb");
+  if (statements.length === 0) {
+    throw new Error(`${loaded.casePath} carries no MariaDB golden statements`);
   }
-  return golden;
+  return statements.map((statement) => statement.sql);
 }
 
 /** Compile a flat read case's single statement against `mariadbDialect`. */
 function compileFlat(loaded: LoadedCase): string {
-  const operation = parseOperation(loaded.raw.operation);
+  const operation = parseOperation(loaded.raw.when?.operation);
   const schema = schemaForReadCase(loaded, operation, mariadbDialect);
   const { sql } = compile(operation, schema, mariadbDialect, {
     locking: loaded.tags.includes("m-read-lock"),
@@ -57,20 +57,20 @@ function compileFlat(loaded: LoadedCase): string {
   return sql;
 }
 
-describe("MariaDB compile-golden lane — emitted === goldenSql.mariadb (Docker-free)", () => {
+describe("MariaDB compile-golden lane — emitted === MariaDB golden (Docker-free)", () => {
   it("m-descriptor-001 quotes a reserved-word identifier with backticks (per identifier)", () => {
     const loaded = caseById("m-descriptor-001");
-    expect(compileFlat(loaded)).toBe(mariadbGolden(loaded));
+    expect(compileFlat(loaded)).toBe(mariadbGolden(loaded)[0]);
   });
 
   it("m-read-lock-009 appends MariaDB's ` lock in share mode` shared read-lock", () => {
     const loaded = caseById("m-read-lock-009");
-    expect(compileFlat(loaded)).toBe(mariadbGolden(loaded));
+    expect(compileFlat(loaded)).toBe(mariadbGolden(loaded)[0]);
   });
 
   it("m-deep-fetch-012 orders a nullable deep-fetch level with the leading `is null,` term", () => {
     const loaded = caseById("m-deep-fetch-012");
-    const golden = mariadbGolden(loaded) as readonly string[];
+    const golden = mariadbGolden(loaded);
     const plan = buildDeepFetchPlan(loaded, mariadbDialect);
 
     // The deep-fetch ROOT statement (level 0) — no ordering divergence, but proves

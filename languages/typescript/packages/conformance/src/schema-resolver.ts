@@ -10,11 +10,11 @@
  * ordered read projection the SELECT projects.
  *
  * Projections are **case-driven** so the emitted SQL matches the golden by
- * construction: a flat read takes its output columns from `expectedRows`; a
- * deep-fetch root takes them from the `expectedGraph` root object (minus the
+ * construction: a flat read takes its output columns from `then.rows`; a
+ * deep-fetch root takes them from the `then.graph` root object (minus the
  * top-level relationship names); a deep-fetch child level takes them from the
- * `expectedGraph` child object (minus that node's own relationship names). When a
- * level carries no `expectedGraph` witness (an empty intermediate), the projection
+ * `then.graph` child object (minus that node's own relationship names). When a
+ * level carries no `then.graph` witness (an empty intermediate), the projection
  * falls back to the child entity's non-nullable columns plus any nullable
  * `orderBy` key — the documented `m-deep-fetch-008` path.
  */
@@ -131,7 +131,7 @@ export class MetamodelSchema implements SchemaResolver {
     return this.projection;
   }
 
-  /** The root entity's domain class name (the `expectedGraph` key). */
+  /** The root entity's domain class name (the `then.graph` key). */
   rootEntityName(): string {
     return this.rootEntity.name;
   }
@@ -183,14 +183,14 @@ export class MetamodelSchema implements SchemaResolver {
  * `[pk, firstNonPk]` heuristic could not express `m-op-algebra-028`'s `distinct active` nor a
  * wider `orders` read).
  *
- * The case's `expectedRows` keys ARE the SQL output column names the golden
+ * The case's `then.rows` keys ARE the SQL output column names the golden
  * projects and the harness compares against. Each key resolves back to its
  * physical attribute so the compiler can lower a `bytes` column to the
  * `encode(t0.<col>, ?) <col>_hex` hex form (m-core scalar-serde projection —
  * `m-core-001`): a direct column match projects verbatim; an output ending `_hex`
  * whose stripped name is a `bytes` attribute projects through `encode(...)`. A key
  * that names no attribute (a computed output) projects verbatim as a plain quoted
- * column, as before. When `expectedRows` is empty (e.g. `m-op-algebra-023-none`),
+ * column, as before. When `then.rows` is empty (e.g. `m-op-algebra-023-none`),
  * the case provides no
  * key witness, so we fall back to the metamodel default — the primary key plus
  * the first non-key attribute.
@@ -200,8 +200,8 @@ export function readProjection(
   rootEntity: EntityMetadata,
   dialect: Dialect,
 ): readonly ProjectionColumn[] {
-  const expectedRows = loaded.raw.expectedRows as readonly Record<string, unknown>[] | undefined;
-  const firstRow = expectedRows?.[0];
+  const rows = loaded.raw.then?.rows as readonly Record<string, unknown>[] | undefined;
+  const firstRow = rows?.[0];
   if (firstRow && Object.keys(firstRow).length > 0) {
     return Object.keys(firstRow).map((output) => projectionForOutput(output, rootEntity, dialect));
   }
@@ -209,7 +209,7 @@ export function readProjection(
 }
 
 /**
- * Resolve one `expectedRows` output column name to its projection descriptor,
+ * Resolve one `then.rows` output column name to its projection descriptor,
  * against the root entity's attributes. Order of resolution:
  *  1. an attribute whose physical `column` equals the output → project verbatim
  *     (with its m-core type, so a `bytes` column authored WITHOUT the `_hex` output
@@ -251,10 +251,10 @@ function attributeProjection(attr: NormalizedAttribute, dialect: Dialect): Proje
 }
 
 /**
- * Resolve a deep-fetch **root** projection from the case's `expectedGraph` root
+ * Resolve a deep-fetch **root** projection from the case's `then.graph` root
  * object: its keys minus the top-level relationship names (the relationships are
  * attached in memory, not projected). When the root resolves to no rows (e.g.
- * `m-deep-fetch-006`, an empty-root deep fetch whose `expectedGraph` is `{ Order: [] }`),
+ * `m-deep-fetch-006`, an empty-root deep fetch whose `then.graph` is `{ Order: [] }`),
  * there is no witness, so we fall back to the metamodel default projection for the
  * root entity — the primary key plus the first non-key attribute, which
  * reproduces the golden root `select id, name from orders …`. An empty projection
@@ -265,7 +265,7 @@ export function rootDeepFetchProjection(
   paths: readonly (readonly string[])[],
   dialect: Dialect,
 ): readonly ProjectionColumn[] {
-  const graph = expectedGraph(loaded);
+  const graph = caseGraph(loaded);
   const rootEntityName = Object.keys(graph)[0];
   const rootRows = rootEntityName ? (graph[rootEntityName] ?? []) : [];
   const witness = rootRows[0];
@@ -295,7 +295,7 @@ function classOf(ref: string | undefined): string | undefined {
 }
 
 /**
- * Resolve a deep-fetch **child-level** projection from the `expectedGraph` child
+ * Resolve a deep-fetch **child-level** projection from the `then.graph` child
  * object found under this node's relationship name: its keys minus this node's
  * own child-relationship names. When no witness exists anywhere (an empty
  * intermediate — `m-deep-fetch-008`), fall back to the child entity's non-nullable columns
@@ -307,7 +307,7 @@ export function childProjection(
   childEntity: EntityMetadata,
   dialect: Dialect,
 ): readonly ProjectionColumn[] {
-  const witness = findChildWitness(expectedGraph(loaded), node);
+  const witness = findChildWitness(caseGraph(loaded), node);
   const childRelNames = new Set(node.children.map((child) => relName(child.relRef)));
   if (witness) {
     return objectColumns(witness, childRelNames, childEntity, dialect);
@@ -316,7 +316,7 @@ export function childProjection(
 }
 
 /**
- * The fallback child projection when no `expectedGraph` witness exists: the
+ * The fallback child projection when no `then.graph` witness exists: the
  * entity's non-nullable columns, plus any nullable column named by a declared
  * `orderBy` key (the order key MUST be projected for the ordering oracle). Quoted
  * for SQL. Exercised only by the empty-intermediate case (`m-deep-fetch-008`).
@@ -339,7 +339,7 @@ function fallbackChildProjection(
 }
 
 /**
- * The keys of an `expectedGraph` object as projection descriptors, minus
+ * The keys of an `then.graph` object as projection descriptors, minus
  * relationship names. Each key resolves back to its physical attribute (so a
  * `bytes` column would lower, matching the flat-read rule) — but the deep-fetch
  * corpus projects only plain scalar columns, so this is verbatim in practice.
@@ -407,11 +407,10 @@ function firstObject(value: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
-/** The `expectedGraph` of a case, or an empty graph when absent. */
-function expectedGraph(loaded: LoadedCase): Record<string, readonly Record<string, unknown>[]> {
+/** The `then.graph` of a case, or an empty graph when absent. */
+function caseGraph(loaded: LoadedCase): Record<string, readonly Record<string, unknown>[]> {
   return (
-    (loaded.raw.expectedGraph as Record<string, readonly Record<string, unknown>[]> | undefined) ??
-    {}
+    (loaded.raw.then?.graph as Record<string, readonly Record<string, unknown>[]> | undefined) ?? {}
   );
 }
 
@@ -454,7 +453,7 @@ export function schemaForEntity(
   return new MetamodelSchema(metamodel, metamodel.entity(entityName), projection, dialect);
 }
 
-/** Build a flat-read `MetamodelSchema` (projection driven by `expectedRows`). */
+/** Build a flat-read `MetamodelSchema` (projection driven by `then.rows`). */
 export function schemaForReadCase(
   loaded: LoadedCase,
   operation: Operation,

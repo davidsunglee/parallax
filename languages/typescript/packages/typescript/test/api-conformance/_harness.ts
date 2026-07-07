@@ -141,7 +141,7 @@ export async function provisionCase(
  */
 function shouldLoadFixtures(loaded: LoadedCase): boolean {
   if (loaded.shape === "writeSequence") {
-    return loaded.raw.loadFixtures === true;
+    return loaded.raw.given?.fixtures === true;
   }
   return true;
 }
@@ -178,7 +178,7 @@ async function loadCaseFixtures(
  * A read-shaped suite snippet that stops matching its canonical case fails here.
  */
 export function assertSameOperation(operation: unknown, loaded: LoadedCase): void {
-  const corpus = loaded.raw.operation;
+  const corpus = loaded.raw.when?.operation;
   expect(
     canonicallyEqual(operation, corpus),
     `DSL for ${loaded.casePath} did not canonicalize to the corpus operation:\n` +
@@ -252,7 +252,7 @@ export function assertGraph(
   rootEntityName: string,
   metamodel: Metamodel,
 ): void {
-  const expectedRaw = (loaded.raw.expectedGraph ?? {}) as Graph;
+  const expectedRaw = (loaded.raw.then?.graph ?? {}) as Graph;
   const expected = translateGraph(expectedRaw, metamodel);
   const observedFull = rows.map((row) => renderManagedNode(row));
   const expectedRoot = expected[rootEntityName] ?? [];
@@ -343,7 +343,7 @@ function firstPopulated(siblings: readonly Record<string, unknown>[], key: strin
  */
 export async function assertTableState(fixture: CaseFixture): Promise<void> {
   const { db, loaded, metamodel, dialect } = fixture;
-  const expected = (loaded.raw.expectedTableState ?? {}) as TableState;
+  const expected = (loaded.raw.then?.tableState ?? {}) as TableState;
   const observed = await readTableState(db, expected, metamodel, dialect);
   const columnTypes = physicalColumnTypes(metamodel);
   const comparison = compareTableState(observed, expected, columnTypes);
@@ -427,10 +427,10 @@ function assertScalarManaged(value: unknown, type: string, label: string): void 
 
 // --- wire rendering + name translation --------------------------------------
 
-/** The corpus `expectedRows`, or a scenario's terminal `expectRows`. */
+/** The corpus `then.rows`, or a scenario's terminal `expectRows`. */
 function expectedRowsFor(loaded: LoadedCase): readonly Record<string, unknown>[] {
   if (loaded.shape === "scenario") {
-    const steps = (loaded.raw.scenario as { expectRows?: Record<string, unknown>[] }[]) ?? [];
+    const steps = (loaded.raw.when?.scenario ?? []) as { expectRows?: Record<string, unknown>[] }[];
     for (let i = steps.length - 1; i >= 0; i -= 1) {
       const rows = steps[i]?.expectRows;
       if (rows !== undefined) {
@@ -439,7 +439,7 @@ function expectedRowsFor(loaded: LoadedCase): readonly Record<string, unknown>[]
     }
     return [];
   }
-  return (loaded.raw.expectedRows as Record<string, unknown>[] | undefined) ?? [];
+  return (loaded.raw.then?.rows as Record<string, unknown>[] | undefined) ?? [];
 }
 
 /** Render a managed row to the neutral wire form keyed by its (DSL) name. */

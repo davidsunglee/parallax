@@ -12,7 +12,7 @@ import {
 function loaded(id: string, shape: CaseShape, tags: readonly string[]): LoadedCase {
   return {
     casePath: `core/compatibility/cases/${id}-case.yaml`,
-    raw: {},
+    raw: {} as LoadedCase["raw"],
     shape,
     tags,
     lane: "harness",

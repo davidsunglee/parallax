@@ -18,6 +18,8 @@
  * reproduced Docker-free, so their statement SQL is pinned in the run lane instead.
  */
 import { describe, expect, it } from "vitest";
+import { type DialectStatement, dialectStatements, goldenEntries } from "../src/case-format.js";
+import { isDeepFetch } from "../src/deepfetch-plan.js";
 import { discoverCasePaths } from "../src/discover.js";
 import { loadCase, runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
 
@@ -39,16 +41,19 @@ const TEMPORAL_M7_EXCLUSIONS: ReadonlySet<string> = new Set(
   Array.from({ length: 13 }, (_, i) => `m-navigate-${String(12 + i).padStart(3, "0")}`),
 );
 
-/** The postgres golden as a single statement (flat case) or `undefined` (deep fetch). */
-function flatGolden(loaded: ReturnType<typeof loadCase>): string | undefined {
-  const golden = (loaded.raw.goldenSql as { postgres?: unknown } | undefined)?.postgres;
-  return typeof golden === "string" ? golden : undefined;
+/** The postgres golden as a single statement entry (flat case) or `undefined` (deep fetch). */
+function flatGolden(loaded: ReturnType<typeof loadCase>): DialectStatement | undefined {
+  if (isDeepFetch(loaded.raw.when?.operation)) {
+    return undefined;
+  }
+  return dialectStatements(goldenEntries(loaded.raw), "postgres")[0];
 }
 
 /**
  * The flat (single-statement) non-temporal navigation read cases: navigation /
- * `exists` / `notExists`. A deep-fetch case is excluded here (its golden is an
- * array), so the discriminator is purely the golden shape — no operation sniffing.
+ * `exists` / `notExists`. A deep-fetch case is excluded here (an empty-root deep
+ * fetch emits only its root statement, so a statement count cannot tell them apart —
+ * the discriminator is the `deepFetch` operation itself).
  */
 function flatRelationshipCases(): readonly { id: string; path: string }[] {
   return discoverCasePaths()
@@ -90,7 +95,7 @@ describe("relationship compile lane — flat EXISTS semi-joins === golden over t
     }
     const [emission] = envelope.emissions;
     expect(emission?.casePointer).toBe("/operation");
-    expect(emission?.sql).toBe(flatGolden(loaded));
-    expect(emission?.binds).toEqual(loaded.raw.binds ?? []);
+    expect(emission?.sql).toBe(flatGolden(loaded)?.sql);
+    expect(emission?.binds).toEqual(flatGolden(loaded)?.binds ?? []);
   });
 });

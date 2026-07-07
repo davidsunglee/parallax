@@ -7,7 +7,14 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["packages/**/*.ts", "packages/**/*.json", "*.json", "!**/dist", "!**/node_modules"]
+    "includes": [
+      "packages/**/*.ts",
+      "packages/**/*.json",
+      "*.json",
+      "!**/dist",
+      "!**/node_modules",
+      "!packages/conformance/src/case-format.generated.ts"
+    ]
   },
   "formatter": {
     "enabled": true,

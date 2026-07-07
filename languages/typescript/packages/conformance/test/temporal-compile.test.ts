@@ -23,6 +23,7 @@
  *    rule) and are pinned per-level in the run lane instead.
  */
 import { describe, expect, it } from "vitest";
+import { dialectStatements, goldenEntries } from "../src/case-format.js";
 import { isDeepFetch } from "../src/deepfetch-plan.js";
 import { discoverCasePaths } from "../src/discover.js";
 import { loadCase, runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
@@ -115,11 +116,11 @@ describe("temporal compile lane — emitted === golden over the m-temporal-read 
       throw new Error("expected an ok compile envelope");
     }
 
-    const golden = (loaded.raw.goldenSql as { postgres?: string | string[] }).postgres;
-    if (Array.isArray(golden)) {
+    const golden = dialectStatements(goldenEntries(loaded.raw), "postgres");
+    if (loaded.shape === "writeSequence") {
       // Write sequence: one emission per statement, in order, with its bind row.
-      expect(envelope.emissions.map((e) => e.sql)).toEqual(golden);
-      expect(envelope.emissions.map((e) => e.binds)).toEqual(loaded.raw.binds);
+      expect(envelope.emissions.map((e) => e.sql)).toEqual(golden.map((g) => g.sql));
+      expect(envelope.emissions.map((e) => e.binds)).toEqual(golden.map((g) => g.binds));
       // Each write emission is keyed by its step pointer (statements can share one).
       for (const emission of envelope.emissions) {
         expect(emission.casePointer).toMatch(/^\/writeSequence\/\d+$/);
@@ -128,26 +129,27 @@ describe("temporal compile lane — emitted === golden over the m-temporal-read 
     } else {
       // Single-statement read: the sole `/operation` emission equals the golden.
       const [emission] = envelope.emissions;
+      const [g] = golden;
       expect(emission?.casePointer).toBe("/operation");
-      expect(emission?.sql).toBe(golden);
-      expect(emission?.binds).toEqual(loaded.raw.binds ?? []);
+      expect(emission?.sql).toBe(g?.sql);
+      expect(emission?.binds).toEqual(g?.binds ?? []);
       expect(envelope.roundTrips).toBe(1);
     }
   });
 
   it.each(DEEP_FETCH)("$id compiles its deep-fetch ROOT to the golden root SQL", ({ path }) => {
     const loaded = loadCase(path);
-    // m-navigate-018 / m-navigate-023 are flat EXISTS reads (single golden string),
+    // m-navigate-018 / m-navigate-023 are flat EXISTS reads (single golden entry),
     // not deep fetches.
-    if (!isDeepFetch(loaded.raw.operation)) {
+    const golden = dialectStatements(goldenEntries(loaded.raw), "postgres");
+    if (!isDeepFetch(loaded.raw.when?.operation)) {
       const envelope = runCompile(loaded, "postgres", TYPESCRIPT_ADAPTER);
       expect(envelope.status).toBe("ok");
       if (envelope.status !== "ok" || envelope.command !== "compile") {
         throw new Error("expected an ok compile envelope");
       }
-      const golden = (loaded.raw.goldenSql as { postgres?: string }).postgres;
-      expect(envelope.emissions[0]?.sql).toBe(golden);
-      expect(envelope.emissions[0]?.binds).toEqual(loaded.raw.binds ?? []);
+      expect(envelope.emissions[0]?.sql).toBe(golden[0]?.sql);
+      expect(envelope.emissions[0]?.binds).toEqual(golden[0]?.binds ?? []);
       return;
     }
     // A deep fetch emits root-only at compile (child levels are run-time-keyed);
@@ -157,8 +159,7 @@ describe("temporal compile lane — emitted === golden over the m-temporal-read 
     if (envelope.status !== "ok" || envelope.command !== "compile") {
       throw new Error("expected an ok compile envelope");
     }
-    const golden = (loaded.raw.goldenSql as { postgres?: string[] }).postgres ?? [];
     expect(envelope.emissions).toHaveLength(1);
-    expect(envelope.emissions[0]?.sql).toBe(golden[0]);
+    expect(envelope.emissions[0]?.sql).toBe(golden[0]?.sql);
   });
 });

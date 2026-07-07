@@ -3,13 +3,16 @@
  *
  * Globs case YAML under `core/compatibility/cases/**`, parses each through the
  * canonical serde seam (re-exported by `@parallax/operation`, the one allowed
- * edge), and resolves its referenced model descriptor + sibling fixtures. Shape
- * detection keys off the discriminating fields the case carries (`operation` →
- * `read`, `writeSequence`, `scenario`, `conflict`).
+ * edge), validates it once against the canonical case JSON Schema behind the
+ * `validateCase` seam, and resolves its referenced model descriptor + sibling
+ * fixtures. Shape detection is a read of the explicit `shape` field the case
+ * carries (checked against the `CaseShape` union), not a sniff of which keys happen
+ * to be present.
  *
- * The runner consumes the `LoadedCase` view: the parsed case, its model
- * descriptor (a plain metamodel document), the fixtures keyed by class name, and
- * the repo-relative case path the envelope's `case` field requires.
+ * The runner consumes the `LoadedCase` view: the parsed case (typed as the
+ * schema-derived `CaseDocument`), its model descriptor (a plain metamodel
+ * document), the fixtures keyed by class name, and the repo-relative case path the
+ * envelope's `case` field requires.
  */
 // The m-case-format lane a case runs on: `harness` (executed) or `api-conformance`
 // (schema-validated by the harness, satisfied by the language's suite).
@@ -20,6 +23,16 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CaseShape } from "@parallax/core";
 import { deserialize } from "@parallax/operation";
+// ajv 8 ships the `Ajv2020` class as a CommonJS named export; ajv-formats ships
+// its plugin as the CommonJS default. Both are resolved as CJS under NodeNext.
+import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
+import addFormatsModule, { type FormatsPlugin } from "ajv-formats";
+import type { CaseDocument } from "./case-format.js";
+
+// Under NodeNext the ajv-formats default import surfaces as the namespace; the
+// callable plugin is its `.default`, falling back to the namespace itself.
+const addFormats = ((addFormatsModule as unknown as { default?: FormatsPlugin }).default ??
+  (addFormatsModule as unknown as FormatsPlugin)) as FormatsPlugin;
 
 /** The repo root, resolved from this module's location (five dirs up). */
 export function repoRoot(): string {
@@ -36,8 +49,8 @@ function compatibilityRoot(): string {
 export interface LoadedCase {
   /** The repo-relative case path (the envelope `case` field; uses `/`). */
   readonly casePath: string;
-  /** The raw parsed case document. */
-  readonly raw: Record<string, unknown>;
+  /** The parsed case document, validated against the canonical case schema. */
+  readonly raw: CaseDocument;
   /** The detected case shape. */
   readonly shape: CaseShape;
   /** The module tags (e.g. `["m-op-algebra", "m-conformance-adapter"]`) the case declares. */
@@ -62,37 +75,65 @@ export interface LoadedCase {
   readonly fixtures: Record<string, readonly Record<string, unknown>[]>;
 }
 
-/** Detect a case's shape from its discriminating top-level fields. */
-export function detectShape(raw: Record<string, unknown>): CaseShape {
-  if ("writeSequence" in raw) {
-    return "writeSequence";
+/** The eight case shapes the harness discriminates (the schema `shape` enum). */
+const CASE_SHAPES: ReadonlySet<CaseShape> = new Set<CaseShape>([
+  "read",
+  "writeSequence",
+  "scenario",
+  "conflict",
+  "coherence",
+  "error",
+  "concurrencySuccess",
+  "boundary",
+]);
+
+/**
+ * Read a case's shape from its explicit `shape` discriminator, checked against the
+ * `CaseShape` union. `validateCase` has already pinned it to the schema enum; this
+ * re-check keeps the loader honest if a case is loaded without validation.
+ */
+export function detectShape(raw: CaseDocument): CaseShape {
+  const shape = raw.shape;
+  if (!CASE_SHAPES.has(shape as CaseShape)) {
+    throw new Error(`case declares unknown shape '${String(shape)}'`);
   }
-  if ("scenario" in raw) {
-    return "scenario";
+  return shape as CaseShape;
+}
+
+let cachedCaseValidate: ValidateFunction | undefined;
+
+/** Compile (once) the canonical compatibility-case schema validator (Ajv2020). */
+function caseValidator(): ValidateFunction {
+  if (cachedCaseValidate) {
+    return cachedCaseValidate;
   }
-  // An error-classification case (`errorClass` + `expectedNativeCode`), single- or
-  // two-connection (`concurrency`). Checked before `conflict`/`read` so `m-read-lock-006`'s
-  // read-lock-blocks-writer concurrency shape resolves to `error`, not `read`.
-  if ("errorClass" in raw) {
-    return "error";
+  const schemaPath = resolve(repoRoot(), "core/schemas/compatibility-case.schema.json");
+  const schema = JSON.parse(readFileSync(schemaPath, "utf8")) as object;
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  addFormats(ajv);
+  cachedCaseValidate = ajv.compile(schema);
+  return cachedCaseValidate;
+}
+
+/**
+ * The single load-time validation seam: validate a lossless-parsed case document
+ * against `core/schemas/compatibility-case.schema.json` (the canonical form),
+ * throwing with the collected Ajv errors if it does not conform. Returns the
+ * document typed as {@link CaseDocument}. The schema keeps value cells
+ * unconstrained, so the serde seam's precision-safe string re-tagging stays
+ * conflict-free.
+ */
+export function validateCase(doc: unknown, casePath: string): CaseDocument {
+  const validate = caseValidator();
+  if (!validate(doc)) {
+    const errors = (validate.errors ?? []).map(
+      (e) => `${e.instancePath || "/"} ${e.message ?? "is invalid"}`,
+    );
+    throw new Error(
+      `${casePath} does not validate against compatibility-case.schema.json:\n  ${errors.join("\n  ")}`,
+    );
   }
-  // A `concurrency` choreography with NO `errorClass` is the concurrency-success
-  // shape (m-read-lock behavioral read-lock: `m-read-lock-007`/`m-read-lock-008`). Checked AFTER `errorClass` so an
-  // error/concurrency case (`m-read-lock-006`) resolves to `error`, and before `read` so it does
-  // not fall through to `read` and throw at `compileRootStatement`.
-  if ("concurrency" in raw) {
-    return "concurrencySuccess";
-  }
-  if ("expectedAffectedRows" in raw || "attempts" in raw) {
-    return "conflict";
-  }
-  if ("coherence" in raw) {
-    return "coherence";
-  }
-  if ("boundary" in raw) {
-    return "boundary";
-  }
-  return "read";
+  return doc as CaseDocument;
 }
 
 /** Parse a YAML file through the canonical serde seam. */
@@ -136,17 +177,16 @@ export function toCasePath(path: string): string {
 export function loadCase(path: string): LoadedCase {
   const casePath = toCasePath(path);
   const absolute = resolve(repoRoot(), casePath);
-  const raw = loadYaml(absolute) as Record<string, unknown>;
-  const { descriptor, fixtures } = loadModel(raw.model as string);
+  const raw = validateCase(loadYaml(absolute), casePath);
+  const { descriptor, fixtures } = loadModel(raw.model);
+  const concurrency = raw.when?.uow?.concurrency;
   return {
     casePath,
     raw,
     shape: detectShape(raw),
-    tags: (raw.tags as string[] | undefined) ?? [],
+    tags: raw.tags,
     lane: (raw.lane as CaseLane | undefined) ?? "harness",
-    ...(raw.uow === undefined
-      ? {}
-      : { uow: raw.uow as { concurrency?: "locking" | "optimistic" } }),
+    ...(concurrency === undefined ? {} : { uow: { concurrency } }),
     descriptor,
     fixtures,
   };

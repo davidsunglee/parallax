@@ -9,6 +9,15 @@
  */
 
 export {
+  type CaseDocument,
+  type DialectStatement,
+  dialectStatements,
+  entryBinds,
+  entrySql,
+  goldenEntries,
+  type StatementEntry,
+} from "./case-format.js";
+export {
   bindsEqual,
   type ColumnTypes,
   compareGraph,

@@ -4,14 +4,14 @@
  *
  * A `conflict` case proves the observable form of optimistic-lock conflict
  * detection: fixtures are loaded (the versioned row exists), an OPTIONAL
- * out-of-band `precondition` simulates a concurrent writer that advanced the
+ * out-of-band `given.apply` simulates a concurrent writer that advanced the
  * version, then the golden versioned `UPDATE`(s) are applied and the affected-row
  * count is asserted (`updatedRows != 1` is the conflict signal). Two forms:
  *
- *  - a SINGLE attempt (`expectedAffectedRows` + `goldenSql` + `binds`); and
- *  - an ordered `attempts` RETRY sequence (each attempt carries its own
- *    `goldenSql` + `binds` + `expectedAffectedRows`) — a stale UPDATE affects 0
- *    rows, then a fresh-version retry affects 1 (`m-opt-lock-007`).
+ *  - a SINGLE attempt (`when.write` + `then.statements` + `then.affectedRows`); and
+ *  - an ordered `when.attempts` RETRY sequence (each attempt carries its own
+ *    `statements` + `write` + `affectedRows`) — a stale UPDATE affects 0 rows, then
+ *    a fresh-version retry affects 1 (`m-opt-lock-007`).
  *
  * The golden `UPDATE` text is authored in the case (`update … set … , version = ?
  * where id = ? and version = ?`). This module DERIVES it — text AND binds — from
@@ -22,38 +22,44 @@
  * R4). The derived emission is cross-checked against the authored golden + binds —
  * two INDEPENDENT representations of the write — so `emitted === golden` is a
  * genuine check of column identity: ① now carries the column intent the corpus once
- * held only inside the golden string. The `precondition` is an out-of-band naive
+ * held only inside the golden string. A `given.apply` entry is an out-of-band naive
  * statement run VERBATIM (it models a concurrent writer, not our runtime's output).
  */
 import { auditWriteStatements } from "@parallax/bitemporal";
 import type { Dialect } from "@parallax/dialect";
 import { type VersionedTarget, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
+import {
+  dialectStatements,
+  entryBinds,
+  goldenEntries,
+  type StatementEntry,
+} from "./case-format.js";
 import { bindsEqual } from "./compare.js";
 import type { LoadedCase } from "./discover.js";
 import { classifyRow, orderedColumns, writeTargetFor } from "./write-sequence.js";
 
 /** One versioned-UPDATE attempt: its generated SQL, binds, expected affected count. */
 export interface ConflictAttempt {
-  /** The JSON Pointer into the case (`/goldenSql/postgres` or `/attempts/<i>`). */
+  /** The m-conformance-adapter case pointer (`/then/statements/0` or `/attempts/<i>`). */
   readonly casePointer: string;
   /** The canonical versioned-UPDATE text (generated, pinned against the golden). */
   readonly sql: string;
   /** The authored binds `[…set values…, newVersion, pk, observedVersion]`. */
   readonly binds: readonly unknown[];
   /** The expected affected-row count (`1` success, `0` conflict). */
-  readonly expectedAffectedRows: number;
+  readonly affectedRows: number;
 }
 
-/** One out-of-band precondition statement (a concurrent writer) run verbatim. */
-export interface PreconditionStatement {
+/** One out-of-band `given.apply` statement (a concurrent writer) run verbatim. */
+export interface ApplyStatement {
   readonly sql: string;
   readonly binds: readonly unknown[];
 }
 
-/** The executable conflict plan: the precondition + the ordered attempts. */
+/** The executable conflict plan: the `given.apply` setup + the ordered attempts. */
 export interface ConflictPlan {
-  readonly precondition: readonly PreconditionStatement[];
+  readonly apply: readonly ApplyStatement[];
   readonly attempts: readonly ConflictAttempt[];
 }
 
@@ -62,36 +68,20 @@ export function isConflict(loaded: LoadedCase): boolean {
   return loaded.shape === "conflict";
 }
 
-/** A raw single-form conflict case's golden, keyed per dialect id. */
-type RawSingleGolden = Record<string, string | undefined>;
-
-/** A raw retry attempt (its own golden UPDATE + binds + expected count + ① write). */
-interface RawAttempt {
-  readonly goldenSql?: RawSingleGolden;
-  readonly binds?: readonly unknown[];
-  readonly expectedAffectedRows?: number;
-  /** The neutral write input (①) for this attempt (flat attribute-named row). */
-  readonly write?: Record<string, unknown>;
-  /** A temporal-close attempt's close instant (→ new `out_z`). */
-  readonly at?: string;
-  /** A temporal-close attempt's observed processing-from (`in_z`) optimistic gate. */
-  readonly observedInZ?: string;
-}
-
 /**
- * Build the conflict plan: resolve the precondition statements (each paired with
- * its authored binds), then the ordered attempts — one for the single form, or
- * the declared list for the retry form. Each attempt's UPDATE + binds are DERIVED
- * (a versioned conflict from its ① `write`; a temporal close from the metamodel),
- * then cross-checked against the authored golden + binds — a genuine independent
- * check, failing loudly if ① and the golden disagree.
+ * Build the conflict plan: resolve the `given.apply` statements (each carrying its
+ * own inline binds), then the ordered attempts — one for the single form, or the
+ * declared list for the retry form. Each attempt's UPDATE + binds are DERIVED (a
+ * versioned conflict from its ① `write`; a temporal close from the metamodel), then
+ * cross-checked against the authored golden + binds — a genuine independent check,
+ * failing loudly if ① and the golden disagree.
  */
 export function buildConflictPlan(loaded: LoadedCase, dialect: Dialect): ConflictPlan {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
   const entity = conflictEntity(metamodel);
   const deriveStatement = conflictSqlDeriver(entity, loaded, dialect);
 
-  const attempts = rawAttempts(loaded, dialect).map((attempt) => {
+  const attempts = normalizedAttempts(loaded, dialect).map((attempt) => {
     const { sql, binds } = deriveStatement(attempt);
     if (sql !== attempt.golden || !bindsEqual(binds, attempt.binds)) {
       throw new Error(
@@ -104,11 +94,11 @@ export function buildConflictPlan(loaded: LoadedCase, dialect: Dialect): Conflic
       casePointer: attempt.casePointer,
       sql,
       binds,
-      expectedAffectedRows: attempt.expectedAffectedRows,
+      affectedRows: attempt.affectedRows,
     } satisfies ConflictAttempt;
   });
 
-  return { precondition: preconditionStatements(loaded), attempts };
+  return { apply: applyStatements(loaded), attempts };
 }
 
 /**
@@ -238,7 +228,7 @@ interface NormalizedAttempt {
   readonly casePointer: string;
   readonly golden: string;
   readonly binds: readonly unknown[];
-  readonly expectedAffectedRows: number;
+  readonly affectedRows: number;
   /** The neutral write input (①) this attempt derives its UPDATE + binds from. */
   readonly write?: Record<string, unknown>;
   /** A temporal-close attempt's close instant (→ new `out_z`). */
@@ -248,58 +238,55 @@ interface NormalizedAttempt {
 }
 
 /** Normalize the case's attempt(s) into a common shape (single or retry form). */
-function rawAttempts(loaded: LoadedCase, dialect: Dialect): readonly NormalizedAttempt[] {
-  const attempts = loaded.raw.attempts as readonly RawAttempt[] | undefined;
+function normalizedAttempts(loaded: LoadedCase, dialect: Dialect): readonly NormalizedAttempt[] {
+  const attempts = loaded.raw.when?.attempts;
   if (attempts && attempts.length > 0) {
-    return attempts.map((attempt, index) => ({
-      casePointer: `/attempts/${index}`,
-      golden: requireGolden(attempt.goldenSql, `/attempts/${index}`, dialect),
-      binds: (attempt.binds ?? []) as readonly unknown[],
-      expectedAffectedRows: requireCount(attempt.expectedAffectedRows, `/attempts/${index}`),
-      ...(attempt.write === undefined ? {} : { write: attempt.write }),
-      ...(attempt.at === undefined ? {} : { at: attempt.at }),
-      ...(attempt.observedInZ === undefined ? {} : { observedInZ: attempt.observedInZ }),
-    }));
+    return attempts.map((attempt, index) => {
+      const pointer = `/attempts/${index}`;
+      const { sql, binds } = requireGoldenStatement(attempt.statements, dialect, pointer);
+      return {
+        casePointer: pointer,
+        golden: sql,
+        binds,
+        affectedRows: attempt.affectedRows,
+        write: attempt.write as Record<string, unknown>,
+        ...(attempt.at === undefined ? {} : { at: attempt.at }),
+        ...(attempt.observedInZ === undefined ? {} : { observedInZ: attempt.observedInZ }),
+      };
+    });
   }
-  const write = loaded.raw.write as Record<string, unknown> | undefined;
-  const at = loaded.raw.at as string | undefined;
-  const observedInZ = loaded.raw.observedInZ as string | undefined;
+  const when = loaded.raw.when;
+  const { sql, binds } = requireGoldenStatement(
+    goldenEntries(loaded.raw),
+    dialect,
+    "/then/statements",
+  );
+  const affectedRows = loaded.raw.then?.affectedRows;
+  if (affectedRows === undefined) {
+    throw new Error(`${loaded.casePath}: conflict case is missing then.affectedRows`);
+  }
   return [
     {
-      casePointer: `/goldenSql/${dialect.id}`,
-      golden: requireGolden(
-        loaded.raw.goldenSql as RawSingleGolden | undefined,
-        "/goldenSql",
-        dialect,
-      ),
-      binds: (loaded.raw.binds as readonly unknown[] | undefined) ?? [],
-      expectedAffectedRows: requireCount(
-        loaded.raw.expectedAffectedRows as number | undefined,
-        "/expectedAffectedRows",
-      ),
-      ...(write === undefined ? {} : { write }),
-      ...(at === undefined ? {} : { at }),
-      ...(observedInZ === undefined ? {} : { observedInZ }),
+      casePointer: "/then/statements/0",
+      golden: sql,
+      binds,
+      affectedRows,
+      ...(when?.write === undefined ? {} : { write: when.write as Record<string, unknown> }),
+      ...(when?.at === undefined ? {} : { at: when.at }),
+      ...(when?.observedInZ === undefined ? {} : { observedInZ: when.observedInZ }),
     },
   ];
 }
 
-/** The out-of-band precondition statement(s), each paired with its binds. */
-function preconditionStatements(loaded: LoadedCase): readonly PreconditionStatement[] {
-  const raw = loaded.raw.precondition;
-  if (raw === undefined) {
+/** The out-of-band `given.apply` statement(s), each carrying its own inline binds. */
+function applyStatements(loaded: LoadedCase): readonly ApplyStatement[] {
+  const apply = loaded.raw.given?.apply;
+  if (apply === undefined) {
     return [];
   }
-  const statements = Array.isArray(raw) ? (raw as string[]) : [raw as string];
-  const bindsRaw = loaded.raw.preconditionBinds as readonly unknown[] | undefined;
-  const perStatement = Array.isArray(bindsRaw?.[0]);
-  return statements.map((sql, index) => ({
-    sql,
-    binds: perStatement
-      ? ((bindsRaw?.[index] as readonly unknown[] | undefined) ?? [])
-      : index === 0
-        ? (bindsRaw ?? [])
-        : [],
+  return apply.map((entry) => ({
+    sql: typeof entry.sql === "string" ? entry.sql : "",
+    binds: entryBinds(entry),
   }));
 }
 
@@ -344,23 +331,19 @@ function versionedTargetFor(entity: EntityMetadata, dialect: Dialect): Versioned
   };
 }
 
-/** Require the compiling dialect's golden for a conflict statement, or fail with the pointer. */
-function requireGolden(
-  golden: RawSingleGolden | undefined,
-  pointer: string,
+/**
+ * Resolve the compiling dialect's single golden statement (`{sql, binds}`) for a
+ * conflict attempt from its statement entries, or fail with the pointer. A conflict
+ * attempt is one UPDATE, so the first resolved entry is the golden.
+ */
+function requireGoldenStatement(
+  entries: readonly StatementEntry[],
   dialect: Dialect,
-): string {
-  const sql = golden?.[dialect.id];
-  if (sql === undefined) {
-    throw new Error(`conflict case is missing goldenSql.${dialect.id} at ${pointer}`);
+  pointer: string,
+): { sql: string; binds: readonly unknown[] } {
+  const [statement] = dialectStatements(entries, dialect.id);
+  if (statement === undefined) {
+    throw new Error(`conflict case is missing golden SQL for ${dialect.id} at ${pointer}`);
   }
-  return sql;
-}
-
-/** Require an expected affected-row count, or fail with the pointer. */
-function requireCount(count: number | undefined, pointer: string): number {
-  if (count === undefined) {
-    throw new Error(`conflict case is missing expectedAffectedRows at ${pointer}`);
-  }
-  return count;
+  return statement;
 }

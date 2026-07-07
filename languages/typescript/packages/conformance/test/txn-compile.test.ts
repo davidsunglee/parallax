@@ -40,6 +40,12 @@
  * affected-row counts.
  */
 import { describe, expect, it } from "vitest";
+import {
+  type DialectStatement,
+  dialectStatements,
+  goldenEntries,
+  type StatementEntry,
+} from "../src/case-format.js";
 import { isConflict } from "../src/conflict.js";
 import { discoverCasePaths, loadCase } from "../src/discover.js";
 import { runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
@@ -117,111 +123,56 @@ const EXPECTED_IDS: readonly string[] = [
 
 const CASES = txnCases();
 
-/** The binds for statement `index` of a (possibly multi-statement) scenario step. */
-function stepBinds(binds: readonly unknown[], index: number): readonly unknown[] {
-  if (binds.length > 0 && Array.isArray(binds[0])) {
-    return (binds[index] as readonly unknown[] | undefined) ?? [];
-  }
-  return index === 0 ? binds : [];
+/** A scenario / write step as authored (its golden statement entries). */
+interface StepWithStatements {
+  readonly statements?: readonly StatementEntry[];
 }
 
-/** One `A`/`B` side of a concurrency round: its dialect-keyed golden + binds. */
-interface RoundEntry {
-  readonly goldenSql?: { readonly postgres?: string };
-  readonly binds?: readonly unknown[];
-}
-
-/** A `concurrency.rounds` step (the `A` and/or `B` statement issued that round). */
-interface Round {
-  readonly A?: RoundEntry;
-  readonly B?: RoundEntry;
-}
-
-/** The declared concurrency rounds of an `error`/concurrency case (else empty). */
-function rounds(loaded: ReturnType<typeof loadCase>): readonly Round[] {
-  return (loaded.raw.concurrency as { rounds?: readonly Round[] } | undefined)?.rounds ?? [];
-}
-
-/** The ordered golden `postgres` statements a case declares, per its shape. */
-function goldenStatements(loaded: ReturnType<typeof loadCase>): readonly string[] {
+/**
+ * The ordered golden Postgres statements (`{sql, binds}`) a case declares, per its
+ * shape — read from the SAME `then.statements` / per-step `statements` entries the
+ * runner emits from, in emission order. Each entry carries its own inline binds.
+ */
+function expectedStatements(loaded: ReturnType<typeof loadCase>): readonly DialectStatement[] {
+  const raw = loaded.raw;
   if (loaded.shape === "error" || loaded.shape === "concurrencySuccess") {
-    // A concurrency case (error `m-read-lock-006`, or concurrency-success `m-read-lock-007`/`m-read-lock-008`) keeps its
-    // golden per round inside `concurrency.rounds[].{A,B}.goldenSql`, not at the top
-    // level — flatten it in round/A/B order (the emission order).
-    return rounds(loaded).flatMap((round) =>
-      (["A", "B"] as const).flatMap((node) => {
-        const golden = round[node]?.goldenSql?.postgres;
-        return golden === undefined ? [] : [golden];
-      }),
+    // A concurrency case (error `m-read-lock-006`, or concurrency-success
+    // `m-read-lock-007`/`m-read-lock-008`) keeps its golden per round inside
+    // `when.concurrency.rounds[].{A,B}.statements` — flatten in round/A/B order.
+    const rounds = raw.when?.concurrency?.rounds ?? [];
+    return rounds.flatMap((round) =>
+      (["A", "B"] as const).flatMap((node) =>
+        dialectStatements((round[node]?.statements ?? []) as readonly StatementEntry[], "postgres"),
+      ),
     );
   }
   if (isScenario(loaded)) {
-    const steps = (loaded.raw.scenario as { goldenSql?: { postgres?: string | string[] } }[]) ?? [];
     // A step may list SEVERAL golden statements (a versioned set-based materialize
-    // write, `m-opt-lock-003`/`m-opt-lock-004`) — flatten them so each per-object `UPDATE` is one entry.
-    return steps.flatMap((step) => {
-      const golden = step.goldenSql?.postgres;
-      if (golden === undefined) {
-        return [];
-      }
-      return Array.isArray(golden) ? golden : [golden];
-    });
+    // write, `m-opt-lock-003`/`m-opt-lock-004`) — flatten them so each per-object
+    // `UPDATE` is one entry.
+    const steps = (raw.when?.scenario ?? []) as readonly StepWithStatements[];
+    return steps.flatMap((step) => dialectStatements(step.statements ?? [], "postgres"));
   }
   if (isConflict(loaded)) {
-    const attempts = loaded.raw.attempts as { goldenSql?: { postgres?: string } }[] | undefined;
+    const attempts = raw.when?.attempts;
     if (attempts) {
-      return attempts.map((attempt) => attempt.goldenSql?.postgres ?? "");
+      return attempts.flatMap((attempt) =>
+        dialectStatements(attempt.statements as readonly StatementEntry[], "postgres"),
+      );
     }
-    return [(loaded.raw.goldenSql as { postgres?: string }).postgres ?? ""];
+    return dialectStatements(goldenEntries(raw), "postgres");
   }
-  const golden = (loaded.raw.goldenSql as { postgres?: string | string[] }).postgres;
-  if (golden === undefined) {
-    return [];
-  }
-  return Array.isArray(golden) ? golden : [golden];
+  return dialectStatements(goldenEntries(raw), "postgres");
 }
 
-/** The authored binds a case declares (flat for a single read, list-of-lists otherwise). */
+/** The ordered golden Postgres SQL texts a case declares, per its shape. */
+function goldenStatements(loaded: ReturnType<typeof loadCase>): readonly string[] {
+  return expectedStatements(loaded).map((statement) => statement.sql);
+}
+
+/** The per-statement authored binds a case declares, in emission order. */
 function goldenBinds(loaded: ReturnType<typeof loadCase>): readonly (readonly unknown[])[] {
-  if (loaded.shape === "error" || loaded.shape === "concurrencySuccess") {
-    // One bind row per present node, in the same round/A/B order as the statements.
-    return rounds(loaded).flatMap((round) =>
-      (["A", "B"] as const).flatMap((node) => {
-        const step = round[node];
-        return step?.goldenSql?.postgres === undefined ? [] : [step.binds ?? []];
-      }),
-    );
-  }
-  if (isScenario(loaded)) {
-    const steps =
-      (loaded.raw.scenario as {
-        goldenSql?: { postgres?: string | string[] };
-        binds?: unknown[];
-      }[]) ?? [];
-    // A multi-statement step carries a list-of-lists `binds` (one row per per-object
-    // `UPDATE`); slice it per statement so each emission's binds line up.
-    return steps.flatMap((step) => {
-      const golden = step.goldenSql?.postgres;
-      if (golden === undefined) {
-        return [];
-      }
-      const statements = Array.isArray(golden) ? golden : [golden];
-      const binds = (step.binds ?? []) as unknown[];
-      return statements.map((_stmt, index) => stepBinds(binds, index));
-    });
-  }
-  if (isConflict(loaded)) {
-    const attempts = loaded.raw.attempts as { binds?: unknown[] }[] | undefined;
-    if (attempts) {
-      return attempts.map((attempt) => attempt.binds ?? []);
-    }
-    return [(loaded.raw.binds as unknown[] | undefined) ?? []];
-  }
-  const binds = loaded.raw.binds as unknown[] | unknown[][] | undefined;
-  if (binds === undefined) {
-    return [[]];
-  }
-  return Array.isArray(binds[0]) ? (binds as unknown[][]) : [binds as unknown[]];
+  return expectedStatements(loaded).map((statement) => statement.binds);
 }
 
 describe("txn compile lane — emitted === golden over the transaction corpus", () => {
@@ -245,7 +196,7 @@ describe("txn compile lane — emitted === golden over the transaction corpus", 
       expect(envelope.roundTrips).toBe(envelope.emissions.length);
     }
     if (isScenario(loaded)) {
-      expect(envelope.roundTrips).toBe(loaded.raw.roundTrips);
+      expect(envelope.roundTrips).toBe(loaded.raw.then?.roundTrips);
     }
     if (loaded.shape === "read") {
       expect(envelope.emissions).toHaveLength(1);
