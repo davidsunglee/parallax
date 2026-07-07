@@ -1,0 +1,33 @@
+# valueObject to-many filter: a flat predicate through a `many` segment is
+# ANY-ELEMENT (m-value-object to-many, m-op-algebra, m-dialect array-traversal
+# form), on Postgres AND MariaDB.
+#
+# nestedEq(Customer.address.phones.type, 'home') matches a row iff SOME element of
+# its `phones` array has type = home. Ada (home in element 0) and Linus (home)
+# match; Nils has only a `work` phone, and every empty/absent-phones row is
+# excluded. Postgres unnests with `jsonb_array_elements` and reads the element's
+# field with `jsonb_extract_path_text(t1.value, ?)`; MariaDB expresses any-element
+# containment with `json_contains(col, candidate, path)`, binding the candidate
+# document '{"type":"home"}' and the array path '$.phones'. The oracle iterates
+# elements a different way per dialect (Postgres `@>`, MariaDB `JSON_TABLE`).
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal]
+shape: read
+when:
+  operation:
+    nestedEq: { path: Customer.address.phones.type, value: home }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1 where jsonb_extract_path_text(t1.value, ?) = ?)
+        mariadb: select t0.id, t0.name from customer t0 where json_contains(t0.address, ?, ?)
+      binds:
+        postgres: [phones, type, home]
+        mariadb: ['{"type":"home"}', '$.phones']
+  referenceSql:
+    postgres: select id, name from customer where address -> 'phones' @> '[{"type":"home"}]'
+    mariadb: select id, name from customer where exists (select 1 from json_table(address, '$.phones[*]' columns (type varchar(64) path '$.type')) jt where jt.type = 'home')
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+  roundTrips: 1

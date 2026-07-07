@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/operation.schema.json",
   "title": "Parallax Operation Algebra (m-op-algebra)",
-  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the m-temporal-read as-of model, never written by the user), AND nested-attribute access into a valueObject (the flat `nested*` predicate family — `nestedEq` / `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` compare an inner structured-document field referenced by a dotted path `Class.valueObject.field` against a TYPED literal, `nestedIn` against a list of typed literals, and `nestedIsNull` / `nestedIsNotNull` test presence — each lowering to a dialect-specific document extraction, cast to the declared type before comparing where the attribute is non-text). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8).",
+  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the m-temporal-read as-of model, never written by the user), AND nested-attribute access into a valueObject (the flat `nested*` predicate family — `nestedEq` / `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` compare an inner structured-document field referenced by a dotted path `Class.valueObject.field` against a TYPED literal, `nestedIn` against a list of typed literals, and `nestedIsNull` / `nestedIsNotNull` test presence — each lowering to a dialect-specific document extraction, cast to the declared type before comparing where the attribute is non-text; PLUS the to-many forms `nestedExists` / `nestedNotExists` over a value-object-terminated path `Class.valueObject(.valueObject)*` — presence of a `one` member or NON-EMPTY-ness of a `many` array, with an optional element-scoped `where` requiring ONE element to satisfy the whole compound sub-predicate (any-element vs same-element semantics), the sub-predicate spelled with element-relative paths inside a parallel scoped `nested*` family — each lowering to the m-dialect array-traversal form). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8).",
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
@@ -76,7 +76,9 @@
         { "$ref": "#/$defs/nestedLte" },
         { "$ref": "#/$defs/nestedIn" },
         { "$ref": "#/$defs/nestedIsNull" },
-        { "$ref": "#/$defs/nestedIsNotNull" }
+        { "$ref": "#/$defs/nestedIsNotNull" },
+        { "$ref": "#/$defs/nestedExists" },
+        { "$ref": "#/$defs/nestedNotExists" }
       ]
     },
 
@@ -770,6 +772,191 @@
       "additionalProperties": false,
       "required": ["nestedIsNotNull"],
       "properties": { "nestedIsNotNull": { "$ref": "#/$defs/nestedNullCheck" } }
+    },
+
+    "valueObjectRef": {
+      "description": "A path that TERMINATES at a valueObject member (not an inner attribute): `Class.valueObject` optionally followed by nested valueObject segments (e.g. Customer.address, Customer.address.phones). Unlike `nestedRef` — which requires an ATTRIBUTE leaf and so has ≥3 components — this path may be just `Class.valueObject` (2 components) because its subject is the value OBJECT itself. It resolves against the declared structure (first segment a declared valueObject on the entity, each further segment a nested valueObject declared on the preceding member); the final member's cardinality (`one` / `many`) selects the presence vs non-empty semantics of nestedExists/nestedNotExists (m-op-algebra).",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$"
+    },
+    "elementRef": {
+      "description": "An ELEMENT-RELATIVE path used ONLY inside a scoped `where` (nestedExists/nestedNotExists over a `many` member). It has NO leading `Class.valueObject` — the subject is the array element bound by the enclosing exists — so it is one or more lowercase dotted segments naming declared members of that element (`type`, `number`, or `geo.country` to descend a nested value object of the element). Each segment resolves against the element's declared structure (intermediates nested valueObjects, leaf a declared attribute).",
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)*$"
+    },
+
+    "elementComparison": {
+      "description": "An element-scoped nested comparison: an element-relative `path` compared against a TYPED literal whose type MUST match the leaf attribute's declared type. The subject is the array element bound by the enclosing nestedExists/nestedNotExists `where`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "value"],
+      "properties": {
+        "path": { "$ref": "#/$defs/elementRef" },
+        "value": { "$ref": "#/$defs/literal" }
+      }
+    },
+    "elementMembership": {
+      "description": "An element-scoped membership test: an element-relative `path` tested against a non-empty list of typed literals.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "values"],
+      "properties": {
+        "path": { "$ref": "#/$defs/elementRef" },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/literal" }
+        }
+      }
+    },
+    "elementNullCheck": {
+      "description": "An element-scoped presence test: an element-relative `path` with NO compared value.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": { "path": { "$ref": "#/$defs/elementRef" } }
+    },
+    "elementPredicate": {
+      "description": "A scoped sub-predicate evaluated against ONE array element inside a nestedExists/nestedNotExists `where`. It is the flat `nested*` family re-expressed over element-relative paths (`elementRef`), composed with the ordinary boolean combinators. The whole compound must be satisfied by a SINGLE element (same-element semantics), which is what distinguishes it from ANDing flat any-element predicates at the top level (m-op-algebra).",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "oneOf": [
+        { "$ref": "#/$defs/elementNestedEq" },
+        { "$ref": "#/$defs/elementNestedNotEq" },
+        { "$ref": "#/$defs/elementNestedGt" },
+        { "$ref": "#/$defs/elementNestedGte" },
+        { "$ref": "#/$defs/elementNestedLt" },
+        { "$ref": "#/$defs/elementNestedLte" },
+        { "$ref": "#/$defs/elementNestedIn" },
+        { "$ref": "#/$defs/elementNestedIsNull" },
+        { "$ref": "#/$defs/elementNestedIsNotNull" },
+        { "$ref": "#/$defs/elementAnd" },
+        { "$ref": "#/$defs/elementOr" },
+        { "$ref": "#/$defs/elementNot" },
+        { "$ref": "#/$defs/elementGroup" }
+      ]
+    },
+    "elementNestedEq": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedEq"],
+      "properties": { "nestedEq": { "$ref": "#/$defs/elementComparison" } }
+    },
+    "elementNestedNotEq": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedNotEq"],
+      "properties": { "nestedNotEq": { "$ref": "#/$defs/elementComparison" } }
+    },
+    "elementNestedGt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedGt"],
+      "properties": { "nestedGt": { "$ref": "#/$defs/elementComparison" } }
+    },
+    "elementNestedGte": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedGte"],
+      "properties": { "nestedGte": { "$ref": "#/$defs/elementComparison" } }
+    },
+    "elementNestedLt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedLt"],
+      "properties": { "nestedLt": { "$ref": "#/$defs/elementComparison" } }
+    },
+    "elementNestedLte": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedLte"],
+      "properties": { "nestedLte": { "$ref": "#/$defs/elementComparison" } }
+    },
+    "elementNestedIn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedIn"],
+      "properties": { "nestedIn": { "$ref": "#/$defs/elementMembership" } }
+    },
+    "elementNestedIsNull": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedIsNull"],
+      "properties": { "nestedIsNull": { "$ref": "#/$defs/elementNullCheck" } }
+    },
+    "elementNestedIsNotNull": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedIsNotNull"],
+      "properties": { "nestedIsNotNull": { "$ref": "#/$defs/elementNullCheck" } }
+    },
+    "elementJunction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operands"],
+      "properties": {
+        "operands": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/elementPredicate" }
+        }
+      }
+    },
+    "elementUnary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operand"],
+      "properties": { "operand": { "$ref": "#/$defs/elementPredicate" } }
+    },
+    "elementAnd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["and"],
+      "properties": { "and": { "$ref": "#/$defs/elementJunction" } }
+    },
+    "elementOr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["or"],
+      "properties": { "or": { "$ref": "#/$defs/elementJunction" } }
+    },
+    "elementNot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["not"],
+      "properties": { "not": { "$ref": "#/$defs/elementUnary" } }
+    },
+    "elementGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group"],
+      "properties": { "group": { "$ref": "#/$defs/elementUnary" } }
+    },
+
+    "nestedExistsBody": {
+      "description": "The body of nestedExists/nestedNotExists: a value-object-terminated `path` and an OPTIONAL element-scoped `where`. Without `where` the meaning is presence — a `one` member present (non-absent per the absence-collapse rule), a `many` member a NON-EMPTY array. With `where` (a `many` path), ONE element must satisfy the whole compound `where` sub-predicate (same-element semantics); nestedNotExists + where means NO element satisfies it (m-op-algebra). Lowers to the m-dialect array-traversal form (m-sql).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "$ref": "#/$defs/valueObjectRef" },
+        "where": { "$ref": "#/$defs/elementPredicate" }
+      }
+    },
+    "nestedExists": {
+      "description": "nestedExists(path[, where]): the value object at `path` is present (`one`) or its array is non-empty (`many`); with `where`, at least one element satisfies the compound sub-predicate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedExists"],
+      "properties": { "nestedExists": { "$ref": "#/$defs/nestedExistsBody" } }
+    },
+    "nestedNotExists": {
+      "description": "nestedNotExists(path[, where]): the complement of nestedExists — the value object is absent (`one`) or the array is empty/absent (`many`); with `where`, no element satisfies the compound sub-predicate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedNotExists"],
+      "properties": { "nestedNotExists": { "$ref": "#/$defs/nestedExistsBody" } }
     }
   }
 }

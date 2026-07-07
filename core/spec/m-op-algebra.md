@@ -199,6 +199,74 @@ NOT** distinguish JSON `null` from a missing key or a null column at the predica
 level — the states stay distinguishable in the stored data but are indistinguishable
 to the algebra.
 
+#### To-many members — any-element and same-element semantics
+
+A value object declared `cardinality: many` is a **JSON array** of documents in the
+same column (`m-value-object`). Two things become expressible over it, and the
+distinction between them is load-bearing.
+
+**Flat predicates through a `many` segment mean *any element matches*.** A flat
+`nested*` predicate whose path crosses a `many` member (e.g.
+`nestedEq(Customer.address.phones.type, "home")`) is true for a row iff **some
+element** of that array satisfies it. Each such predicate is evaluated
+**independently**: ANDing two of them at the top level (`and(nestedEq(phones.type,
+"home"), nestedEq(phones.number, "555-9999"))`) means "some element has
+`type = home` **and** some — *possibly different* — element has
+`number = 555-9999`". The absence-collapse rule still holds: a null column, a
+missing array, an empty array, or an element whose leaf is not present contributes
+no matching element.
+
+**`nestedExists` / `nestedNotExists` test the member itself**, over a
+**value-object-terminated** path (`Class.valueObject(.valueObject)*`, ending at a
+value object rather than at an inner attribute):
+
+| Operation | Encoding | Meaning |
+|---|---|---|
+| `nestedExists` | `{ "nestedExists": { "path", "where"? } }` | the value object at `path` is **present** (`one`) or its array is **non-empty** (`many`); with `where`, **at least one** element satisfies the compound sub-predicate |
+| `nestedNotExists` | `{ "nestedNotExists": { "path", "where"? } }` | the complement — the value object is **absent** (`one`) or the array is **empty or absent** (`many`); with `where`, **no** element satisfies the compound sub-predicate |
+
+Without `where`, `nestedExists` on a `many` path is a pure non-empty test (an empty
+array, a missing key, a JSON `null`, and a SQL `NULL` column all read as
+not-present, so `nestedNotExists` matches every one of them — an empty array and a
+NULL column are **indistinguishable** to the algebra, exactly as the scalar
+absence-collapse rule folds them).
+
+**The scoped `where` expresses same-element matching.** With `where`, one element
+must satisfy the **whole** compound sub-predicate — so `nestedExists` with `where`
+is *not* the same as ANDing flat predicates. The sub-predicate inside `where` is
+the same `nested*` family re-expressed over **element-relative** paths (`type`,
+`geo.country` — declared members of the element, **no** leading `Class.valueObject`)
+composed with the ordinary `and` / `or` / `not` / `group` combinators. It resolves
+against the element's declared structure; a resolver **MUST** reject an
+element-relative path that names an undeclared member.
+
+The discriminating pair, with phones `[{home, 555-1234}, {work, 555-9999}]` (id 1 in
+the corpus fixtures):
+
+```yaml
+# unscoped AND — MATCHES: different elements may satisfy each predicate
+and:
+  operands:
+    - nestedEq: { path: Customer.address.phones.type,   value: home }
+    - nestedEq: { path: Customer.address.phones.number, value: '555-9999' }
+
+# scoped exists — does NOT match: ONE element must satisfy the whole compound
+nestedExists:
+  path: Customer.address.phones
+  where:
+    and:
+      operands:
+        - nestedEq: { path: type,   value: home }
+        - nestedEq: { path: number, value: '555-9999' }
+```
+
+The unscoped form lowers to two **independent** existence checks (a row where `home`
+and `555-9999` live in *different* elements matches); the scoped form lowers to a
+**single** existence check binding one element, so both predicates must hold on the
+*same* element. `nestedNotExists` with `where` is its negation — "no element
+satisfies the compound". The array-traversal spelling per dialect is an `m-dialect`
+decision (`m-sql`), never fixed by this algebra.
+
 ### Boolean combinators
 
 | Operation | Encoding |
@@ -300,7 +368,8 @@ For orientation, this schema revision leaves membership `in(subquery)` out of th
 required operation set. The temporal (`asOf`, `asOfRange`, `history`) and nested
 value-object (the flat `nested*` family — `nestedEq`, `nestedNotEq`, `nestedGt`,
 `nestedGte`, `nestedLt`, `nestedLte`, `nestedIn`, `nestedIsNull`,
-`nestedIsNotNull`) nodes are not deferred; their canonical
+`nestedIsNotNull` — plus the to-many `nestedExists` / `nestedNotExists` with their
+optional element-scoped `where`) nodes are not deferred; their canonical
 encodings are part of the algebra, with observable temporal behavior specified by
 `m-temporal-read` and SQL lowering specified by `m-sql`. The aggregation nodes
 (`groupBy` and friends) are present in `operation.schema.json` but the aggregation
