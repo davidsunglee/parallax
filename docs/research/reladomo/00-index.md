@@ -125,7 +125,7 @@ Question 14 arose during the research (how `reladomoserial`/`reladomographql` ma
 XML) and is answered in [14](14-metamodel-introspection.md).
 
 **Second pass (2026-07-07, same commit).** A follow-up gap-research pass covered the capabilities
-the 13 questions missed, prioritized by `docs/misc/reladomo-gap-priority.md`: computed attributes
+the 13 questions missed, prioritized by [reladomo-gap-priority.md](../reladomo-gap-priority.md): computed attributes
 ([16](16-computed-attributes.md)), identity columns ([17](17-identity-columns.md)), temporal
 repair/recovery ([18](18-temporal-repair-and-recovery.md)), cache operations
 ([19](19-cache-operations.md)), change callbacks and telemetry
@@ -138,8 +138,8 @@ repair/recovery ([18](18-temporal-repair-and-recovery.md)), cache operations
 ## Scope — what this research does not cover
 
 Coverage spans the 13 original questions plus the second-pass gap files (16–24). Against the
-capability inventory in `docs/misc/reladomo-gap-priority.md`, every rank is now documented except
-the following, which remain shallow by choice:
+capability inventory in [reladomo-gap-priority.md](../reladomo-gap-priority.md), every rank is now
+documented except the following, which remain shallow by choice:
 
 - Cache-monitoring UI (rank 28) — the `reladomoui` GWT module is named in
   [01](01-runtime-architecture.md) only; it is a product layer over the
