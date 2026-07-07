@@ -325,6 +325,13 @@ runs; there is no `when.operation` to serde (layer 4a) and no normalization
 difference — the DML golden SQL is normalized to a fixed point exactly like read
 SQL (layer 3).
 
+A **value-object** column's neutral write input (①) value is **always** the literal
+document (a JSON object, a JSON array, or `NULL`) — never a DB-computed write marker
+(`{computed: "maxPlusOne"}` / `{increment: n}`), which is a **scalar-attribute-only**
+form. A value object binds its whole document even when that document is *shaped*
+like a marker; the two are disambiguated by the field's declared metamodel role
+(resolved from `columnOrder(entity)`), not by the value's shape (`m-value-object`).
+
 A writeSequence case MAY set **`given.fixtures: true`** to load the model's
 fixtures **before** the ordered DML (instead of starting empty) — so a sequence
 can mutate a *pre-existing* persisted row. This is the `m-detach` detached-update

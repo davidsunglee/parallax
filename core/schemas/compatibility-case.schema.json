@@ -684,7 +684,7 @@
       }
     },
     "writeComputedMarker": {
-      "description": "A one-key DB-COMPUTED marker in a neutral write row (①): the attribute's value is derived by the database rather than authored as a literal bind, so the adapter emits the strategy's SQL fragment and the harness cross-check skips the literal bind at this position.",
+      "description": "A one-key DB-COMPUTED marker in a neutral write row (①): the attribute's value is derived by the database rather than authored as a literal bind, so the adapter emits the strategy's SQL fragment and the harness cross-check skips the literal bind at this position. This interpretation applies ONLY to a SCALAR ATTRIBUTE column (m-value-object): a value-object column's value is ALWAYS the literal document even when it is marker-SHAPED, so a marker vs a value-object document is disambiguated by the field's declared metamodel role (resolved from `columnOrder(entity)`), NOT by the value's shape.",
       "type": "object",
       "additionalProperties": false,
       "minProperties": 1,
@@ -701,7 +701,7 @@
       }
     },
     "writeRow": {
-      "description": "A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`). An attribute's value is a scalar literal, an explicit `null`, OR a one-key DB-COMPUTED marker object — `{ computed: \"maxPlusOne\" }` or `{ increment: <n> }`; a value-object field's value is the WHOLE embedded composite document (a JSON object, or a JSON array of objects for a `many` value object), or `null` (m-value-object). The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order — binding a value object atomically as one document in its columnOrder position. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`.",
+      "description": "A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`). A SCALAR ATTRIBUTE's value is a scalar literal, an explicit `null`, OR a one-key DB-COMPUTED marker object — `{ computed: \"maxPlusOne\" }` or `{ increment: <n> }`; a VALUE-OBJECT field's value is the WHOLE embedded composite document (a JSON object, or a JSON array of objects for a `many` value object), or `null` (m-value-object). The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order — binding a value object atomically as one document in its columnOrder position. A DB-computed marker vs a value-object document is therefore disambiguated by MODEL ROLE, not by the value's SHAPE: only a scalar-attribute column's value is ever read as a marker, while a value-object column's value is ALWAYS the literal document even when it is marker-SHAPED. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`.",
       "type": "object",
       "properties": {
         "observedVersion": {
@@ -711,13 +711,12 @@
         }
       },
       "additionalProperties": {
-        "oneOf": [
+        "anyOf": [
           { "type": ["string", "number", "boolean", "null"] },
           { "$ref": "#/$defs/writeComputedMarker" },
           {
-            "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite ATOMICALLY as one document value in its columnOrder position — a JSON object for a `one` value object, or a JSON array of objects for a `many` one — never decomposed into path-level binds. (A null nullable value object uses the scalar `null` branch above and binds SQL NULL.) `not` a computed marker, so the write-value branches stay mutually exclusive.",
-            "type": ["object", "array"],
-            "not": { "$ref": "#/$defs/writeComputedMarker" }
+            "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite ATOMICALLY as one document value in its columnOrder position — a JSON object for a `one` value object, or a JSON array of objects for a `many` one — never decomposed into path-level binds. (A null nullable value object uses the scalar `null` branch above and binds SQL NULL.) Whether a marker-SHAPED value (`{computed: …}` / `{increment: n}`) is a DB-computed marker or a value-object document is a MODEL-ROLE decision — resolved from `columnOrder(entity)`, NOT from the value's shape — that this model-agnostic schema cannot make, so the value branches are NON-exclusive (`anyOf`, no mutual-exclusion guard): a value-object column's value is ALWAYS literal document content, and a marker-shaped value-object document therefore validates via BOTH this branch and the computed-marker branch.",
+            "type": ["object", "array"]
           }
         ]
       }
