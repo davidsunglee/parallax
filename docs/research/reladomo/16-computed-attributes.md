@@ -69,12 +69,14 @@ it: `eq/notEq/in/notIn/greaterThan/lessThanEquals` return the standard atomic op
 (`IntegerEqOperation` etc.) with the calculated attribute as the left-hand attribute
 (`CalculatedIntegerAttribute.java:246-323`). `eq(int)` routes through
 `calculator.optimizedIntegerEq(...)` (`NumericAttributeCalculator.java:73`): the default is a
-plain equality (`AbstractArithmeticAttributeCalculator.java:328-332`), but year/month/day
-calculators **rewrite the operation onto the base column** — `orderDate().year().eq(2004)`
-becomes `orderDate >= 2004-01-01 AND orderDate < 2005-01-01`
-(`arithmeticCalculator/TimestampYearCalculator.java:87-97`, `DateYearCalculator.java:71-78`), and
-`convertToIntegerAttribute().eq(123)` becomes `trackingId = "123"`
-(`StringToIntegerNumericAttributeCalculator.java:228-231`).
+plain equality (`AbstractArithmeticAttributeCalculator.java:328-332`), but the *year* calculators
+**rewrite the operation onto the base column** — `orderDate().year().eq(2004)` becomes
+`orderDate >= 2004-01-01 AND orderDate < 2005-01-01`
+(`arithmeticCalculator/TimestampYearCalculator.java:87-97`, `DateYearCalculator.java:71-78`) —
+while `month().eq(...)` and `dayOfMonth().eq(...)` remain equality operations on the calculated
+attribute and render the SQL date-part function (`DateMonthCalculator.java:71-75`,
+`TimestampDayOfMonthCalculator.java:83-87`). `convertToIntegerAttribute().eq(123)` becomes
+`trackingId = "123"` (`StringToIntegerNumericAttributeCalculator.java:228-231`).
 
 Aggregation composes on top: `sum()/avg()/min()/max()` inherited from the numeric attribute wrap
 the calculated attribute (`IntegerAttribute.java:780-799`), e.g.
@@ -118,8 +120,10 @@ interfaces (`IntExtractor` etc.), so cache filtering calls
 `TimestampYearCalculator.java:59-64` — Joda-Time on the cached `Timestamp`). Bulk evaluation
 (aggregation) uses the `forEach(Procedure...)` pattern with `WrappedProcedureAndContext`
 (`mithra/attribute/calculator/WrappedProcedureAndContext.java`). Cached-query invalidation works
-because the calculated attribute's `getUpdateCount()` sums its operands' update counts
-(`AbstractArithmeticAttributeCalculator.java:151-159`).
+because the calculated attribute delegates `getUpdateCount()` to its calculator: binary arithmetic
+calculators sum both operands' update counts (`AbstractArithmeticAttributeCalculator.java:151-159`),
+while single-attribute calculators delegate to their one base attribute
+(`AbstractSingleAttributeCalculator.java:101-108`).
 
 **Null handling**: relational matching treats null as no-match
 (`IntegerEqOperation.java:51`); `StringToLowerCaseCalculator.stringValueOf` returns null for

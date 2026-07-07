@@ -41,9 +41,12 @@ operation to the list) (`mithra/notification/OperationBasedNotificationRegistrat
 verbatim (`mithra/notification/ClassLevelNotificationRegistrationEntry.java:40-47`).
 `DefaultMithraApplicationNotificationListener` is a no-op adapter (`mithra/notification/listener/DefaultMithraApplicationNotificationListener.java`).
 
-**Threading and ordering**: all dispatch happens on one daemon `MithraNotificationThread` (a 1-thread
-`ThreadPoolExecutor`, `mithra/notification/MithraNotificationEventManagerImpl.java:665-680`). Per
-event, the internal cache listener runs first, then application listeners
+**Threading and ordering**: normal incoming notification messages are dispatched on one daemon
+`MithraNotificationThread` (a 1-thread `ThreadPoolExecutor`,
+`mithra/notification/MithraNotificationEventManagerImpl.java:665-680`); replication polling can
+invoke the same processing method directly from per-source daemon polling threads
+(`mithra/notification/MithraReplicationNotificationManager.java:133-151, 392-395`). On both paths,
+per event, the internal cache listener runs first, then application listeners
 (`processNotificationEvents` :593-633 → `processApplicationNotification` :636-643); listener
 exceptions are caught and logged, never propagated (:788-806). `RegistrationEntryList` is explicitly
 unsynchronized "because they are engineered to be called from one thread" (:750-753).

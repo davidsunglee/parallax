@@ -91,8 +91,10 @@ DDL suffix `" identity"` (Sybase/MSSQL syntax, line 551-554) and empty allow-ins
 | Snowflake (`SnowflakeDatabaseType.java:503-506`) | returns `null` | inherited | inherited |
 | Generic (`GenericDatabaseType.java:152-160`) | throws `RuntimeException("not implemented")` | throws | inherited |
 
-Only Sybase, MsSql, H2, Derby, and DB2 return read-back SQL that is valid for their engine;
-Postgres/Maria/Oracle carry a copy of the H2 string. Sybase bcp bulk-insert additionally skips
+Only the Sybase family, MsSql, H2, Derby, and DB2 return read-back SQL that is valid for their
+engine; Postgres/Maria/Oracle carry a copy of the H2 string. (`SybaseIqDatabaseType` and
+`SybaseIqNativeDatabaseType` extend `SybaseDatabaseType`, `SybaseIqDatabaseType.java:42`, and
+inherit its identity behavior.) Sybase bcp bulk-insert additionally skips
 identity columns when building column metadata (status bit 128,
 `SybaseDatabaseType.java:1010-1015`).
 
