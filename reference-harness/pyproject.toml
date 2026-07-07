@@ -18,9 +18,6 @@ dev = [
     "basedpyright>=1.31",
     "pytest>=8.0",
     "ruff>=0.6",
-    # Temporary — used only by scripts/migrate_case_format.py (the COR-23 case-format
-    # codemod). Removed once the migration lands and the script is deleted.
-    "ruamel.yaml>=0.18",
 ]
 
 [build-system]
@@ -40,9 +37,6 @@ dev = [
     "basedpyright>=1.31",
     "pytest>=8.0",
     "ruff>=0.6",
-    # Temporary — used only by scripts/migrate_case_format.py (the COR-23 case-format
-    # codemod). Removed once the migration lands and the script is deleted.
-    "ruamel.yaml>=0.18",
 ]
 
 [tool.pytest.ini_options]
