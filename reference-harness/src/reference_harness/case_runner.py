@@ -240,6 +240,7 @@ def _assert_schema(case: Case) -> None:
     if not case.model.class_name:
         raise CaseFailure(f"{case.path.name}: model has no class name")
     _assert_binds_dialect_keys(case)
+    _assert_reference_sql_dialect_keys(case)
 
 
 def _assert_binds_dialect_keys(case: Case) -> None:
@@ -261,6 +262,33 @@ def _assert_binds_dialect_keys(case: Case) -> None:
                 f"{sorted(binds)} != sql map keys {sorted(sql_keys)}; a dialect-keyed "
                 f"binds map MUST cover exactly the dialects its sql map declares."
             )
+
+
+def _assert_reference_sql_dialect_keys(case: Case) -> None:
+    """A dialect-keyed ``then.referenceSql`` map MUST cover exactly the dialects the
+    case's golden ``sql`` maps declare (m-case-format resolved question 12) — the
+    ``referenceSql`` analogue of :func:`_assert_binds_dialect_keys`. A plain-string
+    ``referenceSql`` is dialect-agnostic and imposes no constraint; an absent one
+    (a trivial case with no oracle) is likewise unconstrained.
+
+    Enforcing this closes a silent gap: without it, a ``referenceSql`` map that omits
+    a dialect the golden ``sql`` declares would drop the INDEPENDENT oracle for that
+    dialect unnoticed — the run would still pass on the golden-vs-``then.rows`` check
+    alone, exactly the self-consistent-but-wrong failure the oracle exists to catch.
+    ``golden_dialects`` is the set the run loop keys execution on, so matching against
+    it guarantees every executed dialect has its oracle.
+    """
+    reference_sql = case.then.get("referenceSql")
+    if not isinstance(reference_sql, dict):
+        return
+    sql_keys = case.golden_dialects
+    if set(reference_sql) != sql_keys:
+        raise CaseFailure(
+            f"{case.path.name}: then.referenceSql map keys {sorted(reference_sql)} "
+            f"!= golden sql map keys {sorted(sql_keys)}; a dialect-keyed referenceSql "
+            f"map MUST cover exactly the dialects its golden sql declares, so no "
+            f"executed dialect runs without its independent oracle."
+        )
 
 
 def _assert_normalization(case: Case, dialect: str) -> None:
