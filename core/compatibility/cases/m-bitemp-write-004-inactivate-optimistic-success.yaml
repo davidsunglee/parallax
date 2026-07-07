@@ -1,28 +1,16 @@
-# Optimistic BITEMPORAL inactivation, FRESH observed in_z (m-bitemp-write + m-opt-lock): the rectangle-
-# split inactivation gates on the observed processing-from and inactivates EXACTLY the
-# one observed current row.
+# Optimistic bitemporal inactivation with a FRESH observed in_z inactivates EXACTLY
+# the one observed current row (m-bitemp-write + m-opt-lock).
 #
-# A bitemporal entity carries no version column, so the observed processing-from (in_z)
-# is the optimistic-lock version analogue. But a bitemporal key spans BOTH axes: the
-# Position fixture rows R2 and R3 SHARE in_z = 2024-04-01 and are BOTH current on the
-# processing axis (out_z = infinity), differing only by their business window. So the
-# gate must add the business discriminator `from_z = ?` to inactivate exactly one row:
-#   update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
-# targeting R3 (value 200, business [2024-06-01, infinity), processing [2024-04-01, inf)).
-#   binds [2024-10-01, 1, infinity, 2024-06-01, 2024-04-01]  ->  1 row inactivated.
-#
-# A conflict case runs the SINGLE inactivating close and asserts its affected-row count;
-# it does NOT run the chained head/middle/tail replacement INSERTs (a full rectangle
-# split chains up to three ungated INSERTs at fresh in_z = txInstant — that fresh in_z
-# IS the version advance). So expectedTableState reflects ONLY the executed SQL: the
-# fixtures with R3 now closed on the processing axis at 2024-10-01; R1/R2 untouched
-# (conflict granularity is the rectangle, not the primary key).
-#
-# Harness-only (bitemporal writes are outside slice-mvp-1: no TS *Until runtime exists).
-# R1 — superseded on the processing axis (out_z finite), untouched.
-# R2 — the head (business [2024-01-01, 2024-06-01)), still current, untouched: the
-# gate's from_z discriminator kept our close off it (conflict granularity = rectangle).
-# R3 — the observed current row, now INACTIVATED on the processing axis at 2024-10-01.
+# A bitemporal entity has no version column, so the observed processing-from (in_z)
+# is the optimistic-lock version analogue — but a bitemporal key spans both axes.
+# Fixture rows R2 and R3 share in_z = 2024-04-01 and are both current on the
+# processing axis, differing only by business window, so the close adds the business
+# discriminator `from_z = ?` alongside the in_z gate to target exactly R3 (value
+# 200, business [2024-06-01, infinity)); it inactivates 1 row. A conflict case runs
+# only that single close, not the replacement INSERTs a full rectangle split would
+# chain, so `then.tableState` shows R3 closed at 2024-10-01 with R1/R2 untouched —
+# conflict granularity is the rectangle, not the primary key. Harness-only
+# (bitemporal writes are outside slice-mvp-1).
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict]
 shape: conflict

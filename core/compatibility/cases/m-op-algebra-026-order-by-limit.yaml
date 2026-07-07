@@ -1,12 +1,11 @@
-# orderBy + limit — directives composed over `all`. Ordering by qty descending
-# and capping at 2 rows makes the ordering OBSERVABLE through row membership (the
-# top-2 by qty are ids 42 and 5), so the order-insensitive result comparison
-# still proves the directive. The directives lower after the predicate, in the
-# canonical clause order `... order by ... limit ...`.
+# orderBy + limit — directives composed over `all`.
 #
-# Cross-dialect (Phase 10): `order by ... limit ?` is identical SQL on Postgres
-# and MariaDB, so this case carries goldenSql for both dialects — the pagination
-# parity witness in the matrix (the row-limit decision point of the m-dialect seam).
+# Ordering by qty descending and capping at 2 rows makes the ordering OBSERVABLE
+# through row membership (the top two by qty are ids 42 and 5), so the
+# order-insensitive result comparison still proves the directive. `order by ...
+# limit ?` is identical SQL on Postgres and MariaDB, so both dialects share one
+# `then.statements` entry — the pagination-parity witness and the row-limit decision
+# point of the m-dialect seam.
 model: models/orders.yaml
 tags: [m-op-algebra, orderBy, limit, directive, slice-mvp-1]
 shape: read

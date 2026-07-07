@@ -1,23 +1,16 @@
-# Optimistic temporal close RETRY after conflict (m-temporal-read + m-opt-lock retry contract): the
-# `attempts` 0-then-1 transition on the gated close (the m-opt-lock-007 analogue for a temporal
-# entity).
+# Optimistic temporal close RETRY after conflict — the `attempts` 0-then-1
+# transition on the gated close (m-temporal-read + m-opt-lock retry contract, the
+# m-opt-lock-007 analogue for a temporal entity).
 #
-# m-temporal-read-010 stops at the conflict signal (a stale-in_z close affects 0 rows). This proves
-# the retry closes the loop: after the conflict, a retry that re-reads the now-current
-# in_z and re-applies affects exactly 1 row. The `attempts` sequence makes the two-step
-# observable (0 then 1) expressible in one case.
-#
-# A concurrent writer fully chained id 2 (precondition): closed the old current row at
-# 2024-09-01 and opened a fresh current row (value 999.00, in_z 2024-09-01). Then:
-#   attempt 0 (stale): gate on the in_z we first read (2024-02-01) ⇒ 0 rows — conflict.
-#   attempt 1 (retry): re-read the fresh current in_z (2024-09-01), re-apply ⇒ 1 row,
-#                      closing the concurrent writer's current milestone at 2024-10-01.
-#
-# The case runs the precondition + the ordered attempts and asserts each affected count.
-# It does NOT run any replacement INSERT, so expectedTableState is the fixtures + the
-# precondition + the retry's close of the fresh current row.
-# id 2's original current milestone, CLOSED by the concurrent writer at 2024-09-01.
-# id 2's concurrent-writer milestone, now CLOSED by the retry at 2024-10-01.
+# m-temporal-read-010 stops at the conflict signal (a stale-in_z close affects 0
+# rows); this proves the retry closes the loop, and the `attempts` sequence makes the
+# two-step observable in one case. `given.apply` fully chains id 2 (old current row
+# closed at 2024-09-01, fresh current row value 999.00 opened at in_z 2024-09-01).
+# Attempt 0 gates on the first-read in_z (2024-02-01) and affects 0 rows — the
+# conflict; attempt 1 re-reads the fresh current in_z (2024-09-01), re-applies, and
+# affects 1 row, closing the concurrent writer's milestone at 2024-10-01. The case
+# asserts each attempt's affected count and runs no replacement INSERT, so
+# `then.tableState` is the fixtures plus the re-chain plus that retry close.
 model: models/balance.yaml
 tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1]
 shape: conflict

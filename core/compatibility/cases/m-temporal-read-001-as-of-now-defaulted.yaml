@@ -1,21 +1,16 @@
 # Defaulted as-of read (the m-temporal-read default-injection rule, made observable).
 #
-# The operation is a plain `all` over Balance — the caller OMITS the
-# processingDate dimension. The temporal MVP rule is "an omitted as-of dimension
-# defaults to as-of now", so the implementation MUST auto-inject the current-row
-# predicate `out_z = infinity`. The golden SQL therefore carries the injected
-# `t0.out_z = ?` even though the operation has no asOf node — that is exactly the
-# injection rule the harness proves automatically here (golden SQL + expected
-# current rows).
-#
-# As-of now over the fixture history returns only the CURRENT milestone of each
-# live account: (1, 150.00) and (2, 200.00). The superseded id-1 row and the
-# terminated id-3 account are excluded because their out_z is finite.
+# The operation is a plain `all` over Balance — the caller OMITS the processingDate
+# dimension. The temporal MVP rule is "an omitted as-of dimension defaults to as-of
+# now", so the implementation must auto-inject the current-row predicate
+# `out_z = infinity`; the golden SQL carries that injected `t0.out_z = ?` even though
+# the operation has no asOf node. As-of now over the fixture history returns only the
+# CURRENT milestone of each live account — (1, 150.00) and (2, 200.00) — excluding
+# the superseded id-1 row and the terminated id-3 account, whose out_z is finite.
 # The cross-dialect infinity-fallback proof lives in the dedicated
-# cases/m-temporal-read-021-infinity-fallback-mariadb.yaml (a goldenSql.mariadb twin of this
-# read whose referenceSql is dialect-neutral); this case stays Postgres-only
-# because its referenceSql uses the Postgres-specific `'infinity'::timestamptz`
-# cast, which the harness runs verbatim and MariaDB would reject.
+# m-temporal-read-021 (a MariaDB `then.statements` twin whose `then.referenceSql` is
+# dialect-neutral); this case stays Postgres-only because its `then.referenceSql`
+# uses the Postgres-specific `'infinity'::timestamptz` cast.
 model: models/balance.yaml
 tags: [m-temporal-read, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-mvp-1]
 shape: read

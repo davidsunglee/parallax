@@ -4,8 +4,8 @@
 #   - Tag:    a duplicate value on a non-PK UNIQUE index -> uniqueViolation
 #             (unique-index path; exercises the DDL UNIQUE-constraint emission).
 #   - Gauge:  two rows two connections contend over -> deadlock / lockWaitTimeout.
-# The error classes are dialect-neutral (errorClass); the per-dialect native code
-# each DB raises is witnessed by expectedNativeCode on every case.
+# The error classes are dialect-neutral (`then.errorClass`); the per-dialect native
+# code each database raises is witnessed by `then.nativeCode` on every case.
 entities:
   - name: Widget
     namespace: parallax.compatibility

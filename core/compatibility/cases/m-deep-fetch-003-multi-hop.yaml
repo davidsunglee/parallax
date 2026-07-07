@@ -1,21 +1,15 @@
 # Deep fetch, MULTI-HOP 1 -> N -> N: the headline N+1-elimination proof.
 #
-# Root: orders {1, 42}. Path: Order.items -> OrderItem.statuses (item-level
-# status events). This resolves in EXACTLY THREE statements:
-#   level 0 (root)     : the two orders
-#   level 1 (items)    : their line items, keyed by order id in {1, 42}  (N items)
-#   level 2 (statuses) : the item-level statuses, keyed by order_item_id in the
-#                        DISTINCT item ids {11, 12, 421, 422}            (N statuses)
-#
-# Naively this is 1 + N + N = 1 + 2 + 4 = 7 statements (one items query per order,
-# one statuses query per item). Deep fetch collapses each level into a single
-# IN-keyed query, so roundTrips = 3. The harness asserts statement count == 3 and
-# that the assembled graph matches expectedGraph, so N+1 elimination is proven
-# AUTOMATICALLY — not by reading the SQL.
-#
-# Note the order-level status rows (order_item_id NULL: 101, 102, 142) are
-# correctly absent here: the OrderItem.statuses hop keys on order_item_id, so only
-# item-level statuses are reached. Item 422 has no statuses ⇒ an empty list.
+# Root orders {1, 42} along the path Order.items -> OrderItem.statuses resolve in
+# EXACTLY THREE statements: the two orders (level 0), their line items keyed by
+# order id (level 1), and the item-level statuses keyed by the DISTINCT item ids
+# {11, 12, 421, 422} (level 2). Naively this is 1 + N + N = 1 + 2 + 4 = 7 (one items
+# query per order, one statuses query per item); deep fetch collapses each level
+# into a single IN-keyed query, so `then.roundTrips` is 3. The harness asserts the
+# statement count is 3 and that the assembled graph matches `then.graph`, proving
+# N+1 elimination automatically rather than by reading the SQL. The order-level
+# status rows (order_item_id NULL) are correctly absent — the hop keys on
+# order_item_id — and item 422, which has no statuses, yields an empty list.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, multi-hop, relationship, slice-mvp-1]
 shape: read

@@ -1,24 +1,16 @@
-# Temporal close hits ZERO rows in LOCKING mode (m-temporal-read + m-opt-lock): a zero-row close is an
-# error in ANY mode — it MUST NOT silently succeed, even under the default pessimistic
-# strategy.
+# A zero-row temporal close in LOCKING mode is an error in ANY mode — it MUST NOT
+# silently succeed, even under the default pessimistic strategy (m-temporal-read +
+# m-opt-lock).
 #
-# In locking mode the close is UNGATED (the m-read-lock shared read lock makes the write
-# correct, so no `and in_z = ?` gate is emitted) — the locking-mode counterpart of
-# m-temporal-read-009's gated close. But correctness still requires the close to find the current
-# milestone: a concurrent writer TERMINATED id 2 (closed its current row at 2024-09-01,
-# chaining NOTHING), so no current row (out_z = infinity) remains. The ungated close:
-#   update balance set out_z = ? where bal_id = ? and out_z = ?
-#   binds [2024-10-01, 2, infinity]  ->  0 rows.
-# A zero-row close is never silent: it surfaces (a stale/consistency error, distinct
-# from an optimistic conflict, and NOT retried — a retry would re-read the same absent
-# current row and loop).
-#
-# The case runs the precondition (the concurrent terminate) + the SINGLE ungated close
-# and asserts affectedRows 0. expectedTableState is the fixtures with id 2 terminated
-# (our close applied nothing).
-# A concurrent writer TERMINATED id 2: close the current row at 2024-09-01, chain nothing.
-# id 2's current milestone, TERMINATED by the concurrent writer at 2024-09-01 — no
-# current row remains, so our ungated close found nothing (0 rows) and applied nothing.
+# In locking mode the close is UNGATED: the m-read-lock shared read lock makes the
+# write correct, so no `and in_z = ?` gate is emitted — the locking-mode counterpart
+# of m-temporal-read-009's gated close. Correctness still requires the close to find
+# the current milestone, but `given.apply` TERMINATES id 2 (closes its current row at
+# 2024-09-01, chaining nothing), so none remains and the ungated close affects 0
+# rows. A zero-row close never passes silently: it surfaces a stale/consistency error
+# — distinct from an optimistic conflict and NOT retried, since a retry would re-read
+# the same absent current row and loop. `then.tableState` is the fixtures with id 2
+# terminated.
 model: models/balance.yaml
 tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, locking, slice-mvp-1]
 shape: conflict

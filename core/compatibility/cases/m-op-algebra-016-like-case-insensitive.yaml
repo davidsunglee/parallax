@@ -1,13 +1,13 @@
-# like (case-insensitive) — the `caseInsensitive` flag lowers both sides through
-# `lower(...)`. The pattern `ada` matches both `Ada` (id 1) and `ada` (id 3);
-# the case-sensitive form would match only id 3, so this fixture pins the
+# like with the `caseInsensitive` flag folds both sides through `lower(...)` — the
 # case-folding contract.
 #
-# Cross-dialect (Phase 10): the `lower(...) like lower(?)` case-folding form is
-# dialect-neutral and result-equal on both Postgres and MariaDB, so this case
-# carries goldenSql for both — the collation/case-sensitivity witness in the
-# matrix. (MariaDB's default collation is case-insensitive on its own, but the
-# explicit `lower()` folding is the portable contract and matches the same rows.)
+# The pattern `ada` matches both `Ada` (id 1) and `ada` (id 3); the case-sensitive
+# form would match only id 3, so this fixture pins case folding. The
+# `lower(...) like lower(?)` form is dialect-neutral and result-equal on Postgres
+# and MariaDB, so both dialects share one `then.statements` entry — the
+# collation/case-sensitivity witness in the matrix. (MariaDB's default collation is
+# case-insensitive on its own, but the explicit `lower()` folding is the portable
+# contract and matches the same rows.)
 model: models/orders.yaml
 tags: [m-op-algebra, like, string, caseInsensitive, slice-mvp-1]
 shape: read

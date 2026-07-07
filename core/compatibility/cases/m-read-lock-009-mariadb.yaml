@@ -1,23 +1,16 @@
-# Read-lock divergence (Phase 10): the marquee cross-dialect case.
+# Read-lock divergence — an in-transaction read that intends to write appends the
+# dialect's shared-row-lock suffix, the one place the two dialects diverge on
+# read-locking syntax (m-read-lock / m-dialect seam).
 #
-# An in-transaction read that intends to write appends the dialect's shared-row-
-# lock suffix (m-read-lock / m-dialect). This is the ONE place the two dialects diverge on
-# read-locking syntax, and it is fully localized to the m-dialect seam:
-#
-#   * Postgres : `for share of t0`     — `for share` qualified by the root alias.
-#   * MariaDB  : `lock in share mode`  — MariaDB has no `for share` (MDEV-17514);
-#                its shared lock is the unaliased `lock in share mode`.
-#
-# Both forms are the canonical fixed point of the m-sql normalizer for their dialect
-# (sqlglot parses both into the same Lock node; the seam renders each spelling),
-# so the goldenSql passes the layer-3 idempotence check per dialect.
-#
-# The lock is a concurrency property; a single-connection harness proves the
-# observable half — each locking read is WELL-FORMED and RESULT-CORRECT against
-# its real database, cross-checked by an independent dialect-neutral oracle (the
-# same select WITHOUT a lock, which must return the same rows because the lock
-# does not change the result). This is the first real compatibility-matrix row
-# where the two dialects emit DIFFERENT optimized SQL for the same operation.
+# Postgres emits `for share of t0` (qualified by the root alias); MariaDB has no
+# `for share` (MDEV-17514) and emits the unaliased `lock in share mode`. Each is the
+# canonical fixed point of the m-sql normalizer for its dialect, so both
+# `then.statements` entries pass the layer-3 idempotence check. The lock is a
+# concurrency property, so a single-connection harness proves the observable half:
+# each locking read is well-formed and result-correct against its real database,
+# cross-checked by a dialect-neutral oracle (the same select WITHOUT a lock, which
+# must return the same rows). This is the first matrix row where the two dialects
+# emit DIFFERENT optimized SQL for the same operation.
 model: models/account.yaml
 tags: [m-read-lock, m-dialect]
 shape: read
