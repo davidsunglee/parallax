@@ -33,8 +33,11 @@ from . import errors, serde
 from .case import Case, Entity, Model
 from .data_loader import load_model
 from .ddl_builder import column_order, ddl_for, quote_identifier
+from .op_validate import validate_operation
 from .providers import DatabaseProvider
 from .sql_normalize import normalize
+from .value_object_resolve import REJECTED_RULES, RejectionError
+from .write_validate import validate_write
 
 
 class CaseFailure(AssertionError):
@@ -236,6 +239,14 @@ def _assert_schema(case: Case) -> None:
             raise CaseFailure(f"{case.path.name}: boundary case has no actions")
         if not case.outcome:
             raise CaseFailure(f"{case.path.name}: boundary case missing outcome")
+    elif case.is_rejected:
+        if case.rejected_rule not in REJECTED_RULES:
+            raise CaseFailure(
+                f"{case.path.name}: rejected case then.rejectedRule "
+                f"{case.rejected_rule!r} is not a known rule"
+            )
+        if "operation" not in case.when and "write" not in case.when:
+            raise CaseFailure(f"{case.path.name}: rejected case needs when.operation or when.write")
     elif "operation" not in case.when:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:
@@ -320,6 +331,12 @@ def _assert_serde(case: Case) -> None:
         for step in case.coherence:
             if "find" in step:
                 serde.assert_roundtrip(step["find"])
+    elif case.is_rejected:
+        # A rejected case carries the invalid input under `when.operation` (a
+        # schema-valid m-op-algebra node — serde it) OR `when.write` (a neutral write
+        # row, which has no operation to serde). The descriptor still round-trips.
+        if "operation" in case.when:
+            serde.assert_roundtrip(case.when["operation"])
     elif (
         not case.is_write_sequence
         and not case.is_conflict
@@ -1170,6 +1187,43 @@ def _assert_value_object_graph(case: Case, db: DatabaseProvider) -> None:
                 f"  reference: {reference_rows!r}\n"
                 f"  expected:  {identity_rows!r}"
             )
+
+
+# --- negative validation (Phase 8, the `rejected` shape) -------------------------------
+
+
+def _assert_rejected(case: Case) -> None:
+    """Assert the input is refused PRE-SQL by model-aware validation (m-case-format Q7).
+
+    A ``rejected`` case carries a schema-valid ``when.operation`` OR a ``when.write``
+    that a model-aware validator MUST refuse BEFORE any SQL is emitted, naming the
+    violated normative rule in ``then.rejectedRule``. This runs the reference
+    validators (``op_validate`` / ``write_validate``) against the queried entity's
+    DECLARED value-object structure and asserts they raise EXACTLY that rule — the
+    portable analogue of Reladomo refusing a structurally-invalid embedded-value use.
+    No dialect, no provisioning, no execution: rejection is dialect-agnostic and
+    happens with no database.
+    """
+    entity = case.model.root_entity
+    expected = case.rejected_rule
+    try:
+        if "operation" in case.when:
+            validate_operation(entity, case.when["operation"])
+        elif "write" in case.when:
+            validate_write(entity, case.write or {})
+        else:  # pragma: no cover - guarded by _assert_schema
+            raise CaseFailure(f"{case.path.name}: rejected case needs when.operation or when.write")
+    except RejectionError as exc:
+        if exc.rule != expected:
+            raise CaseFailure(
+                f"{case.path.name}: input was rejected with rule {exc.rule!r} "
+                f"({exc.detail}) but the case expects then.rejectedRule {expected!r}."
+            ) from exc
+        return
+    raise CaseFailure(
+        f"{case.path.name}: expected a pre-SQL rejection ({expected!r}) but model-aware "
+        f"validation ACCEPTED the input."
+    )
 
 
 # --- write sequences (Phase 5, m-audit-write) ------------------------------------------
@@ -2857,6 +2911,16 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
             # descriptor through the serde seam.
             _assert_serde(case)
             _assert_equivalent_encodings(case)
+        return
+
+    if case.is_rejected:
+        # Negative validation (m-value-object / m-op-algebra, resolved Q7): the input
+        # is refused PRE-SQL by model-aware validation — no dialect, no provisioning,
+        # no execution. It runs identically on every dialect (idempotent, DB-free), so
+        # branch here before the dialect is even read.
+        _assert_schema(case)  # layer 1 (structural invariants for the shape)
+        _assert_serde(case)  # layer 4 (operation, if any, + descriptor)
+        _assert_rejected(case)  # the pre-SQL refusal, asserting the named rule
         return
 
     dialect = db.dialect

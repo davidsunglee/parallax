@@ -426,6 +426,28 @@ class Case:
         return self.shape == "concurrencySuccess"
 
     @property
+    def is_rejected(self) -> bool:
+        """True for a negative-validation case (m-value-object / m-op-algebra, Q7).
+
+        A ``rejected`` case carries the invalid input under ``when.operation`` (a
+        schema-valid m-op-algebra node) OR ``when.write`` (a neutral write row) and
+        a ``then.rejectedRule`` naming the violated normative rule. A model-aware
+        validator MUST refuse it BEFORE any SQL is emitted — no golden SQL, no
+        dialect, no provisioning; :func:`case_runner.run_case` runs it dialect-free.
+        """
+        return self.shape == "rejected"
+
+    @property
+    def rejected_rule(self) -> str | None:
+        """The normative rule a ``rejected`` case expects the input to violate.
+
+        One of the ``then.rejectedRule`` vocabulary
+        (:data:`value_object_resolve.REJECTED_RULES`); the runner asserts the
+        model-aware validator raises exactly this rule.
+        """
+        return self.then.get("rejectedRule")
+
+    @property
     def equivalent_encodings(self) -> list[dict[str, Any]]:
         """Alternate surface encodings that MUST canonicalize to ``operation``.
 

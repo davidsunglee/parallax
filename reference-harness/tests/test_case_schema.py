@@ -245,6 +245,28 @@ def _boundary_case() -> dict[str, Any]:
     }
 
 
+def _rejected_operation_case() -> dict[str, Any]:
+    """A rejected case carrying an invalid OPERATION + the violated rule (COR-10, Q7)."""
+    return {
+        "model": "models/customer.yaml",
+        "tags": ["m-value-object"],
+        "shape": "rejected",
+        "when": {"operation": {"nestedEq": {"path": "Customer.contact.city", "value": "Oslo"}}},
+        "then": {"rejectedRule": "nested-path-first-segment-not-value-object"},
+    }
+
+
+def _rejected_write_case() -> dict[str, Any]:
+    """A rejected case carrying an invalid WRITE input + the violated rule (COR-10, Q7)."""
+    return {
+        "model": "models/contact.yaml",
+        "tags": ["m-value-object"],
+        "shape": "rejected",
+        "when": {"write": {"id": 1, "name": "Acme", "address": {"city": "Oslo"}}},
+        "then": {"rejectedRule": "write-required-attribute-missing"},
+    }
+
+
 VALID_CASES = {
     "read": _read_case,
     "writeSequence": _write_sequence_case,
@@ -255,6 +277,8 @@ VALID_CASES = {
     "error": _error_case,
     "concurrencySuccess": _concurrency_success_case,
     "boundary": _boundary_case,
+    "rejected-operation": _rejected_operation_case,
+    "rejected-write": _rejected_write_case,
 }
 
 
@@ -399,6 +423,34 @@ def _cross_shape_when_member() -> dict[str, Any]:
     return doc
 
 
+def _rejected_without_rule() -> dict[str, Any]:
+    """A rejected case missing `then.rejectedRule` (COR-10, Q7): the branch requires it."""
+    doc = _rejected_operation_case()
+    del doc["then"]["rejectedRule"]
+    return doc
+
+
+def _rejected_unknown_rule() -> dict[str, Any]:
+    """A rejected case naming a rule outside the closed vocabulary — the enum rejects it."""
+    doc = _rejected_operation_case()
+    doc["then"]["rejectedRule"] = "not-a-real-rule"
+    return doc
+
+
+def _rejected_with_golden_statements() -> dict[str, Any]:
+    """A rejected case carrying golden `then.statements` — disallowed (rejection is pre-SQL)."""
+    doc = _rejected_operation_case()
+    doc["then"]["statements"] = [{"sql": {"postgres": "select t0.id from customer t0"}}]
+    return doc
+
+
+def _rejected_cross_shape_when_member() -> dict[str, Any]:
+    """A rejected case carrying a stray `when.boundary` (its `when` allows only operation/write)."""
+    doc = _rejected_operation_case()
+    doc["when"]["boundary"] = [{"action": "read"}]
+    return doc
+
+
 REJECTED_CASES = {
     "legacy-layout": _legacy_layout,
     "mislabeled-shape": _mislabeled_shape,
@@ -408,6 +460,10 @@ REJECTED_CASES = {
     "binds-outside-statement-entry": _binds_outside_statement_entry,
     "attempt-legacy-affected-rows": _attempt_legacy_affected_rows,
     "cross-shape-when-member": _cross_shape_when_member,
+    "rejected-without-rule": _rejected_without_rule,
+    "rejected-unknown-rule": _rejected_unknown_rule,
+    "rejected-with-golden-statements": _rejected_with_golden_statements,
+    "rejected-cross-shape-when-member": _rejected_cross_shape_when_member,
 }
 
 

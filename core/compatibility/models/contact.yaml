@@ -1,0 +1,76 @@
+# Contact: a value-object model with REQUIRED nested members at every depth — the
+# write-validation exemplar for the m-value-object `rejected` cases (resolved Q7).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Like
+# models/customer.yaml it declares a single top-level `address` value object stored
+# in ONE m-core `json` column; UNLIKE customer's largely-nullable members, its inner
+# members are deliberately REQUIRED (`nullable: false`, the default) at each depth so
+# a write can violate write validation:
+#
+#   depth 1  address.street / address.city          (required attributes)
+#   nested   address.geo                             (a required nested value object)
+#   depth 2  address.geo.country                     (required attribute)
+#   depth 3  address.geo.point.lat / .lon            (required attributes)
+#
+# The top-level `address` stays `nullable: true` (a null value object binds SQL NULL,
+# a legal write) — required-ness applies to the inner members only when the document
+# is present. `phones` is a nullable to-many member (an array present-or-absent).
+#
+# There are NO fixtures and NO golden SQL for this model: the `rejected` cases assert
+# a value-object document is refused PRE-SQL by model-aware write validation
+# (m-value-object write semantics), so nothing is ever provisioned or executed.
+entity:
+  name: Contact
+  namespace: parallax.compatibility
+  table: contact
+  mutability: transactional
+  temporal: non-temporal
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGenerator: none
+    - name: name
+      type: string
+      column: name
+      maxLength: 64
+  valueObjects:
+    - name: address
+      column: address
+      mapping: json
+      cardinality: one
+      nullable: true
+      attributes:
+        - name: street
+          type: string
+        - name: city
+          type: string
+      valueObjects:
+        - name: geo
+          cardinality: one
+          attributes:
+            - name: country
+              type: string
+          valueObjects:
+            - name: point
+              cardinality: one
+              attributes:
+                - name: lat
+                  type: float64
+                - name: lon
+                  type: float64
+        - name: phones
+          cardinality: many
+          nullable: true
+          attributes:
+            - name: type
+              type: string
+              nullable: true
+            - name: number
+              type: string
+              nullable: true
+  indices:
+    - name: contact_pk
+      attributes: [id]
+      unique: true
