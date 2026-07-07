@@ -10,10 +10,10 @@
  * comparison rules (exact decimal, boolean never `== 1`, µs timestamps,
  * order-insensitive multisets):
  *
- *  - **read** (flat): observed `rows` vs `expectedRows`;
- *  - **read** (deep fetch, `expectedGraph`): the assembled `graph` structurally,
- *    plus runtime-generated per-level SQL and binds against the array golden;
- *  - **writeSequence**: the resulting `tableState` vs `expectedTableState`;
+ *  - **read** (flat): observed `rows` vs `then.rows`;
+ *  - **read** (deep fetch, `then.graph`): the assembled `graph` structurally,
+ *    plus runtime-generated per-level SQL and binds against the golden entries;
+ *  - **writeSequence**: the resulting `tableState` vs `then.tableState`;
  *  - **scenario**: the terminal find's `rows` (read-your-own-writes);
  *  - **conflict**: the terminal `affectedRows` + the resulting `tableState`.
  *
@@ -33,7 +33,10 @@ import {
   compareGraph,
   compareRowSet,
   compareTableState,
+  type DialectStatement,
+  dialectStatements,
   type Graph,
+  goldenEntries,
   type LoadedCase,
   type MatrixStatus,
   renderMatrixReport,
@@ -135,7 +138,7 @@ function gradeObservation(envelope: Envelope, loaded: LoadedCase): void {
   const observations = envelope.observations;
 
   if (loaded.shape === "writeSequence") {
-    const expected = (loaded.raw.expectedTableState ?? {}) as TableState;
+    const expected = (loaded.raw.then?.tableState ?? {}) as TableState;
     const observed = (observations.tableState ?? {}) as TableState;
     const comparison = compareTableState(observed, expected, columnTypes);
     expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
@@ -143,16 +146,17 @@ function gradeObservation(envelope: Envelope, loaded: LoadedCase): void {
   }
   if (loaded.shape === "conflict") {
     expect(observations.affectedRows, loaded.casePath).toBe(terminalAffectedRows(loaded));
-    const expected = (loaded.raw.expectedTableState ?? {}) as TableState;
+    const expected = (loaded.raw.then?.tableState ?? {}) as TableState;
     const observed = (observations.tableState ?? {}) as TableState;
     const comparison = compareTableState(observed, expected, columnTypes);
     expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
     return;
   }
-  if (loaded.raw.expectedGraph) {
+  const graph = loaded.raw.then?.graph;
+  if (graph) {
     assertDeepFetchEmissions(envelope, loaded);
     const observed = (observations.graph ?? {}) as Graph;
-    const comparison = compareGraph(observed, loaded.raw.expectedGraph as Graph, columnTypes);
+    const comparison = compareGraph(observed, graph as Graph, columnTypes);
     expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
     return;
   }
@@ -168,20 +172,20 @@ function gradeObservation(envelope: Envelope, loaded: LoadedCase): void {
  * here. Docker-free compile tests only see the root statement.
  */
 function assertDeepFetchEmissions(envelope: Envelope, loaded: LoadedCase): void {
-  if (envelope.status !== "ok" || envelope.command !== "run" || !loaded.raw.expectedGraph) {
+  if (envelope.status !== "ok" || envelope.command !== "run" || !loaded.raw.then?.graph) {
     return;
   }
 
-  const golden = (loaded.raw.goldenSql as { postgres?: string | readonly string[] } | undefined)
-    ?.postgres;
-  if (!Array.isArray(golden)) {
+  // A deep fetch's golden lists one `{sql, binds}` entry per level at `then.statements`.
+  const golden = dialectStatements(goldenEntries(loaded.raw), "postgres");
+  if (golden.length <= 1) {
     return;
   }
 
-  expect(envelope.emissions.map((emission) => emission.sql)).toEqual(golden);
+  expect(envelope.emissions.map((emission) => emission.sql)).toEqual(golden.map((g) => g.sql));
   assertDeepFetchBinds(
     envelope.emissions.map((emission) => emission.binds),
-    loaded,
+    golden,
   );
 }
 
@@ -192,18 +196,15 @@ function assertDeepFetchEmissions(envelope: Envelope, loaded: LoadedCase): void 
  */
 function assertDeepFetchBinds(
   observed: readonly (readonly BindValue[])[],
-  loaded: LoadedCase,
+  golden: readonly DialectStatement[],
 ): void {
-  const golden = loaded.raw.binds;
-  if (!Array.isArray(golden) || !golden.every(Array.isArray)) {
-    return;
-  }
+  const goldenBinds = golden.map((statement) => statement.binds);
 
-  expect(observed.length).toBe(golden.length);
-  expect(observed[0]).toEqual(golden[0]);
+  expect(observed.length).toBe(goldenBinds.length);
+  expect(observed[0]).toEqual(goldenBinds[0]);
 
-  for (let level = 1; level < golden.length; level += 1) {
-    const goldenLevel = golden[level] as readonly unknown[];
+  for (let level = 1; level < goldenBinds.length; level += 1) {
+    const goldenLevel = goldenBinds[level] as readonly unknown[];
     const observedLevel = observed[level] ?? [];
     const inCount = goldenLevel.filter((bind) => typeof bind === "number").length;
 
@@ -237,10 +238,10 @@ function assertRoundTrips(envelope: Envelope, loaded: LoadedCase): void {
  */
 function declaredRoundTrips(loaded: LoadedCase): number | undefined {
   if (loaded.shape === "writeSequence") {
-    const golden = (loaded.raw.goldenSql as { postgres?: string[] } | undefined)?.postgres;
-    return Array.isArray(golden) ? golden.length : (loaded.raw.roundTrips as number | undefined);
+    const golden = dialectStatements(goldenEntries(loaded.raw), "postgres");
+    return golden.length > 0 ? golden.length : loaded.raw.then?.roundTrips;
   }
-  const declared = loaded.raw.roundTrips as number | undefined;
+  const declared = loaded.raw.then?.roundTrips;
   if (declared !== undefined) {
     return declared;
   }
@@ -262,20 +263,20 @@ function gradeStatus(envelope: Envelope, loaded: LoadedCase): MatrixStatus {
 
 /** The terminal (last) attempt's expected affected-row count for a conflict case. */
 function terminalAffectedRows(loaded: LoadedCase): number {
-  const attempts = loaded.raw.attempts as { expectedAffectedRows?: number }[] | undefined;
+  const attempts = loaded.raw.when?.attempts;
   if (attempts && attempts.length > 0) {
-    return attempts[attempts.length - 1]?.expectedAffectedRows ?? 0;
+    return attempts[attempts.length - 1]?.affectedRows ?? 0;
   }
-  return (loaded.raw.expectedAffectedRows as number | undefined) ?? 0;
+  return loaded.raw.then?.affectedRows ?? 0;
 }
 
 /**
- * The rows a flat read / read-lock / scenario case asserts: `expectedRows`, or the
+ * The rows a flat read / read-lock / scenario case asserts: `then.rows`, or the
  * `expectRows` of the last scenario find step (read-your-own-writes).
  */
 function expectedRows(loaded: LoadedCase): readonly Record<string, unknown>[] {
   if (loaded.shape === "scenario") {
-    const steps = (loaded.raw.scenario as { expectRows?: Record<string, unknown>[] }[]) ?? [];
+    const steps = (loaded.raw.when?.scenario ?? []) as { expectRows?: Record<string, unknown>[] }[];
     for (let i = steps.length - 1; i >= 0; i -= 1) {
       const rows = steps[i]?.expectRows;
       if (rows !== undefined) {
@@ -284,5 +285,5 @@ function expectedRows(loaded: LoadedCase): readonly Record<string, unknown>[] {
     }
     return [];
   }
-  return (loaded.raw.expectedRows as Record<string, unknown>[] | undefined) ?? [];
+  return (loaded.raw.then?.rows as Record<string, unknown>[] | undefined) ?? [];
 }

@@ -28,6 +28,7 @@
  */
 
 import { expect, describe as group, it } from "vitest";
+import { dialectStatements, goldenEntries } from "../src/case-format.js";
 import {
   CaseMatrix,
   discoverCasePaths,
@@ -62,10 +63,9 @@ function taggedCases(): readonly { id: string; loaded: LoadedCase }[] {
 
 const CASES = taggedCases();
 
-/** The Postgres golden SQL a `read`-shaped case pins (a single string). */
-function readGolden(loaded: LoadedCase): string | undefined {
-  const golden = loaded.raw.goldenSql as { postgres?: unknown } | undefined;
-  return typeof golden?.postgres === "string" ? golden.postgres : undefined;
+/** The Postgres golden `{sql, binds}` a `read`-shaped case pins (one statement entry). */
+function readGolden(loaded: LoadedCase): { sql: string; binds: readonly unknown[] } | undefined {
+  return dialectStatements(goldenEntries(loaded.raw), "postgres")[0];
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
@@ -91,8 +91,8 @@ group("full-slice compile sweep (Docker-free)", () => {
     const golden = loaded.shape === "read" ? readGolden(loaded) : undefined;
     if (golden !== undefined && envelope.emissions.length === 1) {
       const [emission] = envelope.emissions;
-      expect(emission?.sql, loaded.casePath).toBe(golden);
-      expect(emission?.binds, loaded.casePath).toEqual(loaded.raw.binds ?? []);
+      expect(emission?.sql, loaded.casePath).toBe(golden.sql);
+      expect(emission?.binds, loaded.casePath).toEqual(golden.binds);
     }
   });
 });

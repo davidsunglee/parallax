@@ -1,10 +1,11 @@
 /**
  * Build an executable **write-sequence plan** from a loaded case (m-temporal-read + m-unit-work + m-case-format).
  *
- * A `writeSequence` case carries an ordered list of mutations plus per-statement
- * `binds` and an `expectedTableState`. This module turns the steps into the
- * ordered canonical DML the runner applies, choosing the discipline by the
- * entity's temporality:
+ * A `writeSequence` case carries an ordered list of mutations (`when.writeSequence`)
+ * plus the golden DML statement entries (`then.statements`, each with its own inline
+ * binds) and a `then.tableState`. This module turns the steps into the ordered
+ * canonical DML the runner applies, choosing the discipline by the entity's
+ * temporality:
  *
  *  - a **temporal** (audit-only) entity's step is milestone-chaining DML generated
  *    by `@parallax/bitemporal` (`auditWriteStatements`) — open a current row; close
@@ -26,6 +27,7 @@ import { columnOrder, type Dialect } from "@parallax/dialect";
 import { type VersionedTarget, versionAdvancingUpdate, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
 import { type BatchTarget, combineWrites, type PlannedStatement } from "@parallax/transactions";
+import { dialectStatements, goldenEntries } from "./case-format.js";
 import { bindsEqual } from "./compare.js";
 import type { LoadedCase } from "./discover.js";
 
@@ -44,7 +46,11 @@ export interface WriteSequencePlan {
   readonly statements: readonly WriteStatementPlan[];
 }
 
-/** A raw `writeSequence` step (the mutation kind + target entity). */
+/**
+ * A `writeSequence` step (the mutation kind + target entity). The step schema keys
+ * its temporal variants on an `allOf`, so its generated static view is a loose
+ * object; this reader names the members the plan consumes.
+ */
 interface RawWriteStep {
   readonly mutation: MutationKind;
   readonly entity: string;
@@ -55,8 +61,8 @@ interface RawWriteStep {
    * batched, versioned, temporal audit, `*Until` — derives its emitted column list +
    * order + binds from these (classified against the metamodel), so column identity
    * comes from case data, not the golden. REQUIRED on every writeSequence step (the
-   * permanent Family A + Family B contract); typed optional only because `loaded.raw`
-   * is untyped (there is no schema→types codegen).
+   * permanent Family A + Family B contract); typed optional only because the
+   * step's generated view is a loose object.
    */
   readonly rows?: readonly Record<string, unknown>[];
   /**
@@ -141,9 +147,13 @@ export function isWriteSequence(loaded: LoadedCase): boolean {
  */
 export function buildWriteSequencePlan(loaded: LoadedCase, dialect: Dialect): WriteSequencePlan {
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
-  const steps = (loaded.raw.writeSequence as readonly RawWriteStep[] | undefined) ?? [];
-  const bindRows = (loaded.raw.binds as readonly (readonly unknown[])[] | undefined) ?? [];
-  const golden = goldenStatements(loaded, dialect);
+  const steps = (loaded.raw.when?.writeSequence ?? []) as readonly RawWriteStep[];
+  // The golden DML lives at `then.statements`; each `{sql, binds}` entry carries its
+  // own inline binds (no positional pairing), so the per-statement sql + binds are
+  // read directly from the dialect's entries.
+  const goldenStmts = dialectStatements(goldenEntries(loaded.raw), dialect.id);
+  const golden = goldenStmts.map((statement) => statement.sql);
+  const bindRows = goldenStmts.map((statement) => statement.binds);
   const concurrency = loaded.uow?.concurrency;
 
   const statements: WriteStatementPlan[] = [];
@@ -237,8 +247,8 @@ function auditStatementsForStep(
  * `step.rows`) classified against the metamodel — the emitted column list is
  * `columnOrder(entity)` filtered to the present attributes (`m-unit-work-003` omits the
  * nullable `shippedOn`, so `shipped_on` is dropped from the INSERT), never parsed
- * out of the golden. `goldenSql` + `binds` stay an independent oracle the compile
- * lane cross-checks the emission against.
+ * out of the golden. The `then.statements` golden stays an independent oracle the
+ * compile lane cross-checks the emission against.
  */
 function batchStatementsForStep(
   step: RawWriteStep,
@@ -389,12 +399,12 @@ function versionedUpdateStatements(
     const binds = gated
       ? [...setValues, newVersion, row.pk, row.observedVersion]
       : [...setValues, newVersion, row.pk];
-    const goldenSql = golden[offset];
-    if (sql !== goldenSql || !bindsEqual(binds, goldenBinds[offset] ?? [])) {
+    const goldenText = golden[offset];
+    if (sql !== goldenText || !bindsEqual(binds, goldenBinds[offset] ?? [])) {
       throw new Error(
         "generated versioned UPDATE + binds != golden:\n" +
           `  generated: ${sql}  ${JSON.stringify(binds)}\n` +
-          `  golden:    ${goldenSql ?? "<absent>"}  ${JSON.stringify(goldenBinds[offset] ?? [])}`,
+          `  golden:    ${goldenText ?? "<absent>"}  ${JSON.stringify(goldenBinds[offset] ?? [])}`,
       );
     }
     return { sql, binds };
@@ -416,21 +426,6 @@ function versionedTargetFor(entity: EntityMetadata, dialect: Dialect): Versioned
     pkColumn: dialect.quoteIdentifier(pk.column),
     versionColumn: dialect.quoteIdentifier(version.column),
   };
-}
-
-/**
- * The ordered golden statements a write-sequence case declares for the compiling
- * dialect (`goldenSql[dialect.id]`), so a MariaDB compile cross-checks against
- * `goldenSql.mariadb` and Postgres against `goldenSql.postgres`.
- */
-function goldenStatements(loaded: LoadedCase, dialect: Dialect): readonly string[] {
-  const golden = (loaded.raw.goldenSql as Record<string, string | string[]> | undefined)?.[
-    dialect.id
-  ];
-  if (golden === undefined) {
-    return [];
-  }
-  return Array.isArray(golden) ? golden : [golden];
 }
 
 /** Resolve an entity's physical {@link BatchTarget} (table, quoted columns, pk). */

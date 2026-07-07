@@ -1,4 +1,10 @@
-import { discoverCasePaths, type LoadedCase, loadCase } from "@parallax/conformance";
+import {
+  dialectStatements,
+  discoverCasePaths,
+  goldenEntries,
+  type LoadedCase,
+  loadCase,
+} from "@parallax/conformance";
 
 export type MatrixProfileKind = "full" | "partial";
 
@@ -276,7 +282,7 @@ function fixedIdProfile(
 }
 
 function hasMariaDbGolden(loaded: LoadedCase): boolean {
-  return (loaded.raw.goldenSql as { mariadb?: unknown } | undefined)?.mariadb !== undefined;
+  return dialectStatements(goldenEntries(loaded.raw), "mariadb").length > 0;
 }
 
 function caseId(path: string): string {

@@ -16,7 +16,7 @@
  * Compiling every level reuses the m-sql `compile` visitor (via a child-rooted
  * `MetamodelSchema`), so the canonical-by-construction guarantees (alias `t0`,
  * quoted columns, the relationship's `orderBy`) hold uniformly for child levels.
- * The projection each level emits is derived from the case's `expectedGraph`
+ * The projection each level emits is derived from the case's `then.graph`
  * witness (the object shape the corpus authored), matching the golden by
  * construction; an empty level with no witness falls back to the child entity's
  * non-nullable columns plus any nullable `orderBy` keys (the documented
@@ -37,7 +37,7 @@ import {
 
 /** The compiled root statement plus the relationship-hop tree. */
 export interface DeepFetchPlan {
-  /** The root entity's domain class name (the `expectedGraph` key). */
+  /** The root entity's domain class name (the `then.graph` key). */
   readonly rootEntity: string;
   /** The root level: its SQL, its binds, and the root projection columns. */
   readonly root: LevelQuery;
@@ -74,7 +74,7 @@ function deepFetchBody(rawOperation: unknown): DeepFetchBody {
  * path class is what makes the root SELECT hit the right table.
  */
 export function buildDeepFetchPlan(loaded: LoadedCase, dialect: Dialect): DeepFetchPlan {
-  const body = deepFetchBody(loaded.raw.operation);
+  const body = deepFetchBody(loaded.raw.when?.operation);
   const operand = parseOperation(body.operand);
   const rootEntity = deepFetchRootEntity(body.paths);
   const projection = rootDeepFetchProjection(loaded, body.paths, dialect);

@@ -42,6 +42,7 @@ import {
 import { type EntityMetadata, Metamodel, parseOperation } from "@parallax/operation";
 import { deepFetch, type Exec, type Row as GraphRow } from "@parallax/relationships";
 import { compile } from "@parallax/sql";
+import { type DialectStatement, dialectStatements, type StatementEntry } from "./case-format.js";
 import { compareRowSet } from "./compare.js";
 import { buildConflictPlan, isConflict } from "./conflict.js";
 import { buildDeepFetchPlan, type DeepFetchPlan, isDeepFetch } from "./deepfetch-plan.js";
@@ -49,7 +50,7 @@ import { SLICE_MVP_1_CAPABILITIES } from "./describe.js";
 import type { LoadedCase } from "./discover.js";
 import { inClaim } from "./gate.js";
 import type { CompatibilityDatabaseProvider, CompatibilitySession } from "./provider.js";
-import { buildScenarioPlan, isScenario, stepBindsAt } from "./scenario.js";
+import { buildScenarioPlan, isScenario } from "./scenario.js";
 import { assertValidEnvelope } from "./schema.js";
 import { columnTypesForCase, schemaForReadCase } from "./schema-resolver.js";
 import { buildWriteSequencePlan, isWriteSequence } from "./write-sequence.js";
@@ -67,10 +68,9 @@ function isReadLock(loaded: LoadedCase): boolean {
   return loaded.tags.includes("m-read-lock");
 }
 
-/** One side (`A`/`B`) of a `concurrency.rounds` step: a dialect-keyed golden + binds. */
+/** One side (`A`/`B`) of a `concurrency.rounds` step: its golden statement entries. */
 interface ConcurrencyStep {
-  readonly goldenSql: Readonly<Record<string, string>>;
-  readonly binds?: readonly unknown[];
+  readonly statements?: readonly StatementEntry[];
   /**
    * concurrency-SUCCESS form only: the EXPLICIT read-vs-write discriminator the runner
    * branches on (replacing the old SQL-verb sniffing). `read` → the step is fetched on
@@ -96,6 +96,18 @@ interface ConcurrencyRound {
   readonly B?: ConcurrencyStep;
 }
 
+/**
+ * Resolve a concurrency node step's golden `{sql, binds}` for `dialect` (each
+ * concurrency node runs a single statement), or `undefined` when the step is idle /
+ * omits the dialect.
+ */
+function concurrencyStatement(
+  step: ConcurrencyStep | undefined,
+  dialect: Dialect,
+): DialectStatement | undefined {
+  return dialectStatements(step?.statements ?? [], dialect.id)[0];
+}
+
 /** The two barrier-synchronized nodes of the concurrency choreography. */
 const CONCURRENCY_NODES = ["A", "B"] as const;
 type ConcurrencyNode = (typeof CONCURRENCY_NODES)[number];
@@ -106,10 +118,7 @@ type ConcurrencyNode = (typeof CONCURRENCY_NODES)[number];
  * non-autocommit session runs that round; a node absent from a round is idle.
  */
 function concurrencyRounds(loaded: LoadedCase): readonly ConcurrencyRound[] {
-  const concurrency = loaded.raw.concurrency as
-    | { rounds?: readonly ConcurrencyRound[] }
-    | undefined;
-  return concurrency?.rounds ?? [];
+  return (loaded.raw.when?.concurrency?.rounds ?? []) as readonly ConcurrencyRound[];
 }
 
 /** One malformed concurrency-success step: its case pointer + the specific reason. */
@@ -171,15 +180,14 @@ function concurrencyEmissions(loaded: LoadedCase, dialect: Dialect): Emission[] 
   const emissions: Emission[] = [];
   concurrencyRounds(loaded).forEach((round, roundIndex) => {
     for (const node of CONCURRENCY_NODES) {
-      const step = round[node];
-      const sql = step?.goldenSql?.[dialect.id];
-      if (typeof sql !== "string") {
+      const statement = concurrencyStatement(round[node], dialect);
+      if (statement === undefined) {
         continue;
       }
       emissions.push({
         casePointer: `/concurrency/rounds/${roundIndex}/${node}`,
-        sql,
-        binds: (step?.binds ?? []) as readonly WireBind[],
+        sql: statement.sql,
+        binds: statement.binds as readonly WireBind[],
       });
     }
   });
@@ -187,8 +195,8 @@ function concurrencyEmissions(loaded: LoadedCase, dialect: Dialect): Emission[] 
 }
 
 /**
- * Select the concrete {@link Dialect} for a run key (the dialect id keying
- * `goldenSql`). The runner is the m-case-format orchestrator, so it consults the concrete
+ * Select the concrete {@link Dialect} for a run key (the dialect id keying each
+ * golden statement's `sql` map). The runner is the m-case-format orchestrator, so it consults the concrete
  * dialect's pure rules directly (m-case-format → m-dialect). Both conforming dialects are
  * registered: Postgres (the claimed run dialect) and MariaDB (the second
  * implementer, driven Docker-free by the compile-golden lane).
@@ -278,12 +286,12 @@ export function runCompile(
     const plan = buildScenarioPlan(loaded);
     const emissions: Emission[] = plan.steps.flatMap((step) =>
       // A MULTI-statement step (a versioned set-based materialize write, `m-opt-lock-003` /
-      // `m-opt-lock-004`) carries a list-of-lists `binds`, one per statement — slice it so
-      // each per-object `UPDATE` emission carries its own bind row.
-      step.statements.map((sql, statementIndex) => ({
+      // `m-opt-lock-004`) lists one `{sql, binds}` entry per per-object `UPDATE`, each
+      // carrying its own inline binds.
+      step.statements.map((statement) => ({
         casePointer: step.casePointer,
-        sql,
-        binds: stepBindsAt(step.binds, statementIndex) as readonly WireBind[],
+        sql: statement.sql,
+        binds: statement.binds as readonly WireBind[],
       })),
     );
     return assertValidEnvelope({
@@ -374,11 +382,11 @@ function compileRootStatement(
   loaded: LoadedCase,
   dialect: Dialect,
 ): { sql: string; binds: readonly BindValue[] } {
-  if (isDeepFetch(loaded.raw.operation)) {
+  if (isDeepFetch(loaded.raw.when?.operation)) {
     const plan = buildDeepFetchPlan(loaded, dialect);
     return { sql: plan.root.sql, binds: plan.root.binds as readonly BindValue[] };
   }
-  const operation = parseOperation(loaded.raw.operation);
+  const operation = parseOperation(loaded.raw.when?.operation);
   const schema = schemaForReadCase(loaded, operation, dialect);
   // A `read-lock`-tagged case is a locking-mode object find: `compile()` applies the
   // dialect's shared-row-lock in-line after every other clause (m-read-lock automatic read-
@@ -412,6 +420,7 @@ export async function runRun(
   }
 
   const dialectImpl = dialectFor(dialect);
+  const operation = loaded.raw.when?.operation;
 
   // A write-sequence case constructs its own milestone history from its ordered
   // DML, so it provisions an EMPTY table (no fixtures) and asserts the resulting
@@ -421,7 +430,7 @@ export async function runRun(
     return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
   }
 
-  // A conflict case loads fixtures, applies the out-of-band precondition (a
+  // A conflict case loads fixtures, applies the out-of-band `given.apply` (a
   // concurrent writer), then the versioned UPDATE(s), and reports the affected-row
   // count + resulting `tableState` (the observable optimistic-lock contract).
   if (isConflict(loaded)) {
@@ -458,7 +467,7 @@ export async function runRun(
   }
 
   await provision(loaded, provider);
-  const { emissions, observations } = isDeepFetch(loaded.raw.operation)
+  const { emissions, observations } = isDeepFetch(operation)
     ? await runDeepFetch(loaded, provider, dialectImpl)
     : await runFlatRead(loaded, provider, dialectImpl);
   return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
@@ -501,7 +510,7 @@ async function runFlatRead(
   provider: CompatibilityDatabaseProvider,
   dialect: Dialect,
 ): Promise<RunResult> {
-  const operation = parseOperation(loaded.raw.operation);
+  const operation = parseOperation(loaded.raw.when?.operation);
   const schema = schemaForReadCase(loaded, operation, dialect);
   // A `read-lock`-tagged case is a locking-mode object find; `compile()` applies the
   // dialect's shared-row-lock in-line after every other clause (the lock does not
@@ -566,7 +575,7 @@ async function runDeepFetch(
  * Execute a write sequence: provision an EMPTY table (the case builds its own
  * milestone history from its ordered DML — no fixtures), apply the generated DML
  * statements in order with the authored per-statement binds, then read back the
- * resulting `tableState` (every table the case's `expectedTableState` names). One
+ * resulting `tableState` (every table the case's `then.tableState` names). One
  * emission per statement, `roundTrips` = statement count.
  */
 async function runWriteSequence(
@@ -596,16 +605,16 @@ async function runWriteSequence(
 
 /**
  * Execute a conflict case (m-opt-lock): provision + load fixtures (the versioned row
- * exists), apply the out-of-band `precondition` (a concurrent writer) VERBATIM,
+ * exists), apply the out-of-band `given.apply` (a concurrent writer) VERBATIM,
  * then apply the versioned UPDATE(s) — one per attempt — and report the LAST
  * attempt's affected-row count as `affectedRows` plus the resulting `tableState`.
  *
  * The single form has one attempt (`affectedRows` is that update's count); the
  * retry form has two (`m-opt-lock-007`: a stale attempt affects 0, the fresh retry affects
  * 1 — `affectedRows` reports the retry's 1, the terminal outcome). Each attempt's
- * count is checked against its declared `expectedAffectedRows` so a wrong count
+ * count is checked against its declared `affectedRows` so a wrong count
  * fails loudly here, not only at the table-state grade. `roundTrips` counts the
- * versioned UPDATE(s) issued (the precondition is out-of-band, not our runtime).
+ * versioned UPDATE(s) issued (the `given.apply` setup is out-of-band, not our runtime).
  */
 async function runConflict(
   loaded: LoadedCase,
@@ -615,7 +624,7 @@ async function runConflict(
   await provision(loaded, provider);
   const plan = buildConflictPlan(loaded, dialect);
 
-  for (const statement of plan.precondition) {
+  for (const statement of plan.apply) {
     await provider.exec(statement.sql, statement.binds);
   }
 
@@ -628,10 +637,10 @@ async function runConflict(
       binds: attempt.binds as readonly WireBind[],
     });
     const affected = await provider.exec(attempt.sql, attempt.binds);
-    if (affected !== attempt.expectedAffectedRows) {
+    if (affected !== attempt.affectedRows) {
       throw new Error(
         `attempt ${attempt.casePointer}: versioned UPDATE affected ${affected} row(s), ` +
-          `expected ${attempt.expectedAffectedRows}`,
+          `expected ${attempt.affectedRows}`,
       );
     }
     lastAffected = affected;
@@ -668,22 +677,21 @@ async function runScenario(
   for (const [index, step] of plan.steps.entries()) {
     if (step.kind === "write") {
       // A step may emit SEVERAL statements (a versioned set-based materialize write,
-      // `m-opt-lock-003` / `m-opt-lock-004`: one per-object `UPDATE` per row); its `binds` is then a
-      // list-of-lists sliced per statement (`stepBindsAt`).
-      for (const [statementIndex, sql] of step.statements.entries()) {
-        const stmtBinds = stepBindsAt(step.binds, statementIndex);
+      // `m-opt-lock-003` / `m-opt-lock-004`: one per-object `UPDATE` per row); each
+      // `{sql, binds}` entry carries its own inline binds.
+      for (const statement of step.statements) {
         emissions.push({
           casePointer: step.casePointer,
-          sql,
-          binds: stmtBinds as readonly WireBind[],
+          sql: statement.sql,
+          binds: statement.binds as readonly WireBind[],
         });
         // A `rollback: true` step applies the DML then ROLLS IT BACK (the m-unit-work abort
         // contract): the write lands in an atomic scope that is discarded, so a
         // later find MUST observe the ORIGINAL rows. A default write COMMITs.
         if (step.rollback === true) {
-          await provider.execRolledBack(sql, stmtBinds);
+          await provider.execRolledBack(statement.sql, statement.binds);
         } else {
-          await provider.exec(sql, stmtBinds);
+          await provider.exec(statement.sql, statement.binds);
         }
       }
       results.push([]);
@@ -692,17 +700,16 @@ async function runScenario(
 
     // A find step: execute its golden (a cache hit lists none and reuses a prior
     // step's rows via `sameObjectAs`, or the immediately-preceding step). A find is
-    // single-statement, so its binds are the (flat) statement-0 binds.
+    // single-statement, so its binds are that statement's inline binds.
     let rows: readonly Row[];
-    if (step.statements.length > 0) {
-      const sql = step.statements[0] as string;
-      const stmtBinds = stepBindsAt(step.binds, 0);
+    const [find] = step.statements;
+    if (find !== undefined) {
       emissions.push({
         casePointer: step.casePointer,
-        sql,
-        binds: stmtBinds as readonly WireBind[],
+        sql: find.sql,
+        binds: find.binds as readonly WireBind[],
       });
-      rows = (await provider.query(sql, stmtBinds)) as readonly Row[];
+      rows = (await provider.query(find.sql, find.binds)) as readonly Row[];
     } else {
       const source = step.sameObjectAs ?? index - 1;
       rows = results[source] ?? [];
@@ -737,7 +744,7 @@ async function runScenario(
  * BOTH nodes runs them concurrently (the crossing that provokes a deadlock). The
  * contention round MUST raise a portable {@link ParallaxTransientError}; we assert
  * its `kind` equals the case's declared `errorClass` AND its driver-native code
- * equals the declared `expectedNativeCode[dialect]`, and that NOTHING unexpected was
+ * equals the declared `then.nativeCode[dialect]`, and that NOTHING unexpected was
  * raised elsewhere. Sessions are always rolled back + closed (whichever opened). No
  * rows are observed — the case's whole assertion is "the lock
  * held, so the writer was excluded / classified", proven inside this function
@@ -750,7 +757,7 @@ async function runErrorConcurrency(
 ): Promise<RunResult> {
   await provision(loaded, provider);
   const rounds = concurrencyRounds(loaded);
-  const errorClass = String(loaded.raw.errorClass);
+  const errorClass = String(loaded.raw.then?.errorClass);
 
   const emissions: Emission[] = [];
   const raised: unknown[] = [];
@@ -760,20 +767,18 @@ async function runErrorConcurrency(
   const sessions: Partial<Record<ConcurrencyNode, CompatibilitySession>> = {};
 
   const runStep = async (node: ConcurrencyNode, round: ConcurrencyRound, index: number) => {
-    const step = round[node];
-    const sql = step?.goldenSql?.[dialect.id];
+    const statement = concurrencyStatement(round[node], dialect);
     const session = sessions[node];
-    if (typeof sql !== "string" || session === undefined) {
+    if (statement === undefined || session === undefined) {
       return;
     }
-    const binds = (step?.binds ?? []) as readonly unknown[];
     emissions.push({
       casePointer: `/concurrency/rounds/${index}/${node}`,
-      sql,
-      binds: binds as readonly WireBind[],
+      sql: statement.sql,
+      binds: statement.binds as readonly WireBind[],
     });
     try {
-      await session.execute(sql, binds);
+      await session.execute(statement.sql, statement.binds);
     } catch (error) {
       raised.push(error);
     }
@@ -837,9 +842,7 @@ async function runErrorConcurrency(
   // string SQLSTATE each match their declared value.
   const cause = transient.cause as { code?: string | number; errno?: number } | null | undefined;
   const nativeCode = cause?.errno ?? cause?.code;
-  const expected = (loaded.raw.expectedNativeCode as Record<string, unknown> | undefined)?.[
-    dialect.id
-  ];
+  const expected = loaded.raw.then?.nativeCode?.[dialect.id];
   if (expected !== undefined && String(nativeCode) !== String(expected)) {
     throw new Error(
       `${loaded.casePath}: raised native code '${String(nativeCode)}', expected '${String(expected)}'`,
@@ -907,12 +910,12 @@ async function runConcurrencySuccess(
 
   const runStep = async (node: ConcurrencyNode, round: ConcurrencyRound, index: number) => {
     const step = round[node];
-    const sql = step?.goldenSql?.[dialect.id];
+    const statement = concurrencyStatement(step, dialect);
     const session = sessions[node];
-    if (typeof sql !== "string" || session === undefined) {
+    if (statement === undefined || session === undefined) {
       return;
     }
-    const binds = (step?.binds ?? []) as readonly unknown[];
+    const { sql, binds } = statement;
     emissions.push({
       casePointer: `/concurrency/rounds/${index}/${node}`,
       sql,
@@ -998,7 +1001,7 @@ function sameIdentity(left: readonly Row[], right: readonly Row[], pkColumn: str
 }
 
 /**
- * Read the resulting state of every table the case's `expectedTableState` names,
+ * Read the resulting state of every table the case's `then.tableState` names,
  * projecting each entity's columns in descriptor order (matching the golden
  * table-state authoring). Keyed by physical table name.
  */
@@ -1014,12 +1017,12 @@ async function readTableState(
       byTable.set(entity.table, entity);
     }
   }
-  const expected = (loaded.raw.expectedTableState as Record<string, unknown> | undefined) ?? {};
+  const expected = loaded.raw.then?.tableState ?? {};
   const state: Record<string, readonly Row[]> = {};
   for (const table of Object.keys(expected)) {
     const entity = byTable.get(table);
     if (entity === undefined) {
-      throw new Error(`expectedTableState names table '${table}' not in the model`);
+      throw new Error(`then.tableState names table '${table}' not in the model`);
     }
     state[table] = (await provider.query(readTableSql(entity, dialect), [])) as readonly Row[];
   }
@@ -1054,7 +1057,7 @@ async function provision(
 /**
  * Provision a clean, EMPTY DB (reset + DDL, no fixtures) for a write sequence —
  * the case builds its own state from its ordered DML — UNLESS it opts into
- * `loadFixtures` (the per-key batched-update case `m-batch-write-002` mutates pre-existing
+ * `given.fixtures` (the per-key batched-update case `m-batch-write-002` mutates pre-existing
  * fixture rows), in which case the model's fixtures are loaded first (mirrors the
  * Python harness `_provision_empty`).
  */
@@ -1064,7 +1067,7 @@ async function provisionEmpty(
 ): Promise<void> {
   await provider.reset();
   await provider.applyDdl(ddlForDescriptor(loaded.descriptor));
-  if (loaded.raw.loadFixtures === true) {
+  if (loaded.raw.given?.fixtures === true) {
     await loadFixtures(loaded, provider);
   }
 }

@@ -271,11 +271,12 @@ describe("DSL → canonical operation fidelity", () => {
     it(`${row.case}: DSL serializes to the corpus operation`, () => {
       const loaded = loadCase(casePath(row.case));
       const built = row.operation();
+      const corpus = loaded.raw.when?.operation;
       expect(
-        canonicallyEqual(built, loaded.raw.operation),
+        canonicallyEqual(built, corpus),
         `DSL for ${row.case} did not canonicalize to the corpus operation:\n` +
           `  dsl:    ${JSON.stringify(built)}\n` +
-          `  corpus: ${JSON.stringify(loaded.raw.operation)}`,
+          `  corpus: ${JSON.stringify(corpus)}`,
       ).toBe(true);
     });
   }

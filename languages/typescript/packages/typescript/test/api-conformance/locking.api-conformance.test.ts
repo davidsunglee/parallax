@@ -481,16 +481,21 @@ async function applyPrecondition(
   provider: ApiConformanceProvider,
   fixture: Awaited<ReturnType<typeof provisionCase>>,
 ): Promise<void> {
-  const precondition = fixture.loaded.raw.precondition as string | readonly string[] | undefined;
-  if (precondition === undefined) {
+  // The out-of-band setup lives at `given.apply` — an ordered list of naive
+  // `{sql, binds}` statement entries (plain-string SQL). A single statement
+  // (`m-opt-lock-005`) or an ORDERED LIST — the temporal-close conflict cases
+  // (`m-temporal-read-010`/`m-temporal-read-011`) chain a full new current row (close
+  // the old milestone, then insert a fresh one). Apply each in order.
+  const apply = fixture.loaded.raw.given?.apply;
+  if (apply === undefined) {
     return;
   }
-  // A precondition may be a single statement (`m-opt-lock-005`) or an ORDERED LIST — the
-  // temporal-close conflict cases (`m-temporal-read-010`/`m-temporal-read-011`) chain a full new current row
-  // (close the old milestone, then insert a fresh one). Apply each in order.
-  const statements = Array.isArray(precondition) ? precondition : [precondition as string];
-  for (const statement of statements) {
-    await provider.peer.executeWrite(preconditionSqlForDialect(statement, provider), []);
+  for (const entry of apply) {
+    const sql = typeof entry.sql === "string" ? entry.sql : "";
+    await provider.peer.executeWrite(
+      preconditionSqlForDialect(sql, provider),
+      (entry.binds ?? []) as readonly unknown[],
+    );
   }
 }
 

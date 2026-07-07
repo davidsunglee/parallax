@@ -34,9 +34,13 @@ import {
   compareGraph,
   compareRowSet,
   compareTableState,
+  type DialectStatement,
+  dialectStatements,
   type Graph,
+  goldenEntries,
   type LoadedCase,
   type ProviderRow,
+  type StatementEntry,
   schemaForReadCase,
   type TableState,
 } from "@parallax/conformance";
@@ -68,14 +72,18 @@ function loadedById(id: string): LoadedCase {
   return caseById(id).loaded;
 }
 
-/** The MariaDB golden a case pins (a single string, or the per-statement array). */
-function mariadbGolden(loaded: LoadedCase): string | readonly string[] {
-  const golden = (loaded.raw.goldenSql as { mariadb?: string | readonly string[] } | undefined)
-    ?.mariadb;
-  if (golden === undefined) {
-    throw new Error(`${loaded.casePath} carries no goldenSql.mariadb`);
+/** The MariaDB golden `{sql, binds}` a case pins (one entry per `then.statements`). */
+function mariadbGoldenStatements(loaded: LoadedCase): readonly DialectStatement[] {
+  const statements = dialectStatements(goldenEntries(loaded.raw), "mariadb");
+  if (statements.length === 0) {
+    throw new Error(`${loaded.casePath} carries no MariaDB golden statements`);
   }
-  return golden;
+  return statements;
+}
+
+/** The MariaDB golden SQL texts a case pins, in order. */
+function mariadbGolden(loaded: LoadedCase): readonly string[] {
+  return mariadbGoldenStatements(loaded).map((statement) => statement.sql);
 }
 
 /** True when a Docker daemon is reachable (gates the Testcontainers lane). */
@@ -107,7 +115,7 @@ async function provision(provider: MariaDbProvider, loaded: LoadedCase): Promise
 async function provisionEmpty(provider: MariaDbProvider, loaded: LoadedCase): Promise<void> {
   await provider.reset();
   await provider.applyDdl(ddlForDescriptor(loaded.descriptor, mariadbDialect));
-  if (loaded.raw.loadFixtures === true) {
+  if (loaded.raw.given?.fixtures === true) {
     await loadFixtures(provider, loaded);
   }
 }
@@ -146,12 +154,12 @@ async function readTableState(provider: MariaDbProvider, loaded: LoadedCase): Pr
       byTable.set(entity.table, entity);
     }
   }
-  const expected = (loaded.raw.expectedTableState as Record<string, unknown> | undefined) ?? {};
+  const expected = (loaded.raw.then?.tableState as Record<string, unknown> | undefined) ?? {};
   const state: Record<string, readonly ProviderRow[]> = {};
   for (const table of Object.keys(expected)) {
     const entity = byTable.get(table);
     if (entity === undefined) {
-      throw new Error(`expectedTableState names table '${table}' not in the model`);
+      throw new Error(`then.tableState names table '${table}' not in the model`);
     }
     const columns = columnOrder({
       table: entity.table,
@@ -187,17 +195,17 @@ group.skipIf(!HAS_DOCKER)(
         "$id returns the expected rows and emits goldenSql.mariadb",
         async ({ loaded }) => {
           await provision(provider, loaded);
-          const operation = parseOperation(loaded.raw.operation);
+          const operation = parseOperation(loaded.raw.when?.operation);
           const schema = schemaForReadCase(loaded, operation, mariadbDialect);
           const { sql, binds } = compile(operation, schema, mariadbDialect, {
             locking: loaded.tags.includes("m-read-lock"),
           });
 
-          expect(sql).toBe(mariadbGolden(loaded));
+          expect(sql).toBe(mariadbGolden(loaded)[0]);
 
           const observed = await provider.query(sql, binds as readonly unknown[]);
           const expected =
-            (loaded.raw.expectedRows as readonly Record<string, unknown>[] | undefined) ?? [];
+            (loaded.raw.then?.rows as readonly Record<string, unknown>[] | undefined) ?? [];
           const comparison = compareRowSet(observed, expected, columnTypesForCase(loaded));
           expect(
             comparison.equal,
@@ -229,11 +237,11 @@ group.skipIf(!HAS_DOCKER)(
           const graph: Graph = {
             [plan.rootEntity]: result.rows as readonly Record<string, unknown>[],
           };
-          const expectedGraph = (loaded.raw.expectedGraph ?? {}) as Graph;
+          const expectedGraph = (loaded.raw.then?.graph ?? {}) as Graph;
           const comparison = compareGraph(graph, expectedGraph, columnTypesForCase(loaded));
           expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
 
-          const roundTrips = loaded.raw.roundTrips as number | undefined;
+          const roundTrips = loaded.raw.then?.roundTrips;
           if (roundTrips !== undefined) {
             expect(result.roundTrips, loaded.casePath).toBe(roundTrips);
           }
@@ -259,7 +267,7 @@ group.skipIf(!HAS_DOCKER)(
           expect(emissions).toEqual(mariadbGolden(loaded));
 
           const observed = await readTableState(provider, loaded);
-          const expected = (loaded.raw.expectedTableState ?? {}) as TableState;
+          const expected = (loaded.raw.then?.tableState ?? {}) as TableState;
           const comparison = compareTableState(observed, expected, columnTypesForCase(loaded));
           expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
         },
@@ -304,13 +312,13 @@ group.skipIf(!HAS_DOCKER)(
         "$id raises errno 1062 → uniqueViolation on the colliding statement",
         async ({ loaded }) => {
           await provisionEmpty(provider, loaded);
-          const statements = mariadbGolden(loaded) as readonly string[];
-          const binds = (loaded.raw.binds as readonly (readonly unknown[])[] | undefined) ?? [];
+          const golden = mariadbGoldenStatements(loaded);
+          const statements = golden.map((statement) => statement.sql);
 
           let raised: unknown;
           for (let i = 0; i < statements.length; i += 1) {
             try {
-              await provider.exec(statements[i] as string, binds[i] ?? []);
+              await provider.exec(statements[i] as string, golden[i]?.binds ?? []);
             } catch (error) {
               raised = error;
               // The violation is the LAST statement (earlier statements seed / commit).
@@ -323,7 +331,8 @@ group.skipIf(!HAS_DOCKER)(
 
           expect(raised, `${loaded.casePath}: expected a uniqueViolation`).toBeDefined();
           expect(classifyMariaError(raised)).toBe("uniqueViolation");
-          const expectedCode = (loaded.raw.expectedNativeCode as { mariadb?: number }).mariadb;
+          const expectedCode = (loaded.raw.then?.nativeCode as { mariadb?: number } | undefined)
+            ?.mariadb;
           expect((raised as { errno?: number }).errno).toBe(expectedCode);
         },
         BOOT_TIMEOUT,
@@ -342,13 +351,13 @@ group.skipIf(!HAS_DOCKER)(
           const b = await provider.openSession();
           try {
             // Round 0: A and B each acquire their first lock (both held — the barrier).
-            await a.execute(...entry(rounds[0], "A"));
-            await b.execute(...entry(rounds[0], "B"));
+            await a.execute(...entry(rounds[0]!, "A"));
+            await b.execute(...entry(rounds[0]!, "B"));
             // Round 1: both attempt the crossing lock CONCURRENTLY → a cycle; InnoDB
             // victimizes one immediately (errno 1213), the other proceeds.
             const results = await Promise.allSettled([
-              a.execute(...entry(rounds[1], "A")),
-              b.execute(...entry(rounds[1], "B")),
+              a.execute(...entry(rounds[1]!, "A")),
+              b.execute(...entry(rounds[1]!, "B")),
             ]);
             const victim = results
               .filter((r): r is PromiseRejectedResult => r.status === "rejected")
@@ -384,12 +393,12 @@ group.skipIf(!HAS_DOCKER)(
           const b = await provider.openSession();
           try {
             // Round 0: A locks the row and holds it (no commit).
-            await a.execute(...entry(rounds[0], "A"));
+            await a.execute(...entry(rounds[0]!, "A"));
             // Round 1: B contends for the SAME row → blocks → errno 1205 within the
             // session's 1-second lock-wait budget.
             let raised: unknown;
             try {
-              await b.execute(...entry(rounds[1], "B"));
+              await b.execute(...entry(rounds[1]!, "B"));
             } catch (error) {
               raised = error;
             }
@@ -412,10 +421,9 @@ group.skipIf(!HAS_DOCKER)(
 
 // --- concurrency round helpers ----------------------------------------------
 
-/** One side (`A`/`B`) of a `concurrency.rounds` step: its MariaDB golden + binds. */
+/** One side (`A`/`B`) of a `concurrency.rounds` step: its MariaDB golden entries. */
 interface RoundEntry {
-  readonly goldenSql: { readonly mariadb: string };
-  readonly binds: readonly unknown[];
+  readonly statements?: readonly StatementEntry[];
 }
 
 /** A `concurrency.rounds` step: the `A` and/or `B` statement issued that round. */
@@ -426,8 +434,7 @@ interface Round {
 
 /** The case's declared two-connection choreography rounds. */
 function concurrencyRounds(loaded: LoadedCase): readonly Round[] {
-  const concurrency = loaded.raw.concurrency as { rounds?: readonly Round[] } | undefined;
-  const rounds = concurrency?.rounds;
+  const rounds = loaded.raw.when?.concurrency?.rounds as readonly Round[] | undefined;
   if (rounds === undefined || rounds.length < 2) {
     throw new Error(`${loaded.casePath} declares no two-round concurrency choreography`);
   }
@@ -437,10 +444,11 @@ function concurrencyRounds(loaded: LoadedCase): readonly Round[] {
 /** Resolve one side's `[sql, binds]` for a session `execute(...)` call. */
 function entry(round: Round, side: "A" | "B"): [string, readonly unknown[]] {
   const item = round[side];
-  if (item === undefined) {
-    throw new Error(`concurrency round has no '${side}' statement`);
+  const [statement] = dialectStatements(item?.statements ?? [], "mariadb");
+  if (statement === undefined) {
+    throw new Error(`concurrency round has no '${side}' MariaDB statement`);
   }
-  return [item.goldenSql.mariadb, item.binds];
+  return [statement.sql, statement.binds];
 }
 
 // Discovery is Docker-free; assert the exact 25-case set unconditionally so a

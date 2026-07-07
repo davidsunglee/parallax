@@ -288,7 +288,7 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("deep-fetch suite ($label)",
 
       assertGraph(rows, fixture.loaded, row.entity, fixture.metamodel);
       // `1 + L` round trips (never N+1): the declared count the corpus authors.
-      const declared = fixture.loaded.raw.roundTrips as number | undefined;
+      const declared = fixture.loaded.raw.then?.roundTrips;
       if (declared !== undefined) {
         expect(roundTrips, `${row.stem}: roundTrips`).toBe(declared);
       }

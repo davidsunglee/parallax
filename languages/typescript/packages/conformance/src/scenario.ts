@@ -2,8 +2,9 @@
  * Build an executable **scenario plan** from a loaded case (m-unit-work unit-of-work
  * cache / identity + m-case-format).
  *
- * A `scenario` case is an ordered list of steps that prove the cache / identity /
- * read-your-own-writes contract against a real database. Two step kinds:
+ * A `scenario` case is an ordered list of steps (`when.scenario`) that prove the
+ * cache / identity / read-your-own-writes contract against a real database. Two
+ * step kinds:
  *
  *  - a **write** step COMMITs its golden DML (a buffered write the unit of work
  *    flushes) — it captures no rows but its committed state is observable by a
@@ -15,22 +16,27 @@
  * A scenario is NEVER compiled to SQL by the adapter (the golden per step is
  * authored, not derived — `m-case-format.md`): read-your-own-writes,
  * cache reuse and identity are observable RUN properties. This module resolves the
- * ordered steps + their authored golden/binds so the runner can execute them; the
- * `m-unit-work-001` slice is the single read-your-own-writes scenario (a committed insert +
- * a dependent find that MUST observe it), `roundTrips` 2.
+ * ordered steps + their authored golden statement entries so the runner can execute
+ * them; each `{sql, binds}` entry carries its own binds inline (no positional
+ * pairing). The `m-unit-work-001` slice is the single read-your-own-writes scenario
+ * (a committed insert + a dependent find that MUST observe it), `roundTrips` 2.
  */
+import { type DialectStatement, dialectStatements, type StatementEntry } from "./case-format.js";
 import type { LoadedCase } from "./discover.js";
 
 /** A scenario step: a committed write or a find (with its authored golden). */
 export interface ScenarioStep {
   /** The step kind. */
   readonly kind: "write" | "find";
-  /** The JSON Pointer into the case (`/scenario/<index>`). */
+  /** The m-conformance-adapter case pointer for this step (`/scenario/<index>`). */
   readonly casePointer: string;
-  /** The ordered golden statements this step executes (empty for a cache hit). */
-  readonly statements: readonly string[];
-  /** The authored binds (a flat row for a single statement). */
-  readonly binds: readonly unknown[];
+  /**
+   * The ordered golden statements this step executes (empty for a cache hit), each
+   * carrying its own inline binds. A multi-statement write step (a versioned
+   * set-based materialize write, `m-opt-lock-003` / `m-opt-lock-004`) lists one entry
+   * per per-object `UPDATE`; a single-statement find lists one.
+   */
+  readonly statements: readonly DialectStatement[];
   /** The declared round-trip cost of the step (0 for a cache hit). */
   readonly roundTrips: number;
   /**
@@ -48,7 +54,7 @@ export interface ScenarioStep {
 /** The executable scenario plan: the ordered steps + the case round-trip total. */
 export interface ScenarioPlan {
   readonly steps: readonly ScenarioStep[];
-  /** The case-level `roundTrips` (equals the sum of the per-step round trips). */
+  /** The case-level `then.roundTrips` (equals the sum of the per-step round trips). */
   readonly roundTrips: number;
 }
 
@@ -57,13 +63,16 @@ export function isScenario(loaded: LoadedCase): boolean {
   return loaded.shape === "scenario";
 }
 
-/** A raw scenario step as authored in the case YAML. */
+/**
+ * A scenario step as authored in `when.scenario`. The step schema keys read-vs-write
+ * on a `oneOf` (so the generated static view is a loose object); this reader names
+ * the members the runner consumes.
+ */
 interface RawScenarioStep {
   readonly write?: string;
   readonly rollback?: boolean;
   readonly find?: unknown;
-  readonly goldenSql?: { readonly postgres?: string | readonly string[] };
-  readonly binds?: readonly unknown[];
+  readonly statements?: readonly StatementEntry[];
   readonly roundTrips?: number;
   readonly expectRows?: readonly Record<string, unknown>[];
   readonly sameObjectAs?: number;
@@ -71,11 +80,11 @@ interface RawScenarioStep {
 
 /** Build the scenario plan: resolve each step's kind, golden, binds and asserts. */
 export function buildScenarioPlan(loaded: LoadedCase): ScenarioPlan {
-  const rawSteps = (loaded.raw.scenario as readonly RawScenarioStep[] | undefined) ?? [];
+  const rawSteps = (loaded.raw.when?.scenario ?? []) as readonly RawScenarioStep[];
   const steps = rawSteps.map((raw, index) => normalizeStep(raw, index));
   return {
     steps,
-    roundTrips: (loaded.raw.roundTrips as number | undefined) ?? sumRoundTrips(steps),
+    roundTrips: loaded.raw.then?.roundTrips ?? sumRoundTrips(steps),
   };
 }
 
@@ -85,8 +94,7 @@ function normalizeStep(raw: RawScenarioStep, index: number): ScenarioStep {
   return {
     kind,
     casePointer: `/scenario/${index}`,
-    statements: stepStatements(raw),
-    binds: (raw.binds ?? []) as readonly unknown[],
+    statements: dialectStatements(raw.statements ?? [], "postgres"),
     roundTrips: raw.roundTrips ?? 0,
     ...(raw.rollback === undefined ? {} : { rollback: raw.rollback }),
     ...(raw.expectRows === undefined ? {} : { expectRows: raw.expectRows }),
@@ -94,31 +102,7 @@ function normalizeStep(raw: RawScenarioStep, index: number): ScenarioStep {
   };
 }
 
-/** The ordered golden `postgres` statements a step lists (empty for a cache hit). */
-function stepStatements(raw: RawScenarioStep): readonly string[] {
-  const golden = raw.goldenSql?.postgres;
-  if (golden === undefined) {
-    return [];
-  }
-  return typeof golden === "string" ? [golden] : [...golden];
-}
-
 /** The sum of the per-step round trips (the case-level total). */
 function sumRoundTrips(steps: readonly ScenarioStep[]): number {
   return steps.reduce((total, step) => total + step.roundTrips, 0);
-}
-
-/**
- * The binds for statement `index` of a (possibly MULTI-statement) scenario step.
- * A step with several golden statements (a versioned set-based materialize write —
- * one per-object `UPDATE` per row, `m-opt-lock-003` / `m-opt-lock-004`) carries a LIST-OF-LISTS `binds`,
- * one bind list per statement; a single-statement step carries a flat list. Mirrors
- * the reference harness's `_binds_for_list`, so the TS runner slices per-statement
- * exactly as the Python harness does. A flat list is the binds for statement 0.
- */
-export function stepBindsAt(binds: readonly unknown[], index: number): readonly unknown[] {
-  if (binds.length > 0 && Array.isArray(binds[0])) {
-    return (binds[index] as readonly unknown[] | undefined) ?? [];
-  }
-  return index === 0 ? binds : [];
 }
