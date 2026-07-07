@@ -17,7 +17,7 @@ adding one row to that shared table, not creating a one-off suite.
 
 Each row proves the database's answers for the `m-dialect` decision catalog:
 
-- stable dialect identifier used by `goldenSql.<dialect>`
+- stable dialect identifier used as the per-dialect `sql` key in a case's `then.statements` entries
 - identifier quoting, including reserved and non-simple identifiers
 - neutral `NULL` ordering for ascending and descending sort keys
 - row-limit rendering
@@ -83,8 +83,9 @@ The provider matrix must be declared with named profiles. A profile records:
 
 A full profile runs every case in the claimed slice for that dialect. A partial
 profile is first-class only when its omissions are explicit. In particular, a
-second dialect with incomplete `m-case-format` coverage must classify cases without
-`goldenSql.<dialect>` as profile exclusions, not as silent skips.
+second dialect with incomplete `m-case-format` coverage must classify cases whose
+`then.statements` entries carry no `sql` key for that dialect as profile
+exclusions, not as silent skips.
 
 ## Reporting
 

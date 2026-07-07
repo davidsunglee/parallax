@@ -66,11 +66,12 @@ conflict/retry contract itself is `m-opt-lock`.
 
 ## How the harness verifies (`m-case-format`)
 
-Write-sequence cases carry a `writeSequence` (ordered `insert` / `update` /
-`terminate`) and `expectedTableState`. The harness **applies** the ordered DML
-golden SQL to a freshly-provisioned (empty) table, then asserts the resulting
-milestone rows equal `expectedTableState` — including the `out_z = infinity`
-current-row state. The DML statement count must equal the sum of the steps'
-declared statement counts and the case's `roundTrips`. Rather than introspecting
+Write-sequence cases carry a `when.writeSequence` (ordered `insert` / `update` /
+`terminate`) and `then.tableState`. The harness **applies** the ordered DML
+golden SQL (`then.statements`) to a freshly-provisioned (empty) table, then asserts
+the resulting milestone rows equal `then.tableState` — including the
+`out_z = infinity` current-row state. The DML statement count must equal the sum of
+the steps' declared statement counts and the case's `then.roundTrips`. Rather than
+introspecting
 an implementation, the suite proves the *documented golden SQL itself* produces
 the correct milestones.

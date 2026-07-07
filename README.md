@@ -106,25 +106,36 @@ also carries a module tag for every behavior it exercises, so the corpus is
 browsable by module and the coverage gate can map each active module to its
 cases.
 
-The compatibility case schema supports five top-level shapes:
+Each case reads top-to-bottom as **given / when / then** — setup, the action
+under test, then the assertions — with identity and routing (`model`, `tags`,
+`lane`) plus an explicit `shape` discriminator kept top-level. The schema supports
+eight case shapes, named by that required top-level `shape`:
 
-- `read`: execute canonical SQL, compare rows, and optionally compare
-  `referenceSql`.
-- `writeSequence`: run ordered write statements and compare final table state.
+- `read`: execute canonical SQL (`then.statements`), compare `then.rows`, and
+  optionally compare `then.referenceSql`.
+- `writeSequence`: run ordered write statements and compare final `then.tableState`.
 - `scenario`: model transactions, cache hits, identity checks, and round trips.
-- `conflict`: apply a precondition, execute a write, and assert affected rows.
+- `conflict`: apply `given.apply`, execute a write, and assert `then.affectedRows`.
 - `coherence`: use two database connections to observe cross-process behavior.
+- `error`: trigger a real DB error and assert `then.errorClass` + `then.nativeCode`.
+- `concurrencySuccess`: a two-session read-lock choreography asserting no error.
+- `boundary`: an `api-conformance`-lane retry case asserting `then.outcome`.
+
+Every SQL statement — golden or naive — is a `{sql, binds}` **statement entry**:
+its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations and a
+plain string at naive ones, and its `binds` are attached to it inline. There is no
+positional pairing convention.
 
 Every read case follows the same triple oracle:
 
 ```text
-rows(goldenSql + binds) == expectedRows
-rows(referenceSql + binds) == expectedRows
-normalize(goldenSql) is canonical for the dialect
+rows(then.statements[].sql[dialect] + binds) == then.rows
+rows(then.referenceSql + binds) == then.rows
+normalize(then.statements[].sql[dialect]) is canonical for the dialect
 ```
 
 Deep-fetch cases extend this by asserting a bounded number of SQL statements and
-an `expectedGraph`, not just flat rows.
+a `then.graph`, not just flat rows.
 
 ### 5. Run cases through the reference harness
 
@@ -142,8 +153,8 @@ For each case the harness:
 1. Validates the descriptor, operation, and case JSON/YAML against schemas.
 2. Derives test DDL from the descriptor.
 3. Loads the requested fixture rows.
-4. Executes the authored canonical SQL against a real database provider.
-5. Executes `referenceSql` when present.
+4. Executes the authored canonical SQL (`then.statements`) against a real database provider.
+5. Executes `then.referenceSql` when present.
 6. Compares rows, graphs, table state, affected rows, round trips, and cache or
    identity expectations.
 7. Checks SQL normalization and deterministic descriptor/operation serde.
@@ -215,15 +226,15 @@ Use this path when extending the repository:
 2. Update JSON Schemas when the serialized contract changes.
 3. Add or adjust descriptors in `core/compatibility/models/`.
 4. Add fixtures only when the case cannot reuse existing rows.
-5. Add compatibility cases with canonical `goldenSql`, binds, and expected
-   observations.
+5. Add compatibility cases with canonical `then.statements` (dialect-keyed `sql`
+   plus inline `binds`) and expected observations.
 6. Add benchmark coverage when the behavior changes query shape, write shape,
    round trips, or memory use.
 7. Run `just verify` before relying on the change.
 
 When adding a dialect, implement a new provider behind the database seam
-(`m-dialect` / `m-db-port`) and add a new `goldenSql.<dialect>` entry to cases and
-benchmarks that need dialect-specific SQL.
+(`m-dialect` / `m-db-port`) and add a new per-dialect `sql` key to the
+`then.statements` entries of cases and benchmarks that need dialect-specific SQL.
 
 ## Building A Language Implementation
 

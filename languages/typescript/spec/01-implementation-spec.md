@@ -810,7 +810,7 @@ interface CompatibilityDatabaseProvider {
 For every database-backed `run` case, the conformance adapter calls
 `provider.reset()`, derives and applies DDL for the case's model, and then loads
 fixture rows according to the core case lifecycle (`writeSequence` cases start
-empty unless the case sets `loadFixtures`; read/scenario/conflict cases load the
+empty unless the case sets `given.fixtures`; read/scenario/conflict cases load the
 model fixtures). This yields the same clean / migrated / isolated state as the
 Python harness without coupling the suite to Testcontainers internals. The
 composition-root providers also expose the shipped `database` adapter,
@@ -838,14 +838,16 @@ database implementations behind the m-dialect seam:
 - **MariaDB curated m-case-format profile** (`mariadb-curated-25`): a first-class partial
   profile over `mariadb:11.4`, included in `just ts-db-all`. It preserves the
   25-case set: 14
-  harness-lane slice cases with `goldenSql.mariadb` plus 11 marquee MariaDB
+  harness-lane slice cases whose `then.statements` entries carry a `mariadb` `sql`
+  key plus 11 marquee MariaDB
   dialect/error-classification proofs (`m-read-lock-009`, `m-temporal-read-021`, `m-core-004`, `m-db-error-001`-`m-db-error-008`).
 
 Per-dialect golden SQL is selected by the provider's own `dialect` identifier,
-which is the `goldenSql` key on the case. The MariaDB profile does not silently
-skip cases. Every Postgres full-profile case without `goldenSql.mariadb` is
-classified as an explicit MariaDB profile exclusion with the reason
-`no goldenSql.mariadb in this partial MariaDB profile`.
+which is the `sql`-map key inside each `then.statements` entry. The MariaDB profile
+does not silently skip cases. Every Postgres full-profile case whose
+`then.statements` entries carry no `mariadb` `sql` key is classified as an explicit
+MariaDB profile exclusion with the reason
+`no mariadb golden statements in this partial MariaDB profile`.
 
 ### 5.5 Database provider support and matrix profiles
 
@@ -1387,7 +1389,7 @@ implementation **MUST** honor it for claimed compatibility cases. It is enforced
 in V1 through m-conformance-adapter and, once m-perf-bench is claimed, by the benchmark runner too:
 
 - **`m-case-format` round-trip-count layer** — for every compatibility case,
-  `len(goldenSql[dialect])` MUST equal the case's `roundTrips`
+  `len(then.statements[].sql[dialect])` MUST equal the case's `then.roundTrips`
   ([§5.2](#52-case-discovery-and-execution-boundary) compares this via the
   `parallax-conformance` envelope's `roundTrips`).
 - **Post-slice `m-perf-bench` benchmark runner** — when the benchmark command is claimed,

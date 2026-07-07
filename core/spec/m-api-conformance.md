@@ -52,7 +52,7 @@ portable requirements; the mechanism that satisfies each is language-local.
    database adapter against a real database of a claimed dialect (not a mock, an
    in-memory fake, or the conformance grader's provisioning path used as a
    shortcut around the developer surface). **Carve-out for `api-conformance`-lane
-   fault injection.** A boundary case that declares an `inject` fault (a portable
+   fault injection.** A boundary case that declares a `given.fault` (a portable
    transient / conflict a single-connection suite cannot provoke by real
    contention) MAY be driven by a **thin fault-injecting decorator wrapped around
    the shipped adapter** at the database-port seam — the decorator injects the
@@ -73,7 +73,7 @@ portable requirements; the mechanism that satisfies each is language-local.
    like a harness-lane case.
 4. **Expected results match the corpus oracles.** For every exercised case the
    suite MUST assert the developer surface produces the corpus's expected results
-   (`expectedRows`, `expectedGraph`, `expectedTableState`, `expectedAffectedRows`,
+   (`then.rows`, `then.graph`, `then.tableState`, `then.affectedRows`,
    round-trip counts, and identity/cache expectations as applicable), using the
    same comparison rules the conformance grade uses.
 5. **No-drift guard.** For cases whose behavior is a query, the suite MUST assert

@@ -170,7 +170,8 @@ Every language that supports a database must declare its concrete proof of
   exposes.
 - **(decide and record)** The named database matrix profiles, marking each as
   full or partial. A partial profile MUST list explicit exclusions with reasons;
-  missing `goldenSql.<dialect>` entries are exclusions, not silent skips.
+  cases whose `then.statements` entries carry no `sql` key for that dialect are
+  exclusions, not silent skips.
 - **(decide and record)** The commands that run the fast Docker-free checks,
   adapter smoke checks, provider contract checks, API conformance lanes, and full
   or partial matrix profiles. Record how skipped database-backed checks are

@@ -246,8 +246,8 @@ returns the observations required to compare against the case.
 The adapter is responsible for using a clean database according to its declared
 provisioning mode, applying schema and fixtures, executing the implementation's
 public behavior, and reporting observations. A runner may compare those
-observations to `expectedRows`, `expectedGraph`, `expectedTableState`,
-`expectedAffectedRows`, cache/identity expectations, and `roundTrips`.
+observations to `then.rows`, `then.graph`, `then.tableState`,
+`then.affectedRows`, cache/identity expectations, and `then.roundTrips`.
 
 When a language implementation routes case execution through its `m-db-port`
 runtime database port, read/result statements and DML outcome statements remain
@@ -363,13 +363,14 @@ object; the report object is the machine-readable performance artifact.
 A conformance runner compares adapter output to the compatibility case using the
 same rules as `m-case-format`:
 
-- emitted SQL is normalized and compared to `goldenSql[dialect]`
-- binds compare in authored order
+- emitted SQL is normalized and compared to each `then.statements` entry's
+  `sql[dialect]`
+- binds compare in authored order (each statement entry's own `binds`)
 - rows compare using the case's row comparison rules
-- deep-fetch graphs compare to `expectedGraph`
-- write table state compares to `expectedTableState`
-- conflict affected rows compare to `expectedAffectedRows`
-- round trips compare to the case's declared `roundTrips` or scenario step
+- deep-fetch graphs compare to `then.graph`
+- write table state compares to `then.tableState`
+- conflict affected rows compare to `then.affectedRows`
+- round trips compare to the case's declared `then.roundTrips` or scenario step
   counts
 
 The adapter output is not allowed to weaken the core corpus. If an

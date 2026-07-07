@@ -16,7 +16,7 @@ A language target is credible when it can show all of the following:
 - Canonical metamodel and operation serde in JSON and YAML.
 - Runtime metamodel introspection over the same descriptor shape used by the
   corpus.
-- SQL generation that emits the expected per-dialect `goldenSql` and binds.
+- SQL generation that emits the expected per-dialect golden `then.statements` (dialect-keyed `sql`) and binds.
 - Real database execution that matches rows, graphs, table state, affected row
   counts, identity/cache expectations, and round-trip counts.
 - Dependency-boundary enforcement that respects the core module DAG.
@@ -150,7 +150,7 @@ starts.
 | 8 | `m-detach` lifecycle and `m-opt-lock` optimistic locking | The `m-detach-*` and `m-opt-lock-*` cases |
 | 9 | `m-bitemp-write` two-axis writes (`m-business-only` deferred) | The `m-bitemp-write-*` cases |
 | 10 | `m-inheritance` and `m-value-object` | The `m-inheritance-*` and `m-value-object-*` cases |
-| 11 | `m-dialect` second dialect support | The MariaDB cases (e.g. `m-read-lock-009`, `m-core-004`), then every case with that dialect's `goldenSql` |
+| 11 | `m-dialect` second dialect support | The MariaDB cases (e.g. `m-read-lock-009`, `m-core-004`), then every case whose `then.statements` entries carry that dialect's `sql` key |
 | 12 | `m-coherence` cross-process coherence (deferred) | The `m-coherence-*` cases |
 | 13 | `m-perf-bench` benchmark methodology and reports | Every file in `core/compatibility/benchmarks/` |
 | Suite | API Conformance Suite + Usage Guide over the claimed slice (grows with the developer surface) | Coverage partition is green (exercised ∪ skipped == slice); the Usage Guide renders clean |
@@ -228,7 +228,7 @@ Classify the failure before editing code:
 
 - **Serde failure:** the descriptor or operation cannot round-trip. Fix
   `m-descriptor` or `m-op-algebra` before touching SQL generation.
-- **Compile failure:** emitted SQL or binds do not match `goldenSql`. Fix `m-sql`
+- **Compile failure:** emitted SQL or binds do not match the golden `then.statements`. Fix `m-sql`
   or the `m-dialect` seam.
 - **Result failure:** SQL matches but rows differ. Check fixture loading, type
   conversion, value normalization, and object materialization.
