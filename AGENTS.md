@@ -12,7 +12,7 @@
 
 ## Prior Art: Reladomo
 
-- Parallax is informed by Reladomo. The full Reladomo repository is checked out as a peer of this repo (`../reladomo`); a summary lives at `docs/misc/reladomo-research.md`.
+- Parallax is informed by Reladomo. The full Reladomo repository is checked out as a peer of this repo (`../reladomo`); research findings live in `docs/research/reladomo/` (start at `00-index.md`).
 - When researching a design decision (locking, transactions, temporal semantics, caching), always include how Reladomo handles it as prior art. Parallax generally follows Reladomo's lead on runtime semantics unless a spec module says otherwise.
 - Reladomo is prior art, not a template: match its semantics where the spec adopts them, not its Java idioms.
 
