@@ -549,7 +549,7 @@
           "$ref": "#/$defs/goldenStatements"
         },
         "referenceSql": {
-          "description": "Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases. Authored dialect-neutrally as a plain string wherever one naive spelling runs verbatim on every dialect; a dialect-keyed map (`postgres` / `mariadb`) when the naive spelling itself is dialect-specific (e.g. the structured-document extraction, where Postgres `->>` takes a bare key and MariaDB `->>` takes a `'$.path'`). The harness runs the entry matching the executing dialect.",
+          "description": "Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases. Authored dialect-neutrally as a plain string wherever one naive spelling runs verbatim on every dialect; a dialect-keyed map (`postgres` / `mariadb`) when the naive spelling itself is dialect-specific (e.g. the structured-document extraction, where Postgres `->>` takes a bare key and MariaDB `->>` takes a `'$.path'`). When a map, its keys MUST equal the golden `sql` map's keys (harness-asserted, exactly as for a `binds` map) so no executed dialect runs without its oracle. The harness runs the entry matching the executing dialect; a map omitting a declared dialect is a loud failure, never a silently skipped oracle.",
           "oneOf": [
             { "type": "string", "minLength": 1 },
             {

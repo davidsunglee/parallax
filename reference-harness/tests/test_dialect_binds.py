@@ -9,8 +9,10 @@ database:
   ``referenceSql`` (and rejects a non-array / unknown-dialect binds map);
 * ``Case.statement_binds`` resolves the right list per dialect (and errors when a
   map is asked for without a dialect);
-* ``Case.reference_sql_for`` picks the right oracle per dialect;
-* ``_assert_binds_dialect_keys`` enforces the keys-match invariant; and
+* ``Case.reference_sql_for`` picks the right oracle per dialect, and fails LOUDLY
+  (never a silent ``None``) for a dialect a map does not carry;
+* ``_assert_binds_dialect_keys`` and ``_assert_reference_sql_dialect_keys`` enforce
+  the keys-match invariant for ``binds`` and ``referenceSql`` respectively; and
 * the frozen ``m-value-object-*`` corpus is authored with the divergent per-dialect
   binds on both dialects.
 """
@@ -25,7 +27,11 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness.case import Case, Model, discover_cases
-from reference_harness.case_runner import CaseFailure, _assert_binds_dialect_keys
+from reference_harness.case_runner import (
+    CaseFailure,
+    _assert_binds_dialect_keys,
+    _assert_reference_sql_dialect_keys,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -158,7 +164,18 @@ def test_reference_sql_for_map_resolves_per_dialect() -> None:
     )
     assert case.reference_sql_for("postgres") == "pg oracle"
     assert case.reference_sql_for("mariadb") == "maria oracle"
-    assert case.reference_sql_for("snowflake") is None
+    # A dialect the map does NOT carry is a LOUD failure, never a silent None: a
+    # silently skipped oracle would let that dialect's golden SQL go unchecked.
+    with pytest.raises(KeyError):
+        case.reference_sql_for("snowflake")
+
+
+def test_reference_sql_for_absent_is_none() -> None:
+    # An entirely unauthored referenceSql (a trivial case, no oracle) still yields
+    # None — the callers legitimately run no oracle for it.
+    case = _make_case([{"sql": {"postgres": "select 1"}}])
+    assert case.reference_sql_for("postgres") is None
+    assert case.reference_sql_for("mariadb") is None
 
 
 # --- keys-match invariant ---------------------------------------------------
@@ -189,6 +206,44 @@ def test_assert_binds_dialect_keys_ignores_flat_binds() -> None:
     _assert_binds_dialect_keys(case)  # flat binds impose no key constraint
 
 
+def test_assert_reference_sql_dialect_keys_accepts_matching_map() -> None:
+    case = _make_case(
+        [{"sql": {"postgres": "select 1", "mariadb": "select 1"}}],
+        reference_sql={"postgres": "pg oracle", "mariadb": "maria oracle"},
+    )
+    _assert_reference_sql_dialect_keys(case)  # keys == golden sql dialects: no raise
+
+
+def test_assert_reference_sql_dialect_keys_rejects_divergent_keys() -> None:
+    # The golden sql declares postgres AND mariadb, but the oracle only carries
+    # postgres — mariadb would execute with NO independent oracle. Must be rejected.
+    case = _make_case(
+        [{"sql": {"postgres": "select 1", "mariadb": "select 1"}}],
+        reference_sql={"postgres": "pg oracle"},
+    )
+    with pytest.raises(CaseFailure):
+        _assert_reference_sql_dialect_keys(case)
+
+
+def test_assert_reference_sql_dialect_keys_rejects_extra_dialect() -> None:
+    # The oracle carries a dialect (mariadb) the golden sql does not declare — an
+    # oracle with no golden to grade against is equally inconsistent.
+    case = _make_case(
+        [{"sql": {"postgres": "select 1"}}],
+        reference_sql={"postgres": "pg oracle", "mariadb": "maria oracle"},
+    )
+    with pytest.raises(CaseFailure):
+        _assert_reference_sql_dialect_keys(case)
+
+
+def test_assert_reference_sql_dialect_keys_ignores_string() -> None:
+    case = _make_case(
+        [{"sql": {"postgres": "select 1", "mariadb": "select 1"}}],
+        reference_sql="select id from customer",
+    )
+    _assert_reference_sql_dialect_keys(case)  # a plain string imposes no key constraint
+
+
 # --- the frozen value-object corpus ----------------------------------------
 
 
@@ -205,8 +260,10 @@ def test_value_object_cases_carry_both_dialects_and_per_dialect_binds() -> None:
         assert case.golden_dialects == {"postgres", "mariadb"}, (
             f"{case.path.name}: expected postgres+mariadb golden, got {case.golden_dialects}"
         )
-        # The keys-match invariant holds for every value-object case.
+        # The keys-match invariant holds for every value-object case, for both the
+        # per-dialect binds and the per-dialect referenceSql oracle.
         _assert_binds_dialect_keys(case)
+        _assert_reference_sql_dialect_keys(case)
         for index, entry in enumerate(case.golden_entries()):
             binds = entry.get("binds")
             if binds is None:

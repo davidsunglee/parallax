@@ -489,12 +489,26 @@ class Case:
         ``referenceSql`` is a plain string when one naive spelling runs verbatim on
         every dialect (the authored default), OR a dialect-keyed map when the naive
         spelling itself is dialect-specific (the structured-document extraction:
-        Postgres ``->>`` takes a bare key, MariaDB ``->>`` takes a ``'$.path'``).
-        A map with no entry for *dialect* yields ``None`` (no oracle to run there).
+        Postgres spells it ``->>`` over a bare key, MariaDB ``json_value(col,
+        '$.path')`` — MariaDB has no ``->>`` operator).
+        When a map, its keys MUST equal the golden ``sql`` map's keys
+        (``case_runner._assert_reference_sql_dialect_keys``), so resolving a dialect
+        the golden ``sql`` declares always succeeds. A request for a *dialect* the map
+        does NOT carry is a loud :class:`KeyError` — never a silently skipped oracle,
+        which would let a per-dialect golden go unchecked. An entirely UNAUTHORED
+        ``referenceSql`` (absent) still yields ``None``: a trivial case legitimately
+        runs no oracle.
         """
         raw = self.then.get("referenceSql")
+        if raw is None:
+            return None
         if isinstance(raw, dict):
-            return raw.get(dialect)
+            if dialect not in raw:
+                raise KeyError(
+                    f"{self.path.name}: referenceSql map has no key {dialect!r} "
+                    f"(keys: {sorted(raw)})"
+                )
+            return raw[dialect]
         return raw
 
     @property

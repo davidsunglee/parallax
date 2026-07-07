@@ -136,10 +136,13 @@ then:
 
 `then.referenceSql` is polymorphic the same way: a plain string wherever one naive
 spelling runs verbatim on every dialect (the authored default), or a dialect-keyed
-map where the naive spelling itself is dialect-specific (Postgres reads the JSON with
-the `->>` operator and a bare key, MariaDB — which has no `->>` operator — with the
-`json_value(col, '$.path')` function). The harness runs the entry matching the
-executing dialect.
+map — whose keys **MUST** equal the golden `sql` map's keys (harness-asserted, exactly
+as for a `binds` map) — where the naive spelling itself is dialect-specific (Postgres
+reads the JSON with the `->>` operator and a bare key, MariaDB — which has no `->>`
+operator — with the `json_value(col, '$.path')` function). The harness runs the entry
+matching the executing dialect; a map that omits a dialect its golden `sql` declares is
+a **loud failure**, never a silently skipped oracle (which would let that dialect's
+golden SQL go unchecked by the independent oracle).
 
 At the **naive location** (`given.apply`) `sql` is a plain, dialect-agnostic
 **string** run verbatim on every dialect:
