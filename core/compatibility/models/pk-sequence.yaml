@@ -1,17 +1,16 @@
-# Simulated-sequence (Reladomo SimulatedSequence) primary-key allocation.
+# Simulated-sequence (Reladomo SimulatedSequence) primary-key allocation model.
 #
-# `PkSequence` is the sequence registry: one row per named sequence holding the next
-# value to hand out. An allocation advances `next_val` by `batchSize * incrementSize`
-# in ONE update (reserving a block), and the reserved ids are handed out as literal
-# binds in the inserts. Inserting fewer rows than a reserved block leaves a visible
-# GAP (the unused ids are lost) while the counter still lands at the block boundary.
-# The advanced counter and the allocated ids are asserted independently by the
-# PK-generation oracle (case_runner._assert_pk_allocation), which re-derives them from
-# the config below, so the cases need not assert the registry table in
-# `then.tableState`. All SQL is portable (a plain table + UPDATE), so golden is
-# byte-identical on Postgres and MariaDB. Registry rows are seeded to each sequence's
-# initialValue via `given.fixtures`; the target tables (badge/ticket/pass/voucher)
-# carry no fixtures and start empty.
+# `PkSequence` is the sequence registry entity: table `pk_sequence`, one row per named
+# sequence (`name` PK) holding the next value (`next_val`) to hand out. Four target
+# entities draw ids from it via `pkGenerator: { strategy: sequence, ... }`, each with a
+# distinct config to cover the allocation arithmetic (initialValue / incrementSize /
+# batchSize):
+#   - Badge   (badge_seq):   1    / 1  / 1
+#   - Ticket  (ticket_seq):  1000 / 5  / 1
+#   - Pass    (pass_seq):    1    / 1  / 3
+#   - Voucher (voucher_seq): 100  / 10 / 2
+# All entities are non-temporal transactional over a plain table + UPDATE, so the
+# emitted SQL is portable across Postgres and MariaDB.
 entities:
   - name: PkSequence
     namespace: parallax.compatibility

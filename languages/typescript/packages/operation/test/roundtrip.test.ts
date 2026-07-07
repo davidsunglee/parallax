@@ -17,15 +17,32 @@ function repoPath(relative: string): string {
 const CASES_DIR = repoPath("core/compatibility/cases");
 
 interface CaseDoc {
-  readonly tags?: readonly string[];
+  readonly tags?: readonly string[] | undefined;
   readonly operation?: unknown;
-  readonly equivalentEncodings?: readonly unknown[];
+  readonly equivalentEncodings?: readonly unknown[] | undefined;
 }
 
-/** Parse a case YAML from disk. */
+/**
+ * The grouped case layout carries the action under test and its alternate
+ * surface encodings under the `when` group.
+ */
+interface RawCaseDoc {
+  readonly tags?: readonly string[];
+  readonly when?: {
+    readonly operation?: unknown;
+    readonly equivalentEncodings?: readonly unknown[];
+  };
+}
+
+/** Parse a case YAML from disk, projecting the `when` group into a flat view. */
 function loadCase(name: string): CaseDoc {
   const text = readFileSync(`${CASES_DIR}/${name}`, "utf8");
-  return deserialize(text, "yaml") as CaseDoc;
+  const raw = deserialize(text, "yaml") as RawCaseDoc;
+  return {
+    tags: raw.tags,
+    operation: raw.when?.operation,
+    equivalentEncodings: raw.when?.equivalentEncodings,
+  };
 }
 
 /**
