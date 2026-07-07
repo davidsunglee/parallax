@@ -1,11 +1,12 @@
 # Error-cases model (m-db-error error-code classification). Three plain non-temporal
-# entities, each the subject of one error class:
-#   - Widget: a duplicate primary-key INSERT -> uniqueViolation (PK path).
-#   - Tag:    a duplicate value on a non-PK UNIQUE index -> uniqueViolation
-#             (unique-index path; exercises the DDL UNIQUE-constraint emission).
-#   - Gauge:  two rows two connections contend over -> deadlock / lockWaitTimeout.
-# The error classes are dialect-neutral (`then.errorClass`); the per-dialect native
-# code each database raises is witnessed by `then.nativeCode` on every case.
+# entities, each set up so a related case can provoke one error class:
+#   - Widget: id PK with `pkGenerator: none` — the duplicate-PK INSERT path.
+#   - Tag:    id PK plus a `tag_name_uq` UNIQUE index on `name` — a non-PK unique
+#             collision (exercises DDL UNIQUE-constraint emission).
+#   - Gauge:  id PK and an int `v` — two rows for two connections to contend over
+#             (deadlock / lock-wait contention).
+# This file defines only the entities; the error-class and native-code assertions
+# live in the related case files, not here.
 entities:
   - name: Widget
     namespace: parallax.compatibility

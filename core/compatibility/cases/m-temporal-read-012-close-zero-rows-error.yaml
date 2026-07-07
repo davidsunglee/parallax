@@ -1,16 +1,13 @@
-# A zero-row temporal close in LOCKING mode is an error in ANY mode — it MUST NOT
-# silently succeed, even under the default pessimistic strategy (m-temporal-read +
-# m-opt-lock).
+# A zero-row temporal close in LOCKING mode: the ungated close finds no current
+# milestone and affects 0 rows (m-temporal-read + m-opt-lock).
 #
 # In locking mode the close is UNGATED: the m-read-lock shared read lock makes the
 # write correct, so no `and in_z = ?` gate is emitted — the locking-mode counterpart
-# of m-temporal-read-009's gated close. Correctness still requires the close to find
-# the current milestone, but `given.apply` TERMINATES id 2 (closes its current row at
-# 2024-09-01, chaining nothing), so none remains and the ungated close affects 0
-# rows. A zero-row close never passes silently: it surfaces a stale/consistency error
-# — distinct from an optimistic conflict and NOT retried, since a retry would re-read
-# the same absent current row and loop. `then.tableState` is the fixtures with id 2
-# terminated.
+# of m-temporal-read-009's gated close. But `given.apply` TERMINATES id 2 (closes its
+# current row at 2024-09-01, chaining nothing), so no current row remains and the
+# ungated `update ... where out_z = 'infinity'` matches nothing: `then.affectedRows`
+# is 0 and `then.tableState` is the fixtures with id 2 already terminated (unchanged
+# by the close).
 model: models/balance.yaml
 tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, locking, slice-mvp-1]
 shape: conflict
