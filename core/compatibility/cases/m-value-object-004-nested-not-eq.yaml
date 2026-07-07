@@ -4,8 +4,10 @@
 # nestedNotEq(Customer.address.city, 'Oslo') lowers to a negated extraction — a
 # leading `not` (the normalizer renders the negation that way, mirroring
 # `isNotNull`/`notIn`): Postgres `not jsonb_extract_path_text(t0.address, ?) = ?`,
-# MariaDB `not json_unquote(json_extract(t0.address, ?)) = ?`. Only Grace (Boston)
-# does NOT live in Oslo; the null-address customer (4) is excluded by 3VL.
+# MariaDB `not json_value(t0.address, ?) = ?`. Grace (Boston) and Rin (Berlin) do
+# NOT live in Oslo; the not-present cities — null column (4), missing key (5) and
+# explicit JSON `null` leaf (7) — are all excluded by the absence collapse (not
+# present is not "not Oslo"), identically on both dialects.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json]
 shape: read
@@ -16,13 +18,14 @@ then:
   statements:
     - sql:
         postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
-        mariadb: select t0.id, t0.name from customer t0 where not json_unquote(json_extract(t0.address, ?)) = ?
+        mariadb: select t0.id, t0.name from customer t0 where not json_value(t0.address, ?) = ?
       binds:
         postgres: [city, Oslo]
         mariadb: ['$.city', Oslo]
   referenceSql:
     postgres: select id, name from customer where address ->> 'city' <> 'Oslo'
-    mariadb: select id, name from customer where json_value(address, '$.city') <> 'Oslo'
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') <> 'Oslo'
   rows:
     - { id: 3, name: Grace }
+    - { id: 6, name: Rin }
   roundTrips: 1

@@ -1,0 +1,31 @@
+# valueObject structured-column filter: nested field membership (m-value-object,
+# m-sql), on Postgres AND MariaDB.
+#
+# nestedIn(Customer.address.city, [Oslo, Boston]) lowers the extraction into an
+# `in (?, ?)` membership: Postgres `jsonb_extract_path_text(t0.address, ?) in
+# (?, ?)` carries the JSON key then the list values; MariaDB
+# `json_value(t0.address, ?) in (?, ?)` carries one '$.city' path bind then the
+# list values. Oslo (1, 2) and Boston (3) match; Berlin (6) and every not-present
+# city — missing key (5), null column (4), JSON `null` leaf (7) — are excluded.
+model: models/customer.yaml
+tags: [m-value-object, m-sql, nested, json, in]
+shape: read
+when:
+  operation:
+    nestedIn: { path: Customer.address.city, values: [Oslo, Boston] }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) in (?, ?)
+        mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) in (?, ?)
+      binds:
+        postgres: [city, Oslo, Boston]
+        mariadb: ['$.city', Oslo, Boston]
+  referenceSql:
+    postgres: select id, name from customer where address ->> 'city' in ('Oslo', 'Boston')
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') in ('Oslo', 'Boston')
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+    - { id: 3, name: Grace }
+  roundTrips: 1

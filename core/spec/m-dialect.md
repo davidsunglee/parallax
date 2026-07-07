@@ -33,7 +33,8 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 |---|---|---|
 | `dialect` identifier | `postgres` | `mariadb` |
 | type mapping (neutral type → column type) | per the `m-core` Postgres column | per the `m-core` MariaDB column (see below) |
-| **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_unquote(json_extract(col, ?))` — one `?` bind for the whole `'$.a.b'` path (see below) |
+| **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
+| **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
@@ -81,7 +82,7 @@ decision** owned here — the algebra fixes only the path, not the SQL:
 
 | Aspect | Postgres | MariaDB |
 |---|---|---|
-| extraction function | `jsonb_extract_path_text(col, ?, …)` | `json_unquote(json_extract(col, ?))` |
+| extraction function | `jsonb_extract_path_text(col, ?, …)` | `json_value(col, ?)` |
 | path binds | one `?` per path segment, in path order (`?, ?` for `geo.country`) | one `?` for the whole JSON-path string (`'$.geo.country'`) |
 
 So the same nested read binds differently per dialect: Postgres carries the path
@@ -92,6 +93,40 @@ follows the path binds in both. A future dialect with a different document type 
 Snowflake `VARIANT` — slots its own extraction (`GET_PATH(col, '…')` / the `:`
 path operator) behind this same decision point; nothing above the seam names the
 extraction function.
+
+**Why `json_value`, not `json_unquote(json_extract(…))`.** The MariaDB golden
+extraction is `json_value` precisely because it maps an explicit JSON `null` leaf
+— **and** a missing path, **and** a non-object intermediate descent — to SQL
+`NULL`, exactly as Postgres `jsonb_extract_path_text` does. `json_unquote(json_extract(…))`
+would instead yield the *string* `'null'` for a JSON `null` leaf, so that one
+not-present state would fail to collapse on MariaDB and diverge from Postgres. With
+`json_value` all four not-present states (`m-op-algebra`'s absence-collapse rule)
+resolve identically on both dialects, so the observable behavior is portable — the
+whole point of localizing the extraction here. `json_value` returns SQL `NULL` for
+a non-scalar (object/array) target as well, but the algebra only ever extracts a
+declared **scalar** leaf, so that is never reached.
+
+### Typed cast form (`m-value-object`)
+
+A `valueObject` inner attribute has a declared `m-core` neutral type
+(`m-value-object`). The document extraction above yields **text**, so a comparison
+against a **non-text** attribute (a numeric `nestedGt` / `nestedLt`, …) **casts**
+the extraction to the declared type before comparing — and the cast spelling is a
+dialect decision owned here:
+
+| Neutral type | Postgres | MariaDB |
+|---|---|---|
+| `int32` / `int64` | `cast(<extraction> as bigint)` | `cast(<extraction> as signed)` |
+| `float64` | `cast(<extraction> as double precision)` | `cast(<extraction> as double)` |
+| `decimal(p,s)` | `cast(<extraction> as decimal(p, s))` | `cast(<extraction> as decimal(p, s))` |
+
+For a **text** (`string`) attribute the extraction already compares directly — no
+cast. Postgres also admits the `<extraction>::type` surface; it denotes the same
+cast and normalizes to the `cast(… as …)` canonical form (`m-sql`). Because every
+not-present state casts SQL `NULL` (never a spurious value), the numeric predicates
+obey the same absence-collapse rule as the text ones (`m-op-algebra`). A future
+dialect (Snowflake `VARIANT`) supplies its own cast spelling behind this same
+decision point.
 
 ### `NULL` ordering
 

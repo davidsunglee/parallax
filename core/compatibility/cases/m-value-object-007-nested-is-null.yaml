@@ -1,0 +1,33 @@
+# valueObject presence test: nestedIsNull over a shallow field (m-value-object,
+# m-op-algebra absence collapse), on Postgres AND MariaDB.
+#
+# nestedIsNull(Customer.address.city) matches the rows whose city extraction is
+# 'not present'. THREE distinct storage states collapse here: the null column (4),
+# the missing `city` key (5), and the explicit JSON `null` leaf (7, `city: null`)
+# all extract SQL NULL, so all three match. Present cities — Oslo (1, 2), Boston
+# (3), Berlin (6) — are excluded. Postgres
+# `jsonb_extract_path_text(t0.address, ?) is null`; MariaDB
+# `json_value(t0.address, ?) is null`. Because MariaDB json_value maps a JSON
+# `null` leaf to SQL NULL, id 7 collapses identically on both dialects.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, nested, json, "null", absence-collapse]
+shape: read
+when:
+  operation:
+    nestedIsNull: { path: Customer.address.city }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) is null
+        mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) is null
+      binds:
+        postgres: [city]
+        mariadb: ['$.city']
+  referenceSql:
+    postgres: select id, name from customer where address ->> 'city' is null
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') is null
+  rows:
+    - { id: 4, name: Mary }
+    - { id: 5, name: Kavi }
+    - { id: 7, name: Nils }
+  roundTrips: 1

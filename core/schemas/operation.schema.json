@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/operation.schema.json",
   "title": "Parallax Operation Algebra (m-op-algebra)",
-  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the m-temporal-read as-of model, never written by the user), AND nested-attribute access into a valueObject (the `nestedEq` / `nestedNotEq` predicates compare an inner structured-document field referenced by a dotted path `Class.valueObject.field` against a string literal, lowering to a dialect-specific text extraction). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8).",
+  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. Grown one algebra phase at a time; this revision covers the full non-temporal single-entity algebra (identities, equality/range, null, string with case-insensitive + escape rules, membership, boolean incl. the first-class group node, orderBy / limit / distinct), the relationship algebra (navigate(rel) -> predicate, exists / notExists, the deepFetch directive), AND the aggregation algebra (groupBy with aggregate functions sum/avg/count/min/max/stdDev*/variance* and an optional having expression built from gt/gte/lt/lte/eq/notEq comparisons composed with and/or), AND the temporal algebra (asOf / asOfRange pin a temporal dimension and history returns the full milestone set; the from/to as-of predicates are auto-injected from the m-temporal-read as-of model, never written by the user), AND nested-attribute access into a valueObject (the flat `nested*` predicate family — `nestedEq` / `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` compare an inner structured-document field referenced by a dotted path `Class.valueObject.field` against a TYPED literal, `nestedIn` against a list of typed literals, and `nestedIsNull` / `nestedIsNotNull` test presence — each lowering to a dialect-specific document extraction, cast to the declared type before comparing where the attribute is non-text). A BITEMPORAL entity is pinned on both axes by NESTING two asOf nodes (one per asOfAttribute), so a read can fix business date and processing date independently (Phase 8).",
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
@@ -69,7 +69,14 @@
         { "$ref": "#/$defs/asOfRange" },
         { "$ref": "#/$defs/history" },
         { "$ref": "#/$defs/nestedEq" },
-        { "$ref": "#/$defs/nestedNotEq" }
+        { "$ref": "#/$defs/nestedNotEq" },
+        { "$ref": "#/$defs/nestedGt" },
+        { "$ref": "#/$defs/nestedGte" },
+        { "$ref": "#/$defs/nestedLt" },
+        { "$ref": "#/$defs/nestedLte" },
+        { "$ref": "#/$defs/nestedIn" },
+        { "$ref": "#/$defs/nestedIsNull" },
+        { "$ref": "#/$defs/nestedIsNotNull" }
       ]
     },
 
@@ -678,6 +685,29 @@
         "value": { "$ref": "#/$defs/literal" }
       }
     },
+    "nestedMembership": {
+      "description": "A nested-field membership test: a valueObject inner attribute (referenced by a dotted path) tested against a non-empty list of TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); each list value is a `literal` whose type MUST match the leaf attribute's declared type (m-op-algebra). Lowers to `<extraction> in (?, ?, …)` with the JSON path bind(s) first, then one bind per list value in order (m-sql/m-dialect).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "values"],
+      "properties": {
+        "path": { "$ref": "#/$defs/nestedRef" },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/literal" }
+        }
+      }
+    },
+    "nestedNullCheck": {
+      "description": "A nested-field presence test: a valueObject inner attribute referenced by a dotted path, with NO compared value. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`). Per the absence-collapse rule (m-op-algebra) every 'not present' state — SQL NULL column, missing key, JSON `null`, non-object intermediate segment — yields SQL NULL from the extraction, so `nestedIsNull` matches exactly those rows and `nestedIsNotNull` its complement.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "$ref": "#/$defs/nestedRef" }
+      }
+    },
     "nestedEq": {
       "description": "nestedEq(path, value): filter where an embedded valueObject attribute equals a typed literal.",
       "type": "object",
@@ -691,6 +721,55 @@
       "additionalProperties": false,
       "required": ["nestedNotEq"],
       "properties": { "nestedNotEq": { "$ref": "#/$defs/nestedComparison" } }
+    },
+    "nestedGt": {
+      "description": "nestedGt(path, value): filter where an embedded valueObject attribute is greater than a typed literal (the extraction is cast to the declared type before comparing).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedGt"],
+      "properties": { "nestedGt": { "$ref": "#/$defs/nestedComparison" } }
+    },
+    "nestedGte": {
+      "description": "nestedGte(path, value): filter where an embedded valueObject attribute is greater than or equal to a typed literal.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedGte"],
+      "properties": { "nestedGte": { "$ref": "#/$defs/nestedComparison" } }
+    },
+    "nestedLt": {
+      "description": "nestedLt(path, value): filter where an embedded valueObject attribute is less than a typed literal.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedLt"],
+      "properties": { "nestedLt": { "$ref": "#/$defs/nestedComparison" } }
+    },
+    "nestedLte": {
+      "description": "nestedLte(path, value): filter where an embedded valueObject attribute is less than or equal to a typed literal.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedLte"],
+      "properties": { "nestedLte": { "$ref": "#/$defs/nestedComparison" } }
+    },
+    "nestedIn": {
+      "description": "nestedIn(path, values): filter where an embedded valueObject attribute is one of a non-empty list of typed literals.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedIn"],
+      "properties": { "nestedIn": { "$ref": "#/$defs/nestedMembership" } }
+    },
+    "nestedIsNull": {
+      "description": "nestedIsNull(path): filter where an embedded valueObject attribute is 'not present' (SQL NULL column, missing key, JSON null, or non-object intermediate — all collapsed per m-op-algebra).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedIsNull"],
+      "properties": { "nestedIsNull": { "$ref": "#/$defs/nestedNullCheck" } }
+    },
+    "nestedIsNotNull": {
+      "description": "nestedIsNotNull(path): filter where an embedded valueObject attribute is present (the complement of nestedIsNull).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedIsNotNull"],
+      "properties": { "nestedIsNotNull": { "$ref": "#/$defs/nestedNullCheck" } }
     }
   }
 }

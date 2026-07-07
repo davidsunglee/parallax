@@ -489,8 +489,10 @@ class Case:
         ``referenceSql`` is a plain string when one naive spelling runs verbatim on
         every dialect (the authored default), OR a dialect-keyed map when the naive
         spelling itself is dialect-specific (the structured-document extraction:
-        Postgres spells it ``->>`` over a bare key, MariaDB ``json_value(col,
-        '$.path')`` — MariaDB has no ``->>`` operator).
+        Postgres spells it ``->>`` over a bare key, MariaDB
+        ``nullif(json_unquote(json_extract(col, '$.path')), 'null')`` — a different
+        function family from the ``json_value`` golden, with ``nullif(…, 'null')``
+        collapsing the JSON ``null`` leaf).
         When a map, its keys MUST equal the golden ``sql`` map's keys
         (``case_runner._assert_reference_sql_dialect_keys``), so resolving a dialect
         the golden ``sql`` declares always succeeds. A request for a *dialect* the map

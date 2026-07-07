@@ -1,0 +1,32 @@
+# valueObject numeric filter: nestedGt with a typed cast (m-value-object, m-sql,
+# m-dialect typed cast form), on Postgres AND MariaDB.
+#
+# `geo.elevation` is a float64 attribute, so nestedGt(Customer.address.geo.elevation,
+# 8) casts the text extraction to the declared type before comparing — the
+# m-dialect typed-cast form: Postgres `cast(jsonb_extract_path_text(t0.address, ?,
+# ?) as double precision) > ?` (per-segment binds ['geo','elevation'] then the
+# value), MariaDB `cast(json_value(t0.address, ?) as double) > ?` (one
+# '$.geo.elevation' path bind then the value). Ada (10.5) and Linus (20.0) exceed
+# 8; Grace (5.0) does not, and every not-present row (4/5/6/7) casts SQL NULL and
+# is excluded.
+model: models/customer.yaml
+tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric]
+shape: read
+when:
+  operation:
+    nestedGt: { path: Customer.address.geo.elevation, value: 8 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) > ?
+        mariadb: select t0.id, t0.name from customer t0 where cast(json_value(t0.address, ?) as double) > ?
+      binds:
+        postgres: [geo, elevation, 8]
+        mariadb: ['$.geo.elevation', 8]
+  referenceSql:
+    postgres: select id, name from customer where (address -> 'geo' ->> 'elevation')::double precision > 8
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.geo.elevation')), 'null') + 0 > 8
+  rows:
+    - { id: 1, name: Ada }
+    - { id: 2, name: Linus }
+  roundTrips: 1

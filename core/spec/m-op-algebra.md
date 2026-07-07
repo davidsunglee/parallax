@@ -151,24 +151,53 @@ intermediate segment is not a declared nested value object, or whose leaf is not
 declared attribute. Because the structure is declared, the leaf attribute has a
 neutral type, and the comparison is **typed**.
 
+The predicate family is **flat** and **parallel** to the scalar single-entity
+algebra — one single-key tagged node per operator, each with a closed body:
+
 | Operation | Encoding | Meaning |
 |---|---|---|
 | `nestedEq` | `{ "nestedEq": { "path", "value" } }` | the value at `path` equals `value` |
 | `nestedNotEq` | `{ "nestedNotEq": { "path", "value" } }` | the value at `path` does not equal `value` |
+| `nestedGt` | `{ "nestedGt": { "path", "value" } }` | the value at `path` is greater than `value` |
+| `nestedGte` | `{ "nestedGte": { "path", "value" } }` | the value at `path` is greater than or equal to `value` |
+| `nestedLt` | `{ "nestedLt": { "path", "value" } }` | the value at `path` is less than `value` |
+| `nestedLte` | `{ "nestedLte": { "path", "value" } }` | the value at `path` is less than or equal to `value` |
+| `nestedIn` | `{ "nestedIn": { "path", "values" } }` | the value at `path` is one of `values` (non-empty list) |
+| `nestedIsNull` | `{ "nestedIsNull": { "path" } }` | the value at `path` is **not present** (see the absence-collapse rule) |
+| `nestedIsNotNull` | `{ "nestedIsNotNull": { "path" } }` | the value at `path` **is present** (the complement) |
 
-The `value` is a polymorphic `literal` (`string` / `number` / `boolean` /
-`null`), and its type **MUST** match the leaf attribute's declared neutral type; a
-resolver **MUST** reject a type-mismatched literal (e.g. a `number` compared
-against a `string`-typed attribute). `m-sql` lowers a nested read to a
-dialect-specific extraction from the structured-document column and **casts** it
-to the declared type before comparing; the extraction spelling, the typed-cast
-form, and the **bind order** (per-segment JSON keys vs a single path bind) are all
-`m-dialect` decisions (`m-sql`, `m-dialect`), not fixed by this algebra.
+The comparison / membership `value`(s) are polymorphic `literal`s (`string` /
+`number` / `boolean` / `null`), and each type **MUST** match the leaf attribute's
+declared neutral type; a resolver **MUST** reject a type-mismatched literal (e.g. a
+`number` compared against a `string`-typed attribute). The presence tests
+(`nestedIsNull` / `nestedIsNotNull`) carry a `path` only. `m-sql` lowers a nested
+read to a dialect-specific extraction from the structured-document column and
+**casts** it to the declared type before comparing; the extraction spelling, the
+typed-cast form, and the **bind order** (per-segment JSON keys vs a single path
+bind) are all `m-dialect` decisions (`m-sql`, `m-dialect`), not fixed by this
+algebra.
 
-If the value-object column is SQL `NULL`, the path is absent, or the selected JSON
-value is `null`, the extraction yields SQL `NULL`. In that case neither
-`nestedEq` nor `nestedNotEq` is true, so the row is excluded; this matches the
-scalar `notEq` null behavior described above.
+#### Absence-collapse rule
+
+A nested field is in exactly one of two observable conditions: **present** — the
+extraction yields a non-NULL, non-JSON-`null` scalar — or **not present**. Four
+distinguishable storage states all collapse to **not present**, uniformly, for
+every nested predicate:
+
+- the value-object **column is SQL `NULL`** (the whole value object is absent);
+- a **path segment is missing** from the stored document (no such key);
+- the selected value is an explicit **JSON `null`**;
+- an **intermediate segment is a non-object** (a scalar or array blocks descent).
+
+In every one of these the extraction yields SQL `NULL`, so a comparison
+(`nestedEq` / `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`)
+and `nestedIn` are neither true — the row is **excluded**, exactly as the scalar
+`notEq`/`notIn` null behavior above. `nestedIsNull` is true **exactly** on the
+rows a comparison excludes for this reason (all four not-present states);
+`nestedIsNotNull` is its complement (the present rows). An implementation **MUST
+NOT** distinguish JSON `null` from a missing key or a null column at the predicate
+level — the states stay distinguishable in the stored data but are indistinguishable
+to the algebra.
 
 ### Boolean combinators
 
@@ -269,7 +298,9 @@ layer of the compatibility harness (`m-case-format`).
 
 For orientation, this schema revision leaves membership `in(subquery)` out of the
 required operation set. The temporal (`asOf`, `asOfRange`, `history`) and nested
-value-object (`nestedEq`, `nestedNotEq`) nodes are not deferred; their canonical
+value-object (the flat `nested*` family — `nestedEq`, `nestedNotEq`, `nestedGt`,
+`nestedGte`, `nestedLt`, `nestedLte`, `nestedIn`, `nestedIsNull`,
+`nestedIsNotNull`) nodes are not deferred; their canonical
 encodings are part of the algebra, with observable temporal behavior specified by
 `m-temporal-read` and SQL lowering specified by `m-sql`. The aggregation nodes
 (`groupBy` and friends) are present in `operation.schema.json` but the aggregation

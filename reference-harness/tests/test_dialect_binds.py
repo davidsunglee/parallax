@@ -39,7 +39,7 @@ _CASE_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema
 
 
 _PG_NESTED = "select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?"
-_MDB_NESTED = "select t0.id from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?"
+_MDB_NESTED = "select t0.id from customer t0 where json_value(t0.address, ?) = ?"
 
 
 def _case_validator() -> Draft202012Validator:
@@ -82,7 +82,10 @@ def _read_case_doc() -> dict[str, Any]:
             ],
             "referenceSql": {
                 "postgres": "select id from customer where address ->> 'city' = 'Oslo'",
-                "mariadb": "select id from customer where address ->> '$.city' = 'Oslo'",
+                "mariadb": (
+                    "select id from customer where "
+                    "nullif(json_unquote(json_extract(address, '$.city')), 'null') = 'Oslo'"
+                ),
             },
             "rows": [{"id": 1}],
             "roundTrips": 1,

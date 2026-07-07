@@ -5,13 +5,15 @@
 # one structured-document column). nestedEq(Customer.address.city, 'Oslo') lowers
 # per the m-dialect nested-extraction seam: Postgres
 # `jsonb_extract_path_text(t0.address, ?) = ?` carries the JSON key then the value
-# as per-segment binds ['city', 'Oslo']; MariaDB
-# `json_unquote(json_extract(t0.address, ?)) = ?` carries one '$.city' path bind
-# then the value. Customers 1 and 2 live in Oslo; Grace (Boston) is excluded.
+# as per-segment binds ['city', 'Oslo']; MariaDB `json_value(t0.address, ?) = ?`
+# carries one '$.city' path bind then the value. Customers 1 and 2 live in Oslo;
+# Grace (Boston) is excluded, and every not-present city (4/5/7) is excluded too.
 #
 # The bind hole structure diverges, so `binds` is a dialect-keyed map; the
-# independent `referenceSql` oracle is likewise per dialect (native `->>` spelling
-# — a bare key on Postgres, a '$.path' on MariaDB).
+# independent `referenceSql` oracle is likewise per dialect and a DIFFERENT
+# extraction from the golden (Postgres native `->>`; MariaDB
+# nullif(json_unquote(json_extract(...)),'null'), a different function family from
+# json_value that collapses the JSON-`null` leaf via nullif).
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json]
 shape: read
@@ -22,13 +24,13 @@ then:
   statements:
     - sql:
         postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
-        mariadb: select t0.id, t0.name from customer t0 where json_unquote(json_extract(t0.address, ?)) = ?
+        mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) = ?
       binds:
         postgres: [city, Oslo]
         mariadb: ['$.city', Oslo]
   referenceSql:
     postgres: select id, name from customer where address ->> 'city' = 'Oslo'
-    mariadb: select id, name from customer where json_value(address, '$.city') = 'Oslo'
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') = 'Oslo'
   rows:
     - { id: 1, name: Ada }
     - { id: 2, name: Linus }

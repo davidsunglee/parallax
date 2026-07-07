@@ -1,0 +1,29 @@
+# valueObject numeric filter: nestedLt with a typed cast (m-value-object, m-sql,
+# m-dialect typed cast form), on Postgres AND MariaDB.
+#
+# nestedLt(Customer.address.geo.elevation, 8) casts the float64 extraction and
+# compares with `<`: Postgres `cast(jsonb_extract_path_text(t0.address, ?, ?) as
+# double precision) < ?`, MariaDB `cast(json_value(t0.address, ?) as double) < ?`.
+# Only Grace (5.0) is below 8; Ada (10.5) and Linus (20.0) are not, and every
+# not-present row (4/5/6/7) casts SQL NULL and is excluded — a `<` never
+# resurrects an absent value.
+model: models/customer.yaml
+tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric]
+shape: read
+when:
+  operation:
+    nestedLt: { path: Customer.address.geo.elevation, value: 8 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) < ?
+        mariadb: select t0.id, t0.name from customer t0 where cast(json_value(t0.address, ?) as double) < ?
+      binds:
+        postgres: [geo, elevation, 8]
+        mariadb: ['$.geo.elevation', 8]
+  referenceSql:
+    postgres: select id, name from customer where (address -> 'geo' ->> 'elevation')::double precision < 8
+    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.geo.elevation')), 'null') + 0 < 8
+  rows:
+    - { id: 3, name: Grace }
+  roundTrips: 1
