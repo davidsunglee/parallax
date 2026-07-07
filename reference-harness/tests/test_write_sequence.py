@@ -215,6 +215,39 @@ def test_marker_helpers_are_shape_predicates_over_raw_values() -> None:
     assert _increment_marker({"street": "Main"}) is None
 
 
+def test_is_computed_marker_matches_exact_schema_shape() -> None:
+    # The predicate mirrors the EXACT `writeComputedMarker` schema shape: a dict
+    # with exactly one key `computed` whose value is exactly "maxPlusOne".
+    assert _is_computed_marker({"computed": "maxPlusOne"}) is True
+    # A multi-key dict is not the one-key marker shape the schema accepts.
+    assert _is_computed_marker({"computed": "maxPlusOne", "street": "Main"}) is False
+    assert _is_computed_marker({"computed": "x", "street": "Main"}) is False
+    # A different `computed` value is outside the marker's enum.
+    assert _is_computed_marker({"computed": "somethingElse"}) is False
+    # A non-dict is never a marker.
+    assert _is_computed_marker("computed") is False
+    assert _is_computed_marker(None) is False
+
+
+def test_increment_marker_matches_exact_schema_shape() -> None:
+    # The predicate mirrors the EXACT `writeComputedMarker` schema shape: a dict
+    # with exactly one key `increment` whose value is a JSON integer.
+    assert _increment_marker({"increment": 1}) == 1
+    assert _increment_marker({"increment": 0}) == 0
+    # A multi-key dict is not the one-key marker shape the schema accepts.
+    assert _increment_marker({"increment": 1, "street": "Main"}) is None
+    # A JSON boolean is schema-type `boolean`, not `integer` — and Python's bool
+    # is an int subclass, so it must be excluded explicitly.
+    assert _increment_marker({"increment": True}) is None
+    assert _increment_marker({"increment": False}) is None
+    # A string / float `increment` is not a JSON integer.
+    assert _increment_marker({"increment": "1"}) is None
+    assert _increment_marker({"increment": 1.5}) is None
+    # A non-dict is never a marker.
+    assert _increment_marker("increment") is None
+    assert _increment_marker(None) is None
+
+
 def test_temporal_ddl_primary_key_spans_the_as_of_from_column() -> None:
     model = _balance_model()
     (create,) = ddl_for(model, "postgres")
