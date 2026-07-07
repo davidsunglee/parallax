@@ -1,0 +1,75 @@
+# valueObject WHOLE-document UPDATE: an update REPLACES the entire document column,
+# never a path inside it (m-value-object write, m-sql), on Postgres AND MariaDB.
+#
+# Self-contained (from an empty table): step 1 inserts a Customer with an original
+# address document; step 2 updates the address valueObject with a NEW whole
+# document. The update is `set address = ?` — the value-object column is set exactly
+# like a scalar column, one `?` in columnOrder position — and it REPLACES the whole
+# column value: the new document drops `geo` and shrinks `phones` to one element, so
+# the resulting row carries the new document verbatim with NO trace of the original
+# (no path-level update, no merge with the prior value). The scalar `name` is not in
+# the update, so it is untouched. `then.tableState` pins the replaced document,
+# decoded and compared identically on both dialects.
+model: models/customer.yaml
+tags: [m-value-object, m-sql, write-sequence, update, json, nested, to-many]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Customer
+      statements: 1
+      note: seed a Customer with the original address document
+      rows:
+        - id: 200
+          name: Ingrid
+          address:
+            street: 3 Old Road
+            city: Bergen
+            geo:
+              country: "NO"
+            phones:
+              - { type: home, number: '555-1111' }
+    - mutation: update
+      entity: Customer
+      statements: 1
+      note: replace the WHOLE address document (a different shape — proves no path-level merge)
+      rows:
+        - id: 200
+          address:
+            street: 9 New Way
+            city: Stavanger
+            phones:
+              - { type: work, number: '555-2222' }
+then:
+  statements:
+    - sql:
+        postgres: insert into customer(id, name, address) values (?, ?, ?)
+        mariadb: insert into customer(id, name, address) values (?, ?, ?)
+      binds:
+        - 200
+        - Ingrid
+        - street: 3 Old Road
+          city: Bergen
+          geo:
+            country: "NO"
+          phones:
+            - { type: home, number: '555-1111' }
+    - sql:
+        postgres: update customer set address = ? where id = ?
+        mariadb: update customer set address = ? where id = ?
+      binds:
+        - street: 9 New Way
+          city: Stavanger
+          phones:
+            - { type: work, number: '555-2222' }
+        - 200
+  tableState:
+    customer:
+      - id: 200
+        name: Ingrid
+        address:
+          street: 9 New Way
+          city: Stavanger
+          phones:
+            - { type: work, number: '555-2222' }
+  roundTrips: 2

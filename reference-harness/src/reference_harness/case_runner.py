@@ -1245,10 +1245,14 @@ def _classify_write_row(
     """Classify a flat attribute-named ① row against *entity*'s metamodel.
 
     Mirrors the fixture loader's attribute→column resolution. Every key is either
-    the reserved control key ``observedVersion`` or an ENTITY ATTRIBUTE name (a bad
-    key raises :class:`CaseFailure`, so the neutral input can't silently name a
-    non-attribute); the primary-key attribute's value is split into the pk, every
-    other attribute into the domain ``set`` — both keyed by physical column.
+    the reserved control key ``observedVersion``, an ENTITY ATTRIBUTE name, or a
+    top-level VALUE-OBJECT name (a bad key raises :class:`CaseFailure`, so the
+    neutral input can't silently name a non-member); the primary-key attribute's
+    value is split into the pk, every other attribute AND every value object into
+    the domain ``set`` — all keyed by physical column. A value object resolves to
+    its single structured-document column and its value is the WHOLE document
+    (m-value-object): it binds atomically as one document value in columnOrder
+    position, never decomposed into path-level binds.
     """
     pk_columns = {a["column"] for a in entity.attributes if a.get("primaryKey")}
     columns: dict[str, Any] = {}
@@ -1260,13 +1264,19 @@ def _classify_write_row(
             observed_version = value
             continue
         try:
-            attribute = entity.attribute_by_name(key)
-        except KeyError as exc:
-            raise CaseFailure(
-                f"{case.path.name}: writeSequence row key {key!r} is not an attribute of "
-                f"{entity.name} — the neutral write input speaks ATTRIBUTE names, not columns."
-            ) from exc
-        column = attribute["column"]
+            column = entity.attribute_by_name(key)["column"]
+        except KeyError:
+            # Not an attribute — a value object binds as ONE document in its
+            # columnOrder position (m-value-object); the neutral input names it
+            # like a scalar attribute and its value is the whole document.
+            try:
+                column = entity.value_object_by_name(key)["column"]
+            except KeyError as exc:
+                raise CaseFailure(
+                    f"{case.path.name}: writeSequence row key {key!r} is not an attribute "
+                    f"or value object of {entity.name} — the neutral write input speaks "
+                    f"ATTRIBUTE / value-object names, not columns."
+                ) from exc
         columns[column] = value
         if column in pk_columns:
             pk_value = value
@@ -1930,10 +1940,23 @@ def _assert_temporal_conflict_close(
 
 
 def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
-    """Read the full state of *entity*'s table, projecting every column by name."""
+    """Read the full state of *entity*'s table, projecting every column by name.
+
+    A value-object column is decoded to a Python structure (m-value-object): Postgres
+    returns its ``jsonb`` already parsed while MariaDB returns raw JSON text, so both
+    dialects collapse to the same ``dict`` / ``list`` / ``None`` here — the shape a
+    ``then.tableState`` document row is authored as, so the write-sequence comparison
+    is dialect-agnostic.
+    """
     columns = list(column_order(entity))
     projection = ", ".join(f"t0.{quote_identifier(column, db.dialect)}" for column in columns)
-    return db.query(f"select {projection} from {quote_identifier(entity.table, db.dialect)} t0")
+    rows = db.query(f"select {projection} from {quote_identifier(entity.table, db.dialect)} t0")
+    document_columns = {value_object["column"] for value_object in entity.value_objects}
+    for row in rows:
+        for column in document_columns:
+            if column in row:
+                row[column] = _decode_document(row[column])
+    return rows
 
 
 def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:

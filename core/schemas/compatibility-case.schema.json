@@ -683,8 +683,25 @@
         ]
       }
     },
+    "writeComputedMarker": {
+      "description": "A one-key DB-COMPUTED marker in a neutral write row (①): the attribute's value is derived by the database rather than authored as a literal bind, so the adapter emits the strategy's SQL fragment and the harness cross-check skips the literal bind at this position.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "computed": {
+          "description": "The pk-gen `max` strategy: the column is emitted as `coalesce(max(col), ?) + ?` (its binds are the strategy's coalesce base + increment, NOT an ① literal).",
+          "enum": ["maxPlusOne"]
+        },
+        "increment": {
+          "description": "A self-referential advance emitted as `col = col + ?` (e.g. a sequence registry's `next_val`); the integer is the amount added.",
+          "type": "integer"
+        }
+      }
+    },
     "writeRow": {
-      "description": "A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name (a business/developer name like `id` / `orderedOn`, NOT a physical column like `ordered_on`). An attribute's value is a scalar literal, an explicit `null`, OR a one-key DB-COMPUTED marker object — `{ computed: \"maxPlusOne\" }` or `{ increment: <n> }`. The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute keys via `additionalProperties`.",
+      "description": "A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`). An attribute's value is a scalar literal, an explicit `null`, OR a one-key DB-COMPUTED marker object — `{ computed: \"maxPlusOne\" }` or `{ increment: <n> }`; a value-object field's value is the WHOLE embedded composite document (a JSON object, or a JSON array of objects for a `many` value object), or `null` (m-value-object). The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order — binding a value object atomically as one document in its columnOrder position. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`.",
       "type": "object",
       "properties": {
         "observedVersion": {
@@ -696,22 +713,11 @@
       "additionalProperties": {
         "oneOf": [
           { "type": ["string", "number", "boolean", "null"] },
+          { "$ref": "#/$defs/writeComputedMarker" },
           {
-            "description": "A one-key DB-COMPUTED marker: the attribute's value is derived by the database rather than authored as a literal bind, so the adapter emits the strategy's SQL fragment and the harness cross-check skips the literal bind at this position.",
-            "type": "object",
-            "additionalProperties": false,
-            "minProperties": 1,
-            "maxProperties": 1,
-            "properties": {
-              "computed": {
-                "description": "The pk-gen `max` strategy: the column is emitted as `coalesce(max(col), ?) + ?` (its binds are the strategy's coalesce base + increment, NOT an ① literal).",
-                "enum": ["maxPlusOne"]
-              },
-              "increment": {
-                "description": "A self-referential advance emitted as `col = col + ?` (e.g. a sequence registry's `next_val`); the integer is the amount added.",
-                "type": "integer"
-              }
-            }
+            "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite ATOMICALLY as one document value in its columnOrder position — a JSON object for a `one` value object, or a JSON array of objects for a `many` one — never decomposed into path-level binds. (A null nullable value object uses the scalar `null` branch above and binds SQL NULL.) `not` a computed marker, so the write-value branches stay mutually exclusive.",
+            "type": ["object", "array"],
+            "not": { "$ref": "#/$defs/writeComputedMarker" }
           }
         ]
       }

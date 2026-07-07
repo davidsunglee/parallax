@@ -1,0 +1,62 @@
+# valueObject atomic document INSERT: the whole embedded composite binds as ONE
+# document value in columnOrder position (m-value-object write, m-sql), on Postgres
+# AND MariaDB.
+#
+# Inserting a Customer writes the `address` valueObject as a single structured-
+# document bind in the entity's columnOrder position ([id, name, address]) — the
+# third `?` carries the WHOLE nested-plus-to-many document (street/city, nested
+# `geo`, to-many `phones`) atomically, never decomposed into path-level binds. The
+# INSERT DML is identical on both dialects (a plain column bind, no JSON function);
+# only the document VALUE is adapted at bind time (Postgres `jsonb`, MariaDB `json`
+# text), so the hole structure is shared and `binds` is a single flat array with the
+# document riding as one element. The write-sequence oracle applies the golden DML
+# and reads the row back, decoding the document column so `then.tableState`'s
+# authored document compares identically on both dialects.
+model: models/customer.yaml
+tags: [m-value-object, m-sql, write-sequence, insert, json, nested, to-many]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Customer
+      statements: 1
+      note: insert one Customer, binding the whole address document atomically in columnOrder position
+      rows:
+        - id: 100
+          name: Solveig
+          address:
+            street: 12 Aurora Ave
+            city: Tromso
+            geo:
+              country: "NO"
+            phones:
+              - { type: home, number: '555-0001' }
+              - { type: work, number: '555-0002' }
+then:
+  statements:
+    - sql:
+        postgres: insert into customer(id, name, address) values (?, ?, ?)
+        mariadb: insert into customer(id, name, address) values (?, ?, ?)
+      binds:
+        - 100
+        - Solveig
+        - street: 12 Aurora Ave
+          city: Tromso
+          geo:
+            country: "NO"
+          phones:
+            - { type: home, number: '555-0001' }
+            - { type: work, number: '555-0002' }
+  tableState:
+    customer:
+      - id: 100
+        name: Solveig
+        address:
+          street: 12 Aurora Ave
+          city: Tromso
+          geo:
+            country: "NO"
+          phones:
+            - { type: home, number: '555-0001' }
+            - { type: work, number: '555-0002' }
+  roundTrips: 1

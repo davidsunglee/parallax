@@ -742,3 +742,52 @@ non-equality element predicates through a `many` segment — `nestedGt` / `neste
 unnest and are a **documented deferred limitation on MariaDB** (`m-dialect`,
 "Scope of the containment golden"). Postgres's `jsonb_array_elements` lowering is
 fully general; the corpus's to-many coverage is equality-based accordingly.
+
+#### valueObject — atomic document write
+
+A `valueObject` is **written atomically as one document** (`m-value-object`). On
+an insert or an update the backing column takes **one bind** in the entity's
+`columnOrder` position, carrying the whole embedded composite; the write path
+**never** decomposes it into path-level binds. Unlike the read extraction — whose
+per-dialect function family and bind holes diverge (`json_value` vs
+`jsonb_extract_path_text`, one `'$.a.b'` bind vs per-segment binds) — the write DML
+is **identical on both dialects**: a plain column bind, no JSON function. The
+document value itself is adapted to the dialect's structured-document type at bind
+time (Postgres wraps it as `jsonb`, MariaDB serializes it to `json` text), so the
+**hole structure is shared** and the `binds` are authored as a single flat array
+(`m-case-format` — the shared-hole form), the document riding as one element:
+
+```yaml
+# insert one Customer, binding the whole address document in columnOrder position:
+- sql:
+    postgres: insert into customer(id, name, address) values (?, ?, ?)
+    mariadb: insert into customer(id, name, address) values (?, ?, ?)
+  binds:
+    - 100
+    - Solveig
+    - { street: 12 Aurora Ave, city: Tromso, geo: { country: 'NO' }, phones: [ { type: home, number: '555-0001' } ] }
+# replace the WHOLE document (no path-level update, no merge):
+- sql:
+    postgres: update customer set address = ? where id = ?
+    mariadb: update customer set address = ? where id = ?
+  binds:
+    - { street: 9 New Way, city: Stavanger }
+    - 100
+# null out a nullable value object → SQL NULL (the whole column, not a document of nulls):
+- sql:
+    postgres: update customer set address = ? where id = ?
+    mariadb: update customer set address = ? where id = ?
+  binds: [null, 100]
+```
+
+The value-object column appears in the `INSERT` column list and the `UPDATE`
+`set` clause **exactly like a scalar column** — one `?` in `columnOrder` position,
+after the scalar attributes. A whole-document update **replaces** the column value;
+there is no `UPDATE` of a path inside the document (`m-value-object`). A null bind
+stores SQL `NULL`. On a temporal owner the same document rides milestone chaining
+like any scalar column (the milestone-chaining write sequences above); there is no
+value-object-specific write machinery. The harness proves each form by **applying**
+the golden DML and reading the resulting `then.tableState` document back (decoding
+the structured-document column to a Python structure so both dialects compare
+against the authored document), the write-sequence oracle (`m-case-format`) — corpus
+`m-value-object-025` (insert), `-026` (whole-document update), `-027` (null-out).
