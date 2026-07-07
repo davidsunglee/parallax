@@ -78,23 +78,30 @@ interface RawScenarioStep {
   readonly sameObjectAs?: number;
 }
 
-/** Build the scenario plan: resolve each step's kind, golden, binds and asserts. */
-export function buildScenarioPlan(loaded: LoadedCase): ScenarioPlan {
+/**
+ * Build the scenario plan: resolve each step's kind, golden, binds and asserts for
+ * the run's active `dialect` (the dialect id keying each step's golden `sql` map). A
+ * step whose golden omits `dialect` resolves to zero statements — the caller must
+ * skip a scenario the case declares no golden for on the active dialect (mirroring
+ * the Python oracle's per-dialect skip), rather than silently emitting another
+ * dialect's SQL.
+ */
+export function buildScenarioPlan(loaded: LoadedCase, dialect: string): ScenarioPlan {
   const rawSteps = (loaded.raw.when?.scenario ?? []) as readonly RawScenarioStep[];
-  const steps = rawSteps.map((raw, index) => normalizeStep(raw, index));
+  const steps = rawSteps.map((raw, index) => normalizeStep(raw, index, dialect));
   return {
     steps,
     roundTrips: loaded.raw.then?.roundTrips ?? sumRoundTrips(steps),
   };
 }
 
-/** Normalize one raw step into a {@link ScenarioStep}. */
-function normalizeStep(raw: RawScenarioStep, index: number): ScenarioStep {
+/** Normalize one raw step into a {@link ScenarioStep} for the active `dialect`. */
+function normalizeStep(raw: RawScenarioStep, index: number, dialect: string): ScenarioStep {
   const kind = "write" in raw && raw.write !== undefined ? "write" : "find";
   return {
     kind,
     casePointer: `/scenario/${index}`,
-    statements: dialectStatements(raw.statements ?? [], "postgres"),
+    statements: dialectStatements(raw.statements ?? [], dialect),
     roundTrips: raw.roundTrips ?? 0,
     ...(raw.rollback === undefined ? {} : { rollback: raw.rollback }),
     ...(raw.expectRows === undefined ? {} : { expectRows: raw.expectRows }),
