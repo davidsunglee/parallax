@@ -10,6 +10,18 @@
 - The reference harness's internals are non-normative and MUST NOT be used as design input for a language implementation; the binding inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the conformance-adapter contract.
 - For implementation changes, run the smallest relevant language conformance slice plus feasible root verification. Report any skipped database-backed checks.
 
+## Prior Art: Reladomo
+
+- Parallax is informed by Reladomo. The full Reladomo repository is checked out as a peer of this repo (`../reladomo`); a summary lives at `docs/misc/reladomo-research.md`.
+- When researching a design decision (locking, transactions, temporal semantics, caching), always include how Reladomo handles it as prior art. Parallax generally follows Reladomo's lead on runtime semantics unless a spec module says otherwise.
+- Reladomo is prior art, not a template: match its semantics where the spec adopts them, not its Java idioms.
+
+## Task Workflow
+
+- Task artifacts live in `.humanlayer/tasks/<ticket>/` (research, design discussion, structure outline, review findings, handoff docs).
+- Implementation of large features happens in per-ticket worktrees (`~/.humanlayer/workspaces/<ticket>/parallax`), never directly on `main` in the primary checkout.
+- After each phase, state whether the accumulated unreviewed changes warrant an external code review; unreviewed phases roll forward into the next review's scope. Offer to generate a prompt for the code review, if a review is warranted.
+
 ## Commit Messages
 
 - Every commit subject MUST use a Conventional Commits prefix such as `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, or `ci:`.
@@ -19,3 +31,4 @@
 - Use exactly one blank line between the subject and body.
 - Use exactly one blank line between the body paragraph and bullet list.
 - Do not include verification commands in the commit message body unless the user asks for them.
+- Do not add `Co-authored-by`, `Generated with`, or similar trailers to commits.
