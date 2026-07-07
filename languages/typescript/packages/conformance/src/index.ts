@@ -75,7 +75,7 @@ export type {
   CompatibilitySession,
   ProviderRow,
 } from "./provider.js";
-export { readProjection, runCompile, runRun } from "./runner.js";
+export { caseDeclaresGoldenForDialect, readProjection, runCompile, runRun } from "./runner.js";
 export {
   buildScenarioPlan,
   isScenario,

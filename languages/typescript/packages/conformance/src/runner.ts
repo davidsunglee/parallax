@@ -42,7 +42,12 @@ import {
 import { type EntityMetadata, Metamodel, parseOperation } from "@parallax/operation";
 import { deepFetch, type Exec, type Row as GraphRow } from "@parallax/relationships";
 import { compile } from "@parallax/sql";
-import { type DialectStatement, dialectStatements, type StatementEntry } from "./case-format.js";
+import {
+  type DialectStatement,
+  dialectStatements,
+  goldenEntries,
+  type StatementEntry,
+} from "./case-format.js";
 import { compareRowSet } from "./compare.js";
 import { buildConflictPlan, isConflict } from "./conflict.js";
 import { buildDeepFetchPlan, type DeepFetchPlan, isDeepFetch } from "./deepfetch-plan.js";
@@ -119,6 +124,92 @@ type ConcurrencyNode = (typeof CONCURRENCY_NODES)[number];
  */
 function concurrencyRounds(loaded: LoadedCase): readonly ConcurrencyRound[] {
   return (loaded.raw.when?.concurrency?.rounds ?? []) as readonly ConcurrencyRound[];
+}
+
+/**
+ * A per-step node that MAY carry authored golden statement entries — a scenario step
+ * (`when.scenario[]`) or a conflict retry attempt (`when.attempts[]`). Both schemas
+ * key golden per step (not at the top-level `then.statements`), and both surface as a
+ * loosely-typed generated object, so this reader names only the `statements` member
+ * the golden-availability check consults (mirroring `scenario.ts`'s `RawScenarioStep`
+ * and `conflict.ts`'s per-attempt `statements` access).
+ */
+interface StatementBearer {
+  readonly statements?: readonly StatementEntry[];
+}
+
+/**
+ * Whether the case declares golden SQL for `dialect` **anywhere its shape authors it**
+ * — the TS mirror of the Python oracle's per-dialect skip (`case_runner.run_case`'s
+ * `_scenario_has_golden` / `_error_has_golden` / `_concurrency_has_golden` /
+ * `_conflict_retry_has_golden` / `dialect in case.golden_dialects` guards). The oracle
+ * runs only the dialect-agnostic checks and returns when a case declares no golden for
+ * the active dialect; the runner needs the same signal to route such a case to a skip
+ * rather than compiling / executing a dialect the case never authored.
+ *
+ * Golden lives in a DIFFERENT place per shape, so the check is per shape:
+ *
+ *  - **scenario** — per step at `when.scenario[].statements`; true iff any step declares
+ *    the dialect (`_scenario_has_golden`);
+ *  - **concurrencySuccess** — per concurrency round node at
+ *    `when.concurrency.rounds[].{A,B}.statements`; true iff any node declares the dialect
+ *    (`_concurrency_has_golden`);
+ *  - **error** — the concurrency choreography (as above) OR, for a single-connection
+ *    error case, the top-level `then.statements` (`_error_has_golden`, whose
+ *    single-connection branch keys on `dialect in case.golden_dialects`);
+ *  - **conflict** — the retry form declares golden per attempt at
+ *    `when.attempts[].statements` (`_conflict_retry_has_golden`); the single form uses
+ *    the top-level `then.statements`;
+ *  - **read / writeSequence / deepFetch (default)** — the top-level `then.statements`
+ *    (`dialect in case.golden_dialects`).
+ *
+ * The `boundary` and `coherence` shapes never reach this check — a boundary case is
+ * `lane: api-conformance` (routed by {@link laneSkipOrNonOk}) and a coherence case is an
+ * unclaimed shape (rejected by the gate) — but the default `then.statements` branch is a
+ * safe (non-throwing) fallback for them regardless.
+ */
+export function caseDeclaresGoldenForDialect(loaded: LoadedCase, dialect: string): boolean {
+  switch (loaded.shape) {
+    case "scenario": {
+      const steps = (loaded.raw.when?.scenario ?? []) as readonly StatementBearer[];
+      return steps.some((step) => dialectStatements(step.statements ?? [], dialect).length > 0);
+    }
+    case "concurrencySuccess":
+      return concurrencyRoundsDeclareGolden(loaded, dialect);
+    case "error":
+      // Two-connection (concurrency choreography) OR single-connection (top-level golden).
+      return (
+        concurrencyRoundsDeclareGolden(loaded, dialect) ||
+        dialectStatements(goldenEntries(loaded.raw), dialect).length > 0
+      );
+    case "conflict": {
+      const attempts = (loaded.raw.when?.attempts ?? []) as readonly StatementBearer[];
+      // The retry form authors golden per attempt; the single form uses then.statements.
+      if (attempts.length > 0) {
+        return attempts.some(
+          (attempt) => dialectStatements(attempt.statements ?? [], dialect).length > 0,
+        );
+      }
+      return dialectStatements(goldenEntries(loaded.raw), dialect).length > 0;
+    }
+    default:
+      // read / writeSequence / deepFetch (and the never-reached boundary / coherence):
+      // golden is the top-level then.statements.
+      return dialectStatements(goldenEntries(loaded.raw), dialect).length > 0;
+  }
+}
+
+/**
+ * Whether any concurrency round node (`when.concurrency.rounds[].{A,B}`) declares golden
+ * for `dialect` — the round-shaped golden location shared by the `error` (two-connection)
+ * and `concurrencySuccess` shapes (mirrors Python's `_concurrency_statements`).
+ */
+function concurrencyRoundsDeclareGolden(loaded: LoadedCase, dialect: string): boolean {
+  return concurrencyRounds(loaded).some(
+    (round) =>
+      dialectStatements(round.A?.statements ?? [], dialect).length > 0 ||
+      dialectStatements(round.B?.statements ?? [], dialect).length > 0,
+  );
 }
 
 /** One malformed concurrency-success step: its case pointer + the specific reason. */
@@ -264,6 +355,10 @@ export function runCompile(
   if (suiteSatisfied) {
     return suiteSatisfied;
   }
+  const notDeclared = dialectDeclaredOrNonOk(loaded, "compile", dialect, adapter);
+  if (notDeclared) {
+    return notDeclared;
+  }
 
   // A write-sequence case emits one item per generated DML statement, in
   // execution order, with `roundTrips` equal to the statement count.
@@ -283,7 +378,7 @@ export function runCompile(
   // derived); the adapter surfaces the authored step statements so the compile
   // gate can classify it in-claim, with `roundTrips` the declared case total.
   if (isScenario(loaded)) {
-    const plan = buildScenarioPlan(loaded);
+    const plan = buildScenarioPlan(loaded, dialect);
     const emissions: Emission[] = plan.steps.flatMap((step) =>
       // A MULTI-statement step (a versioned set-based materialize write, `m-opt-lock-003` /
       // `m-opt-lock-004`) lists one `{sql, binds}` entry per per-object `UPDATE`, each
@@ -418,6 +513,10 @@ export async function runRun(
   if (suiteSatisfied) {
     return suiteSatisfied;
   }
+  const notDeclared = dialectDeclaredOrNonOk(loaded, "run", dialect, adapter);
+  if (notDeclared) {
+    return notDeclared;
+  }
 
   const dialectImpl = dialectFor(dialect);
   const operation = loaded.raw.when?.operation;
@@ -442,7 +541,7 @@ export async function runRun(
   // provisioned DB, reporting the observed rows + identity checks (m-unit-work read-your-
   // own-writes / cache / identity).
   if (isScenario(loaded)) {
-    const { emissions, observations } = await runScenario(loaded, provider);
+    const { emissions, observations } = await runScenario(loaded, provider, dialect);
     return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
   }
 
@@ -665,9 +764,10 @@ async function runConflict(
 async function runScenario(
   loaded: LoadedCase,
   provider: CompatibilityDatabaseProvider,
+  dialect: string,
 ): Promise<RunResult> {
   await provision(loaded, provider);
-  const plan = buildScenarioPlan(loaded);
+  const plan = buildScenarioPlan(loaded, dialect);
 
   const emissions: Emission[] = [];
   const results: (readonly Row[])[] = [];
@@ -1125,6 +1225,44 @@ function gateOrNonOk(
   const diagnostic: Diagnostic = {
     code: gate.code,
     message: gate.message,
+    casePointer: "",
+  };
+  return {
+    schemaVersion: "1",
+    command,
+    status: "unsupported",
+    adapter,
+    diagnostics: [diagnostic],
+  };
+}
+
+/**
+ * Route a case that declares **no golden SQL for the active dialect** to a skip
+ * `unsupported` envelope, or `undefined` (the case declares golden — proceed). This is
+ * the pre-run mirror of the Python oracle's per-dialect skip (`case_runner.run_case`),
+ * which runs only the dialect-agnostic checks and returns when a case authors no golden
+ * for the active dialect. It is a SEPARATE pre-run check, not a gate condition — the
+ * gate ({@link gateOrNonOk}) stays the pure capability-claim contract; this is a
+ * correctness-by-construction parity guard applied AFTER the gate + lane-skip.
+ *
+ * In the current corpus every in-claim (Postgres) case declares Postgres golden, so this
+ * branch does not fire in the harness sweeps; it exists so a future dialect-partial case
+ * routes to a skip (like the oracle) instead of the runner trying to compile / execute a
+ * dialect the case never authored. The diagnostic `code` is free-form (the envelope
+ * `status` stays the schema's `unsupported`).
+ */
+function dialectDeclaredOrNonOk(
+  loaded: LoadedCase,
+  command: "compile" | "run",
+  dialect: string,
+  adapter: AdapterIdentity,
+): NonOk | undefined {
+  if (caseDeclaresGoldenForDialect(loaded, dialect)) {
+    return undefined;
+  }
+  const diagnostic: Diagnostic = {
+    code: "dialect-not-declared",
+    message: `case declares no golden SQL for dialect '${dialect}'`,
     casePointer: "",
   };
   return {
