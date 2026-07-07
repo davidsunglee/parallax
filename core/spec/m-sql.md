@@ -644,3 +644,73 @@ MariaDB golden extraction is `json_value` precisely because it maps an explicit 
 state casts or compares SQL `NULL` and the absence-collapse rule (`m-op-algebra`)
 holds portably. The compatibility corpus pins all four states on Postgres **and**
 MariaDB (`m-value-object-013` asserts all four at `geo.country`).
+
+#### To-many — exists / notExists and any-element predicates
+
+A `cardinality: many` value object is a JSON **array** in the same column
+(`m-value-object`). Filtering it lowers through the `m-dialect` **array-traversal**
+seam, which the two dialects spell with **different function families** (Postgres a
+correlated `jsonb_array_elements` unnest, MariaDB the `json_contains` / `json_length`
+containment family — `m-dialect` explains why MariaDB does not use `JSON_TABLE`).
+The path segment(s) reaching the array are `?` binds (rule 4) exactly as for the
+scalar extraction, so the `binds` are a **per-dialect map** (`m-case-format`); the
+element alias is the next alias after the root (`t1`, or `t1`/`t2` for two
+independent any-element subqueries):
+
+| Operation | Postgres canonical fragment | MariaDB canonical fragment |
+|---|---|---|
+| `nestedExists(Class.vo.arr)` (non-empty) | `exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1)` | `json_length(t0.address, ?) > ?` |
+| `nestedNotExists(Class.vo.arr)` (empty-or-absent) | `not exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1)` | `not coalesce(json_length(t0.address, ?), ?) > ?` |
+| flat `nestedEq(Class.vo.arr.field, v)` (any-element) | `exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1 where jsonb_extract_path_text(t1.value, ?) = ?)` | `json_contains(t0.address, ?, ?)` |
+| `nestedExists(Class.vo.arr, where: <compound>)` (same-element) | one `exists` with every element predicate on the **same** `t1` | `json_contains(t0.address, ?, ?)` with a candidate object carrying every field |
+| `nestedNotExists(Class.vo.arr, where: <compound>)` (no element) | `not exists (select 1 from jsonb_array_elements(…) t1 where <compound on t1>)` | `not coalesce(json_contains(t0.address, ?, ?), ?)` |
+
+On Postgres the array is reached with `jsonb_extract_path` (the **jsonb** sibling of
+the `jsonb_extract_path_text` extraction — it returns the array, not text) and
+unnested by the **strict** `jsonb_array_elements`, so a NULL column, a missing key,
+or a JSON `null` yields **zero** elements; an element's own field is read with the
+ordinary `jsonb_extract_path_text` over the element alias `t1.value`. On MariaDB the
+`json_contains(col, candidate, path)` predicate binds a candidate JSON document and
+the array path; containment against an array is **any-element**, and a candidate
+object with several fields forces one element to carry **all** of them
+(same-element). The negated forms wrap the containment / length in
+`coalesce(…, 0)` so an empty array **and** a NULL column both fall on the matching
+side of the leading `not` — an empty array and a NULL column are indistinguishable
+here, exactly as `m-op-algebra`'s absence collapse requires.
+
+```yaml
+# nestedEq(Customer.address.phones.type, 'home') — flat any-element:
+- sql:
+    postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1 where jsonb_extract_path_text(t1.value, ?) = ?)
+    mariadb: select t0.id, t0.name from customer t0 where json_contains(t0.address, ?, ?)
+  binds:
+    postgres: [phones, type, home]
+    mariadb: ['{"type": "home"}', '$.phones']
+# nestedExists(Customer.address.phones, where: type='home' AND number='555-9999') — same-element:
+- sql:
+    postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)
+    mariadb: select t0.id, t0.name from customer t0 where json_contains(t0.address, ?, ?)
+  binds:
+    postgres: [phones, type, home, number, '555-9999']
+    mariadb: ['{"type": "home", "number": "555-9999"}', '$.phones']
+```
+
+The unscoped `and(nestedEq(phones.type, 'home'), nestedEq(phones.number,
+'555-9999'))` lowers to **two independent** any-element checks (Postgres two `exists`
+subqueries with aliases `t1`, `t2`; MariaDB two `json_contains` conjuncts), so a row
+whose two fields live in *different* elements matches — the discriminating contrast
+with the same-element scoped form above (`m-op-algebra`; corpus
+`m-value-object-018` vs `-019`). The independent `then.referenceSql` oracle spells
+the traversal a **different** way per dialect: Postgres the `@>` containment operator
+(`t0.address -> 'phones' @> '[{"type": "home"}]'`) and `jsonb_array_length`, MariaDB
+a `JSON_TABLE(…)` element unnest (parse-only, executed against real MariaDB — the
+element-unnest golden SQL cannot use, since its `COLUMNS ( … PATH '…')` paths cannot
+be `?` binds and do not normalize) and `json_contains_path`.
+
+The MariaDB `json_contains` golden expresses **equality/containment** element
+predicates only (any-element `nestedEq`, same-element equality conjunctions);
+non-equality element predicates through a `many` segment — `nestedGt` / `nestedLt` /
+`nestedNotEq`, or a `where` compound with a range/`or`/`not` — need a set-returning
+unnest and are a **documented deferred limitation on MariaDB** (`m-dialect`,
+"Scope of the containment golden"). Postgres's `jsonb_array_elements` lowering is
+fully general; the corpus's to-many coverage is equality-based accordingly.

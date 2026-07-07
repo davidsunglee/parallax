@@ -25,6 +25,26 @@
 # them. Because the MariaDB golden extraction is json_value (JSON `null` -> SQL
 # NULL) all four collapse IDENTICALLY on Postgres AND MariaDB, and are what the
 # cases pin on both dialects.
+#
+# To-many (`address.phones`, a `many` nested value object — a JSON array of
+# {type, number} documents in the SAME address column) drives the exists /
+# any-element / same-element cases (m-op-algebra to-many, m-dialect array-traversal
+# form). The phones arrays are the discriminating dataset:
+#
+#   id 1 Ada    phones [{home,555-1234},{work,555-9999}]  two elements — the DISCRIMINATOR
+#   id 2 Linus  phones [{home,555-9999}]                  one element with BOTH home & 555-9999
+#   id 3 Grace  phones []                                 EMPTY array
+#   id 7 Nils   phones [{work,555-0000}]                  present, matches neither predicate
+#   id 4 Mary   (address null)                            NULL column — no phones
+#   id 5 Kavi / id 6 Rin  (address present, no `phones`)  MISSING phones key
+#
+# The discriminating pair: ANDing two flat any-element predicates
+# (nestedEq(phones.type, home) AND nestedEq(phones.number, '555-9999')) matches
+# BOTH id 1 (home in element 0, 555-9999 in element 1 — DIFFERENT elements) and id
+# 2; the scoped form nestedExists(phones, where: type=home AND number=555-9999)
+# requires ONE element to satisfy both, so it matches ONLY id 2. id 1 is the row
+# that tells the two apart. exists = non-empty {1,2,7}; notExists (empty-or-absent)
+# {3,4,5,6} distinguishes the empty array (3) from the NULL column (4).
 Customer:
   - id: 1
     name: Ada
@@ -38,6 +58,9 @@ Customer:
         point:
           lat: 59.9
           lon: 10.7
+      phones:
+        - { type: home, number: '555-1234' }
+        - { type: work, number: '555-9999' }
   - id: 2
     name: Linus
     address:
@@ -50,6 +73,8 @@ Customer:
         point:
           lat: 59.9
           lon: 10.8
+      phones:
+        - { type: home, number: '555-9999' }
   - id: 3
     name: Grace
     address:
@@ -62,6 +87,7 @@ Customer:
         point:
           lat: 42.3
           lon: -71.0
+      phones: []
   # id 4 (Mary) has NO address: the nullable valueObject column is SQL NULL. A
   # nested extraction over it yields null, so it reads back as a null projected
   # field and is EXCLUDED by every nested predicate via the absence collapse.
@@ -106,3 +132,5 @@ Customer:
         point:
           lat: null
           lon: null
+      phones:
+        - { type: work, number: '555-0000' }

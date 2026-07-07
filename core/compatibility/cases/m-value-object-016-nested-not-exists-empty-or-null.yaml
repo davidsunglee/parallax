@@ -1,0 +1,34 @@
+# valueObject to-many absence: nestedNotExists folds the EMPTY array and the NULL
+# column together (m-value-object to-many, m-op-algebra absence collapse, m-dialect
+# array-traversal form), on Postgres AND MariaDB.
+#
+# nestedNotExists(Customer.address.phones) matches every row whose `phones` array
+# is empty OR absent. Grace's empty array (3), Mary's NULL column (4) and the two
+# missing-`phones` rows (5, 6) all match — an empty array and a NULL column are
+# INDISTINGUISHABLE to the algebra, the whole point of this case. Ada, Linus, Nils
+# (non-empty) are excluded. Postgres `not exists (...)` over zero unnested elements
+# is true; MariaDB wraps the length in `coalesce(..., 0)` so a NULL/missing path
+# lands on the matching side of the leading `not`.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, absence-collapse, array-traversal]
+shape: read
+when:
+  operation:
+    nestedNotExists: { path: Customer.address.phones }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where not exists (select 1 from jsonb_array_elements(jsonb_extract_path(t0.address, ?)) t1)
+        mariadb: select t0.id, t0.name from customer t0 where not coalesce(json_length(t0.address, ?), ?) > ?
+      binds:
+        postgres: [phones]
+        mariadb: ['$.phones', 0, 0]
+  referenceSql:
+    postgres: select id, name from customer where coalesce(jsonb_array_length(address -> 'phones'), 0) = 0
+    mariadb: select id, name from customer where coalesce(json_contains_path(address, 'one', '$.phones[0]'), 0) = 0
+  rows:
+    - { id: 3, name: Grace }
+    - { id: 4, name: Mary }
+    - { id: 5, name: Kavi }
+    - { id: 6, name: Rin }
+  roundTrips: 1

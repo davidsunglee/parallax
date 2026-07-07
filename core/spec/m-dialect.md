@@ -35,6 +35,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | type mapping (neutral type → column type) | per the `m-core` Postgres column | per the `m-core` MariaDB column (see below) |
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) |
+| **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array>) t1 …)` — a set-returning unnest | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
@@ -127,6 +128,59 @@ not-present state casts SQL `NULL` (never a spurious value), the numeric predica
 obey the same absence-collapse rule as the text ones (`m-op-algebra`). A future
 dialect (Snowflake `VARIANT`) supplies its own cast spelling behind this same
 decision point.
+
+### Array traversal form (`m-value-object`)
+
+A `many` value object is a JSON **array** of documents in the same column
+(`m-value-object`). Testing it — `nestedExists` / `nestedNotExists`, or a flat
+`nested*` predicate whose path crosses the `many` member (any-element),
+`m-op-algebra` — requires **traversing the array**, and the spelling is a dialect
+decision owned here. The two concrete dialects pick genuinely different function
+families; both produce the identical observable row set (the independent
+`referenceSql` oracle proves it per case, `m-case-format`):
+
+| Aspect | Postgres | MariaDB |
+|---|---|---|
+| element unnest | `jsonb_array_elements(jsonb_extract_path(col, ?, …))` inside a correlated `exists (select 1 from … t1 where <element-predicate>)` — the element alias binds one row per element; `jsonb_extract_path` (the jsonb, not `_text`, sibling of the nested-extraction form) yields the array, and `jsonb_array_elements` is **strict**, so a NULL column / missing key / JSON `null` array yields **zero** elements | none — MariaDB has no set-returning array unnest usable as golden SQL (see below); the containment family expresses the same predicates directly |
+| any-element predicate | `exists (select 1 from jsonb_array_elements(jsonb_extract_path(col, ?)) t1 where <ext>(t1.value, ?) = ?)` | `json_contains(col, ?, ?)` — bind a candidate JSON document (`'{"type": "home"}'`) and the array path (`'$.phones'`); containment against an array is **any-element** |
+| same-element (`where`) | one `exists` with every element predicate on the **same** `t1` alias | one `json_contains(col, ?, ?)` whose candidate object carries **every** required field — a single element must contain all of them |
+| non-empty (`exists`, no `where`) | `exists (select 1 from jsonb_array_elements(jsonb_extract_path(col, ?)) t1)` | `json_length(col, ?) > ?` (`> 0`) |
+| empty-or-absent (`notExists`) | `not exists (…)` — `not exists` over zero elements is **true**, so an empty array and a NULL column both match | wrap the containment / length in `coalesce(…, ?)` so a NULL column, missing key, and empty array all read as the "no match" value the leading `not` then admits |
+
+**Why MariaDB uses the containment family, not `JSON_TABLE`.** The natural
+element-unnest on MariaDB is `JSON_TABLE(col, '$.phones[*]' columns (…))`, and it is
+what a future set-returning dialect (Snowflake `LATERAL FLATTEN`) mirrors. But
+`JSON_TABLE`'s path arguments are **literal syntax that cannot be a `?` bind**, and
+the `m-sql` canonical normalizer (sqlglot, non-normative harness machinery, but the
+fixed-point property it enforces **is** normative — `m-case-format` layer 3) does
+not round-trip the `COLUMNS ( … PATH '…')` clause to a stable, re-parseable,
+executable form. So golden SQL — which MUST be a normalizer fixed point — cannot use
+`JSON_TABLE`. The **containment family** (`json_contains` / `json_length`) expresses
+the same any-element and same-element predicates as scalar functions that keep their
+paths and candidates as `?` binds and normalize cleanly; it is the MariaDB golden
+form. `JSON_TABLE` still appears — as the **independent `referenceSql` oracle**
+(parse-only, executed against real MariaDB), a deliberately different element-unnest
+formulation that the harness asserts returns the same rows. A future dialect with a
+set-returning unnest (Snowflake `LATERAL FLATTEN`) slots behind this same decision
+point.
+
+**Scope of the containment golden — equality only.** `json_contains` is a
+**containment** predicate: it expresses element predicates that are equality against
+a fixed candidate (any-element `nestedEq` through a `many` segment, and a
+same-element `where` whose compound is a **conjunction of equalities** carried in one
+candidate object). It **cannot** express a non-equality element predicate — a flat
+`nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` / `nestedNotEq` through a `many`
+segment, or a `where` compound containing a range/`or`/`not` element predicate — even
+though `m-op-algebra` admits the whole `nested*` family there. Those require a
+set-returning element unnest that binds one row per element (`JSON_TABLE`), which the
+current reference harness cannot normalize as golden SQL (above). **Non-equality
+to-many element predicates on MariaDB are therefore a documented deferred
+limitation**: the algebra and the Postgres lowering (`jsonb_array_elements`, fully
+general) support them, the MariaDB **golden** does not until a set-returning unnest
+can be normalized (or a set-returning dialect such as Snowflake `LATERAL FLATTEN`
+supplies one behind this seam). The compatibility corpus's to-many coverage is
+equality-based, consistent with this scope; a MariaDB implementation MAY reject a
+non-equality to-many predicate as unsupported until then.
 
 ### `NULL` ordering
 
