@@ -8,7 +8,7 @@
  * `git diff --exit-code` gate (`ts:generate-case-types:check`).
  */
 /**
- * The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedInZ` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of eight shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); or a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.
+ * The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedInZ` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.
  */
 export type ParallaxCompatibilityCaseMCaseFormat = {
   [k: string]: unknown;
@@ -38,7 +38,8 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
     | "coherence"
     | "error"
     | "concurrencySuccess"
-    | "boundary";
+    | "boundary"
+    | "rejected";
   /**
    * Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, and any injected fault. Optional — a case that starts from the model's default fixtures and injects nothing omits `given` entirely.
    */
@@ -332,15 +333,19 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
   then?: {
     statements?: GoldenStatements3;
     /**
-     * Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases.
+     * Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases. Authored dialect-neutrally as a plain string wherever one naive spelling runs verbatim on every dialect; a dialect-keyed map (`postgres` / `mariadb`) when the naive spelling itself is dialect-specific (e.g. the structured-document extraction, where Postgres `->>` takes a bare key and MariaDB `->>` takes a `'$.path'`). When a map, its keys MUST equal the golden `sql` map's keys (harness-asserted, exactly as for a `binds` map) so no executed dialect runs without its oracle. The harness runs the entry matching the executing dialect; a map omitting a declared dialect is a loud failure, never a silently skipped oracle.
      */
-    referenceSql?: string;
+    referenceSql?:
+      | string
+      | {
+          [k: string]: string;
+        };
     /**
      * The rows the query must return against the fixture data (single-statement / flat-result cases).
      */
     rows?: {}[];
     /**
-     * The assembled object graph a deep fetch must produce: the root rows, each carrying its eager-fetched related rows under the relationship name. Keyed by the root class name, whose value is a list of root objects; a related set appears under its relationship name (a list for to-many, a single object or null for to-one).
+     * The assembled object graph a read must produce. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name. For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class name, whose value is a list of root objects; a related set appears under its relationship name (a list for to-many, a single object or null for to-one), and a value-object member under its declared name.
      */
     graph?: {
       [k: string]: {}[];
@@ -375,6 +380,19 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
       | "deadlock"
       | "serialization-failure"
       | "lock-wait-timeout";
+    /**
+     * rejected cases (m-value-object / m-op-algebra negative validation, resolved Q7). The normative rule the input violates, from a small closed vocabulary a model-aware PRE-SQL validator (and every language implementation) MUST enforce, asserted BEFORE any SQL is emitted. OPERATION rules: `nested-path-first-segment-not-value-object` (a nested path's first segment names no declared value object on the queried entity — m-op-algebra nested-predicate resolver MUST); `nested-path-unknown-member` (an intermediate segment names no declared nested value object, or a leaf names no declared attribute); `nested-literal-type-mismatch` (a nested comparison/membership literal's type differs from the leaf attribute's declared neutral type — m-op-algebra typed-literal MUST); `deep-fetch-value-object-segment` (a `deepFetch` path segment names a value object — m-value-object materialization/navigation contract 4, m-deep-fetch); `navigate-value-object-target` (a `navigate`/`exists`/`notExists` targets a value object — m-value-object contract 4, m-navigate); `find-root-value-object` (a find() is rooted at a value object — m-value-object contract 5). WRITE rules: `write-required-attribute-missing` (a required `nullable:false` attribute is absent at some depth — m-value-object write validation); `write-required-value-object-missing` (a required `nullable:false` nested value object is absent, or a required `many` array is absent — emptiness is fine); `write-value-type-mismatch` (a document field value's type differs from the declared attribute's neutral type).
+     */
+    rejectedRule?:
+      | "nested-path-first-segment-not-value-object"
+      | "nested-path-unknown-member"
+      | "nested-literal-type-mismatch"
+      | "deep-fetch-value-object-segment"
+      | "navigate-value-object-target"
+      | "find-root-value-object"
+      | "write-required-attribute-missing"
+      | "write-required-value-object-missing"
+      | "write-value-type-mismatch";
     /**
      * Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips.
      */
@@ -467,6 +485,11 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
           [k: string]: unknown;
         };
         then: {
+          [k: string]: unknown;
+        };
+      }
+    | {
+        when?: {
           [k: string]: unknown;
         };
       }
@@ -575,49 +598,44 @@ export interface StatementEntry {
         [k: string]: string;
       };
   /**
-   * Bind values for the `?` placeholders in this statement's `sql`. One flat ordered list (dialect-agnostic — positional order is identical across dialects). Defaults to empty.
+   * Bind values for the `?` placeholders in this statement's `sql`. Follows the same scalar-or-dialect-keyed polymorphism as `sql`: a flat ordered array when the bind holes are shared across dialects (the authored default), OR a dialect-keyed map of arrays when the hole structure diverges (e.g. Postgres carries per-segment JSON keys while MariaDB carries one `'$.a.b'` path bind). When a map, its keys MUST equal this entry's `sql` map's keys (harness-asserted). Defaults to empty.
    */
-  binds?: unknown[];
+  binds?:
+    | unknown[]
+    | {
+        [k: string]: unknown[];
+      };
 }
 /**
- * A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name (a business/developer name like `id` / `orderedOn`, NOT a physical column like `ordered_on`). An attribute's value is a scalar literal, an explicit `null`, OR a one-key DB-COMPUTED marker object — `{ computed: "maxPlusOne" }` or `{ increment: <n> }`. The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute keys via `additionalProperties`.
+ * A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`). A SCALAR ATTRIBUTE's value is a scalar literal, an explicit `null`, OR a one-key DB-COMPUTED marker object — `{ computed: "maxPlusOne" }` or `{ increment: <n> }`; a VALUE-OBJECT field's value is the WHOLE embedded composite document (a JSON object, or a JSON array of objects for a `many` value object), or `null` (m-value-object). The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order — binding a value object atomically as one document in its columnOrder position. A DB-computed marker vs a value-object document is therefore disambiguated by MODEL ROLE, not by the value's SHAPE: only a scalar-attribute column's value is ever read as a marker, while a value-object column's value is ALWAYS the literal document even when it is marker-SHAPED. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`.
  */
 export interface WriteRow {
   /**
    * The optimistic-lock version the unit of work read (m-opt-lock). A reserved control key, NOT an attribute/column: it is the gate/advance token (the advance `observedVersion + 1` and the `and version = ?` gate are DERIVED, never authored). Present on a versioned update; absent on a versioned insert and on a non-versioned write.
    */
   observedVersion?: number;
-  [k: string]:
-    | (string | number | boolean | null)
-    | {
-        /**
-         * The pk-gen `max` strategy: the column is emitted as `coalesce(max(col), ?) + ?` (its binds are the strategy's coalesce base + increment, NOT an ① literal).
-         */
-        computed?: "maxPlusOne";
-        /**
-         * A self-referential advance emitted as `col = col + ?` (e.g. a sequence registry's `next_val`); the integer is the amount added.
-         */
-        increment?: number;
-      };
+  [k: string]: (string | number | boolean | null) | WriteComputedMarker | ({} | unknown[]);
 }
 /**
- * A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name (a business/developer name like `id` / `orderedOn`, NOT a physical column like `ordered_on`). An attribute's value is a scalar literal, an explicit `null`, OR a one-key DB-COMPUTED marker object — `{ computed: "maxPlusOne" }` or `{ increment: <n> }`. The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute keys via `additionalProperties`.
+ * A one-key DB-COMPUTED marker in a neutral write row (①): the attribute's value is derived by the database rather than authored as a literal bind, so the adapter emits the strategy's SQL fragment and the harness cross-check skips the literal bind at this position. This interpretation applies ONLY to a SCALAR ATTRIBUTE column (m-value-object): a value-object column's value is ALWAYS the literal document even when it is marker-SHAPED, so a marker vs a value-object document is disambiguated by the field's declared metamodel role (resolved from `columnOrder(entity)`), NOT by the value's shape.
+ */
+export interface WriteComputedMarker {
+  /**
+   * The pk-gen `max` strategy: the column is emitted as `coalesce(max(col), ?) + ?` (its binds are the strategy's coalesce base + increment, NOT an ① literal).
+   */
+  computed?: "maxPlusOne";
+  /**
+   * A self-referential advance emitted as `col = col + ?` (e.g. a sequence registry's `next_val`); the integer is the amount added.
+   */
+  increment?: number;
+}
+/**
+ * A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`). A SCALAR ATTRIBUTE's value is a scalar literal, an explicit `null`, OR a one-key DB-COMPUTED marker object — `{ computed: "maxPlusOne" }` or `{ increment: <n> }`; a VALUE-OBJECT field's value is the WHOLE embedded composite document (a JSON object, or a JSON array of objects for a `many` value object), or `null` (m-value-object). The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order — binding a value object atomically as one document in its columnOrder position. A DB-computed marker vs a value-object document is therefore disambiguated by MODEL ROLE, not by the value's SHAPE: only a scalar-attribute column's value is ever read as a marker, while a value-object column's value is ALWAYS the literal document even when it is marker-SHAPED. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`.
  */
 export interface WriteRow1 {
   /**
    * The optimistic-lock version the unit of work read (m-opt-lock). A reserved control key, NOT an attribute/column: it is the gate/advance token (the advance `observedVersion + 1` and the `and version = ?` gate are DERIVED, never authored). Present on a versioned update; absent on a versioned insert and on a non-versioned write.
    */
   observedVersion?: number;
-  [k: string]:
-    | (string | number | boolean | null)
-    | {
-        /**
-         * The pk-gen `max` strategy: the column is emitted as `coalesce(max(col), ?) + ?` (its binds are the strategy's coalesce base + increment, NOT an ① literal).
-         */
-        computed?: "maxPlusOne";
-        /**
-         * A self-referential advance emitted as `col = col + ?` (e.g. a sequence registry's `next_val`); the integer is the amount added.
-         */
-        increment?: number;
-      };
+  [k: string]: (string | number | boolean | null) | WriteComputedMarker | ({} | unknown[]);
 }

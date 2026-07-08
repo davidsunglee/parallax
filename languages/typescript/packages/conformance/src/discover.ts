@@ -85,6 +85,7 @@ const CASE_SHAPES: ReadonlySet<CaseShape> = new Set<CaseShape>([
   "error",
   "concurrencySuccess",
   "boundary",
+  "rejected",
 ]);
 
 /**

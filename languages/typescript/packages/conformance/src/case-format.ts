@@ -27,9 +27,24 @@ export interface DialectStatement {
   readonly binds: readonly unknown[];
 }
 
-/** The authored binds of a statement entry (dialect-agnostic; defaults to `[]`). */
-export function entryBinds(entry: StatementEntry): readonly unknown[] {
-  return entry.binds ?? [];
+/**
+ * The authored binds of a statement entry, resolved for `dialect`. `binds` follows
+ * the same scalar-or-dialect-keyed form as `sql` (m-case-format): a flat array when
+ * the hole structure is shared across dialects (returned verbatim), or a
+ * dialect-keyed map when it diverges (the per-segment JSON keys of a nested
+ * extraction) — this returns the `dialect`'s list, or `[]` when that dialect is
+ * absent. A naive `given.apply` entry always carries a flat array, so `dialect` is
+ * optional there. Defaults to `[]`.
+ */
+export function entryBinds(entry: StatementEntry, dialect?: string): readonly unknown[] {
+  const binds = entry.binds;
+  if (binds === undefined) {
+    return [];
+  }
+  if (Array.isArray(binds)) {
+    return binds;
+  }
+  return dialect === undefined ? [] : (binds[dialect] ?? []);
 }
 
 /**
@@ -59,7 +74,7 @@ export function dialectStatements(
   for (const entry of entries) {
     const sql = entrySql(entry, dialect);
     if (sql !== undefined) {
-      out.push({ sql, binds: entryBinds(entry) });
+      out.push({ sql, binds: entryBinds(entry, dialect) });
     }
   }
   return out;
