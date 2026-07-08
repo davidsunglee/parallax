@@ -32,6 +32,7 @@ import {
   type ParallaxRow,
   ParallaxTemporalCloseError,
   ParallaxTemporalOptimisticError,
+  ParallaxWriteValidationError,
   Predicate,
 } from "../src/index.js";
 
@@ -862,5 +863,83 @@ describe("TransactionWriter optimistic x temporal close (m-temporal-read + m-opt
         dialect: postgresDialect,
       }),
     ).not.toThrow();
+  });
+});
+
+/** The `Contact` descriptor — value objects with REQUIRED nested members at depths 1/2/3. */
+const CONTACT = loadCase(
+  "core/compatibility/cases/m-value-object-039-rejected-write-required-attribute-depth-1.yaml",
+).descriptor;
+
+describe("TransactionWriter refuses an invalid value-object document PRE-SQL (m-value-object, cases 039-043)", () => {
+  it("throws ParallaxWriteValidationError before any DML for a document missing a required depth-1 attribute", async () => {
+    const db = new StubDatabase([]);
+    const px = createParallax({ descriptor: CONTACT, database: db, dialect: postgresDialect });
+
+    // The exact corpus-pinned invalid write (case 039): `address.street` — a required
+    // depth-1 attribute — is omitted, so the whole atomic document is structurally
+    // incomplete against its DECLARED structure. The developer surface must make the
+    // SAME pre-SQL refusal the conformance runner does (validateWriteValueObjects).
+    const invalid = {
+      id: 1,
+      name: "Acme",
+      address: { city: "Oslo", geo: { country: "NO", point: { lat: 59.9, lon: 10.7 } } },
+    };
+
+    const error = await px
+      .transaction((tx) => tx.entity("Contact").create(invalid))
+      .catch((e: unknown) => e);
+
+    // The RejectionError (.rule) is mapped to the public ParallaxError subclass, so a
+    // developer catches a clean validation refusal carrying the violated rule.
+    expect(error).toBeInstanceOf(ParallaxWriteValidationError);
+    expect((error as ParallaxWriteValidationError).rule).toBe("write-required-attribute-missing");
+    expect((error as ParallaxWriteValidationError).code).toBe("write-required-attribute-missing");
+    // The refusal is PRE-SQL: no bind generation, no INSERT buffered or flushed.
+    expect(db.queries).toEqual([]);
+  });
+
+  it("rejects a nested type mismatch at depth 3 (write-value-type-mismatch), still pre-SQL", async () => {
+    const db = new StubDatabase([]);
+    const px = createParallax({ descriptor: CONTACT, database: db, dialect: postgresDialect });
+
+    // `address.geo.point.lat` is declared float64; a string value mismatches its type.
+    const invalid = {
+      id: 2,
+      name: "Beta",
+      address: {
+        street: "1 Main",
+        city: "Oslo",
+        geo: { country: "NO", point: { lat: "not-a-number", lon: 10.7 } },
+      },
+    };
+
+    const error = await px
+      .transaction((tx) => tx.entity("Contact").create(invalid))
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ParallaxWriteValidationError);
+    expect((error as ParallaxWriteValidationError).rule).toBe("write-value-type-mismatch");
+    expect(db.queries).toEqual([]);
+  });
+
+  it("accepts a structurally-complete document (no false reject) and issues the INSERT", async () => {
+    const db = new StubDatabase([]);
+    const px = createParallax({ descriptor: CONTACT, database: db, dialect: postgresDialect });
+
+    await px.transaction((tx) =>
+      tx.entity("Contact").create({
+        id: 3,
+        name: "Gamma",
+        address: {
+          street: "12 Aurora Ave",
+          city: "Oslo",
+          geo: { country: "NO", point: { lat: 59.9, lon: 10.7 } },
+        },
+      }),
+    );
+
+    const insert = db.queries.find((q) => q.sql.includes("insert into contact"));
+    expect(insert, "a valid document flushes its INSERT").toBeDefined();
   });
 });

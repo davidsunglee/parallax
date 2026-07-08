@@ -44,3 +44,4 @@ export {
   toPositionalPlaceholders,
   uuidFromDb,
 } from "./postgres.js";
+export { canonicalBind, canonicalBinds, isRawJson, RawJson, rawJson } from "./raw-json.js";

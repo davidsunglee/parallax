@@ -32,6 +32,7 @@ import type {
   ResolvedElementPredicate,
 } from "./dialect.js";
 import { classifyErrorCode } from "./errors.js";
+import { rawJson } from "./raw-json.js";
 
 /** The dialect identifier this seam answers for. */
 export const POSTGRES_DIALECT = "postgres" as const;
@@ -188,6 +189,15 @@ export function typedCast(extraction: string, neutralType: string): string {
 
 /** The JSON type-name / empty-array literals the array guard binds (kept as `?` binds). */
 const PG_JSON_ARRAY_TYPE = "array";
+/**
+ * The empty-array fallback the `case`/`jsonb_typeof` guard binds to `cast(? as jsonb)`
+ * when the column is not a JSON array (absence collapse). It is already-canonical JSON
+ * text, so it must reach the driver VERBATIM — {@link rawJson} wraps it so the adapter's
+ * fail-safe json serializer passes it through raw rather than JSON-encoding it into the
+ * jsonb string scalar `"[]"` (which `jsonb_array_elements` would reject). The wrapper is
+ * canonicalized back to the plain string `"[]"` wherever the compiled bind is reported or
+ * compared to a golden.
+ */
 const PG_EMPTY_ARRAY = "[]";
 
 /**
@@ -301,7 +311,7 @@ export function nestedArrayPredicate(request: NestedArrayRequest): DialectFragme
   const guard =
     `case when jsonb_typeof(jsonb_extract_path(${column}${pathHoles})) = ? ` +
     `then jsonb_extract_path(${column}${pathHoles}) else cast(? as jsonb) end`;
-  const guardBinds = [...arrayPath, PG_JSON_ARRAY_TYPE, ...arrayPath, PG_EMPTY_ARRAY];
+  const guardBinds = [...arrayPath, PG_JSON_ARRAY_TYPE, ...arrayPath, rawJson(PG_EMPTY_ARRAY)];
   const rendered =
     element === undefined ? undefined : renderElement(element, `${elementAlias}.value`);
   const where = rendered === undefined ? "" : ` where ${rendered.sql}`;
@@ -514,10 +524,26 @@ export function uuidFromDb(raw: string): string {
  * serializes it as `\xDEADBEEF`. Flattening it through `toWire` would hand
  * porsager a hex STRING, which Postgres coerces via the `bytea` *escape* format —
  * storing the ASCII hex characters, not the intended bytes.
+ *
+ * A `json` value (m-value-object / m-core json) is a plain, unencoded JS structure or
+ * scalar bound to a structured-document column. It is **pre-serialized to canonical
+ * JSON and wrapped in the {@link rawJson} sentinel**, so the adapter's json serializer
+ * emits that text verbatim. The wrapper is load-bearing on the write path: the porsager
+ * driver infers a bind's Postgres type from its JS value and sends it in `Parse`, so a
+ * bare `true` / `bigint` / array would be described to the server as boolean / int8 /
+ * array and REJECTED by a `json`/`jsonb` column — only a value porsager can't type (a
+ * plain object, like this sentinel) is described by the column OID and routed through
+ * the json serializer. Pre-serializing here (rather than passing the raw value) keeps
+ * every JSON shape correct; the serializer's fail-safe `JSON.stringify` default remains
+ * the safety net for a DIRECT / missed-path bind that reaches it unwrapped. A null json
+ * value binds as SQL NULL (no sentinel).
  */
-function bindValue(_neutralType: string, value: unknown): unknown {
+function bindValue(neutralType: string, value: unknown): unknown {
   if (value instanceof Uint8Array) {
     return value;
+  }
+  if (neutralType === "json" && value !== null && value !== undefined) {
+    return rawJson(JSON.stringify(value));
   }
   return toWire(value);
 }

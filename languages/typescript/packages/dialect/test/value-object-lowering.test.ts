@@ -9,12 +9,23 @@
  * diagnostic (the documented deferred limitation), while Postgres lowers it.
  */
 import {
+  canonicalBinds,
   mariadbDialect,
   type NestedArrayRequest,
   postgresDialect,
   type ResolvedElementPredicate,
 } from "@parallax/dialect";
 import { describe, expect, it } from "vitest";
+
+/**
+ * A Postgres array-traversal fragment with its guard's `rawJson('[]')` sentinel
+ * canonicalized to the scalar string `"[]"` for comparison against the expected binds
+ * (the same collapse the reported envelope + goldens apply — see `raw-json.ts`).
+ */
+function pgArray(req: NestedArrayRequest): { sql: string; binds: readonly unknown[] } {
+  const { sql, binds } = postgresDialect.nestedArrayPredicate(req);
+  return { sql, binds: canonicalBinds(binds) };
+}
 
 describe("nested extraction form (m-dialect)", () => {
   it("Postgres carries one ? per path segment; MariaDB one '$.a.b' path bind", () => {
@@ -77,23 +88,21 @@ const SAME_ELEMENT: ResolvedElementPredicate = {
 
 describe("array traversal form (m-dialect) — Postgres jsonb_array_elements", () => {
   it("non-empty existence unnests under the case/jsonb_typeof array guard", () => {
-    expect(postgresDialect.nestedArrayPredicate(request())).toEqual({
+    expect(pgArray(request())).toEqual({
       sql: "exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1)",
       binds: ["phones", "array", "phones", "[]"],
     });
   });
 
   it("any-element eq reads the element field over the unnest alias", () => {
-    expect(postgresDialect.nestedArrayPredicate(request({ element: EQ_TYPE_HOME }))).toEqual({
+    expect(pgArray(request({ element: EQ_TYPE_HOME }))).toEqual({
       sql: "exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ?)",
       binds: ["phones", "array", "phones", "[]", "type", "home"],
     });
   });
 
   it("same-element `and` puts both predicates on one alias; notExists prepends `not`", () => {
-    expect(
-      postgresDialect.nestedArrayPredicate(request({ element: SAME_ELEMENT, negated: true })),
-    ).toEqual({
+    expect(pgArray(request({ element: SAME_ELEMENT, negated: true }))).toEqual({
       sql: "not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)",
       binds: ["phones", "array", "phones", "[]", "type", "home", "number", "555-9999"],
     });
@@ -103,7 +112,7 @@ describe("array traversal form (m-dialect) — Postgres jsonb_array_elements", (
     // Off-corpus: the frozen to-many coverage is equality on string fields. Postgres
     // now casts a numeric element extraction (as the range ops already did) and binds
     // a boolean element value as its JSON-text form so `<extraction> = ?` stays valid.
-    const numericEq = postgresDialect.nestedArrayPredicate(
+    const numericEq = pgArray(
       request({
         element: { op: "eq", path: ["rank"], value: 5, valueType: "int64" },
       }),
@@ -113,7 +122,7 @@ describe("array traversal form (m-dialect) — Postgres jsonb_array_elements", (
     );
     expect(numericEq.binds).toEqual(["phones", "array", "phones", "[]", "rank", 5]);
 
-    const numericIn = postgresDialect.nestedArrayPredicate(
+    const numericIn = pgArray(
       request({
         element: {
           op: "in",
@@ -128,7 +137,7 @@ describe("array traversal form (m-dialect) — Postgres jsonb_array_elements", (
     );
     expect(numericIn.binds).toEqual(["phones", "array", "phones", "[]", "rank", 1, 2]);
 
-    const boolEq = postgresDialect.nestedArrayPredicate(
+    const boolEq = pgArray(
       request({
         element: {
           op: "eq",

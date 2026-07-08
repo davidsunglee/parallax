@@ -14,7 +14,7 @@
  * There is **no wire / grading logic here** — an adapter emits managed types
  * only (*managed at the boundary, wire at the grader*).
  */
-import { postgresDialect } from "@parallax/dialect";
+import { isRawJson, postgresDialect } from "@parallax/dialect";
 
 /**
  * The Postgres OIDs whose driver-default parse would violate an m-core contract, so the
@@ -82,23 +82,41 @@ export function serializeBytea(v: unknown): unknown {
 }
 
 /**
- * Serialize a value-object document bind to `json` / `jsonb` (m-value-object).
+ * Serialize a `json` / `jsonb` bind (m-value-object / m-core json). This is the
+ * serializer porsager runs for a parameter it binds to a `json`/`jsonb` column:
+ * porsager sends Parse first, the server's ParameterDescription reports the real
+ * column OID (114 / 3802), and porsager binds through the serializer registered on
+ * that OID (below) — so this runs for every json/jsonb write value AND for the
+ * read-side `cast(? as jsonb)` array-guard literal.
  *
- * porsager's DEFAULT json serializer `JSON.stringify`s every value it binds to a
- * jsonb-inferred parameter — including a value that is ALREADY JSON text. The
- * value-object to-many read lowers to `cast(? as jsonb)` with the empty-array
- * GUARD literal `'[]'` (a string) as its bind; the default serializer would
- * re-encode that string to the jsonb STRING scalar `"[]"`, which
- * `jsonb_array_elements` then rejects with "cannot extract elements from a
- * scalar". So a string is passed through verbatim (it is already canonical JSON
- * text — the guard literal, or a pre-serialized document), while a plain object /
- * array is `JSON.stringify`d into JSON text; `null` binds as SQL NULL.
+ * The serializer is **fail-safe by DEFAULT** — it JSON-encodes everything so no
+ * value can reach the wire as invalid raw text — with a single explicit escape hatch:
+ *
+ *  - `null` / `undefined` — bind as SQL NULL, passed through untouched;
+ *  - a {@link RawJson} sentinel — already-canonical, pre-serialized JSON text: the
+ *    value-object to-many read's empty-array GUARD literal `'[]'`, wrapped at the
+ *    array lowering. Its inner string is returned VERBATIM; re-encoding it to the
+ *    jsonb string scalar `"[]"` would make `jsonb_array_elements` reject it with
+ *    "cannot extract elements from a scalar" (the exact bug the sentinel guards);
+ *  - EVERYTHING ELSE — a string, number, boolean, object, or array (a `json`
+ *    attribute a developer writes, whether via the runtime write path or a DIRECT
+ *    `@parallax/db-postgres` bind) — is `JSON.stringify`d, so a string scalar
+ *    `"hello"` lands as the jsonb string `"hello"` (NOT the raw, invalid-JSON text
+ *    `hello`), and a number / boolean / object / array lands as its jsonb form.
+ *
+ * Inverting the marker this way (default = encode, sentinel = raw) makes any missed
+ * provider path or direct adapter use SAFE by default — the Finding fix. The sentinel
+ * rides only the compiled READ guard and is canonicalized back to the scalar `"[]"`
+ * before any reported/compared bind, so golden parity stays byte-identical.
  */
-function serializeJson(v: unknown): unknown {
+export function serializeJson(v: unknown): unknown {
   if (v === null || v === undefined) {
     return v;
   }
-  return typeof v === "string" ? v : JSON.stringify(v);
+  if (isRawJson(v)) {
+    return v.json;
+  }
+  return JSON.stringify(v);
 }
 
 /** A custom type forcing `oid` to be read as raw text and parsed by `parse`. */

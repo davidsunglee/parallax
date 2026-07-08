@@ -25,6 +25,7 @@ export {
   ParallaxReadBeforeWriteError,
   ParallaxTemporalCloseError,
   ParallaxTemporalOptimisticError,
+  ParallaxWriteValidationError,
   TransactionWriter,
   type UpdateOptions,
   type WriteResult,

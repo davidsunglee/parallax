@@ -10,7 +10,12 @@
  * non-equality element predicate (deferral #1). The whole-corpus parity lane lives
  * in `@parallax/conformance`; this pins the compiler's nested emission in isolation.
  */
-import { mariadbDialect, postgresDialect, quoteIdentifier } from "@parallax/dialect";
+import {
+  canonicalBinds,
+  mariadbDialect,
+  postgresDialect,
+  quoteIdentifier,
+} from "@parallax/dialect";
 import { type Operation, parseOperation } from "@parallax/operation";
 import { describe, expect, it } from "vitest";
 import {
@@ -118,10 +123,16 @@ function customerResolver(): SchemaResolver {
   };
 }
 
-/** Compile a schema-validated operation over `customer` for the given dialect. */
+/**
+ * Compile a schema-validated operation over `customer` for the given dialect,
+ * canonicalizing the compiled binds: a to-many read carries the array-guard
+ * `rawJson('[]')` sentinel, which collapses to the scalar string `"[]"` (a no-op for
+ * every scalar-only flat-family bind), matching the reported/golden form.
+ */
 function emit(op: unknown, dialect = postgresDialect): { sql: string; binds: readonly Bind[] } {
   const operation = parseOperation(op) as Operation;
-  return compile(operation, customerResolver(), dialect);
+  const { sql, binds } = compile(operation, customerResolver(), dialect);
+  return { sql, binds: canonicalBinds(binds) as readonly Bind[] };
 }
 
 const HEAD = "select t0.id, t0.name from customer t0 where ";
