@@ -36,7 +36,12 @@ import {
   timestampFromRaw,
   toWire,
 } from "@parallax/core";
-import type { Dialect } from "./dialect.js";
+import type {
+  Dialect,
+  DialectFragment,
+  NestedArrayRequest,
+  ResolvedElementPredicate,
+} from "./dialect.js";
 import type { ErrorCategory } from "./errors.js";
 
 /** The dialect identifier this seam answers for (keys `goldenSql`/`expectedNativeCode`). */
@@ -165,6 +170,140 @@ function bytesProjection(
   outputName: string,
 ): { readonly sql: string; readonly binds: readonly unknown[] } {
   return { sql: `hex(${qualifiedColumn}) ${outputName}`, binds: [] };
+}
+
+// --- value-object structured-column lowering (m-value-object / m-sql) ---------
+
+/**
+ * Render a document path as a MariaDB JSON path string (`['geo','country']` →
+ * `$.geo.country`). An EMPTY path is a root array — a top-level `many` value object,
+ * where the document column itself is the array — and renders as the document root
+ * `$` (not `$.`, which MariaDB rejects), so `json_type(json_extract(col, '$'))` /
+ * `json_contains(col, ?, '$')` / `json_length(col, '$')` are valid.
+ */
+function jsonPath(segments: readonly string[]): string {
+  return segments.length === 0 ? "$" : `$.${segments.join(".")}`;
+}
+
+/**
+ * MariaDB **nested extraction form** (`m-dialect`): `json_value(col, ?)` — one `?`
+ * bind for the WHOLE `'$.a.b'` path (unlike Postgres's per-segment binds). Chosen
+ * over `json_unquote(json_extract(…))` precisely because it maps a JSON `null`
+ * leaf — like a missing path and a non-object descent — to SQL `NULL`, so the
+ * absence-collapse rule holds identically on both dialects.
+ */
+function nestedExtraction(baseExpression: string, segments: readonly string[]): DialectFragment {
+  return {
+    sql: `json_value(${baseExpression}, ?)`,
+    binds: [jsonPath(segments)],
+  };
+}
+
+/** MariaDB cast targets for the non-text neutral types (the m-dialect typed-cast table). */
+const MARIADB_CASTS: Readonly<Record<string, string>> = {
+  int32: "signed",
+  int64: "signed",
+  float32: "double",
+  float64: "double",
+};
+
+/**
+ * MariaDB **typed cast form** (`m-dialect`): `cast(<extraction> as double)` /
+ * `… as signed` / `… as decimal(p, s)` before a numeric comparison. A `string`
+ * (or text/temporal) attribute compares directly, so the extraction is unchanged.
+ */
+function typedCast(extraction: string, neutralType: string): string {
+  const decimal = DECIMAL_TYPE.exec(neutralType);
+  if (decimal) {
+    return `cast(${extraction} as decimal(${decimal[1]}, ${decimal[2]}))`;
+  }
+  const target = MARIADB_CASTS[neutralType];
+  return target === undefined ? extraction : `cast(${extraction} as ${target})`;
+}
+
+/** The MariaDB JSON array type-name literal the array guard binds. */
+const MARIADB_JSON_ARRAY_TYPE = "ARRAY";
+
+/**
+ * One equality leaf of a `json_contains` candidate object: a single-segment
+ * element field bound to its compared value.
+ */
+interface CandidateLeaf {
+  readonly field: string;
+  readonly value: unknown;
+}
+
+/**
+ * Reduce a resolved element predicate to a `json_contains` candidate — the ONLY
+ * form MariaDB's containment golden lowers (`m-dialect` "Scope of the containment
+ * golden", equality-only). A single `nestedEq` on a single-segment field, or an
+ * `and` of such equalities, becomes one candidate object whose fields a single
+ * element must contain. **Every other element predicate** — a range, `notEq`,
+ * `in`, a null check, an `or` / `not` / `group`, or a multi-segment element path —
+ * needs a set-returning unnest the containment family cannot express, so it is
+ * **rejected with a capability diagnostic** (the Phase-10 MariaDB-lowering
+ * boundary, deferral #1). Postgres's `jsonb_array_elements` lowers all of them.
+ */
+function candidateLeaves(element: ResolvedElementPredicate, out: CandidateLeaf[]): void {
+  if (element.op === "and") {
+    for (const operand of element.operands) {
+      candidateLeaves(operand, out);
+    }
+    return;
+  }
+  if (element.op === "eq" && element.path.length === 1) {
+    out.push({ field: element.path[0] as string, value: element.value });
+    return;
+  }
+  throw new Error(
+    "mariadb: the json_contains containment golden lowers only equality element predicates " +
+      "(a nestedEq, or an `and` of nestedEq, on a single-segment field); a non-equality " +
+      "to-many element predicate requires a set-returning element unnest, a documented " +
+      "deferred limitation on MariaDB (m-dialect 'Scope of the containment golden')",
+  );
+}
+
+/** Serialize a candidate object to the `json_contains` document literal (`{"type":"home", …}`). */
+function serializeCandidate(leaves: readonly CandidateLeaf[]): string {
+  const fields = leaves.map(
+    (leaf) => `${JSON.stringify(leaf.field)}:${JSON.stringify(leaf.value)}`,
+  );
+  return `{${fields.join(", ")}}`;
+}
+
+/**
+ * MariaDB **array traversal form** (`m-dialect`): the JSON containment family under
+ * a `json_type(json_extract(col, ?)) = 'ARRAY'` guard `<g>`. A non-empty test is
+ * `<g> and json_length(col, ?) > 0` (the guard required because `json_length` of a
+ * scalar is `1`); an element predicate is `<g> and json_contains(col, candidate,
+ * path)` (any-element / same-element, the guard required because `json_contains`
+ * matches a containing object). `nestedNotExists` wraps the guarded test in
+ * `coalesce(…, 0)` so a NULL / missing / non-array `many` value lands on the "no
+ * element" side of the leading `not`. A non-equality element predicate is rejected
+ * (see {@link candidateLeaves}).
+ */
+function nestedArrayPredicate(request: NestedArrayRequest): DialectFragment {
+  const { column, arrayPath, negated, element } = request;
+  const path = jsonPath(arrayPath);
+  const guard = `json_type(json_extract(${column}, ?)) = ?`;
+  const guardBinds: unknown[] = [path, MARIADB_JSON_ARRAY_TYPE];
+
+  let coreSql: string;
+  let coreBinds: unknown[];
+  if (element === undefined) {
+    coreSql = `${guard} and json_length(${column}, ?) > ?`;
+    coreBinds = [...guardBinds, path, 0];
+  } else {
+    const leaves: CandidateLeaf[] = [];
+    candidateLeaves(element, leaves);
+    coreSql = `${guard} and json_contains(${column}, ?, ?)`;
+    coreBinds = [...guardBinds, serializeCandidate(leaves), path];
+  }
+
+  if (negated) {
+    return { sql: `not coalesce(${coreSql}, ?)`, binds: [...coreBinds, 0] };
+  }
+  return { sql: coreSql, binds: coreBinds };
 }
 
 // --- neutral-type → MariaDB column type (the m-core table) ----------------------
@@ -404,6 +543,9 @@ export const mariadbDialect: Dialect = {
   orderByTerm,
   rowLimit,
   bytesProjection,
+  nestedExtraction,
+  typedCast,
+  nestedArrayPredicate,
   applyReadLock,
   columnType: mariadbColumnType,
   bindValue,

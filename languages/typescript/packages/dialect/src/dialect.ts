@@ -42,6 +42,62 @@ export interface DialectParsers {
 }
 
 /**
+ * A produced SQL fragment plus the binds it introduces, in placeholder order —
+ * the shape a divergent extraction/traversal decision point returns (modeled on
+ * `bytesProjection`). The caller splices `sql` into the statement and appends
+ * `binds` to its accumulator so the `?` holes and their values stay aligned.
+ */
+export interface DialectFragment {
+  readonly sql: string;
+  readonly binds: readonly unknown[];
+}
+
+/**
+ * A resolved element predicate applied to ONE element of a `many` value object
+ * (`m-value-object` to-many, `m-op-algebra`). The m-sql compiler resolves the
+ * element-relative paths + literal types against the declared array member and
+ * hands the dialect this **neutral** tree; each dialect renders it its own way
+ * (`m-dialect` array-traversal form) — Postgres a general predicate over the
+ * unnested element alias, MariaDB a `json_contains` candidate it can only build
+ * from the equality forms (the containment-golden scope). Values are already
+ * coerced to their canonical wire form.
+ */
+export type ResolvedElementPredicate =
+  | {
+      readonly op: "eq" | "notEq" | "gt" | "gte" | "lt" | "lte";
+      readonly path: readonly string[];
+      readonly value: unknown;
+      readonly valueType: string;
+    }
+  | {
+      readonly op: "in";
+      readonly path: readonly string[];
+      readonly values: readonly unknown[];
+      readonly valueType: string;
+    }
+  | { readonly op: "isNull" | "isNotNull"; readonly path: readonly string[] }
+  | { readonly op: "and" | "or"; readonly operands: readonly ResolvedElementPredicate[] }
+  | { readonly op: "not" | "group"; readonly operand: ResolvedElementPredicate };
+
+/**
+ * The request the m-sql compiler hands the dialect to lower a to-many
+ * value-object predicate through the `m-dialect` **array-traversal** decision
+ * point. `column` is the alias-qualified structured-document column
+ * (`t0.address`); `arrayPath` the document segments reaching the `many` member
+ * (`['phones']`); `elementAlias` the alias the compiler allocated for the
+ * Postgres set-returning unnest (unused by MariaDB's containment family);
+ * `negated` distinguishes `nestedNotExists` from `nestedExists`; `element` the
+ * per-element predicate (absent ⇒ a non-empty existence test).
+ */
+export interface NestedArrayRequest {
+  readonly column: string;
+  readonly arrayPath: readonly string[];
+  readonly elementAlias: string;
+  readonly negated: boolean;
+  readonly element?: ResolvedElementPredicate;
+}
+
+/**
  * The single normative dialect contract. Every SQL-dialect variation the catalog
  * enumerates is a member here; a concrete database supplies one conforming object.
  */
@@ -87,6 +143,37 @@ export interface Dialect {
     qualifiedColumn: string,
     outputName: string,
   ): { readonly sql: string; readonly binds: readonly unknown[] };
+
+  // --- value-object structured-column lowering (m-value-object / m-sql) ---
+  /**
+   * The **nested extraction form** decision point (`m-dialect`): extract a scalar
+   * from a structured-document column at the given document path. `baseExpression`
+   * is the alias-qualified column (`t0.address`) or a to-many element expression
+   * (`t1.value`); `segments` the document path (`['geo', 'country']`). The bind
+   * shape **diverges** — Postgres `jsonb_extract_path_text(col, ?, …)` carries one
+   * `?` per segment; MariaDB `json_value(col, ?)` carries one `'$.a.b'` path bind —
+   * so this returns the SQL plus its own binds (`m-case-format` per-dialect binds).
+   */
+  nestedExtraction(baseExpression: string, segments: readonly string[]): DialectFragment;
+  /**
+   * The **typed cast form** decision point (`m-dialect`): wrap a text extraction in
+   * a cast to a non-text declared neutral type before comparing (Postgres
+   * `cast(… as double precision)` / `… as bigint`, MariaDB `cast(… as double)` /
+   * `… as signed`). A `string` (or otherwise text) attribute compares directly, so
+   * the extraction is returned unchanged.
+   */
+  typedCast(extraction: string, neutralType: string): string;
+  /**
+   * The **array traversal form** decision point (`m-dialect`): lower a to-many
+   * value-object predicate. Postgres emits a correlated `jsonb_array_elements`
+   * unnest under a `case`/`jsonb_typeof` array guard (fully general over the
+   * element predicate); MariaDB the `json_contains` / `json_length` containment
+   * family under a `json_type(json_extract(…)) = 'ARRAY'` guard — which lowers only
+   * the equality forms of the containment golden and **rejects** a non-equality
+   * element predicate with a capability diagnostic (the documented deferred
+   * limitation). Returns the predicate SQL plus its per-dialect binds.
+   */
+  nestedArrayPredicate(request: NestedArrayRequest): DialectFragment;
 
   // --- schema / DDL vocabulary ---
   /** Map an m-core neutral type (+ optional max length) to this dialect's column type. */

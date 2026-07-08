@@ -31,6 +31,7 @@ import {
   Metamodel,
   type NormalizedAttribute,
   type NormalizedRelationship,
+  type NormalizedValueObjectMember,
   type Operation,
 } from "@parallax/operation";
 import type {
@@ -39,6 +40,7 @@ import type {
   AxisPins as CompilerAxisPins,
   ProjectionColumn,
   ResolvedColumn,
+  ResolvedNestedPath,
   ResolvedRelationship,
   SchemaResolver,
 } from "@parallax/sql";
@@ -96,6 +98,71 @@ export class MetamodelSchema implements SchemaResolver {
       childTable: correlation.childTable,
       childColumn: this.dialect.quoteIdentifier(correlation.childColumn),
       parentColumn: this.dialect.quoteIdentifier(correlation.parentColumn),
+    };
+  }
+
+  /**
+   * Resolve a value-object nested path (`Class.vo.field…`, or `Class.vo…` for an
+   * exists) against the declared recursive structure (m-value-object). The first
+   * segment after the class names a top-level value object (the one
+   * structured-document column); each further segment a nested value object or, at
+   * the leaf, a typed attribute. `manyIndex` records the first `many` member crossed
+   * within the full path — including the TOP-LEVEL value object itself (a top-level
+   * `many` is `manyIndex === 0`, a root array), so a `many` crossing turns a flat
+   * extraction into an any-element traversal; `leafType` / `leafIsMany` describe the
+   * terminal member (a top-level `many` reached with empty `rest` is the to-many
+   * leaf of an exists). An
+   * unresolved segment throws — but by the time compile runs, the `rejected`-case
+   * validator (`@parallax/operation`) has already refused a bad path pre-SQL.
+   */
+  resolveNested(ref: string): ResolvedNestedPath {
+    const [className, voName, ...rest] = ref.split(".");
+    const entity = this.metamodel.entity(className as string);
+    const top = voName === undefined ? undefined : entity.findValueObject(voName);
+    if (top === undefined) {
+      throw new Error(
+        `'${ref}': '${String(voName)}' is not a value object declared on ${className}`,
+      );
+    }
+    let member: NormalizedValueObjectMember = top;
+    // `manyIndex` counts the full nested path with the top-level value object at index
+    // 0. A top-level `many` value object makes the ROOT the first `many` crossing
+    // (`manyIndex === 0`, an empty `arrayPath` — the document column itself is the
+    // array); a nested `many` at `rest[k]` is `k + 1`; a to-one-only path is `-1`.
+    let manyIndex = top.cardinality === "many" ? 0 : -1;
+    let leafIsAttribute = false;
+    let leafType: string | undefined;
+    // An exists path with empty `rest` terminates AT the top-level value object, so a
+    // top-level `many` is itself the to-many leaf (`nestedExists(Class.vo)`).
+    let leafIsMany = rest.length === 0 && top.cardinality === "many";
+    rest.forEach((segment, index) => {
+      const nested = member.valueObjects.find((vo) => vo.name === segment);
+      if (nested !== undefined) {
+        if (nested.cardinality === "many" && manyIndex === -1) {
+          manyIndex = index + 1;
+        }
+        member = nested;
+        if (index === rest.length - 1) {
+          leafIsAttribute = false;
+          leafIsMany = nested.cardinality === "many";
+        }
+        return;
+      }
+      const attribute = member.attributes.find((attr) => attr.name === segment);
+      if (attribute === undefined) {
+        throw new Error(`'${ref}': '${segment}' is not a member of value object '${member.name}'`);
+      }
+      leafIsAttribute = true;
+      leafType = attribute.type;
+    });
+    return {
+      table: entity.table,
+      column: this.dialect.quoteIdentifier(top.column),
+      segments: rest,
+      manyIndex,
+      leafIsAttribute,
+      ...(leafType === undefined ? {} : { leafType }),
+      leafIsMany,
     };
   }
 
@@ -205,7 +272,31 @@ export function readProjection(
   if (firstRow && Object.keys(firstRow).length > 0) {
     return Object.keys(firstRow).map((output) => projectionForOutput(output, rootEntity, dialect));
   }
+  // A value-object materialization / temporal graph read (m-value-object) carries
+  // no `then.rows`; the projection is the graph root object's keys, so the whole
+  // structured-document column projects verbatim with the owner (`t0.address`) —
+  // the getter surface decodes the nested composite from that one column.
+  const graphWitness = firstGraphRow(loaded);
+  if (graphWitness && Object.keys(graphWitness).length > 0) {
+    return Object.keys(graphWitness).map((output) =>
+      projectionForOutput(output, rootEntity, dialect),
+    );
+  }
   return defaultEntityProjection(rootEntity).map((attr) => attributeProjection(attr, dialect));
+}
+
+/** The first root-object witness of a case's `then.graph`, or `undefined` when absent. */
+function firstGraphRow(loaded: LoadedCase): Record<string, unknown> | undefined {
+  const graph = loaded.raw.then?.graph as
+    | Record<string, readonly Record<string, unknown>[]>
+    | undefined;
+  if (graph === undefined) {
+    return undefined;
+  }
+  const rootKey = Object.keys(graph)[0];
+  const rootRows = rootKey ? graph[rootKey] : undefined;
+  const witness = rootRows?.[0];
+  return witness && typeof witness === "object" ? witness : undefined;
 }
 
 /**
@@ -238,6 +329,19 @@ function projectionForOutput(
       return {
         column: dialect.quoteIdentifier(bytesAttr.column),
         type: "bytes",
+        outputName: output,
+      };
+    }
+  }
+  // A value-object inner field projected by name (m-value-object structured-column
+  // read — `m-value-object-003` projects `city`): a depth-1 attribute of a declared
+  // top-level value object lowers through the dialect's nested-extraction form
+  // (`jsonb_extract_path_text(t0.address, ?) city`) rather than a bare column.
+  for (const valueObject of entity.valueObjects()) {
+    if (valueObject.attributes.some((attr) => attr.name === output)) {
+      return {
+        column: dialect.quoteIdentifier(valueObject.column),
+        nested: [output],
         outputName: output,
       };
     }

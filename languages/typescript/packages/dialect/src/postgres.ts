@@ -25,7 +25,12 @@ import {
   timestampFromRaw,
   toWire,
 } from "@parallax/core";
-import type { Dialect } from "./dialect.js";
+import type {
+  Dialect,
+  DialectFragment,
+  NestedArrayRequest,
+  ResolvedElementPredicate,
+} from "./dialect.js";
 import { classifyErrorCode } from "./errors.js";
 
 /** The dialect identifier this seam answers for. */
@@ -131,7 +136,180 @@ export function bytesProjection(
   qualifiedColumn: string,
   outputName: string,
 ): { readonly sql: string; readonly binds: readonly unknown[] } {
-  return { sql: `encode(${qualifiedColumn}, ?) ${outputName}`, binds: [HEX_ENCODE_FORMAT] };
+  return {
+    sql: `encode(${qualifiedColumn}, ?) ${outputName}`,
+    binds: [HEX_ENCODE_FORMAT],
+  };
+}
+
+// --- value-object structured-column lowering (m-value-object / m-sql) ---------
+
+/**
+ * Postgres **nested extraction form** (`m-dialect`): `jsonb_extract_path_text(col,
+ * ?, …)` — one `?` bind **per path segment**, in path order. A JSON `null` leaf, a
+ * missing key, and a non-object intermediate all extract SQL `NULL` (the
+ * absence-collapse rule). Serves both a top-level column (`t0.address`) and a
+ * to-many element (`t1.value`).
+ */
+export function nestedExtraction(
+  baseExpression: string,
+  segments: readonly string[],
+): DialectFragment {
+  const placeholders = segments.map(() => "?").join(", ");
+  return {
+    sql: `jsonb_extract_path_text(${baseExpression}, ${placeholders})`,
+    binds: [...segments],
+  };
+}
+
+/** Postgres cast targets for the non-text neutral types (the m-dialect typed-cast table). */
+const POSTGRES_CASTS: Readonly<Record<string, string>> = {
+  int32: "bigint",
+  int64: "bigint",
+  float32: "double precision",
+  float64: "double precision",
+};
+
+/**
+ * Postgres **typed cast form** (`m-dialect`): the text extraction is cast to the
+ * declared neutral type before a numeric comparison — `cast(<extraction> as double
+ * precision)` / `… as bigint` / `… as decimal(p, s)`. A `string` (or any
+ * text/temporal) attribute compares directly, so the extraction is returned
+ * unchanged.
+ */
+export function typedCast(extraction: string, neutralType: string): string {
+  const decimal = DECIMAL_TYPE.exec(neutralType);
+  if (decimal) {
+    return `cast(${extraction} as decimal(${decimal[1]}, ${decimal[2]}))`;
+  }
+  const target = POSTGRES_CASTS[neutralType];
+  return target === undefined ? extraction : `cast(${extraction} as ${target})`;
+}
+
+/** The JSON type-name / empty-array literals the array guard binds (kept as `?` binds). */
+const PG_JSON_ARRAY_TYPE = "array";
+const PG_EMPTY_ARRAY = "[]";
+
+/**
+ * Render a resolved element predicate over the Postgres unnested element alias
+ * (`t1.value`) — the general lowering the correlated `jsonb_array_elements` subquery
+ * carries in its `where`. Every leaf reads the element field with the ordinary
+ * `jsonb_extract_path_text` extraction (a numeric leaf casts); the combinators map
+ * to `and` / `or` / leading-`not` / parenthesized `group`.
+ */
+function renderElement(pred: ResolvedElementPredicate, base: string): DialectFragment {
+  switch (pred.op) {
+    case "eq":
+    case "notEq": {
+      const ext = nestedExtraction(base, pred.path);
+      // Cast the text extraction to the declared leaf type before comparing, exactly
+      // as the range ops below do (m-dialect typed-cast form): a no-op for a string
+      // element field (so the equality-only corpus goldens stay byte-identical) and a
+      // real cast for a numeric one. A boolean field compares as JSON text.
+      const expr = `${typedCast(ext.sql, pred.valueType)} = ?`;
+      return {
+        sql: pred.op === "notEq" ? `not ${expr}` : expr,
+        binds: [...ext.binds, elementCompareBind(pred.value, pred.valueType)],
+      };
+    }
+    case "gt":
+    case "gte":
+    case "lt":
+    case "lte": {
+      const ext = nestedExtraction(base, pred.path);
+      return {
+        sql: `${typedCast(ext.sql, pred.valueType)} ${COMPARISON_OPS[pred.op]} ?`,
+        binds: [...ext.binds, pred.value],
+      };
+    }
+    case "in": {
+      const ext = nestedExtraction(base, pred.path);
+      const placeholders = pred.values.map(() => "?").join(", ");
+      return {
+        sql: `${typedCast(ext.sql, pred.valueType)} in (${placeholders})`,
+        binds: [
+          ...ext.binds,
+          ...pred.values.map((value) => elementCompareBind(value, pred.valueType)),
+        ],
+      };
+    }
+    case "isNull": {
+      const ext = nestedExtraction(base, pred.path);
+      return { sql: `${ext.sql} is null`, binds: [...ext.binds] };
+    }
+    case "isNotNull": {
+      const ext = nestedExtraction(base, pred.path);
+      return { sql: `not ${ext.sql} is null`, binds: [...ext.binds] };
+    }
+    case "and":
+    case "or": {
+      const parts = pred.operands.map((operand) => renderElement(operand, base));
+      return {
+        sql: parts.map((part) => part.sql).join(` ${pred.op} `),
+        binds: parts.flatMap((part) => [...part.binds]),
+      };
+    }
+    case "not": {
+      const inner = renderElement(pred.operand, base);
+      return { sql: `not ${inner.sql}`, binds: inner.binds };
+    }
+    case "group": {
+      const inner = renderElement(pred.operand, base);
+      return { sql: `(${inner.sql})`, binds: inner.binds };
+    }
+  }
+}
+
+/**
+ * The comparison-bind form of an equality/membership element value. A **boolean**
+ * element field carries no typed cast (m-dialect specifies casts only for int /
+ * float / decimal), so it compares against its JSON-text form (`'true'` / `'false'`)
+ * over the text extraction, rather than an invented boolean cast. Every other value
+ * (already coerced to its wire form upstream) binds unchanged — a numeric field casts
+ * the extraction instead. (Contrast MariaDB's containment candidate, which carries the
+ * native JSON boolean.)
+ */
+function elementCompareBind(value: unknown, valueType: string): unknown {
+  if (valueType === "boolean" && typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  return value;
+}
+
+/** The SQL comparison operator for each range element op. */
+const COMPARISON_OPS: Readonly<Record<"gt" | "gte" | "lt" | "lte", string>> = {
+  gt: ">",
+  gte: ">=",
+  lt: "<",
+  lte: "<=",
+};
+
+/**
+ * Postgres **array traversal form** (`m-dialect`): a correlated `exists` over a
+ * set-returning `jsonb_array_elements` unnest. The strict `jsonb_array_elements`
+ * errors on a non-array, so the array is reached through a `case`/`jsonb_typeof`
+ * guard that yields the extracted value only when it IS a JSON array and an empty
+ * `[]` otherwise — folding every non-array `many` value (NULL column, missing key,
+ * JSON `null`, scalar, object) to zero elements (absence collapse). The path binds
+ * **twice** (in the `when` and the `then`), plus the type name `array` and `[]`.
+ * `nestedNotExists` prepends a leading `not`; the lowering is fully general over the
+ * element predicate.
+ */
+export function nestedArrayPredicate(request: NestedArrayRequest): DialectFragment {
+  const { column, arrayPath, elementAlias, negated, element } = request;
+  const pathHoles = arrayPath.map(() => ", ?").join("");
+  const guard =
+    `case when jsonb_typeof(jsonb_extract_path(${column}${pathHoles})) = ? ` +
+    `then jsonb_extract_path(${column}${pathHoles}) else cast(? as jsonb) end`;
+  const guardBinds = [...arrayPath, PG_JSON_ARRAY_TYPE, ...arrayPath, PG_EMPTY_ARRAY];
+  const rendered =
+    element === undefined ? undefined : renderElement(element, `${elementAlias}.value`);
+  const where = rendered === undefined ? "" : ` where ${rendered.sql}`;
+  const exists = `exists (select 1 from jsonb_array_elements(${guard}) ${elementAlias}${where})`;
+  return {
+    sql: negated ? `not ${exists}` : exists,
+    binds: [...guardBinds, ...(rendered?.binds ?? [])],
+  };
 }
 
 // --- neutral-type → Postgres column type (the m-core table) ---------------------
@@ -363,6 +541,9 @@ export const postgresDialect: Dialect = {
   orderByTerm,
   rowLimit,
   bytesProjection,
+  nestedExtraction,
+  typedCast,
+  nestedArrayPredicate,
   applyReadLock,
   columnType: postgresColumnType,
   bindValue,

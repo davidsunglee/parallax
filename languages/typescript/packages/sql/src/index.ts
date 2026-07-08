@@ -23,6 +23,7 @@ export {
   newCompileCtx,
   type ProjectionColumn,
   type ResolvedColumn,
+  type ResolvedNestedPath,
   type ResolvedRelationship,
   type SchemaResolver,
 } from "./compile.js";
