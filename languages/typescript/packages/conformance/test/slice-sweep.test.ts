@@ -86,14 +86,16 @@ function readGolden(loaded: LoadedCase): { sql: string; binds: readonly unknown[
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the harness-lane slice-mvp-1 slice (168 cases)", () => {
+  it("discovers the harness-lane slice-mvp-1 slice (173 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case. This is the
     // harness-executable subset (api-conformance-lane cases are filtered out). It
     // grew by the 42 value-object cases (all harness-lane) in Phase 11, then by the
     // 8 m-bitemp-write cases (COR-26), then by the 7 audit-chaining / unit-work RYOW
-    // cases (COR-26 Phase 2) — all harness-lane.
-    expect(CASES.length).toBe(168);
+    // cases (COR-26 Phase 2), then by the 5 batch-DELETE / opt-lock-edge / mixed-op
+    // cases (COR-26 Phase 3: m-batch-write-003/004, m-opt-lock-012/013,
+    // m-unit-work-009) — all harness-lane.
+    expect(CASES.length).toBe(173);
   });
 
   it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
@@ -189,12 +191,13 @@ group("case-matrix report — the slice is green at a glance", () => {
     // The rendered report is the human-facing artifact; surface it on failure so
     // a regression names the exact residual case IDs.
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(168);
-    // 158 non-rejected cases compile `ok` (143 + the 8 m-bitemp-write cases, COR-26,
-    // + the 7 audit-chaining / unit-work RYOW cases, COR-26 Phase 2); the 10
+    expect(report.total).toBe(173);
+    // 163 non-rejected cases compile `ok` (143 + the 8 m-bitemp-write cases, COR-26,
+    // + the 7 audit-chaining / unit-work RYOW cases, COR-26 Phase 2, + the 5
+    // batch-DELETE / opt-lock-edge / mixed-op cases, COR-26 Phase 3); the 10
     // value-object `rejected` cases are graded `pass` (a correct pre-SQL refusal
     // naming the rule).
-    expect(report.counts.ok).toBe(158);
+    expect(report.counts.ok).toBe(163);
     expect(report.counts.pass).toBe(10);
     expect(report.residuals).toEqual([]);
   });

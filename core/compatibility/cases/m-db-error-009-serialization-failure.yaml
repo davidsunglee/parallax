@@ -1,0 +1,53 @@
+# Serialization failure classifies to `deadlock` (m-db-error). A real Postgres
+# SQLSTATE 40001 (`could not serialize access due to read/write dependencies`) is
+# folded into the retriable `deadlock` category — the SAME neutral class as a true
+# lock-cycle deadlock (40P01) — with NO vocabulary change (m-db-error.md:33-37;
+# errors.py already maps 40001 -> deadlock).
+#
+# The trigger is a classic SERIALIZABLE write-skew, distinct from the lock-cycle
+# deadlock cases (m-db-error-004/005): there is NO lock contention. Under SSI both
+# transactions read one row and write ANOTHER (no write-write conflict, so neither
+# blocks), forming a read/write dependency CYCLE the serializable monitor detects at
+# COMMIT — victimizing one transaction with 40001:
+#   round 0 : A reads gauge 2, B reads gauge 1 (each takes its SIREAD predicate lock)
+#   round 1 : A writes gauge 1, B writes gauge 2 (crossing the reads — the dangerous
+#             structure; different rows, so neither blocks)
+#   commit  : the runner commits both held SERIALIZABLE transactions; the cycle makes
+#             ONE commit raise 40001. The runner classifies whichever is victimized.
+#
+# Postgres-only: 40001 is a Postgres SQLSTATE. MariaDB surfaces serialization
+# conflicts as its deadlock errno (1213), already witnessed by m-db-error-004/005, so
+# this case carries only a `postgres` golden + native code (the harness runs it on
+# Postgres and skips MariaDB, which declares no golden here).
+model: models/error-cases.yaml
+tags: [m-db-error, deadlock, serialization]
+shape: error
+given:
+  fixtures: true
+when:
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.v from gauge t0 where t0.id = ?
+              binds: [2]
+        B:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.v from gauge t0 where t0.id = ?
+              binds: [1]
+      - A:
+          statements:
+            - sql:
+                postgres: update gauge set v = ? where id = ?
+              binds: [11, 1]
+        B:
+          statements:
+            - sql:
+                postgres: update gauge set v = ? where id = ?
+              binds: [21, 2]
+then:
+  errorClass: deadlock
+  nativeCode:
+    postgres: "40001"

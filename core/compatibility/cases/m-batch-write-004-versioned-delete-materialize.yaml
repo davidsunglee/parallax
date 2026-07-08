@@ -1,0 +1,44 @@
+# Versioned set-based DELETE materializes per key (m-batch-write + m-opt-lock, ADR 0014).
+#
+# The versioned complement of m-batch-write-003's collapse. A set-based delete
+# targeting a VERSIONED entity (Account) has NO collapsed `id in (...)` template —
+# each row's delete must GATE on that row's observed version — so it MATERIALIZES:
+# one keyed, version-gated `delete from account where id = ? and version = ?` per
+# resolved row, mirroring the versioned set-based UPDATE (m-opt-lock-003/004). A
+# per-key gate matching zero rows would be the `updatedRows != 1` conflict signal
+# (m-opt-lock-005); here no concurrent writer intervenes, so each gated delete
+# matches its row exactly (observed version 1) and removes it.
+#
+# Fixtures are loaded first (accounts 1/2/3 at version 1). The materialize deletes
+# accounts 1 and 2 (each gated on version 1), leaving account 3 untouched. The
+# harness applies the ordered DML and reads the table back — the per-key materialize
+# is proven by the rows it removes (1 and 2 gone, 3 intact), never collapsed into an
+# IN list. The materialize READ round trip that resolves the predicate to rows is
+# proven separately by the versioned set-based UPDATE scenarios (m-opt-lock-003/004);
+# this case pins the versioned DELETE *write* shape.
+model: models/account.yaml
+tags: [m-batch-write, m-opt-lock, m-sql, write-sequence, materialize, slice-mvp-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: delete
+      entity: Account
+      statements: 2
+      note: a versioned set-based delete materializes to ONE version-gated delete per key
+      rows:
+        - { id: 1, observedVersion: 1 }
+        - { id: 2, observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: delete from account where id = ? and version = ?
+      binds: [1, 1]
+    - sql:
+        postgres: delete from account where id = ? and version = ?
+      binds: [2, 1]
+  tableState:
+    account:
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+  roundTrips: 2

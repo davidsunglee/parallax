@@ -26,8 +26,8 @@ function sliceIds(): readonly string[] {
 const SLICE = sliceIds();
 const EXERCISED_IDS = new Set(EXERCISED.map(idOf));
 
-it("discovers the whole slice-mvp-1 slice (180 cases)", () => {
-  expect(SLICE.length).toBe(180);
+it("discovers the whole slice-mvp-1 slice (185 cases)", () => {
+  expect(SLICE.length).toBe(185);
 });
 
 it("every in-slice case is exercised or skipped-with-reason (no silent gaps)", () => {

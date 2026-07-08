@@ -1,0 +1,38 @@
+# Batched DELETE collapse (m-batch-write): buffered deletes of a NON-versioned
+# entity flush as ONE set-based `DELETE ... WHERE id IN (...)`, not one per row.
+#
+# The delete analogue of m-batch-write-001's multi-row INSERT collapse. At the
+# unit-of-work boundary three buffered deletes of Wallet collapse into a SINGLE
+# statement with an `id in (?, ?, ?)` predicate binding every key — never three
+# `delete ... where id = ?` statements (that per-row shape is the FK-ordered
+# m-unit-work-007 direction, where ordering matters). This is honest ONLY for a
+# NON-VERSIONED entity: a versioned entity's set-based delete MUST materialize
+# into per-object version-gated deletes (m-batch-write-004 / m-opt-lock / ADR 0014),
+# so the collapse cannot apply to it.
+#
+# Fixtures are loaded first (wallets 1/2/3); the collapse deletes all three,
+# leaving the table empty. The harness applies the golden DML and reads the table
+# back empty — the collapse is proven by the rows it removes, not merely asserted.
+model: models/wallet.yaml
+tags: [m-batch-write, m-sql, write-sequence, slice-mvp-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: delete
+      entity: Wallet
+      statements: 1
+      note: three buffered deletes collapse into ONE `delete ... where id in (?, ?, ?)`
+      rows:
+        - { id: 1 }
+        - { id: 2 }
+        - { id: 3 }
+then:
+  statements:
+    - sql:
+        postgres: delete from wallet where id in (?, ?, ?)
+      binds: [1, 2, 3]
+  tableState:
+    wallet: []
+  roundTrips: 1

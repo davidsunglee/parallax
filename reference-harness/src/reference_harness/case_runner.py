@@ -1727,9 +1727,25 @@ def _assert_delete_input(
 ) -> None:
     # A delete / cascadeDelete row carries only the pk (the `where` key — no written
     # columns), so ① supplies no INSERT/SET column list to cross-check; assert the
-    # pk value appears in each statement's binds (each DELETE keys on it, or on a
-    # same-valued foreign key for the dependent cascade statements).
+    # pk value(s) appear in the DELETE binds.
     pk_values = [pk for _, pk, _, _ in classified]
+    # A COLLAPSED set-based DELETE (m-batch-write-003) is ONE statement whose
+    # `id in (…)` binds carry EVERY buffered pk. Cross-check that all of them appear
+    # — a meaningful check for the collapse (a dropped/typo'd key is caught). The
+    # per-statement path below (one statement per row: the FK-ordered m-unit-work-007
+    # deletes, the versioned per-key m-batch-write-004 deletes, the dependent-cascade
+    # m-cascade-delete-001 statements keyed on a same-valued FK) keeps the weaker
+    # "this statement's binds carry SOME pk" check, since those bind a single key.
+    collapsed = len(step_binds) == 1 and len(pk_values) > 1
+    if collapsed:
+        binds = step_binds[0]
+        missing = [pk for pk in pk_values if not any(_write_value_equal(pk, b) for b in binds)]
+        if missing:
+            raise CaseFailure(
+                f"{case.path.name}: the collapsed DELETE binds {binds} omit neutral write "
+                f"input pk value(s) {missing}."
+            )
+        return
     for binds in step_binds:
         if not any(_write_value_equal(pk, bind) for pk in pk_values for bind in binds):
             raise CaseFailure(
@@ -2662,16 +2678,29 @@ def _assert_classified(case: Case, db: DatabaseProvider, exc: Exception) -> None
 
 
 def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
-    """Two-node, barrier-synchronized lock contention (deadlock / lock timeout).
+    """Two-node, barrier-synchronized contention (deadlock / lock timeout / serialization).
 
     Each node (A, B) runs on its own thread over its own non-autocommit session.
     A threading.Barrier separates rounds so round k completes for both nodes
-    before round k+1 begins -- guaranteeing both first locks are held before the
-    contention round. In that round both statements block; the DB resolves the
-    contention (deadlock victim, or lock-wait timeout) and one statement raises.
-    A thread that catches an error ROLLS BACK immediately (releasing its locks so
-    the peer can proceed) then meets the barrier. The single raised error is
-    classified. Sessions are rolled back + closed in a finally.
+    before round k+1 begins -- guaranteeing both first locks/reads are established
+    before the contention round. In that round both statements block; the DB
+    resolves the contention (deadlock victim, or lock-wait timeout) and one
+    statement raises. A thread that catches an error ROLLS BACK immediately
+    (releasing its locks so the peer can proceed) then meets the barrier.
+
+    A **serialization-failure** case (Postgres SQLSTATE ``40001``) is a different
+    mechanism: there is NO lock contention -- under SERIALIZABLE both transactions
+    read one row and write ANOTHER (a read/write dependency cycle), so nothing
+    blocks and nothing raises mid-round. The dangerous structure surfaces only at
+    COMMIT, so this runner switches into a serialization mode (keyed off the
+    expected ``40001`` native code): each node runs its transaction at SERIALIZABLE
+    (an isolation SET the harness issues, NOT authored golden SQL) and, after the
+    rounds, the runner COMMITS each still-open transaction and captures the SSI
+    abort raised on the victim. This is orthogonal to the deadlock / lock-timeout
+    cases, which never enter serialization mode and behave exactly as before.
+
+    The single raised error is classified. Sessions are rolled back + closed in a
+    finally.
     """
     dialect = db.dialect
     concurrency = case.concurrency
@@ -2681,10 +2710,20 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     nodes = ("A", "B")
     barrier = threading.Barrier(len(nodes))
     raised: dict[str, Exception] = {}
+    # A serialization-failure case declares Postgres SQLSTATE 40001; it needs
+    # SERIALIZABLE isolation + a commit phase (the SSI abort is a commit-time event).
+    # Every other error/concurrency case (deadlock 40P01, lock-wait 55P03) leaves this
+    # False and keeps the original mid-round-raise-only behavior untouched.
+    serialization = str(case.expected_native_code.get(dialect)) == "40001"
 
     _provision(case, db)  # given.fixtures seeds the lockable Gauge rows
 
     def run_node(node: str, session: Any) -> None:
+        errored = False
+        if serialization:
+            # A read/write dependency cycle is only a *conflict* under SERIALIZABLE;
+            # set it as the first statement of the transaction (before any read).
+            session.execute("set transaction isolation level serializable")
         for rnd in rounds:
             step = rnd.get(node)
             pairs = _entry_pairs(step.get("statements"), dialect) if isinstance(step, dict) else []
@@ -2694,12 +2733,25 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
                         session.execute(sql, binds)
                 except Exception as exc:  # noqa: BLE001 -- the contention signal
                     raised[node] = exc
+                    errored = True
                     with contextlib.suppress(Exception):
                         session.rollback()  # release locks so the peer unblocks
             try:
                 barrier.wait(timeout=30)
             except threading.BrokenBarrierError:
                 return
+        # Serialization mode: the dangerous read/write cycle surfaces at COMMIT, not
+        # mid-round. Commit each still-open transaction; the SSI monitor aborts one
+        # with 40001, which this captures as the contention signal (the peer commits
+        # cleanly). The barrier above guarantees BOTH transactions finished their
+        # reads + writes before either commits, so the cycle is complete.
+        if serialization and not errored:
+            try:
+                session.commit()
+            except Exception as exc:  # noqa: BLE001 -- the serialization-failure signal
+                raised[node] = exc
+                with contextlib.suppress(Exception):
+                    session.rollback()
 
     with contextlib.ExitStack() as stack:
         sessions = {node: stack.enter_context(db.open_session()) for node in nodes}

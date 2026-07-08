@@ -1,0 +1,55 @@
+# Mixed-op flush ordering (m-unit-work): one unit of work buffering an INSERT, an
+# UPDATE, and a DELETE flushes them in the combined canonical order — inserts,
+# then updates, then deletes.
+#
+# m-unit-work-003 / m-unit-work-007 pin FK ordering within a single mutation kind;
+# this pins the ordering ACROSS kinds in one flush. The unit of work buffers three
+# writes of Account and, at the boundary, flushes them grouped by kind (insert ->
+# update -> delete) in a single committed step, after which a dependent find proves
+# the combined net state:
+#   step 0 write : COMMIT three buffered writes in flush order —
+#                    (1) insert a new account 9 (Noether, 5.00),
+#                    (2) update account 1's balance 100.00 -> 20.00 (version 1 -> 2),
+#                    (3) delete account 3 (Grace, 10.00).
+#   step 1 find  : `balance < 50` re-resolves (cache MISS) and MUST observe the
+#                  combined result — account 1 at 20.00 (the update landed), account 9
+#                  at 5.00 (the insert landed), and NOT account 3, which qualified at
+#                  10.00 before the flush but is gone (the delete landed). Account 2
+#                  (250.00) is excluded by the predicate.
+# The single find witnesses all three flushed ops at once. roundTrips = 4 (the three
+# flushed writes + the dependent find).
+model: models/account.yaml
+tags: [m-unit-work, m-sql, mixed-op-flush, scenario, slice-mvp-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - write: flush
+      roundTrips: 3
+      note: one flush, combined order — insert account 9, update account 1, delete account 3
+      statements:
+        - sql:
+            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [9, Noether, 5.00, 1]
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ?
+          binds: [20.00, 2, 1]
+        - sql:
+            postgres: delete from account where id = ?
+          binds: [3]
+    - find:
+        lessThan:
+          attr: Account.balance
+          value: 50.00
+      roundTrips: 1
+      note: the combined net state — account 1 (20.00) + account 9 (5.00); account 3 was deleted, account 2 excluded
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+          binds: [50.00]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 20.00, version: 2 }
+        - { id: 9, owner: Noether, balance: 5.00, version: 1 }
+then:
+  roundTrips: 4

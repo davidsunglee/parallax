@@ -89,3 +89,32 @@ export function keyedUpdate(target: BatchTarget, setColumn: string): BatchStatem
 export function keyedDelete(target: BatchTarget): BatchStatement {
   return `delete from ${target.table} where ${target.pkColumn} = ?`;
 }
+
+/**
+ * Render a batched DELETE that collapses `keyCount` buffered deletes of a
+ * NON-versioned entity into ONE statement (`delete from t where <pk> in (?, …)`) —
+ * the delete analogue of {@link multiRowInsert} (`m-batch-write-003`). The caller
+ * binds every buffered pk in order. A versioned entity CANNOT collapse (each row
+ * gates on its own observed version); it uses {@link versionedDelete} per key.
+ */
+export function collapsedDelete(target: BatchTarget, keyCount: number): BatchStatement {
+  if (keyCount < 1) {
+    throw new Error("collapsedDelete requires at least one key");
+  }
+  const placeholders = Array.from({ length: keyCount }, () => "?").join(", ");
+  return `delete from ${target.table} where ${target.pkColumn} in (${placeholders})`;
+}
+
+/**
+ * Render ONE version-gated `delete` for a single row of a VERSIONED entity
+ * (`delete from t where <pk> = ? and <version> = ?`) — the versioned set-based
+ * delete's per-key materialize form (`m-batch-write-004` / `m-opt-lock`, ADR 0014).
+ * A versioned set-based delete has no collapsed `IN` template because each row's
+ * delete must gate on that row's observed version; the caller emits one of these
+ * per key, pairing each with its `[pk, observedVersion]` binds, and a per-key
+ * `≠1`-row outcome is the `updatedRows != 1` conflict. The version column is passed
+ * quoted so the caller quotes it consistently with the metamodel.
+ */
+export function versionedDelete(target: BatchTarget, versionColumn: string): BatchStatement {
+  return `delete from ${target.table} where ${target.pkColumn} = ? and ${versionColumn} = ?`;
+}

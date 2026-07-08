@@ -28,9 +28,11 @@ import { type VersionedTarget, versionAdvancingUpdate, versionedUpdate } from "@
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
 import {
   type BatchTarget,
+  collapsedDelete,
   combineWrites,
   keyedDelete,
   type PlannedStatement,
+  versionedDelete,
 } from "@parallax/transactions";
 import { dialectStatements, goldenEntries } from "./case-format.js";
 import { bindsEqual } from "./compare.js";
@@ -534,12 +536,13 @@ function batchStatementsForStep(
 ): readonly { sql: string; binds: readonly unknown[] }[] {
   const count = step.statements ?? 1;
   const rows = (step.rows ?? []).map((row) => classifyRow(entity, row));
-  // A non-temporal `delete` step flushes one keyed `delete from t where pk = ?` per
-  // buffered row (the FK-ordered delete direction, `m-unit-work-007`) — the pk is the
-  // `where` key; a delete writes no columns. Set-based DELETE collapse / versioned
-  // gated delete are separate batched forms.
+  // A non-temporal `delete` step flushes: a per-key keyed delete (the FK-ordered
+  // direction, `m-unit-work-007`), a collapsed `pk in (…)` for a NON-versioned
+  // set-based delete (`m-batch-write-003`), or a per-key version-gated delete for a
+  // VERSIONED set-based delete (`m-batch-write-004` / m-opt-lock). The pk is the
+  // `where` key; a delete writes no columns.
   if (step.mutation === "delete") {
-    return deleteStatements(entity, rows, dialect);
+    return deleteStatements(entity, rows, count, dialect);
   }
   const mutation = step.mutation === "insert" ? "insert" : "update";
   // A VERSIONED entity's keyed update advances its framework-owned version — the
@@ -633,20 +636,48 @@ function updateStatements(
 }
 
 /**
- * Plan a NON-temporal, non-versioned `delete` step from its classified ① rows: one
- * keyed `delete from <table> where <pk> = ?` per row (`@parallax/transactions`
- * `keyedDelete`), keyed on the row's primary key. A delete writes no columns, so ①
- * supplies only the pk (the `where` key) — no SET/INSERT column list to derive. The
- * unit of work flushes these in buffered order so a child is removed before the
- * parent it references (`m-unit-work-007`). Set-based DELETE collapse
- * (`delete … where id in (…)`) and the versioned gated delete are separate forms.
+ * Plan a NON-temporal `delete` step from its classified ① rows. Three forms, routed
+ * by the entity's version column and the step's declared statement `count`:
+ *
+ *  - a **versioned** entity materializes to one version-gated
+ *    `delete from t where <pk> = ? and <version> = ?` per row, bound
+ *    `[pk, observedVersion]` — it cannot collapse (each row gates on its own
+ *    observed version), mirroring the versioned UPDATE (`m-batch-write-004` /
+ *    m-opt-lock, ADR 0014);
+ *  - a **non-versioned** set-based delete of several rows in ONE statement
+ *    (`count === 1`, `rows > 1`) collapses to `delete from t where <pk> in (?, …)`
+ *    binding every pk (`m-batch-write-003`);
+ *  - otherwise one keyed `delete from t where <pk> = ?` per row (the FK-ordered
+ *    delete direction, `m-unit-work-007`).
+ *
+ * A delete writes no columns, so ① supplies only the pk (the `where` key) — and, for
+ * a versioned delete, `observedVersion` (the gate); no SET/INSERT list to derive.
  */
 function deleteStatements(
   entity: EntityMetadata,
   rows: readonly ClassifiedRow[],
+  count: number,
   dialect: Dialect,
 ): readonly { sql: string; binds: readonly unknown[] }[] {
   const target = batchTargetFor(entity, dialect);
+  const version = entity.versionAttribute();
+  if (version !== undefined) {
+    const versionColumn = dialect.quoteIdentifier(version.column);
+    return rows.map((row) => {
+      if (row.observedVersion === undefined) {
+        throw new Error(
+          `versioned delete on '${entity.name}' requires an observedVersion in its neutral write input (①)`,
+        );
+      }
+      return {
+        sql: versionedDelete(target, versionColumn),
+        binds: [row.pk, row.observedVersion],
+      };
+    });
+  }
+  if (count === 1 && rows.length > 1) {
+    return [{ sql: collapsedDelete(target, rows.length), binds: rows.map((row) => row.pk) }];
+  }
   return rows.map((row) => ({ sql: keyedDelete(target), binds: [row.pk] }));
 }
 

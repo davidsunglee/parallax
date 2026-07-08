@@ -199,6 +199,36 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "The unit-of-work developer idiom is already exercised by m-unit-work-001/-002/-003 in " +
       "transactions.api-conformance.test.ts — these are breadth variants whose specific goldens the run lane grades.",
   })),
+  // --- batch-DELETE + opt-lock edges + mixed-op flush (COR-26 Phase 3, already-claimed modules) ---
+  ...["m-batch-write-003", "m-batch-write-004"].map((id) => ({
+    id,
+    reason:
+      "set-based DELETE flush breadth (the non-versioned `delete ... where id in (...)` collapse and the " +
+      "versioned per-key version-gated materialize): the collapsed / materialized DML is proven end-to-end by the " +
+      "reference harness AND the conformance runner's run lane (slice-run drives @parallax/conformance's " +
+      "write-sequence plan, grading the resulting tableState). The batched-write developer idiom is already " +
+      "exercised by m-batch-write-001/-002 (and the versioned materialize by m-opt-lock-003/-004) in " +
+      "transactions.api-conformance.test.ts — these are the DELETE-form variants whose specific goldens the run lane grades.",
+  })),
+  ...["m-opt-lock-012", "m-opt-lock-013"].map((id) => ({
+    id,
+    reason:
+      "optimistic-lock edges (a `updatedRows != 1` conflict ABORTING the whole unit of work with no partial " +
+      "flush; a multi-attribute versioned update advancing the version once): the affected-row count and the " +
+      "aborted-then-unchanged / multi-column tableState are proven end-to-end by the reference harness AND the " +
+      "conformance runner's run lane (slice-run drives @parallax/conformance's scenario / conflict plan). The " +
+      "opt-lock developer idiom is already exercised by m-opt-lock-005/-006 (conflict + success) and the abort by " +
+      "m-unit-work-002 in transactions.api-conformance.test.ts — these are edge variants whose specific goldens the run lane grades.",
+  })),
+  {
+    id: "m-unit-work-009",
+    reason:
+      "mixed-op flush ordering (one unit of work flushing an insert + an update + a delete in the combined " +
+      "canonical order): the combined net state a dependent find observes is proven end-to-end by the reference " +
+      "harness AND the conformance runner's run lane (slice-run drives @parallax/conformance's scenario plan). The " +
+      "unit-of-work flush idiom is already exercised by m-unit-work-001/-003 in transactions.api-conformance.test.ts — " +
+      "this is a cross-kind flush-ordering variant whose specific golden the run lane grades.",
+  },
 ];
 
 /** The set of skipped case ids, for the coverage check. */
