@@ -2,7 +2,14 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { assertRoundTrip, canonical, deserialize, serialize } from "@parallax/serde";
 import { expect, describe as group, it } from "vitest";
-import { deriveTemporal, Metamodel, normalizeEntity, validateDescriptor } from "../src/index.js";
+import {
+  deriveTemporal,
+  findNestedValueObject,
+  findValueObjectAttribute,
+  Metamodel,
+  normalizeEntity,
+  validateDescriptor,
+} from "../src/index.js";
 
 /**
  * Resolve a repo-root-relative path from this test file. The metamodel package
@@ -184,6 +191,83 @@ group("default surfacing", () => {
     const address = metamodel.entity("Customer").findValueObject("address");
     expect(address?.mapping).toBe("json");
     expect(address?.nullable).toBe(true);
+  });
+
+  it("normalizes the recursive value-object structure (attributes, nested VOs, cardinality)", () => {
+    const customer = Metamodel.fromDescriptor(loadDescriptor("customer.yaml")).entity("Customer");
+    const address = customer.valueObjectByName("address");
+    // Top-level `address`: a single document with typed attributes and nested VOs.
+    expect(address.cardinality).toBe("one");
+    expect(address.attributes.map((a) => a.name)).toEqual(["street", "city"]);
+    expect(address.attributes.every((a) => a.type === "string")).toBe(true);
+    expect(address.valueObjects.map((vo) => vo.name)).toEqual(["geo", "phones"]);
+
+    // Nested to-one `geo`: its own typed attributes (elevation nullable) and further nesting.
+    const geo = findNestedValueObject(address, "geo");
+    expect(geo).toBeDefined();
+    if (geo) {
+      expect(geo.cardinality).toBe("one");
+      expect(findValueObjectAttribute(geo, "country")?.nullable).toBe(false);
+      expect(findValueObjectAttribute(geo, "elevation")).toEqual({
+        name: "elevation",
+        type: "float64",
+        nullable: true,
+      });
+    }
+
+    // Three-level path resolves through the reader accessor.
+    const point = customer.resolveValueObjectPath(["address", "geo", "point"]);
+    expect(point?.name).toBe("point");
+    expect(point?.cardinality).toBe("one");
+    expect(point?.attributes.map((a) => a.name)).toEqual(["lat", "lon"]);
+
+    // The to-many `phones` member surfaces `many` cardinality.
+    const phones = findNestedValueObject(address, "phones");
+    expect(phones?.cardinality).toBe("many");
+    expect(phones?.attributes.map((a) => a.name)).toEqual(["type", "number"]);
+
+    // Unresolved segments / names are reported rather than silently coerced.
+    expect(customer.resolveValueObjectPath(["address", "nope"])).toBeUndefined();
+    expect(() => customer.valueObjectByName("nope")).toThrow();
+  });
+
+  it("defaults value-object cardinality to one, mapping to json, nullability to false", () => {
+    // A value object that omits cardinality / mapping / nullable takes the schema
+    // defaults (one / json / non-null); its attributes default non-null too, at
+    // every depth.
+    const widget = Metamodel.fromDescriptor({
+      entity: {
+        name: "Widget",
+        table: "widget",
+        attributes: [{ name: "id", type: "int64", column: "id", primaryKey: true }],
+        valueObjects: [
+          {
+            name: "spec",
+            column: "spec",
+            attributes: [{ name: "code", type: "string" }],
+            valueObjects: [{ name: "dims", attributes: [{ name: "w", type: "int32" }] }],
+          },
+        ],
+      },
+    }).entity("Widget");
+
+    const spec = widget.valueObjectByName("spec");
+    expect(spec.cardinality).toBe("one");
+    expect(spec.mapping).toBe("json");
+    expect(spec.nullable).toBe(false);
+    expect(findValueObjectAttribute(spec, "code")).toEqual({
+      name: "code",
+      type: "string",
+      nullable: false,
+    });
+
+    const dims = widget.resolveValueObjectPath(["spec", "dims"]);
+    expect(dims).toBeDefined();
+    if (dims) {
+      expect(dims.cardinality).toBe("one");
+      expect(dims.nullable).toBe(false);
+      expect(findValueObjectAttribute(dims, "w")?.nullable).toBe(false);
+    }
   });
 
   it("deriveTemporal classifies each cardinality of asOf set", () => {
