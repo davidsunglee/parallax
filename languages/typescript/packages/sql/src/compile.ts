@@ -26,7 +26,7 @@
  * `@parallax/operation` (the DAG forbids `sql → metamodel`). The runner builds the
  * resolver from the m-descriptor reader.
  */
-import type { Dialect } from "@parallax/dialect";
+import type { Dialect, ResolvedElementPredicate } from "@parallax/dialect";
 import { type Operation, operationTag } from "@parallax/operation";
 import { coerceBind } from "./bind.js";
 
@@ -52,6 +52,41 @@ export interface ResolvedColumn {
    * goldens). Optional: a resolver that omits it defaults a column to NOT-NULL.
    */
   readonly nullable?: boolean;
+}
+
+/**
+ * A resolved value-object nested path (`Class.vo.field…` / `Class.vo…` for
+ * exists), against the declared recursive structure (m-value-object). The
+ * top-level value object maps to one structured-document `column` on `table`;
+ * `segments` is the document path AFTER the value-object name. `manyIndex` is the
+ * index of the first `many` member crossed within the FULL nested path (the
+ * top-level value object at index 0, then `segments`): `-1` for a to-one-only path
+ * (a flat extraction), `0` for a top-level `many` value object (the document column
+ * itself is the array — an empty `arrayPath`), and `k + 1` for a nested `many` at
+ * `segments[k]`. A `manyIndex >= 0` path lowers to the array-traversal any-element
+ * form. `leafIsAttribute` / `leafType` describe an attribute leaf (a comparison /
+ * null / membership target); `leafIsMany` marks an exists path terminating at a
+ * `many` value object.
+ */
+export interface ResolvedNestedPath {
+  /** The owning entity's UNQUOTED physical table name (used to look up the root alias). */
+  readonly table: string;
+  /** The dialect-quoted structured-document column of the TOP-LEVEL value object. */
+  readonly column: string;
+  /** The document path segments after the value-object name (`['geo', 'country']`). */
+  readonly segments: readonly string[];
+  /**
+   * Index of the first `many` member crossed within the full nested path (the
+   * top-level value object at index 0): `-1` (all to-one), `0` (top-level `many` —
+   * root array), or `k + 1` (a nested `many` at `segments[k]`).
+   */
+  readonly manyIndex: number;
+  /** Whether the terminal segment resolves to a typed attribute (vs. a value-object member). */
+  readonly leafIsAttribute: boolean;
+  /** The terminal attribute's m-core neutral type, when `leafIsAttribute`. */
+  readonly leafType?: string;
+  /** Whether the terminal value-object member is `many` (an exists-over-array target). */
+  readonly leafIsMany: boolean;
 }
 
 /**
@@ -122,6 +157,14 @@ export interface SchemaResolver {
    */
   resolveRelationship(ref: string): ResolvedRelationship;
   /**
+   * Resolve a value-object nested path (`Class.vo.field…`, or `Class.vo…`
+   * terminating at a value object for exists) against the declared recursive
+   * structure (m-value-object). Present only when the resolver supports value
+   * objects (the nested predicate family probes for it and throws a clear error
+   * when absent, mirroring the temporal-resolver probe).
+   */
+  resolveNested?(ref: string): ResolvedNestedPath;
+  /**
    * The root entity's UNQUOTED physical table name (the `from` target). The alias
    * map is keyed by this unquoted name (`aliasFor`), so the resolver must NOT quote
    * it; `compile` quotes it through `dialect.quoteIdentifier` right before splicing
@@ -186,6 +229,15 @@ export interface ProjectionColumn {
    * physical column; a verbatim column's output name is the column itself.
    */
   readonly outputName?: string;
+  /**
+   * A value-object inner-field projection: the document path within `column` to
+   * extract (m-value-object structured-column read — case `m-value-object-003`).
+   * When present, the column is projected through the dialect's nested-extraction
+   * form (`jsonb_extract_path_text(t0.address, ?) city` / `json_value(…)`) aliased
+   * to `outputName` (defaulting to the leaf segment), with the path carried as a
+   * `?` bind spliced in projection order.
+   */
+  readonly nested?: readonly string[];
 }
 
 /**
@@ -396,6 +448,17 @@ function renderProjectionColumn(
   dialect: Dialect,
 ): string {
   const qualified = `${alias}.${column.column}`;
+  if (column.nested !== undefined) {
+    // A value-object inner-field projection lowers through the dialect's
+    // nested-extraction form (per-dialect bind shape), aliased to the output name.
+    // The extraction bind lands here in projection order (before any `where` binds).
+    const extraction = dialect.nestedExtraction(qualified, column.nested);
+    for (const bind of extraction.binds) {
+      ctx.binds.push(bind as Bind);
+    }
+    const output = column.outputName ?? (column.nested[column.nested.length - 1] as string);
+    return `${extraction.sql} ${output}`;
+  }
   if (column.type === "bytes") {
     // A byte column has no stable text rendering across drivers/dialects, so the
     // projection is lowered to the dialect's hex form (Postgres `encode(t0.payload,
@@ -439,8 +502,11 @@ function peelTemporal(op: Operation, ctx: CompileCtx): Operation {
   for (;;) {
     const tag = operationTag(current);
     if (tag === "asOf") {
-      const body = (current as { asOf: { operand: Operation; asOfAttr: string; date: string } })
-        .asOf;
+      const body = (
+        current as {
+          asOf: { operand: Operation; asOfAttr: string; date: string };
+        }
+      ).asOf;
       recordPin(ctx, body.asOfAttr, temporalPinForDate(body.date));
       current = body.operand;
       continue;
@@ -448,10 +514,19 @@ function peelTemporal(op: Operation, ctx: CompileCtx): Operation {
     if (tag === "asOfRange") {
       const body = (
         current as {
-          asOfRange: { operand: Operation; asOfAttr: string; from: string; to: string };
+          asOfRange: {
+            operand: Operation;
+            asOfAttr: string;
+            from: string;
+            to: string;
+          };
         }
       ).asOfRange;
-      recordPin(ctx, body.asOfAttr, { kind: "range", from: body.from, to: body.to });
+      recordPin(ctx, body.asOfAttr, {
+        kind: "range",
+        from: body.from,
+        to: body.to,
+      });
       current = body.operand;
       continue;
     }
@@ -526,7 +601,10 @@ function peelDirectives(op: Operation, ctx: CompileCtx, dialect: Dialect): Direc
     if (tag === "orderBy") {
       const body = (
         current as {
-          orderBy: { operand: Operation; keys: readonly { attr: string; direction?: string }[] };
+          orderBy: {
+            operand: Operation;
+            keys: readonly { attr: string; direction?: string }[];
+          };
         }
       ).orderBy;
       orderBy = body.keys.map((key) => orderByTerm(ctx, dialect, key)).join(", ");
@@ -620,6 +698,34 @@ export function compilePredicate(op: Operation, ctx: CompileCtx, scope = "t0"): 
     case "notExists":
       return existsSemiJoin(ctx, (op as { notExists: NavigationBody }).notExists, true, scope);
 
+    // --- value-object nested predicates (m-value-object / m-op-algebra) ------
+    case "nestedEq":
+      return nestedComparison(ctx, (op as { nestedEq: NestedComparisonBody }).nestedEq, EQ);
+    case "nestedNotEq":
+      return nestedComparison(
+        ctx,
+        (op as { nestedNotEq: NestedComparisonBody }).nestedNotEq,
+        NOT_EQ,
+      );
+    case "nestedGt":
+      return nestedComparison(ctx, (op as { nestedGt: NestedComparisonBody }).nestedGt, GT);
+    case "nestedGte":
+      return nestedComparison(ctx, (op as { nestedGte: NestedComparisonBody }).nestedGte, GTE);
+    case "nestedLt":
+      return nestedComparison(ctx, (op as { nestedLt: NestedComparisonBody }).nestedLt, LT);
+    case "nestedLte":
+      return nestedComparison(ctx, (op as { nestedLte: NestedComparisonBody }).nestedLte, LTE);
+    case "nestedIn":
+      return nestedMembership(ctx, (op as { nestedIn: NestedMembershipBody }).nestedIn);
+    case "nestedIsNull":
+      return nestedNull(ctx, (op as { nestedIsNull: NestedNullBody }).nestedIsNull, false);
+    case "nestedIsNotNull":
+      return nestedNull(ctx, (op as { nestedIsNotNull: NestedNullBody }).nestedIsNotNull, true);
+    case "nestedExists":
+      return nestedExists(ctx, (op as { nestedExists: NestedExistsBody }).nestedExists, false);
+    case "nestedNotExists":
+      return nestedExists(ctx, (op as { nestedNotExists: NestedExistsBody }).nestedNotExists, true);
+
     default:
       throw new Error(`compile: operation '${tag}' is not supported in this phase`);
   }
@@ -658,6 +764,46 @@ interface NavigationBody {
   readonly rel: string;
   readonly op?: Operation;
 }
+
+/** `{ path, value }` — a flat nested comparison (`nestedEq` … `nestedLte`). */
+interface NestedComparisonBody {
+  readonly path: string;
+  readonly value: Bind;
+}
+/** `{ path, values }` — `nestedIn`. */
+interface NestedMembershipBody {
+  readonly path: string;
+  readonly values: readonly Bind[];
+}
+/** `{ path }` — `nestedIsNull` / `nestedIsNotNull`. */
+interface NestedNullBody {
+  readonly path: string;
+}
+/** `{ path, where? }` — `nestedExists` / `nestedNotExists` (the `where` is element-scoped). */
+interface NestedExistsBody {
+  readonly path: string;
+  readonly where?: Record<string, unknown>;
+}
+
+/**
+ * A flat nested comparison descriptor: the SQL operator, the equivalent
+ * element-scope op (for an any-element predicate through a `many` segment), and
+ * whether the whole predicate is negated (a leading `not`, `nestedNotEq`). Every
+ * comparison casts the text extraction to the declared leaf type before comparing
+ * (m-sql / m-dialect typed-cast form) — a no-op for a text leaf — so no per-operator
+ * cast flag is needed.
+ */
+interface FlatNestedOp {
+  readonly sqlOp: string;
+  readonly elementOp: "eq" | "notEq" | "gt" | "gte" | "lt" | "lte";
+  readonly negated: boolean;
+}
+const EQ: FlatNestedOp = { sqlOp: "=", elementOp: "eq", negated: false };
+const NOT_EQ: FlatNestedOp = { sqlOp: "=", elementOp: "notEq", negated: true };
+const GT: FlatNestedOp = { sqlOp: ">", elementOp: "gt", negated: false };
+const GTE: FlatNestedOp = { sqlOp: ">=", elementOp: "gte", negated: false };
+const LT: FlatNestedOp = { sqlOp: "<", elementOp: "lt", negated: false };
+const LTE: FlatNestedOp = { sqlOp: "<=", elementOp: "lte", negated: false };
 
 // --- leaf emitters ----------------------------------------------------------
 
@@ -743,7 +889,10 @@ function wrapAffix(escaped: string, mode: StringMode): string {
  * in a literal search term so they match literally. Reports whether any escaping
  * happened so the caller knows to emit the `escape ?` clause.
  */
-function escapeLikeLiteral(value: string): { pattern: string; usedEscape: boolean } {
+function escapeLikeLiteral(value: string): {
+  pattern: string;
+  usedEscape: boolean;
+} {
   let used = false;
   let out = "";
   for (const ch of value) {
@@ -890,6 +1039,283 @@ function qualify(ctx: CompileCtx, ref: string): string {
   return `${alias}.${resolved.column}`;
 }
 
+// --- value-object nested predicates (m-value-object / m-op-algebra) ----------
+
+/**
+ * Resolve a value-object nested path against the model-aware resolver, throwing a
+ * clear error when the resolver is not value-object-capable (mirroring the
+ * temporal-resolver probe). The `rejected` cases' model-aware refusal is a
+ * SEPARATE pre-SQL validation pass (`@parallax/operation`); by the time an
+ * operation reaches `compile`, its paths resolve.
+ */
+function requireNested(ctx: CompileCtx, path: string): ResolvedNestedPath {
+  if (ctx.schema.resolveNested === undefined) {
+    throw new Error(
+      "compile: nested value-object predicates require a value-object-capable SchemaResolver",
+    );
+  }
+  return ctx.schema.resolveNested(path);
+}
+
+/** The alias-qualified structured-document column a nested path reads (`t0.address`). */
+function nestedColumn(ctx: CompileCtx, resolved: ResolvedNestedPath): string {
+  return `${aliasFor(ctx, resolved.table)}.${resolved.column}`;
+}
+
+/** The declared leaf type, defaulting to `string` (a value object's default text compare). */
+function leafType(resolved: ResolvedNestedPath): string {
+  return resolved.leafType ?? "string";
+}
+
+/**
+ * Emit the dialect's nested extraction for a to-one path, pushing its path binds
+ * (per-segment on Postgres, one `'$.a.b'` on MariaDB) onto the accumulator in
+ * order, and return the extraction SQL fragment.
+ */
+function pushExtraction(ctx: CompileCtx, resolved: ResolvedNestedPath): string {
+  const extraction = ctx.dialect.nestedExtraction(nestedColumn(ctx, resolved), resolved.segments);
+  for (const bind of extraction.binds) {
+    ctx.binds.push(bind as Bind);
+  }
+  return extraction.sql;
+}
+
+/**
+ * The document path reaching (and including) the first `many` member. `manyIndex`
+ * counts the full nested path with the top-level value object at index 0, so a
+ * nested `many` at `segments[k]` (`manyIndex === k + 1`) yields `segments[0..k]`,
+ * and a top-level `many` (`manyIndex === 0`) yields the EMPTY path — the document
+ * column itself is the array (root array).
+ */
+function arrayPathOf(resolved: ResolvedNestedPath): readonly string[] {
+  return resolved.segments.slice(0, resolved.manyIndex);
+}
+
+/**
+ * The element-relative path AFTER the first `many` member. For a top-level `many`
+ * (`manyIndex === 0`) this is the whole of `segments` — the leaves are relative to
+ * the array element root.
+ */
+function elementPathOf(resolved: ResolvedNestedPath): readonly string[] {
+  return resolved.segments.slice(resolved.manyIndex);
+}
+
+/**
+ * Lower a flat nested comparison (`nestedEq` … `nestedLte`). A to-one path lowers
+ * to a scalar extraction (`<extraction> = ?`, a range operator casting first); a
+ * path crossing a `many` segment lowers to the any-element array-traversal form
+ * (the same operator applied to one element).
+ */
+function nestedComparison(ctx: CompileCtx, body: NestedComparisonBody, flat: FlatNestedOp): string {
+  const resolved = requireNested(ctx, body.path);
+  const type = leafType(resolved);
+  if (resolved.manyIndex >= 0) {
+    const element: ResolvedElementPredicate = {
+      op: flat.elementOp,
+      path: elementPathOf(resolved),
+      value: coerceBind(body.value, type),
+      valueType: type,
+    };
+    return emitArrayPredicate(ctx, resolved, arrayPathOf(resolved), element, false);
+  }
+  const extraction = pushExtraction(ctx, resolved);
+  // Every nested comparison casts the text extraction to the declared leaf type
+  // before comparing (m-sql / m-dialect typed-cast form), not just the range ops:
+  // `typedCast` is a no-op for a string/text leaf (so string goldens stay
+  // byte-identical) and a real cast for a numeric one, so a numeric `nestedEq` /
+  // `nestedNotEq` compares against a correctly-typed extraction. A boolean leaf has
+  // no specified cast and compares as JSON text (see `nestedComparisonBind`).
+  const target = ctx.dialect.typedCast(extraction, type);
+  ctx.binds.push(nestedComparisonBind(body.value, type));
+  const predicate = `${target} ${flat.sqlOp} ?`;
+  return flat.negated ? `not ${predicate}` : predicate;
+}
+
+/** Lower `nestedIn` — a to-one `<extraction> in (?, …)`, or an any-element membership. */
+function nestedMembership(ctx: CompileCtx, body: NestedMembershipBody): string {
+  const resolved = requireNested(ctx, body.path);
+  const type = leafType(resolved);
+  if (resolved.manyIndex >= 0) {
+    const element: ResolvedElementPredicate = {
+      op: "in",
+      path: elementPathOf(resolved),
+      values: body.values.map((value) => coerceBind(value, type)),
+      valueType: type,
+    };
+    return emitArrayPredicate(ctx, resolved, arrayPathOf(resolved), element, false);
+  }
+  const extraction = pushExtraction(ctx, resolved);
+  // A nested membership casts the extraction to the declared leaf type too (no-op for
+  // a string leaf; a real cast for a numeric one; a boolean compares as JSON text),
+  // so `<cast> in (?, …)` is a valid typed membership rather than a text/number mix.
+  const target = ctx.dialect.typedCast(extraction, type);
+  const placeholders = body.values
+    .map((value) => {
+      ctx.binds.push(nestedComparisonBind(value, type));
+      return "?";
+    })
+    .join(", ");
+  return `${target} in (${placeholders})`;
+}
+
+/** Lower `nestedIsNull` / `nestedIsNotNull` — the presence collapse over an extraction. */
+function nestedNull(ctx: CompileCtx, body: NestedNullBody, negated: boolean): string {
+  const resolved = requireNested(ctx, body.path);
+  if (resolved.manyIndex >= 0) {
+    const element: ResolvedElementPredicate = {
+      op: negated ? "isNotNull" : "isNull",
+      path: elementPathOf(resolved),
+    };
+    return emitArrayPredicate(ctx, resolved, arrayPathOf(resolved), element, false);
+  }
+  const predicate = `${pushExtraction(ctx, resolved)} is null`;
+  return negated ? `not ${predicate}` : predicate;
+}
+
+/**
+ * Lower `nestedExists` / `nestedNotExists` over a to-many value object: a non-empty
+ * test (no `where`) or a same-element scoped compound (one element satisfies the
+ * whole `where`). Only a `many`-terminated path is lowered — a to-one presence
+ * exists has no golden in this phase.
+ */
+function nestedExists(ctx: CompileCtx, body: NestedExistsBody, negated: boolean): string {
+  const resolved = requireNested(ctx, body.path);
+  if (resolved.leafIsAttribute || !resolved.leafIsMany) {
+    throw new Error(
+      `compile: nestedExists/nestedNotExists on '${body.path}' must terminate at a to-many ` +
+        `value object (to-one presence is unsupported in this phase)`,
+    );
+  }
+  const element =
+    body.where === undefined ? undefined : resolveElementPredicate(ctx, body.path, body.where);
+  return emitArrayPredicate(ctx, resolved, resolved.segments, element, negated);
+}
+
+/**
+ * Allocate the element alias for a to-many traversal (Postgres's unnest alias;
+ * unused by MariaDB's containment family) and hand the request to the dialect's
+ * array-traversal form, pushing its per-dialect binds in order. Two independent
+ * any-element predicates in one `and` therefore get `t1` and `t2` (the alias
+ * counter advances per call).
+ */
+function emitArrayPredicate(
+  ctx: CompileCtx,
+  resolved: ResolvedNestedPath,
+  arrayPath: readonly string[],
+  element: ResolvedElementPredicate | undefined,
+  negated: boolean,
+): string {
+  const column = nestedColumn(ctx, resolved);
+  const alias = nextAlias(ctx);
+  registerAlias(ctx, `__vo_element_${alias}`, alias);
+  const result = ctx.dialect.nestedArrayPredicate({
+    column,
+    arrayPath,
+    elementAlias: alias,
+    negated,
+    ...(element === undefined ? {} : { element }),
+  });
+  for (const bind of result.binds) {
+    ctx.binds.push(bind as Bind);
+  }
+  return result.sql;
+}
+
+/**
+ * Resolve an element-scoped `where` sub-predicate (element-relative paths) into the
+ * dialect-neutral {@link ResolvedElementPredicate} the array-traversal form
+ * renders: each leaf's element-relative path + literal type resolves against the
+ * `many` member (`baseRef` is the value-object-terminated exists path), and values
+ * are coerced to their wire form. The dialect decides how to lower it (Postgres
+ * general; MariaDB the equality-only containment candidate).
+ */
+function resolveElementPredicate(
+  ctx: CompileCtx,
+  baseRef: string,
+  node: Record<string, unknown>,
+): ResolvedElementPredicate {
+  const tag = operationTag(node as unknown as Operation);
+  switch (tag) {
+    case "nestedEq":
+      return elementComparison(ctx, baseRef, node.nestedEq as NestedComparisonBody, "eq");
+    case "nestedNotEq":
+      return elementComparison(ctx, baseRef, node.nestedNotEq as NestedComparisonBody, "notEq");
+    case "nestedGt":
+      return elementComparison(ctx, baseRef, node.nestedGt as NestedComparisonBody, "gt");
+    case "nestedGte":
+      return elementComparison(ctx, baseRef, node.nestedGte as NestedComparisonBody, "gte");
+    case "nestedLt":
+      return elementComparison(ctx, baseRef, node.nestedLt as NestedComparisonBody, "lt");
+    case "nestedLte":
+      return elementComparison(ctx, baseRef, node.nestedLte as NestedComparisonBody, "lte");
+    case "nestedIn": {
+      const body = node.nestedIn as NestedMembershipBody;
+      const type = elementLeafType(ctx, baseRef, body.path);
+      return {
+        op: "in",
+        path: body.path.split("."),
+        values: body.values.map((value) => coerceBind(value, type)),
+        valueType: type,
+      };
+    }
+    case "nestedIsNull":
+      return {
+        op: "isNull",
+        path: (node.nestedIsNull as NestedNullBody).path.split("."),
+      };
+    case "nestedIsNotNull":
+      return {
+        op: "isNotNull",
+        path: (node.nestedIsNotNull as NestedNullBody).path.split("."),
+      };
+    case "and":
+    case "or":
+      return {
+        op: tag,
+        operands: ((node[tag] as { operands: Record<string, unknown>[] }).operands ?? []).map(
+          (operand) => resolveElementPredicate(ctx, baseRef, operand),
+        ),
+      };
+    case "not":
+    case "group":
+      return {
+        op: tag,
+        operand: resolveElementPredicate(
+          ctx,
+          baseRef,
+          (node[tag] as { operand: Record<string, unknown> }).operand,
+        ),
+      };
+    default:
+      throw new Error(`compile: unsupported element predicate '${tag}' in a scoped 'where'`);
+  }
+}
+
+/** Resolve one element-relative comparison leaf into a typed {@link ResolvedElementPredicate}. */
+function elementComparison(
+  ctx: CompileCtx,
+  baseRef: string,
+  body: NestedComparisonBody,
+  op: "eq" | "notEq" | "gt" | "gte" | "lt" | "lte",
+): ResolvedElementPredicate {
+  const type = elementLeafType(ctx, baseRef, body.path);
+  return {
+    op,
+    path: body.path.split("."),
+    value: coerceBind(body.value, type),
+    valueType: type,
+  };
+}
+
+/**
+ * The declared neutral type of an element-relative leaf: resolve
+ * `<arrayMemberRef>.<elementPath>` as a full nested path (`Customer.address.phones`
+ * + `type` = `Customer.address.phones.type`) and read its leaf type.
+ */
+function elementLeafType(ctx: CompileCtx, baseRef: string, elementPath: string): string {
+  return leafType(requireNested(ctx, `${baseRef}.${elementPath}`));
+}
+
 /**
  * Render one ORDER BY term for a sort key, consulting the dialect's NULL placement
  * (`dialect.orderByTerm`) **only** for a NULL-bearing column. The canonical
@@ -920,4 +1346,22 @@ function orderByTerm(
  */
 function pushBind(ctx: CompileCtx, value: Bind, type: string): void {
   ctx.binds.push(coerceBind(value, type));
+}
+
+/**
+ * The wire form of a nested value-object comparison literal. A numeric or `decimal`
+ * leaf coerces through the ordinary {@link coerceBind} (and the extraction is cast to
+ * the matching neutral type). A **boolean** leaf is the one type m-dialect specifies
+ * NO cast for (the typed-cast table lists only int / float / decimal), so — rather
+ * than invent an unspecified cast — the boolean compares against its JSON-text form
+ * (`'true'` / `'false'`): both dialect extractions (`jsonb_extract_path_text` /
+ * `json_value`) yield the JSON text `'true'` / `'false'` for a stored JSON boolean,
+ * so `<extraction> = ?` stays a valid text-to-text comparison (and the absence
+ * collapse still holds — a NULL extraction is neither `'true'` nor `'false'`).
+ */
+function nestedComparisonBind(value: Bind, type: string): Bind {
+  if (type === "boolean" && typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  return coerceBind(value, type);
 }

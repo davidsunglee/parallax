@@ -20,7 +20,11 @@ export {
   type NormalizedAsOfAttribute,
   type NormalizedAttribute,
   type NormalizedEntity,
+  type NormalizedNestedValueObject,
   type NormalizedRelationship,
+  type NormalizedValueObject,
+  type NormalizedValueObjectAttribute,
+  type NormalizedValueObjectMember,
 } from "@parallax/metamodel";
 // Re-export the canonical serde seam so m-op-algebra-consumers (the conformance harness)
 // can parse case / model YAML through the *same* seam the algebra
@@ -38,3 +42,4 @@ export {
 export * from "./ast.js";
 export * from "./canonicalize.js";
 export * from "./schema.js";
+export * from "./value-object-validate.js";

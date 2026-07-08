@@ -15,7 +15,13 @@
  */
 
 export { columnOrder, ddlForDescriptor } from "./ddl.js";
-export type { Dialect, DialectParsers } from "./dialect.js";
+export type {
+  Dialect,
+  DialectFragment,
+  DialectParsers,
+  NestedArrayRequest,
+  ResolvedElementPredicate,
+} from "./dialect.js";
 export {
   classifyErrorCode,
   type ErrorCategory,
