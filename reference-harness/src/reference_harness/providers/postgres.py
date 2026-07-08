@@ -230,12 +230,19 @@ class _PgTxSession:
     def __init__(self, conn: psycopg.Connection[Any]) -> None:
         self._conn = conn
 
-    def execute(self, sql: str, binds: Sequence[Any] = ()) -> None:
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        """Run DML on the HELD transaction; return the affected-row count.
+
+        The count is what makes an optimistic-lock conflict observable inside a
+        buffered unit of work (m-opt-lock): a stale-version gate matches 0 rows.
+        The two-node lock-contention callers ignore the return.
+        """
         with self._conn.cursor() as cur:
             if binds:
                 cur.execute(_trusted_query(sql.replace("?", "%s")), tuple(binds))
             else:
                 cur.execute(_trusted_query(sql))
+            return cur.rowcount
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
         """Fetch rows INSIDE the held transaction (concurrency-success `expectRows`).

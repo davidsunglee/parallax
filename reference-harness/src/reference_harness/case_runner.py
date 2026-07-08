@@ -1739,11 +1739,18 @@ def _assert_delete_input(
     collapsed = len(step_binds) == 1 and len(pk_values) > 1
     if collapsed:
         binds = step_binds[0]
-        missing = [pk for pk in pk_values if not any(_write_value_equal(pk, b) for b in binds)]
-        if missing:
+        # A collapsed `id in (?, …)` binds EXACTLY the buffered pks, in ① order — the
+        # same exact-bind discipline the insert/update input cross-checks apply. Require
+        # positional bind equality against the pk list, rejecting a reordered, duplicated,
+        # or extra bind (not the weaker "every pk appears somewhere", which tolerated all
+        # three): the golden's binds MUST equal the pk list one-for-one and in order.
+        if len(binds) != len(pk_values) or any(
+            not _write_value_equal(pk, bind) for pk, bind in zip(pk_values, binds, strict=False)
+        ):
             raise CaseFailure(
-                f"{case.path.name}: the collapsed DELETE binds {binds} omit neutral write "
-                f"input pk value(s) {missing}."
+                f"{case.path.name}: the collapsed DELETE binds {binds} MUST equal the "
+                f"neutral write input pk value(s) {pk_values} exactly and in order "
+                f"(no reorder, duplicate, or extra bind)."
             )
         return
     for binds in step_binds:
@@ -2354,8 +2361,18 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # in the atomic scope the abort discards, so a later find MUST
                 # re-resolve and observe the ORIGINAL rows, never the aborted write.
                 with db.open_session() as session:
+                    executed: list[tuple[str, int]] = []
                     for statement, stmt_binds in pairs:
-                        session.execute(statement, stmt_binds)
+                        executed.append((statement, session.execute(statement, stmt_binds)))
+                    # A scenario that declares `then.affectedRows` is a conflict-abort
+                    # case (m-opt-lock + m-unit-work): the UoW aborts BECAUSE a
+                    # version-gated write conflicted. Assert the conflict was actually
+                    # DETECTED (the gated write affected `then.affectedRows` rows —
+                    # `updatedRows != 1`) BEFORE rolling back, so a rollback that merely
+                    # discarded a NON-conflicting write fails the case rather than
+                    # passing on a vacuous abort.
+                    if case.expected_affected_rows is not None:
+                        _assert_scenario_conflict_abort(case, index, executed)
                     session.rollback()
             else:
                 # A committed write between finds (read-your-own-writes / cache
@@ -2413,6 +2430,72 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                     f"  step {index}: {this_ids!r}\n"
                     f"  step {source}: {that_ids!r}"
                 )
+
+
+def _has_version_gate(statement: str, version_col: str) -> bool:
+    """True when a versioned write's WHERE clause gates on the optimistic version.
+
+    The optimistic golden write appends ``and <version> = ?`` to its keyed predicate
+    (m-opt-lock). The version column also appears in an ``UPDATE``'s SET clause, so the
+    gate is matched only in the WHERE clause (after the final ` where `), word-bounded
+    so a longer column ending in the version name is never mistaken for the gate.
+    """
+    lowered = statement.lower()
+    where_at = lowered.rfind(" where ")
+    if where_at == -1:
+        return False
+    where_clause = lowered[where_at + len(" where ") :]
+    return bool(re.search(rf"\b{re.escape(version_col.lower())}\s*=\s*\?", where_clause))
+
+
+def _assert_scenario_conflict_abort(
+    case: Case,
+    index: int,
+    executed: list[tuple[str, int]],
+) -> None:
+    """Assert an aborted scenario step aborted BECAUSE a versioned write conflicted.
+
+    A scenario that declares ``then.affectedRows`` (the m-opt-lock conflict signal) is
+    a conflict-abort case (m-opt-lock + m-unit-work): the rollback must be the
+    CONSEQUENCE of a genuinely detected optimistic-lock conflict, not a vacuous abort.
+    The step's version-gated write (identified by its ``and <version> = ?`` gate) MUST
+    have affected ``then.affectedRows`` rows — ``0`` for a stale-version gate that
+    matched no row (``updatedRows != 1``). A gated write that unexpectedly affects 1
+    row is NO conflict, so the case fails rather than passing on the rollback alone.
+    """
+    expected = case.expected_affected_rows
+    if case.concurrency_mode != "optimistic":
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] declares then.affectedRows (an "
+            f"optimistic-lock conflict) but the unit of work is not "
+            f"`concurrency: optimistic` — a conflict abort requires the version gate."
+        )
+    if expected == 1:
+        raise CaseFailure(
+            f"{case.path.name}: then.affectedRows is 1, which is NOT a conflict — "
+            f"`updatedRows != 1` is the conflict signal. A conflict-abort scenario MUST "
+            f"declare a != 1 count (0 for a stale-version gate)."
+        )
+    version_col = _version_column(_scenario_root_entity(case))
+    if version_col is None:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] declares a conflict abort but the "
+            f"entity carries no optimistic-lock version column to gate on."
+        )
+    gated = [(sql, affected) for sql, affected in executed if _has_version_gate(sql, version_col)]
+    if len(gated) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] conflict-abort step MUST list exactly "
+            f"one version-gated write (the conflicting statement), found {len(gated)}."
+        )
+    _sql, affected = gated[0]
+    if affected != expected:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] gated versioned write affected "
+            f"{affected} row(s) but then.affectedRows is {expected}. The UoW abort MUST "
+            f"be a CONSEQUENCE of a detected optimistic-lock conflict "
+            f"(`updatedRows != 1`); a gated write affecting 1 row is NO conflict."
+        )
 
 
 def _identity_keys(

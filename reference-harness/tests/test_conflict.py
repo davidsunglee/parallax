@@ -18,7 +18,15 @@ from pathlib import Path
 import pytest
 
 from reference_harness.case import discover_cases
-from reference_harness.case_runner import CaseFailure, _assert_conflict_input
+from reference_harness.case_runner import (
+    CaseFailure,
+    _assert_conflict_input,
+    _assert_scenario_conflict_abort,
+    _entry_pairs,
+    _has_version_gate,
+    _scenario_root_entity,
+    _version_column,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -205,3 +213,91 @@ def test_detached_update_loads_fixtures() -> None:
     for case in detached_updates:
         # The original persisted row must exist before the merge-back UPDATE.
         assert case.load_fixtures
+
+
+# --- conflict-abort scenario helper (m-opt-lock-012, m-opt-lock + m-unit-work) ---
+#
+# `_assert_scenario_conflict_abort` is the DB-free guard that makes a rolled-back
+# unit of work a CONSEQUENCE of a detected optimistic-lock conflict, not a vacuous
+# abort. These pin its accept/reject decision directly (no Docker), driving it with
+# the REAL m-opt-lock-012 case so `concurrency_mode`, `expected_affected_rows`, the
+# root entity, and the version column all resolve authentically. The full
+# execute-and-rollback behavior is exercised end-to-end against real Postgres by the
+# compatibility suite.
+
+
+def _conflict_abort_scenario():
+    """The real m-opt-lock-012 case + its conflict-abort step, split into gated / non-gated.
+
+    The version-gated write (the conflicting `... and version = ?` UPDATE) and the
+    non-gated write(s) are resolved from the case's OWN scenario statements via the
+    SAME version column the harness gates on (`_version_column` over the scenario root
+    entity), so the `executed` lists below are built from authentic golden SQL rather
+    than hand-typed strings.
+    """
+    case = next(c for c in _cases() if c.path.stem.startswith("m-opt-lock-012"))
+    index, step = next((i, s) for i, s in enumerate(case.scenario) if s.get("rollback"))
+    version_col = _version_column(_scenario_root_entity(case))
+    assert version_col is not None, "the scenario root entity must carry a version column"
+    statements = [sql for sql, _binds in _entry_pairs(step.get("statements"), "postgres")]
+    gated = [sql for sql in statements if _has_version_gate(sql, version_col)]
+    non_gated = [sql for sql in statements if not _has_version_gate(sql, version_col)]
+    # The authored abort step lists exactly one gated write and at least one non-gated
+    # write (the buffered insert), so the corruptions below are well-formed.
+    assert len(gated) == 1 and non_gated, "m-opt-lock-012 abort step shape changed"
+    return case, index, gated[0], non_gated
+
+
+def test_conflict_abort_helper_holds_for_the_authored_conflict() -> None:
+    # Positive anchor (c): the REAL version-gated write paired with the conflict count
+    # (0 rows — a stale-version gate that matched nothing, `updatedRows != 1`) MUST
+    # pass. The helper accepts the genuine conflict, so the rejections below prove it
+    # bites only the corruptions, not everything.
+    case, index, gated_sql, non_gated = _conflict_abort_scenario()
+    executed = [(sql, 1) for sql in non_gated] + [(gated_sql, 0)]
+    # Must not raise: affected 0 == then.affectedRows 0, so the abort is a consequence
+    # of a detected conflict.
+    _assert_scenario_conflict_abort(case, index, executed)
+
+
+def test_conflict_abort_rejects_fresh_gated_update_affecting_one_row() -> None:
+    # (a) a version-gated write that affected 1 row is NO conflict — `updatedRows != 1`
+    # is the conflict signal, so a rollback on a NON-conflicting gated write MUST fail
+    # the case rather than pass on the abort alone.
+    case, index, gated_sql, non_gated = _conflict_abort_scenario()
+    executed = [(sql, 1) for sql in non_gated] + [(gated_sql, 1)]
+    with pytest.raises(CaseFailure):
+        _assert_scenario_conflict_abort(case, index, executed)
+
+
+def test_conflict_abort_rejects_missing_gated_update() -> None:
+    # (b) an aborted step whose executed writes list NO version-gated write (only the
+    # non-gated buffered insert) never detected a conflict — the helper MUST fail
+    # ("exactly one version-gated write, found 0"), so a vacuous abort cannot pass.
+    case, index, _gated_sql, non_gated = _conflict_abort_scenario()
+    executed = [(sql, 1) for sql in non_gated]
+    with pytest.raises(CaseFailure):
+        _assert_scenario_conflict_abort(case, index, executed)
+
+
+def test_conflict_abort_rejects_non_optimistic_unit_of_work() -> None:
+    # A `then.affectedRows` conflict signal requires the version gate: if the unit of
+    # work is not `concurrency: optimistic`, there is no gate to conflict on, so the
+    # helper MUST reject even the genuine 0-row conflict shape.
+    case, index, gated_sql, non_gated = _conflict_abort_scenario()
+    case.when["uow"]["concurrency"] = "locking"
+    assert case.concurrency_mode != "optimistic"
+    executed = [(sql, 1) for sql in non_gated] + [(gated_sql, 0)]
+    with pytest.raises(CaseFailure):
+        _assert_scenario_conflict_abort(case, index, executed)
+
+
+def test_conflict_abort_rejects_affected_rows_one_as_no_conflict() -> None:
+    # A conflict-abort scenario MUST declare a `!= 1` count (0 for a stale-version
+    # gate): then.affectedRows == 1 is NOT a conflict, so the helper rejects it before
+    # ever inspecting the executed writes.
+    case, index, gated_sql, non_gated = _conflict_abort_scenario()
+    case.then["affectedRows"] = 1
+    executed = [(sql, 1) for sql in non_gated] + [(gated_sql, 1)]
+    with pytest.raises(CaseFailure):
+        _assert_scenario_conflict_abort(case, index, executed)
