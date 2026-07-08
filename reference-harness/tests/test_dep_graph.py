@@ -415,10 +415,11 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 # --- the profile gate over the real corpus -----------------------------------
 #
 # The family-selected cases are internally consistent with the canonical claim,
-# and exactly 165 cases carry the slice tag (a drift tripwire — adding or losing a
+# and exactly 173 cases carry the slice tag (a drift tripwire — adding or losing a
 # tagged case fails the count). Phase 11 added the 42 value-object cases (the
 # whole m-value-object module except the deferred bitemporal rectangle-split
-# value-object write, m-value-object-033), lifting the slice from 123 to 165.
+# value-object write, m-value-object-033), lifting the slice from 123 to 165; COR-26
+# promoted the eight m-bitemp-write cases (m-bitemp-write-001..008), lifting it to 173.
 
 
 def test_real_corpus_profile_is_consistent() -> None:
@@ -436,6 +437,6 @@ def test_profile_slice_tag_count() -> None:
         tags = [t for t in doc.get("tags", []) if isinstance(t, str)]
         if _SLICE_TAG in tags:
             tagged.append(path.name)
-    assert len(tagged) == 165, (
-        f"expected exactly 165 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
+    assert len(tagged) == 173, (
+        f"expected exactly 173 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
     )

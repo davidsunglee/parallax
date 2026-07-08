@@ -24,12 +24,14 @@ so a slice is immune to the corpus's tag hazards.
 
 `slice-mvp-1` is the smallest agent-buildable first build: Postgres only, the
 unit-of-work transaction behavior but **not** the process caches, no PK
-generation, no aggregation, no inheritance, no detach, no bitemporal
-rectangle-split writes, no MariaDB, no benchmarks, no coherence. Value objects
-**are** in the slice: their nested-predicate reads, atomic document writes,
-inherited-temporality reads, materialization graph, and pre-SQL `rejected`
-negatives all gate the build (the bitemporal rectangle-split value-object write
-stays out, with the rest of `m-bitemp-write`).
+generation, no aggregation, no inheritance, no detach, no MariaDB, no benchmarks,
+no coherence. The full bitemporal write surface (`m-bitemp-write`) **is** in the
+slice: the windowed and plain rectangle-split milestone writes and the
+optimistic-gated inactivation all gate the build. Value objects **are** in the
+slice: their nested-predicate reads, atomic document writes, inherited-temporality
+reads, materialization graph, and pre-SQL `rejected` negatives all gate the build
+(the bitemporal rectangle-split *value-object* write stays out — the one
+milestone-chaining write the slice still defers).
 
 The canonical `describe` claim below is the **single source of truth** for the
 slice. Its `capabilities.modules` is the derived union of the module tags carried
@@ -43,7 +45,7 @@ and asserts the tagged set can never silently drift from it. The claim carries n
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "reference", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-read-lock", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-read-lock", "m-sql", "m-temporal-read", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-mvp-1"] },

@@ -73,6 +73,14 @@ interface RawWriteStep {
    * a non-temporal step.
    */
   readonly at?: string;
+  /**
+   * The BUSINESS valid-time end bound a full-bitemporal `*Until` write closes the
+   * window at — the milestone's `thru_z` on the chained rows (m-bitemp-write). A
+   * `updateUntil` / `terminateUntil` bounds the change to `[businessFrom, until)`; a
+   * plain (unbounded) `update` / `terminate` omits it (the residual window runs to
+   * the currently-open row's `thru_z`). Absent on an audit-only step.
+   */
+  readonly until?: string;
 }
 
 /**
@@ -184,14 +192,27 @@ export function buildWriteSequencePlan(loaded: LoadedCase, dialect: Dialect): Wr
   const golden = goldenStmts.map((statement) => statement.sql);
   const bindRows = goldenStmts.map((statement) => statement.binds);
   const concurrency = loaded.uow?.concurrency;
+  // A full-bitemporal write sequence gates its inactivating close in OPTIMISTIC mode
+  // (the observed rectangle's `(from_z, in_z)`, `m-bitemp-write-008`). A writeSequence
+  // carries no `when.uow`, so the optimistic intent rides the `m-opt-lock` module tag —
+  // the same signal the case declares to claim the gate is under test.
+  const gated = loaded.tags.includes("m-opt-lock");
+  // The currently-open (current-on-processing) rows per pk, reconstructed by in-memory
+  // replay: a rectangle split's head/tail inserts carry the UNCHANGED columns of the
+  // open row (acct_num, the old value) — not present in the mutating step's own ①. A pk
+  // holds a LIST because a split leaves several open business rectangles (head / (middle /)
+  // tail), each a candidate for a later same-pk split.
+  const openRows = new Map<unknown, ReadonlyMap<string, unknown>[]>();
 
   const statements: WriteStatementPlan[] = [];
   let bindIndex = 0;
   steps.forEach((step, stepIndex) => {
     const entity = metamodel.entity(step.entity);
-    const generated = isTemporalEntity(entity)
-      ? auditStatementsForStep(step, entity, dialect)
-      : batchStatementsForStep(step, entity, bindRows, bindIndex, golden, concurrency, dialect);
+    const generated = isBitemporalEntity(entity)
+      ? bitemporalStatementsForStep(step, entity, dialect, openRows, gated)
+      : isTemporalEntity(entity)
+        ? auditStatementsForStep(step, entity, dialect)
+        : batchStatementsForStep(step, entity, bindRows, bindIndex, golden, concurrency, dialect);
     for (const { sql, binds } of generated) {
       statements.push({ casePointer: `/writeSequence/${stepIndex}`, sql, binds });
       bindIndex += 1;
@@ -203,6 +224,212 @@ export function buildWriteSequencePlan(loaded: LoadedCase, dialect: Dialect): Wr
 /** True when the entity carries a processing axis (audit-only milestone chaining). */
 function isTemporalEntity(entity: EntityMetadata): boolean {
   return entity.asOfAttributes().some((axis) => axis.axis === "processing");
+}
+
+/** True when the entity carries BOTH as-of axes — the full-bitemporal rectangle profile. */
+function isBitemporalEntity(entity: EntityMetadata): boolean {
+  const axes = new Set(entity.asOfAttributes().map((axis) => axis.axis));
+  return axes.has("business") && axes.has("processing");
+}
+
+/**
+ * The generated rectangle-split statements for one FULL-bitemporal step, each paired
+ * with binds DERIVED from the classified ① row, the step instants (`at` / `until`),
+ * and the currently-open row reconstructed by replay (`openRows`). A bitemporal write
+ * never mutates in place — it closes the original on the PROCESSING axis and chains
+ * milestones partitioned on the BUSINESS axis (m-bitemp-write):
+ *
+ *  - `insert` / `insertUntil` open one milestone `[businessFrom, businessTo|until) ×
+ *    [at, infinity)` and record it as the pk's currently-open row;
+ *  - `update` (plain, unbounded) → close + head (old `[from_z, B)`) + new tail (new
+ *    `[B, thru_z)`); `updateUntil` (windowed) → close + head + middle (new `[B, until)`)
+ *    + tail (old `[until, thru_z)`); `terminate` → close + head only; `terminateUntil`
+ *    → close + head + tail (no middle).
+ *
+ * The head/tail carry the open row's UNCHANGED columns (acct_num, the old value) — NOT
+ * present in the mutating step's own ① — so they are reconstructed from `openRows` (the
+ * compile lane is Docker-free, so no DB read-back is available). A gated close
+ * (`m-bitemp-write-008`, optimistic) binds the observed rectangle's `(from_z, in_z)`
+ * from that same open row — distinct from the window boundary.
+ */
+function bitemporalStatementsForStep(
+  step: RawWriteStep,
+  entity: EntityMetadata,
+  dialect: Dialect,
+  openRows: Map<unknown, ReadonlyMap<string, unknown>[]>,
+  gated: boolean,
+): readonly { sql: string; binds: readonly unknown[] }[] {
+  const business = entity.asOfAttributes().find((axis) => axis.axis === "business");
+  const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
+  if (business === undefined || processing === undefined) {
+    throw new Error(`bitemporal write on '${entity.name}' is missing a business/processing axis`);
+  }
+  const fromZ = business.fromColumn;
+  const thruZ = business.toColumn;
+  const inZ = processing.fromColumn;
+  const outZ = processing.toColumn;
+  const infinity = processing.infinity;
+  const cols = orderedColumns(entity);
+  const target = writeTargetFor(entity, dialect);
+  const [rawRow] = step.rows ?? [];
+  if (rawRow === undefined) {
+    throw new Error(`bitemporal write on '${entity.name}' requires a row in its ① input`);
+  }
+  const row = classifyRow(entity, rawRow);
+  const { at, until } = step;
+  if (at === undefined) {
+    throw new Error(
+      `bitemporal write on '${entity.name}' requires an 'at' (the txn instant → in_z)`,
+    );
+  }
+
+  // A milestone OPEN (insert / insertUntil): the full physical row with `in_z = at`,
+  // `out_z = infinity`, and — for insertUntil — `thru_z = until` (a bounded business
+  // window). Record it as the pk's currently-open row for a later rectangle split.
+  if (step.mutation === "insert" || step.mutation === "insertUntil") {
+    const openBinds = cols.map((column) =>
+      column === inZ
+        ? at
+        : column === outZ
+          ? infinity
+          : column === thruZ && step.mutation === "insertUntil"
+            ? until
+            : row.columns.get(column),
+    );
+    const openRow = new Map(cols.map((column, index) => [column, openBinds[index]]));
+    const opened = openRows.get(row.pk);
+    if (opened === undefined) {
+      openRows.set(row.pk, [openRow]);
+    } else {
+      opened.push(openRow);
+    }
+    const [insertSql] = auditWriteStatements("insert", target);
+    return [{ sql: insertSql as string, binds: openBinds }];
+  }
+
+  // A rectangle SPLIT (update / terminate / updateUntil / terminateUntil): reconstruct the
+  // currently-open row COVERING the mutation's business instant, chain the milestones
+  // around it, then ADVANCE the open-row set (below) so a later same-pk split reconstructs
+  // from the new current state — not a stale original.
+  const businessFrom = row.columns.get(fromZ);
+  if (businessFrom === undefined) {
+    throw new Error(
+      `bitemporal ${step.mutation} on '${entity.name}' requires a businessFrom (→ from_z)`,
+    );
+  }
+  const openList = openRows.get(row.pk);
+  if (openList === undefined || openList.length === 0) {
+    throw new Error(
+      `bitemporal ${step.mutation} on '${entity.name}' has no prior insert opening pk ${String(row.pk)}`,
+    );
+  }
+  // The open milestone whose BUSINESS window `[from_z, thru_z)` contains `businessFrom` —
+  // the rectangle this split partitions. With one open row (the everyday single-split
+  // cases) it is that row; after a prior split there are several, so the covering one is
+  // selected on the business axis (`infinity` the open upper bound).
+  const open = coveringOpenRow(openList, businessFrom, fromZ, thruZ, infinity);
+  if (open === undefined) {
+    throw new Error(
+      `bitemporal ${step.mutation} on '${entity.name}' has no currently-open row covering ` +
+        `businessFrom ${String(businessFrom)} for pk ${String(row.pk)}`,
+    );
+  }
+  const bounded = step.mutation === "updateUntil" || step.mutation === "terminateUntil";
+  if (bounded && until === undefined) {
+    throw new Error(`bitemporal ${step.mutation} on '${entity.name}' requires an 'until' bound`);
+  }
+  // The residual window's upper bound: the explicit `until` for a windowed write, else
+  // the covering row's own `thru_z` (unbounded — runs to that row's business end).
+  const windowEnd = bounded ? until : open.get(thruZ);
+  // The step's NEW domain values (the value(s) it corrects), i.e. its `set` columns
+  // excluding the as-of axis columns — applied only to the new-value milestones.
+  const axisColumns = new Set([fromZ, thruZ, inZ, outZ]);
+  const newDomain = new Map<string, unknown>();
+  for (const [column, value] of row.set) {
+    if (!axisColumns.has(column)) {
+      newDomain.set(column, value);
+    }
+  }
+  // Build one chained-milestone bind row: the open row's columns (base) with the
+  // business interval [from, thru), fresh processing [at, infinity), and — for a
+  // new-value milestone — the step's domain overrides.
+  const rectangle = (fromValue: unknown, thruValue: unknown, useNew: boolean): readonly unknown[] =>
+    cols.map((column) => {
+      if (column === inZ) return at;
+      if (column === outZ) return infinity;
+      if (column === fromZ) return fromValue;
+      if (column === thruZ) return thruValue;
+      if (useNew && newDomain.has(column)) return newDomain.get(column);
+      return open.get(column);
+    });
+
+  const head = rectangle(open.get(fromZ), businessFrom, false); // old value, [from_z, B)
+  const inserts: (readonly unknown[])[] = [];
+  switch (step.mutation) {
+    case "update": // plain unbounded: head (old) + new tail (new), no middle/old-tail
+      inserts.push(head, rectangle(businessFrom, windowEnd, true));
+      break;
+    case "updateUntil": // windowed: head (old) + middle (new) + tail (old)
+      inserts.push(
+        head,
+        rectangle(businessFrom, windowEnd, true),
+        rectangle(windowEnd, open.get(thruZ), false),
+      );
+      break;
+    case "terminate": // plain unbounded: head only — value absent from B onward
+      inserts.push(head);
+      break;
+    case "terminateUntil": // windowed: head (old) + tail (old), no middle
+      inserts.push(head, rectangle(windowEnd, open.get(thruZ), false));
+      break;
+  }
+
+  // Advance the open-row set: the split row is now closed on the processing axis, and each
+  // chained milestone (head / (middle /) tail) opens fresh — record them as the pk's
+  // currently-open rows so a subsequent same-pk split reconstructs from here.
+  const remaining = openList.filter((candidate) => candidate !== open);
+  for (const binds of inserts) {
+    remaining.push(new Map(cols.map((column, index) => [column, binds[index]])));
+  }
+  openRows.set(row.pk, remaining);
+
+  const [closeSql] = auditWriteStatements("terminate", target, { gated });
+  const [insertSql] = auditWriteStatements("insert", target);
+  // The inactivating close sets `out_z = at` keyed on the current-on-processing row; a
+  // gated close adds the observed rectangle's `(from_z, in_z)` from the open row.
+  const closeBinds: readonly unknown[] = gated
+    ? [at, row.pk, infinity, open.get(fromZ), open.get(inZ)]
+    : [at, row.pk, infinity];
+  return [
+    { sql: closeSql as string, binds: closeBinds },
+    ...inserts.map((binds) => ({ sql: insertSql as string, binds })),
+  ];
+}
+
+/**
+ * The currently-open milestone whose BUSINESS window `[from_z, thru_z)` contains the
+ * mutation instant `businessFrom` — the rectangle a split partitions. The processing
+ * axis's `infinity` sentinel is the open upper bound (greater than every finite instant);
+ * finite instants share an ISO-8601 shape, so their lexical order is chronological.
+ * Returns `undefined` when no open row covers the instant (a malformed sequence).
+ */
+function coveringOpenRow(
+  openList: readonly ReadonlyMap<string, unknown>[],
+  businessFrom: unknown,
+  fromZ: string,
+  thruZ: string,
+  infinity: unknown,
+): ReadonlyMap<string, unknown> | undefined {
+  const before = (left: unknown, right: unknown): boolean => {
+    if (left === right) return false;
+    if (left === infinity) return false;
+    if (right === infinity) return true;
+    return String(left) < String(right);
+  };
+  // Half-open coverage: `from_z <= businessFrom < thru_z`.
+  return openList.find(
+    (open) => !before(businessFrom, open.get(fromZ)) && before(businessFrom, open.get(thruZ)),
+  );
 }
 
 /**
@@ -490,8 +717,11 @@ export function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteT
   }
   // The processing axis's `toColumn` (`out_z`) the close UPDATE sets + keys on, and
   // its `fromColumn` (`in_z`) the optimistic gate. Absent for a non-temporal entity
-  // (only `insert` is legal there).
+  // (only `insert` is legal there). The BUSINESS axis's `fromColumn` (`from_z`) is the
+  // bitemporal discriminator a gated close on a full-bitemporal entity adds
+  // (m-bitemp-write); absent for an audit-only entity, whose gated close omits it.
   const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
+  const business = entity.asOfAttributes().find((axis) => axis.axis === "business");
   return {
     table: dialect.quoteIdentifier(entity.table),
     columns,
@@ -502,5 +732,8 @@ export function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteT
           toColumn: dialect.quoteIdentifier(processing.toColumn),
           fromColumn: dialect.quoteIdentifier(processing.fromColumn),
         }),
+    ...(business === undefined
+      ? {}
+      : { businessFromColumn: dialect.quoteIdentifier(business.fromColumn) }),
   };
 }

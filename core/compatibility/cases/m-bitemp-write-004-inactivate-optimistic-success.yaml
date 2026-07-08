@@ -9,10 +9,9 @@
 # 200, business [2024-06-01, infinity)); it inactivates 1 row. A conflict case runs
 # only that single close, not the replacement INSERTs a full rectangle split would
 # chain, so `then.tableState` shows R3 closed at 2024-10-01 with R1/R2 untouched —
-# conflict granularity is the rectangle, not the primary key. Harness-only
-# (bitemporal writes are outside slice-mvp-1).
+# conflict granularity is the rectangle, not the primary key.
 model: models/position.yaml
-tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict]
+tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-mvp-1]
 shape: conflict
 when:
   uow:

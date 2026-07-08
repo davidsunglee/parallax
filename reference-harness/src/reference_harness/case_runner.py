@@ -1272,6 +1272,21 @@ _SET_CLAUSE_RE = re.compile(r"\bset\s+(.+?)\s+where\b", re.IGNORECASE)
 # write whose ① carries the valid-time window (`at`/`until`/`businessFrom`).
 _UNTIL_MUTATIONS = ("insertUntil", "updateUntil", "terminateUntil")
 
+# The plain (UNBOUNDED) bitemporal rectangle-split mutations: an everyday business
+# correction/termination from an instant onward with no upper business bound
+# (`m-bitemp-write-006` / `m-bitemp-write-007`). Like the `*Until` trio they close
+# the original on the processing axis and chain head / (new-)tail milestones, but
+# the residual window runs to the open bound (thru_z), so ① carries no `until`.
+_PLAIN_SPLIT_MUTATIONS = ("update", "terminate")
+
+
+def _is_bitemporal(entity: Entity) -> bool:
+    """Whether an entity carries BOTH as-of axes (business + processing) — the
+    full-bitemporal rectangle profile, where a plain `update` / `terminate` is a
+    milestone rectangle split (close + chain), not the audit-only close-and-open."""
+    axes = {dim.get("axis") for dim in entity.as_of_attributes}
+    return {"business", "processing"} <= axes
+
 
 def _is_computed_marker(value: Any) -> bool:
     """Whether an ① value is a DB-COMPUTED pk-gen `max` marker.
@@ -1502,7 +1517,15 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         step_statements = statements[stmt_index : stmt_index + count]
         step_binds = [case.statement_binds(stmt_index + offset) for offset in range(count)]
         mutation = step["mutation"]
-        if mutation in _UNTIL_MUTATIONS:
+        # A full-bitemporal step is a RECTANGLE SPLIT: the windowed `*Until` trio, or
+        # a plain (unbounded) `update` / `terminate` on a two-axis entity (the everyday
+        # business correction / termination, `m-bitemp-write-006` / `-007`). Both close
+        # the original on the processing axis and chain head / (new-)tail milestones, so
+        # both route through the rectangle-split cross-check — never the audit-only
+        # close-and-open, which would mis-count the chained inserts.
+        if mutation in _UNTIL_MUTATIONS or (
+            _is_bitemporal(entity) and mutation in _PLAIN_SPLIT_MUTATIONS
+        ):
             _assert_until_input(case, entity, classified, step, step_statements, step_binds)
         elif entity.is_temporal:
             _assert_temporal_input(case, entity, classified, step, step_statements, step_binds)
@@ -1799,22 +1822,37 @@ def _assert_until_input(
     step_statements: list[str],
     step_binds: list[list[Any]],
 ) -> None:
-    """Cross-check a full-bitemporal ``*Until`` step's ① against its golden (②).
+    """Cross-check a full-bitemporal RECTANGLE-SPLIT step's ① against its golden (②).
 
-    An ``*Until`` write bounds a mutation to a business valid-time window: it
-    inactivates the original on the PROCESSING axis at the transaction instant and
-    chains head / (middle) / tail rows at fresh processing time ``[at, infinity)``,
-    partitioned on the BUSINESS axis around the window ``[businessFrom, until)``. Like
-    the audit-only close it is Family B (full physical row, metamodel-sourced column
-    list), so the cross-check is BINDS-only on the DERIVED coordinates ① supplies:
+    A rectangle-split write inactivates the original on the PROCESSING axis at the
+    transaction instant and chains head / (middle) / (new-)tail rows at fresh
+    processing time ``[at, infinity)``, partitioned on the BUSINESS axis around the
+    mutation instant. Two forms share this cross-check:
+
+      * a WINDOWED ``*Until`` write bounds the change to ``[businessFrom, until)``
+        (`m-bitemp-write-001` / `-002` / `-003` / `-008`); ① carries both ``at`` and
+        ``until``;
+      * a PLAIN (unbounded) ``update`` / ``terminate`` corrects/ends the value from
+        ``businessFrom`` ONWARD (`m-bitemp-write-006` / `-007`); ① carries ``at`` but
+        no ``until`` — the residual window runs to the open bound (``thru_z``).
+
+    Like the audit-only close it is Family B (full physical row, metamodel-sourced
+    column list), so the cross-check is BINDS-only on the DERIVED coordinates ①
+    supplies:
 
       * the inactivating close (the ``update … set out_z = ? where …`` statement)
-        binds ``[at, pk, infinity]`` — closes the original at the transaction instant;
+        binds ``[at, pk, infinity]`` — closes the original at the transaction instant.
+        A GATED close (`m-bitemp-write-008`, optimistic) additionally carries the
+        observed rectangle's ``(from_z, in_z)`` as the trailing ``and from_z = ? and
+        in_z = ?`` binds — drawn from the currently-open row (reconstructed by
+        replaying prior insert steps, :func:`_open_rectangle_binds`), NOT the closing
+        step's own ①, and DISTINCT from the window boundary; the gate rides the golden
+        directly (no ``observedInZ`` token on the writeSequence step);
       * every chained INSERT opens a fresh processing milestone, so its ``in_z`` bind
         equals ``at`` and its ``out_z`` bind equals ``infinity``;
       * the business window bounds — ``businessFrom`` (the window start, an ① row
-        attribute) and ``until`` (the window end, step-level) — both appear among the
-        chained inserts' business-axis (``from_z`` / ``thru_z``) binds.
+        attribute) and, for a windowed write, ``until`` (the window end, step-level) —
+        appear among the chained inserts' business-axis (``from_z`` / ``thru_z``) binds.
 
     The domain values (carried, not derived) and the head/tail residual windows are
     graded observably by ``then.tableState`` in the run, not restated in ①.
@@ -1828,20 +1866,28 @@ def _assert_until_input(
     in_z_pos, out_z_pos = full_columns.index(in_z), full_columns.index(out_z)
     from_z_pos, thru_z_pos = full_columns.index(from_z), full_columns.index(thru_z)
 
+    windowed = step["mutation"] in _UNTIL_MUTATIONS
     at = step.get("at")
     until = step.get("until")
-    if at is None or until is None:
+    if at is None:
+        raise CaseFailure(
+            f"{case.path.name}: a bitemporal rectangle-split step's neutral write input "
+            f"(①) MUST carry `at` (the transaction instant → in_z), which is DERIVED, "
+            f"never read from the golden."
+        )
+    if windowed and until is None:
         raise CaseFailure(
             f"{case.path.name}: a `*Until` step's neutral write input (①) MUST carry "
-            f"both `at` (the transaction instant → in_z) and `until` (the business "
-            f"window end → thru_z), which are DERIVED, never read from the golden."
+            f"`until` (the business window end → thru_z), which is DERIVED, never read "
+            f"from the golden."
         )
     columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
     business_from = columns.get(from_z)
     if business_from is None:
         raise CaseFailure(
-            f"{case.path.name}: a `*Until` step's ① row MUST carry the business window "
-            f"start (`businessFrom` → {from_z}), which discriminates the chained rows."
+            f"{case.path.name}: a bitemporal rectangle-split step's ① row MUST carry the "
+            f"business window start (`businessFrom` → {from_z}), which discriminates the "
+            f"chained rows."
         )
 
     business_binds: list[Any] = []
@@ -1853,15 +1899,89 @@ def _assert_until_input(
             business_binds.extend([binds[from_z_pos], binds[thru_z_pos]])
         else:
             # The inactivating close: out_z = at, keyed on the current-on-processing row.
-            _assert_write_values(case, [at, pk, infinity], binds, statement)
+            # Whether the close is GATED (optimistic) is decided by the SQL SHAPE — it MUST
+            # carry the observed rectangle's business + processing gate predicates
+            # (`and from_z = ? and in_z = ?`) — NEVER merely by a longer bind row, so a
+            # plain close with spurious trailing binds fails as a mismatch rather than being
+            # tolerated as gated. A gated close then pairs those two predicates with EXACTLY
+            # two trailing binds — the currently-open row's (from_z, in_z), reconstructed
+            # from prior insert steps and DISTINCT from the window boundary.
+            expected = [at, pk, infinity]
+            gated = _has_temporal_gate(statement, from_z, in_z)
+            if gated:
+                open_rect = _open_rectangle_binds(case, entity, step, pk, from_z)
+                if open_rect is None:
+                    raise CaseFailure(
+                        f"{case.path.name}: a gated bitemporal close carries the "
+                        f"`and {from_z} = ? and {in_z} = ?` gate, but no prior insert step "
+                        f"opens a rectangle for pk {pk!r} to draw the observed "
+                        f"(from_z, in_z) from."
+                    )
+                expected = [*expected, *open_rect]
+            placeholders = statement.count("?")
+            if placeholders != len(expected) or len(binds) != len(expected):
+                raise CaseFailure(
+                    f"{case.path.name}: the {'gated' if gated else 'plain'} bitemporal close "
+                    f"{statement!r} carries {placeholders} placeholder(s) and {len(binds)} "
+                    f"bind(s), but its derived shape is {len(expected)} — a gated close MUST "
+                    f"pair the `and {from_z} = ? and {in_z} = ?` gate with exactly two "
+                    f"trailing (from_z, in_z) binds; a plain close carries only "
+                    f"`[at, pk, infinity]`."
+                )
+            _assert_write_values(case, expected, binds, statement)
 
-    for bound, label in ((business_from, "businessFrom"), (until, "until")):
+    bounds = [(business_from, "businessFrom")]
+    if until is not None:
+        bounds.append((until, "until"))
+    for bound, label in bounds:
         if not any(_write_value_equal(bound, value) for value in business_binds):
             raise CaseFailure(
-                f"{case.path.name}: the `*Until` business window bound {label}={bound!r} "
-                f"appears in none of the chained inserts' business-axis binds "
-                f"{business_binds!r}."
+                f"{case.path.name}: the rectangle-split business window bound "
+                f"{label}={bound!r} appears in none of the chained inserts' business-axis "
+                f"binds {business_binds!r}."
             )
+
+
+def _open_rectangle_binds(
+    case: Case, entity: Entity, current_step: dict[str, Any], pk: Any, from_z: str
+) -> tuple[Any, Any] | None:
+    """Reconstruct the currently-open rectangle's ``(from_z, in_z)`` for a gated close.
+
+    A gated bitemporal close (`m-bitemp-write-008`) gates on the observed rectangle's
+    business-from and processing-from — neither present in the closing step's own ①
+    row (the row carries the NEW value + window start, distinct from the observed
+    ``from_z``). Replay the prior insert / insertUntil steps in the same write sequence
+    and return the last-opened rectangle's ``(businessFrom → from_z, at → in_z)`` for
+    ``pk``, so the trailing gate binds cross-check against the row they inactivate
+    rather than being tolerated blind. Returns ``None`` when no prior step opens ``pk``.
+    """
+    reconstructed: tuple[Any, Any] | None = None
+    for prior in case.write_sequence:
+        if prior is current_step:
+            break
+        if prior.get("mutation") not in ("insert", "insertUntil"):
+            continue
+        for row in prior.get("rows", []):
+            _, prior_pk, prior_set, _ = _classify_write_row(case, entity, row)
+            if _write_value_equal(prior_pk, pk):
+                reconstructed = (prior_set.get(from_z), prior.get("at"))
+    return reconstructed
+
+
+def _has_temporal_gate(statement: str, from_z: str, in_z: str) -> bool:
+    """True when a bitemporal close's SQL carries the OPTIMISTIC gate predicates.
+
+    A gated (optimistic) bitemporal close (`m-bitemp-write-008`) targets EXACTLY the
+    observed rectangle, so its inactivating ``UPDATE``'s ``WHERE`` adds the business +
+    processing discriminators — ``and <from_z> = ? and <in_z> = ?`` — beyond the plain
+    ``and <out_z> = ?`` current-row key. BOTH predicates are required, matched
+    word-bounded so ``out_z = ?`` is never mistaken for ``in_z = ?``; a plain close is
+    then never mis-read as gated on the strength of a longer bind row alone.
+    """
+    return bool(
+        re.search(rf"\b{re.escape(from_z)}\s*=\s*\?", statement)
+        and re.search(rf"\b{re.escape(in_z)}\s*=\s*\?", statement)
+    )
 
 
 def _conflict_versioned_entity(case: Case) -> Entity | None:

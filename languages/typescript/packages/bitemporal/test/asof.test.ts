@@ -236,3 +236,61 @@ describe("auditWriteStatements — milestone-chaining DML (audit-only)", () => {
     expect(() => auditWriteStatements("terminate", EVENT)).toThrow(/non-temporal/);
   });
 });
+
+describe("auditWriteStatements — full-bitemporal rectangle-split DML (m-bitemp-write)", () => {
+  // The full-bitemporal Position write target: BOTH axes (business from_z/thru_z,
+  // processing in_z/out_z), so `businessFromColumn` is present (the gated close's
+  // business discriminator).
+  const POSITION: WriteTarget = {
+    table: "position",
+    columns: ["pos_id", "acct_num", "val", "from_z", "thru_z", "in_z", "out_z"],
+    pkColumn: "pos_id",
+    toColumn: "out_z",
+    fromColumn: "in_z",
+    businessFromColumn: "from_z",
+  };
+  const INSERT =
+    "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)";
+  const PLAIN_CLOSE = "update position set out_z = ? where pos_id = ? and out_z = ?";
+
+  it("m-bitemp-write-003 insertUntil opens one business-bounded milestone (1 statement)", () => {
+    expect(auditWriteStatements("insertUntil", POSITION)).toEqual([INSERT]);
+  });
+
+  it("m-bitemp-write-001 updateUntil is inactivate + head/middle/tail (4 statements)", () => {
+    expect(auditWriteStatements("updateUntil", POSITION)).toEqual([
+      PLAIN_CLOSE,
+      INSERT,
+      INSERT,
+      INSERT,
+    ]);
+  });
+
+  it("m-bitemp-write-002 terminateUntil is inactivate + head/tail, no middle (3 statements)", () => {
+    expect(auditWriteStatements("terminateUntil", POSITION)).toEqual([PLAIN_CLOSE, INSERT, INSERT]);
+  });
+
+  it("m-bitemp-write-008 gated close adds the business discriminator between out_z and in_z", () => {
+    // The optimistic gated close targets EXACTLY the observed rectangle: the business
+    // discriminator `from_z` slots between the `out_z` and `in_z` gates.
+    const [gatedClose] = auditWriteStatements("terminate", POSITION, { gated: true });
+    expect(gatedClose).toBe(
+      "update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?",
+    );
+  });
+
+  it("an AUDIT-ONLY gated close omits the business discriminator (no business axis)", () => {
+    // Balance has no business axis, so its gated close is `… and out_z = ? and in_z = ?`.
+    const AUDIT_GATED: WriteTarget = {
+      table: "balance",
+      columns: ["bal_id", "acct_num", "val", "in_z", "out_z"],
+      pkColumn: "bal_id",
+      toColumn: "out_z",
+      fromColumn: "in_z",
+    };
+    const [gatedClose] = auditWriteStatements("terminate", AUDIT_GATED, { gated: true });
+    expect(gatedClose).toBe(
+      "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?",
+    );
+  });
+});

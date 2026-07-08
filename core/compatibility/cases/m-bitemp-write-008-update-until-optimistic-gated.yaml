@@ -1,35 +1,37 @@
-# Write sequence: updateUntil — the BITEMPORAL RECTANGLE SPLIT (the signature
-# full-bitemporal write). A value is corrected for a BOUNDED business window only,
-# while preserving the audit trail on the processing axis (research §6).
+# Write sequence: updateUntil under an OPTIMISTIC gate, asserted END-TO-END — the
+# full bitemporal RECTANGLE SPLIT (-001) whose inactivating close is GATED on the
+# observed rectangle's processing-from (in_z) AND business-from (from_z), so the
+# whole gated split (close + head/middle/tail) is witnessed, not just the single
+# gated UPDATE that -004/-005 pin (m-bitemp-write + m-opt-lock).
 #
-# An updateUntil over a business window [businessFrom, businessTo) never mutates a
-# value in place. It (1) INACTIVATES the original current row by closing its
-# PROCESSING axis at the transaction instant (out_z = txInstant), then chains
-# THREE new rows at fresh processing time [txInstant, infinity):
-#   head   : business [from_z, businessFrom)  — the OLD value before the window
-#   middle : business [businessFrom, businessTo) — the NEW value, for the window
-#   tail   : business [businessTo, infinity)  — the OLD value after the window
-# so the value changes ONLY inside the window. The original survives as a row
-# closed on the processing axis — the bitemporal audit trail.
+# A bitemporal entity has no version column, so the observed processing-from (in_z)
+# is the optimistic-lock version analogue; a bitemporal key adds the business
+# discriminator (from_z) so the close targets EXACTLY the observed rectangle. Here
+# the sequence opens a single current rectangle at business [2024-01-01, infinity),
+# processing [2024-01-01, infinity), then an `updateUntil` corrects the value to
+# 200 for the bounded business window [2024-03-01, 2024-09-01) at txInstant
+# 2024-02-15. The close is gated on the observed rectangle's
+# (from_z, in_z) = (2024-01-01, 2024-01-01) — NOTE the gate's from_z (2024-01-01,
+# the observed row) is DISTINCT from the window boundary (2024-03-01). It then
+# chains head / middle / tail as in -001.
+#
+# The optimistic gate rides the GOLDEN close directly (no `observedInZ` token on the
+# writeSequence step): the writeSequence `when` is identical to -001's; only the
+# close statement in `then.statements` carries the `and from_z = ? and in_z = ?`
+# gate, whose two trailing binds are drawn from the currently-open row.
 #
 # The sequence (self-contained, from an empty table):
 #   step 1 insert      : open the current rectangle, value 100,
 #                        business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
 #   step 2 updateUntil : set value 200 for business window [2024-03-01, 2024-09-01)
-#                        at txInstant 2024-02-15 — inactivate the original
-#                        (out_z = 2024-02-15) and chain head / middle / tail
-#                        at processing [2024-02-15, infinity)                   (4 statements)
+#                        at txInstant 2024-02-15 — GATED-inactivate the observed
+#                        rectangle (out_z = 2024-02-15 where from_z = 2024-01-01 and
+#                        in_z = 2024-01-01) and chain head / middle / tail            (4 statements)
 #
-# Resulting state (4 rows): the inactivated original (out_z finite) + head (100) +
-# middle (200) + tail (100), the three new rows current on processing. The close
-# UPDATE is keyed by the current-on-processing predicate (pos_id AND
-# out_z = infinity), never a blind in-place set.
-# the inactivated original — closed on the processing axis (out_z finite)
-# head: old value 100 before the business window, current on processing
-# middle: NEW value 200 for the business window, current on processing
-# tail: old value 100 after the business window, current on processing
+# Resulting state (4 rows): identical to m-bitemp-write-001 — the inactivated
+# original (out_z finite) + head (100) + middle (200) + tail (100).
 model: models/position.yaml
-tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-mvp-1]
+tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-mvp-1]
 shape: writeSequence
 when:
   writeSequence:
@@ -43,7 +45,7 @@ when:
     - mutation: updateUntil
       entity: Position
       statements: 4
-      note: inactivate the original on the processing axis, then chain head / middle / tail
+      note: GATED-inactivate the observed rectangle on the processing axis, then chain head / middle / tail
       rows:
         - { id: 1, value: 200.00, businessFrom: "2024-03-01T00:00:00+00:00" }
       at: "2024-02-15T00:00:00+00:00"
@@ -54,8 +56,8 @@ then:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
-        postgres: update position set out_z = ? where pos_id = ? and out_z = ?
-      binds: ["2024-02-15T00:00:00+00:00", 1, infinity]
+        postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
+      binds: ["2024-02-15T00:00:00+00:00", 1, infinity, "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00"]
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-15T00:00:00+00:00", infinity]

@@ -1,7 +1,8 @@
 /**
- * m-audit-write milestone-chaining writes (audit-only) — the DML statement generation for the
- * `insert` / `update` / `terminate` mutation surface (the MVP mutation surface;
- * the `*Until` rectangle-split trio is out of V1).
+ * m-audit-write / m-bitemp-write milestone-chaining writes — the DML statement
+ * generation for the `insert` / `update` / `terminate` audit-only surface AND the
+ * full-bitemporal `insertUntil` / `updateUntil` / `terminateUntil` rectangle-split
+ * trio (COR-26 promoted `m-bitemp-write` into `slice-mvp-1`).
  *
  * A write to an audit-only temporal entity **chains milestone rows** rather than
  * mutating in place — that is what produces the audit trail. In audit-only mode
@@ -48,13 +49,32 @@ export interface WriteTarget {
    * the version analogue. Present only for a gated (optimistic) close.
    */
   readonly fromColumn?: string;
+  /**
+   * The BUSINESS axis's `fromColumn` (`from_z`) — the bitemporal business
+   * discriminator (m-bitemp-write). A gated (optimistic) close on a FULL-bitemporal
+   * entity targets EXACTLY the observed rectangle, so it adds `and <from_z> = ?`
+   * between the `out_z` and `in_z` gates (`m-bitemp-write-004` / `-005` / `-008`).
+   * Present only for a bitemporal entity; absent for an audit-only one, whose gated
+   * close is `… and out_z = ? and in_z = ?` (no business axis).
+   */
+  readonly businessFromColumn?: string;
 }
 
 /** A generated DML statement: canonical `?`-placeholder SQL text. */
 export type WriteStatement = string;
 
-/** The MVP audit-only mutation kinds. */
-export type MutationKind = "insert" | "update" | "terminate";
+/**
+ * The milestone-chaining mutation kinds: the audit-only `insert` / `update` /
+ * `terminate` surface plus the full-bitemporal `*Until` rectangle-split trio, which
+ * bound a mutation to a business valid-time window (m-bitemp-write).
+ */
+export type MutationKind =
+  | "insert"
+  | "update"
+  | "terminate"
+  | "insertUntil"
+  | "updateUntil"
+  | "terminateUntil";
 
 /** Options for {@link auditWriteStatements}. */
 export interface AuditWriteOptions {
@@ -82,19 +102,34 @@ export function auditWriteStatements(
   target: WriteTarget,
   options: AuditWriteOptions = {},
 ): WriteStatement[] {
-  // Resolve the close LAZILY — only `update`/`terminate` close a milestone, so a
-  // non-temporal `insert` (`m-core-002`/`m-core-003`, no processing axis) never demands one.
+  // Resolve the close LAZILY — only `update`/`terminate`/`*Until` close a milestone,
+  // so a non-temporal `insert` (`m-core-002`/`m-core-003`, no processing axis) never
+  // demands one.
   const close = (): WriteStatement =>
     options.gated ? gatedCloseStatement(target) : closeStatement(target);
+  const insert = (): WriteStatement => insertStatement(target);
   switch (kind) {
     case "insert":
-      return [insertStatement(target)];
+    case "insertUntil":
+      // Open one milestone: an audit-only insert, or a business-bounded insertUntil
+      // (`m-bitemp-write-003`, a single INSERT with no prior row to close).
+      return [insert()];
     case "update":
-      // Close the current row, then chain a new current milestone.
-      return [close(), insertStatement(target)];
+      // Audit-only close-and-chain (2): close the current row, chain a new current
+      // milestone. A bitemporal PLAIN update's extra head/new-tail split is
+      // orchestrated by the write-sequence rectangle-split planner (m-bitemp-write-006).
+      return [close(), insert()];
+    case "updateUntil":
+      // Bitemporal rectangle split (4): inactivate the original on the processing axis,
+      // then chain head / middle / tail (`m-bitemp-write-001` / `-008`).
+      return [close(), insert(), insert(), insert()];
     case "terminate":
-      // Close the current row and insert nothing.
+      // Audit-only close (1): close the current row and insert nothing.
       return [close()];
+    case "terminateUntil":
+      // Bitemporal rectangle split with NO middle (3): inactivate + head / tail — the
+      // value is absent inside the terminated window (`m-bitemp-write-002`).
+      return [close(), insert(), insert()];
   }
 }
 
@@ -120,13 +155,18 @@ function closeStatement(target: WriteTarget): WriteStatement {
 }
 
 /**
- * `update <table> set out_z = ? where <pk> = ? and out_z = ? and <in_z> = ?` — the
- * OPTIMISTIC-mode gated close (m-opt-lock). Like {@link closeStatement} but with the
- * `… and <in_z> = ?` gate on the observed processing-from (the version analogue for
- * a temporal entity, which carries no version column). The gate shape mirrors
+ * The OPTIMISTIC-mode gated close (m-opt-lock). Like {@link closeStatement} but with
+ * the `… and <in_z> = ?` gate on the observed processing-from (the version analogue
+ * for a temporal entity, which carries no version column). The gate shape mirrors
  * `@parallax/locking`'s `versionedUpdate` `… and <version> = ?`: a concurrent writer
  * that superseded the milestone leaves a fresh `in_z`, so the stale gate matches
  * ZERO rows — the `updatedRows != 1` conflict signal.
+ *
+ * On a FULL-bitemporal entity ({@link WriteTarget.businessFromColumn} present) the
+ * gate additionally carries the business discriminator so the close targets EXACTLY
+ * the observed rectangle (m-bitemp-write): `… where <pk> = ? and out_z = ? and
+ * <from_z> = ? and <in_z> = ?`. An audit-only entity has no business axis, so it
+ * omits the `and <from_z> = ?` term: `… where <pk> = ? and out_z = ? and <in_z> = ?`.
  */
 function gatedCloseStatement(target: WriteTarget): WriteStatement {
   if (target.toColumn === undefined) {
@@ -139,8 +179,12 @@ function gatedCloseStatement(target: WriteTarget): WriteStatement {
       "a gated (optimistic) audit close requires a processing fromColumn (the in_z gate)",
     );
   }
+  // A bitemporal close's business discriminator slots BETWEEN the out_z and in_z gates
+  // (model column order: from_z precedes in_z), so the observed rectangle is targeted.
+  const businessGate =
+    target.businessFromColumn === undefined ? "" : ` and ${target.businessFromColumn} = ?`;
   return (
     `update ${target.table} set ${target.toColumn} = ? ` +
-    `where ${target.pkColumn} = ? and ${target.toColumn} = ? and ${target.fromColumn} = ?`
+    `where ${target.pkColumn} = ? and ${target.toColumn} = ?${businessGate} and ${target.fromColumn} = ?`
   );
 }

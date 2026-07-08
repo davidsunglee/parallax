@@ -1,0 +1,85 @@
+# Write sequence: plain (UNBOUNDED) bitemporal update — the everyday correction
+# (Reladomo testUpdateLaterBusinesDay). A value is corrected from a business
+# instant B ONWARD, with no upper business bound: the new value holds for
+# [B, infinity) while the audit trail is preserved on the processing axis.
+#
+# A plain `update` on a bitemporal entity is the TWO-WAY degenerate of the
+# rectangle split (contrast the three-way windowed `updateUntil`, -001). It
+# inactivates the original current row by closing its PROCESSING axis at the
+# transaction instant (out_z = txInstant), then chains only TWO new rows at fresh
+# processing time [txInstant, infinity):
+#   head     : business [from_z, B)        — the OLD value before the correction
+#   new tail : business [B, infinity)      — the NEW value from B onward
+# There is NO middle and NO old-tail (the correction is unbounded, so the new
+# value simply runs to infinity). The original survives as a row closed on the
+# processing axis — the bitemporal audit trail.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert : open the current rectangle, value 100,
+#                   business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
+#   step 2 update : correct the value to 200 from business B = 2024-06-01 at
+#                   txInstant 2024-07-01 — inactivate the original (out_z = 2024-07-01)
+#                   and chain head (old 100) + new tail (new 200)                       (3 statements)
+#
+# Resulting state (3 rows): the inactivated original (out_z finite) + head (100,
+# business [2024-01-01, 2024-06-01)) + new tail (200, business [2024-06-01, infinity)),
+# the two new rows current on processing. The close UPDATE is keyed by the
+# current-on-processing predicate (pos_id AND out_z = infinity), never a blind
+# in-place set.
+model: models/position.yaml
+tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-update-split, slice-mvp-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Position
+      statements: 1
+      note: open the original current rectangle [business inf, processing inf)
+      rows:
+        - { id: 1, acctNum: A, value: 100.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: update
+      entity: Position
+      statements: 3
+      note: inactivate the original on the processing axis, then chain head (old) + new tail (new)
+      rows:
+        - { id: 1, value: 200.00, businessFrom: "2024-06-01T00:00:00+00:00" }
+      at: "2024-07-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: update position set out_z = ? where pos_id = ? and out_z = ?
+      binds: ["2024-07-01T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, A, 200.00, "2024-06-01T00:00:00+00:00", infinity, "2024-07-01T00:00:00+00:00", infinity]
+  tableState:
+    position:
+      - pos_id: 1
+        acct_num: A
+        val: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-07-01T00:00:00+00:00"
+      - pos_id: 1
+        acct_num: A
+        val: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-07-01T00:00:00+00:00"
+        out_z: infinity
+      - pos_id: 1
+        acct_num: A
+        val: 200.00
+        from_z: "2024-06-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-07-01T00:00:00+00:00"
+        out_z: infinity
+  roundTrips: 4
