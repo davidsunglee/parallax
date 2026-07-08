@@ -16,7 +16,7 @@ database seam (`m-dialect` / `m-db-port` / `m-db-error`), but
 it is not added to the V1 adapter claim. It is covered by separate, explicit
 database profiles: shared Docker-free dialect tests, shared adapter smoke, shared
 provider contract, a selectable API Conformance lane, and the
-`mariadb-curated-28` partial compatibility profile. Cases whose `then.statements`
+`mariadb-curated-36` partial compatibility profile. Cases whose `then.statements`
 entries carry no `mariadb` `sql` key are profile exclusions with reasons, not
 silent skips.
 

@@ -1,7 +1,7 @@
 /**
  * The MariaDB **curated m-case-format matrix profile** (Testcontainers `mariadb:11.4`) —
  * the driver-bound corner that proves `typescript × mariadb` end-to-end for the
- * declared `mariadb-curated-28` partial profile.
+ * declared `mariadb-curated-36` partial profile.
  *
  * The abstraction earns its keep by a real second implementer round-tripping
  * through an actual database: each case compiles against `mariadbDialect`, runs
@@ -14,11 +14,23 @@
  * `hex()` (`m-core-004`), and errno classification (`m-db-error-001`-`m-db-error-008`) — are proven by a real
  * round trip, not only by the Docker-free compile-golden / dialect-unit lanes.
  *
- * The 28-case set (17 `slice-mvp-1 ∩ goldenSql.mariadb` + 11 marquee proofs):
+ * The 36-case set (25 `slice-mvp-1 ∩ goldenSql.mariadb` + 11 marquee proofs):
  *   - flat reads:  `m-op-algebra-002 m-descriptor-001 m-op-algebra-016 m-op-algebra-018 m-op-algebra-026 m-navigate-001 m-read-lock-009 m-temporal-read-021 m-core-004`
  *   - deep fetch:  `m-deep-fetch-012 m-navigate-013 m-navigate-015 m-navigate-020 m-navigate-024`
  *   - writes:      `m-core-002 m-core-003 m-audit-write-001 m-audit-write-002 m-audit-write-003 m-audit-write-004` (COR-26 audit-chaining backfill)
+ *   - bitemporal:  `m-bitemp-write-001..008` (COR-26 full-bitemporal `position` writes/conflicts — see below)
  *   - errno:       `m-db-error-001`-`m-db-error-008` (uniqueViolation / deadlock / lock-wait timeout)
+ *
+ * The eight `m-bitemp-write` cases carry `goldenSql.mariadb`, JOIN this curated profile,
+ * and now EXECUTE on this TypeScript run-lane (COR-26): the six write-sequence splits
+ * (`-001` / `-002` / `-003` / `-006` / `-007` / `-008`) run through `buildWriteSequencePlan`
+ * (empty provision → apply the rectangle-split DML → read back `tableState`), and the two
+ * optimistic-conflict closes (`-004` / `-005`) run through `buildConflictPlan` (fixtures →
+ * `given.apply` → the gated close → assert `affectedRows` + `tableState`). This is possible
+ * because the `@parallax/bitemporal` temporal-insert builder now emits the sqlglot-canonical
+ * quoted-table spacing (`` insert into `position` (…) ``, a space before `(` for a quoted
+ * table; `insert into position(…)` stays tight on unquoted Postgres). The reference-harness
+ * oracle (`just oracle-test`, both dialects) remains the independent second witness.
  *
  * The errno family asserts the thrown `ParallaxTransientError` / neutral category
  * via the adapter's classifier, and `m-db-error-004`-`m-db-error-007` drive the TWO-CONNECTION
@@ -28,6 +40,7 @@
  */
 import { execFileSync } from "node:child_process";
 import {
+  buildConflictPlan,
   buildDeepFetchPlan,
   buildWriteSequencePlan,
   columnTypesForCase,
@@ -56,6 +69,8 @@ import {
   caseById,
   casesForProfile,
   exclusionsForProfile,
+  MARIADB_BITEMP_CONFLICT_PROFILE_IDS,
+  MARIADB_BITEMP_WRITE_PROFILE_IDS,
   MARIADB_CURATED_PROFILE,
   MARIADB_CURATED_PROFILE_IDS,
   MARIADB_DEADLOCK_PROFILE_IDS,
@@ -275,6 +290,76 @@ group.skipIf(!HAS_DOCKER)(
       );
     });
 
+    // --- bitemporal write sequences (rectangle split, table state + emitted SQL) ---
+
+    group("bitemporal write sequences (table state + emitted SQL)", () => {
+      // The full-bitemporal `position` rectangle-split writes (COR-26): a self-contained
+      // milestone history built from an EMPTY table, then read back. These exercise the
+      // quoted-table INSERT spacing (`` insert into `position` (…) ``) the temporal-insert
+      // builder now emits, so `emitted === goldenSql.mariadb` holds on the real MariaDB lane.
+      it.each(MARIADB_BITEMP_WRITE_PROFILE_IDS.map((id) => ({ id, loaded: loadedById(id) })))(
+        "$id applies the rectangle-split DML and reads back the expected table state",
+        async ({ loaded }) => {
+          await provisionEmpty(provider, loaded);
+          const plan = buildWriteSequencePlan(loaded, mariadbDialect);
+          const emissions: string[] = [];
+          for (const statement of plan.statements) {
+            emissions.push(statement.sql);
+            await provider.exec(statement.sql, statement.binds);
+          }
+
+          expect(emissions).toEqual(mariadbGolden(loaded));
+
+          const observed = await readTableState(provider, loaded);
+          const expected = (loaded.raw.then?.tableState ?? {}) as TableState;
+          const comparison = compareTableState(observed, expected, columnTypesForCase(loaded));
+          expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
+        },
+        BOOT_TIMEOUT,
+      );
+    });
+
+    // --- bitemporal conflicts (optimistic gated close: affected rows + table state) ---
+
+    group("bitemporal conflicts (affected rows + table state)", () => {
+      // The optimistic bitemporal inactivation cases (COR-26): fixtures are loaded, the
+      // out-of-band `given.apply` (a concurrent writer's re-chain) runs verbatim, then the
+      // gated close targets the observed rectangle (`… and from_z = ? and in_z = ?`) and
+      // affects 1 row (`-004`, fresh in_z) or 0 rows (`-005`, stale in_z). `buildConflictPlan`
+      // cross-checks the derived close against `goldenSql.mariadb`, so the close's backtick
+      // quoting is proven on the real MariaDB lane alongside the affected-row semantics.
+      it.each(MARIADB_BITEMP_CONFLICT_PROFILE_IDS.map((id) => ({ id, loaded: loadedById(id) })))(
+        "$id applies the gated close and reads back the expected table state",
+        async ({ loaded }) => {
+          await provision(provider, loaded);
+          const plan = buildConflictPlan(loaded, mariadbDialect);
+
+          // The concurrent writer's setup (a naive re-chain) — run verbatim, out of band.
+          for (const statement of plan.apply) {
+            await provider.exec(statement.sql, statement.binds);
+          }
+
+          const emissions: string[] = [];
+          for (const attempt of plan.attempts) {
+            emissions.push(attempt.sql);
+            const affected = await provider.exec(attempt.sql, attempt.binds);
+            expect(
+              affected,
+              `${loaded.casePath}: ${attempt.casePointer} expected ${attempt.affectedRows} affected`,
+            ).toBe(attempt.affectedRows);
+          }
+
+          expect(emissions).toEqual(mariadbGolden(loaded));
+
+          const observed = await readTableState(provider, loaded);
+          const expected = (loaded.raw.then?.tableState ?? {}) as TableState;
+          const comparison = compareTableState(observed, expected, columnTypesForCase(loaded));
+          expect(comparison.equal, `${loaded.casePath}: ${comparison.reason}`).toBe(true);
+        },
+        BOOT_TIMEOUT,
+      );
+    });
+
     // --- bytes write round-trip (dialect bind seam) ---------------------------
 
     group("bytes write round-trip (dialect bind seam)", () => {
@@ -451,12 +536,14 @@ function entry(round: Round, side: "A" | "B"): [string, readonly unknown[]] {
   return [statement.sql, statement.binds];
 }
 
-// Discovery is Docker-free; assert the exact 28-case set unconditionally so a
+// Discovery is Docker-free; assert the exact 36-case set unconditionally so a
 // discovery regression that silently drops a case fails loudly. The 24 top-level
 // golden cases (reads / deep fetch / writes / unique inserts) carry
 // `goldenSql.mariadb`; the 4 deadlock / lock-wait concurrency proofs carry their
-// golden SQL inside `concurrency.rounds`.
-it("covers exactly the declared mariadb-curated-28 profile", () => {
+// golden SQL inside `concurrency.rounds`; the 8 full-bitemporal `position` cases carry
+// `goldenSql.mariadb` too and now EXECUTE on this run-lane — six write-sequence splits
+// and two optimistic-conflict closes (see the header + the two bitemporal groups above).
+it("covers exactly the declared mariadb-curated-36 profile", () => {
   const shapeGolden = [
     ...MARIADB_FLAT_READ_PROFILE_IDS,
     ...MARIADB_DEEP_FETCH_PROFILE_IDS,
@@ -464,13 +551,14 @@ it("covers exactly the declared mariadb-curated-28 profile", () => {
     ...MARIADB_UNIQUE_PROFILE_IDS,
   ];
   const concurrency = [...MARIADB_DEADLOCK_PROFILE_IDS, ...MARIADB_LOCK_WAIT_PROFILE_IDS];
+  const bitemporal = [...MARIADB_BITEMP_WRITE_PROFILE_IDS, ...MARIADB_BITEMP_CONFLICT_PROFILE_IDS];
   expect(
     casesForProfile(MARIADB_CURATED_PROFILE)
       .map(({ id }) => id)
       .sort(),
   ).toEqual([...MARIADB_CURATED_PROFILE_IDS].sort());
-  expect(shapeGolden.length + concurrency.length).toBe(28);
-  for (const id of shapeGolden) {
+  expect(shapeGolden.length + concurrency.length + bitemporal.length).toBe(36);
+  for (const id of [...shapeGolden, ...bitemporal]) {
     expect(mariadbGolden(loadedById(id))).toBeDefined();
   }
   for (const id of concurrency) {
@@ -481,7 +569,7 @@ it("covers exactly the declared mariadb-curated-28 profile", () => {
 it("reports non-curated Postgres full-profile cases as explicit MariaDB exclusions", () => {
   const postgresFullCount = casesForProfile(POSTGRES_FULL_PROFILE).length;
   const exclusions = exclusionsForProfile(MARIADB_CURATED_PROFILE);
-  expect(exclusions).toHaveLength(postgresFullCount - 14);
+  expect(exclusions).toHaveLength(postgresFullCount - 25);
   // Two exclusion reasons: the historical no-mariadb-golden reason, plus the
   // value-object cases (which DO carry mariadb golden but are proven by the
   // Phase-10 direct compile tests, not this run-lane profile — impl-spec §5.4).

@@ -27,14 +27,12 @@
 # current-on-processing predicate (pos_id AND out_z = infinity), never a blind
 # in-place set.
 #
-# This case is Postgres-only: `position` is a reserved function name in MariaDB, so
-# an unquoted `insert into position(...)` parses as a POSITION() call and is rejected
-# there — yet the harness/adapter `quote_identifier` deliberately does NOT quote
-# `position` (it is not in the reserved-word set that would ripple into every
-# existing Postgres position golden). The MariaDB infinity-sentinel witness (DQ3)
-# therefore rides the audit-only case m-audit-write-004 (the `balance` table is not
-# reserved); the sentinel translation is column-agnostic, so proving it on out_z
-# there proves it for thru_z here too.
+# The goldens carry both dialects. `position` is a reserved function name in MariaDB
+# (`POSITION()`), so its golden quotes the table as `position` — the one divergence
+# from the bare-Postgres golden (m-dialect: the reserved-word set is per-dialect). The
+# open bound rides as an `infinity` bind, so the MariaDB max-sentinel round-trips on the
+# processing close AND the business thru_z here exactly as the audit witness
+# m-audit-write-004 proves it on out_z, and the asserted table state stays dialect-neutral.
 model: models/position.yaml
 tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-update-split, slice-mvp-1]
 shape: writeSequence
@@ -58,15 +56,19 @@ then:
   statements:
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
         postgres: update position set out_z = ? where pos_id = ? and out_z = ?
+        mariadb: update `position` set out_z = ? where pos_id = ? and out_z = ?
       binds: ["2024-07-01T00:00:00+00:00", 1, infinity]
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 200.00, "2024-06-01T00:00:00+00:00", infinity, "2024-07-01T00:00:00+00:00", infinity]
   tableState:
     position:

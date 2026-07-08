@@ -133,11 +133,30 @@ export function auditWriteStatements(
   }
 }
 
-/** `insert into <table>(<cols>) values (?, …)` — open a milestone row. */
+/**
+ * A bare, lexically-simple identifier — the shape the dialect quoting seam leaves
+ * UNQUOTED (`^[a-z_][a-z0-9_]*$`, m-dialect). A table reference is quoted exactly when
+ * it does NOT match this, which is what {@link insertStatement} keys its INSERT
+ * column-list spacing on.
+ */
+const SIMPLE_TABLE_REFERENCE = /^[a-z_][a-z0-9_]*$/;
+
+/**
+ * `insert into <table>(<cols>) values (?, …)` — open a milestone row, with the m-sql
+ * canonical spacing before the column list. A BARE (simple, unquoted) table name
+ * renders TIGHT against its `(` (`insert into position(...)`, Postgres), while a
+ * QUOTED / otherwise non-simple table reference takes a single space before `(`
+ * (`` insert into `position` (...) ``, MariaDB). This mirrors the m-sql normalizer: a
+ * bare name tokenizes as a function-call VAR (no space before its `(`), a quoted name
+ * as an IDENTIFIER (a space before `(`). The separator is therefore CONDITIONAL on the
+ * table's quoting — never a blanket space, which would corrupt the unquoted-Postgres
+ * canonical form the existing goldens pin.
+ */
 function insertStatement(target: WriteTarget): WriteStatement {
   const cols = target.columns.join(", ");
   const placeholders = target.columns.map(() => "?").join(", ");
-  return `insert into ${target.table}(${cols}) values (${placeholders})`;
+  const gap = SIMPLE_TABLE_REFERENCE.test(target.table) ? "" : " ";
+  return `insert into ${target.table}${gap}(${cols}) values (${placeholders})`;
 }
 
 /**

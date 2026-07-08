@@ -293,4 +293,25 @@ describe("auditWriteStatements — full-bitemporal rectangle-split DML (m-bitemp
       "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?",
     );
   });
+
+  it("a QUOTED table INSERT canonically spaces the column list (m-sql spacing)", () => {
+    // A reserved table name is quoted by the dialect seam (MariaDB backtick, Postgres
+    // double-quote). The m-sql normalizer renders such a quoted table with a space before
+    // its INSERT column list (an IDENTIFIER token), unlike a bare name (a function-call
+    // VAR, tight). The builder follows suit so `emitted === golden` on the quoted-table lane
+    // — for BOTH quote characters, since spacing keys on quoting, not the specific char.
+    const MARIADB_POSITION: WriteTarget = { ...POSITION, table: "`position`" };
+    expect(auditWriteStatements("insert", MARIADB_POSITION)).toEqual([
+      "insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)",
+    ]);
+
+    const POSTGRES_QUOTED: WriteTarget = {
+      table: '"order"',
+      columns: ["id", "label"],
+      pkColumn: "id",
+    };
+    expect(auditWriteStatements("insert", POSTGRES_QUOTED)).toEqual([
+      'insert into "order" (id, label) values (?, ?)',
+    ]);
+  });
 });
