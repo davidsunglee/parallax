@@ -19,6 +19,10 @@
 #   step 2 find  : query account 9 — it MUST observe NO rows. The would-be-successful
 #                  insert never became durable: the conflict discarded the entire UoW
 #                  (no partial flush). This is the teeth.
+# The conflict is ASSERTED against real data, not merely simulated: then.affectedRows
+# (0) pins the gated update of account 2 to the 0-row conflict count, and the harness
+# makes the abort a CONSEQUENCE of detecting it — a gated write that affected 1 row
+# (no conflict) would fail this case rather than pass on the rollback alone.
 # roundTrips = 4 (the concurrent commit + the two aborted writes + the dependent find).
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, optimistic-lock-conflict, abort, scenario, slice-mvp-1]
@@ -59,4 +63,11 @@ when:
           binds: [9]
       expectRows: []
 then:
+  # The conflict is ASSERTED, not merely simulated: the version-gated update of
+  # account 2 (step 1's second statement) MUST affect 0 rows — the stale-version gate
+  # matched no row (`updatedRows != 1`, m-opt-lock). The harness detects that 0-row
+  # conflict and makes the abort its CONSEQUENCE; a gated write that instead affected
+  # 1 row (no real conflict) fails this case. This composes with the table-unchanged
+  # read-back (step 2: account 9 absent — the buffered insert never flushed).
+  affectedRows: 0
   roundTrips: 4
