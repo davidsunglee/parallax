@@ -415,13 +415,16 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 # --- the profile gate over the real corpus -----------------------------------
 #
 # The family-selected cases are internally consistent with the canonical claim,
-# and exactly 180 cases carry the slice tag (a drift tripwire — adding or losing a
+# and exactly 185 cases carry the slice tag (a drift tripwire — adding or losing a
 # tagged case fails the count). Phase 11 added the 42 value-object cases (the
 # whole m-value-object module except the deferred bitemporal rectangle-split
 # value-object write, m-value-object-033), lifting the slice from 123 to 165; COR-26
 # promoted the eight m-bitemp-write cases (m-bitemp-write-001..008), lifting it to 173,
 # then added seven audit-chaining / unit-work RYOW cases (m-audit-write-004..006,
-# m-unit-work-005..008) on already-claimed modules, lifting it to 180.
+# m-unit-work-005..008) on already-claimed modules, lifting it to 180, then five
+# batch-DELETE / opt-lock-edge / mixed-op cases (m-batch-write-003/004,
+# m-opt-lock-012/013, m-unit-work-009) in COR-26 Phase 3, lifting it to 185.
+# (m-db-error-009, the serialization-failure witness, stays harness-only.)
 
 
 def test_real_corpus_profile_is_consistent() -> None:
@@ -439,6 +442,6 @@ def test_profile_slice_tag_count() -> None:
         tags = [t for t in doc.get("tags", []) if isinstance(t, str)]
         if _SLICE_TAG in tags:
             tagged.append(path.name)
-    assert len(tagged) == 180, (
-        f"expected exactly 180 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
+    assert len(tagged) == 185, (
+        f"expected exactly 185 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
     )

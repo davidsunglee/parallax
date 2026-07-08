@@ -1,0 +1,35 @@
+# Multi-attribute versioned UPDATE (m-opt-lock): a versioned update that sets
+# SEVERAL domain columns advances + gates the version exactly once.
+#
+# m-opt-lock-006 proves the single-attribute success (balance only). This pins the
+# multi-attribute form: the unit of work observes account 2 at version 1 and
+# updates BOTH owner and balance. The golden SET lists the domain columns in
+# columnOrder (owner, balance) followed by the framework-owned version advance
+# (version = observed + 1 = 2); the gate binds the observed version (1). With no
+# concurrent writer the fresh gate matches exactly ONE row — success — so both
+# attributes land and the version advances to 2:
+#   update account set owner = ?, balance = ?, version = ? where id = ? and version = ?
+#   binds: [Ling, 300.00, 2, 2, 1]
+#
+# The harness loads fixtures, applies the golden UPDATE, and asserts affectedRows = 1
+# and the resulting table state: account 2 is now Ling / 300.00 / version 2, the
+# other rows untouched. This proves the version advances ONCE (not once per set
+# column) and the multi-column SET binds in columnOrder ahead of the version.
+model: models/account.yaml
+tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-mvp-1]
+shape: conflict
+when:
+  uow:
+    concurrency: optimistic
+  write: { id: 2, owner: Ling, balance: 300.00, observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: update account set owner = ?, balance = ?, version = ? where id = ? and version = ?
+      binds: [Ling, 300.00, 2, 2, 1]
+  affectedRows: 1
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+      - { id: 2, owner: Ling, balance: 300.00, version: 2 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }

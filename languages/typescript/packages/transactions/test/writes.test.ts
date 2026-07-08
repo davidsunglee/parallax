@@ -21,10 +21,13 @@
  */
 import {
   type BatchTarget,
+  collapsedDelete,
   combineWrites,
+  keyedDelete,
   keyedUpdate,
   multiRowInsert,
   uniformUpdate,
+  versionedDelete,
   type WriteStep,
 } from "@parallax/transactions";
 import { describe, expect, it } from "vitest";
@@ -63,6 +66,31 @@ describe("batched update forms", () => {
 
   it("renders one keyed UPDATE for the per-key form (m-batch-write-002)", () => {
     expect(keyedUpdate(WALLET, "balance")).toBe("update wallet set balance = ? where id = ?");
+  });
+});
+
+describe("batched delete forms", () => {
+  it("renders one keyed DELETE for the FK-ordered per-row form (m-unit-work-007)", () => {
+    expect(keyedDelete(WALLET)).toBe("delete from wallet where id = ?");
+  });
+
+  it("collapses three buffered deletes into one `id in (…)` DELETE (m-batch-write-003)", () => {
+    expect(collapsedDelete(WALLET, 3)).toBe("delete from wallet where id in (?, ?, ?)");
+  });
+
+  it("renders a single-key `in (?)` collapse for one row (the degenerate form)", () => {
+    expect(collapsedDelete(WALLET, 1)).toBe("delete from wallet where id in (?)");
+  });
+
+  it("rejects a non-positive key count", () => {
+    expect(() => collapsedDelete(WALLET, 0)).toThrow(/at least one key/);
+  });
+
+  it("renders a version-gated DELETE per key for a versioned entity (m-batch-write-004)", () => {
+    // The versioned entity carries a `version` column; the gate rides the `where`.
+    expect(versionedDelete({ ...WALLET, table: "account" }, "version")).toBe(
+      "delete from account where id = ? and version = ?",
+    );
   });
 });
 

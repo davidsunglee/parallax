@@ -11,10 +11,12 @@
 export {
   type BatchStatement,
   type BatchTarget,
+  collapsedDelete,
   keyedDelete,
   keyedUpdate,
   multiRowInsert,
   uniformUpdate,
+  versionedDelete,
 } from "./batch.js";
 export {
   type BatchMutation,

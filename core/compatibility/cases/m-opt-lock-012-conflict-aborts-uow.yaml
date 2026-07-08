@@ -1,0 +1,62 @@
+# Optimistic-lock conflict ABORTS the unit of work (m-opt-lock + m-unit-work): a
+# `updatedRows != 1` conflict mid-flush discards EVERY buffered write in the UoW,
+# not just the conflicting one — no partial flush survives.
+#
+# m-opt-lock-005 proves the conflict SIGNAL (a stale-version UPDATE affects 0 rows);
+# this composes it with the m-unit-work abort contract: when a versioned write in a
+# unit of work conflicts, the WHOLE unit of work rolls back, so an unrelated insert
+# buffered in the same UoW is discarded too. The scenario:
+#   step 0 write : a CONCURRENT transaction commits first, bumping account 2 to
+#                  balance 999.00 / version 2 (the classic optimistic race).
+#   step 1 write : OUR optimistic unit of work buffers TWO writes and flushes them,
+#                  then ABORTS (rollback: true — the observable form of the conflict
+#                  abort):
+#                    (a) insert a brand-new account 9 (would succeed on its own), then
+#                    (b) a version-GATED update of account 2 on the version we OBSERVED
+#                        (1) — but the row is now version 2, so the gate matches ZERO
+#                        rows (updatedRows != 1). That conflict aborts the UoW, so (a)
+#                        is rolled back with it.
+#   step 2 find  : query account 9 — it MUST observe NO rows. The would-be-successful
+#                  insert never became durable: the conflict discarded the entire UoW
+#                  (no partial flush). This is the teeth.
+# roundTrips = 4 (the concurrent commit + the two aborted writes + the dependent find).
+model: models/account.yaml
+tags: [m-opt-lock, m-unit-work, optimistic-lock-conflict, abort, scenario, slice-mvp-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - write: update
+      roundTrips: 1
+      note: a CONCURRENT transaction commits first — account 2 -> balance 999.00, version 2
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ?
+          binds: [999.00, 2, 2]
+    - write: update
+      rollback: true
+      roundTrips: 2
+      note: our UoW inserts account 9 then hits a stale-version conflict on account 2 (0 rows) -> the whole UoW aborts
+      statements:
+        - sql:
+            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [9, Noether, 5.00, 1]
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: [300.00, 2, 2, 1]
+    - find:
+        eq:
+          attr: Account.id
+          value: 9
+      roundTrips: 1
+      note: account 9 MUST be absent — the aborted UoW's insert never flushed (no partial flush)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [9]
+      expectRows: []
+then:
+  roundTrips: 4

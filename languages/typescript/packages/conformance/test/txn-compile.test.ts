@@ -135,6 +135,18 @@ const EXPECTED_IDS: readonly string[] = [
   "m-unit-work-006",
   "m-unit-work-007",
   "m-unit-work-008",
+  // COR-26 Phase 3 — batch-DELETE + opt-lock edges + mixed-op flush (already-claimed
+  // modules): the non-versioned DELETE collapse `m-batch-write-003` (writeSequence,
+  // `delete ... where id in (…)`), the versioned per-key gated delete
+  // `m-batch-write-004` (writeSequence, one `... where id = ? and version = ?` per
+  // key), the conflict-aborts-UoW scenario `m-opt-lock-012`, the multi-attribute
+  // versioned update `m-opt-lock-013` (conflict), and the mixed-op flush scenario
+  // `m-unit-work-009`.
+  "m-batch-write-003",
+  "m-batch-write-004",
+  "m-opt-lock-012",
+  "m-opt-lock-013",
+  "m-unit-work-009",
 ];
 
 const CASES = txnCases();

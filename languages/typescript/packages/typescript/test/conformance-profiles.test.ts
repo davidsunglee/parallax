@@ -29,8 +29,8 @@ describe("m-case-format matrix profiles", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("keeps the canonical Postgres full profile at the 168 harness-lane cases", () => {
-    expect(casesForProfile(POSTGRES_FULL_PROFILE)).toHaveLength(168);
+  it("keeps the canonical Postgres full profile at the 173 harness-lane cases", () => {
+    expect(casesForProfile(POSTGRES_FULL_PROFILE)).toHaveLength(173);
   });
 
   it("folds the historical Postgres read run into a named profile", () => {
