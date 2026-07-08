@@ -25,14 +25,19 @@
  * lowered-lock-budget choreography. (The read lock's developer-observable behavior — a
  * locking find returns the row — IS exercised here by `m-read-lock-001`/`m-read-lock-002`.)
  *
- * The other two constructs the phase note calls out are NOT case-level skips in the
- * 123-case slice:
- *  - the conflict `precondition` / `preconditionBinds` (out-of-band SQL simulating a
- *    concurrent writer) is a SUB-STEP of the exercised locking cases (`m-opt-lock-005` /
- *    `m-opt-lock-007`), applied harness-side — those cases ARE exercised;
- *  - the out-of-V1 `createUntil` / `updateUntil` / `terminateUntil` writes
- *    (`m-bitemp-write-001`–`-003`) are not tagged `slice-mvp-1`, so they are not in
- *    the slice at all.
+ * The conflict `precondition` / `preconditionBinds` (out-of-band SQL simulating a
+ * concurrent writer) is NOT a case-level skip: it is a SUB-STEP of the exercised
+ * locking cases (`m-opt-lock-005` / `m-opt-lock-007`), applied harness-side — those
+ * cases ARE exercised.
+ *
+ * The eight full-bitemporal milestone-chaining writes (`m-bitemp-write-001`–`-008`,
+ * promoted into `slice-mvp-1` by COR-26 — the windowed / plain rectangle splits and
+ * the optimistic-gated close) are all skipped here: their rectangle-split /
+ * plain-split / optimistic-gated DML is proven end-to-end by the reference harness AND
+ * the TypeScript conformance runner's run lane (`slice-run` / `mariadb-run` drive
+ * `@parallax/conformance`'s write-sequence / conflict plan), not the developer-surface
+ * object-lifecycle API — a developer never authors the milestone-chaining DML directly
+ * (the developer surface for the bitemporal *reads* IS exercised, in `temporal`).
  */
 
 /** One skipped case: its per-module id and the reason it is not developer-authored. */
@@ -159,6 +164,18 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "value object, a type-mismatched literal, a missing required attribute / nested value object) is REFUSED " +
       "before any query is built — so there is no idiomatic developer query to author. The refusal is proven by " +
       "the `@parallax/operation` validators and the harness run lane (slice-run emits the rejected rule).",
+  })),
+  // --- bitemporal milestone-chaining writes (m-bitemp-write, promoted by COR-26) ---
+  ...["001", "002", "003", "004", "005", "006", "007", "008"].map((n) => ({
+    id: `m-bitemp-write-${n}`,
+    reason:
+      "bitemporal milestone-chaining write (rectangle split / plain split / optimistic-gated close): the " +
+      "windowed `*Until` and plain `update`/`terminate` rectangle splits and the optimistic-gated inactivation " +
+      "close never mutate in place — they close the original on the processing axis and chain milestone rows. " +
+      "Their DML is proven end-to-end by the reference harness AND the TypeScript conformance runner's run lane " +
+      "(slice-run drives @parallax/conformance's write-sequence / conflict plan, grading the resulting tableState " +
+      "/ affectedRows), not the developer-surface object API — a developer never authors the milestone-chaining " +
+      "DML directly. The bitemporal READ developer surface is exercised in temporal.api-conformance.test.ts.",
   })),
 ];
 

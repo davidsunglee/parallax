@@ -24,6 +24,7 @@ from reference_harness.case_runner import (
     _assert_conflict_input,
     _assert_write_input_columns,
     _assert_write_step_count,
+    _has_temporal_gate,
 )
 from reference_harness.ddl_builder import ddl_for
 
@@ -211,6 +212,170 @@ def test_until_write_input_window_corruption_is_rejected() -> None:
     # chained inserts' business-axis binds, so the `*Until` ① ↔ ② window gate MUST
     # fail (the window bounds are DERIVED from `at`/`until`, never read from golden).
     step["until"] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def _plain_split_write_cases():
+    """Plain (UNBOUNDED) bitemporal rectangle-split write-sequence cases: an
+    everyday `update` / `terminate` on the two-axis Position (`m-bitemp-write-006` /
+    `m-bitemp-write-007`), the degenerate rectangle split with no `until`."""
+    return [
+        case
+        for case in _phase8_cases()
+        if case.is_write_sequence
+        and any(step.get("mutation") in ("update", "terminate") for step in case.write_sequence)
+    ]
+
+
+def test_plain_split_write_input_holds_for_authored_cases() -> None:
+    cases = _plain_split_write_cases()
+    # The plain unbounded update/terminate pair carry ① (rows + at, NO until).
+    assert {_case_id(case.path.stem) for case in cases} >= {
+        "m-bitemp-write-006",
+        "m-bitemp-write-007",
+    }
+    for case in cases:
+        # Must not raise: routed through the rectangle-split cross-check (not the
+        # audit-only close-and-open), the close binds [at, pk, infinity], the chained
+        # head / new-tail open at fresh processing [at, infinity), and businessFrom
+        # appears among the chained inserts' business-axis binds (until is absent).
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_plain_two_way_split_and_plain_terminate_statement_shapes() -> None:
+    # The plain-update split is inactivate + head (old) + new tail (new) — a TWO-way
+    # split (no middle, no old-tail): the `update` step is 3 statements, 4 with the
+    # opening insert.
+    split = next(
+        c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-006")
+    )
+    update_step = next(s for s in split.write_sequence if s["mutation"] == "update")
+    assert update_step["statements"] == 3
+    assert len(split.golden_statements("postgres")) == 4
+    _assert_write_step_count(split, "postgres")
+
+    # The plain terminate is inactivate + head (old) only — no tail: the `terminate`
+    # step is 2 statements, 3 with the opening insert.
+    terminate = next(
+        c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-007")
+    )
+    terminate_step = next(s for s in terminate.write_sequence if s["mutation"] == "terminate")
+    assert terminate_step["statements"] == 2
+    assert len(terminate.golden_statements("postgres")) == 3
+    _assert_write_step_count(terminate, "postgres")
+
+
+def test_plain_close_with_trailing_binds_but_no_gate_predicate_is_rejected() -> None:
+    # The gated branch is decided by the SQL SHAPE, not the bind arity: a PLAIN
+    # (non-gated) close whose golden binds carry spurious trailing values — even ones
+    # that happen to match the observed rectangle's (from_z, in_z) — is a shape mismatch
+    # (3 placeholders, 5 binds), which the loose branch tolerated as "gated". It MUST now
+    # raise rather than reconstruct the open rectangle and pass.
+    case = next(
+        c for c in _plain_split_write_cases() if c.path.stem.startswith("m-bitemp-write-006")
+    )
+    # Sanity: as authored the plain split cross-checks cleanly.
+    _assert_write_input_columns(case, "postgres")
+    opening = next(s for s in case.write_sequence if s["mutation"] == "insert")
+    observed_from = opening["rows"][0]["businessFrom"]
+    observed_in = opening["at"]
+    # The plain close is the second golden statement — confirm it is the NON-gated shape
+    # (no `from_z = ?` / `in_z = ?` gate) before corrupting its binds.
+    close = case.then["statements"][1]
+    assert "from_z" not in close["sql"]["postgres"]
+    assert "in_z" not in close["sql"]["postgres"]
+    close["binds"] = [*close["binds"], observed_from, observed_in]
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def _gated_split_case():
+    return next(c for c in _until_write_cases() if c.path.stem.startswith("m-bitemp-write-008"))
+
+
+def test_gated_rectangle_split_close_reconstructs_the_observed_open_rectangle() -> None:
+    # The optimistic gated split (`m-bitemp-write-008`) inactivates the observed
+    # rectangle with `... and from_z = ? and in_z = ?`; the two trailing gate binds are
+    # the observed rectangle's (businessFrom, in_z), DERIVED from the OPENING insert
+    # step's row + `at` — distinct from the `updateUntil` window boundary (2024-03-01).
+    case = _gated_split_case()
+    opening = next(s for s in case.write_sequence if s["mutation"] == "insert")
+    open_business_from = opening["rows"][0]["businessFrom"]
+    open_at = opening["at"]
+    # The golden close is the second statement (after the opening insert): its binds are
+    # [at, pk, infinity, observedFromZ, observedInZ].
+    close_binds = case.statement_binds(1)
+    assert len(close_binds) == 5
+    assert str(close_binds[3]) == str(open_business_from)  # observed from_z (not the window)
+    assert str(close_binds[4]) == str(open_at)  # observed in_z
+    # The whole cross-check holds as authored.
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_gated_rectangle_split_gate_bind_corruption_is_rejected() -> None:
+    case = _gated_split_case()
+    # Corrupt the golden's observed-from_z gate bind so it no longer matches the
+    # reconstructed open rectangle: the gate is cross-checked against the row it
+    # inactivates (drawn from the replayed open row), so the ① ↔ ② gate MUST fail.
+    case.then["statements"][1]["binds"][3] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_has_temporal_gate_requires_both_discriminators_word_bounded() -> None:
+    # Direct seam check on the gated-close shape detector: "gated" requires BOTH the
+    # business (`from_z = ?`) AND processing (`in_z = ?`) discriminators, matched
+    # word-bounded. A close carrying only ONE (a PARTIAL gate) is NOT a valid gated
+    # close; the plain current-row key (`out_z = ?`) alone is likewise not a gate.
+    both = "update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?"
+    only_from = "update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ?"
+    only_in = "update position set out_z = ? where pos_id = ? and out_z = ? and in_z = ?"
+    plain = "update position set out_z = ? where pos_id = ? and out_z = ?"
+    assert _has_temporal_gate(both, "from_z", "in_z")
+    assert not _has_temporal_gate(only_from, "from_z", "in_z")
+    assert not _has_temporal_gate(only_in, "from_z", "in_z")
+    assert not _has_temporal_gate(plain, "from_z", "in_z")
+
+
+def test_partial_temporal_gate_missing_processing_discriminator_is_rejected() -> None:
+    # A PARTIAL gate — only ONE of the two discriminators — must be REJECTED, never
+    # tolerated as a valid gated close. Here the close keeps the business predicate
+    # (`from_z = ?`) but drops the processing one (`in_z = ?`), swapping in a
+    # `thru_z = ?` decoy so it still declares five placeholders (the gated arity) and
+    # its authored five gated binds still line up. A detector that loosened to accept a
+    # single predicate would treat it as gated, reconstruct the open rectangle, and
+    # PASS; the BOTH-required shape check instead reports the close plain, so its five
+    # placeholders mismatch the derived three-bind plain shape and MUST raise.
+    case = _gated_split_case()
+    _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
+    close = case.then["statements"][1]
+    authored = close["sql"]["postgres"]
+    assert _has_temporal_gate(authored, "from_z", "in_z")  # authored is the gated shape
+    partial = authored.replace("in_z = ?", "thru_z = ?")
+    assert "in_z = ?" not in partial and "from_z = ?" in partial
+    assert not _has_temporal_gate(partial, "from_z", "in_z")  # partial is NOT gated
+    close["sql"]["postgres"] = partial  # binds unchanged — still the five gated binds
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_gated_close_with_extra_placeholder_arity_mismatch_is_rejected() -> None:
+    # A WELL-FORMED gated close (both discriminators present, correctly detected as
+    # gated) must ALSO carry EXACTLY the derived gated arity — five placeholders paired
+    # with the five [at, pk, infinity, from_z, in_z] binds. Here the close keeps both
+    # gate predicates but gains a spurious SIXTH `thru_z = ?` placeholder while the binds
+    # stay at the five-value gated shape. The bind-count backstop (`_assert_write_values`)
+    # still sees five == five, so ONLY the placeholder-vs-derived-shape arity check
+    # catches the surplus placeholder — which MUST raise rather than tolerate it.
+    case = _gated_split_case()
+    _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
+    close = case.then["statements"][1]
+    authored = close["sql"]["postgres"]
+    assert _has_temporal_gate(authored, "from_z", "in_z")
+    assert authored.count("?") == 5 and len(close["binds"]) == 5
+    close["sql"]["postgres"] = f"{authored} and thru_z = ?"  # sixth placeholder, binds unchanged
+    assert _has_temporal_gate(close["sql"]["postgres"], "from_z", "in_z")  # still gated-shaped
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 

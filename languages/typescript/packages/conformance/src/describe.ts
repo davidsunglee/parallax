@@ -13,7 +13,7 @@ import { SCHEMA_VERSION } from "@parallax/core";
 
 /**
  * The canonical `slice-mvp-1` capabilities, verbatim from `slices.md`. `modules`
- * is the derived union of the module tags carried by the 165 tagged cases. This
+ * is the derived union of the module tags carried by the 173 tagged cases. This
  * object is the single source of truth for what the TypeScript adapter claims;
  * only the `adapter` identity is supplied per call.
  */
@@ -23,6 +23,7 @@ export const SLICE_MVP_1_CAPABILITIES: Capabilities = {
     "m-audit-write",
     "m-auto-retry",
     "m-batch-write",
+    "m-bitemp-write",
     "m-case-format",
     "m-conformance-adapter",
     "m-core",

@@ -25,7 +25,7 @@
 # head: value before the terminated window, current on processing
 # tail: value after the terminated window, current on processing (NO middle)
 model: models/position.yaml
-tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, terminate-until, rectangle-split]
+tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, terminate-until, rectangle-split, slice-mvp-1]
 shape: writeSequence
 when:
   writeSequence:

@@ -10,10 +10,9 @@
 # milestone than the one we observed, so our close bound to the stale in_z
 # (2024-04-01) matches nothing and affects 0 rows — without the in_z gate it would
 # silently re-inactivate the concurrent writer's fresh milestone. `then.tableState`
-# is the fixtures plus that re-chain. Harness-only (bitemporal writes are outside
-# slice-mvp-1).
+# is the fixtures plus that re-chain.
 model: models/position.yaml
-tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict]
+tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-mvp-1]
 shape: conflict
 given:
   apply:

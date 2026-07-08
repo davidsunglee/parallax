@@ -1,0 +1,69 @@
+# Write sequence: plain (UNBOUNDED) bitemporal terminate — end a value from a
+# business instant B ONWARD, leaving the value intact before B (rectangle split
+# with a HEAD only, no tail).
+#
+# A plain `terminate` on a bitemporal entity inactivates the original current row
+# on the PROCESSING axis (out_z = txInstant) and chains only ONE new row at fresh
+# processing time [txInstant, infinity):
+#   head : business [from_z, B)  — the value before the termination
+# There is NO tail and NO middle — the window [B, infinity) is left covered by no
+# current-on-processing row, so the value is ABSENT (terminated) from B onward.
+# The original survives as a row closed on the processing axis — the audit trail.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert    : open the current rectangle, value 100,
+#                      business [2024-01-01, infinity), processing [2024-01-01, infinity)  (1 statement)
+#   step 2 terminate : end the value from business B = 2024-06-01 at txInstant
+#                      2024-07-01 — inactivate the original (out_z = 2024-07-01)
+#                      and chain head (old 100, [2024-01-01, 2024-06-01))                  (2 statements)
+#
+# Resulting state (2 rows): the inactivated original (out_z finite) + head (100,
+# business [2024-01-01, 2024-06-01)), the window [2024-06-01, infinity) left
+# uncovered by any current-on-processing row.
+model: models/position.yaml
+tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-terminate, slice-mvp-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Position
+      statements: 1
+      note: open the original current rectangle [business inf, processing inf)
+      rows:
+        - { id: 1, acctNum: A, value: 100.00, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: terminate
+      entity: Position
+      statements: 2
+      note: inactivate the original on the processing axis, then chain head only (no tail)
+      rows:
+        - { id: 1, businessFrom: "2024-06-01T00:00:00+00:00" }
+      at: "2024-07-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: update position set out_z = ? where pos_id = ? and out_z = ?
+      binds: ["2024-07-01T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]
+  tableState:
+    position:
+      - pos_id: 1
+        acct_num: A
+        val: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-07-01T00:00:00+00:00"
+      - pos_id: 1
+        acct_num: A
+        val: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-07-01T00:00:00+00:00"
+        out_z: infinity
+  roundTrips: 3

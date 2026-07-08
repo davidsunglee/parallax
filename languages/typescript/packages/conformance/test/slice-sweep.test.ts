@@ -86,12 +86,13 @@ function readGolden(loaded: LoadedCase): { sql: string; binds: readonly unknown[
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the harness-lane slice-mvp-1 slice (153 cases)", () => {
+  it("discovers the harness-lane slice-mvp-1 slice (161 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case. This is the
     // harness-executable subset (api-conformance-lane cases are filtered out). It
-    // grew by the 42 value-object cases (all harness-lane) in Phase 11.
-    expect(CASES.length).toBe(153);
+    // grew by the 42 value-object cases (all harness-lane) in Phase 11, then by the
+    // 8 m-bitemp-write cases (COR-26) — all harness-lane.
+    expect(CASES.length).toBe(161);
   });
 
   it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
@@ -187,10 +188,11 @@ group("case-matrix report — the slice is green at a glance", () => {
     // The rendered report is the human-facing artifact; surface it on failure so
     // a regression names the exact residual case IDs.
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(153);
-    // 143 non-rejected cases compile `ok`; the 10 value-object `rejected` cases are
-    // graded `pass` (a correct pre-SQL refusal naming the rule).
-    expect(report.counts.ok).toBe(143);
+    expect(report.total).toBe(161);
+    // 151 non-rejected cases compile `ok` (143 + the 8 m-bitemp-write cases, COR-26);
+    // the 10 value-object `rejected` cases are graded `pass` (a correct pre-SQL
+    // refusal naming the rule).
+    expect(report.counts.ok).toBe(151);
     expect(report.counts.pass).toBe(10);
     expect(report.residuals).toEqual([]);
   });

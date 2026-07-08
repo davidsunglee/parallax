@@ -119,6 +119,12 @@ const EXPECTED_IDS: readonly string[] = [
   "m-temporal-read-011",
   "m-temporal-read-012",
   "m-read-lock-008",
+  // The full-bitemporal optimistic cases (COR-26): the gated inactivation-close
+  // conflict pair `m-bitemp-write-004`/`-005` and the end-to-end optimistic-gated
+  // rectangle split `m-bitemp-write-008` (writeSequence) — all carry `m-opt-lock`.
+  "m-bitemp-write-004",
+  "m-bitemp-write-005",
+  "m-bitemp-write-008",
 ];
 
 const CASES = txnCases();
