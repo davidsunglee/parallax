@@ -17,8 +17,10 @@ import pytest
 from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
+    _assert_scenario_count_consistency,
     _assert_write_input_columns,
     _assert_write_step_count,
+    _discriminator,
     _increment_marker,
     _is_computed_marker,
 )
@@ -164,6 +166,124 @@ def test_collapsed_delete_input_requires_exact_ordered_binds() -> None:
     duplicated.then["statements"][0]["binds"] = [1, 2, 2]
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(duplicated, "postgres")
+
+
+# --- table-per-hierarchy discriminator on write (m-inheritance) --------------
+#
+# A TPH insert writes the discriminator column (`kind`) from the entity's
+# discriminatorValue, NOT from the neutral write input (①) — a framework-derived
+# column, exactly like the version bump. A TPL insert has no discriminator.
+
+
+def test_tph_insert_writes_discriminator_from_discriminator_value() -> None:
+    # m-inheritance-007: the golden INSERT emits `kind` = the discriminatorValue
+    # ('card'); the ① row carries only the domain attributes. The ① ↔ ② cross-check
+    # MUST accept the derived discriminator (its bind is the discriminatorValue).
+    case = _write_case_by_id("m-inheritance-007")
+    (insert,) = case.golden_statements("postgres")
+    assert insert == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
+    assert case.statement_binds(0) == [10, "card", 200.00, "Mastercard"]
+    assert "kind" not in case.write_sequence[0]["rows"][0]  # kind is derived, not authored
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_discriminator_helper_reads_the_inheritance_metadata() -> None:
+    case = _write_case_by_id("m-inheritance-007")
+    assert _discriminator(case.model.entity("CardPayment")) == ("kind", "card")
+    assert _discriminator(case.model.entity("Payment")) == ("kind", "payment")
+    # A table-per-leaf entity has no discriminator (discriminatorValue is FORBIDDEN).
+    document = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
+    assert _discriminator(document.entity("Invoice")) is None
+
+
+def test_tph_insert_rejects_wrong_discriminator_bind() -> None:
+    # Corrupting the discriminator bind to the wrong discriminatorValue MUST fail the
+    # cross-check: the derived value is pinned to the model's discriminatorValue.
+    case = _write_case_by_id("m-inheritance-007")
+    case.then["statements"][0]["binds"][1] = "cash"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_tph_insert_rejects_discriminator_authored_in_row() -> None:
+    # Authoring the discriminator column in ① MUST be rejected — it is framework-derived
+    # from discriminatorValue, never authored (m-inheritance).
+    case = _write_case_by_id("m-inheritance-007")
+    case.write_sequence[0]["rows"][0]["kind"] = "card"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_tpl_insert_targets_leaf_table_without_discriminator() -> None:
+    # m-inheritance-010: a table-per-leaf INSERT targets the leaf's own table with no
+    # discriminator column and no shared table.
+    case = _write_case_by_id("m-inheritance-010")
+    (insert,) = case.golden_statements("postgres")
+    assert insert == "insert into invoice(id, title, amount_due) values (?, ?, ?)"
+    assert "kind" not in insert and "payment" not in insert
+    _assert_write_input_columns(case, "postgres")
+
+
+# --- cascade delete ordering (m-cascade-delete) ------------------------------
+
+
+def test_one_to_one_cascade_deletes_dependent_before_root() -> None:
+    # m-cascade-delete-003: the dependent passport is deleted BEFORE the root person.
+    case = _write_case_by_id("m-cascade-delete-003")
+    sqls = [s["sql"]["postgres"] for s in case.then["statements"]]
+    assert sqls == [
+        "delete from passport where person_id = ?",
+        "delete from person where id = ?",
+    ]
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_multi_root_cascade_deletes_each_roots_children_first() -> None:
+    # m-cascade-delete-004: two roots cascaded in one sequence, each deleting its own
+    # dependents (children) before its own root row.
+    case = _write_case_by_id("m-cascade-delete-004")
+    assert [step["mutation"] for step in case.write_sequence] == [
+        "cascadeDelete",
+        "cascadeDelete",
+    ]
+    sqls = [s["sql"]["postgres"] for s in case.then["statements"]]
+    assert sqls[:3] == [
+        "delete from order_status where order_id = ?",
+        "delete from order_item where order_id = ?",
+        "delete from orders where id = ?",
+    ]
+    # Each level's binds stay within one root (2, then 42) — not collapsed across roots.
+    assert [case.statement_binds(i)[0] for i in range(6)] == [2, 2, 2, 42, 42, 42]
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_non_dependent_relationship_is_not_cascaded() -> None:
+    # m-cascade-delete-002: the cascade emits deletes only over dependent edges
+    # (statuses, items) — never the non-dependent order_tag table.
+    case = _write_case_by_id("m-cascade-delete-002")
+    tables = [s["sql"]["postgres"].split()[2] for s in case.then["statements"]]
+    assert tables == ["order_status", "order_item", "orders"]
+    assert "order_tag" not in tables
+    # The surviving order_tag rows (order 1's tags) are asserted unchanged.
+    assert "order_tag" in case.expected_table_state
+
+
+# --- detached merge-back no-op skip (m-detach) -------------------------------
+
+
+def test_detach_noop_merge_back_issues_no_dml() -> None:
+    # m-detach-004: the unmodified merge-back is a scenario NO-OP write step —
+    # roundTrips 0 with NO golden SQL (the schema's zero-DML write), witnessing the
+    # isModifiedSinceDetachment-false MUST. A writeSequence cannot express zero DML
+    # (its schema requires >= 1 golden statement and roundTrips >= 1), so the no-op
+    # skip lives in the scenario shape the schema provides for it.
+    case = _write_case_by_id("m-detach-004")
+    assert case.is_scenario
+    (merge_back,) = [step for step in case.scenario if "write" in step]
+    assert merge_back["roundTrips"] == 0
+    assert "statements" not in merge_back
+    # The per-step count-consistency check accepts the zero-round-trip write step.
+    _assert_scenario_count_consistency(case, "postgres")
 
 
 # --- role-aware DB-computed marker interpretation (COR-10) ------------------

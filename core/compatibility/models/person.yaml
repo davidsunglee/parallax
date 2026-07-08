@@ -34,6 +34,13 @@ entities:
         cardinality: one-to-one
         join: this.id = Passport.personId
         reverseName: holder
+        # The passport is OWNED by its holder (m-cascade-delete): deleting a Person
+        # cascade-deletes its Passport. This is the sole one-to-one `dependent`
+        # relationship in the corpus (orders' dependents are one-to-many), so it
+        # witnesses the 1:1 cascade (m-cascade-delete-003). `dependent` is a cascade
+        # concern only; navigation / deep fetch (which drive the person read cases)
+        # ignore it, so those cases are unaffected.
+        dependent: true
         foreignKey: person_id
     indices:
       - name: person_pk

@@ -22,6 +22,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 
 from reference_harness.case import Entity, Model, discover_cases, load_model
+from reference_harness.case_runner import _assert_write_input_columns, _discriminator
 from reference_harness.ddl_builder import _create_table, column_order, ddl_for
 from reference_harness.paths import schemas_dir
 
@@ -274,6 +275,42 @@ def test_phase9_cases_are_discovered() -> None:
     nested = [c for c in cases.values() if "nested" in c.tags]
     assert inheritance, "no inheritance cases discovered"
     assert nested, "no nested/valueObject cases discovered"
+
+
+# --- inheritance WRITE: the discriminator is derived from the metamodel ------
+
+
+def test_table_per_hierarchy_write_derives_the_discriminator_column() -> None:
+    """A TPH write derives the discriminator column from the entity's declared
+    ``discriminatorValue`` (m-inheritance) — it is never carried in the neutral write
+    input. The metamodel is the source of the value; the corpus insert case
+    (m-inheritance-007) cross-checks against it."""
+    model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+    # Each entity's discriminator (shared column, own value) comes from the model.
+    assert _discriminator(model.entity("Payment")) == ("kind", "payment")
+    assert _discriminator(model.entity("CardPayment")) == ("kind", "card")
+    assert _discriminator(model.entity("CashPayment")) == ("kind", "cash")
+
+    cases = {c.path.stem: c for c in discover_cases(COMPATIBILITY_ROOT)}
+    tph_insert = cases["m-inheritance-007-tph-insert"]
+    # The golden INSERT includes the discriminator column with the discriminatorValue
+    # as its bind, and the ① ↔ ② cross-check accepts the derived column.
+    (insert,) = tph_insert.golden_statements("postgres")
+    assert "kind" in insert
+    assert tph_insert.statement_binds(0)[1] == "card"
+    _assert_write_input_columns(tph_insert, "postgres")
+
+
+def test_table_per_leaf_write_has_no_discriminator() -> None:
+    """A TPL write targets the leaf's own table with no discriminator column
+    (m-inheritance): ``_discriminator`` is None and the golden INSERT names the leaf
+    table, not a shared hierarchy table."""
+    cases = {c.path.stem: c for c in discover_cases(COMPATIBILITY_ROOT)}
+    tpl_insert = cases["m-inheritance-010-tpl-insert"]
+    assert _discriminator(tpl_insert.model.entity("Invoice")) is None
+    (insert,) = tpl_insert.golden_statements("postgres")
+    assert insert.startswith("insert into invoice(")
+    _assert_write_input_columns(tpl_insert, "postgres")
 
 
 # --- unique-index DDL emission (Task 5) --------------------------------------

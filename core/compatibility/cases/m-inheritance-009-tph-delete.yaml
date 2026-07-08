@@ -1,0 +1,32 @@
+# Table-per-hierarchy DELETE: a subtype delete removes its row from the shared table
+# by primary key (m-inheritance, m-sql).
+#
+# Fixtures are loaded first. Deleting CardPayment 2 removes exactly that row from the
+# shared `payment` table — keyed on `id` (unique across the hierarchy), so no
+# discriminator predicate is required. The other card row, the cash row, and the
+# plain root-kind row remain, proving the delete is keyed, not a discriminator-wide
+# sweep.
+model: models/payment.yaml
+tags: [m-inheritance, m-sql, table-per-hierarchy, write-sequence, delete]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: delete
+      entity: CardPayment
+      statements: 1
+      note: delete CardPayment 2 from the shared table by primary key
+      rows:
+        - { id: 2 }
+then:
+  statements:
+    - sql:
+        postgres: delete from payment where id = ?
+      binds: [2]
+  tableState:
+    payment:
+      - { id: 1, kind: card, amount: 100.00, card_network: Visa, tendered: null }
+      - { id: 3, kind: cash, amount: 20.00, card_network: null, tendered: 25.00 }
+      - { id: 4, kind: payment, amount: 10.00, card_network: null, tendered: null }
+  roundTrips: 1
