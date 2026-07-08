@@ -19,8 +19,12 @@ export type AttributeRef = string;
 export type RelationshipRef = string;
 /** `Class.asOfAttribute` — a metamodel as-of-attribute reference. */
 export type AsOfAttributeRef = string;
-/** `Class.valueObject.field[.field…]` — a nested value-object field reference. */
+/** `Class.valueObject.field[.field…]` — a nested value-object field reference (attribute leaf). */
 export type NestedRef = string;
+/** `Class.valueObject[.valueObject…]` — a path terminating at a value-object member. */
+export type ValueObjectRef = string;
+/** `field[.field…]` — an element-relative path used inside a scoped `where`. */
+export type ElementRef = string;
 /** A scalar literal usable as a bind. */
 export type Literal = string | number | boolean | null;
 /** An ISO-8601 UTC instant, or the keyword `now`. */
@@ -83,11 +87,82 @@ export interface NavigationFilter {
   readonly op?: Operation;
 }
 
-/** `{ path, value }` — the body of the nested value-object comparisons. */
+/** `{ path, value }` — the body of the nested value-object comparisons (typed literal). */
 export interface NestedComparison {
   readonly path: NestedRef;
-  readonly value: string;
+  readonly value: Literal;
 }
+
+/** `{ path, values }` — the body of `nestedIn` (a list of typed literals). */
+export interface NestedMembership {
+  readonly path: NestedRef;
+  readonly values: readonly Literal[];
+}
+
+/** `{ path }` — the body of the nested presence tests (`nestedIsNull` / `nestedIsNotNull`). */
+export interface NestedNullCheck {
+  readonly path: NestedRef;
+}
+
+/**
+ * `{ path, where? }` — the body of `nestedExists` / `nestedNotExists`. `path`
+ * terminates at a value-object member; the optional `where` (a `many` path)
+ * scopes a compound to ONE element (same-element semantics).
+ */
+export interface NestedExistsBody {
+  readonly path: ValueObjectRef;
+  readonly where?: ElementPredicate;
+}
+
+// --- element-scope operand bodies ------------------------------------------
+
+/** `{ path, value }` — an element-relative comparison inside a scoped `where`. */
+export interface ElementComparison {
+  readonly path: ElementRef;
+  readonly value: Literal;
+}
+
+/** `{ path, values }` — an element-relative membership test inside a scoped `where`. */
+export interface ElementMembership {
+  readonly path: ElementRef;
+  readonly values: readonly Literal[];
+}
+
+/** `{ path }` — an element-relative presence test inside a scoped `where`. */
+export interface ElementNullCheck {
+  readonly path: ElementRef;
+}
+
+/** `{ operands }` — the body of a scoped element junction (`and` / `or`). */
+export interface ElementJunction {
+  readonly operands: readonly ElementPredicate[];
+}
+
+/** `{ operand }` — the body of a scoped element unary wrapper (`not` / `group`). */
+export interface ElementUnary {
+  readonly operand: ElementPredicate;
+}
+
+/**
+ * A scoped sub-predicate evaluated against ONE array element inside a
+ * `nestedExists` / `nestedNotExists` `where`: the flat `nested*` family
+ * re-expressed over element-relative paths, composed with boolean combinators.
+ * The whole compound must be satisfied by a SINGLE element (same-element).
+ */
+export type ElementPredicate =
+  | { readonly nestedEq: ElementComparison }
+  | { readonly nestedNotEq: ElementComparison }
+  | { readonly nestedGt: ElementComparison }
+  | { readonly nestedGte: ElementComparison }
+  | { readonly nestedLt: ElementComparison }
+  | { readonly nestedLte: ElementComparison }
+  | { readonly nestedIn: ElementMembership }
+  | { readonly nestedIsNull: ElementNullCheck }
+  | { readonly nestedIsNotNull: ElementNullCheck }
+  | { readonly and: ElementJunction }
+  | { readonly or: ElementJunction }
+  | { readonly not: ElementUnary }
+  | { readonly group: ElementUnary };
 
 // --- identity --------------------------------------------------------------
 
@@ -291,6 +366,33 @@ export interface NestedEqOp {
 export interface NestedNotEqOp {
   readonly nestedNotEq: NestedComparison;
 }
+export interface NestedGtOp {
+  readonly nestedGt: NestedComparison;
+}
+export interface NestedGteOp {
+  readonly nestedGte: NestedComparison;
+}
+export interface NestedLtOp {
+  readonly nestedLt: NestedComparison;
+}
+export interface NestedLteOp {
+  readonly nestedLte: NestedComparison;
+}
+export interface NestedInOp {
+  readonly nestedIn: NestedMembership;
+}
+export interface NestedIsNullOp {
+  readonly nestedIsNull: NestedNullCheck;
+}
+export interface NestedIsNotNullOp {
+  readonly nestedIsNotNull: NestedNullCheck;
+}
+export interface NestedExistsOp {
+  readonly nestedExists: NestedExistsBody;
+}
+export interface NestedNotExistsOp {
+  readonly nestedNotExists: NestedExistsBody;
+}
 
 /**
  * The full m-op-algebra operation algebra as a discriminated union. The single key on
@@ -331,7 +433,16 @@ export type Operation =
   | AsOfRangeOp
   | HistoryOp
   | NestedEqOp
-  | NestedNotEqOp;
+  | NestedNotEqOp
+  | NestedGtOp
+  | NestedGteOp
+  | NestedLtOp
+  | NestedLteOp
+  | NestedInOp
+  | NestedIsNullOp
+  | NestedIsNotNullOp
+  | NestedExistsOp
+  | NestedNotExistsOp;
 
 /** The discriminant key names, one per operation kind. */
 export type OperationTag = keyof (AllOp &
@@ -368,7 +479,16 @@ export type OperationTag = keyof (AllOp &
   AsOfRangeOp &
   HistoryOp &
   NestedEqOp &
-  NestedNotEqOp);
+  NestedNotEqOp &
+  NestedGtOp &
+  NestedGteOp &
+  NestedLtOp &
+  NestedLteOp &
+  NestedInOp &
+  NestedIsNullOp &
+  NestedIsNotNullOp &
+  NestedExistsOp &
+  NestedNotExistsOp);
 
 /**
  * Extract the single discriminant tag of an operation node. Every operation is

@@ -46,24 +46,40 @@ function loadCase(name: string): CaseDoc {
 }
 
 /**
- * The `slice-mvp-1` cases that carry an `operation` (the read shape) from the
- * `m-op-algebra` family — exactly the operations the compile path will consume.
+ * Every corpus case that carries an `operation` the compile path will consume:
+ * the `slice-mvp-1` `m-op-algebra` read family PLUS the `m-value-object` family
+ * (nested-predicate reads, temporal reads, and the schema-valid `rejected`
+ * operations). The value-object cases are NOT yet `slice-mvp-1`-tagged — that
+ * lands in Phase 11 — so they gate on the presence of an `operation` rather than
+ * the slice tag; the write / rejected-write shapes carry no `operation` and drop
+ * out naturally.
  */
 function claimedReadCases(): readonly { name: string; doc: CaseDoc }[] {
   return readdirSync(CASES_DIR)
-    .filter((name) => /^m-op-algebra-\d{3}-.*\.ya?ml$/.test(name))
+    .filter((name) => /^(m-op-algebra|m-value-object)-\d{3}-.*\.ya?ml$/.test(name))
     .sort()
     .map((name) => ({ name, doc: loadCase(name) }))
-    .filter(({ doc }) => doc.operation !== undefined && (doc.tags ?? []).includes("slice-mvp-1"));
+    .filter(({ name, doc }) => {
+      if (doc.operation === undefined) {
+        return false;
+      }
+      // m-value-object operations join the sweep on operation-presence alone
+      // (Phase-11 slice tagging is still pending); m-op-algebra reads keep the
+      // slice-mvp-1 gate.
+      return name.startsWith("m-value-object-") || (doc.tags ?? []).includes("slice-mvp-1");
+    });
 }
 
 const READ_CASES = claimedReadCases();
 
 group("operation round-trip", () => {
-  it("discovers the claimed m-op-algebra read operations", () => {
+  it("discovers the claimed m-op-algebra and m-value-object read operations", () => {
     // Sanity: the corpus carries the families we expect (find-all, eq, and the
-    // single-entity algebra).
+    // single-entity algebra) AND the value-object nested-predicate family now
+    // joins the serde round-trip sweep.
     expect(READ_CASES.length).toBeGreaterThanOrEqual(20);
+    const valueObjectCases = READ_CASES.filter((c) => c.name.startsWith("m-value-object-"));
+    expect(valueObjectCases.length).toBeGreaterThan(0);
   });
 
   it.each(

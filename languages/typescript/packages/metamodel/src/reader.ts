@@ -16,13 +16,40 @@ import {
   type NormalizedAttribute,
   type NormalizedEntity,
   type NormalizedIndex,
+  type NormalizedNestedValueObject,
   type NormalizedRelationship,
   type NormalizedValueObject,
+  type NormalizedValueObjectAttribute,
   normalizeEntity,
   type RawDescriptor,
   rawEntities,
 } from "./normalize.js";
 import { assertValidDescriptor } from "./schema.js";
+
+/**
+ * The recursive members a value object (top-level or nested) exposes: its own
+ * `cardinality`, typed `attributes`, and further-nested `valueObjects`. Both a
+ * top-level `NormalizedValueObject` and a `NormalizedNestedValueObject` satisfy
+ * it, so the free accessors below traverse either without caring which is the
+ * storage-carrying root.
+ */
+export type NormalizedValueObjectMember = NormalizedValueObject | NormalizedNestedValueObject;
+
+/** Look up a nested value object by name within a value-object member; `undefined` if absent. */
+export function findNestedValueObject(
+  member: NormalizedValueObjectMember,
+  name: string,
+): NormalizedNestedValueObject | undefined {
+  return member.valueObjects.find((vo) => vo.name === name);
+}
+
+/** Look up a typed attribute by name within a value-object member; `undefined` if absent. */
+export function findValueObjectAttribute(
+  member: NormalizedValueObjectMember,
+  name: string,
+): NormalizedValueObjectAttribute | undefined {
+  return member.attributes.find((attr) => attr.name === name);
+}
 
 /**
  * Introspection facade over one entity's fully-defaulted metadata. The typed
@@ -160,9 +187,41 @@ export class EntityMetadata {
     return this.entity.valueObjects;
   }
 
-  /** Look up a value object by name; `undefined` if absent. */
+  /** Look up a top-level value object by name; `undefined` if absent. */
   findValueObject(name: string): NormalizedValueObject | undefined {
     return this.entity.valueObjects.find((vo) => vo.name === name);
+  }
+
+  /** Look up a top-level value object by name; throws if absent. */
+  valueObjectByName(name: string): NormalizedValueObject {
+    const found = this.findValueObject(name);
+    if (!found) {
+      throw new Error(`entity '${this.entity.name}' has no value object '${name}'`);
+    }
+    return found;
+  }
+
+  /**
+   * Resolve a value-object member path relative to this entity: the first
+   * segment names a top-level value object, each further segment a nested value
+   * object declared on the preceding member (to arbitrary depth). Returns the
+   * resolved member (whose `cardinality` / `attributes` / nested `valueObjects`
+   * are then readable) or `undefined` if any segment is unresolved. An empty
+   * path resolves to `undefined`.
+   */
+  resolveValueObjectPath(segments: readonly string[]): NormalizedValueObjectMember | undefined {
+    const [head, ...rest] = segments;
+    if (head === undefined) {
+      return undefined;
+    }
+    let member: NormalizedValueObjectMember | undefined = this.findValueObject(head);
+    for (const segment of rest) {
+      if (member === undefined) {
+        return undefined;
+      }
+      member = findNestedValueObject(member, segment);
+    }
+    return member;
   }
 
   /** The fully-defaulted normalized entity, for callers that need the record. */

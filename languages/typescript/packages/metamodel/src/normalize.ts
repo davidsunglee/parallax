@@ -82,12 +82,40 @@ export interface RawAsOfAttribute {
   readonly default?: "now";
 }
 
-export interface RawValueObject {
+/** A raw (as-parsed) typed field of a value object — no per-field column. */
+export interface RawValueObjectAttribute {
   readonly name: string;
   readonly type: string;
+  readonly nullable?: boolean;
+}
+
+/**
+ * A raw (as-parsed) value object nested inside another. It shares its top-level
+ * ancestor's single structured-document column, so it carries NO `column` /
+ * `mapping` storage — otherwise it mirrors a top-level value object: typed
+ * attributes, its own `one` / `many` cardinality, and further-nested value
+ * objects to arbitrary depth.
+ */
+export interface RawNestedValueObject {
+  readonly name: string;
+  readonly nullable?: boolean;
+  readonly cardinality?: "one" | "many";
+  readonly attributes?: readonly RawValueObjectAttribute[];
+  readonly valueObjects?: readonly RawNestedValueObject[];
+}
+
+/**
+ * A raw (as-parsed) top-level value object: the recursive nested shape PLUS the
+ * single-column storage (`column` / `mapping`) only a top-level member carries.
+ */
+export interface RawValueObject {
+  readonly name: string;
   readonly column: string;
   readonly mapping?: "json";
   readonly nullable?: boolean;
+  readonly cardinality?: "one" | "many";
+  readonly attributes?: readonly RawValueObjectAttribute[];
+  readonly valueObjects?: readonly RawNestedValueObject[];
 }
 
 export interface RawInheritance {
@@ -155,13 +183,39 @@ export interface NormalizedAsOfAttribute {
   readonly default: "now";
 }
 
-/** A fully-defaulted value object. */
-export interface NormalizedValueObject {
+/** A fully-defaulted typed field of a value object (no per-field column). */
+export interface NormalizedValueObjectAttribute {
   readonly name: string;
   readonly type: string;
+  readonly nullable: boolean;
+}
+
+/**
+ * A fully-defaulted value object nested inside another. It shares its top-level
+ * ancestor's single structured-document column, so it carries no `column` /
+ * `mapping`. Recursive: its own typed attributes, `one` / `many` cardinality,
+ * and further-nested value objects to arbitrary depth.
+ */
+export interface NormalizedNestedValueObject {
+  readonly name: string;
+  readonly nullable: boolean;
+  readonly cardinality: "one" | "many";
+  readonly attributes: readonly NormalizedValueObjectAttribute[];
+  readonly valueObjects: readonly NormalizedNestedValueObject[];
+}
+
+/**
+ * A fully-defaulted top-level value object: the recursive nested shape PLUS the
+ * single-column storage (`column` / `mapping`) only a top-level member carries.
+ */
+export interface NormalizedValueObject {
+  readonly name: string;
   readonly column: string;
   readonly mapping: "json";
   readonly nullable: boolean;
+  readonly cardinality: "one" | "many";
+  readonly attributes: readonly NormalizedValueObjectAttribute[];
+  readonly valueObjects: readonly NormalizedNestedValueObject[];
 }
 
 /** A fully-defaulted, temporal-classified entity. */
@@ -246,13 +300,31 @@ function normalizeAsOf(raw: RawAsOfAttribute): NormalizedAsOfAttribute {
   };
 }
 
+function normalizeValueObjectAttribute(
+  raw: RawValueObjectAttribute,
+): NormalizedValueObjectAttribute {
+  return { name: raw.name, type: raw.type, nullable: raw.nullable ?? false };
+}
+
+function normalizeNestedValueObject(raw: RawNestedValueObject): NormalizedNestedValueObject {
+  return {
+    name: raw.name,
+    nullable: raw.nullable ?? false,
+    cardinality: raw.cardinality ?? "one",
+    attributes: (raw.attributes ?? []).map(normalizeValueObjectAttribute),
+    valueObjects: (raw.valueObjects ?? []).map(normalizeNestedValueObject),
+  };
+}
+
 function normalizeValueObject(raw: RawValueObject): NormalizedValueObject {
   return {
     name: raw.name,
-    type: raw.type,
     column: raw.column,
     mapping: raw.mapping ?? "json",
     nullable: raw.nullable ?? false,
+    cardinality: raw.cardinality ?? "one",
+    attributes: (raw.attributes ?? []).map(normalizeValueObjectAttribute),
+    valueObjects: (raw.valueObjects ?? []).map(normalizeNestedValueObject),
   };
 }
 
