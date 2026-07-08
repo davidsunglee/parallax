@@ -92,6 +92,74 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "harness and the conformance runner's two-session runRun (slice-run/mariadb-run), not the " +
       "developer surface. The projection-omits-lock EMISSION is exercised by m-read-lock-003.",
   },
+  // --- value objects: the non-developer-query slice (m-value-object) ---------
+  {
+    id: "m-value-object-003",
+    reason:
+      "project-nested-field: a projection of one nested field (`select … jsonb_extract_path_text(t0.address, 'city') city …`) " +
+      "whose witness rows name a PROJECTED column. The V1 developer `find` returns whole managed " +
+      "objects (with the value-object composite), so a projected-column result needs the out-of-V1 " +
+      "aggregation/projection surface (m-agg, deferred by §2.8) — exactly as m-op-algebra-028 is skipped. " +
+      "The nested-extraction developer surface itself is exercised by m-value-object-001/023.",
+  },
+  {
+    id: "m-value-object-026",
+    reason:
+      "write-update-whole-document: a whole-document UPDATE (`update customer set address = ?`). The V1 " +
+      "value-object developer write surface is the atomic document create (exercised by m-value-object-025); " +
+      "assigning a document to a value-object member via the update DSL is a follow-on surface. The write's " +
+      "observable (the replaced document in tableState) is proven by the harness run lane (slice-run).",
+  },
+  {
+    id: "m-value-object-027",
+    reason:
+      "write-null-out: a whole-document null-out (`update customer set address = ?` binding SQL NULL). Same " +
+      "follow-on value-object UPDATE surface as m-value-object-026; the null-out observable is proven by the " +
+      "harness run lane (slice-run).",
+  },
+  {
+    id: "m-value-object-028",
+    reason:
+      "temporal-as-of-now-document: a value-object materialization under an `asOf` processing pin. It composes " +
+      "two surfaces already exercised — the temporal-read developer surface (temporal.api-conformance.test.ts, " +
+      "m-temporal-read-*) and value-object materialization (m-value-object-023/024) — and the composed observable is " +
+      "proven end-to-end by the harness run lane (slice-run).",
+  },
+  {
+    id: "m-value-object-029",
+    reason:
+      "temporal-as-of-past-document: an as-of-past value-object materialization; same composition as " +
+      "m-value-object-028 (temporal read × value-object materialization), proven end-to-end by the harness run lane.",
+  },
+  {
+    id: "m-value-object-030",
+    reason:
+      "bitemporal-as-of-now-document: a bitemporal (both-axes) value-object materialization; same composition as " +
+      "m-value-object-028, proven end-to-end by the harness run lane.",
+  },
+  {
+    id: "m-value-object-031",
+    reason:
+      "bitemporal-as-of-past-document: a bitemporal as-of-past value-object materialization; same composition as " +
+      "m-value-object-028, proven end-to-end by the harness run lane.",
+  },
+  {
+    id: "m-value-object-032",
+    reason:
+      "temporal-write-chaining-document: an audit-only milestone-chaining UPDATE that carries the document across " +
+      "the chain. It composes the audit-write developer surface (transactions.api-conformance.test.ts, " +
+      "m-audit-write-*) with the value-object document; the chaining observable (the document on each milestone) is " +
+      "proven by the harness run lane (slice-run).",
+  },
+  ...["034", "035", "036", "037", "038", "039", "040", "041", "042", "043"].map((n) => ({
+    id: `m-value-object-${n}`,
+    reason:
+      "rejected: a pre-SQL refusal negative (m-value-object resolved Q7). Its whole assertion is that a " +
+      "model-invalid input (a value-object root, an unknown nested path, a deepFetch/navigation targeting a " +
+      "value object, a type-mismatched literal, a missing required attribute / nested value object) is REFUSED " +
+      "before any query is built — so there is no idiomatic developer query to author. The refusal is proven by " +
+      "the `@parallax/operation` validators and the harness run lane (slice-run emits the rejected rule).",
+  })),
 ];
 
 /** The set of skipped case ids, for the coverage check. */

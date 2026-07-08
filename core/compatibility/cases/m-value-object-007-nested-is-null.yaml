@@ -11,7 +11,7 @@
 # `json_value(t0.address, ?) is null`. Because MariaDB json_value maps a JSON
 # `null` leaf to SQL NULL, id 7 collapses identically on both dialects.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, nested, json, "null", absence-collapse]
+tags: [m-value-object, m-op-algebra, m-sql, nested, json, "null", absence-collapse, slice-mvp-1]
 shape: read
 when:
   operation:

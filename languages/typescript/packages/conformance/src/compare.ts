@@ -82,7 +82,14 @@ export function compareRowSet(
   return { equal: true, reason: "" };
 }
 
-/** Two rows are equal when they have the same keys and scalar-equal values. */
+/**
+ * Two rows are equal when they have the same keys and equal values. A scalar
+ * column grades by the m-case-format scalar rules; a **value-object document**
+ * column (a decoded object or array — m-value-object write/table-state read-back)
+ * grades structurally via {@link nodeValuesEqual}, so a nested composite compares
+ * by content (its to-many array as an order-insensitive multiset) rather than
+ * collapsing to `"[object Object]"`.
+ */
 function rowsEqual(left: Row, right: Row, columnTypes: ColumnTypes): boolean {
   const leftKeys = Object.keys(left);
   const rightKeys = Object.keys(right);
@@ -93,7 +100,14 @@ function rowsEqual(left: Row, right: Row, columnTypes: ColumnTypes): boolean {
     if (!(key in right)) {
       return false;
     }
-    if (!scalarsEqual(left[key], right[key], columnTypes[key])) {
+    const l = left[key];
+    const r = right[key];
+    const structural = Array.isArray(l) || Array.isArray(r) || isPlainObject(l) || isPlainObject(r);
+    if (structural) {
+      if (!nodeValuesEqual(l, r, columnTypes[key], columnTypes)) {
+        return false;
+      }
+    } else if (!scalarsEqual(l, r, columnTypes[key])) {
       return false;
     }
   }

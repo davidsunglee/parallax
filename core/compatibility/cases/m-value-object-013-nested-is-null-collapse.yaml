@@ -14,7 +14,7 @@
 # `jsonb_extract_path_text(t0.address, ?, ?) is null`; MariaDB
 # `json_value(t0.address, ?) is null`.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, nested, json, "null", absence-collapse]
+tags: [m-value-object, m-op-algebra, m-sql, nested, json, "null", absence-collapse, slice-mvp-1]
 shape: read
 when:
   operation:

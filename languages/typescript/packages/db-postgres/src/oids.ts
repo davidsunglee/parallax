@@ -40,6 +40,10 @@ const RAW_TEXT_OIDS = {
   time: 1083,
   /** `uuid` — a canonical lowercase string (no managed carrier). */
   uuid: 2950,
+  /** `json` — a structured-document value (m-value-object / m-core json). */
+  json: 114,
+  /** `jsonb` — the Postgres m-dialect mapping of the neutral `json` type. */
+  jsonb: 3802,
 } as const;
 
 /** A porsager custom-type registration keyed by its serializer + parser. */
@@ -77,6 +81,26 @@ export function serializeBytea(v: unknown): unknown {
   return `\\x${Buffer.from(v as Uint8Array).toString("hex")}`;
 }
 
+/**
+ * Serialize a value-object document bind to `json` / `jsonb` (m-value-object).
+ *
+ * porsager's DEFAULT json serializer `JSON.stringify`s every value it binds to a
+ * jsonb-inferred parameter — including a value that is ALREADY JSON text. The
+ * value-object to-many read lowers to `cast(? as jsonb)` with the empty-array
+ * GUARD literal `'[]'` (a string) as its bind; the default serializer would
+ * re-encode that string to the jsonb STRING scalar `"[]"`, which
+ * `jsonb_array_elements` then rejects with "cannot extract elements from a
+ * scalar". So a string is passed through verbatim (it is already canonical JSON
+ * text — the guard literal, or a pre-serialized document), while a plain object /
+ * array is `JSON.stringify`d into JSON text; `null` binds as SQL NULL.
+ */
+function serializeJson(v: unknown): unknown {
+  if (v === null || v === undefined) {
+    return v;
+  }
+  return typeof v === "string" ? v : JSON.stringify(v);
+}
+
 /** A custom type forcing `oid` to be read as raw text and parsed by `parse`. */
 function rawType(
   oid: number,
@@ -105,5 +129,11 @@ export function managedTypes(): Record<string, PorsagerType> {
     date: rawType(RAW_TEXT_OIDS.date, (raw) => parsers.date(raw)),
     time: rawType(RAW_TEXT_OIDS.time, (raw) => parsers.time(raw)),
     uuid: rawType(RAW_TEXT_OIDS.uuid, (raw) => parsers.uuid(raw)),
+    // A value-object document column (m-value-object): read the raw JSON text and
+    // parse it to a plain structure (the materializer projects the declared
+    // shape); bind through `serializeJson` so an already-JSON-text guard literal
+    // is not double-encoded into a jsonb string scalar.
+    json: rawType(RAW_TEXT_OIDS.json, (raw) => JSON.parse(raw), serializeJson),
+    jsonb: rawType(RAW_TEXT_OIDS.jsonb, (raw) => JSON.parse(raw), serializeJson),
   };
 }

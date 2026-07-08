@@ -74,6 +74,7 @@ _CASE_SHAPES = frozenset(
         "error",
         "concurrencySuccess",
         "boundary",
+        "rejected",
     }
 )
 
@@ -519,9 +520,12 @@ def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
         # An api-conformance-lane case (every boundary case, plus the read-lock
         # matrix reads) is NOT executed by the harness, so it need not carry a
         # Postgres golden — its observable is proven by the language's API
-        # Conformance Suite. Harness-lane cases still must carry one.
+        # Conformance Suite. A `rejected` case asserts a pre-SQL refusal (it never
+        # reaches SQL), so it deliberately carries no golden either. Every other
+        # harness-lane case must carry one.
         if (
             shape is not None
+            and shape != "rejected"
             and doc.get("lane") != "api-conformance"
             and not _has_postgres_golden(doc, shape)
         ):

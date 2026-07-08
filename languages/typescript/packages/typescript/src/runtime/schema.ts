@@ -21,13 +21,14 @@ import {
   type Axis as TemporalAxis,
 } from "@parallax/bitemporal";
 import type { Dialect } from "@parallax/dialect";
-import type { EntityMetadata, Metamodel } from "@parallax/metamodel";
+import type { EntityMetadata, Metamodel, NormalizedValueObjectMember } from "@parallax/metamodel";
 import type {
   AsOfFragment,
   Axis,
   AxisPins as CompilerAxisPins,
   ProjectionColumn,
   ResolvedColumn,
+  ResolvedNestedPath,
   ResolvedRelationship,
   SchemaResolver,
 } from "@parallax/sql";
@@ -93,6 +94,60 @@ export class RuntimeSchema implements SchemaResolver {
     };
   }
 
+  /**
+   * Resolve a value-object nested path (`Class.vo.field…` / `Class.vo…`) against
+   * the declared recursive structure (m-value-object) — the runtime mirror of the
+   * conformance `MetamodelSchema.resolveNested`, so a developer nested predicate
+   * (`Customer.address.city.eq(...)`, `Customer.address.phones.exists(...)`) lowers
+   * to the same golden SQL. `manyIndex` records the first `many` crossing (the
+   * top-level value object is index 0), turning a flat extraction into an
+   * any-element traversal.
+   */
+  resolveNested(ref: string): ResolvedNestedPath {
+    const [className, voName, ...rest] = ref.split(".");
+    const entity = this.metamodel.entity(className as string);
+    const top = voName === undefined ? undefined : entity.findValueObject(voName);
+    if (top === undefined) {
+      throw new Error(
+        `'${ref}': '${String(voName)}' is not a value object declared on ${className}`,
+      );
+    }
+    let member: NormalizedValueObjectMember = top;
+    let manyIndex = top.cardinality === "many" ? 0 : -1;
+    let leafIsAttribute = false;
+    let leafType: string | undefined;
+    let leafIsMany = rest.length === 0 && top.cardinality === "many";
+    rest.forEach((segment, index) => {
+      const nested = member.valueObjects.find((vo) => vo.name === segment);
+      if (nested !== undefined) {
+        if (nested.cardinality === "many" && manyIndex === -1) {
+          manyIndex = index + 1;
+        }
+        member = nested;
+        if (index === rest.length - 1) {
+          leafIsAttribute = false;
+          leafIsMany = nested.cardinality === "many";
+        }
+        return;
+      }
+      const attribute = member.attributes.find((attr) => attr.name === segment);
+      if (attribute === undefined) {
+        throw new Error(`'${ref}': '${segment}' is not a member of value object '${member.name}'`);
+      }
+      leafIsAttribute = true;
+      leafType = attribute.type;
+    });
+    return {
+      table: entity.table,
+      column: this.dialect.quoteIdentifier(top.column),
+      segments: rest,
+      manyIndex,
+      leafIsAttribute,
+      ...(leafType === undefined ? {} : { leafType }),
+      leafIsMany,
+    };
+  }
+
   rootTable(): string {
     return this.rootEntity.table;
   }
@@ -110,13 +165,21 @@ export class RuntimeSchema implements SchemaResolver {
    * m-core `type` (no consumer other than the bytes trigger, but harmless).
    */
   rootProjection(): readonly ProjectionColumn[] {
-    return this.rootEntity
+    const attributeColumns = this.rootEntity
       .attributes()
       .map((attr) =>
         attr.type === "bytes"
           ? { column: this.dialect.quoteIdentifier(attr.column) }
           : { column: this.dialect.quoteIdentifier(attr.column), type: attr.type },
       );
+    // A top-level value object projects its ONE structured-document column
+    // verbatim (m-value-object): the whole nested composite materializes with the
+    // owner in one round trip; the row materializer decodes + projects it to the
+    // declared shape. No child statement, no reverse getter.
+    const valueObjectColumns = this.rootEntity
+      .valueObjects()
+      .map((vo) => ({ column: this.dialect.quoteIdentifier(vo.column) }));
+    return [...attributeColumns, ...valueObjectColumns];
   }
 
   rootEntityName(): string {

@@ -7,7 +7,7 @@
 # (m-value-object writes: type-mismatched values are rejected). Every other member is
 # present and well-typed, isolating the mismatch to `street`.
 model: models/contact.yaml
-tags: [m-value-object, rejected, negative, write]
+tags: [m-value-object, rejected, negative, write, slice-mvp-1]
 shape: rejected
 when:
   write:

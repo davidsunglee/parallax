@@ -8,7 +8,7 @@
 # list values. Oslo (1, 2) and Boston (3) match; Berlin (6) and every not-present
 # city — missing key (5), null column (4), JSON `null` leaf (7) — are excluded.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, nested, json, in]
+tags: [m-value-object, m-sql, nested, json, in, slice-mvp-1]
 shape: read
 when:
   operation:

@@ -8,7 +8,7 @@
 # nested-predicate resolver MUST). The path is schema-VALID (`nestedRef` regex), so
 # only model-aware validation catches it — exactly the gap the `rejected` shape closes.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, rejected, negative, nested]
+tags: [m-value-object, m-op-algebra, rejected, negative, nested, slice-mvp-1]
 shape: rejected
 when:
   operation:

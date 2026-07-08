@@ -4,7 +4,12 @@
  * so codegen emits only artifacts the descriptor declares (no invented enum or
  * value-object field types — spec §2.1).
  */
-import type { EntityMetadata, Metamodel, NormalizedAttribute } from "@parallax/metamodel";
+import type {
+  EntityMetadata,
+  Metamodel,
+  NormalizedAttribute,
+  NormalizedValueObjectMember,
+} from "@parallax/metamodel";
 
 /** The generated TS property type for one m-core neutral scalar (spec §3.2.1). */
 export function propertyTypeFor(type: string): string {
@@ -68,6 +73,43 @@ export interface ToOneRelationshipModel {
   readonly relatedEntity: string;
 }
 
+/** A generated typed leaf field of a value object (`address.city`). */
+export interface ValueObjectFieldModel {
+  /** The declared field name (`city`). */
+  readonly name: string;
+  /** The generated managed property type (`string`). */
+  readonly propertyType: string;
+  /** Whether the property unions `| null`. */
+  readonly nullable: boolean;
+  /** The FULL dotted DSL ref (`Customer.address.geo.country`) for a flat / any-element predicate. */
+  readonly ref: string;
+}
+
+/**
+ * A generated typed value object — its declared fields and self-nested value
+ * objects to arbitrary depth (m-value-object). The managed shape is one typed
+ * interface ({@link typeName}), and the DSL builder exposes typed
+ * nested-predicate accessors (comparisons on fields, `exists`/`notExists` on the
+ * member) carrying the dotted path. No reverse getter and no lock/cache/statement
+ * machinery — a value object rides its owner.
+ */
+export interface ValueObjectModel {
+  /** The member name (`address`, `geo`, `phones`). */
+  readonly name: string;
+  /** `one` (a nested object) or `many` (an array). */
+  readonly cardinality: "one" | "many";
+  /** Whether the member is nullable (`one` → `| null`). */
+  readonly nullable: boolean;
+  /** The generated managed interface name (`CustomerAddressGeo`). */
+  readonly typeName: string;
+  /** The FULL dotted DSL ref to this member (`Customer.address.phones`) — the `exists` path. */
+  readonly ref: string;
+  /** The declared typed leaf fields. */
+  readonly fields: readonly ValueObjectFieldModel[];
+  /** The self-nested value objects (recursive, arbitrary depth). */
+  readonly nested: readonly ValueObjectModel[];
+}
+
 /** The generated shape of one entity. */
 export interface EntityModel {
   /** The domain class name (`Order`) — the entity symbol + managed-object type. */
@@ -79,6 +121,8 @@ export interface EntityModel {
   readonly attributes: readonly AttributeModel[];
   readonly toMany: readonly ToManyRelationshipModel[];
   readonly toOne: readonly ToOneRelationshipModel[];
+  /** The declared top-level value objects (m-value-object), recursive. */
+  readonly valueObjects: readonly ValueObjectModel[];
 }
 
 /** The whole generated model: every entity plus the bundled descriptor. */
@@ -98,8 +142,12 @@ export function usesDecimal(model: CodegenModel): boolean {
 
 /** True when any attribute maps to a Temporal type (needs the `Temporal` import). */
 export function usesTemporal(model: CodegenModel): boolean {
-  const temporalTypes = new Set(["date", "time", "timestamp"]);
-  return model.entities.some((e) => e.attributes.some((a) => temporalTypes.has(a.attributeType)));
+  const temporalTypes = new Set(["Temporal.PlainDate", "Temporal.PlainTime", "Temporal.Instant"]);
+  return model.entities.some(
+    (e) =>
+      e.attributes.some((a) => new Set(["date", "time", "timestamp"]).has(a.attributeType)) ||
+      valueObjectFieldTypes(e.valueObjects).some((t) => temporalTypes.has(t)),
+  );
 }
 
 /** True when any attribute maps to `ParallaxJsonValue`. */
@@ -107,6 +155,57 @@ export function usesJson(model: CodegenModel): boolean {
   return model.entities.some((e) =>
     e.attributes.some((a) => propertyTypeFor(a.attributeType) === "ParallaxJsonValue"),
   );
+}
+
+/** True when any entity declares a value object (needs the nested-predicate builders). */
+export function usesValueObjects(model: CodegenModel): boolean {
+  return model.entities.some((e) => e.valueObjects.length > 0);
+}
+
+/** Whether any value-object field (at any depth) maps to a Temporal type. */
+function valueObjectFieldTypes(vos: readonly ValueObjectModel[]): readonly string[] {
+  return vos.flatMap((vo) => [
+    ...vo.fields.map((f) => f.propertyType),
+    ...valueObjectFieldTypes(vo.nested),
+  ]);
+}
+
+/** Pascal-case a snake/camel segment for a generated type name (`geo` → `Geo`). */
+function pascal(name: string): string {
+  const camel = name.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+  return camel.charAt(0).toUpperCase() + camel.slice(1);
+}
+
+/**
+ * Build one value object's recursive codegen model. `entityRef` is the dotted DSL
+ * ref of this member (`Customer.address.geo`); children accumulate onto it for
+ * their full ref. The element-relative paths a scoped `where` uses are recomputed
+ * per-`exists`-root in the emitter (they depend on which member `exists` is called
+ * on), so the model carries only the full ref + the declared structure.
+ */
+function valueObjectModel(
+  vo: NormalizedValueObjectMember,
+  entityRef: string,
+  typePrefix: string,
+): ValueObjectModel {
+  const ref = `${entityRef}.${vo.name}`;
+  const typeName = `${typePrefix}${pascal(vo.name)}`;
+  const fields: ValueObjectFieldModel[] = vo.attributes.map((attr) => ({
+    name: attr.name,
+    propertyType: propertyTypeFor(attr.type),
+    nullable: attr.nullable,
+    ref: `${ref}.${attr.name}`,
+  }));
+  const nested = vo.valueObjects.map((child) => valueObjectModel(child, ref, typeName));
+  return {
+    name: vo.name,
+    cardinality: vo.cardinality,
+    nullable: vo.nullable,
+    typeName,
+    ref,
+    fields,
+    nested,
+  };
 }
 
 /** The default finder accessor name for an entity (`Order` → `orders`). */
@@ -141,6 +240,9 @@ function entityModel(entity: EntityMetadata): EntityModel {
       toOne.push({ name: rel.name, ref, relatedEntity: rel.relatedEntity });
     }
   }
+  const valueObjects = entity
+    .valueObjects()
+    .map((vo) => valueObjectModel(vo, entity.name, entity.name));
   return {
     name: entity.name,
     finderName: finderNameFor(entity),
@@ -148,6 +250,7 @@ function entityModel(entity: EntityMetadata): EntityModel {
     attributes,
     toMany,
     toOne,
+    valueObjects,
   };
 }
 

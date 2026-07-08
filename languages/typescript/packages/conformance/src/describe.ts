@@ -13,7 +13,7 @@ import { SCHEMA_VERSION } from "@parallax/core";
 
 /**
  * The canonical `slice-mvp-1` capabilities, verbatim from `slices.md`. `modules`
- * is the derived union of the module tags carried by the 123 tagged cases. This
+ * is the derived union of the module tags carried by the 165 tagged cases. This
  * object is the single source of truth for what the TypeScript adapter claims;
  * only the `adapter` identity is supplied per call.
  */
@@ -38,6 +38,7 @@ export const SLICE_MVP_1_CAPABILITIES: Capabilities = {
     "m-sql",
     "m-temporal-read",
     "m-unit-work",
+    "m-value-object",
   ],
   dialects: ["postgres"],
   caseShapes: [
@@ -48,6 +49,7 @@ export const SLICE_MVP_1_CAPABILITIES: Capabilities = {
     "boundary",
     "error",
     "concurrencySuccess",
+    "rejected",
   ],
   caseTags: { include: ["slice-mvp-1"] },
   commands: ["describe", "compile", "run"],

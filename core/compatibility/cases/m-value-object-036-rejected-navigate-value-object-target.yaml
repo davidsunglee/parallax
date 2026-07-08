@@ -9,7 +9,7 @@
 # node is schema-valid (`address` matches the relationship-ref regex); only
 # model-aware validation catches the misuse.
 model: models/customer.yaml
-tags: [m-value-object, m-navigate, rejected, negative]
+tags: [m-value-object, m-navigate, rejected, negative, slice-mvp-1]
 shape: rejected
 when:
   operation:

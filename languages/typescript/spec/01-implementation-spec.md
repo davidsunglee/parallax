@@ -59,14 +59,16 @@ declared in [`slices.md`](../../../core/spec/slices.md#first-implementation-conf
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
 the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
-so V1 claims precisely the 123 cases tagged for the slice and returns
+so V1 claims precisely the 165 cases tagged for the slice and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads** + audit-only
-processing-temporal), and optimistic-locking surfaces but defers aggregation,
+processing-temporal), optimistic-locking, and value-object (typed nested
+predicates, atomic document writes, inherited-temporality reads, materialization
+graph, and the pre-SQL `rejected` negatives) surfaces but defers aggregation,
 identity-cache scenarios, query-cache scenarios, m-detach detached merge-back, PK
-generation, value objects, inheritance, error classification, bitemporal
-rectangle-split writes, m-perf-bench benchmarks, and non-Postgres dialects claims
-capabilities in this shape:
+generation, inheritance, error classification, bitemporal rectangle-split writes,
+m-perf-bench benchmarks, and non-Postgres dialects claims capabilities in this
+shape:
 
 ```json
 {
@@ -98,10 +100,11 @@ capabilities in this shape:
       "m-read-lock",
       "m-sql",
       "m-temporal-read",
-      "m-unit-work"
+      "m-unit-work",
+      "m-value-object"
     ],
     "dialects": ["postgres"],
-    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess"],
+    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": {
       "include": ["slice-mvp-1"]
     },
@@ -185,15 +188,19 @@ The value/type namespace overlap is deliberate: `Order` is both the entity symbo
 value used in expressions and the managed object `type Order` (aliasable as
 `OrderObject` when clarity matters).
 
-No generated enum types or structured value-object interfaces are part of
-TypeScript V1. The canonical descriptor has no enum element, and a `valueObject`
-declares only its element name, logical type name, backing column, mapping, and
-nullability. Generated value-object properties therefore use the unstructured
-`ParallaxJsonValue` scalar mapping from [§3.2.1](#321-m-core-scalar-runtime-mapping),
-and nested value-object predicates use untyped string paths after the declared
-value-object name. A future core descriptor extension that describes enum values
-or value-object fields may add generated types, but V1 codegen MUST NOT invent
-them from TypeScript-local assumptions.
+No generated enum types are part of TypeScript V1 (the canonical descriptor has
+no enum element). Value objects, by contrast, **are** structured in V1: a
+`valueObject` declares typed inner `attributes`, self-nested `valueObjects` to
+arbitrary depth, and `cardinality: one | many` (m-value-object), all stored in
+its one structured-document column. Codegen therefore emits a typed value-object
+class per declared member and parent-to-nested **getters to arbitrary depth**
+(no reverse getters, no lock/cache/statement machinery — [§7](#7-codegen-or-not-dq5)),
+and the query DSL exposes a typed nested-predicate builder whose comparisons,
+`in`, null tests, and `exists`/`notExists` (with a scoped element `where`) carry
+the declared `Class.vo.field` path (m-op-algebra `nested*` family). The whole
+document still materializes with its owner in one round trip and binds atomically
+on write; a value object is never a queryable root, a navigation target, or a
+`deepFetch` segment — those misuses are the pre-SQL `rejected` negatives.
 
 ### 2.2 Parallax handle
 
@@ -832,22 +839,31 @@ The V1 `parallax-conformance describe` claim remains **Postgres-only**. That is
 the official adapter grade for `slice-mvp-1`. TypeScript nevertheless ships two
 database implementations behind the m-dialect seam:
 
-- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 111
-  harness-lane `slice-mvp-1` cases over `postgres:17`, included in
-  `just ts-db`.
+- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 153
+  harness-lane `slice-mvp-1` cases over `postgres:17` (including the 42
+  value-object cases — their nested-predicate reads, materialization graph,
+  atomic document writes, inherited-temporality reads, and pre-SQL `rejected`
+  refusals), included in `just ts-db`.
 - **MariaDB curated m-case-format profile** (`mariadb-curated-25`): a first-class partial
   profile over `mariadb:11.4`, included in `just ts-db-all`. It preserves the
   25-case set: 14
   harness-lane slice cases whose `then.statements` entries carry a `mariadb` `sql`
   key plus 11 marquee MariaDB
   dialect/error-classification proofs (`m-read-lock-009`, `m-temporal-read-021`, `m-core-004`, `m-db-error-001`-`m-db-error-008`).
+  The value-object cases DO carry `mariadb` golden, but they are deliberately
+  **not** run through the curated run-lane profile: their MariaDB golden-SQL
+  parity is proven directly by the Phase-10 dialect-lowering compile tests
+  (`packages/dialect/test/value-object-lowering.test.ts`,
+  `packages/sql/test/value-object.test.ts`), so the curated profile stays at its
+  original 25-case marquee set.
 
 Per-dialect golden SQL is selected by the provider's own `dialect` identifier,
 which is the `sql`-map key inside each `then.statements` entry. The MariaDB profile
-does not silently skip cases. Every Postgres full-profile case whose
-`then.statements` entries carry no `mariadb` `sql` key is classified as an explicit
-MariaDB profile exclusion with the reason
-`no mariadb golden statements in this partial MariaDB profile`.
+does not silently skip cases. Every Postgres full-profile case that the curated
+profile does not run is classified as an explicit MariaDB profile exclusion:
+either `no mariadb golden statements in this partial MariaDB profile` (no
+`mariadb` `sql` key) or, for a value-object case, `value-object MariaDB parity is
+proven by the Phase-10 direct compile tests, not this run-lane profile`.
 
 ### 5.5 Database provider support and matrix profiles
 
@@ -911,7 +927,7 @@ partition below.
 ### 6.2 Coverage partition and no-drift guard
 
 - **Coverage partition.** `coverage.test.ts` (Docker-free) discovers exactly the
-  123 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
+  165 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
   with no stale ids: every in-slice case is either exercised by a family suite
   (`covered.ts`) or listed in the reasoned skip manifest (`skip-manifest.ts`),
   and every skip carries a non-empty reason — a silent gap fails the build.
@@ -927,8 +943,16 @@ partition below.
 
 ### 6.3 Reasoned skips
 
-Five of the 123 cases are reason-skipped because what they prove is serde/harness
-machinery a developer never authors, not a developer-facing surface:
+Fifteen of the 165 cases are reason-skipped because what they prove is
+serde/harness machinery a developer never authors, not a developer-facing
+surface — the five below plus the ten value-object `rejected` negatives
+(`m-value-object-034`-`m-value-object-043`), whose whole assertion is a **pre-SQL
+refusal**: the invalid input (a value-object root, an unknown nested path, a
+`deepFetch`/navigation targeting a value object, a type-mismatched literal, a
+missing required attribute/nested value object) is refused before any query is
+built, so there is no idiomatic developer query to author — the refusal is proven
+by the harness run lane and the `@parallax/operation` validators. The five
+non-value-object skips are:
 
 - **`m-op-algebra-024`** — an `equivalentEncodings` serde-canonicalization check (two surface
   spellings collapse to one canonical operation). Its query semantics are
@@ -971,10 +995,13 @@ language-local realization of the contract's guide drift-check requirement.
   serialized metamodel the compatibility corpus uses, validated against
   `metamodel.schema.json` per [§3.1](#31-primary-authoring-format)). The typed
   entity symbols, managed-object types, entity input types, snapshot types,
-  value-object properties as unstructured JSON values, and operation accessors
-  are all generated from it. Codegen MUST emit only artifacts derivable from
-  `metamodel.schema.json`; enum types and structured value-object field types are
-  not generated in V1 because the descriptor does not define them. Codegen is
+  typed value-object classes with parent-to-nested getters to arbitrary depth,
+  the typed nested-predicate builder, and operation accessors are all generated
+  from it. Codegen MUST emit only artifacts derivable from
+  `metamodel.schema.json`: value objects generate typed structure because the
+  descriptor declares their `attributes` / nested `valueObjects` / `cardinality`
+  (m-value-object), while enum types are not generated in V1 because the
+  descriptor has no enum element. Codegen is
   chosen over runtime reflection/proxies so the typed finder/object surface is
   statically checkable and matches the generated import barrel
   ([§2.1](#21-generated-import-surface)). Decorators and TypeScript schema
@@ -1429,9 +1456,10 @@ const snapshots = await orders.toSnapshots({
 Snapshot output includes all scalar and value-object attributes by default and no
 relationships by default; `attributes` and `excludeAttributes` are mutually
 exclusive, relationship paths are opt-in (there is no `excludeRelationships`,
-since omitted relationships are already excluded), and value-object attributes
-are selected as whole `ParallaxJsonValue` properties rather than typed nested
-field paths. List-level snapshots batch-load requested relationships like
+since omitted relationships are already excluded), and each top-level value
+object is selected as one whole structured-document property (its typed nested
+composite) rather than a per-nested-field selection. List-level snapshots
+batch-load requested relationships like
 includes
 ([§2.6](#26-relationship-navigation-and-deep-fetch-m-deep-fetch)) to avoid N+1.
 (`JSON.stringify` over a managed object is scalar-only and synchronous and does

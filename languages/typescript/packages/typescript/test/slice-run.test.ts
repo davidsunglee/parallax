@@ -73,9 +73,10 @@ function dockerAvailable(): boolean {
 const HAS_DOCKER = dockerAvailable();
 const CASES = casesForProfile(POSTGRES_FULL_PROFILE);
 
-// Discovery is Docker-free; assert the exact slice size unconditionally.
-it("discovers the harness-lane slice-mvp-1 slice (111 cases)", () => {
-  expect(CASES.length).toBe(111);
+// Discovery is Docker-free; assert the exact slice size unconditionally. It grew
+// by the 42 value-object cases (all harness-lane) in Phase 11.
+it("discovers the harness-lane slice-mvp-1 slice (153 cases)", () => {
+  expect(CASES.length).toBe(153);
 });
 
 group.skipIf(!HAS_DOCKER)(
@@ -106,6 +107,21 @@ group.skipIf(!HAS_DOCKER)(
           command: "run",
           status: gradeStatus(envelope, loaded),
         });
+
+        // A `rejected` case is refused PRE-SQL (no provisioning / execution): it
+        // returns an `error` envelope whose diagnostic names the violated rule
+        // (m-value-object resolved Q7). That refusal IS its green result.
+        if (loaded.shape === "rejected") {
+          expect(envelope.status, `${loaded.casePath}: ${JSON.stringify(envelope)}`).toBe("error");
+          if (envelope.status !== "error") {
+            throw new Error("expected an error (pre-SQL refusal) run envelope");
+          }
+          expect(envelope.diagnostics[0]?.code, loaded.casePath).toBe(
+            loaded.raw.then?.rejectedRule,
+          );
+          return;
+        }
+
         expect(envelope.status, `${loaded.casePath}: ${JSON.stringify(envelope)}`).toBe("ok");
         if (envelope.status !== "ok" || envelope.command !== "run") {
           throw new Error("expected an ok run envelope");
@@ -119,7 +135,7 @@ group.skipIf(!HAS_DOCKER)(
     it("the case-matrix report is GREEN with no residuals", () => {
       const report = matrix.report();
       expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-      expect(report.total).toBe(111);
+      expect(report.total).toBe(153);
       expect(report.residuals).toEqual([]);
     });
   },
@@ -250,6 +266,13 @@ function declaredRoundTrips(loaded: LoadedCase): number | undefined {
 
 /** The status a graded envelope contributes to the matrix (`pass`/`fail`/raw). */
 function gradeStatus(envelope: Envelope, loaded: LoadedCase): MatrixStatus {
+  // A `rejected` case is green when it refuses pre-SQL with the declared rule.
+  if (loaded.shape === "rejected") {
+    const ok =
+      envelope.status === "error" &&
+      envelope.diagnostics[0]?.code === loaded.raw.then?.rejectedRule;
+    return ok ? "pass" : "fail";
+  }
   if (envelope.status !== "ok") {
     return envelope.status as MatrixStatus;
   }

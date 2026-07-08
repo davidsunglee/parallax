@@ -29,8 +29,8 @@ describe("m-case-format matrix profiles", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("keeps the canonical Postgres full profile at the 111 harness-lane cases", () => {
-    expect(casesForProfile(POSTGRES_FULL_PROFILE)).toHaveLength(111);
+  it("keeps the canonical Postgres full profile at the 153 harness-lane cases", () => {
+    expect(casesForProfile(POSTGRES_FULL_PROFILE)).toHaveLength(153);
   });
 
   it("folds the historical Postgres read run into a named profile", () => {
@@ -70,8 +70,14 @@ describe("m-case-format matrix profiles", () => {
       ).toBe(true);
     }
     expect(exclusions.length).toBe(postgresFull.length - 14);
+    // Two exclusion reasons now: the historical no-mariadb-golden reason, plus the
+    // value-object cases (which DO carry mariadb golden but are proven by the
+    // Phase-10 direct compile tests, not this run-lane profile).
     expect(new Set(exclusions.map(({ reason }) => reason))).toEqual(
-      new Set(["no goldenSql.mariadb in this partial MariaDB profile"]),
+      new Set([
+        "no goldenSql.mariadb in this partial MariaDB profile",
+        "value-object MariaDB parity is proven by the Phase-10 direct compile tests, not this run-lane profile",
+      ]),
     );
   });
 });

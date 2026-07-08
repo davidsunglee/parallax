@@ -679,7 +679,7 @@ export class TransactionWriter {
    */
   private insertBinds(entity: EntityMetadata, input: Record<string, unknown>): readonly unknown[] {
     const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
-    return entity.attributes().map((attr) => {
+    const attributeBinds = entity.attributes().map((attr) => {
       if (attr.name in input) {
         return this.bindAttribute(attr, input[attr.name]);
       }
@@ -691,6 +691,14 @@ export class TransactionWriter {
       }
       return this.bindAttribute(attr, null);
     });
+    // A top-level value object binds its WHOLE document atomically in columnOrder
+    // position (m-value-object) — after the scalar attributes, matching
+    // `quotedColumnOrder`. The object / array / null rides through to the dialect's
+    // structured-document bind (jsonb / json); an omitted value object binds null.
+    const valueObjectBinds = entity
+      .valueObjects()
+      .map((vo) => (vo.name in input ? (input[vo.name] ?? null) : null));
+    return [...attributeBinds, ...valueObjectBinds];
   }
 
   /** Normalize one attribute value for the injected dialect's driver boundary. */
@@ -783,6 +791,9 @@ function quotedColumnOrder(entity: EntityMetadata, dialect: Dialect): readonly s
   return columnOrder({
     table: entity.table,
     attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
+    // A top-level value object contributes one structured-document column in
+    // columnOrder position (m-value-object) — the whole document binds atomically.
+    valueObjects: entity.valueObjects().map((vo) => ({ column: vo.column, nullable: vo.nullable })),
   }).map((column) => dialect.quoteIdentifier(column));
 }
 

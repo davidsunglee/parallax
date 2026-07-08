@@ -18,10 +18,14 @@ import type {
   AttributeRef,
   Comparison,
   Literal,
+  NestedComparison,
+  NestedMembership,
+  NestedRef,
   Operation,
   OrderKey,
   RelationshipRef,
   StringMatch,
+  ValueObjectRef,
 } from "@parallax/operation";
 
 /** Options accepted by the string predicates (`{ caseInsensitive: true }`). */
@@ -287,6 +291,114 @@ export class ToManyRelationshipExpression {
     return new Predicate({ navigate: { rel: this.ref, op: inner.toOperation() } });
   }
 }
+
+/**
+ * A typed **nested value-object field** reference — the leaf attribute of a
+ * declared value-object path (`Customer.address.city`, or the element-relative
+ * `type` inside a scoped `where`). Every predicate method serializes to the
+ * matching single-key `nested*` m-op-algebra node carrying the dotted `path`, so
+ * `Customer.address.city.eq("Oslo")` → `{ nestedEq: { path: "Customer.address.city",
+ * value: "Oslo" } }` (m-value-object typed nested predicates). The path is the
+ * dotted string the codegen accumulates from the declared structure (arbitrary
+ * depth); an element-relative path (no `Class.` prefix) is what a scoped `where`
+ * uses, and the same builder serves both because the node shapes are identical.
+ */
+export class NestedFieldExpression {
+  constructor(readonly path: NestedRef) {}
+
+  private cmp(tag: keyof NestedComparisonTags, value: Literal): Predicate {
+    const body: NestedComparison = { path: this.path, value };
+    return new Predicate({ [tag]: body } as unknown as Operation);
+  }
+
+  /** `nestedEq` (`m-value-object-001`). `eq(null)` is rejected in favor of {@link isNull}. */
+  eq(value: Exclude<Literal, null>): Predicate {
+    return this.cmp("nestedEq", value);
+  }
+
+  /** `nestedNotEq` (`m-value-object-004`). */
+  notEq(value: Exclude<Literal, null>): Predicate {
+    return this.cmp("nestedNotEq", value);
+  }
+
+  /** `nestedGt` (`m-value-object-009`, typed-cast comparison). */
+  gt(value: Exclude<Literal, null>): Predicate {
+    return this.cmp("nestedGt", value);
+  }
+
+  /** `nestedGte` (`m-value-object-011`). */
+  gte(value: Exclude<Literal, null>): Predicate {
+    return this.cmp("nestedGte", value);
+  }
+
+  /** `nestedLt` (`m-value-object-010`). */
+  lt(value: Exclude<Literal, null>): Predicate {
+    return this.cmp("nestedLt", value);
+  }
+
+  /** `nestedLte` (`m-value-object-012`). */
+  lte(value: Exclude<Literal, null>): Predicate {
+    return this.cmp("nestedLte", value);
+  }
+
+  /** `nestedIn` (`m-value-object-006`), a list of typed literals. */
+  in(values: readonly Exclude<Literal, null>[]): Predicate {
+    const body: NestedMembership = { path: this.path, values };
+    return new Predicate({ nestedIn: body } as unknown as Operation);
+  }
+
+  /** `nestedIsNull` — true exactly where a comparison excludes (absence collapse, `m-value-object-007`). */
+  isNull(): Predicate {
+    return new Predicate({ nestedIsNull: { path: this.path } } as unknown as Operation);
+  }
+
+  /** `nestedIsNotNull` (`m-value-object-008`). */
+  isNotNull(): Predicate {
+    return new Predicate({ nestedIsNotNull: { path: this.path } } as unknown as Operation);
+  }
+}
+
+/**
+ * A typed **value-object member** reference (`Customer.address`, `Customer.address.geo`,
+ * or the to-many `Customer.address.phones`). Its typed field / nested accessors are
+ * generated onto it by codegen (arbitrary depth); this runtime carries the presence
+ * quantifiers: `exists` / `notExists`, with an optional element-scoped `where`
+ * (same-element compound matching over a `many` member — resolved Q13). Without a
+ * `where` the meaning is presence for a to-one and non-empty for a to-many; with a
+ * `where`, ONE element must satisfy the whole compound.
+ *
+ * The scoped `where` predicate is built from ELEMENT-relative field expressions
+ * (`phones.field(...)` → an element path with no `Class.` prefix); the boolean
+ * combinators reuse {@link Predicate}, so `p1.and(p2)` inside a `where` serializes
+ * to the same element-junction shape the schema's element-scope grammar admits.
+ */
+export class ValueObjectExpression {
+  constructor(readonly path: ValueObjectRef) {}
+
+  /** `nestedExists` — presence (to-one) / non-empty (to-many), optionally scoped (`m-value-object-015`/`-019`). */
+  exists(where?: Predicate): Predicate {
+    return new Predicate({
+      nestedExists: { path: this.path, ...(where ? { where: where.toOperation() } : {}) },
+    } as unknown as Operation);
+  }
+
+  /** `nestedNotExists` — absent / empty, optionally "no element satisfies" (`m-value-object-016`/`-020`). */
+  notExists(where?: Predicate): Predicate {
+    return new Predicate({
+      nestedNotExists: { path: this.path, ...(where ? { where: where.toOperation() } : {}) },
+    } as unknown as Operation);
+  }
+}
+
+/** Helper: the nested comparison node tags a {@link NestedFieldExpression} produces. */
+type NestedComparisonTags = {
+  nestedEq: unknown;
+  nestedNotEq: unknown;
+  nestedGt: unknown;
+  nestedGte: unknown;
+  nestedLt: unknown;
+  nestedLte: unknown;
+};
 
 /**
  * A navigation path used by the eager-fetch `includes` / `deepFetch` option — an

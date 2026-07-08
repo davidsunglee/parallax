@@ -91,12 +91,17 @@ export interface ClassifiedRow {
 }
 
 /**
- * Classify a flat attribute-named row against the entity's metamodel — mirroring
- * the fixture loader (`runner.ts` `loadFixtures`), which resolves attribute-name
- * rows to columns. Each key is either the reserved control key `observedVersion`
- * or an ENTITY ATTRIBUTE name (`attributeByName` throws on anything else, so a
- * typo surfaces loudly); the primary-key attribute's value is split into `pk`,
- * every other attribute into `set`, both keyed by physical column.
+ * Classify a flat write row against the entity's metamodel — mirroring the
+ * fixture loader (`runner.ts` `loadFixtures`), which resolves attribute-name rows
+ * to columns. Each key is the reserved control key `observedVersion`, an ENTITY
+ * ATTRIBUTE name, or a top-level VALUE-OBJECT name. A value object resolves
+ * FIRST-class to its ONE structured-document column (m-value-object): the WHOLE
+ * value — an object (`one`), an array (`many`), or `null` — binds atomically at
+ * that column's `columnOrder` position, NEVER decomposed into path-level binds
+ * (even when its content is marker-shaped, per the role-based disambiguation
+ * contract). An unknown key throws (a typo surfaces loudly). The primary-key
+ * attribute's value is split into `pk`; every other attribute / value object
+ * column into `set`.
  */
 export function classifyRow(entity: EntityMetadata, row: Record<string, unknown>): ClassifiedRow {
   const pkColumn = entity.primaryKey()[0]?.column;
@@ -109,23 +114,47 @@ export function classifyRow(entity: EntityMetadata, row: Record<string, unknown>
       observedVersion = value as number;
       continue;
     }
-    const attribute = entity.attributeByName(key);
-    columns.set(attribute.column, value);
-    if (attribute.column === pkColumn) {
+    // Resolve the key by role: a top-level value object binds its whole document
+    // to the one structured column; otherwise it must be an entity attribute.
+    const valueObject = entity.findValueObject(key);
+    const column =
+      valueObject !== undefined ? valueObject.column : entity.attributeByName(key).column;
+    columns.set(column, value);
+    if (column === pkColumn) {
       pk = value;
     } else {
-      set.set(attribute.column, value);
+      set.set(column, value);
     }
   }
   return { columns, pk, set, ...(observedVersion === undefined ? {} : { observedVersion }) };
 }
 
-/** The entity's physical column list in descriptor order (attribute → column). */
-export function orderedColumns(entity: EntityMetadata): readonly string[] {
-  return columnOrder({
+/**
+ * The physical DDL view of an entity — attribute columns PLUS exactly one
+ * structured-document column per top-level value object (m-value-object). This is
+ * the single seam every column-order / DDL / write-target derivation routes
+ * through, so the value-object column lands in `columnOrder` position uniformly
+ * (fixture load, table-state read, insert/update binds) instead of each caller
+ * rebuilding an attributes-only synthetic entity that would drop it.
+ */
+export function ddlEntityView(entity: EntityMetadata): {
+  readonly table: string;
+  readonly attributes: readonly { readonly type: string; readonly column: string }[];
+  readonly valueObjects: readonly { readonly column: string; readonly nullable: boolean }[];
+} {
+  return {
     table: entity.table,
     attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
-  });
+    valueObjects: entity.valueObjects().map((vo) => ({ column: vo.column, nullable: vo.nullable })),
+  };
+}
+
+/**
+ * The entity's physical column list in descriptor order: attribute columns then
+ * one column per top-level value object (m-value-object).
+ */
+export function orderedColumns(entity: EntityMetadata): readonly string[] {
+  return columnOrder(ddlEntityView(entity));
 }
 
 /** True when a case's shape is a write sequence. */
@@ -430,10 +459,9 @@ function versionedTargetFor(entity: EntityMetadata, dialect: Dialect): Versioned
 
 /** Resolve an entity's physical {@link BatchTarget} (table, quoted columns, pk). */
 function batchTargetFor(entity: EntityMetadata, dialect: Dialect): BatchTarget {
-  const columns = columnOrder({
-    table: entity.table,
-    attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
-  }).map((column) => dialect.quoteIdentifier(column));
+  const columns = columnOrder(ddlEntityView(entity)).map((column) =>
+    dialect.quoteIdentifier(column),
+  );
   const pk = entity.primaryKey()[0];
   if (pk === undefined) {
     throw new Error(`entity '${entity.name}' has no primary key for a batched write`);
@@ -453,10 +481,9 @@ function batchTargetFor(entity: EntityMetadata, dialect: Dialect): BatchTarget {
  * an OPTIMISTIC-mode close binds the observed value on (m-opt-lock).
  */
 export function writeTargetFor(entity: EntityMetadata, dialect: Dialect): WriteTarget {
-  const columns = columnOrder({
-    table: entity.table,
-    attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
-  }).map((column) => dialect.quoteIdentifier(column));
+  const columns = columnOrder(ddlEntityView(entity)).map((column) =>
+    dialect.quoteIdentifier(column),
+  );
   const pk = entity.primaryKey()[0];
   if (pk === undefined) {
     throw new Error(`entity '${entity.name}' has no primary key for a write sequence`);
