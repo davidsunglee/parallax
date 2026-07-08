@@ -100,6 +100,51 @@ def test_no_op_write_scenario_step_is_discovered_and_self_describes() -> None:
     _assert_scenario_count_consistency(case, "postgres")
 
 
+def _scenario_by_id(prefix: str):
+    return next(c for c in _scenario_cases() if c.path.stem.startswith(prefix))
+
+
+def test_read_your_own_writes_update_scenario_flushes_before_dependent_find() -> None:
+    # m-unit-work-005: a committed UPDATE followed by a dependent find that MUST observe
+    # the new value (read-your-own-writes for UPDATE).
+    case = _scenario_by_id("m-unit-work-005")
+    write, find = case.scenario
+    assert "write" in write and write["write"] == "update"
+    update_sql = write["statements"][0]["sql"]["postgres"]
+    assert update_sql.startswith("update account set")
+    assert "find" in find
+    # The dependent find asserts the flushed new balance/version (the RYOW observable).
+    assert find["expectRows"] == [{"id": 1, "owner": "Ada", "balance": 175.00, "version": 2}]
+    _assert_scenario_count_consistency(case, "postgres")
+
+
+def test_read_your_own_writes_delete_scenario_observes_absence() -> None:
+    # m-unit-work-006: a committed DELETE followed by a dependent find that MUST observe
+    # the row's ABSENCE (read-your-own-writes for DELETE).
+    case = _scenario_by_id("m-unit-work-006")
+    write, find = case.scenario
+    assert "write" in write and write["write"] == "delete"
+    assert write["statements"][0]["sql"]["postgres"] == "delete from account where id = ?"
+    # The dependent find returns ZERO rows — the deletion is visible.
+    assert find["expectRows"] == []
+    _assert_scenario_count_consistency(case, "postgres")
+
+
+def test_insert_update_combining_scenario_emits_exactly_one_insert() -> None:
+    # m-unit-work-008: a buffered insert + a buffered update of the same new object
+    # COMBINE into exactly ONE INSERT with the final values — no intervening UPDATE.
+    case = _scenario_by_id("m-unit-work-008")
+    write = case.scenario[0]
+    assert "write" in write
+    statements = write["statements"]
+    assert len(statements) == 1, "combining must emit exactly one statement"
+    sql = statements[0]["sql"]["postgres"]
+    assert sql.startswith("insert into account") and "update" not in sql
+    # The single INSERT carries the FINAL (post-combine) balance, not the initial one.
+    assert statements[0]["binds"] == [8, "Turing", 99.00, 1]
+    _assert_scenario_count_consistency(case, "postgres")
+
+
 def test_scenario_count_consistency_holds_for_authored_cases() -> None:
     for case in _scenario_cases():
         # Must not raise: per-step counts match the golden SQL and total roundTrips.

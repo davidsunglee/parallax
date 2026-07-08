@@ -177,6 +177,28 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "/ affectedRows), not the developer-surface object API — a developer never authors the milestone-chaining " +
       "DML directly. The bitemporal READ developer surface is exercised in temporal.api-conformance.test.ts.",
   })),
+  // --- audit-chaining breadth + unit-work RYOW (COR-26 Phase 2, already-claimed modules) ---
+  ...["m-audit-write-004", "m-audit-write-005", "m-audit-write-006"].map((id) => ({
+    id,
+    reason:
+      "audit-only milestone-chaining write breadth (multi-attribute correction, update from EXISTING " +
+      "persisted history, and the optimistic-gated close): the close-and-chain / gated-close DML is proven " +
+      "end-to-end by the reference harness AND the TypeScript conformance runner's run lane (slice-run drives " +
+      "@parallax/conformance's write-sequence / conflict plan, grading tableState / affectedRows). The " +
+      "audit-write developer idiom is already exercised by m-audit-write-001/-002/-003 in " +
+      "transactions.api-conformance.test.ts — these are breadth variants whose specific goldens the run lane " +
+      "grades, not a distinct developer query.",
+  })),
+  ...["m-unit-work-005", "m-unit-work-006", "m-unit-work-007", "m-unit-work-008"].map((id) => ({
+    id,
+    reason:
+      "unit-of-work read-your-own-writes / flush breadth (RYOW update, RYOW delete, non-cascade FK-delete " +
+      "ordering, insert-then-update combining): the observable — a dependent find seeing the committed write, the " +
+      "ordered delete flush, the single combined INSERT — is proven end-to-end by the reference harness AND the " +
+      "conformance runner's run lane (slice-run drives @parallax/conformance's scenario / write-sequence plan). " +
+      "The unit-of-work developer idiom is already exercised by m-unit-work-001/-002/-003 in " +
+      "transactions.api-conformance.test.ts — these are breadth variants whose specific goldens the run lane grades.",
+  })),
 ];
 
 /** The set of skipped case ids, for the coverage check. */

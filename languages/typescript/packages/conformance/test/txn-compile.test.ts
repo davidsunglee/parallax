@@ -125,6 +125,16 @@ const EXPECTED_IDS: readonly string[] = [
   "m-bitemp-write-004",
   "m-bitemp-write-005",
   "m-bitemp-write-008",
+  // COR-26 Phase 2 — audit-chaining breadth + unit-work RYOW (already-claimed
+  // modules): the optimistic-gated audit close `m-audit-write-006` (conflict, carries
+  // `m-opt-lock`), the read-your-own-writes update/delete scenarios `m-unit-work-005`/
+  // `-006`, the non-cascade FK-delete ordering `m-unit-work-007` (writeSequence,
+  // delete), and the insert-update combining scenario `m-unit-work-008`.
+  "m-audit-write-006",
+  "m-unit-work-005",
+  "m-unit-work-006",
+  "m-unit-work-007",
+  "m-unit-work-008",
 ];
 
 const CASES = txnCases();

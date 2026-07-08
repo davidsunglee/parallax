@@ -131,6 +131,13 @@ export const MARIADB_WRITE_PROFILE_IDS: readonly string[] = [
   "m-core-002",
   "m-core-003",
   "m-audit-write-001",
+  // COR-26 DQ3 — the audit-chaining MariaDB backfill: the update-chaining `-002`,
+  // terminate `-003`, and the new multi-attribute update `-004` now carry
+  // goldenSql.mariadb, so the max-sentinel infinity round-trips on the audit close +
+  // chain are proven on MariaDB, not only Postgres.
+  "m-audit-write-002",
+  "m-audit-write-003",
+  "m-audit-write-004",
 ];
 
 export const MARIADB_UNIQUE_PROFILE_IDS: readonly string[] = [
@@ -200,7 +207,8 @@ export const POSTGRES_TEMPORAL_PROFILE: MatrixProfile = fixedIdProfile(
  * (`value-object-lowering.test.ts` / `value-object.test.ts`), NOT this run-lane
  * curated profile. Excluding them keeps the curated profile at its original
  * 25-case marquee set (impl-spec §5.4) rather than ballooning it with every
- * value-object golden.
+ * value-object golden. COR-26 grew the marquee write set by the three audit-chaining
+ * MariaDB backfill cases (m-audit-write-002/-003/-004), lifting the profile to 28.
  */
 const VALUE_OBJECT_MARIADB_REASON =
   "value-object MariaDB parity is proven by the Phase-10 direct compile tests, not this run-lane profile";
@@ -210,7 +218,7 @@ function isValueObjectCase(loaded: LoadedCase): boolean {
 }
 
 export const MARIADB_CURATED_PROFILE: MatrixProfile = {
-  name: "mariadb-curated-25",
+  name: "mariadb-curated-28",
   dialect: "mariadb",
   kind: "partial",
   description:

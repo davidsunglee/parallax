@@ -36,7 +36,7 @@ MariaDB is different: it is not part of the V1 `describe` claim, but TypeScript
 does ship it as the second concrete dialect/adapter behind the database seam
 (`m-dialect` / `m-db-port`). It is covered by Docker-free dialect tests, shared
 adapter/provider contract tests, a selectable API Conformance lane, and the
-declared `mariadb-curated-25` partial matrix profile.
+declared `mariadb-curated-28` partial matrix profile.
 
 The adapter's machine-readable form is a `describe` envelope whose `capabilities`
 are byte-equal to the canonical slice, differing only in adapter identity. An
@@ -150,7 +150,7 @@ just ts-db-all                 # exhaustive DB sweep: primary gate + MariaDB mat
 `just verify` from the repository root runs the primary merge gate: static checks,
 Docker-free conformance, the primary TypeScript DB gate, and the Python suite.
 `just ts-db-all` adds the MariaDB API Conformance Suite and the curated
-`mariadb-curated-25` matrix profile.
+`mariadb-curated-28` matrix profile.
 
 ## Learn More
 

@@ -11,6 +11,7 @@
 export {
   type BatchStatement,
   type BatchTarget,
+  keyedDelete,
   keyedUpdate,
   multiRowInsert,
   uniformUpdate,

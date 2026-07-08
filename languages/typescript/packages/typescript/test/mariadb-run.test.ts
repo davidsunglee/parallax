@@ -1,7 +1,7 @@
 /**
  * The MariaDB **curated m-case-format matrix profile** (Testcontainers `mariadb:11.4`) —
  * the driver-bound corner that proves `typescript × mariadb` end-to-end for the
- * declared `mariadb-curated-25` partial profile.
+ * declared `mariadb-curated-28` partial profile.
  *
  * The abstraction earns its keep by a real second implementer round-tripping
  * through an actual database: each case compiles against `mariadbDialect`, runs
@@ -14,10 +14,10 @@
  * `hex()` (`m-core-004`), and errno classification (`m-db-error-001`-`m-db-error-008`) — are proven by a real
  * round trip, not only by the Docker-free compile-golden / dialect-unit lanes.
  *
- * The 25-case set (14 `slice-mvp-1 ∩ goldenSql.mariadb` + 11 marquee proofs):
+ * The 28-case set (17 `slice-mvp-1 ∩ goldenSql.mariadb` + 11 marquee proofs):
  *   - flat reads:  `m-op-algebra-002 m-descriptor-001 m-op-algebra-016 m-op-algebra-018 m-op-algebra-026 m-navigate-001 m-read-lock-009 m-temporal-read-021 m-core-004`
  *   - deep fetch:  `m-deep-fetch-012 m-navigate-013 m-navigate-015 m-navigate-020 m-navigate-024`
- *   - writes:      `m-core-002 m-core-003 m-audit-write-001`
+ *   - writes:      `m-core-002 m-core-003 m-audit-write-001 m-audit-write-002 m-audit-write-003 m-audit-write-004` (COR-26 audit-chaining backfill)
  *   - errno:       `m-db-error-001`-`m-db-error-008` (uniqueViolation / deadlock / lock-wait timeout)
  *
  * The errno family asserts the thrown `ParallaxTransientError` / neutral category
@@ -451,12 +451,12 @@ function entry(round: Round, side: "A" | "B"): [string, readonly unknown[]] {
   return [statement.sql, statement.binds];
 }
 
-// Discovery is Docker-free; assert the exact 25-case set unconditionally so a
-// discovery regression that silently drops a case fails loudly. The 21 top-level
+// Discovery is Docker-free; assert the exact 28-case set unconditionally so a
+// discovery regression that silently drops a case fails loudly. The 24 top-level
 // golden cases (reads / deep fetch / writes / unique inserts) carry
 // `goldenSql.mariadb`; the 4 deadlock / lock-wait concurrency proofs carry their
 // golden SQL inside `concurrency.rounds`.
-it("covers exactly the declared mariadb-curated-25 profile", () => {
+it("covers exactly the declared mariadb-curated-28 profile", () => {
   const shapeGolden = [
     ...MARIADB_FLAT_READ_PROFILE_IDS,
     ...MARIADB_DEEP_FETCH_PROFILE_IDS,
@@ -469,7 +469,7 @@ it("covers exactly the declared mariadb-curated-25 profile", () => {
       .map(({ id }) => id)
       .sort(),
   ).toEqual([...MARIADB_CURATED_PROFILE_IDS].sort());
-  expect(shapeGolden.length + concurrency.length).toBe(25);
+  expect(shapeGolden.length + concurrency.length).toBe(28);
   for (const id of shapeGolden) {
     expect(mariadbGolden(loadedById(id))).toBeDefined();
   }

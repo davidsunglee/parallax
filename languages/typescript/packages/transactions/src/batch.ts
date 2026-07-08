@@ -77,3 +77,15 @@ export function uniformUpdate(
 export function keyedUpdate(target: BatchTarget, setColumn: string): BatchStatement {
   return `update ${target.table} set ${setColumn} = ? where ${target.pkColumn} = ?`;
 }
+
+/**
+ * Render ONE keyed `delete` for a single row (`delete from t where <pk> = ?`) — the
+ * ordinary non-cascade, non-versioned delete a unit of work flushes per buffered
+ * row (the FK-ordered delete direction, `m-unit-work-007`). The caller emits one per
+ * deleted row, pairing each with its pk bind. Set-based DELETE COLLAPSE
+ * (`delete … where id in (…)`) and the versioned per-key gated delete are separate
+ * batched forms; this is the everyday keyed delete.
+ */
+export function keyedDelete(target: BatchTarget): BatchStatement {
+  return `delete from ${target.table} where ${target.pkColumn} = ?`;
+}
