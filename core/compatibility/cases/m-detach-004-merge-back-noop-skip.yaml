@@ -1,0 +1,49 @@
+# Detached merge-back NO-OP skip (m-detach): merging back an UNMODIFIED detached copy
+# issues NO DML.
+#
+# `isModifiedSinceDetachment` is false for a copy that was never edited (or edited and
+# reverted), and m-detach.md:124-125 mandates such a merge-back flushes NO UPDATE. The
+# observable form of "zero DML" is a scenario with a NO-OP WRITE step: it costs ZERO
+# round trips and lists no golden SQL (exactly the schema's no-op write, mirroring a
+# cache-hit read). A write-sequence cannot express this — its schema requires at least
+# one golden statement and roundTrips >= 1 — so the no-op skip lives in the scenario
+# shape the schema provides for it.
+#
+# The scenario (Account fixtures loaded by the scenario provisioner):
+#   step 0 find  : cache MISS — read account 1 (Ada, 100.00, version 1), 1 round trip
+#   step 1 write : merge back an UNMODIFIED detached copy ⇒ NO DML, 0 round trips
+#   step 2 find  : cache HIT (0 round trips) — the SAME row, unchanged
+# Because nothing was written, the version does NOT advance and the row is byte-
+# identical to the loaded fixture (Ada, 100.00, version 1). roundTrips = 1 (the single
+# find; the no-op merge and the cache hit cost nothing).
+model: models/account.yaml
+tags: [m-detach, m-unit-work, no-op, scenario]
+shape: scenario
+when:
+  scenario:
+    - find:
+        eq:
+          attr: Account.id
+          value: 1
+      roundTrips: 1
+      note: cache MISS — read account 1 (Ada, 100.00, version 1)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+    - write: mergeBack
+      roundTrips: 0
+      note: merge back an UNMODIFIED detached copy (isModifiedSinceDetachment false) ⇒ NO DML
+    - find:
+        eq:
+          attr: Account.id
+          value: 1
+      roundTrips: 0
+      sameObjectAs: 0
+      note: cache HIT — the no-op merge did not invalidate the cache; the row is unchanged
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+then:
+  roundTrips: 1

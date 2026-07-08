@@ -1,0 +1,66 @@
+# Multi-root cascade delete (m-cascade-delete): one unit of work cascades two
+# independent root aggregates.
+#
+# m-cascade-delete-001 cascades a single root. This pins that TWO roots can be
+# cascaded in one sequence, each deleting its own dependents (children before its
+# root) — the per-root minimal witness applied twice, proving the ordering holds
+# independently for each aggregate rather than collapsing across roots.
+#
+# Fixtures are loaded first. Order 2 owns item 21 and status 102; order 42 owns items
+# 421/422 and statuses 142/204. Cascading order 2 then order 42 leaves order 1 (and
+# its items 11/12 and statuses 101/201/202/203) and the childless orders 3/4/5
+# untouched.
+model: models/orders.yaml
+tags: [m-cascade-delete, m-unit-work, m-sql, write-sequence]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: cascadeDelete
+      entity: Order
+      statements: 3
+      note: cascade root order 2 — dependent status, dependent item, then the order
+      rows:
+        - { id: 2 }
+    - mutation: cascadeDelete
+      entity: Order
+      statements: 3
+      note: cascade root order 42 — dependent statuses, dependent items, then the order
+      rows:
+        - { id: 42 }
+then:
+  statements:
+    - sql:
+        postgres: delete from order_status where order_id = ?
+      binds: [2]
+    - sql:
+        postgres: delete from order_item where order_id = ?
+      binds: [2]
+    - sql:
+        postgres: delete from orders where id = ?
+      binds: [2]
+    - sql:
+        postgres: delete from order_status where order_id = ?
+      binds: [42]
+    - sql:
+        postgres: delete from order_item where order_id = ?
+      binds: [42]
+    - sql:
+        postgres: delete from orders where id = ?
+      binds: [42]
+  tableState:
+    orders:
+      - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+      - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15 }
+      - { id: 4, name: Margaret, sku: null, qty: 20, price: 40.00, active: true, ordered_on: 2024-04-20 }
+      - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: 50.75, active: false, ordered_on: 2024-05-25 }
+    order_item:
+      - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+      - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+    order_status:
+      - { id: 101, order_id: 1, order_item_id: null, code: NEW }
+      - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
+      - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
+      - { id: 203, order_id: 1, order_item_id: 12, code: PICKED }
+  roundTrips: 6

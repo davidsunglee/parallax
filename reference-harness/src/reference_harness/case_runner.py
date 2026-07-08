@@ -1428,6 +1428,27 @@ def _version_column(entity: Entity) -> str | None:
     return None
 
 
+def _discriminator(entity: Entity) -> tuple[str, Any] | None:
+    """The (column, value) a table-per-hierarchy INSERT writes, or None (m-inheritance).
+
+    A TABLE-PER-HIERARCHY entity maps to a shared table discriminated by a
+    ``discriminator`` column; the value THIS entity's rows carry is its
+    ``discriminatorValue``. On a write that column is FRAMEWORK-DERIVED — set from the
+    declared ``discriminatorValue``, never carried in the neutral write input (①),
+    exactly as the version column's advance is derived. A TABLE-PER-LEAF entity has no
+    shared table and no discriminator (``discriminatorValue`` is FORBIDDEN, m-inheritance),
+    so this returns ``None`` and the leaf INSERT is an ordinary single-table write.
+    """
+    inheritance = entity.definition.get("inheritance")
+    if not inheritance:
+        return None
+    discriminator = inheritance.get("discriminator")
+    value = inheritance.get("discriminatorValue")
+    if discriminator is None or value is None:
+        return None
+    return discriminator["column"], value
+
+
 def _write_value_equal(left: Any, right: Any) -> bool:
     """Scalar equality for an ① value vs a golden bind, tolerant of date encoding.
 
@@ -1579,14 +1600,30 @@ def _assert_insert_statement(
 ) -> None:
     golden_columns = _parse_insert_columns(case, statement)
     domain = [c for c in column_order(entity) if any(c in cols for cols, *_ in classified)]
+    # A TABLE-PER-HIERARCHY insert writes the discriminator column from the entity's
+    # discriminatorValue (m-inheritance) — a FRAMEWORK-DERIVED column, never carried in
+    # ① — slotted at its columnOrder position, exactly as the version column is derived.
+    discriminator = _discriminator(entity)
+    if discriminator is not None and discriminator[0] in domain:
+        raise CaseFailure(
+            f"{case.path.name}: the neutral write input (①) carries the discriminator "
+            f"column {discriminator[0]!r}, which a table-per-hierarchy write derives from "
+            f"the entity's discriminatorValue (m-inheritance), never authored."
+        )
+    emitted = [
+        c
+        for c in column_order(entity)
+        if c in domain or (discriminator is not None and c == discriminator[0])
+    ]
     # A VERSIONED insert appends the framework-owned version column with the DERIVED
     # initial value `1` (never authored in ①, so it is not in the row's columns).
-    present = [*domain, version_col] if version_col is not None else domain
+    present = [*emitted, version_col] if version_col is not None else emitted
     if golden_columns != present:
         raise CaseFailure(
             f"{case.path.name}: the golden INSERT column list {golden_columns} != the "
             f"columns the neutral write input resolves to {present} (columnOrder order, "
             f"present attributes"
+            f"{' + derived discriminator' if discriminator is not None else ''}"
             f"{' + derived version' if version_col is not None else ''})."
         )
     # A DB-computed marker is a SCALAR-ATTRIBUTE-only interpretation (m-value-object):
@@ -1612,7 +1649,13 @@ def _assert_insert_statement(
         return
     expected: list[Any] = []
     for cols, *_ in classified:
-        expected.extend(cols[column] for column in domain)
+        for column in emitted:
+            if discriminator is not None and column == discriminator[0]:
+                # The discriminator's bind is the entity's discriminatorValue, DERIVED
+                # from the model (m-inheritance), never an ① literal.
+                expected.append(discriminator[1])
+            else:
+                expected.append(cols[column])
         if version_col is not None:
             expected.append(1)  # derived initial version (m-opt-lock baseline), never authored
     _assert_write_values(case, expected, binds, statement)

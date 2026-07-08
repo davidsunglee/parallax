@@ -1,0 +1,40 @@
+# One-to-one dependent cascade delete (m-cascade-delete).
+#
+# m-cascade-delete-001 witnesses cascade over one-to-many dependents (an order's
+# items/statuses); this pins the ONE-TO-ONE dependent edge. Person.passport is
+# `dependent: true` (a passport is owned by its holder), so deleting a Person
+# cascade-deletes its Passport before the person row — the dependent child first,
+# then the root, exactly like the to-many case.
+#
+# Fixtures are loaded first: person 1 (Alan) holds passport 101, person 2 (Grace)
+# holds passport 102, person 3 (Ada) holds none. Deleting person 1 removes passport
+# 101 then person 1; person 2 and its passport, and the passport-less person 3, are
+# untouched.
+model: models/person.yaml
+tags: [m-cascade-delete, m-unit-work, m-sql, write-sequence]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: cascadeDelete
+      entity: Person
+      statements: 2
+      note: delete the dependent passport, then the root person
+      rows:
+        - { id: 1 }
+then:
+  statements:
+    - sql:
+        postgres: delete from passport where person_id = ?
+      binds: [1]
+    - sql:
+        postgres: delete from person where id = ?
+      binds: [1]
+  tableState:
+    person:
+      - { id: 2, name: Grace }
+      - { id: 3, name: Ada }
+    passport:
+      - { id: 102, person_id: 2, number: P-BBB }
+  roundTrips: 2

@@ -1,0 +1,35 @@
+# Table-per-hierarchy INSERT: writing a subtype persists the DISCRIMINATOR
+# (m-inheritance, m-sql).
+#
+# The whole Payment hierarchy shares one `payment` table discriminated by `kind`.
+# Inserting a CardPayment writes its subtype-specific columns AND the discriminator
+# `kind` — set to the entity's declared `discriminatorValue` ('card'), NOT authored
+# in the neutral write input (①). The framework derives the discriminator column the
+# same way it derives a version bump or a milestone bound: the ① row carries only the
+# domain attributes (id, amount, cardNetwork), and `kind` is slotted at its
+# columnOrder position with the discriminatorValue as its bind. `tendered` (the cash
+# subtype's column) is left null.
+#
+# Starts from an EMPTY table (self-contained), then asserts the single inserted row
+# carries kind='card'. This is the write mirror of the read cases m-inheritance-001..
+# 003, where the discriminator is INJECTED into the SELECT, never written by the user.
+model: models/payment.yaml
+tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator, write-sequence]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: CardPayment
+      statements: 1
+      note: insert a CardPayment; kind='card' is derived from discriminatorValue, not authored
+      rows:
+        - { id: 10, amount: 200.00, cardNetwork: Mastercard }
+then:
+  statements:
+    - sql:
+        postgres: insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)
+      binds: [10, card, 200.00, Mastercard]
+  tableState:
+    payment:
+      - { id: 10, kind: card, amount: 200.00, card_network: Mastercard, tendered: null }
+  roundTrips: 1

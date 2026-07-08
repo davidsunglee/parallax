@@ -1,0 +1,29 @@
+# Table-per-leaf INSERT: writing a leaf targets its OWN table, with no discriminator
+# (m-inheritance, m-sql).
+#
+# In a table-per-leaf hierarchy each concrete leaf maps to its own table, so inserting
+# an Invoice is an ordinary single-table INSERT into `invoice` — no shared table and
+# no discriminator column exist (contrast the table-per-hierarchy insert
+# m-inheritance-007, which writes `kind`). The abstract Document root owns no rows;
+# its table stays empty. Starts from an EMPTY schema and asserts the single inserted
+# invoice row.
+model: models/document.yaml
+tags: [m-inheritance, m-sql, table-per-leaf, write-sequence]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Invoice
+      statements: 1
+      note: insert an Invoice into its own leaf table; no discriminator column
+      rows:
+        - { id: 10, title: Invoice-C, amountDue: 300.00 }
+then:
+  statements:
+    - sql:
+        postgres: insert into invoice(id, title, amount_due) values (?, ?, ?)
+      binds: [10, Invoice-C, 300.00]
+  tableState:
+    invoice:
+      - { id: 10, title: Invoice-C, amount_due: 300.00 }
+  roundTrips: 1

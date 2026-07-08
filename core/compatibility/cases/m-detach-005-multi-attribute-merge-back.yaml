@@ -1,0 +1,35 @@
+# Multi-attribute detached-update merge-back (m-detach): merging a copy whose
+# MULTIPLE attributes changed flushes ONE UPDATE carrying every changed column.
+#
+# m-detach-002 changes a single attribute (balance). This pins the multi-attribute
+# case: a detached copy of Account 1 (Ada) is edited to a new owner AND a new balance
+# with no transaction open. At merge-back the original is looked up by primary key,
+# found, and BOTH changed attributes are copied onto the live object — a single
+# buffered UPDATE whose SET lists owner and balance (plus the derived version advance).
+# Only Ada's row changes (owner Adele, balance 175.00, version 1 -> 2); Linus and Grace
+# are untouched. Locking mode (m-read-lock shared read lock), so no `and version = ?`
+# gate — the version still advances on the successful write (the m-opt-lock baseline).
+model: models/account.yaml
+tags: [m-detach, m-sql, detached-update, write-sequence]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: Account
+      statements: 1
+      note: merge-back of a copy with two edited attributes updates both in one UPDATE
+      rows:
+        - { id: 1, owner: Adele, balance: 175.00, observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: update account set owner = ?, balance = ?, version = ? where id = ?
+      binds: [Adele, 175.00, 2, 1]
+  tableState:
+    account:
+      - { id: 1, owner: Adele, balance: 175.00, version: 2 }
+      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+  roundTrips: 1
