@@ -1,0 +1,38 @@
+# Read-your-own-writes for UPDATE (m-unit-work): a dependent find observes a
+# committed in-transaction UPDATE.
+#
+# m-unit-work-001 proves read-your-own-writes for INSERT; this pins the UPDATE
+# variant. The unit of work commits an UPDATE to an existing account, then issues a
+# find that depends on it — the find MUST observe the updated row, not the stale
+# fixture value. account.version is an optimistic-lock column, so a keyed UPDATE
+# advances it (locking mode: no gate, version advances 1 -> 2). The scenario:
+#   step 0 write : COMMIT an UPDATE of account 1 (Ada) balance 100.00 -> 175.00
+#   step 1 find  : query account 1 — it MUST observe balance 175.00, version 2.
+# The find is a cache MISS that costs one round trip (the forced flush precedes it).
+# roundTrips = 2 (the committed update + the dependent find).
+model: models/account.yaml
+tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1]
+shape: scenario
+when:
+  scenario:
+    - write: update
+      roundTrips: 1
+      note: buffer + COMMIT a keyed update of account 1 (balance 175.00, version advances to 2)
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ?
+          binds: [175.00, 2, 1]
+    - find:
+        eq:
+          attr: Account.id
+          value: 1
+      roundTrips: 1
+      note: a dependent find MUST observe the flushed update (read-your-own-writes)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 175.00, version: 2 }
+then:
+  roundTrips: 2

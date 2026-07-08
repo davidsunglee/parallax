@@ -75,9 +75,10 @@ const CASES = casesForProfile(POSTGRES_FULL_PROFILE);
 
 // Discovery is Docker-free; assert the exact slice size unconditionally. It grew
 // by the 42 value-object cases (all harness-lane) in Phase 11, then by the 8
-// m-bitemp-write cases (COR-26) — all harness-lane.
-it("discovers the harness-lane slice-mvp-1 slice (161 cases)", () => {
-  expect(CASES.length).toBe(161);
+// m-bitemp-write cases (COR-26), then by the 7 audit-chaining / unit-work RYOW
+// cases (COR-26 Phase 2) — all harness-lane.
+it("discovers the harness-lane slice-mvp-1 slice (168 cases)", () => {
+  expect(CASES.length).toBe(168);
 });
 
 group.skipIf(!HAS_DOCKER)(
@@ -136,7 +137,7 @@ group.skipIf(!HAS_DOCKER)(
     it("the case-matrix report is GREEN with no residuals", () => {
       const report = matrix.report();
       expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-      expect(report.total).toBe(161);
+      expect(report.total).toBe(168);
       expect(report.residuals).toEqual([]);
     });
   },

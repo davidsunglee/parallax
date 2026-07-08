@@ -328,7 +328,9 @@ def test_has_temporal_gate_requires_both_discriminators_word_bounded() -> None:
     # business (`from_z = ?`) AND processing (`in_z = ?`) discriminators, matched
     # word-bounded. A close carrying only ONE (a PARTIAL gate) is NOT a valid gated
     # close; the plain current-row key (`out_z = ?`) alone is likewise not a gate.
-    both = "update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?"
+    both = (
+        "update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?"
+    )
     only_from = "update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ?"
     only_in = "update position set out_z = ? where pos_id = ? and out_z = ? and in_z = ?"
     plain = "update position set out_z = ? where pos_id = ? and out_z = ?"

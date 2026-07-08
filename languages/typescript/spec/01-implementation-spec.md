@@ -59,7 +59,7 @@ declared in [`slices.md`](../../../core/spec/slices.md#first-implementation-conf
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
 the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
-so V1 claims precisely the 173 cases tagged for the slice and returns
+so V1 claims precisely the 180 cases tagged for the slice and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads and writes** +
 audit-only processing-temporal), optimistic-locking, and value-object (typed nested
@@ -840,23 +840,23 @@ The V1 `parallax-conformance describe` claim remains **Postgres-only**. That is
 the official adapter grade for `slice-mvp-1`. TypeScript nevertheless ships two
 database implementations behind the m-dialect seam:
 
-- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 161
+- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 168
   harness-lane `slice-mvp-1` cases over `postgres:17` (including the 42
   value-object cases — their nested-predicate reads, materialization graph,
   atomic document writes, inherited-temporality reads, and pre-SQL `rejected`
   refusals), included in `just ts-db`.
-- **MariaDB curated m-case-format profile** (`mariadb-curated-25`): a first-class partial
+- **MariaDB curated m-case-format profile** (`mariadb-curated-28`): a first-class partial
   profile over `mariadb:11.4`, included in `just ts-db-all`. It preserves the
-  25-case set: 14
+  28-case set: 17
   harness-lane slice cases whose `then.statements` entries carry a `mariadb` `sql`
-  key plus 11 marquee MariaDB
+  key (COR-26 added the audit-chaining backfill `m-audit-write-002`/`-003`/`-004`) plus 11 marquee MariaDB
   dialect/error-classification proofs (`m-read-lock-009`, `m-temporal-read-021`, `m-core-004`, `m-db-error-001`-`m-db-error-008`).
   The value-object cases DO carry `mariadb` golden, but they are deliberately
   **not** run through the curated run-lane profile: their MariaDB golden-SQL
   parity is proven directly by the Phase-10 dialect-lowering compile tests
   (`packages/dialect/test/value-object-lowering.test.ts`,
   `packages/sql/test/value-object.test.ts`), so the curated profile stays at its
-  original 25-case marquee set.
+  marquee (non-value-object) set.
 
 Per-dialect golden SQL is selected by the provider's own `dialect` identifier,
 which is the `sql`-map key inside each `then.statements` entry. The MariaDB profile
@@ -928,7 +928,7 @@ partition below.
 ### 6.2 Coverage partition and no-drift guard
 
 - **Coverage partition.** `coverage.test.ts` (Docker-free) discovers exactly the
-  173 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
+  180 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
   with no stale ids: every in-slice case is either exercised by a family suite
   (`covered.ts`) or listed in the reasoned skip manifest (`skip-manifest.ts`),
   and every skip carries a non-empty reason — a silent gap fails the build.
@@ -944,7 +944,7 @@ partition below.
 
 ### 6.3 Reasoned skips
 
-Cases (of the 173) are reason-skipped because what they prove is
+Cases (of the 180) are reason-skipped because what they prove is
 serde/harness machinery a developer never authors, not a developer-facing
 surface — the five below, the ten value-object `rejected` negatives
 (`m-value-object-034`-`m-value-object-043`), whose whole assertion is a **pre-SQL

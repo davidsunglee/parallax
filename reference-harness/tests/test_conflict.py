@@ -139,18 +139,40 @@ def test_conflict_input_observed_version_corruption_is_rejected() -> None:
 
 def test_temporal_conflict_close_input_holds_for_authored_cases() -> None:
     cases = _temporal_conflict_close_cases()
-    # The Phase 4 processing-axis close family all carry ① (write + at [+ observedInZ]).
+    # The Phase 4 processing-axis close family all carry ① (write + at [+ observedInZ]);
+    # COR-26 adds m-audit-write-006, the SAME gated close tagged under m-audit-write.
     assert {_case_id(case.path.stem) for case in cases} >= {
         "m-temporal-read-009",
         "m-temporal-read-010",
         "m-temporal-read-011",
         "m-temporal-read-012",
+        "m-audit-write-006",
     }
     for case in cases:
         # Must not raise: each close ① derives out_z = at (+ the in_z = observedInZ gate
         # in optimistic mode) and cross-checks the derived binds against the golden
         # binds — a binds-only ① ↔ ② check (the SET column out_z stays metamodel-fixed).
         _assert_conflict_input(case, "postgres")
+
+
+def test_audit_write_optimistic_gated_close_binds_in_z_gate() -> None:
+    # m-audit-write-006 witnesses the OPTIMISTIC-gated close of an audit-only chaining
+    # update: a single gated close UPDATE keyed on the observed processing-from (in_z),
+    # with no business discriminator (balance has no business axis). It is the audit-only
+    # analogue of the bitemporal gate (m-bitemp-write-004), reusing that shape.
+    case = next(c for c in _conflict_cases() if c.path.stem.startswith("m-audit-write-006"))
+    assert "m-audit-write" in case.tags and "m-opt-lock" in case.tags
+    assert case.concurrency_mode == "optimistic"
+    assert case.observed_in_z is not None  # the in_z gate token
+    assert case.expected_affected_rows == 1  # the gate MATCHES the observed milestone
+    (statement,) = case.golden_statements("postgres")
+    # The gated audit close carries the `and in_z = ?` gate but NO business `from_z`
+    # gate (audit-only), unlike the bitemporal close.
+    assert "in_z = ?" in statement
+    assert "from_z" not in statement
+    # Must not raise: the derived close binds [at, pk, infinity, observedInZ] cross-check
+    # the golden binds.
+    _assert_conflict_input(case, "postgres")
 
 
 def test_temporal_conflict_close_observed_in_z_corruption_is_rejected() -> None:

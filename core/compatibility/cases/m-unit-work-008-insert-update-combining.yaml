@@ -1,0 +1,41 @@
+# Insert-then-update combining in one unit of work (m-unit-work + m-batch-write):
+# a buffered INSERT followed by an UPDATE of the SAME new object collapses to a
+# SINGLE INSERT carrying the FINAL values (Reladomo testInsertAndUpdateInTransaction).
+#
+# When a unit of work inserts a new object and then updates it before flushing, the
+# two buffered writes COMBINE: the update folds into the pending insert, so the
+# flush emits exactly ONE INSERT with the post-update values — never an INSERT
+# followed by an UPDATE. The scenario:
+#   step 0 write : buffer INSERT account 8 (Turing, balance 1.00), then buffer an
+#                  UPDATE of its balance to 99.00 — COMBINED into ONE INSERT that
+#                  writes the FINAL balance 99.00 (no intervening UPDATE)  (1 round trip)
+#   step 1 find  : query account 8 — it observes the combined INSERT's final state.
+# The single INSERT in step 0's golden (balance 99.00, no UPDATE statement) IS the
+# observable proof of combining; the dependent find confirms read-your-own-writes on
+# the combined row. roundTrips = 2 (the one combined insert + the find).
+model: models/account.yaml
+tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-mvp-1]
+shape: scenario
+when:
+  scenario:
+    - write: insert
+      roundTrips: 1
+      note: a buffered insert + a buffered update of the SAME new object combine to ONE insert (final balance 99.00)
+      statements:
+        - sql:
+            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [8, Turing, 99.00, 1]
+    - find:
+        eq:
+          attr: Account.id
+          value: 8
+      roundTrips: 1
+      note: a dependent find observes the combined insert's final values (read-your-own-writes)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [8]
+      expectRows:
+        - { id: 8, owner: Turing, balance: 99.00, version: 1 }
+then:
+  roundTrips: 2

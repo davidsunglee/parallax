@@ -102,6 +102,41 @@ def test_write_input_column_corruption_is_rejected() -> None:
         _assert_write_input_columns(case, "postgres")
 
 
+def _write_case_by_id(prefix: str):
+    return next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith(prefix))
+
+
+def test_multi_attribute_audit_update_chains_all_new_values() -> None:
+    # m-audit-write-004: a multi-attribute correction (acct + value). The close touches
+    # ONLY out_z; the chained INSERT carries the entity's FULL physical row with EVERY
+    # new value (Family B — a milestone always writes the whole row).
+    case = _write_case_by_id("m-audit-write-004")
+    close, chain = case.golden_statements("postgres")[1], case.golden_statements("postgres")[2]
+    assert close == "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    assert chain.startswith("insert into balance(bal_id, acct_num, val, in_z, out_z)")
+    # The chained INSERT binds carry BOTH corrected attributes (acct B, value 250.00).
+    assert case.statement_binds(2)[:3] == [1, "B", 250.00]
+    # Must not raise: ① (the update row carrying both new attributes) cross-checks ②.
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_fk_delete_ordering_deletes_child_before_parent() -> None:
+    # m-unit-work-007: the non-cascade FK-delete direction — the child OrderItem is
+    # deleted BEFORE the parent Order it references (the reverse of the insert order).
+    case = _write_case_by_id("m-unit-work-007")
+    mutations = [step["mutation"] for step in case.write_sequence]
+    assert mutations == ["insert", "insert", "delete", "delete"]
+    sqls = [s["sql"]["postgres"] for s in case.then["statements"]]
+    # The child delete (order_item) precedes the parent delete (orders).
+    assert sqls[2] == "delete from order_item where id = ?"
+    assert sqls[3] == "delete from orders where id = ?"
+    assert sqls.index("delete from order_item where id = ?") < sqls.index(
+        "delete from orders where id = ?"
+    )
+    # Must not raise: each delete ①'s pk value appears in its DELETE binds.
+    _assert_write_input_columns(case, "postgres")
+
+
 # --- role-aware DB-computed marker interpretation (COR-10) ------------------
 #
 # A DB-computed marker (`{computed}` / `{increment}`) is a SCALAR-ATTRIBUTE-only

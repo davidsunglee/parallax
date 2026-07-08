@@ -37,12 +37,15 @@ then:
   statements:
     - sql:
         postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
         postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+        mariadb: update balance set out_z = ? where bal_id = ? and out_z = ?
       binds: ["2024-06-01T00:00:00+00:00", 1, infinity]
     - sql:
         postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
       binds: [1, A, 150.00, "2024-06-01T00:00:00+00:00", infinity]
   tableState:
     balance:

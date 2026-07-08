@@ -26,7 +26,12 @@ import { auditWriteStatements, type MutationKind, type WriteTarget } from "@para
 import { columnOrder, type Dialect } from "@parallax/dialect";
 import { type VersionedTarget, versionAdvancingUpdate, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
-import { type BatchTarget, combineWrites, type PlannedStatement } from "@parallax/transactions";
+import {
+  type BatchTarget,
+  combineWrites,
+  keyedDelete,
+  type PlannedStatement,
+} from "@parallax/transactions";
 import { dialectStatements, goldenEntries } from "./case-format.js";
 import { bindsEqual } from "./compare.js";
 import type { LoadedCase } from "./discover.js";
@@ -52,7 +57,13 @@ export interface WriteSequencePlan {
  * object; this reader names the members the plan consumes.
  */
 interface RawWriteStep {
-  readonly mutation: MutationKind;
+  /**
+   * The mutation kind. The milestone-chaining {@link MutationKind} surface plus the
+   * non-temporal batched `delete` / `cascadeDelete` — the full `when.writeSequence`
+   * step enum. The temporal generators only ever see a {@link MutationKind}; the
+   * batched generator additionally routes `delete`.
+   */
+  readonly mutation: MutationKind | "delete" | "cascadeDelete";
   readonly entity: string;
   readonly statements?: number;
   /**
@@ -454,7 +465,12 @@ function auditStatementsForStep(
   entity: EntityMetadata,
   dialect: Dialect,
 ): readonly { sql: string; binds: readonly unknown[] }[] {
-  const texts = auditWriteStatements(step.mutation, writeTargetFor(entity, dialect));
+  // A temporal (audit-only) step is always a milestone-chaining kind (insert / update
+  // / terminate); `delete` / `cascadeDelete` route to the batched generator, never here.
+  const texts = auditWriteStatements(
+    step.mutation as MutationKind,
+    writeTargetFor(entity, dialect),
+  );
   const processing = entity.asOfAttributes().find((axis) => axis.axis === "processing");
   if (processing === undefined) {
     throw new Error(`temporal write on '${entity.name}' has no processing axis to derive in_z`);
@@ -497,7 +513,8 @@ function auditStatementsForStep(
  * The generated DML statements for one NON-temporal step, via the m-unit-work unit-of-work
  * planner (`combineWrites`): an `insert` collapses its buffered rows into one
  * multi-row `INSERT`, an `update` is uniform `pk in (…)` (one statement) or one
- * keyed `UPDATE` per distinct key.
+ * keyed `UPDATE` per distinct key, and a `delete` is one keyed `delete … where
+ * pk = ?` per buffered row (the FK-ordered delete direction, `m-unit-work-007`).
  *
  * Column identity + order + binds are DERIVED from the neutral write input (①,
  * `step.rows`) classified against the metamodel — the emitted column list is
@@ -515,9 +532,16 @@ function batchStatementsForStep(
   concurrency: string | undefined,
   dialect: Dialect,
 ): readonly { sql: string; binds: readonly unknown[] }[] {
-  const mutation = step.mutation === "insert" ? "insert" : "update";
   const count = step.statements ?? 1;
   const rows = (step.rows ?? []).map((row) => classifyRow(entity, row));
+  // A non-temporal `delete` step flushes one keyed `delete from t where pk = ?` per
+  // buffered row (the FK-ordered delete direction, `m-unit-work-007`) — the pk is the
+  // `where` key; a delete writes no columns. Set-based DELETE collapse / versioned
+  // gated delete are separate batched forms.
+  if (step.mutation === "delete") {
+    return deleteStatements(entity, rows, dialect);
+  }
+  const mutation = step.mutation === "insert" ? "insert" : "update";
   // A VERSIONED entity's keyed update advances its framework-owned version — the
   // readless batched forms below apply only to a non-versioned entity (a versioned
   // set-based update MUST materialize per object, m-opt-lock / core ADR 0014). Columns, the
@@ -606,6 +630,24 @@ function updateStatements(
   return combineWrites([
     { mutation: "update", target, setColumn, statements: binds.length, binds },
   ]);
+}
+
+/**
+ * Plan a NON-temporal, non-versioned `delete` step from its classified ① rows: one
+ * keyed `delete from <table> where <pk> = ?` per row (`@parallax/transactions`
+ * `keyedDelete`), keyed on the row's primary key. A delete writes no columns, so ①
+ * supplies only the pk (the `where` key) — no SET/INSERT column list to derive. The
+ * unit of work flushes these in buffered order so a child is removed before the
+ * parent it references (`m-unit-work-007`). Set-based DELETE collapse
+ * (`delete … where id in (…)`) and the versioned gated delete are separate forms.
+ */
+function deleteStatements(
+  entity: EntityMetadata,
+  rows: readonly ClassifiedRow[],
+  dialect: Dialect,
+): readonly { sql: string; binds: readonly unknown[] }[] {
+  const target = batchTargetFor(entity, dialect);
+  return rows.map((row) => ({ sql: keyedDelete(target), binds: [row.pk] }));
 }
 
 /** Element-wise scalar equality over two ordered value tuples. */

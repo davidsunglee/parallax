@@ -1,0 +1,49 @@
+# Write sequence: audit-only update starting from EXISTING persisted history
+# (milestone chaining, m-audit-write).
+#
+# m-audit-write-002 chains from an empty table (it opens the original milestone
+# itself). This case instead LOADS the model fixtures (given.fixtures: true) — the
+# persisted milestone history the as-of READ cases query — and closes the ONE
+# CURRENT row among the priors, chaining a new current milestone on top. It proves
+# the close predicate (bal_id AND out_z = infinity) selects exactly the open row
+# even when superseded (finite-out_z) priors for the SAME key already exist.
+#
+# Fixture history for id 1 (acct A): value 100.00 known [2024-01-01, 2024-06-01)
+# — SUPERSEDED — then value 150.00 known [2024-06-01, infinity) — CURRENT. The
+# single update step:
+#   step 1 update : close the ONE current id-1 row (out_z = 2024-09-01) and chain a
+#                   new current row [2024-09-01, infinity) value 175.00  (2 statements)
+#
+# Resulting state for id 1: the original superseded row (unchanged), the previously
+# current row now closed at 2024-09-01, and the new current row — three milestones,
+# one key. Ids 2 and 3 are untouched: the close is keyed, not a table-wide set.
+model: models/balance.yaml
+tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-mvp-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: Balance
+      statements: 2
+      note: close the one CURRENT id-1 milestone among the priors, then chain a new current row
+      rows:
+        - { id: 1, acctNum: A, value: 175.00 }
+      at: "2024-09-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+      binds: ["2024-09-01T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, 175.00, "2024-09-01T00:00:00+00:00", infinity]
+  tableState:
+    balance:
+      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: "2024-09-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: 175.00, in_z: "2024-09-01T00:00:00+00:00", out_z: infinity }
+      - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
+      - { bal_id: 3, acct_num: C, val: 50.00, in_z: "2024-03-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
+  roundTrips: 2

@@ -1,0 +1,63 @@
+# Foreign-key DELETE ordering (m-unit-work): a child row is deleted BEFORE the
+# parent it references — the NON-CASCADE complement of m-unit-work-003.
+#
+# m-unit-work-003 pins the INSERT direction (parent before child); m-cascade-delete-001
+# pins the framework-driven cascade. This case pins the ordinary NON-cascade DELETE
+# direction: at the unit-of-work boundary the buffered deletes are ordered so the
+# child OrderItem is removed BEFORE the Order it points at — deleting the parent
+# first would strand (or, under a real foreign key, reject) the child. The sequence
+# is self-contained: it builds the parent + child from an empty schema (as
+# m-unit-work-003 does), then tears them down child-first, leaving both tables empty.
+#   step 1 insert : the parent Order (the referenced row)
+#   step 2 insert : the child OrderItem whose order_id references it
+#   step 3 delete : the child OrderItem FIRST (before its parent)
+#   step 4 delete : the parent Order last
+# The harness applies the ordered DML and reads both tables back empty. The child's
+# nullable shipped_on is absent from the insert input (a 4-of-5 column insert).
+model: models/orders.yaml
+tags: [m-unit-work, m-sql, write-sequence, delete, fk-ordering, slice-mvp-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Order
+      statements: 1
+      note: insert the parent Order first (the referenced row)
+      rows:
+        - { id: 100, name: Hopper, sku: X-1, qty: 1, price: 9.99, active: true, orderedOn: "2024-07-01" }
+    - mutation: insert
+      entity: OrderItem
+      statements: 1
+      note: then insert the child OrderItem whose order_id references it
+      rows:
+        - { id: 200, orderId: 100, sku: X-1, quantity: 3 }
+    - mutation: delete
+      entity: OrderItem
+      statements: 1
+      note: delete the child FIRST (before the parent it references)
+      rows:
+        - { id: 200 }
+    - mutation: delete
+      entity: Order
+      statements: 1
+      note: delete the parent Order last, now that no child references it
+      rows:
+        - { id: 100 }
+then:
+  statements:
+    - sql:
+        postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [100, Hopper, X-1, 1, 9.99, true, 2024-07-01]
+    - sql:
+        postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+      binds: [200, 100, X-1, 3]
+    - sql:
+        postgres: delete from order_item where id = ?
+      binds: [200]
+    - sql:
+        postgres: delete from orders where id = ?
+      binds: [100]
+  tableState:
+    orders: []
+    order_item: []
+  roundTrips: 4

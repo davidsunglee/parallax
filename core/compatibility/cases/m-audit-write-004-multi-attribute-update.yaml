@@ -1,0 +1,62 @@
+# Write sequence: MULTI-ATTRIBUTE audit-only update (milestone chaining, m-audit-write).
+#
+# m-audit-write-002 corrects a single attribute; this case corrects SEVERAL at once
+# (both the account number and the value) to witness the Family-B contract that the
+# chained INSERT carries the entity's FULL physical row with EVERY new value, while
+# the close still touches only out_z. The audit chain never mutates in place: it (1)
+# closes the current row (out_z = the transaction instant), then (2) chains a NEW
+# current row [txInstant, infinity) carrying ALL the corrected values (acct B, 250.00).
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert : open [2024-01-01, infinity) acct A, value 100.00           (1 statement)
+#   step 2 update : close the current row (out_z = 2024-06-01) and chain a new
+#                   current row [2024-06-01, infinity) acct B, value 250.00     (2 statements)
+#
+# Resulting state: the superseded (acct A, 100.00) row with a finite out_z AND the
+# current (acct B, 250.00) row — the multi-attribute correction preserved as an
+# audit trail. The close UPDATE is keyed by the current-row predicate (bal_id AND
+# out_z = infinity), never a blind in-place set.
+#
+# This is also the MariaDB temporal witness (DQ3): the goldens carry both dialects
+# so the case runs on MariaDB too, proving the open-milestone infinity sentinel
+# round-trips through the MariaDB max-sentinel (9999-12-31 23:59:59.999999) exactly
+# as the native-infinity Postgres golden does. The chaining DML is identical on both
+# dialects (the open bound rides as a bind), so the goldens are byte-equal.
+model: models/balance.yaml
+tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-mvp-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Balance
+      statements: 1
+      note: open the original current milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, acctNum: A, value: 100.00 }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: update
+      entity: Balance
+      statements: 2
+      note: close the current row, then chain a new milestone carrying BOTH corrected attributes
+      rows:
+        - { id: 1, acctNum: B, value: 250.00 }
+      at: "2024-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+        mariadb: update balance set out_z = ? where bal_id = ? and out_z = ?
+      binds: ["2024-06-01T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, B, 250.00, "2024-06-01T00:00:00+00:00", infinity]
+  tableState:
+    balance:
+      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: B, val: 250.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+  roundTrips: 3

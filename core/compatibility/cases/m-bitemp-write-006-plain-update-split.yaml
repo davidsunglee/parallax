@@ -26,6 +26,15 @@
 # the two new rows current on processing. The close UPDATE is keyed by the
 # current-on-processing predicate (pos_id AND out_z = infinity), never a blind
 # in-place set.
+#
+# This case is Postgres-only: `position` is a reserved function name in MariaDB, so
+# an unquoted `insert into position(...)` parses as a POSITION() call and is rejected
+# there — yet the harness/adapter `quote_identifier` deliberately does NOT quote
+# `position` (it is not in the reserved-word set that would ripple into every
+# existing Postgres position golden). The MariaDB infinity-sentinel witness (DQ3)
+# therefore rides the audit-only case m-audit-write-004 (the `balance` table is not
+# reserved); the sentinel translation is column-agnostic, so proving it on out_z
+# there proves it for thru_z here too.
 model: models/position.yaml
 tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-update-split, slice-mvp-1]
 shape: writeSequence
