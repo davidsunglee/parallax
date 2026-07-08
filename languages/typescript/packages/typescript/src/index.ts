@@ -31,6 +31,7 @@ export {
   buildFindOperation,
   type FindOptions,
   NavigationPath,
+  NestedFieldExpression,
   OrderKeyExpression,
   Predicate,
   type StringPredicateOptions,
@@ -39,6 +40,7 @@ export {
   type TemporalRange,
   type TemporalReadOptions,
   ToManyRelationshipExpression,
+  ValueObjectExpression,
 } from "./dsl/index.js";
 // --- runtime factory + handles (spec §2.2, §4) ------------------------------
 export {

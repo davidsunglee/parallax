@@ -10,7 +10,7 @@
 # qualify at the boundary; Grace (42.3) does not; the not-present rows (4/5/6/7)
 # cast SQL NULL and are excluded.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric]
+tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-mvp-1]
 shape: read
 when:
   operation:

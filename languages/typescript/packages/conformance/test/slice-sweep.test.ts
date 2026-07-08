@@ -27,6 +27,7 @@
  * because the concrete Testcontainers provider does.
  */
 
+import type { Envelope } from "@parallax/core";
 import { expect, describe as group, it } from "vitest";
 import { dialectStatements, goldenEntries } from "../src/case-format.js";
 import {
@@ -39,6 +40,22 @@ import {
   runCompile,
   TYPESCRIPT_ADAPTER,
 } from "../src/index.js";
+
+/**
+ * The matrix status a compile outcome contributes. A `rejected` case is graded
+ * GREEN when it returns an `error` envelope whose diagnostic names the case's
+ * `then.rejectedRule` (the pre-SQL refusal is its expected result — m-value-object
+ * resolved Q7); every other in-claim case is green iff it compiled `ok`.
+ */
+function compileMatrixStatus(envelope: Envelope, loaded: LoadedCase): MatrixStatus {
+  if (loaded.shape === "rejected") {
+    const ok =
+      envelope.status === "error" &&
+      envelope.diagnostics[0]?.code === loaded.raw.then?.rejectedRule;
+    return ok ? "pass" : "fail";
+  }
+  return envelope.status as MatrixStatus;
+}
 
 /**
  * The full `slice-mvp-1` tagged slice the HARNESS executes, in discovery order.
@@ -69,15 +86,29 @@ function readGolden(loaded: LoadedCase): { sql: string; binds: readonly unknown[
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the harness-lane slice-mvp-1 slice (111 cases)", () => {
+  it("discovers the harness-lane slice-mvp-1 slice (153 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case. This is the
-    // harness-executable subset (api-conformance-lane cases are filtered out).
-    expect(CASES.length).toBe(111);
+    // harness-executable subset (api-conformance-lane cases are filtered out). It
+    // grew by the 42 value-object cases (all harness-lane) in Phase 11.
+    expect(CASES.length).toBe(153);
   });
 
   it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
     const envelope = runCompile(loaded, "postgres", TYPESCRIPT_ADAPTER);
+
+    // A `rejected` case is refused PRE-SQL: it returns an `error` envelope whose
+    // diagnostic names the violated rule (m-value-object resolved Q7), never a
+    // compiled `ok`+golden. That refusal IS its green result.
+    if (loaded.shape === "rejected") {
+      expect(envelope.status, `${loaded.casePath}: ${JSON.stringify(envelope)}`).toBe("error");
+      if (envelope.status !== "error") {
+        throw new Error("expected an error (pre-SQL refusal) envelope");
+      }
+      expect(envelope.diagnostics[0]?.code, loaded.casePath).toBe(loaded.raw.then?.rejectedRule);
+      return;
+    }
+
     // Honesty: an in-claim (tagged) case must be attempted — `ok` or `error`,
     // NEVER `unsupported`. The whole slice is green, so it is `ok`.
     expect(envelope.status, `${loaded.casePath}: ${JSON.stringify(envelope)}`).toBe("ok");
@@ -87,7 +118,7 @@ group("full-slice compile sweep (Docker-free)", () => {
 
     // A single-statement read golden is compared exactly (`emitted === golden`);
     // this includes `m-core-001`'s `bytes` `encode(t0.payload, ?) payload_hex`
-    // projection (the scalar-projection residual this phase closes).
+    // projection and the value-object nested-extraction reads.
     const golden = loaded.shape === "read" ? readGolden(loaded) : undefined;
     if (golden !== undefined && envelope.emissions.length === 1) {
       const [emission] = envelope.emissions;
@@ -149,15 +180,18 @@ group("case-matrix report — the slice is green at a glance", () => {
       matrix.record({
         casePath: loaded.casePath,
         command: "compile",
-        status: envelope.status as MatrixStatus,
+        status: compileMatrixStatus(envelope, loaded),
       });
     }
     const report = matrix.report();
     // The rendered report is the human-facing artifact; surface it on failure so
     // a regression names the exact residual case IDs.
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(111);
-    expect(report.counts.ok).toBe(111);
+    expect(report.total).toBe(153);
+    // 143 non-rejected cases compile `ok`; the 10 value-object `rejected` cases are
+    // graded `pass` (a correct pre-SQL refusal naming the rule).
+    expect(report.counts.ok).toBe(143);
+    expect(report.counts.pass).toBe(10);
     expect(report.residuals).toEqual([]);
   });
 });

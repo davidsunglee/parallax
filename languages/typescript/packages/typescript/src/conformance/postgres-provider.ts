@@ -53,6 +53,13 @@ const POSTGRES_IMAGE = "postgres:17";
  */
 type DriverParams = Parameters<Sql["unsafe"]>[1];
 function asParams(binds: readonly unknown[]): DriverParams {
+  // A value-object document bind (a plain object / array) needs NO grader-side
+  // adaptation on Postgres: porsager serializes a plain object / array to `jsonb`
+  // natively (verified against `jsonb_typeof` = 'object'), so the atomic document
+  // (m-value-object) lands in its one column as a real jsonb value. Pre-encoding
+  // it to text here would double-wrap it as a jsonb STRING scalar. MariaDB's
+  // mysql2 driver, by contrast, does need the explicit JSON-text form (see the
+  // MariaDB provider's `toManagedBind`).
   return binds as DriverParams;
 }
 
@@ -199,6 +206,8 @@ export class PostgresProvider implements CompatibilityDatabaseProvider {
   async exec(sql: string, binds: readonly unknown[]): Promise<number> {
     // Delegate affected-row DML to the shipped adapter's write port. The adapter
     // owns `?`→`$n` translation and returns Postgres's native affected-row count.
+    // A value-object document bind rides through as a plain object — porsager
+    // serializes it to a real `jsonb` value natively (m-value-object atomic write).
     return this.db.executeWrite(sql, binds);
   }
 

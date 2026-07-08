@@ -8,7 +8,7 @@
 # object, which is invalid in a path grammar. A model-aware resolver MUST reject it
 # before any SQL. The node is schema-valid (`address` matches the relationship-ref regex).
 model: models/customer.yaml
-tags: [m-value-object, m-deep-fetch, rejected, negative, materialization]
+tags: [m-value-object, m-deep-fetch, rejected, negative, materialization, slice-mvp-1]
 shape: rejected
 when:
   operation:

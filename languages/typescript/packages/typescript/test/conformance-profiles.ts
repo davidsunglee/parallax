@@ -194,20 +194,46 @@ export const POSTGRES_TEMPORAL_PROFILE: MatrixProfile = fixedIdProfile(
   POSTGRES_TEMPORAL_PROFILE_IDS,
 );
 
+/**
+ * The value-object cases carry `mariadb` golden SQL, but MariaDB parity for them
+ * is proven directly by the Phase-10 dialect-lowering compile tests
+ * (`value-object-lowering.test.ts` / `value-object.test.ts`), NOT this run-lane
+ * curated profile. Excluding them keeps the curated profile at its original
+ * 25-case marquee set (impl-spec §5.4) rather than ballooning it with every
+ * value-object golden.
+ */
+const VALUE_OBJECT_MARIADB_REASON =
+  "value-object MariaDB parity is proven by the Phase-10 direct compile tests, not this run-lane profile";
+
+function isValueObjectCase(loaded: LoadedCase): boolean {
+  return loaded.tags.includes("m-value-object");
+}
+
 export const MARIADB_CURATED_PROFILE: MatrixProfile = {
   name: "mariadb-curated-25",
   dialect: "mariadb",
   kind: "partial",
   description:
-    "Curated MariaDB m-case-format profile: every harness-lane slice case with goldenSql.mariadb plus marquee dialect/error cases.",
+    "Curated MariaDB m-case-format profile: every harness-lane slice case with goldenSql.mariadb (excluding value-object cases, proven by Phase-10 compile tests) plus marquee dialect/error cases.",
   select: ({ id, loaded }) =>
-    (POSTGRES_FULL_PROFILE.select({ id, loaded }) && hasMariaDbGolden(loaded)) ||
+    (POSTGRES_FULL_PROFILE.select({ id, loaded }) &&
+      hasMariaDbGolden(loaded) &&
+      !isValueObjectCase(loaded)) ||
     MARIADB_CURATED_ID_SET.has(id),
-  exclusionReason: ({ loaded }) =>
-    POSTGRES_FULL_PROFILE.select({ id: caseId(loaded.casePath), loaded }) &&
-    !hasMariaDbGolden(loaded)
-      ? "no goldenSql.mariadb in this partial MariaDB profile"
-      : undefined,
+  exclusionReason: ({ id, loaded }) => {
+    if (!POSTGRES_FULL_PROFILE.select({ id: caseId(loaded.casePath), loaded })) {
+      return undefined;
+    }
+    if (MARIADB_CURATED_ID_SET.has(id)) {
+      return undefined;
+    }
+    if (isValueObjectCase(loaded)) {
+      return VALUE_OBJECT_MARIADB_REASON;
+    }
+    return hasMariaDbGolden(loaded)
+      ? undefined
+      : "no goldenSql.mariadb in this partial MariaDB profile";
+  },
 };
 
 export const MATRIX_PROFILES: readonly MatrixProfile[] = [

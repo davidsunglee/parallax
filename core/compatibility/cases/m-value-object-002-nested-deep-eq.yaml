@@ -10,7 +10,7 @@
 # is a dialect-keyed map. Only Grace (Boston, US) qualifies; the two Oslo (NO)
 # customers are excluded.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, nested, json]
+tags: [m-value-object, m-sql, nested, json, slice-mvp-1]
 shape: read
 when:
   operation:

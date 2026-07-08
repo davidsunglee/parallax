@@ -52,7 +52,7 @@
     },
     "caseShape": {
       "type": "string",
-      "enum": ["read", "writeSequence", "scenario", "conflict", "coherence", "error", "concurrencySuccess", "boundary"]
+      "enum": ["read", "writeSequence", "scenario", "conflict", "coherence", "error", "concurrencySuccess", "boundary", "rejected"]
     },
     "moduleTag": {
       "type": "string",

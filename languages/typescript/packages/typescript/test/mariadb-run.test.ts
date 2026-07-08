@@ -482,5 +482,14 @@ it("reports non-curated Postgres full-profile cases as explicit MariaDB exclusio
   const postgresFullCount = casesForProfile(POSTGRES_FULL_PROFILE).length;
   const exclusions = exclusionsForProfile(MARIADB_CURATED_PROFILE);
   expect(exclusions).toHaveLength(postgresFullCount - 14);
-  expect(exclusions.every((item) => item.reason.includes("no goldenSql.mariadb"))).toBe(true);
+  // Two exclusion reasons: the historical no-mariadb-golden reason, plus the
+  // value-object cases (which DO carry mariadb golden but are proven by the
+  // Phase-10 direct compile tests, not this run-lane profile — impl-spec §5.4).
+  expect(
+    exclusions.every(
+      (item) =>
+        item.reason.includes("no goldenSql.mariadb") ||
+        item.reason.includes("value-object MariaDB parity"),
+    ),
+  ).toBe(true);
 });

@@ -7,10 +7,12 @@
 export {
   AttributeExpression,
   NavigationPath,
+  NestedFieldExpression,
   OrderKeyExpression,
   Predicate,
   type StringPredicateOptions,
   ToManyRelationshipExpression,
+  ValueObjectExpression,
 } from "./expression.js";
 export {
   type AxisRefs,

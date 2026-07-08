@@ -33,7 +33,7 @@
 import { bytesFromHex, isInfinity, ParallaxDecimal, Temporal } from "@parallax/core";
 import type { ParallaxRow } from "@parallax/db";
 import type { Dialect } from "@parallax/dialect";
-import type { EntityMetadata } from "@parallax/metamodel";
+import type { EntityMetadata, NormalizedValueObjectMember } from "@parallax/metamodel";
 
 /** Matches an m-core `decimal(p,s)` neutral type token. */
 const DECIMAL_TYPE = /^decimal\(\d+,\d+\)$/;
@@ -53,13 +53,66 @@ export function rowMaterializer(
   dialect: Dialect,
 ): (row: ParallaxRow) => ParallaxRow {
   const attributes = entity.attributes();
+  const valueObjects = entity.valueObjects();
   return (row) => {
     const out: ParallaxRow = {};
     for (const attr of attributes) {
       out[attr.name] = coerceScalar(row[attr.column], attr.type, dialect);
     }
+    // A top-level value object materializes with its owner (m-value-object): its
+    // one structured-document column is decoded and projected to the DECLARED
+    // nested shape (typed getters), collapsing absence exactly as the read
+    // predicates do (a null / missing / non-object `one` → null, a non-array
+    // `many` → []). No child round trip, no reverse getter.
+    for (const vo of valueObjects) {
+      out[vo.name] = projectValueObject(vo, decodeDocument(row[vo.column]));
+    }
     return out;
   };
+}
+
+/** True for a non-null, non-array plain object. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Decode a structured-document column to a plain structure (parsed jsonb / json text). */
+function decodeDocument(raw: unknown): unknown {
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  if (raw instanceof Uint8Array) {
+    return decodeDocument(new TextDecoder().decode(raw));
+  }
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+/** Project a decoded slot to its declared value-object shape (`one` → obj|null, `many` → []). */
+function projectValueObject(vo: NormalizedValueObjectMember, decoded: unknown): unknown {
+  if (vo.cardinality === "many") {
+    return Array.isArray(decoded) ? decoded.map((element) => projectMembers(vo, element)) : [];
+  }
+  return isPlainObject(decoded) ? projectMembers(vo, decoded) : null;
+}
+
+/** Build the declared-member projection of one document object (undeclared keys dropped). */
+function projectMembers(vo: NormalizedValueObjectMember, obj: unknown): Record<string, unknown> {
+  const source = isPlainObject(obj) ? obj : {};
+  const node: Record<string, unknown> = {};
+  for (const attribute of vo.attributes) {
+    node[attribute.name] = source[attribute.name] ?? null;
+  }
+  for (const nested of vo.valueObjects) {
+    node[nested.name] = projectValueObject(nested, source[nested.name]);
+  }
+  return node;
 }
 
 /**

@@ -19,7 +19,7 @@
 # a different formulation per dialect (Postgres `jsonb_array_length`, MariaDB a
 # `json_table` unnest), each itself array-type-guarded.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, array-traversal]
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, array-traversal, slice-mvp-1]
 shape: read
 when:
   operation:

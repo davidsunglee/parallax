@@ -14,7 +14,7 @@
 # SQL NULL, so id 7 projects null identically to Postgres. ids 8-10 (the non-array
 # `phones` rows) carry no `city` key either, so they project null like id 5.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, nested, json, projection]
+tags: [m-value-object, m-sql, nested, json, projection, slice-mvp-1]
 shape: read
 when:
   operation:

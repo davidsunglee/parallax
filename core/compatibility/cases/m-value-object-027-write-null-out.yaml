@@ -10,7 +10,7 @@
 # MariaDB alike), decoded to `null` and pinned by `then.tableState`; the scalar
 # `name` is untouched.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, write-sequence, update, json, "null"]
+tags: [m-value-object, m-sql, write-sequence, update, json, "null", slice-mvp-1]
 shape: writeSequence
 when:
   writeSequence:

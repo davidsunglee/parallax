@@ -27,7 +27,7 @@
 # array comparison is order-insensitive (a multiset — element multiplicity is
 # still enforced, only order is not), so a reordered `phones` array still passes.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many]
+tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many, slice-mvp-1]
 shape: read
 when:
   operation:

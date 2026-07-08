@@ -17,7 +17,7 @@
 # collapses the non-array `phones` to not-present. The oracle is a `json_table`
 # same-element unnest on MariaDB and a same-element `@>` on Postgres.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal]
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-mvp-1]
 shape: read
 when:
   operation:

@@ -81,7 +81,11 @@ is deliberately expanded with matching green cases:
 - aggregation and projection
 - the `m-process-cache` identity-cache and query-cache scenarios
 - PK generation cases
-- value-object and inheritance cases
+- `m-inheritance` cases (value objects are **in** the slice: `m-value-object`
+  nested-predicate reads, atomic document writes, inherited-temporality reads,
+  the materialization graph, and the pre-SQL `rejected` negatives all gate the
+  build; only the bitemporal rectangle-split value-object write stays deferred
+  with the rest of `m-bitemp-write`)
 - `m-detach` detached merge-back lifecycle
 - `m-db-error` database error classification
 - bounded business-window and bitemporal rectangle-split writes

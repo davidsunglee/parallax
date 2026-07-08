@@ -123,6 +123,13 @@ export function renderFixtureInsert(table: string, columns: readonly string[]): 
  * WHERE the untyped ISO string becomes an instant.
  */
 export function toManagedBind(value: unknown): unknown {
+  // A value-object document bind (a plain object / array) serializes to JSON TEXT
+  // for the MariaDB `json` column (m-value-object atomic document write) — the
+  // managed carriers (`Temporal.*` / `Uint8Array` / `bigint`) are not plain
+  // objects, so they are never mistaken for a document.
+  if (isDocumentBind(value)) {
+    return JSON.stringify(value);
+  }
   if (typeof value !== "string" || !value.includes("T")) {
     return value;
   }
@@ -131,6 +138,21 @@ export function toManagedBind(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+/**
+ * Whether a bind value is a value-object document (a plain JSON object or array) —
+ * the atomic bind for a top-level value object's structured-document column.
+ */
+function isDocumentBind(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return true;
+  }
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value) as unknown;
+  return proto === Object.prototype || proto === null;
 }
 
 /** Materialize an ordered bind list of untyped corpus values (per-value {@link toManagedBind}). */

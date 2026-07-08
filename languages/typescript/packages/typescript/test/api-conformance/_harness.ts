@@ -157,13 +157,21 @@ async function loadCaseFixtures(
     if (rows.length === 0) {
       continue;
     }
-    const columns = entity.attributes().map((attr) => attr.column);
-    const columnByName = new Map(entity.attributes().map((attr) => [attr.name, attr.column]));
+    // Attribute columns then one structured-document column per top-level value
+    // object (m-value-object), so a value-object fixture row loads its document.
+    const columns = [
+      ...entity.attributes().map((attr) => attr.column),
+      ...entity.valueObjects().map((vo) => vo.column),
+    ];
+    const nameByColumn = new Map<string, string>([
+      ...entity.attributes().map((attr) => [attr.column, attr.name] as const),
+      ...entity.valueObjects().map((vo) => [vo.column, vo.name] as const),
+    ]);
     const bindRows = rows.map((row) =>
       columns.map((column) => {
-        // Fixtures are authored by DSL attribute name OR physical column name.
-        const attrName = [...columnByName.entries()].find(([, c]) => c === column)?.[0];
-        const value = attrName !== undefined && attrName in row ? row[attrName] : row[column];
+        // Fixtures are authored by DSL attribute / value-object name OR physical column.
+        const name = nameByColumn.get(column);
+        const value = name !== undefined && name in row ? row[name] : row[column];
         return value ?? null;
       }),
     );
@@ -612,7 +620,10 @@ async function readTableState(
   for (const table of Object.keys(expected)) {
     const entity = tableToEntity.get(table);
     const columns = entity
-      ? entity.attributes().map((attr) => attr.column)
+      ? [
+          ...entity.attributes().map((attr) => attr.column),
+          ...entity.valueObjects().map((vo) => vo.column),
+        ]
       : Object.keys(expected[table]?.[0] ?? {});
     // Quote through the injected m-dialect seam — double quotes on Postgres, backticks on
     // MariaDB — so the read-back never diverges from the dialect the DDL created.

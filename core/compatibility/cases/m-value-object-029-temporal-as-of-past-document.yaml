@@ -18,7 +18,7 @@
 # literal diverges (Postgres `'…'::timestamptz`, MariaDB a space-separated DATETIME);
 # both select the same then-known owners and pin the matched identities.
 model: models/supplier.yaml
-tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, as-of, audit-only, past, materialization, graph]
+tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, as-of, audit-only, past, materialization, graph, slice-mvp-1]
 shape: read
 when:
   operation:

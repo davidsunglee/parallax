@@ -185,6 +185,44 @@ export const BOUNDARY: readonly string[] = [
   "m-unit-work-004-callback-value-withheld-on-abort",
 ];
 
+/**
+ * Value objects (`value-objects.api-conformance.test.ts`): the typed
+ * nested-predicate developer surface (m-value-object) — comparisons /
+ * membership / null tests at shallow-to-three-level depth, to-many
+ * exists/any-element/same-element (scoped `where`), the materialization graph
+ * (the nested composite arriving with the owner in one round trip), and the
+ * atomic document insert. The projection case (`m-value-object-003`), the
+ * whole-document UPDATE / null-out / temporal-chaining writes, the temporal
+ * value-object reads, and the `rejected` negatives are reason-skipped (see
+ * `skip-manifest.ts`).
+ */
+export const VALUE_OBJECTS: readonly string[] = [
+  "m-value-object-001-nested-eq",
+  "m-value-object-002-nested-deep-eq",
+  "m-value-object-004-nested-not-eq",
+  "m-value-object-005-nested-null-excluded",
+  "m-value-object-006-nested-in",
+  "m-value-object-007-nested-is-null",
+  "m-value-object-008-nested-is-not-null",
+  "m-value-object-009-nested-gt-cast",
+  "m-value-object-010-nested-lt-cast",
+  "m-value-object-011-nested-gte-deep-cast",
+  "m-value-object-012-nested-lte-deep-cast",
+  "m-value-object-013-nested-is-null-collapse",
+  "m-value-object-014-nested-is-not-null-deep",
+  "m-value-object-015-nested-exists-nonempty",
+  "m-value-object-016-nested-not-exists-empty-or-null",
+  "m-value-object-017-nested-any-element-eq",
+  "m-value-object-018-nested-any-element-and-different",
+  "m-value-object-019-nested-exists-scoped-where",
+  "m-value-object-020-nested-not-exists-scoped-where",
+  "m-value-object-021-nested-any-element-scalar-collapse",
+  "m-value-object-022-nested-not-exists-scoped-scalar-collapse",
+  "m-value-object-023-graph-nested-materialization",
+  "m-value-object-024-graph-filtered-materialization",
+  "m-value-object-025-write-insert-document",
+];
+
 /** Every exercised case stem across all families. */
 export const EXERCISED: readonly string[] = [
   ...READS,
@@ -193,6 +231,7 @@ export const EXERCISED: readonly string[] = [
   ...TRANSACTIONS,
   ...LOCKING,
   ...BOUNDARY,
+  ...VALUE_OBJECTS,
 ];
 
 /** The per-module id of a case stem (`m-op-algebra-002-eq` → `m-op-algebra-002`). */

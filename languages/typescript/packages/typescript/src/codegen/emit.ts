@@ -18,8 +18,9 @@ import type {
   EntityModel,
   ToManyRelationshipModel,
   ToOneRelationshipModel,
+  ValueObjectModel,
 } from "./model.js";
-import { usesDecimal, usesJson, usesTemporal } from "./model.js";
+import { usesDecimal, usesJson, usesTemporal, usesValueObjects } from "./model.js";
 
 /** A single generated file: its output path (relative to `output`) and source. */
 export interface GeneratedFile {
@@ -55,6 +56,9 @@ function imports(model: CodegenModel): string {
     coreTypes.push("ParallaxJsonValue");
   }
   const lines: string[] = [];
+  const valueObjectImports = usesValueObjects(model)
+    ? "  NestedFieldExpression,\n  ValueObjectExpression,\n"
+    : "";
   lines.push(
     "import {\n" +
       "  AttributeExpression,\n" +
@@ -67,6 +71,7 @@ function imports(model: CodegenModel): string {
       "  ParallaxTransaction,\n" +
       "  Predicate,\n" +
       "  ToManyRelationshipExpression,\n" +
+      valueObjectImports +
       "  type FindOptions,\n" +
       "  type TransactionOptions,\n" +
       '} from "@parallax/typescript";',
@@ -102,15 +107,61 @@ function managedProperty(attr: AttributeModel): string {
   return `  readonly ${attr.name}: ${type};`;
 }
 
-/** Render the managed-object `type Entity = { … }`. */
+/** The managed-object property type for a value-object member (typed, arbitrary depth). */
+function valueObjectPropertyType(vo: ValueObjectModel): string {
+  if (vo.cardinality === "many") {
+    return `readonly ${vo.typeName}[]`;
+  }
+  return vo.nullable ? `${vo.typeName} | null` : vo.typeName;
+}
+
+/** Render one value object's managed property (`address: CustomerAddress | null;`). */
+function valueObjectManagedProperty(vo: ValueObjectModel): string {
+  return `  readonly ${vo.name}: ${valueObjectPropertyType(vo)};`;
+}
+
+/** Render the managed-object `type Entity = { … }` (scalar attributes + value objects). */
 function managedType(entity: EntityModel): string {
-  const props = entity.attributes.map(managedProperty).join("\n");
+  const props = [
+    ...entity.attributes.map(managedProperty),
+    ...entity.valueObjects.map(valueObjectManagedProperty),
+  ].join("\n");
   return [
-    `/** The managed \`${entity.name}\` domain object — its scalar attributes (spec §3.2.1). */`,
+    `/** The managed \`${entity.name}\` domain object — its scalar attributes + value objects (spec §3.2.1). */`,
     `export type ${entity.name} = {`,
     props,
     "};",
   ].join("\n");
+}
+
+/**
+ * Render the typed value-object interfaces for one value object and every member
+ * nested inside it (recursive, arbitrary depth — m-value-object). Each is one
+ * `type <Prefix><Name> = { … }` exposing the DECLARED members as typed getters: a
+ * scalar field is its managed carrier (`| null` when nullable), a `one` nested
+ * member is `Type | null`, a `many` member is `readonly Type[]`. There is NO
+ * reverse getter and no relationship/lock/cache machinery — the composite rides
+ * its owner (m-value-object "Materialization and navigation contract").
+ */
+function valueObjectInterfaces(vo: ValueObjectModel): readonly string[] {
+  const members = [
+    ...vo.fields.map(
+      (f) => `  readonly ${f.name}: ${f.nullable ? `${f.propertyType} | null` : f.propertyType};`,
+    ),
+    ...vo.nested.map((child) => `  readonly ${child.name}: ${valueObjectPropertyType(child)};`),
+  ].join("\n");
+  const own = [
+    `/** The typed \`${vo.name}\` value object — declared nested getters to arbitrary depth (m-value-object). */`,
+    `export type ${vo.typeName} = {`,
+    members,
+    "};",
+  ].join("\n");
+  return [own, ...vo.nested.flatMap(valueObjectInterfaces)];
+}
+
+/** Every value-object interface an entity declares (top-level + nested, recursive). */
+function entityValueObjectInterfaces(entity: EntityModel): string {
+  return entity.valueObjects.flatMap(valueObjectInterfaces).join("\n\n");
 }
 
 /** Render one attribute symbol field (`id: new AttributeExpression("Order.id")`). */
@@ -126,6 +177,56 @@ function toManySymbol(rel: ToManyRelationshipModel): string {
 /** Render one to-one relationship include-path symbol field. */
 function toOneSymbol(rel: ToOneRelationshipModel): string {
   return `  ${rel.name}: new NavigationPath([${stringLiteral(rel.ref)}]),`;
+}
+
+/** Indent every line of a block by two spaces. */
+function indentBlock(block: string): string {
+  return block
+    .split("\n")
+    .map((line) => (line.length > 0 ? `  ${line}` : line))
+    .join("\n");
+}
+
+/**
+ * Render the ELEMENT-relative predicate builder for a value object's scoped
+ * `where` (`Customer.address.phones.element.type` → `nestedEq { path: "type" }`).
+ * `prefix` is the element-relative path to this member from the `exists` root
+ * (empty at the root), so a same-element compound uses element-relative paths.
+ */
+function elementBuilder(vo: ValueObjectModel, prefix: string): string {
+  const rel = (name: string): string => (prefix === "" ? name : `${prefix}.${name}`);
+  const members = [
+    ...vo.fields.map((f) => `${f.name}: new NestedFieldExpression(${stringLiteral(rel(f.name))}),`),
+    ...vo.nested.map((child) => `${child.name}: ${elementBuilder(child, rel(child.name))},`),
+  ];
+  return ["{", indentBlock(members.join("\n")), "}"].join("\n");
+}
+
+/**
+ * Render the typed nested-predicate builder for one value object (m-value-object):
+ * a `ValueObjectExpression` (carrying `exists` / `notExists` on the member) with
+ * the declared typed accessors assigned onto it — a `NestedFieldExpression` per
+ * scalar field (comparisons carrying the FULL dotted path), the recursive builder
+ * per nested value object, and an `element` sub-builder exposing the same fields
+ * on ELEMENT-relative paths for a scoped `where`. No reverse getter, no lock /
+ * cache / statement machinery.
+ */
+function valueObjectBuilder(vo: ValueObjectModel): string {
+  const members = [
+    ...vo.fields.map((f) => `${f.name}: new NestedFieldExpression(${stringLiteral(f.ref)}),`),
+    ...vo.nested.map((child) => `${child.name}: ${valueObjectBuilder(child)},`),
+    `element: ${elementBuilder(vo, "")},`,
+  ];
+  return [
+    `Object.assign(new ValueObjectExpression(${stringLiteral(vo.ref)}), {`,
+    indentBlock(members.join("\n")),
+    "})",
+  ].join("\n");
+}
+
+/** Render one top-level value-object symbol field on the entity symbol. */
+function valueObjectSymbol(vo: ValueObjectModel): string {
+  return `  ${vo.name}: ${indentBlock(valueObjectBuilder(vo)).trimStart()},`;
 }
 
 /**
@@ -144,6 +245,7 @@ function entitySymbol(entity: EntityModel): string {
     ...entity.attributes.map((a) => a.name),
     ...entity.toMany.map((r) => r.name),
     ...entity.toOne.map((r) => r.name),
+    ...entity.valueObjects.map((vo) => vo.name),
     "all",
     "none",
   ]);
@@ -162,6 +264,7 @@ function entitySymbol(entity: EntityModel): string {
     ...entity.attributes.map(attributeSymbol),
     ...entity.toMany.map(toManySymbol),
     ...entity.toOne.map(toOneSymbol),
+    ...entity.valueObjects.map(valueObjectSymbol),
     `  /** The unfiltered identity predicate (\`find()\` shorthand, spec §2.3). */`,
     `  all(): Predicate {`,
     `    return new Predicate({ all: {} });`,
@@ -276,9 +379,13 @@ function reexports(): string {
  */
 export function emitBarrel(model: CodegenModel, descriptor: unknown): GeneratedFile {
   const descriptorJson = JSON.stringify(descriptor, null, 2);
+  const valueObjectTypes = model.entities
+    .filter((e) => e.valueObjects.length > 0)
+    .map(entityValueObjectInterfaces);
   const sections = [
     banner(),
     imports(model),
+    ...valueObjectTypes,
     ...model.entities.map(managedType),
     ...model.entities.map(entitySymbol),
     handleType(model),

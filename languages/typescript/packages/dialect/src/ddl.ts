@@ -42,12 +42,24 @@ interface DdlIndex {
   readonly unique?: boolean;
 }
 
+/**
+ * A top-level value object contributes exactly ONE structured-document column to
+ * the physical row (m-value-object): the whole recursive composite lives in that
+ * one `json`/`jsonb` column, never column-flattened. Nested members carry no
+ * `column`, so they never reach DDL derivation.
+ */
+interface DdlValueObject {
+  readonly column: string;
+  readonly nullable?: boolean;
+}
+
 /** The minimal entity view DDL derivation needs. */
 interface DdlEntity {
   readonly table: string;
   readonly attributes: readonly DdlAttribute[];
   readonly asOfAttributes?: readonly DdlAsOfAttribute[];
   readonly indices?: readonly DdlIndex[];
+  readonly valueObjects?: readonly DdlValueObject[];
 }
 
 /** A descriptor is either a single `entity` or an `entities` array. */
@@ -73,6 +85,19 @@ function createTable(entity: DdlEntity, dialect: Dialect): string {
     if (attr.primaryKey) {
       pkColumns.push(attr.column);
     }
+  }
+
+  // A top-level value object is stored in ONE dialect-mapped `json` column
+  // (m-value-object/m-core): the whole embedded composite, never column-flattened
+  // and never a nested member's own column. Emit it AFTER the scalar attributes
+  // (so the columnOrder is attributes-then-value-objects), synthesizing the
+  // neutral `json` type the dialect maps to `jsonb` / `json`.
+  for (const valueObject of entity.valueObjects ?? []) {
+    const parts = [dialect.quoteIdentifier(valueObject.column), dialect.columnType("json")];
+    if (!valueObject.nullable) {
+      parts.push("not null");
+    }
+    columns.push(parts.join(" "));
   }
 
   // A temporal entity keeps many milestone rows per business key, so the
@@ -143,8 +168,13 @@ export function ddlForDescriptor(
 /**
  * The descriptor's physical column order for an entity's table (matches the DDL
  * and the fixture-load order), so fixture loading and table-state reads stay
- * column-aligned.
+ * column-aligned. Attribute columns come first, then exactly one structured-
+ * document column per top-level value object (m-value-object) — the same
+ * attributes-then-value-objects order {@link createTable} emits.
  */
 export function columnOrder(entity: DdlEntity): readonly string[] {
-  return entity.attributes.map((attr) => attr.column);
+  return [
+    ...entity.attributes.map((attr) => attr.column),
+    ...(entity.valueObjects ?? []).map((vo) => vo.column),
+  ];
 }

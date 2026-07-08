@@ -32,14 +32,15 @@ import type {
 } from "@parallax/core";
 import { toWire } from "@parallax/core";
 import { type ParallaxRow, ParallaxTransientError } from "@parallax/db";
+import { type Dialect, ddlForDescriptor, mariadbDialect, postgresDialect } from "@parallax/dialect";
 import {
-  columnOrder,
-  type Dialect,
-  ddlForDescriptor,
-  mariadbDialect,
-  postgresDialect,
-} from "@parallax/dialect";
-import { type EntityMetadata, Metamodel, parseOperation } from "@parallax/operation";
+  type EntityMetadata,
+  Metamodel,
+  parseOperation,
+  RejectionError,
+  validateOperationValueObjects,
+  validateWriteValueObjects,
+} from "@parallax/operation";
 import { deepFetch, type Exec, type Row as GraphRow } from "@parallax/relationships";
 import { compile } from "@parallax/sql";
 import {
@@ -58,7 +59,8 @@ import type { CompatibilityDatabaseProvider, CompatibilitySession } from "./prov
 import { buildScenarioPlan, isScenario } from "./scenario.js";
 import { assertValidEnvelope } from "./schema.js";
 import { columnTypesForCase, schemaForReadCase } from "./schema-resolver.js";
-import { buildWriteSequencePlan, isWriteSequence } from "./write-sequence.js";
+import { decodeTableStateRow, materializeOwnerNode } from "./value-object-materialize.js";
+import { buildWriteSequencePlan, isWriteSequence, orderedColumns } from "./write-sequence.js";
 
 /**
  * The `m-read-lock` module tag marks a locking-mode in-transaction object find
@@ -355,6 +357,15 @@ export function runCompile(
   if (suiteSatisfied) {
     return suiteSatisfied;
   }
+
+  // A `rejected` case carries a schema-valid but model-invalid input the adapter
+  // MUST refuse BEFORE any SQL is emitted (m-value-object resolved Q7): it has no
+  // golden, so the pre-SQL refusal IS the compile result — and it is checked
+  // BEFORE the golden-per-dialect guard (which would otherwise skip it).
+  if (loaded.shape === "rejected") {
+    return rejectedEnvelope(loaded, "compile", adapter);
+  }
+
   const notDeclared = dialectDeclaredOrNonOk(loaded, "compile", dialect, adapter);
   if (notDeclared) {
     return notDeclared;
@@ -513,6 +524,14 @@ export async function runRun(
   if (suiteSatisfied) {
     return suiteSatisfied;
   }
+
+  // A `rejected` case is refused pre-SQL — no provisioning, no execution, no
+  // dialect: the refusal is dialect-agnostic model-aware validation, and it is
+  // checked BEFORE the golden-per-dialect guard (a rejected case has no golden).
+  if (loaded.shape === "rejected") {
+    return rejectedEnvelope(loaded, "run", adapter);
+  }
+
   const notDeclared = dialectDeclaredOrNonOk(loaded, "run", dialect, adapter);
   if (notDeclared) {
     return notDeclared;
@@ -568,8 +587,124 @@ export async function runRun(
   await provision(loaded, provider);
   const { emissions, observations } = isDeepFetch(operation)
     ? await runDeepFetch(loaded, provider, dialectImpl)
-    : await runFlatRead(loaded, provider, dialectImpl);
+    : isValueObjectGraph(loaded)
+      ? await runValueObjectGraph(loaded, provider, dialectImpl)
+      : await runFlatRead(loaded, provider, dialectImpl);
   return assertValidEnvelope(runOk(loaded, dialect, adapter, emissions, observations));
+}
+
+/**
+ * Whether a read case materializes value objects with their owner (a `then.graph`
+ * over an entity that declares value objects, and NOT a deep fetch): the whole
+ * nested composite arrives with the owner in one round trip (m-value-object). This
+ * distinguishes a value-object graph read (001-024/028-031's graph cases) from a
+ * deep-fetch graph, which is keyed by `isDeepFetch`.
+ */
+function isValueObjectGraph(loaded: LoadedCase): boolean {
+  if (loaded.shape !== "read" || loaded.raw.then?.graph === undefined) {
+    return false;
+  }
+  if (isDeepFetch(loaded.raw.when?.operation)) {
+    return false;
+  }
+  const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
+  const operation = parseOperation(loaded.raw.when?.operation);
+  const schema = schemaForReadCase(loaded, operation, dialectFor("postgres"));
+  return metamodel.entity(schema.rootEntityName()).valueObjects().length > 0;
+}
+
+/**
+ * Execute a value-object materialization read: run the single projected statement
+ * (the golden projects the whole structured-document column through the graph
+ * witness), decode each row's document into its DECLARED nested to-one / to-many
+ * projection, and assemble `graph[rootEntity] = nodes` at `roundTrips: 1`. There
+ * is NO child statement — the nested values ride the owner (m-value-object).
+ */
+async function runValueObjectGraph(
+  loaded: LoadedCase,
+  provider: CompatibilityDatabaseProvider,
+  dialect: Dialect,
+): Promise<RunResult> {
+  const operation = parseOperation(loaded.raw.when?.operation);
+  const schema = schemaForReadCase(loaded, operation, dialect);
+  const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
+  const rootEntity = metamodel.entity(schema.rootEntityName());
+  const { sql, binds } = compile(operation, schema, dialect, { locking: false });
+
+  const rows = await provider.query(sql, binds as readonly unknown[]);
+  const nodes = rows.map((row) => materializeOwnerNode(rootEntity, row as Row));
+  const graph: Record<string, readonly Row[]> = { [rootEntity.name]: nodes };
+  return {
+    emissions: [{ casePointer: READ_OPERATION_POINTER, sql, binds: binds as readonly WireBind[] }],
+    observations: { roundTrips: 1, graph },
+  };
+}
+
+/**
+ * The pre-SQL refusal envelope for a `rejected` case (m-value-object resolved Q7):
+ * run the model-aware value-object validator over the case's invalid `when`
+ * (`operation` or `write`) against the queried entity's DECLARED value-object
+ * structure and surface the {@link RejectionError}'s rule as an `error`-status
+ * diagnostic (`code` == the rule, mechanically comparable to `then.rejectedRule`).
+ * If validation ACCEPTS the input, that is itself the failure — an `error`
+ * envelope whose code says the refusal never happened, so the grade fails loudly.
+ */
+function rejectedEnvelope(
+  loaded: LoadedCase,
+  command: "compile" | "run",
+  adapter: AdapterIdentity,
+): NonOk {
+  const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
+  const [entity] = metamodel.entities();
+  if (entity === undefined) {
+    throw new Error(`${loaded.casePath}: rejected case model declares no entity`);
+  }
+  const when = loaded.raw.when as
+    | { operation?: unknown; write?: Record<string, unknown> }
+    | undefined;
+  try {
+    if (when?.operation !== undefined) {
+      validateOperationValueObjects(entity, when.operation);
+    } else if (when?.write !== undefined) {
+      validateWriteValueObjects(entity, when.write);
+    } else {
+      throw new Error(
+        `${loaded.casePath}: rejected case carries neither when.operation nor when.write`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof RejectionError) {
+      return nonOk(command, adapter, {
+        code: error.rule,
+        message: error.message,
+        casePointer: when?.operation !== undefined ? "/operation" : "/write",
+      });
+    }
+    throw error;
+  }
+  // Validation accepted a case the corpus pins as rejected — a conformance failure.
+  return nonOk(command, adapter, {
+    code: "rejected-input-accepted",
+    message: `${loaded.casePath}: expected a pre-SQL rejection (${String(
+      loaded.raw.then?.rejectedRule,
+    )}) but model-aware validation accepted the input`,
+    casePointer: "",
+  });
+}
+
+/** Assemble an `error`-status envelope carrying a single diagnostic. */
+function nonOk(
+  command: "compile" | "run",
+  adapter: AdapterIdentity,
+  diagnostic: Diagnostic,
+): NonOk {
+  return {
+    schemaVersion: "1",
+    command,
+    status: "error",
+    adapter,
+    diagnostics: [diagnostic],
+  };
 }
 
 /** Assemble a `run` success envelope from its emissions + observations. */
@@ -683,6 +818,12 @@ async function runWriteSequence(
   dialect: Dialect,
 ): Promise<RunResult> {
   await provisionEmpty(loaded, provider);
+  // Pre-SQL, before classifying any row: a value-object write validates its
+  // document against the declared recursive structure (m-value-object resolved
+  // Q7) — a no-op for a valid write (the write cases here), but the same refusal
+  // seam the `rejected` write cases prove. A structurally-invalid document raises
+  // a RejectionError before any DML is generated.
+  validateWriteSequenceDocuments(loaded);
   const plan = buildWriteSequencePlan(loaded, dialect);
 
   const emissions: Emission[] = [];
@@ -700,6 +841,34 @@ async function runWriteSequence(
     emissions,
     observations: { roundTrips: emissions.length, tableState },
   };
+}
+
+/**
+ * Run the model-aware value-object write validator over every write-sequence
+ * step's rows pre-SQL (m-value-object): each row's value-object documents are
+ * checked against the declared recursive structure. A no-op for an entity with no
+ * value objects, and for the valid value-object write cases; a structurally
+ * invalid document raises a `RejectionError` before any DML is generated (the
+ * refusal the `rejected` write cases pin).
+ */
+function validateWriteSequenceDocuments(loaded: LoadedCase): void {
+  const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
+  const steps = (loaded.raw.when?.writeSequence ?? []) as readonly {
+    entity?: string;
+    rows?: readonly Record<string, unknown>[];
+  }[];
+  for (const step of steps) {
+    if (step.entity === undefined) {
+      continue;
+    }
+    const entity = metamodel.entity(step.entity);
+    if (entity.valueObjects().length === 0) {
+      continue;
+    }
+    for (const row of step.rows ?? []) {
+      validateWriteValueObjects(entity, row);
+    }
+  }
 }
 
 /**
@@ -1124,7 +1293,11 @@ async function readTableState(
     if (entity === undefined) {
       throw new Error(`then.tableState names table '${table}' not in the model`);
     }
-    state[table] = (await provider.query(readTableSql(entity, dialect), [])) as readonly Row[];
+    const rows = (await provider.query(readTableSql(entity, dialect), [])) as readonly Row[];
+    // Decode each top-level value-object document column so `then.tableState`'s
+    // authored document compares structurally on both dialects (Postgres returns
+    // a parsed jsonb, MariaDB raw json text) — m-value-object write read-back.
+    state[table] = rows.map((row) => decodeTableStateRow(entity, row));
   }
   return state;
 }
@@ -1136,10 +1309,9 @@ async function readTableState(
  * Postgres (double-quotes).
  */
 function readTableSql(entity: EntityMetadata, dialect: Dialect): string {
-  const columns = columnOrder({
-    table: entity.table,
-    attributes: entity.attributes().map((a) => ({ type: a.type, column: a.column })),
-  });
+  // Attribute columns then one structured-document column per top-level value
+  // object (m-value-object), so a value-object write reads its document back.
+  const columns = orderedColumns(entity);
   const projection = columns.map((column) => `t0.${dialect.quoteIdentifier(column)}`).join(", ");
   return `select ${projection} from ${dialect.quoteIdentifier(entity.table)} t0`;
 }
@@ -1187,12 +1359,15 @@ async function loadFixtures(
     if (rows.length === 0) {
       continue;
     }
-    const attributes = entity.attributes();
-    const columns = columnOrder({
-      table: entity.table,
-      attributes: attributes.map((a) => ({ type: a.type, column: a.column })),
-    });
-    const nameByColumn = new Map(attributes.map((a) => [a.column, a.name]));
+    // Attribute columns then one structured-document column per top-level value
+    // object (m-value-object); a fixture row speaks attribute / value-object
+    // NAMES, so map each physical column back to the name that supplies it (the
+    // value-object document rides its column atomically).
+    const columns = orderedColumns(entity);
+    const nameByColumn = new Map<string, string>([
+      ...entity.attributes().map((a) => [a.column, a.name] as const),
+      ...entity.valueObjects().map((vo) => [vo.column, vo.name] as const),
+    ]);
     const tuples = rows.map((row) =>
       columns.map((column) => row[nameByColumn.get(column) ?? column] ?? null),
     );
