@@ -451,6 +451,31 @@ def _rejected_cross_shape_when_member() -> dict[str, Any]:
     return doc
 
 
+def _rejected_both_operation_and_write() -> dict[str, Any]:
+    """A rejected case carrying BOTH `operation` and `write` (COR-10, Q7).
+
+    A rejected case pins a SINGLE invalid input, so its `when` MUST carry EXACTLY ONE
+    of operation/write. The schema `oneOf` (each alternative requiring one member)
+    matches BOTH alternatives when both are present, so `oneOf` fails — closing the
+    gap the earlier `anyOf` (>= 1, not exactly 1) left open.
+    """
+    doc = _rejected_operation_case()
+    doc["when"]["write"] = {"id": 1, "name": "Acme", "address": {"city": "Oslo"}}
+    return doc
+
+
+def _rejected_neither_operation_nor_write() -> dict[str, Any]:
+    """A rejected case carrying NEITHER `operation` nor `write` (COR-10, Q7).
+
+    An empty `when` matches no `oneOf` alternative, so the rejected branch fails and
+    no other top-level branch matches (the `shape` const gates them) — the document
+    is rejected.
+    """
+    doc = _rejected_operation_case()
+    del doc["when"]["operation"]
+    return doc
+
+
 REJECTED_CASES = {
     "legacy-layout": _legacy_layout,
     "mislabeled-shape": _mislabeled_shape,
@@ -464,6 +489,8 @@ REJECTED_CASES = {
     "rejected-unknown-rule": _rejected_unknown_rule,
     "rejected-with-golden-statements": _rejected_with_golden_statements,
     "rejected-cross-shape-when-member": _rejected_cross_shape_when_member,
+    "rejected-both-operation-and-write": _rejected_both_operation_and_write,
+    "rejected-neither-operation-nor-write": _rejected_neither_operation_nor_write,
 }
 
 

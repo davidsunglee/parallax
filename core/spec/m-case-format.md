@@ -461,14 +461,19 @@ lane.
 
 A **rejected** case proves a **negative**: that a model-aware validator refuses an
 invalid input **before any SQL is emitted** (resolved question 7). It carries the
-invalid input under `when` — **either** an `operation` (a schema-valid
+invalid input under `when` — **exactly one** of an `operation` (a schema-valid
 `m-op-algebra` node) **or** a `write` (a neutral write row, ①) — and a
-`then.rejectedRule` naming the violated normative rule. It carries **no** golden SQL
-(`then.statements` is disallowed): the assertion is that the input never *reaches*
-SQL. The harness (and every language implementation) resolves the input against the
-queried entity's **declared** value-object structure and asserts the refusal happens
-pre-SQL with **exactly** the named rule; a run that accepts the input, or rejects it
-with a different rule, **fails**. Rejection is **dialect-agnostic** — no dialect,
+`then.rejectedRule` naming the violated normative rule. A rejected case pins a
+**single** invalid input: carrying **both** `operation` and `write`, or **neither**,
+is invalid — enforced by the schema `oneOf` (paired with the `propertyNames` enum
+that forbids other keys) and mirrored by a harness XOR guard, so the "exactly one
+invalid input" rule holds even for a caller that reaches the runner without schema
+validation. It carries **no** golden SQL (`then.statements` is disallowed): the
+assertion is that the input never *reaches* SQL. The harness (and every language
+implementation) resolves the input against the queried entity's **declared**
+value-object structure and asserts the refusal happens pre-SQL with **exactly** the
+named rule; a run that accepts the input, or rejects it with a different rule,
+**fails**. Rejection is **dialect-agnostic** — no dialect,
 provisioning, or execution — so a rejected case is checked once, with no database.
 This is the portable analogue of Reladomo refusing a structurally-invalid
 embedded-value use (an embedded value is not a relationship target and cannot be

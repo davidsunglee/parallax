@@ -245,8 +245,22 @@ def _assert_schema(case: Case) -> None:
                 f"{case.path.name}: rejected case then.rejectedRule "
                 f"{case.rejected_rule!r} is not a known rule"
             )
-        if "operation" not in case.when and "write" not in case.when:
-            raise CaseFailure(f"{case.path.name}: rejected case needs when.operation or when.write")
+        # A rejected case pins a SINGLE invalid input, so its `when` MUST carry
+        # EXACTLY ONE of `operation` / `write` (the normative "exactly one invalid
+        # input" rule, m-case-format Rejected cases). This XOR guard is a
+        # defense-in-depth mirror of the schema's `oneOf`
+        # (compatibility-case.schema.json rejected branch): it keeps the constraint
+        # enforced even if some future caller reaches the runner without schema
+        # validation, and `_assert_rejected` below validates `operation` first and
+        # would otherwise SILENTLY ignore a `write` present alongside it.
+        has_operation = "operation" in case.when
+        has_write = "write" in case.when
+        if has_operation == has_write:
+            raise CaseFailure(
+                f"{case.path.name}: a rejected case MUST carry EXACTLY ONE of "
+                f"when.operation / when.write (one invalid input); found "
+                f"{'both' if has_operation else 'neither'}."
+            )
     elif "operation" not in case.when:
         raise CaseFailure(f"{case.path.name}: missing operation")
     if not case.model.class_name:

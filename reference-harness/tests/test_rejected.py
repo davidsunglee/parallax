@@ -196,6 +196,61 @@ def test_scoped_where_undeclared_member_rejected() -> None:
     assert exc.value.rule == NESTED_PATH_UNKNOWN_MEMBER
 
 
+# --- value-object rules fire at ANY depth in the queried entity's op tree -----
+#
+# `validate_operation` descends through the SAME-entity boolean combinators
+# (and/or/not/group), so a nested-predicate violation buried inside a combinator is
+# rejected with its exact rule — not silently accepted because it is not top-level.
+# These regression tests pin that recursion (case m-value-object-018 shows nested
+# predicates nesting inside `and`, so this path is real).
+
+
+def test_nested_path_violation_buried_inside_and_is_rejected() -> None:
+    entity = _customer_entity()
+    operation = {
+        "and": {
+            "operands": [
+                {"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}},  # valid
+                {"nestedEq": {"path": "Customer.contact.city", "value": "x"}},  # buried violation
+            ]
+        }
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(entity, operation)
+    assert exc.value.rule == NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT
+
+
+def test_nested_literal_type_mismatch_buried_inside_or_not_group_is_rejected() -> None:
+    # A mistyped literal (string against a float64 leaf) buried under or -> not ->
+    # group is still caught with the literal-type rule, proving every combinator is
+    # traversed and resolution stays against the SAME root entity throughout.
+    entity = _customer_entity()
+    operation = {
+        "or": {
+            "operands": [
+                {"eq": {"attr": "Customer.name", "value": "Ada"}},
+                {
+                    "not": {
+                        "operand": {
+                            "group": {
+                                "operand": {
+                                    "nestedGt": {
+                                        "path": "Customer.address.geo.elevation",
+                                        "value": "not-a-number",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            ]
+        }
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_operation(entity, operation)
+    assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+
+
 def test_write_present_but_null_required_value_object_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
         validate_write(
@@ -258,6 +313,52 @@ def test_runner_fails_when_the_named_rule_is_wrong() -> None:
     )
     with pytest.raises(CaseFailure):
         run_case(case, None)  # type: ignore[arg-type]
+
+
+# --- the _assert_schema XOR guard: EXACTLY ONE of operation/write (COR-10, Q7) --
+#
+# A defense-in-depth mirror of the schema `oneOf`: even a case that reaches the
+# runner without schema validation MUST carry EXACTLY ONE invalid input, so
+# `_assert_schema` raises loudly on BOTH-present or NEITHER-present.
+
+
+def _rejected_case_with_when(
+    when: dict[str, Any],
+    rule: str = NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
+) -> Case:
+    from reference_harness.case import Model
+
+    raw = {
+        "model": "models/customer.yaml",
+        "tags": ["m-value-object"],
+        "shape": "rejected",
+        "when": when,
+        "then": {"rejectedRule": rule},
+    }
+    model = load_model(_COMPATIBILITY_ROOT, "models/customer.yaml")
+    assert isinstance(model, Model)
+    return Case(path=Path("m-value-object-999-x.yaml"), raw=raw, model=model)
+
+
+def test_assert_schema_rejects_both_operation_and_write() -> None:
+    from reference_harness.case_runner import _assert_schema
+
+    case = _rejected_case_with_when(
+        {
+            "operation": {"nestedEq": {"path": "Customer.contact.city", "value": "x"}},
+            "write": {"id": 1, "name": "Acme", "address": {"city": "Oslo"}},
+        }
+    )
+    with pytest.raises(CaseFailure, match="EXACTLY ONE"):
+        _assert_schema(case)
+
+
+def test_assert_schema_rejects_neither_operation_nor_write() -> None:
+    from reference_harness.case_runner import _assert_schema
+
+    case = _rejected_case_with_when({})
+    with pytest.raises(CaseFailure, match="EXACTLY ONE"):
+        _assert_schema(case)
 
 
 # --- regex-level negatives stay OPERATION-SCHEMA unit tests (resolved Q7) ----

@@ -22,6 +22,26 @@ normative rule:
 The reference harness (a non-normative oracle) runs this so the reference
 implementation actually rejects what the `rejected` cases pin — the same refusal
 each language implementation must make.
+
+Scope — value-object rules are enforced at ANY depth within the queried entity's
+own operation tree. :func:`validate_operation` descends through the SAME-entity
+boolean combinators (``and`` / ``or`` / ``not`` / ``group``) and the result-directive
+wrappers (``orderBy`` / ``limit`` / ``distinct`` / ``asOf`` …), so a nested-predicate
+violation (an undeclared path segment, a mistyped literal, a value-object misuse) is
+rejected wherever the offending node appears — buried inside an ``and`` just as at
+the top level. The combinators do not change the root entity, so resolution stays
+against the same declared value-object structure throughout.
+
+Tracked scope limitation (future extension): value-object rules inside a
+RELATED-entity sub-operation — a navigation's inner operation (``navigationFilter.op``
+/ the ``op`` a ``navigate`` / ``exists`` / ``notExists`` carries, which resolves
+against a DIFFERENT entity) — are NOT enforced here. That would require cross-entity
+model resolution (following the relationship to its target entity's declared
+structure); no corpus case exercises it, and value objects are never navigation
+targets (they have no identity to correlate), so :func:`validate_operation` refuses a
+value-object-TARGETED navigation but does not recurse INTO a related entity's
+sub-operation. Enforcing nested value-object rules across a relationship boundary is
+a documented future extension.
 """
 
 from __future__ import annotations
@@ -77,6 +97,12 @@ def validate_operation(entity: Entity, operation: Any) -> None:
     first violation. An operation with no value-object misuse returns quietly — this
     is used ONLY for ``rejected`` cases, so it need not fully validate every valid
     operation, only reject the specific negative inputs the corpus pins.
+
+    The walk descends through the SAME-entity boolean combinators
+    (``and`` / ``or`` / ``not`` / ``group``) and the directive / temporal wrappers, so
+    a violation is caught at ANY depth in the queried entity's operation tree, not
+    only at the top level. It does NOT recurse into a related-entity sub-operation
+    (a navigation's inner op) — a tracked scope limitation (see the module docstring).
     """
     _walk(entity, operation)
 
