@@ -39,6 +39,7 @@ import { auditWriteStatements, type WriteTarget } from "@parallax/bitemporal";
 import { INFINITY, ParallaxDecimal, Temporal } from "@parallax/core";
 import type { ParallaxDatabase } from "@parallax/db";
 import { columnOrder, type Dialect } from "@parallax/dialect";
+import { ParallaxError } from "@parallax/lists";
 import {
   classifyOutcome,
   type VersionedTarget,
@@ -46,7 +47,7 @@ import {
   versionedUpdate,
 } from "@parallax/locking";
 import type { EntityMetadata, NormalizedAttribute } from "@parallax/metamodel";
-import type { Operation } from "@parallax/operation";
+import { type Operation, RejectionError, validateWriteValueObjects } from "@parallax/operation";
 import { combineWrites, type WriteStep } from "@parallax/transactions";
 import type { Predicate } from "../dsl/find.js";
 
@@ -119,6 +120,54 @@ export class ParallaxReadBeforeWriteError extends Error {
     );
     this.name = "ParallaxReadBeforeWriteError";
     Object.setPrototypeOf(this, ParallaxReadBeforeWriteError.prototype);
+  }
+}
+
+/**
+ * Thrown when a developer write presents a structurally INVALID value-object
+ * document — a required nested member absent at any depth, a required nested value
+ * object / to-many array absent, or a document field whose type mismatches the
+ * declared attribute (m-value-object write validation, resolved Q7, the rejected-
+ * write contract cases 039-043). The runtime refuses it PRE-SQL — before any bind
+ * generation or DML — so an invalid document never reaches the unconstrained jsonb
+ * column, the same refusal the conformance runner makes (`validateWriteValueObjects`).
+ *
+ * It joins the public {@link ParallaxError} hierarchy (ADR-0007) so an application
+ * catches it uniformly and branches on its machine-readable `code`; `code` (and the
+ * `rule` alias) is the violated normative rule id — `write-required-attribute-missing`
+ * / `write-required-value-object-missing` / `write-value-type-mismatch` — carried
+ * over from the model-aware validator's `RejectionError`.
+ */
+export class ParallaxWriteValidationError extends ParallaxError {
+  /** The violated normative rule id (an alias of the {@link ParallaxError.code}). */
+  readonly rule: string;
+
+  constructor(rule: string, message: string) {
+    super(rule, message);
+    this.rule = rule;
+  }
+}
+
+/**
+ * Refuse a value-object write PRE-SQL if any of its documents is structurally
+ * invalid (m-value-object write validation). A no-op for an entity that declares no
+ * value objects, and for a valid document; a violation raises a
+ * {@link ParallaxWriteValidationError} (the mapped public form of the model-aware
+ * validator's `RejectionError`) BEFORE any bind generation. The developer surface
+ * makes the SAME pre-SQL refusal the conformance runner does for the rejected-write
+ * contract (cases 039-043).
+ */
+function assertValueObjectWrite(entity: EntityMetadata, input: Record<string, unknown>): void {
+  if (entity.valueObjects().length === 0) {
+    return;
+  }
+  try {
+    validateWriteValueObjects(entity, input);
+  } catch (error) {
+    if (error instanceof RejectionError) {
+      throw new ParallaxWriteValidationError(error.rule, error.message);
+    }
+    throw error;
   }
 }
 
@@ -219,6 +268,10 @@ export class TransactionWriter {
    */
   async create(entity: EntityMetadata, input: Record<string, unknown>): Promise<void> {
     this.assertOptimisticParticipation(entity);
+    // Refuse a structurally-invalid value-object document PRE-SQL (m-value-object
+    // write validation) — before any bind is generated — so an invalid document
+    // never reaches the unconstrained jsonb column (the rejected-write contract).
+    assertValueObjectWrite(entity, input);
     const binds = this.insertBinds(entity, input);
     if (isAuditOnly(entity)) {
       const [sql] = auditWriteStatements("insert", this.writeTargetFor(entity));

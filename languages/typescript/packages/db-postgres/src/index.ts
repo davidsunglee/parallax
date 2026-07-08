@@ -7,4 +7,4 @@
  * grading logic.
  */
 export { PostgresDatabase, type PostgresDatabaseOptions, PostgresSession } from "./adapter.js";
-export { managedTypes, serializeBytea } from "./oids.js";
+export { managedTypes, serializeBytea, serializeJson } from "./oids.js";

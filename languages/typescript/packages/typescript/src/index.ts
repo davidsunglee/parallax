@@ -61,6 +61,7 @@ export {
   ParallaxTemporalCloseError,
   ParallaxTemporalOptimisticError,
   ParallaxTransaction,
+  ParallaxWriteValidationError,
   RuntimeSchema,
   TransactionEntity,
   type TransactionOptions,

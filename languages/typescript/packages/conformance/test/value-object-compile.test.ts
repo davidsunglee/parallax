@@ -21,7 +21,7 @@
  * The positive reads are ALSO run through the operation validator to prove it
  * accepts every valid nested operation (the negative-only walk never false-rejects).
  */
-import { mariadbDialect, postgresDialect } from "@parallax/dialect";
+import { canonicalBinds, mariadbDialect, postgresDialect } from "@parallax/dialect";
 import {
   Metamodel,
   parseOperation,
@@ -74,7 +74,10 @@ describe("m-value-object compile-golden lane — emitted === golden, both dialec
         const schema = schemaForReadCase(loaded, operation, dialect);
         const { sql, binds } = compile(operation, schema, dialect);
         expect(sql).toBe(golden[0]?.sql);
-        expect(binds).toEqual(golden[0]?.binds);
+        // Canonicalize the compiled binds: a to-many read carries the array-guard
+        // `rawJson('[]')` sentinel, which collapses to the scalar string `"[]"` the
+        // hand-authored golden carries (byte-identical parity).
+        expect(canonicalBinds(binds)).toEqual(golden[0]?.binds);
       });
     });
   }

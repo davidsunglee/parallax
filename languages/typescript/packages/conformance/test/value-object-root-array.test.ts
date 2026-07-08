@@ -15,7 +15,7 @@
  *  - MariaDB's equality-only containment deferral holds for a root-array element
  *    predicate too (a non-equality any-element predicate is rejected pre-SQL).
  */
-import { type Dialect, mariadbDialect, postgresDialect } from "@parallax/dialect";
+import { canonicalBinds, type Dialect, mariadbDialect, postgresDialect } from "@parallax/dialect";
 import { Metamodel, parseOperation } from "@parallax/operation";
 import { compile } from "@parallax/sql";
 import { describe, expect, it } from "vitest";
@@ -100,10 +100,10 @@ describe("resolveNested honors a top-level `many` value object", () => {
 describe("compile lowers a root array validly on both dialects", () => {
   it("nestedExists(Class.vo) — Postgres unnests the guarded column directly", () => {
     const op = parseOperation({ nestedExists: { path: "Tagged.tags" } });
-    expect(compile(op, rootArraySchema(postgresDialect), postgresDialect)).toEqual({
-      sql: `${HEAD}exists (select 1 from jsonb_array_elements(${PG_GUARD}) t1)`,
-      binds: ["array", "[]"],
-    });
+    const result = compile(op, rootArraySchema(postgresDialect), postgresDialect);
+    expect(result.sql).toBe(`${HEAD}exists (select 1 from jsonb_array_elements(${PG_GUARD}) t1)`);
+    // The guard's `rawJson('[]')` sentinel canonicalizes to the scalar string `"[]"`.
+    expect(canonicalBinds(result.binds)).toEqual(["array", "[]"]);
   });
 
   it("nestedExists(Class.vo) — MariaDB tests containment over the document root `$`", () => {
@@ -118,10 +118,11 @@ describe("compile lowers a root array validly on both dialects", () => {
     const op = parseOperation({
       nestedEq: { path: "Tagged.tags.label", value: "home" },
     });
-    expect(compile(op, rootArraySchema(postgresDialect), postgresDialect)).toEqual({
-      sql: `${HEAD}exists (select 1 from jsonb_array_elements(${PG_GUARD}) t1 where jsonb_extract_path_text(t1.value, ?) = ?)`,
-      binds: ["array", "[]", "label", "home"],
-    });
+    const result = compile(op, rootArraySchema(postgresDialect), postgresDialect);
+    expect(result.sql).toBe(
+      `${HEAD}exists (select 1 from jsonb_array_elements(${PG_GUARD}) t1 where jsonb_extract_path_text(t1.value, ?) = ?)`,
+    );
+    expect(canonicalBinds(result.binds)).toEqual(["array", "[]", "label", "home"]);
   });
 
   it("a same-element scoped `where` eq lowers to a MariaDB containment candidate", () => {

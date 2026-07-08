@@ -32,7 +32,13 @@ import type {
 } from "@parallax/core";
 import { toWire } from "@parallax/core";
 import { type ParallaxRow, ParallaxTransientError } from "@parallax/db";
-import { type Dialect, ddlForDescriptor, mariadbDialect, postgresDialect } from "@parallax/dialect";
+import {
+  canonicalBinds,
+  type Dialect,
+  ddlForDescriptor,
+  mariadbDialect,
+  postgresDialect,
+} from "@parallax/dialect";
 import {
   type EntityMetadata,
   Metamodel,
@@ -424,10 +430,13 @@ export function runCompile(
   }
 
   const { sql, binds } = compileRootStatement(loaded, dialectFor(dialect));
+  // Canonicalize the compiled binds before REPORTING them: a value-object to-many read
+  // carries the array-guard `rawJson('[]')` sentinel, which must collapse to the scalar
+  // string `"[]"` so the envelope binds stay wire-scalar and byte-identical to the golden.
   const emission: Emission = {
     casePointer: READ_OPERATION_POINTER,
     sql,
-    binds: binds as readonly WireBind[],
+    binds: canonicalBinds(binds) as readonly WireBind[],
   };
   return assertValidEnvelope({
     schemaVersion: "1",
@@ -631,11 +640,20 @@ async function runValueObjectGraph(
   const rootEntity = metamodel.entity(schema.rootEntityName());
   const { sql, binds } = compile(operation, schema, dialect, { locking: false });
 
+  // The provider gets the RAW binds (any `rawJson('[]')` guard sentinel must reach the
+  // driver's json serializer verbatim); the REPORTED emission gets the canonicalized
+  // scalars (the sentinel collapses to `"[]"` for the wire-scalar envelope).
   const rows = await provider.query(sql, binds as readonly unknown[]);
   const nodes = rows.map((row) => materializeOwnerNode(rootEntity, row as Row));
   const graph: Record<string, readonly Row[]> = { [rootEntity.name]: nodes };
   return {
-    emissions: [{ casePointer: READ_OPERATION_POINTER, sql, binds: binds as readonly WireBind[] }],
+    emissions: [
+      {
+        casePointer: READ_OPERATION_POINTER,
+        sql,
+        binds: canonicalBinds(binds) as readonly WireBind[],
+      },
+    ],
     observations: { roundTrips: 1, graph },
   };
 }
@@ -751,9 +769,18 @@ async function runFlatRead(
   // change rows), so the executed SQL is already locked.
   const { sql, binds } = compile(operation, schema, dialect, { locking: isReadLock(loaded) });
 
+  // The provider gets the RAW binds (a value-object to-many read's `rawJson('[]')` guard
+  // sentinel must reach the driver's json serializer verbatim); the REPORTED emission gets
+  // the canonicalized scalars (the sentinel collapses to `"[]"` for the wire-scalar envelope).
   const rows = await provider.query(sql, binds as readonly unknown[]);
   return {
-    emissions: [{ casePointer: READ_OPERATION_POINTER, sql, binds: binds as readonly WireBind[] }],
+    emissions: [
+      {
+        casePointer: READ_OPERATION_POINTER,
+        sql,
+        binds: canonicalBinds(binds) as readonly WireBind[],
+      },
+    ],
     observations: { roundTrips: 1, rows: rows as readonly Row[] },
   };
 }

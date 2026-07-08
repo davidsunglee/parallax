@@ -12,7 +12,7 @@ import type { ParallaxDatabase } from "@parallax/db";
 import { ParallaxTransientError } from "@parallax/db";
 import { MariaDbDatabase } from "@parallax/db-mariadb";
 import { PostgresDatabase } from "@parallax/db-postgres";
-import { type Dialect, mariadbDialect, postgresDialect } from "@parallax/dialect";
+import { type Dialect, mariadbDialect, postgresDialect, rawJson } from "@parallax/dialect";
 import { MySqlContainer } from "@testcontainers/mysql";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, expect, describe as group, it } from "vitest";
@@ -184,6 +184,119 @@ for (const spec of SPECS) {
     );
   });
 }
+
+/**
+ * Postgres-only `json` / `jsonb` round-trip through the shipped adapter — the
+ * fail-safe-by-default fix proven on a real server. A `json` value binds through the
+ * SAME seam the runtime write path uses (`postgresDialect.bindValue("json", value)`,
+ * which pre-serializes to canonical JSON and wraps it in the raw sentinel the adapter's
+ * `serializeJson` emits verbatim), and must read back equal for every JSON shape —
+ * including a STRING scalar, the regression that was bound as the raw, invalid-JSON text
+ * `hello` instead of the jsonb string `"hello"`. A companion test proves the
+ * DIRECT-adapter fail-safe: a bare string bound with NO wrapper still lands as valid JSON
+ * via `serializeJson`'s `JSON.stringify` default (the exact missed-path the finding is
+ * about). A third proves the read-side empty-array guard `'[]'` still passes through raw
+ * (a jsonb ARRAY, not the jsonb string scalar `"[]"`), so the fix does not re-break the
+ * value-object to-many read.
+ */
+group.skipIf(!HAS_DOCKER)(
+  "@parallax/db-postgres json column round-trip (Testcontainers postgres:17)",
+  () => {
+    let handle: AdapterHandle | undefined;
+
+    beforeAll(async () => {
+      handle = await startPostgres();
+    }, BOOT_TIMEOUT);
+
+    afterAll(async () => {
+      await handle?.close();
+    });
+
+    it(
+      "round-trips a json attribute value written through the dialect bind seam (Finding 1)",
+      async () => {
+        const db = mustHandle(handle).db;
+        await db.execute("drop table if exists adapter_json", []);
+        await db.execute("create table adapter_json (id int primary key, doc jsonb)", []);
+
+        // A plain `json` m-core attribute holding each JSON shape a developer may
+        // write: string / number / boolean / nested object / array.
+        const cases: readonly (readonly [number, unknown])[] = [
+          [1, "hello"],
+          [2, 42],
+          [3, true],
+          [4, { street: "12 Aurora Ave", geo: { country: "NO" } }],
+          [5, [{ type: "home" }, { type: "work" }]],
+        ];
+        for (const [id, value] of cases) {
+          await db.executeWrite("insert into adapter_json (id, doc) values (?, ?)", [
+            id,
+            postgresDialect.bindValue("json", value),
+          ]);
+        }
+
+        const rows = await db.execute("select id, doc from adapter_json", []);
+        const doc = new Map(
+          rows.map((row) => {
+            const r = row as { id: number; doc: unknown };
+            return [Number(r.id), r.doc] as const;
+          }),
+        );
+        // A json STRING scalar round-trips as the string "hello" — the regression (it
+        // was previously bound as the raw, invalid-JSON text `hello`, which Postgres
+        // rejects). The adapter now JSON-ENCODES it to the jsonb string `"hello"`.
+        expect(doc.get(1)).toBe("hello");
+        expect(doc.get(2)).toBe(42);
+        expect(doc.get(3)).toBe(true);
+        expect(doc.get(4)).toEqual({ street: "12 Aurora Ave", geo: { country: "NO" } });
+        expect(doc.get(5)).toEqual([{ type: "home" }, { type: "work" }]);
+      },
+      BOOT_TIMEOUT,
+    );
+
+    it(
+      "fail-safe default: a bare string bound DIRECTLY (no wrapper) lands as valid JSON",
+      async () => {
+        const db = mustHandle(handle).db;
+        await db.execute("drop table if exists adapter_json_direct", []);
+        await db.execute("create table adapter_json_direct (id int primary key, doc jsonb)", []);
+
+        // The exact missed path the finding is about: a bare string bound straight
+        // through the adapter — NOT via bindValue / any sentinel wrapper — to a jsonb
+        // column. The fail-safe serializer JSON-encodes it, so it lands as the valid
+        // jsonb string "hello" (not the raw, invalid-JSON text `hello` Postgres rejects).
+        await db.executeWrite("insert into adapter_json_direct (id, doc) values (?, ?)", [
+          1,
+          "hello",
+        ]);
+
+        const [row] = await db.execute("select doc from adapter_json_direct where id = ?", [1]);
+        expect((row as { doc: unknown }).doc).toBe("hello");
+      },
+      BOOT_TIMEOUT,
+    );
+
+    it(
+      "still passes the value-object to-many read's empty-array guard '[]' through raw",
+      async () => {
+        const db = mustHandle(handle).db;
+        // The read lowering binds the array guard as `rawJson('[]')` to cast(? as jsonb);
+        // the sentinel passes through raw so it stays a jsonb ARRAY (not the jsonb string
+        // scalar `"[]"` the fail-safe default would encode), which jsonb_array_elements
+        // accepts. This is exactly what `nestedArrayPredicate` emits into the read binds.
+        const [row] = await db.execute(
+          "select jsonb_typeof(cast(? as jsonb)) as kind, " +
+            "(select count(*) from jsonb_array_elements(cast(? as jsonb))) as n",
+          [rawJson("[]"), rawJson("[]")],
+        );
+        const r = row as { kind: string; n: unknown };
+        expect(r.kind).toBe("array");
+        expect(Number(r.n)).toBe(0);
+      },
+      BOOT_TIMEOUT,
+    );
+  },
+);
 
 function mustHandle(handle: AdapterHandle | undefined): AdapterHandle {
   if (handle === undefined) {
