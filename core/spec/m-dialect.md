@@ -259,15 +259,22 @@ both forms yield the identical observable order (case `m-deep-fetch-012`).
   dialects. A reserved word or otherwise non-simple name MUST be quoted, and the
   quote **character diverges** — Postgres double-quotes (`"order"`), MariaDB
   backticks (`` `order` ``). **Which names are reserved is itself per-dialect** — a
-  database's keyword list differs — so the reserved-word set (not only the quote
-  character) is owned here per dialect: `position` is a reserved function name on
-  MariaDB (an unquoted `position` table emits an unparseable `POSITION(` call) but
-  not on Postgres, so the `m-bitemp-write` cases quote `` `position` `` on MariaDB
-  while leaving `position` bare on Postgres. The compatibility case `m-descriptor-001`
-  witnesses the shared-reserved `order` on both dialects (a column literally named
-  `order`); the `m-sql` normalizer preserves quoted identifiers, and the harness
-  quotes reserved identifiers in the DDL/DML it generates while leaving simple names
-  unquoted.
+  database's keyword list differs — so the quoting *decision*, not only the quote
+  character, is per-dialect; that **rule** is owned here, but the concrete
+  reserved-word list is **not enumerated here**. `position` is a reserved function
+  name on MariaDB (an unquoted `position` table emits an unparseable `POSITION(`
+  call) but not on Postgres, so the `m-bitemp-write` cases quote `` `position` `` on
+  MariaDB while leaving `position` bare on Postgres. The compatibility case
+  `m-descriptor-001` witnesses the shared-reserved `order` on both dialects (a
+  column literally named `order`); the `m-sql` normalizer preserves quoted
+  identifiers, and the harness quotes reserved identifiers in the DDL/DML it
+  generates while leaving simple names unquoted. The concrete per-dialect
+  reserved-word lists themselves are **currently maintained by each conforming
+  implementation** — the reference harness's DDL builder and each language's dialect
+  layer — so a divergence such as MariaDB's `position` lives in those lists rather
+  than in a shared table. A single shared normative reserved-word artifact (one
+  `core` list the implementations derive from, with a cross-implementation drift
+  guard) is a **deferred follow-on**, not yet part of `core`.
 - **Infinity representation.** The open upper bound of a temporal interval
   (`m-core`) is owned here. **Postgres** uses native `'infinity'::timestamptz`, so
   the current-row predicate is `to = infinity` and a milestone insert writes
