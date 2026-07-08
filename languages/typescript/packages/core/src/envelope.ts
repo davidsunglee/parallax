@@ -27,7 +27,8 @@ export type CaseShape =
   | "coherence"
   | "error"
   | "concurrencySuccess"
-  | "boundary";
+  | "boundary"
+  | "rejected";
 
 /**
  * A canonical module tag from the closed catalog (`core/spec/modules.md`). The
