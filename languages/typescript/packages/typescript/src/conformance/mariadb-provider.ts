@@ -32,12 +32,34 @@
  */
 import type { CompatibilityDatabaseProvider, ProviderRow } from "@parallax/conformance";
 import { parseTimestamp, toWire } from "@parallax/core";
-import { MariaDbDatabase, type MariaDbSession } from "@parallax/db-mariadb";
+import {
+  MariaDbDatabase,
+  type MariaDbDatabaseOptions,
+  type MariaDbSession,
+} from "@parallax/db-mariadb";
 import { type Dialect, MARIADB_DIALECT, mariadbDialect } from "@parallax/dialect";
 import { MySqlContainer, type StartedMySqlContainer } from "@testcontainers/mysql";
 
 /** Pinned at a current stable MariaDB major (m-case-format/DQ15), matching the Python oracle. */
 const MARIADB_IMAGE = "mariadb:11.4";
+
+/**
+ * Run-lane connection options that reproduce the reference oracle's (pymysql) SQL
+ * PARSING, so a case's verbatim `given.apply` behaves identically here.
+ *
+ * `mysql2` sets the `CLIENT_IGNORE_SPACE` capability by DEFAULT (`getDefaultFlags`),
+ * which tells MariaDB to treat a built-in function name followed by a SPACE as the
+ * function — so `insert into position (…)` parses `position` as the `POSITION()`
+ * function and is REJECTED. pymysql (the oracle) does NOT set that flag, so the same
+ * spaced-out unquoted `position` reads as a table identifier — the portability trick a
+ * `given.apply` uses (`m-bitemp-write-005`) to stay dialect-agnostic. Blacklisting
+ * `IGNORE_SPACE` (`"-IGNORE_SPACE"`) aligns this run-lane's parsing with the oracle.
+ * It affects ONLY function-name-space parsing; every statement the run-lane executes
+ * quotes its identifiers or writes function calls tight (`hex(…)`), so nothing else
+ * changes. NOT set on the shipped adapter default — the compiler always quotes
+ * `position` on MariaDB, so generated SQL never depends on this.
+ */
+const MARIADB_RUN_LANE_OPTIONS: MariaDbDatabaseOptions = { flags: ["-IGNORE_SPACE"] };
 
 /** Pause helper for the connect-retry loop. */
 function sleep(ms: number): Promise<void> {
@@ -187,7 +209,7 @@ export class MariaDbProvider implements CompatibilityDatabaseProvider {
   static async start(): Promise<MariaDbProvider> {
     const container = await new MySqlContainer(MARIADB_IMAGE).start();
     const uri = container.getConnectionUri();
-    const db = MariaDbDatabase.fromConnectionString(uri);
+    const db = MariaDbDatabase.fromConnectionString(uri, MARIADB_RUN_LANE_OPTIONS);
     await waitForReady(db);
     return new MariaDbProvider(container, db, uri);
   }

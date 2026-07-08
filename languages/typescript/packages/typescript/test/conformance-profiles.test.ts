@@ -49,9 +49,9 @@ describe("m-case-format matrix profiles", () => {
     expect(idsFor(POSTGRES_TEMPORAL_PROFILE)).toEqual([...POSTGRES_TEMPORAL_PROFILE_IDS].sort());
   });
 
-  it("declares MariaDB as a first-class curated 28-case partial profile", () => {
+  it("declares MariaDB as a first-class curated 36-case partial profile", () => {
     expect(idsFor(MARIADB_CURATED_PROFILE)).toEqual([...MARIADB_CURATED_PROFILE_IDS].sort());
-    expect(casesForProfile(MARIADB_CURATED_PROFILE)).toHaveLength(28);
+    expect(casesForProfile(MARIADB_CURATED_PROFILE)).toHaveLength(36);
   });
 
   it("classifies every non-included Postgres full-profile case as an explicit MariaDB exclusion", () => {
@@ -69,7 +69,7 @@ describe("m-case-format matrix profiles", () => {
         `${id} is neither included nor explicitly excluded from ${MARIADB_CURATED_PROFILE.name}`,
       ).toBe(true);
     }
-    expect(exclusions.length).toBe(postgresFull.length - 17);
+    expect(exclusions.length).toBe(postgresFull.length - 25);
     // Two exclusion reasons now: the historical no-mariadb-golden reason, plus the
     // value-object cases (which DO carry mariadb golden but are proven by the
     // Phase-10 direct compile tests, not this run-lane profile).

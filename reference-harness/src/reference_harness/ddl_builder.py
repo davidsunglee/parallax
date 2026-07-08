@@ -66,10 +66,16 @@ _DECIMAL_RE = re.compile(r"^decimal\((\d+),(\d+)\)$")
 _SIMPLE_IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 # Reserved words that, although lexically simple, MUST be quoted when used as a
-# column/table identifier. A curated set common to Postgres and MariaDB — enough
-# to cover identifiers a model might realistically use (e.g. `order`); a non-
-# simple name (uppercase / special) is caught by the regex regardless.
-_RESERVED_WORDS = frozenset(
+# column/table identifier. The set is **per-dialect** (m-dialect: identifier
+# quoting): a keyword list differs from database to database, so the quoting
+# DECISION — not merely the quote character — diverges. The curated base below is
+# the words shared by both dialects (enough to cover identifiers a model might
+# realistically use, e.g. `order`); a non-simple name (uppercase / special) is
+# caught by the regex regardless. This mirrors the per-dialect sets the TypeScript
+# dialects already carry (`postgres.ts` / `mariadb.ts` `RESERVED_WORDS`); it is a
+# non-normative harness fix bringing the harness into line with the already-
+# normative per-dialect rule (m-dialect), and introduces no new normative surface.
+_RESERVED_WORDS_BASE = frozenset(
     {
         "all",
         "and",
@@ -126,20 +132,32 @@ _RESERVED_WORDS = frozenset(
     }
 )
 
+# `position` is a MariaDB-only addition: `POSITION()` is a reserved SQL function
+# name on MariaDB (so an unquoted `Position` table emits an unparseable
+# `insert into position(...)` there) but NOT on Postgres, where `position` stays
+# unquoted — byte-identical to the existing bare-Postgres `position` goldens. This
+# is exactly the divergence the single-set shape could not express.
+_RESERVED_WORDS = {
+    "postgres": _RESERVED_WORDS_BASE,
+    "mariadb": _RESERVED_WORDS_BASE | {"position"},
+}
+
 _QUOTE_CHAR = {"postgres": '"', "mariadb": "`"}
 
 
 def quote_identifier(name: str, dialect: str) -> str:
     """Quote *name* for *dialect* when it is a reserved word or otherwise non-simple.
 
-    A simple lowercase identifier that is not reserved is returned unquoted, so
-    the generated DDL/DML for every existing model is byte-identical. A reserved
-    word (e.g. ``order``) or a name with uppercase / special characters is wrapped
-    in the dialect's quote character — ``"..."`` on Postgres, backticks on MariaDB
-    — with any embedded quote doubled. The hand-authored golden SQL quotes the
-    same identifiers; the m-sql normalizer preserves that quoting.
+    A simple lowercase identifier that is not reserved **for that dialect** is
+    returned unquoted, so the generated DDL/DML for every existing model is
+    byte-identical. A reserved word (e.g. ``order`` on both dialects, or
+    ``position`` on MariaDB only) or a name with uppercase / special characters is
+    wrapped in the dialect's quote character — ``"..."`` on Postgres, backticks on
+    MariaDB — with any embedded quote doubled. The hand-authored golden SQL quotes
+    the same identifiers; the m-sql normalizer preserves that quoting.
     """
-    if _SIMPLE_IDENTIFIER.match(name) and name not in _RESERVED_WORDS:
+    reserved = _RESERVED_WORDS.get(dialect, _RESERVED_WORDS_BASE)
+    if _SIMPLE_IDENTIFIER.match(name) and name not in reserved:
         return name
     char = _QUOTE_CHAR.get(dialect, '"')
     return f"{char}{name.replace(char, char * 2)}{char}"

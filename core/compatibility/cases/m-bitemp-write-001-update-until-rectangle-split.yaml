@@ -52,18 +52,23 @@ then:
   statements:
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
     - sql:
         postgres: update position set out_z = ? where pos_id = ? and out_z = ?
+        mariadb: update `position` set out_z = ? where pos_id = ? and out_z = ?
       binds: ["2024-02-15T00:00:00+00:00", 1, infinity]
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-15T00:00:00+00:00", infinity]
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 200.00, "2024-03-01T00:00:00+00:00", "2024-09-01T00:00:00+00:00", "2024-02-15T00:00:00+00:00", infinity]
     - sql:
         postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into `position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, 100.00, "2024-09-01T00:00:00+00:00", infinity, "2024-02-15T00:00:00+00:00", infinity]
   tableState:
     position:

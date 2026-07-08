@@ -10,14 +10,20 @@
 # milestone than the one we observed, so our close bound to the stale in_z
 # (2024-04-01) matches nothing and affects 0 rows — without the in_z gate it would
 # silently re-inactivate the concurrent writer's fresh milestone. `then.tableState`
-# is the fixtures plus that re-chain.
+# is the fixtures plus that re-chain. The `given.apply` re-chain runs VERBATIM on both
+# dialects, so its open bound rides as an `infinity` BIND the dialect translates (native
+# infinity on Postgres, max-sentinel on MariaDB) rather than an inline `'infinity'`
+# literal, and `position` carries a space before `(` so MariaDB reads a table
+# identifier, not a `POSITION(` function call.
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-mvp-1]
 shape: conflict
 given:
   apply:
-    - sql: update position set out_z = '2024-05-01T00:00:00+00:00' where pos_id = 1 and out_z = 'infinity' and from_z = '2024-06-01T00:00:00+00:00' and in_z = '2024-04-01T00:00:00+00:00'
-    - sql: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (1, 'A', 250.00, '2024-06-01T00:00:00+00:00', 'infinity', '2024-05-01T00:00:00+00:00', 'infinity')
+    - sql: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
+      binds: ["2024-05-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+    - sql: insert into position (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, A, 250.00, "2024-06-01T00:00:00+00:00", infinity, "2024-05-01T00:00:00+00:00", infinity]
 when:
   uow:
     concurrency: optimistic
@@ -28,6 +34,7 @@ then:
   statements:
     - sql:
         postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
+        mariadb: update `position` set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
       binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
   affectedRows: 0
   tableState:

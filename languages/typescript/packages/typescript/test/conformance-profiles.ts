@@ -140,6 +140,28 @@ export const MARIADB_WRITE_PROFILE_IDS: readonly string[] = [
   "m-audit-write-004",
 ];
 
+// COR-26 — the full-bitemporal `position` write/conflict cases carry goldenSql.mariadb
+// (the harness reserved-word set became per-dialect, so `position` quotes as `position`
+// on MariaDB while staying bare on Postgres). They JOIN the curated profile via
+// `hasMariaDbGolden` AND now execute on the TypeScript run-lane (`mariadb-run.test.ts`):
+// the temporal-insert builder emits the sqlglot-canonical quoted-table spacing
+// (`` insert into `position` (…) ``, a space before `(` for a quoted table; the unquoted
+// Postgres form `insert into position(…)` stays tight). The reference-harness oracle
+// (`just oracle-test`, both dialects) is the independent second witness.
+export const MARIADB_BITEMP_WRITE_PROFILE_IDS: readonly string[] = [
+  "m-bitemp-write-001",
+  "m-bitemp-write-002",
+  "m-bitemp-write-003",
+  "m-bitemp-write-006",
+  "m-bitemp-write-007",
+  "m-bitemp-write-008",
+];
+
+export const MARIADB_BITEMP_CONFLICT_PROFILE_IDS: readonly string[] = [
+  "m-bitemp-write-004",
+  "m-bitemp-write-005",
+];
+
 export const MARIADB_UNIQUE_PROFILE_IDS: readonly string[] = [
   "m-db-error-001",
   "m-db-error-002",
@@ -158,6 +180,8 @@ export const MARIADB_CURATED_PROFILE_IDS: readonly string[] = [
   ...MARIADB_FLAT_READ_PROFILE_IDS,
   ...MARIADB_DEEP_FETCH_PROFILE_IDS,
   ...MARIADB_WRITE_PROFILE_IDS,
+  ...MARIADB_BITEMP_WRITE_PROFILE_IDS,
+  ...MARIADB_BITEMP_CONFLICT_PROFILE_IDS,
   ...MARIADB_UNIQUE_PROFILE_IDS,
   ...MARIADB_DEADLOCK_PROFILE_IDS,
   ...MARIADB_LOCK_WAIT_PROFILE_IDS,
@@ -208,7 +232,9 @@ export const POSTGRES_TEMPORAL_PROFILE: MatrixProfile = fixedIdProfile(
  * curated profile. Excluding them keeps the curated profile at its original
  * 25-case marquee set (impl-spec §5.4) rather than ballooning it with every
  * value-object golden. COR-26 grew the marquee write set by the three audit-chaining
- * MariaDB backfill cases (m-audit-write-002/-003/-004), lifting the profile to 28.
+ * MariaDB backfill cases (m-audit-write-002/-003/-004), lifting the profile to 28, then
+ * by the eight full-bitemporal `position` write/conflict cases (m-bitemp-write-001..008)
+ * once the harness reserved-word set became per-dialect, lifting it to 36.
  */
 const VALUE_OBJECT_MARIADB_REASON =
   "value-object MariaDB parity is proven by the Phase-10 direct compile tests, not this run-lane profile";
@@ -218,7 +244,7 @@ function isValueObjectCase(loaded: LoadedCase): boolean {
 }
 
 export const MARIADB_CURATED_PROFILE: MatrixProfile = {
-  name: "mariadb-curated-28",
+  name: "mariadb-curated-36",
   dialect: "mariadb",
   kind: "partial",
   description:
@@ -257,7 +283,7 @@ export const MATRIX_PROFILES: readonly MatrixProfile[] = [
  * Every discovered corpus case, discovered + parsed **once per process** and then
  * memoized. `caseById` / `casesForProfile` / `exclusionsForProfile` each fan out
  * over the full corpus, so without the cache a single test that resolves many ids
- * (e.g. the curated-profile coverage assertion, which touches 25) re-reads and
+ * (e.g. the curated-profile coverage assertion, which touches 36) re-reads and
  * re-parses all ~200 case + model + fixture YAMLs *per id* — enough synchronous
  * I/O to blow the default 5s test timeout on a contended runner. The m-case-format corpus is
  * static within a run, so caching the loaded set is safe.

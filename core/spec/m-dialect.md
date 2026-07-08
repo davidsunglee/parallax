@@ -258,10 +258,16 @@ both forms yield the identical observable order (case `m-deep-fetch-012`).
 - **Identifier quoting.** Simple lowercase identifiers are unquoted on both
   dialects. A reserved word or otherwise non-simple name MUST be quoted, and the
   quote **character diverges** — Postgres double-quotes (`"order"`), MariaDB
-  backticks (`` `order` ``). The compatibility case `m-descriptor-001` witnesses
-  this on both dialects (a column literally named `order`); the `m-sql` normalizer
-  preserves quoted identifiers, and the harness quotes reserved identifiers in the
-  DDL/DML it generates while leaving simple names unquoted.
+  backticks (`` `order` ``). **Which names are reserved is itself per-dialect** — a
+  database's keyword list differs — so the reserved-word set (not only the quote
+  character) is owned here per dialect: `position` is a reserved function name on
+  MariaDB (an unquoted `position` table emits an unparseable `POSITION(` call) but
+  not on Postgres, so the `m-bitemp-write` cases quote `` `position` `` on MariaDB
+  while leaving `position` bare on Postgres. The compatibility case `m-descriptor-001`
+  witnesses the shared-reserved `order` on both dialects (a column literally named
+  `order`); the `m-sql` normalizer preserves quoted identifiers, and the harness
+  quotes reserved identifiers in the DDL/DML it generates while leaving simple names
+  unquoted.
 - **Infinity representation.** The open upper bound of a temporal interval
   (`m-core`) is owned here. **Postgres** uses native `'infinity'::timestamptz`, so
   the current-row predicate is `to = infinity` and a milestone insert writes

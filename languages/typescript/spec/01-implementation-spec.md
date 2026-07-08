@@ -845,11 +845,17 @@ database implementations behind the m-dialect seam:
   value-object cases — their nested-predicate reads, materialization graph,
   atomic document writes, inherited-temporality reads, and pre-SQL `rejected`
   refusals), included in `just ts-db`.
-- **MariaDB curated m-case-format profile** (`mariadb-curated-28`): a first-class partial
+- **MariaDB curated m-case-format profile** (`mariadb-curated-36`): a first-class partial
   profile over `mariadb:11.4`, included in `just ts-db-all`. It preserves the
-  28-case set: 17
+  36-case set: 25
   harness-lane slice cases whose `then.statements` entries carry a `mariadb` `sql`
-  key (COR-26 added the audit-chaining backfill `m-audit-write-002`/`-003`/`-004`) plus 11 marquee MariaDB
+  key (COR-26 added the audit-chaining backfill `m-audit-write-002`/`-003`/`-004`, then the
+  eight full-bitemporal `position` write/conflict cases `m-bitemp-write-001`-`-008` once the
+  harness reserved-word set became per-dialect — those eight now EXECUTE on the TS run-lane
+  too, six rectangle-split write sequences plus two optimistic-conflict closes, because the
+  temporal-insert builder emits the sqlglot-canonical quoted-table spacing
+  (`` insert into `position` (…) ``); the reference-harness oracle is the independent second
+  witness) plus 11 marquee MariaDB
   dialect/error-classification proofs (`m-read-lock-009`, `m-temporal-read-021`, `m-core-004`, `m-db-error-001`-`m-db-error-008`).
   The value-object cases DO carry `mariadb` golden, but they are deliberately
   **not** run through the curated run-lane profile: their MariaDB golden-SQL
