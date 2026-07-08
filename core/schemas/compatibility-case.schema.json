@@ -141,7 +141,7 @@
       }
     },
     {
-      "description": "A rejected case (m-value-object / m-op-algebra negative validation, resolved Q7): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries the invalid input — EITHER an `operation` (a SCHEMA-VALID m-op-algebra node that violates a resolver MUST or the m-value-object materialization/navigation contract: a nested path whose first segment is not a declared value object, a nested comparison whose literal type mismatches the declared attribute, a `deepFetch` path or a relationship navigation aimed at a value-object segment, or a find() rooted at a value object) OR a `write` (a neutral write row whose value-object document omits a required attribute / required nested value object at any depth, or carries a type-mismatched value). It carries NO golden SQL — `then.statements` is disallowed — because rejection is asserted pre-SQL, on no dialect. Purely regex-level negatives (an empty path after the value-object name, a bad-cased segment) are the operation schema's job and stay schema-validation unit tests, NOT rejected cases.",
+      "description": "A rejected case (m-value-object / m-op-algebra negative validation, resolved Q7): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — EITHER an `operation` (a SCHEMA-VALID m-op-algebra node that violates a resolver MUST or the m-value-object materialization/navigation contract: a nested path whose first segment is not a declared value object, a nested comparison whose literal type mismatches the declared attribute, a `deepFetch` path or a relationship navigation aimed at a value-object segment, or a find() rooted at a value object) OR a `write` (a neutral write row whose value-object document omits a required attribute / required nested value object at any depth, or carries a type-mismatched value). The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `operation`/`write`: a `when` carrying BOTH, or NEITHER, fails validation (the normative \"exactly one invalid input\" rule). It carries NO golden SQL — `then.statements` is disallowed — because rejection is asserted pre-SQL, on no dialect. Purely regex-level negatives (an empty path after the value-object name, a bad-cased segment) are the operation schema's job and stay schema-validation unit tests, NOT rejected cases.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "rejected" },
@@ -153,7 +153,7 @@
           "not": { "required": ["statements"] }
         }
       },
-      "anyOf": [
+      "oneOf": [
         { "properties": { "when": { "required": ["operation"] } } },
         { "properties": { "when": { "required": ["write"] } } }
       ]
