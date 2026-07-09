@@ -145,10 +145,9 @@ implementer authoring a first build ordinarily adopts an existing claim's
 
 That canonical block is the general rule, not a one-off: a slice's
 machine-readable form is a `describeOk` envelope validated against this schema,
-and its name is its `caseTags.include` tag, which follows the slice-naming
+and its name is its `caseTags.include` tag, which follows the slice-tag
 convention `^slice-[a-z0-9][a-z0-9-]*$`. Both the rule and the convention are
-stated with the slice in
-[`slices.md`](slices.md#first-implementation-conformance-slice).
+stated in [`slices.md`](slices.md#the-slice-tag-convention).
 
 A case command is claimed only when **all** of these are true:
 

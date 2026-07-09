@@ -38,7 +38,7 @@ temporal object is a view of its milestone timeline pinned at a coordinate, so
 same-key views at different pins coexist in one transaction, and every held
 view reflects an in-transaction milestone write at its own pin. The entity
 component normalizes to the inheritance family, so a row read through the
-abstract root and through a concrete leaf interns to the same object.
+abstract root and through a concrete subtype interns to the same object.
 `history()`/`asOfRange` results are edge-pinned at each milestone's from-instant
 (Reladomo's `equalsEdgePoint`, which uses the from column for half-open
 intervals), making every version navigable at its own pin; combining history

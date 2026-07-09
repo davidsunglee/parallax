@@ -28,18 +28,17 @@ while deferring others). Its machine-readable form is a `describeOk` envelope
 validated against
 [`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json),
 and its name is its `caseTags.include` tag. Slice mechanics and the canonical
-claim live in
-[`slices.md`](slices.md#first-implementation-conformance-slice).
+claims live in [`slices.md`](slices.md#the-slice-tag-convention).
 
 - **(decide and record)** The named **Conformance Slice** this build claims — its
-  name **MUST** equal the `caseTags.include` tag and follow the slice-naming
+  name **MUST** equal the `caseTags.include` tag and follow the slice-tag
   convention `^slice-[a-z0-9][a-z0-9-]*$` — or the definition of a new named
-  slice in [`slices.md`](slices.md). The recommended first
-  slice is the include-driven
-  [`slice-mvp-1`](slices.md#first-implementation-conformance-slice)
-  slice: a Postgres-only, 123-case subset whose canonical `describe` claim lives
-  in `slices.md` and is the single source of truth (a slice may defer parts of a
-  module).
+  slice in [`slices.md`](slices.md). A first implementation should choose an
+  existing include-driven slice such as
+  [`slice-snapshot-1`](slices.md#snapshot-conformance-slice) or
+  [`slice-managed-1`](slices.md#managed-object-conformance-slice), whose
+  canonical `describe` claim lives in `slices.md` and is the single source of
+  truth (a slice may defer parts of a module).
 - **(decide and record)** The adapter's `capabilities` block
   (`modules` / `dialects` / `caseShapes` / `caseTags.include`) — **byte-equal to
   the canonical claim except for the `adapter` identity**. This block is the

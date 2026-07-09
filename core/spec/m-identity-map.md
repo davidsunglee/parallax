@@ -46,7 +46,7 @@ The identity key is the triple:
 
 - **Entity family** — the key normalizes to the **inheritance family**
   (`m-inheritance`): a row read through the abstract family root and through its
-  concrete leaf finder interns to the **same** managed object. Identity is a
+  concrete subtype finder interns to the **same** managed object. Identity is a
   property of the row's family position, never of the query's declared type.
 - **Primary key** — the entity's declared primary key (`m-descriptor`).
 - **Lowered as-of coordinates** — one coordinate per declared `asOfAttribute`
