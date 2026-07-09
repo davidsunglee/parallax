@@ -1449,13 +1449,32 @@ def _discriminator(entity: Entity) -> tuple[str, Any] | None:
     return discriminator["column"], value
 
 
+def _bytes_to_hex(value: Any) -> Any:
+    """Render a ``bytes`` / ``memoryview`` value as lowercase hex text, else unchanged.
+
+    The neutral write input (①) authors a ``bytes`` column as its wire form — a
+    lowercase hex STRING (a ``bytes`` object is not a JSON type the write-row schema
+    admits), while the golden bind carries the raw bytes (a ``!!binary`` tag). Both
+    collapse to the same lowercase hex text here so ① ↔ golden cross-checking and
+    table-state read-back compare a ``bytes`` column dialect-agnostically (the same
+    hex form the TypeScript adapter's ``toWire`` produces).
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    return value
+
+
 def _write_value_equal(left: Any, right: Any) -> bool:
-    """Scalar equality for an ① value vs a golden bind, tolerant of date encoding.
+    """Scalar equality for an ① value vs a golden bind, tolerant of date/bytes encoding.
 
     A date/timestamp authored QUOTED in ① (a string) must match the golden bind
     that PyYAML parsed from an UNQUOTED token into a ``date`` / ``datetime`` object;
-    compare their ISO string forms once the exact-Decimal comparison declines.
+    compare their ISO string forms once the exact-Decimal comparison declines. A
+    ``bytes`` column is authored as a hex STRING in ① but as raw ``!!binary`` bytes
+    in the golden bind, so both are normalized to lowercase hex first.
     """
+    left = _bytes_to_hex(left)
+    right = _bytes_to_hex(right)
     if _scalars_equal(left, right, None):
         return True
     return str(left) == str(right)
@@ -2271,10 +2290,20 @@ def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:
     projection = ", ".join(f"t0.{quote_identifier(column, db.dialect)}" for column in columns)
     rows = db.query(f"select {projection} from {quote_identifier(entity.table, db.dialect)} t0")
     document_columns = {value_object["column"] for value_object in entity.value_objects}
+    # A `bytes` column reads back as raw driver bytes (Postgres ``memoryview`` /
+    # MariaDB ``bytes``); render it to lowercase hex text so a write round-trip's
+    # ``then.tableState`` compares dialect-agnostically to the authored hex string
+    # (the same wire form the TypeScript adapter's ``toWire`` produces on read).
+    bytes_columns = {
+        attribute["column"] for attribute in entity.attributes if attribute.get("type") == "bytes"
+    }
     for row in rows:
         for column in document_columns:
             if column in row:
                 row[column] = _decode_document(row[column])
+        for column in bytes_columns:
+            if isinstance(row.get(column), (bytes, bytearray, memoryview)):
+                row[column] = bytes(row[column]).hex()
     return rows
 
 

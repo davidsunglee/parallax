@@ -1,0 +1,54 @@
+# Subscriber: a VERSIONED value-object owner — an `optimisticLocking` version
+# column PLUS a top-level `valueObjects` block on the SAME entity (m-opt-lock +
+# m-value-object). This composition is net-new: no existing model combines an
+# optimistic-lock version with a value object, so a versioned document write under
+# an optimistic gate had no witness before m-value-object-046.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `address`
+# is a top-level value object stored atomically in ONE m-core `json` column;
+# `version` is the framework-owned optimistic-lock counter (int32). A versioned
+# UPDATE that assigns the whole `address` document advances + gates `version`
+# exactly once — the domain SET column (address) lists ahead of the derived
+# `version = observed + 1`, gated on the observed version (m-opt-lock ADR 0014).
+#
+# optimisticLocking MUST NOT coexist with asOfAttributes on one entity (metamodel
+# invariant), so Subscriber is non-temporal. Row data lives in
+# fixtures/subscriber.yaml (the conflict case loads the version-1 row it updates).
+entity:
+  name: Subscriber
+  namespace: parallax.compatibility
+  table: subscriber
+  mutability: transactional
+  temporal: non-temporal
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGenerator: none
+    - name: version
+      type: int32
+      column: version
+      optimisticLocking: true
+  valueObjects:
+    - name: address
+      column: address
+      mapping: json
+      cardinality: one
+      nullable: true
+      attributes:
+        - name: street
+          type: string
+        - name: city
+          type: string
+      valueObjects:
+        - name: geo
+          cardinality: one
+          nullable: true
+          attributes:
+            - name: country
+              type: string
+  indices:
+    - name: subscriber_pk
+      attributes: [id]
+      unique: true

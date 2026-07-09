@@ -23,6 +23,7 @@
  * path (a one-row multi-row insert).
  */
 import { auditWriteStatements, type MutationKind, type WriteTarget } from "@parallax/bitemporal";
+import { bytesFromHex } from "@parallax/core";
 import { columnOrder, type Dialect } from "@parallax/dialect";
 import { type VersionedTarget, versionAdvancingUpdate, versionedUpdate } from "@parallax/locking";
 import { type EntityMetadata, Metamodel } from "@parallax/operation";
@@ -30,7 +31,9 @@ import {
   type BatchTarget,
   collapsedDelete,
   combineWrites,
+  incrementUpdate,
   keyedDelete,
+  maxPlusOneInsert,
   type PlannedStatement,
   versionedDelete,
 } from "@parallax/transactions";
@@ -593,16 +596,83 @@ function insertStatements(
   const domain = orderedColumns(entity).filter(
     (column) => column !== versionColumn && rows.some((row) => row.columns.has(column)),
   );
+
+  // pk-gen `max`: the primary-key column carries a `{computed: maxPlusOne}` marker, so
+  // the insert derives the id as `coalesce(max(t0.pk), ?) + ?` (a single-row
+  // `insert … select`, m-pk-gen). Only a SCALAR pk column is read as a marker (a
+  // value-object column always binds its literal document, per the role rule).
+  const pkColumn = entity.primaryKey()[0]?.column;
+  const documentColumns = new Set(entity.valueObjects().map((vo) => vo.column));
+  const [firstRow] = rows;
+  if (
+    pkColumn !== undefined &&
+    !documentColumns.has(pkColumn) &&
+    firstRow !== undefined &&
+    isMaxPlusOneMarker(firstRow.columns.get(pkColumn))
+  ) {
+    const target: BatchTarget = {
+      ...batchTargetFor(entity, dialect),
+      columns: domain.map((column) => dialect.quoteIdentifier(column)),
+    };
+    // The two `?` in `coalesce(max(pk), ?) + ?` bind the strategy's coalesce base +
+    // increment (`0`, `1`), NOT an ① literal; every other column binds its value.
+    const binds = domain.flatMap((column) =>
+      column === pkColumn
+        ? [0, 1]
+        : [encodeScalarBind(entity, column, firstRow.columns.get(column))],
+    );
+    return [{ sql: maxPlusOneInsert(target, dialect.quoteIdentifier(pkColumn)), binds }];
+  }
+
   const present = versionColumn === undefined ? domain : [...domain, versionColumn];
   const target: BatchTarget = {
     ...batchTargetFor(entity, dialect),
     columns: present.map((column) => dialect.quoteIdentifier(column)),
   };
   const flat = rows.flatMap((row) => [
-    ...domain.map((column) => row.columns.get(column)),
+    ...domain.map((column) => encodeScalarBind(entity, column, row.columns.get(column))),
     ...(versionColumn === undefined ? [] : [1]),
   ]);
   return combineWrites([{ mutation: "insert", target, statements: 1, binds: [flat] }]);
+}
+
+/**
+ * Encode a neutral ① scalar value into the physical bind its column type expects
+ * (m-core write boundary). A `bytes` column authors its value as a lowercase hex
+ * STRING in ① (a `bytes` object is not a JSON write-row value), so it is decoded to
+ * a `Uint8Array` the driver serializes to the dialect's binary column; every other
+ * scalar (and every value-object document) binds unchanged.
+ */
+function encodeScalarBind(entity: EntityMetadata, column: string, value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const attribute = entity.attributes().find((attr) => attr.column === column);
+  return attribute?.type === "bytes" ? bytesFromHex(value) : value;
+}
+
+/** True when an ① value is a pk-gen `max` marker (`{computed: "maxPlusOne"}`). */
+function isMaxPlusOneMarker(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 1 &&
+    (value as Record<string, unknown>).computed === "maxPlusOne"
+  );
+}
+
+/** The amount of a self-referential `{increment: n}` marker, or `undefined`. */
+function incrementAmount(value: unknown): number | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== "increment") {
+    return undefined;
+  }
+  const amount = (value as Record<string, unknown>).increment;
+  return typeof amount === "number" && Number.isInteger(amount) ? amount : undefined;
 }
 
 /**
@@ -621,6 +691,18 @@ function updateStatements(
   const setColumns = orderedColumns(entity).filter((column) =>
     rows.some((row) => row.set.has(column)),
   );
+
+  // pk-gen `sequence` registry advance: a scalar set column carries a `{increment: n}`
+  // marker, so the update is a self-referential `set col = col + ?` (m-pk-gen), one per
+  // row, binding the increment amount then the pk. Only a SCALAR column is read as a
+  // marker (a value-object column always binds its literal document).
+  const documentColumns = new Set(entity.valueObjects().map((vo) => vo.column));
+  const isIncrement = (column: string, row: ClassifiedRow): boolean =>
+    !documentColumns.has(column) && incrementAmount(row.set.get(column)) !== undefined;
+  if (rows.some((row) => setColumns.some((column) => isIncrement(column, row)))) {
+    return incrementUpdateStatements(entity, rows, setColumns, dialect);
+  }
+
   const setColumn = setColumns.map((column) => dialect.quoteIdentifier(column)).join(", ");
   const target = batchTargetFor(entity, dialect);
   const setValues = rows.map((row) => setColumns.map((column) => row.set.get(column)));
@@ -633,6 +715,38 @@ function updateStatements(
   return combineWrites([
     { mutation: "update", target, setColumn, statements: binds.length, binds },
   ]);
+}
+
+/**
+ * Plan a pk-gen `sequence` registry advance from its classified ① rows: one
+ * self-referential `update t set <col> = <col> + ? where <pk> = ?` per row, binding
+ * the `{increment: n}` amount then the pk (m-pk-gen). The corpus registry advance
+ * touches exactly one increment column (`next_val`), so a mixed / multi-column form
+ * is out of scope (and fails loudly rather than emitting a malformed statement).
+ */
+function incrementUpdateStatements(
+  entity: EntityMetadata,
+  rows: readonly ClassifiedRow[],
+  setColumns: readonly string[],
+  dialect: Dialect,
+): readonly { sql: string; binds: readonly unknown[] }[] {
+  const [column] = setColumns;
+  if (column === undefined || setColumns.length !== 1) {
+    throw new Error(
+      `increment (sequence-registry) update on '${entity.name}' expects exactly one SET column`,
+    );
+  }
+  const target = batchTargetFor(entity, dialect);
+  const sql = incrementUpdate(target, dialect.quoteIdentifier(column));
+  return rows.map((row) => {
+    const amount = incrementAmount(row.set.get(column));
+    if (amount === undefined) {
+      throw new Error(
+        `increment update on '${entity.name}' requires a {increment: n} marker on ${column}`,
+      );
+    }
+    return { sql, binds: [amount, row.pk] };
+  });
 }
 
 /**

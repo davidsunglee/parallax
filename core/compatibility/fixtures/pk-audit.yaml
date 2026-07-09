@@ -1,0 +1,8 @@
+# Fixture rows for the pk-audit model (models/pk-audit.yaml).
+#
+# Seed the simulated-sequence registry with the AuditEntry id sequence at its
+# initial value; the pk-gen x temporal insert case (m-pk-gen-014) reserves a block
+# from it (next_val 1 -> 2) before opening the milestone that carries id 1.
+AuditSeq:
+  - name: entry_seq
+    nextVal: 1

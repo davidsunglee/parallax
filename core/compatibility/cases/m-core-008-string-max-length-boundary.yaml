@@ -1,0 +1,34 @@
+# String max-length WRITE boundary (m-core): a value exactly `maxLength` characters
+# long round-trips intact.
+#
+# `label` declares `maxLength: 8`, so it maps to a bounded varchar(8) column
+# (m-core string mapping). Writing a value of EXACTLY eight characters and reading
+# it back unchanged witnesses the write boundary at the declared limit — the largest
+# value the bounded column accepts (a ninth character would overflow the column).
+model: models/writable-scalars.yaml
+tags: [m-core, m-sql, scalar, string, write-sequence, slice-mvp-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: WritableScalar
+      statements: 1
+      note: write a string of exactly maxLength (8) characters
+      rows:
+        - { id: 4, label: abcdefgh }
+then:
+  statements:
+    - sql:
+        postgres: insert into writable_scalars(id, label) values (?, ?)
+      binds: [4, abcdefgh]
+  tableState:
+    writable_scalars:
+      - id: 4
+        f32: null
+        f64: null
+        payload: null
+        local_time: null
+        external_id: null
+        amount: null
+        label: abcdefgh
+  roundTrips: 1

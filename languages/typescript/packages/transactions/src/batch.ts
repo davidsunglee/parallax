@@ -106,6 +106,33 @@ export function collapsedDelete(target: BatchTarget, keyCount: number): BatchSta
 }
 
 /**
+ * Render a pk-gen `max`-strategy INSERT: a single-row `insert … select` that
+ * derives the primary key as `coalesce(max(t0.<pk>), ?) + ?` while every other
+ * column binds a literal `?` (`m-pk-gen`, the `max` strategy). The bind at the two
+ * `?` in the `coalesce(…, ?) + ?` expression is the strategy's coalesce base +
+ * increment (`0`, `1`), NOT a neutral-row literal; the remaining `?` bind the
+ * domain values in column order. `columns` and `maxColumn` are quoted by the caller.
+ */
+export function maxPlusOneInsert(target: BatchTarget, maxColumn: string): BatchStatement {
+  const cols = target.columns.join(", ");
+  const selectExprs = target.columns
+    .map((column) => (column === maxColumn ? `coalesce(max(t0.${maxColumn}), ?) + ?` : "?"))
+    .join(", ");
+  return `insert into ${target.table}(${cols}) select ${selectExprs} from ${target.table} t0`;
+}
+
+/**
+ * Render a self-referential increment `update` (`update t set <col> = <col> + ?
+ * where <pk> = ?`) — a simulated-sequence registry advance (`m-pk-gen`, the
+ * `sequence` strategy reserves a block by adding the stride to `next_val`). The
+ * bind at the `?` in `<col> + ?` is the increment amount `n`; the `where` binds the
+ * pk. The set column is passed quoted so the caller quotes it consistently.
+ */
+export function incrementUpdate(target: BatchTarget, setColumn: string): BatchStatement {
+  return `update ${target.table} set ${setColumn} = ${setColumn} + ? where ${target.pkColumn} = ?`;
+}
+
+/**
  * Render ONE version-gated `delete` for a single row of a VERSIONED entity
  * (`delete from t where <pk> = ? and <version> = ?`) — the versioned set-based
  * delete's per-key materialize form (`m-batch-write-004` / `m-opt-lock`, ADR 0014).

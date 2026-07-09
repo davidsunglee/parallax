@@ -239,8 +239,27 @@ export const POSTGRES_TEMPORAL_PROFILE: MatrixProfile = fixedIdProfile(
 const VALUE_OBJECT_MARIADB_REASON =
   "value-object MariaDB parity is proven by the Phase-10 direct compile tests, not this run-lane profile";
 
+// COR-26 Phase 5 — the pk-gen and writable-scalar write cases carry goldenSql.mariadb
+// (pk-gen SQL is portable; the scalar round-trips are dual-dialect witnesses), but
+// their MariaDB parity is proven by the reference-harness oracle on BOTH dialects
+// (`just oracle-test`), not this TypeScript run-lane profile — keeping the curated
+// MariaDB run lane the same marquee dialect/error set and off the newly-promoted
+// scalar/pk-gen surface.
+const PK_GEN_MARIADB_REASON =
+  "pk-gen MariaDB parity is proven by the reference-harness oracle on both dialects, not this run-lane profile";
+const SCALAR_WRITE_MARIADB_REASON =
+  "writable-scalar MariaDB parity is proven by the reference-harness oracle on both dialects, not this run-lane profile";
+
 function isValueObjectCase(loaded: LoadedCase): boolean {
   return loaded.tags.includes("m-value-object");
+}
+
+function isPkGenCase(loaded: LoadedCase): boolean {
+  return loaded.tags.includes("m-pk-gen");
+}
+
+function isScalarWriteCase(loaded: LoadedCase): boolean {
+  return loaded.raw.model === "models/writable-scalars.yaml";
 }
 
 export const MARIADB_CURATED_PROFILE: MatrixProfile = {
@@ -252,7 +271,9 @@ export const MARIADB_CURATED_PROFILE: MatrixProfile = {
   select: ({ id, loaded }) =>
     (POSTGRES_FULL_PROFILE.select({ id, loaded }) &&
       hasMariaDbGolden(loaded) &&
-      !isValueObjectCase(loaded)) ||
+      !isValueObjectCase(loaded) &&
+      !isPkGenCase(loaded) &&
+      !isScalarWriteCase(loaded)) ||
     MARIADB_CURATED_ID_SET.has(id),
   exclusionReason: ({ id, loaded }) => {
     if (!POSTGRES_FULL_PROFILE.select({ id: caseId(loaded.casePath), loaded })) {
@@ -263,6 +284,12 @@ export const MARIADB_CURATED_PROFILE: MatrixProfile = {
     }
     if (isValueObjectCase(loaded)) {
       return VALUE_OBJECT_MARIADB_REASON;
+    }
+    if (isScalarWriteCase(loaded)) {
+      return SCALAR_WRITE_MARIADB_REASON;
+    }
+    if (isPkGenCase(loaded)) {
+      return PK_GEN_MARIADB_REASON;
     }
     return hasMariaDbGolden(loaded)
       ? undefined

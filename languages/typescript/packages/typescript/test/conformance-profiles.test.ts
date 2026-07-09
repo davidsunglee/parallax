@@ -29,8 +29,8 @@ describe("m-case-format matrix profiles", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("keeps the canonical Postgres full profile at the 173 harness-lane cases", () => {
-    expect(casesForProfile(POSTGRES_FULL_PROFILE)).toHaveLength(173);
+  it("keeps the canonical Postgres full profile at the 185 harness-lane cases", () => {
+    expect(casesForProfile(POSTGRES_FULL_PROFILE)).toHaveLength(185);
   });
 
   it("folds the historical Postgres read run into a named profile", () => {
@@ -70,13 +70,17 @@ describe("m-case-format matrix profiles", () => {
       ).toBe(true);
     }
     expect(exclusions.length).toBe(postgresFull.length - 25);
-    // Two exclusion reasons now: the historical no-mariadb-golden reason, plus the
-    // value-object cases (which DO carry mariadb golden but are proven by the
-    // Phase-10 direct compile tests, not this run-lane profile).
+    // Four exclusion reasons now: the historical no-mariadb-golden reason; the
+    // value-object cases (which carry mariadb golden but are proven by the Phase-10
+    // direct compile tests); and the COR-26 Phase-5 pk-gen and writable-scalar write
+    // cases (proven by the reference-harness oracle on both dialects, not this
+    // run-lane profile).
     expect(new Set(exclusions.map(({ reason }) => reason))).toEqual(
       new Set([
         "no goldenSql.mariadb in this partial MariaDB profile",
         "value-object MariaDB parity is proven by the Phase-10 direct compile tests, not this run-lane profile",
+        "pk-gen MariaDB parity is proven by the reference-harness oracle on both dialects, not this run-lane profile",
+        "writable-scalar MariaDB parity is proven by the reference-harness oracle on both dialects, not this run-lane profile",
       ]),
     );
   });

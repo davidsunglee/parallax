@@ -147,6 +147,22 @@ const EXPECTED_IDS: readonly string[] = [
   "m-opt-lock-012",
   "m-opt-lock-013",
   "m-unit-work-009",
+  // COR-26 Phase 5 — the promoted pk-gen cases carry `m-unit-work`, so they enter
+  // this lane: the `max` allocations `m-pk-gen-001`/`-002` (insert ... select
+  // coalesce(max(col), ?) + ?) and the simulated-sequence allocations
+  // `m-pk-gen-004`/`-006` (update ... set next_val = next_val + ? then the reserved
+  // id insert). The sequence x temporal `m-pk-gen-014` files under `m-pk-gen` +
+  // `m-audit-write` (no TXN_MODULE tag), so it is graded by the run lane, not here.
+  "m-pk-gen-001",
+  "m-pk-gen-002",
+  "m-pk-gen-004",
+  "m-pk-gen-006",
+  // COR-26 Phase 5 — value-object write cases cross-tagged into the transaction
+  // family: the multi-row batched VO insert `m-value-object-045` (carries
+  // `m-batch-write`) and the versioned VO document write under an optimistic gate
+  // `m-value-object-046` (carries `m-opt-lock`).
+  "m-value-object-045",
+  "m-value-object-046",
 ];
 
 const CASES = txnCases();

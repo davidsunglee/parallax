@@ -59,10 +59,10 @@ function entityOf(loaded: LoadedCase) {
 }
 
 describe("m-value-object compile-golden lane — emitted === golden, both dialects", () => {
-  it("discovers the frozen value-object case set (24 reads, 10 rejected)", () => {
+  it("discovers the frozen value-object case set (28 reads, 11 rejected)", () => {
     // Exact counts guard against a discovery regression silently dropping a case.
     expect(READ_CASES.length).toBe(28); // 001–024 + temporal reads 028–031
-    expect(REJECTED_CASES.length).toBe(10); // 034–043
+    expect(REJECTED_CASES.length).toBe(11); // 034–043 + the top-level-required-VO 044
   });
 
   for (const dialect of [postgresDialect, mariadbDialect]) {

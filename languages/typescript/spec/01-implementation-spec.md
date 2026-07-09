@@ -59,7 +59,7 @@ declared in [`slices.md`](../../../core/spec/slices.md#first-implementation-conf
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
 the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
-so V1 claims precisely the 185 cases tagged for the slice and returns
+so V1 claims precisely the 197 cases tagged for the slice and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads and writes** +
 audit-only processing-temporal), optimistic-locking, and value-object (typed nested
@@ -98,6 +98,7 @@ capabilities in this shape:
       "m-op-algebra",
       "m-op-list",
       "m-opt-lock",
+      "m-pk-gen",
       "m-read-lock",
       "m-sql",
       "m-temporal-read",
@@ -840,7 +841,7 @@ The V1 `parallax-conformance describe` claim remains **Postgres-only**. That is
 the official adapter grade for `slice-mvp-1`. TypeScript nevertheless ships two
 database implementations behind the m-dialect seam:
 
-- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 173
+- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 185
   harness-lane `slice-mvp-1` cases over `postgres:17` (including the 42
   value-object cases — their nested-predicate reads, materialization graph,
   atomic document writes, inherited-temporality reads, and pre-SQL `rejected`
@@ -934,7 +935,7 @@ partition below.
 ### 6.2 Coverage partition and no-drift guard
 
 - **Coverage partition.** `coverage.test.ts` (Docker-free) discovers exactly the
-  185 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
+  197 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
   with no stale ids: every in-slice case is either exercised by a family suite
   (`covered.ts`) or listed in the reasoned skip manifest (`skip-manifest.ts`),
   and every skip carries a non-empty reason — a silent gap fails the build.
@@ -950,20 +951,28 @@ partition below.
 
 ### 6.3 Reasoned skips
 
-Cases (of the 185) are reason-skipped because what they prove is
+Cases (of the 197) are reason-skipped because what they prove is
 serde/harness machinery a developer never authors, not a developer-facing
-surface — the five below, the ten value-object `rejected` negatives
-(`m-value-object-034`-`m-value-object-043`), whose whole assertion is a **pre-SQL
+surface — the five below, the eleven value-object `rejected` negatives
+(`m-value-object-034`-`m-value-object-044`), whose whole assertion is a **pre-SQL
 refusal**: the invalid input (a value-object root, an unknown nested path, a
 `deepFetch`/navigation targeting a value object, a type-mismatched literal, a
-missing required attribute/nested value object) is refused before any query is
-built, so there is no idiomatic developer query to author — the refusal is proven
-by the harness run lane and the `@parallax/operation` validators; and the eight
-bitemporal milestone-chaining writes (`m-bitemp-write-001`-`m-bitemp-write-008`),
-whose rectangle-split / plain / optimistic-gated DML is proven end-to-end by the
-harness and conformance run lanes (`slice-run` drives `@parallax/conformance`'s
-write-sequence / conflict plan), not the developer-surface object API. The five
-non-value-object, non-bitemporal skips are:
+missing required attribute or a missing required nested / top-level value object)
+is refused before any query is built, so there is no idiomatic developer query to
+author — the refusal is proven by the harness run lane and the
+`@parallax/operation` validators; the eight bitemporal milestone-chaining writes
+(`m-bitemp-write-001`-`m-bitemp-write-008`), whose rectangle-split / plain /
+optimistic-gated DML is proven end-to-end by the harness and conformance run lanes
+(`slice-run` drives `@parallax/conformance`'s write-sequence / conflict plan), not
+the developer-surface object API; and the COR-26 Phase-5 type-fidelity,
+value-object-write, and pk-gen writes — the scalar WRITE round-trips / boundaries
+(`m-core-005`-`m-core-008`), the value-object document writes (`m-value-object-045`
+multi-row batched insert, `m-value-object-046` under an optimistic gate), and the
+primary-key allocations (`m-pk-gen-001`/`-002` `max`, `m-pk-gen-004`/`-006`/`-014`
+simulated-`sequence`) — each proven end-to-end by the reference harness (both
+dialects; the pk-allocation oracle) and the conformance run lane, not a
+developer-authored serde/allocation surface. The five serde-canonicalization /
+concurrency-choreography skips are:
 
 - **`m-op-algebra-024`** — an `equivalentEncodings` serde-canonicalization check (two surface
   spellings collapse to one canonical operation). Its query semantics are

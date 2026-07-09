@@ -1,0 +1,36 @@
+# Decimal precision/scale WRITE boundary (m-core): a decimal(18,4) value round-trips
+# all four fractional digits exactly.
+#
+# Every asserted decimal write in the corpus uses the money type decimal(18,2). This
+# witnesses a different scale: writing 9999.9999 into a decimal(18,4) column and
+# reading it back UNCHANGED proves the write boundary preserves scale-4 precision
+# (decimal(18,2) would truncate the value to 10000.00). The value is compared in
+# exact decimal space (never binary float), so all four fractional digits must
+# survive the bind + read round-trip.
+model: models/writable-scalars.yaml
+tags: [m-core, m-sql, scalar, decimal, write-sequence, slice-mvp-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: WritableScalar
+      statements: 1
+      note: write a decimal(18,4) value using all four fractional digits
+      rows:
+        - { id: 3, amount: 9999.9999 }
+then:
+  statements:
+    - sql:
+        postgres: insert into writable_scalars(id, amount) values (?, ?)
+      binds: [3, 9999.9999]
+  tableState:
+    writable_scalars:
+      - id: 3
+        f32: null
+        f64: null
+        payload: null
+        local_time: null
+        external_id: null
+        amount: 9999.9999
+        label: null
+  roundTrips: 1
