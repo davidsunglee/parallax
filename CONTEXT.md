@@ -19,24 +19,36 @@ The explicit entry point for reads, writes, and managed object graph mutation in
 _Avoid_: transaction client, ambient transaction, hidden unit of work, session
 
 **Inheritance Family**:
-A closed polymorphic entity family with an abstract root and concrete leaf types, where reads may address the family position or narrow to specific leaves.
+A closed polymorphic entity tree with one abstract root, optional abstract subtypes, and concrete subtypes, where reads may address any abstract position or concrete subtype and may narrow to a specific effective concrete subtype set.
 _Avoid_: class tree, inheritance graph, open hierarchy
 
 **Abstract Root Type**:
-The non-instantiable entity that names an inheritance family and carries the attributes common to every concrete leaf type.
+The non-instantiable, tableless entity that names an inheritance family, owns the family strategy, and carries attributes common to every descendant concrete subtype.
 _Avoid_: base class object, root row
 
-**Concrete Leaf Type**:
-An instantiable member of an inheritance family that represents one concrete variant of the family.
-_Avoid_: subclass table, child class
+**Abstract Subtype**:
+A non-instantiable, tableless subtype below the abstract root that may declare attributes, value objects, and relationships common to its descendants, and may be used as a read, relationship, or narrowing position.
+_Avoid_: intermediate row, superclass table, abstract leaf
 
-**Family Variant Tag**:
-A stable result value that identifies which concrete leaf type a row belongs to when reading through an abstract family root.
-_Avoid_: discriminator column, class name string
+**Concrete Subtype**:
+An instantiable member of an inheritance family that owns rows and represents one concrete variant of the family.
+_Avoid_: subclass table, child class, concrete leaf
 
-**Subtype-Specific Attribute**:
-An attribute declared by a subtype rather than by the abstract family root.
+**Family Variant**:
+The concrete subtype identity of a polymorphic result, represented canonically in compatibility data and exposed idiomatically by each language.
+_Avoid_: discriminator value, class name string, mandatory type property
+
+**Variant Tag**:
+The descriptor metadata that maps `table-per-hierarchy` rows to concrete subtypes through a family `tag` and concrete subtype `tagValue`.
+_Avoid_: discriminator, discriminator value
+
+**Subtype-Declared Attribute**:
+An attribute declared by an abstract or concrete subtype rather than by the abstract root; it may be common to an abstract subtype's descendants or specific to one concrete subtype.
 _Avoid_: subclass field, subtype column
+
+**Concrete-Subtype Attribute**:
+An attribute declared by exactly one concrete subtype and not guaranteed on sibling concrete subtypes or unrelated abstract-subtype branches.
+_Avoid_: subclass-only field, leaf column
 
 **Value Object**:
 An identity-free composite value owned by an entity and read or written as part of that owning entity.
@@ -77,8 +89,8 @@ A relationship path listed in `includes`; longer paths imply any intermediate re
 _Avoid_: include tree, populate path
 
 **Subtype Narrowing**:
-A query or include constraint that limits a polymorphic entity position to one or more concrete leaf types while preserving the surrounding operation shape.
-_Avoid_: manual discriminator filter, type cast
+A query or include constraint that limits a polymorphic entity position to an effective concrete subtype set, authored with abstract subtype and/or concrete subtype names while preserving the surrounding operation shape.
+_Avoid_: manual tag filter, type cast
 
 **Nested Value-Object Path**:
 A typed path that starts at an entity-owned value object and addresses a nested member inside that value.
@@ -111,11 +123,11 @@ A mapped entity whose rows represent links between entity identities, usually ba
 _Avoid_: join entity, mapping type, link table
 
 **Polymorphic Relationship**:
-A relationship whose target is an abstract family root and whose navigation may produce objects belonging to one or more concrete leaf types in that family.
+A relationship whose target is an abstract root or abstract subtype and whose navigation may produce objects belonging to one or more concrete subtypes in that target's effective concrete subtype set.
 _Avoid_: generic relationship, untyped relationship
 
 **Narrowed Relationship View**:
-A named relationship view produced by subtype narrowing, representing the exact narrowed relationship that was requested without implying the full relationship collection is loaded.
+A named relationship view produced by subtype narrowing, keyed by the relationship name and effective concrete subtype set, representing the exact narrowed relationship requested without implying the full relationship collection is loaded.
 _Avoid_: partially loaded relationship, filtered array
 
 **Managed Object**:
