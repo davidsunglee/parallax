@@ -151,5 +151,14 @@ All three reuse the `m-case-format` write-sequence machinery: *apply the documen
 golden DML, assert the rows it leaves behind*, so the merge-back contract is
 verified against real data rather than merely asserted in prose.
 
+The **no-op skip** — merging back an *unmodified* detached copy issues **no** DML
+(the `isModifiedSinceDetachment: false` MUST above) — is deliberately expressed as a
+**scenario**, not a write-sequence: its observable effect is the *absence* of a round
+trip, which the scenario shape models natively as a zero-round-trip merge-back step
+with no golden SQL (the write-side sibling of a cache-hit read; see the no-op write
+note in `m-case-format`), asserting the row stays byte-identical. A zero-DML
+write-sequence is not expressible — its `roundTrips` and statement counts require at
+least one statement — so the scenario is the intentional home for this case.
+
 Optimistic-lock conflict on merge-back — when a concurrent transaction changed
 the original between detachment and merge-back — is the subject of `m-opt-lock`.
