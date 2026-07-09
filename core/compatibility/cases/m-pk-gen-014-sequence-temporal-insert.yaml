@@ -11,7 +11,7 @@
 # audit-write cases, so this case (the pk-gen x temporal composition) proves the
 # ordering on Postgres and leaves the sentinel witness to those.
 model: models/pk-audit.yaml
-tags: [m-pk-gen, m-audit-write, m-sql, sequence, write-sequence, slice-mvp-1]
+tags: [m-pk-gen, m-audit-write, m-sql, sequence, write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

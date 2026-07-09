@@ -10,7 +10,7 @@
 # its parent-key set is empty. The harness asserts the statuses statement is not
 # authored after an empty level.
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, empty-intermediate, relationship, slice-mvp-1]
+tags: [m-deep-fetch, m-op-list, empty-intermediate, relationship, slice-mvp-1, slice-managed-1]
 shape: read
 when:
   operation:

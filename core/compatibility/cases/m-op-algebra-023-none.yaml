@@ -3,7 +3,7 @@
 # the dual of `all`; here it gets its dedicated fixture alongside the boolean
 # combinators.
 model: models/orders.yaml
-tags: [m-op-algebra, none, boolean, slice-mvp-1]
+tags: [m-op-algebra, none, boolean, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

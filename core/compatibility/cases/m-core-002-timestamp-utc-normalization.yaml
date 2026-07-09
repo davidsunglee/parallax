@@ -8,7 +8,7 @@
 # re-stamps +00:00 on the way out — so the one authored expected value holds on
 # both dialects. The bind carries the offset form; the stored form is UTC.
 model: models/event.yaml
-tags: [m-core, m-sql, m-dialect, timestamp, timezone, utc, write-sequence, slice-mvp-1]
+tags: [m-core, m-sql, m-dialect, timestamp, timezone, utc, write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

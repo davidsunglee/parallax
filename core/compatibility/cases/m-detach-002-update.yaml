@@ -12,7 +12,7 @@
 # (the m-opt-lock baseline: every successful write moves it forward), since the
 # Account model carries the optimistic-locking version column.
 model: models/account.yaml
-tags: [m-detach, m-sql, detached-update, write-sequence]
+tags: [m-detach, m-sql, detached-update, write-sequence, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

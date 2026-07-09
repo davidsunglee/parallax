@@ -9,7 +9,7 @@
 # explicit JSON `null` leaf (7) — are all excluded by the absence collapse (not
 # present is not "not Oslo"), identically on both dialects.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, nested, json, slice-mvp-1]
+tags: [m-value-object, m-sql, nested, json, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

@@ -13,7 +13,7 @@
 # Fixtures are loaded first; the resulting state proves the write landed and the
 # version advanced (id 2 → balance 500.00, version 2; ids 1 and 3 untouched).
 model: models/account.yaml
-tags: [m-opt-lock, m-unit-work, m-sql, locking-mode, write-sequence, slice-mvp-1]
+tags: [m-opt-lock, m-unit-work, m-sql, locking-mode, write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

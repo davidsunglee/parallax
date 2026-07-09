@@ -14,7 +14,7 @@
 # observable proof of combining; the dependent find confirms read-your-own-writes on
 # the combined row. roundTrips = 2 (the one combined insert + the find).
 model: models/account.yaml
-tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-mvp-1]
+tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
 when:
   scenario:

@@ -19,7 +19,7 @@
 # The single find witnesses all three flushed ops at once. roundTrips = 4 (the three
 # flushed writes + the dependent find).
 model: models/account.yaml
-tags: [m-unit-work, m-sql, mixed-op-flush, scenario, slice-mvp-1]
+tags: [m-unit-work, m-sql, mixed-op-flush, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
 given:
   fixtures: true

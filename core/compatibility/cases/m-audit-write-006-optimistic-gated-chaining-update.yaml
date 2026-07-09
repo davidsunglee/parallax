@@ -19,7 +19,7 @@
 # 2024-09-01, gated on `and in_z = 2024-06-01`; it inactivates 1 row. Ids 2 and 3
 # are untouched — conflict granularity is the observed milestone, not the key.
 model: models/balance.yaml
-tags: [m-audit-write, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1]
+tags: [m-audit-write, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
 when:
   uow:

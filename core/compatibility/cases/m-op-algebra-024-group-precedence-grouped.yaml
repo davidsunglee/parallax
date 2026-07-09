@@ -16,7 +16,7 @@
 # "prefix" surface: group(...) wrapping the disjunction, eq written value-first.
 # "fluent" surface: identical tree, comparators written value-before-attr.
 model: models/orders.yaml
-tags: [m-op-algebra, group, boolean, precedence, slice-mvp-1]
+tags: [m-op-algebra, group, boolean, precedence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

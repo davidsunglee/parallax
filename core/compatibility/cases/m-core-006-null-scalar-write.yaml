@@ -8,7 +8,7 @@
 # on both dialects (a null bytes / time / uuid must not decode to a spurious empty
 # value). The INSERT DML and binds are identical on both dialects.
 model: models/writable-scalars.yaml
-tags: [m-core, m-sql, m-dialect, scalar, "null", write-sequence, slice-mvp-1]
+tags: [m-core, m-sql, m-dialect, scalar, "null", write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

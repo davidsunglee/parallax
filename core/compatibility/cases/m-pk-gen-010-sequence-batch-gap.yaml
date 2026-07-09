@@ -4,7 +4,7 @@
 # (id 1). ids 2 and 3 are reserved-and-lost -> a GAP. Counter lands at 4 (the full
 # block was reserved) -- asserted by the oracle.
 model: models/pk-sequence.yaml
-tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

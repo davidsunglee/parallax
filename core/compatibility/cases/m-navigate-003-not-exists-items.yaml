@@ -2,7 +2,7 @@
 # golden SQL normalizes the negation as a leading `not exists (...)`. Orders 3,
 # 4, 5 have no items.
 model: models/orders.yaml
-tags: [m-navigate, notExists, relationship, slice-mvp-1]
+tags: [m-navigate, notExists, relationship, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

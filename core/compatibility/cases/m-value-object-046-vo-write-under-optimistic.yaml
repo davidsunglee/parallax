@@ -12,7 +12,7 @@
 # 2. The harness loads the version-1 fixture, applies the golden UPDATE, and asserts
 # affectedRows = 1 and the resulting row (decoding the document column).
 model: models/subscriber.yaml
-tags: [m-value-object, m-opt-lock, m-sql, conflict, json, slice-mvp-1]
+tags: [m-value-object, m-opt-lock, m-sql, conflict, json, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
 when:
   uow:

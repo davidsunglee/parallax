@@ -41,12 +41,12 @@ matrix:
 # Core spec: validation of the core specification and compatibility corpus.
 #   dep-graph: DAG legality; the coverage gate (every active/cases module from
 #   the modules.md catalog has a tagged fixture) + the active->deferred rule; the
-#   slice-mvp-1 profile gate (the tagged slice matches its canonical describe
-#   claim in slices.md). schemas: meta-schema + fixture validation + sqlglot parse
+#   profile gate (every slice's tagged cases match its canonical describe claim
+#   in slices.md). schemas: meta-schema + fixture validation + sqlglot parse
 #   of all golden/reference SQL.
 # ===========================================================================
 
-# Core module DAG + coverage gate + the slice-mvp-1 profile gate.
+# Core module DAG + coverage gate + the per-slice profile gate.
 core-dep-graph:
     cd {{harness}} && uv run python -m reference_harness.dep_graph_check --coverage ../core/spec ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.dep_graph_check --profile ../core/spec ../core/compatibility

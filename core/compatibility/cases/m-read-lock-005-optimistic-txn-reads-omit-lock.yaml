@@ -11,7 +11,7 @@
 # language's API Conformance Suite proves (the same read, run under `optimistic`
 # mode, emits no lock); the m-case-format harness schema-validates the case.
 model: models/account.yaml
-tags: [m-read-lock, m-opt-lock, m-dialect, m-api-conformance, slice-mvp-1]
+tags: [m-read-lock, m-opt-lock, m-dialect, m-api-conformance, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
 shape: read
 when:

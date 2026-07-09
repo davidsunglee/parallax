@@ -6,7 +6,7 @@
 # 3VL companion to m-op-algebra-003 (notEq over non-null data) — the classic SQL footgun the
 # spec mandates, proven against real data.
 model: models/orders.yaml
-tags: [m-op-algebra, notEq, "null", three-valued-logic, slice-mvp-1]
+tags: [m-op-algebra, notEq, "null", three-valued-logic, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

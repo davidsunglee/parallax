@@ -6,7 +6,7 @@
 # row across the shared table — the two card rows, the cash row, and the plain
 # root-kind row. The golden SQL has no WHERE clause; its absence is the contract.
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, root, no-discriminator]
+tags: [m-inheritance, m-sql, table-per-hierarchy, root, no-discriminator, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

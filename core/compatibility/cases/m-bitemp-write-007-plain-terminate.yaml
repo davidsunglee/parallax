@@ -21,7 +21,7 @@
 # business [2024-01-01, 2024-06-01)), the window [2024-06-01, infinity) left
 # uncovered by any current-on-processing row.
 model: models/position.yaml
-tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-terminate, slice-mvp-1]
+tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-terminate, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

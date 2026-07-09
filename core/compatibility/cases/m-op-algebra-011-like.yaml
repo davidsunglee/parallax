@@ -1,7 +1,7 @@
 # like — raw pattern match; `%` and `_` are wildcards in the pattern. The bind
 # carries the pattern verbatim. NULL skus never match.
 model: models/orders.yaml
-tags: [m-op-algebra, like, string, slice-mvp-1]
+tags: [m-op-algebra, like, string, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

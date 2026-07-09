@@ -12,7 +12,7 @@
 # asserts each attempt's affected count and runs no replacement INSERT, so
 # `then.tableState` is the fixtures plus the re-chain plus that retry close.
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1]
+tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
 given:
   apply:

@@ -6,7 +6,7 @@
 # saving (contrast m-pk-gen-005: batch=1 needs one allocation per row). The counter
 # landing at 4 (proving the whole block was reserved) is asserted by the oracle.
 model: models/pk-sequence.yaml
-tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

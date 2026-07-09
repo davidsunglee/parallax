@@ -2,7 +2,7 @@
 # prepends a leading `%` wildcard. `00` has no wildcard chars, so the pattern is
 # `%00`.
 model: models/orders.yaml
-tags: [m-op-algebra, endsWith, string, slice-mvp-1]
+tags: [m-op-algebra, endsWith, string, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

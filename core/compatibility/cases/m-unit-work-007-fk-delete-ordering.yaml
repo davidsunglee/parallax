@@ -15,7 +15,7 @@
 # The harness applies the ordered DML and reads both tables back empty. The child's
 # nullable shipped_on is absent from the insert input (a 4-of-5 column insert).
 model: models/orders.yaml
-tags: [m-unit-work, m-sql, write-sequence, delete, fk-ordering, slice-mvp-1]
+tags: [m-unit-work, m-sql, write-sequence, delete, fk-ordering, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

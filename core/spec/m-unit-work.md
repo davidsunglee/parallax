@@ -11,17 +11,16 @@ takes no direct edge to SQL generation. (`m-op-list` and `m-navigate` in turn
 depend on `m-unit-work`, because a list is an operation-backed view resolved within
 a unit of work.)
 
-Layered on the unit of work are three modules: the automatic shared read lock
-(`m-read-lock`), bounded automatic retry (`m-auto-retry`), and the identity + query
-caches (`m-process-cache`, deferred).
+Layered on the unit of work are four modules: the automatic shared read lock
+(`m-read-lock`), bounded automatic retry (`m-auto-retry`), the transaction-scoped
+identity map (`m-identity-map`), and the process-wide identity + query caches
+(`m-process-cache`, deferred).
 
 ## The unit of work
 
 A **unit of work** (transaction) is the scope within which object reads and
 writes are coherent. Within one unit of work:
 
-- Every read of a given primary key resolves to the **same** logical object
-  (identity — the cache that guarantees this is `m-process-cache`).
 - Writes are **buffered** as pending operations, not flushed eagerly. At the
   unit-of-work boundary they are **combined, batched, and ordered** to respect
   foreign-key constraints, then flushed in one pass.
@@ -34,6 +33,19 @@ writes are coherent. Within one unit of work:
 > explicit `begin`/`commit` pair — is an idiomatic, per-language concern and is
 > pinned down in the per-language spec, **never** in raw SQL terms in core. Core
 > mandates the *observable effects within and at* the boundary, not its syntax.
+
+### No identity promise
+
+`m-unit-work` is expressed purely in **operations** — it promises nothing about
+*object identity*. Without a claimed identity module, two reads of one row
+within a unit of work MAY yield distinct managed instances, and mutating both
+buffers conflicting updates whose interleaving is unspecified — a **named
+hazard**, not a contract. The guarantee that one database identity resolves to
+one managed object within the unit of work is `m-identity-map`; a plain-value
+read surface (`m-snapshot-read`) has no managed instances to promise identity
+for. This silence is deliberate in **both** directions: nothing here mandates
+that two reads yield the *same* instance, and nothing may mandate they yield
+*distinct* instances.
 
 ## Abort
 

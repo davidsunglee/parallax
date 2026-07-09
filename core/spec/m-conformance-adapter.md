@@ -135,15 +135,13 @@ while deferring aggregation (`m-agg`) reads, or `m-unit-work` transaction/write
 cases while deferring the `m-process-cache` query-cache and identity-cache
 scenarios.
 
-The example above is intentionally minimal. For a worked, canonical
-**include-driven** first slice, see the
-[`slice-mvp-1`](slices.md#first-implementation-conformance-slice)
-Conformance Slice in `slices.md`: its `describe` claim selects 123
-Postgres-only cases by a single `caseTags.include: ["slice-mvp-1"]`
-tag rather than by a fragile list of exclusions, and a consistency gate keeps the
-tagged corpus aligned with that claim. A fresh implementer authoring a first build
-ordinarily adopts that claim's `capabilities` verbatim (only the `adapter`
-identity differs).
+The example above is intentionally minimal. For worked, canonical
+**include-driven** slices, see the Conformance Slices in
+[`slices.md`](slices.md): each `describe` claim selects its Postgres-only cases
+by a single `caseTags.include` tag rather than by a fragile list of exclusions,
+and a consistency gate keeps the tagged corpus aligned with every claim. A fresh
+implementer authoring a first build ordinarily adopts an existing claim's
+`capabilities` verbatim (only the `adapter` identity differs).
 
 That canonical block is the general rule, not a one-off: a slice's
 machine-readable form is a `describeOk` envelope validated against this schema,

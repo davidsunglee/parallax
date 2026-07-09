@@ -15,7 +15,7 @@
 # `coalesce(..., 0)` so a NULL/empty/missing/non-array `phones` still counts as "no
 # element".
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, absence-collapse, array-traversal, slice-mvp-1]
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, absence-collapse, array-traversal, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

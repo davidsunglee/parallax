@@ -8,7 +8,7 @@
 #
 # Trivial single-table read => referenceSql optional, but supplied as the oracle.
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-leaf]
+tags: [m-inheritance, m-sql, table-per-leaf, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

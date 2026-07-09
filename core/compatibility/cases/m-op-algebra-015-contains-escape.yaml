@@ -7,7 +7,7 @@
 # silently turn `%` back into a wildcard and over-match, which the independent
 # referenceSql (using Postgres `position`) would catch.
 model: models/orders.yaml
-tags: [m-op-algebra, contains, string, escape, slice-mvp-1]
+tags: [m-op-algebra, contains, string, escape, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

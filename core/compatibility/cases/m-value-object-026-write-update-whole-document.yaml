@@ -11,7 +11,7 @@
 # the update, so it is untouched. `then.tableState` pins the replaced document,
 # decoded and compared identically on both dialects.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, write-sequence, update, json, nested, to-many, slice-mvp-1]
+tags: [m-value-object, m-sql, write-sequence, update, json, nested, to-many, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

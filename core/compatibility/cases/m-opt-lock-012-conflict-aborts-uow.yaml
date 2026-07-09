@@ -25,7 +25,7 @@
 # (no conflict) would fail this case rather than pass on the rollback alone.
 # roundTrips = 4 (the concurrent commit + the two aborted writes + the dependent find).
 model: models/account.yaml
-tags: [m-opt-lock, m-unit-work, optimistic-lock-conflict, abort, scenario, slice-mvp-1]
+tags: [m-opt-lock, m-unit-work, optimistic-lock-conflict, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
 given:
   fixtures: true

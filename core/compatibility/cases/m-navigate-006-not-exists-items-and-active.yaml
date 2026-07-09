@@ -4,7 +4,7 @@
 # composes inside the boolean algebra exactly like an atomic predicate, and that
 # the EXISTS semi-join's correlation binds come before the trailing scalar bind.
 model: models/orders.yaml
-tags: [m-navigate, notExists, boolean, relationship, slice-mvp-1]
+tags: [m-navigate, notExists, boolean, relationship, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

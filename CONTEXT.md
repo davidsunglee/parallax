@@ -123,7 +123,7 @@ A live domain object owned by an open Parallax Transaction: interned in the Iden
 _Avoid_: tracked entity, active record, entity instance
 
 **Detached Object**:
-An object no longer owned by any transaction — because its owning transaction ended or it was deliberately copied out. Mutations land only in the object; persistence happens through merge-back inside a new transaction.
+An object no longer owned by any live scope — the scope that owned it (today, the transaction) ended, or it was deliberately copied out. Mutations land only in the object; persistence happens through merge-back inside a new transaction.
 _Avoid_: stale object, evicted object, offline entity
 
 **Managed Object Graph Mutation**:

@@ -13,9 +13,10 @@ Three modes:
 
       uv run python -m reference_harness.dep_graph_check --coverage core/spec core/compatibility
 
-* **Profile gate** (``--profile``) — assert the ``slice-mvp-1`` Conformance
-  Slice's tagged cases are consistent with its canonical ``describe`` claim
-  embedded in ``slices.md``::
+* **Profile gate** (``--profile``) — assert every Conformance Slice's tagged
+  cases are consistent with its canonical ``describe`` claim embedded in
+  ``slices.md`` (one fenced json claim per slice), and that no case carries a
+  slice tag with no claim::
 
       uv run python -m reference_harness.dep_graph_check --profile core/spec core/compatibility
 
@@ -78,14 +79,13 @@ _CASE_SHAPES = frozenset(
     }
 )
 
-# The named conformance slice the profile gate enforces. The slice is selected by
-# this single tag on each included case; the canonical describe claim that declares
-# its boundaries lives in slices.md.
-_SLICE_TAG = "slice-mvp-1"
+# A slice is selected by a single well-formed slice tag on each included case;
+# the canonical describe claims that declare each slice's boundaries live in
+# slices.md, one fenced json block per slice.
+_SLICE_TAG_RE = re.compile(r"^slice-[a-z0-9][a-z0-9-]*$")
 
-# The heading under which the canonical slice claim is embedded in slices.md,
-# normalized to lower case (the json fence right after it is the source of truth).
-_SLICE_HEADING = "first-implementation conformance slice"
+# Every fenced json block in slices.md is a canonical slice claim.
+_JSON_FENCE_RE = re.compile(r"```json\n(.*?)```", re.DOTALL)
 
 
 class DepGraphFailure(Exception):
@@ -322,49 +322,44 @@ def catalog_graph_consistency_errors(modules_markdown: str) -> list[str]:
 # --- profile (conformance-slice) consistency gate --------------------------
 
 
-def parse_profile_claim(claim_markdown: str) -> dict:
-    """Return the ``capabilities`` of the canonical slice ``describe`` claim.
+def parse_profile_claims(claim_markdown: str) -> dict[str, dict]:
+    """Return ``{slice_tag: capabilities}`` for every claim in ``slices.md``.
 
-    The claim is the single source of truth for the ``slice-mvp-1`` Conformance
-    Slice: a fenced ```` ```json ```` block under the ``## First-implementation
-    Conformance Slice`` heading of ``slices.md``. This parses the first such
-    block, ``json.loads`` it, and returns its ``capabilities`` object.
+    Every fenced ```` ```json ```` block in ``slices.md`` is a canonical slice
+    ``describe`` claim — the single source of truth for one Conformance Slice.
+    A claim is keyed by its ``capabilities.caseTags.include``, which MUST be
+    exactly one well-formed ``slice-*`` tag; two claims MUST NOT name the same
+    slice tag.
     """
-    lines = claim_markdown.splitlines()
-    in_section = False
-    fence_lines: list[str] | None = None
-    block: str | None = None
-    for line in lines:
-        heading = re.match(r"^##\s+(.*?)\s*$", line)
-        if heading:
-            # Any "## " heading ends the slice section (the json fence sits
-            # directly under the slice heading, not under a deeper heading).
-            in_section = heading.group(1).strip().lower() == _SLICE_HEADING
-            continue
-        if not in_section:
-            continue
-        if fence_lines is None:
-            if line.strip() == "```json":
-                fence_lines = []
-            continue
-        if line.strip() == "```":
-            block = "\n".join(fence_lines)
-            break
-        fence_lines.append(line)
-
-    if block is None:
-        raise DepGraphFailure(
-            "no ```json slice claim found under the "
-            "'## First-implementation Conformance Slice' heading of slices.md"
-        )
-    try:
-        claim = json.loads(block)
-    except json.JSONDecodeError as exc:
-        raise DepGraphFailure(f"slice claim is not valid JSON: {exc}") from exc
-    capabilities = claim.get("capabilities")
-    if not isinstance(capabilities, dict):
-        raise DepGraphFailure("slice claim has no 'capabilities' object")
-    return capabilities
+    blocks = _JSON_FENCE_RE.findall(claim_markdown)
+    if not blocks:
+        raise DepGraphFailure("no ```json slice claim found in slices.md")
+    claims: dict[str, dict] = {}
+    for index, block in enumerate(blocks, start=1):
+        try:
+            claim = json.loads(block)
+        except json.JSONDecodeError as exc:
+            raise DepGraphFailure(f"slice claim #{index} is not valid JSON: {exc}") from exc
+        capabilities = claim.get("capabilities")
+        if not isinstance(capabilities, dict):
+            raise DepGraphFailure(f"slice claim #{index} has no 'capabilities' object")
+        case_tags = capabilities.get("caseTags")
+        include = case_tags.get("include") if isinstance(case_tags, dict) else None
+        if (
+            not isinstance(include, list)
+            or len(include) != 1
+            or not isinstance(include[0], str)
+            or not _SLICE_TAG_RE.match(include[0])
+        ):
+            raise DepGraphFailure(
+                f"slice claim #{index}: caseTags.include must be exactly one "
+                f"well-formed slice tag (^slice-…$), got {include!r}"
+            )
+        slice_tag = include[0]
+        if slice_tag in claims:
+            raise DepGraphFailure(f"two slice claims name the same tag {slice_tag!r}")
+        claims[slice_tag] = capabilities
+    return claims
 
 
 def _case_shape(doc: dict) -> str | None:
@@ -432,15 +427,15 @@ def _has_postgres_golden(doc: dict, shape: str) -> bool:
     return False
 
 
-def _slice_cases(compatibility_root: Path) -> list[tuple[Path, dict]]:
-    """Load (path, doc) for every ``cases/`` fixture carrying the slice tag.
+def _load_cases(compatibility_root: Path) -> list[tuple[Path, dict]]:
+    """Load (path, doc) for every ``cases/`` fixture.
 
-    Benchmarks are intentionally ignored — the slice is a subset of ``cases/``.
+    Benchmarks are intentionally ignored — a slice is a subset of ``cases/``.
     """
     cases_dir = compatibility_root / "cases"
-    tagged: list[tuple[Path, dict]] = []
+    loaded: list[tuple[Path, dict]] = []
     if not cases_dir.is_dir():
-        return tagged
+        return loaded
     paths = sorted(cases_dir.glob("**/*.yaml")) + sorted(cases_dir.glob("**/*.yml"))
     for path in sorted(set(paths)):
         try:
@@ -449,46 +444,23 @@ def _slice_cases(compatibility_root: Path) -> list[tuple[Path, dict]]:
             continue
         if not isinstance(doc, dict):
             continue
-        tags = [t for t in doc.get("tags", []) if isinstance(t, str)]
-        if _SLICE_TAG in tags:
-            tagged.append((path, doc))
-    return tagged
+        loaded.append((path, doc))
+    return loaded
 
 
-def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
-    """Assert the tagged slice cases are consistent with the canonical claim.
-
-    Parse the declared claim, scan ``cases/``, diff, and return one error per
-    inconsistency (empty == consistent). First, the claim must select exactly
-    ``caseTags.include: ["slice-mvp-1"]``; then the gate checks both directions:
-
-    * **forward (completeness)** — every module the claim lists has at least one
-      tagged case carrying that module tag;
-    * **reverse (no drift), per tagged case** — its shape is in the claim's
-      ``caseShapes``; every module slug tag on it is in the claim's ``modules``; it
-      carries a Postgres golden (shape-aware); and if the claim lists
-      ``caseTags.exclude``, the case carries none of those tags.
-    """
-    try:
-        capabilities = parse_profile_claim(claim_markdown)
-    except DepGraphFailure as exc:
-        return [str(exc)]
-
+def _claim_errors(slice_tag: str, capabilities: dict, cases: list[tuple[Path, dict]]) -> list[str]:
+    """One slice's forward/reverse consistency errors (empty == consistent)."""
     errors: list[str] = []
     claim_modules = {m for m in capabilities.get("modules", []) if isinstance(m, str)}
     claim_shapes = {s for s in capabilities.get("caseShapes", []) if isinstance(s, str)}
-    case_tags = capabilities.get("caseTags")
-    if not isinstance(case_tags, dict):
-        errors.append(f"slice claim must declare caseTags.include exactly [{_SLICE_TAG!r}]")
-        case_tags = {}
-    raw_include = case_tags.get("include")
-    if raw_include != [_SLICE_TAG]:
-        errors.append(
-            f"slice claim caseTags.include must be exactly [{_SLICE_TAG!r}], got {raw_include!r}"
-        )
+    case_tags = capabilities.get("caseTags", {})
     claim_exclude = {t for t in case_tags.get("exclude", []) if isinstance(t, str)}
 
-    tagged = _slice_cases(compatibility_root)
+    tagged = [
+        (path, doc)
+        for path, doc in cases
+        if slice_tag in [t for t in doc.get("tags", []) if isinstance(t, str)]
+    ]
 
     # forward: every claimed module is carried by at least one tagged case.
     covered_modules: set[str] = set()
@@ -498,11 +470,13 @@ def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
                 covered_modules.add(tag)
     for module in sorted(claim_modules):
         if module not in covered_modules:
-            errors.append(f"slice claims module {module!r} but no tagged case carries it")
+            errors.append(
+                f"[{slice_tag}] slice claims module {module!r} but no tagged case carries it"
+            )
 
     # reverse: every tagged case stays inside the claim.
     for path, doc in tagged:
-        name = path.name
+        name = f"[{slice_tag}] {path.name}"
         shape = _case_shape(doc)
         if shape is None:
             errors.append(f"{name}: tagged case has no recognizable shape")
@@ -535,6 +509,42 @@ def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
             offending = sorted(set(case_tags_list) & claim_exclude)
             if offending:
                 errors.append(f"{name}: carries excluded slice tag(s) {offending}")
+
+    return errors
+
+
+def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
+    """Assert every slice's tagged cases are consistent with its claim.
+
+    Parse the declared claims (one fenced json block per slice in ``slices.md``),
+    scan ``cases/``, diff, and return one error per inconsistency (empty ==
+    consistent). Per claim the gate checks both directions:
+
+    * **forward (completeness)** — every module the claim lists has at least one
+      tagged case carrying that module tag;
+    * **reverse (no drift), per tagged case** — its shape is in the claim's
+      ``caseShapes``; every module slug tag on it is in the claim's ``modules``; it
+      carries a Postgres golden (shape-aware); and if the claim lists
+      ``caseTags.exclude``, the case carries none of those tags.
+
+    Additionally, a case carrying a ``slice-*`` tag with **no** claim in
+    ``slices.md`` is an error — a slice cannot exist as tags alone.
+    """
+    try:
+        claims = parse_profile_claims(claim_markdown)
+    except DepGraphFailure as exc:
+        return [str(exc)]
+
+    errors: list[str] = []
+    cases = _load_cases(compatibility_root)
+
+    for path, doc in cases:
+        for tag in doc.get("tags", []):
+            if isinstance(tag, str) and _SLICE_TAG_RE.match(tag) and tag not in claims:
+                errors.append(f"{path.name}: carries slice tag {tag!r} with no claim in slices.md")
+
+    for slice_tag, capabilities in claims.items():
+        errors += _claim_errors(slice_tag, capabilities, cases)
 
     return errors
 
@@ -610,18 +620,25 @@ def run_profile(spec_dir: Path, compatibility_root: Path) -> int:
     errors = profile_errors(claim_markdown, compatibility_root)
     if errors:
         print(
-            f"profile gate FAILED ({len(errors)} inconsistency(ies) for {_SLICE_TAG!r}):",
+            f"profile gate FAILED ({len(errors)} inconsistency(ies)):",
             file=sys.stderr,
         )
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
 
-    tagged = _slice_cases(compatibility_root)
-    print(
-        f"profile gate OK: the {_SLICE_TAG!r} slice is consistent with its claim "
-        f"({len(tagged)} tagged case(s))"
-    )
+    claims = parse_profile_claims(claim_markdown)
+    cases = _load_cases(compatibility_root)
+    counts = {
+        slice_tag: sum(
+            1
+            for _path, doc in cases
+            if slice_tag in [t for t in doc.get("tags", []) if isinstance(t, str)]
+        )
+        for slice_tag in claims
+    }
+    summary = ", ".join(f"{tag!r}: {count} tagged case(s)" for tag, count in counts.items())
+    print(f"profile gate OK: every slice is consistent with its claim ({summary})")
     return 0
 
 

@@ -13,7 +13,7 @@
 # as text — so `payload` compares as `"01020304"` on both dialects. `amount` and
 # `label` are unset, so they read back null.
 model: models/writable-scalars.yaml
-tags: [m-core, m-sql, m-dialect, scalar, write-sequence, slice-mvp-1]
+tags: [m-core, m-sql, m-dialect, scalar, write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

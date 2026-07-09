@@ -2,7 +2,7 @@
 # Single-axis propagation: the child carries `out_z = ?` (bind infinity). Line
 # 1000 -> 75 (current), line 1001 -> 25.
 model: models/invoice.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, audit-only, slice-mvp-1]
+tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, audit-only, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

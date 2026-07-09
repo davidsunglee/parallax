@@ -7,7 +7,7 @@
 # columns so the result carries the current row's open bound (`out_z = infinity`)
 # alongside a finite, superseded `out_z` — exercising the native-infinity read.
 model: models/balance.yaml
-tags: [m-temporal-read, m-sql, history, audit-only, slice-mvp-1]
+tags: [m-temporal-read, m-sql, history, audit-only, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

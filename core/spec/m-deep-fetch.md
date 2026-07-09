@@ -93,6 +93,41 @@ A deep fetch as of an instant yields a **point-in-time-consistent object graph**
 The per-hop as-of propagation rule (matched by axis, defaulting unpinned axes to
 latest) is owned by `m-navigate` and applies inside each per-level child query.
 
+## Deferred relationship load
+
+A **deferred relationship load** resolves declared relationship paths for an
+**ad-hoc set of already-materialized managed objects** — the
+query-many/navigate-few pattern ("load `customer` for these 10 of my 1000
+orders") without an up-front include and without N+1. It is the same machinery
+as deep fetch, applied after materialization (Reladomo's ad-hoc list deep fetch
+is the prior art). The semantic is **one**, and it is this module's; only the
+**trigger** is per-language idiom:
+
+- an **explicit load call** over the object set (always available);
+- **transparent relationship access** on a managed object, permitted in
+  synchronous languages (where property access can resolve) — the access *is*
+  the trigger, the semantics are identical;
+- eager `includes` at query time remain the third form of the same load.
+
+The normative rules, whatever the trigger:
+
+- A deferred load resolves **only through the live unit of work** that owns the
+  objects — the `m-unit-work` rules apply, including the flush of dependent
+  buffered writes before the read. On an object whose owning scope has ended (a
+  detached object, `m-detach`) it raises a **defined Parallax Error**; it never
+  opens a transaction implicitly.
+- It propagates **each source object's pinned as-of coordinates** (`m-navigate`,
+  applied at the object level), batching sources **per coordinate group**: one
+  child statement per relationship level per distinct coordinate group. The
+  common all-latest set collapses to exactly the deep-fetch form — one statement
+  per level.
+- Round trips stay query-determined: a deferred load is an explicit resolution
+  point whose statement count follows the same one-statement-per-non-empty-level
+  contract, so scenario cases can declare it.
+
+A plain-value graph (`m-snapshot-read`) has **no trigger at all**: a snapshot
+graph is closed-world and never issues SQL after materialization.
+
 ## What the harness verifies
 
 For each deep-fetch case the compatibility harness (`m-case-format`) asserts, in

@@ -1,0 +1,47 @@
+# Same-transaction identity (m-identity-map): two DIFFERENT operations resolving one
+# row within ONE unit of work denote the SAME managed object.
+#
+# Inside one optimistic-mode unit of work, a find by primary key (id = 2) and a find
+# by the unique owner (owner = 'Linus') both resolve Account row 2. The identity map
+# interns per (entity family, primary key) — Account is non-temporal, so there is no
+# as-of coordinate component — and both results MUST be the same logical object
+# (`sameObjectAs`), never two equal copies buffering conflicting updates. Each find
+# still costs one round trip (total 2): the identity map makes NO
+# round-trip-elimination claim — an operation-to-result cache is m-process-cache,
+# deferred. The object-REFERENCE half of the assertion is proven per-language by the
+# API Conformance Suite, which runs this scenario inside one unit of work.
+model: models/account.yaml
+tags: [m-identity-map, identity, scenario, slice-managed-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - find:
+        eq:
+          attr: Account.id
+          value: 2
+      roundTrips: 1
+      note: find by primary key
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+    - find:
+        eq:
+          attr: Account.owner
+          value: Linus
+      roundTrips: 1
+      sameObjectAs: 0
+      identityAttr: id
+      note: find by unique owner — the SAME managed object as step 0 within this unit of work
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
+          binds: [Linus]
+      expectRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+then:
+  roundTrips: 2

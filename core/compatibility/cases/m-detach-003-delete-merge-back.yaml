@@ -5,7 +5,7 @@
 # detached-deleted copy flushes one DELETE; the resulting table state keeps only
 # the untouched rows.
 model: models/account.yaml
-tags: [m-detach, m-sql, detached-delete, write-sequence]
+tags: [m-detach, m-sql, detached-delete, write-sequence, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

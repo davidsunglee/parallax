@@ -17,7 +17,7 @@
 # is INCLUDED here (its non-array `phones` collapses to not-present), the negation
 # of the 019 trap.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-mvp-1]
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

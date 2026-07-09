@@ -2,7 +2,7 @@
 #
 # batch=1 -> each row reserves its own block; badge_seq 1->2->3->4; ids 1,2,3.
 model: models/pk-sequence.yaml
-tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

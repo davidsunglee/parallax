@@ -19,16 +19,19 @@ materialized array. The canonical entry point is `findMany(operation)`:
 - Resolution is **idempotent and stable**: re-accessing an already-resolved list
   does not re-query.
 
-Where the **process caches** (`m-process-cache`) are present, resolution is served
-from the query cache with **no** round trip on a repeated equal operation, and
-identity is preserved — two lists resolving to the same primary key yield the
-**same** logical object. Those cross-find guarantees are `m-process-cache`
-(deferred); the list-core contract above holds independently of them.
+Where the **transaction-scoped identity map** (`m-identity-map`) is present, two
+lists resolving the same identity key within one unit of work yield the **same**
+logical object — the rows still round-trip; only the materialized objects
+coalesce. Repeated-equal-operation round-trip *elimination* (a query cache) is
+`m-process-cache` (deferred). The list-core contract above holds independently
+of both.
 
 This laziness is what makes the deep-fetch round-trip guarantees (`m-deep-fetch`)
 observable: because a list defers resolution and a deep fetch issues one statement
 per relationship level, the harness can count statements and prove that populating
-an already-fetched relationship does not fan out.
+an already-fetched relationship does not fan out. (A plain-value read is **not**
+an operation-backed list — for snapshot graphs the same round-trip observability
+is pinned by `m-snapshot-read` on its own materialization.)
 
 ### Observable contract
 

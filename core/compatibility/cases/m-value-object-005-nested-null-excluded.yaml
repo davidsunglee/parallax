@@ -13,7 +13,7 @@
 # exclusion (m-op-algebra-029/m-op-algebra-030), proven identically on both
 # dialects (MariaDB json_value collapses the JSON-`null` leaf like Postgres).
 model: models/customer.yaml
-tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic, slice-mvp-1]
+tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

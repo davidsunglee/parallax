@@ -73,6 +73,18 @@ These rules are entity-local: each injected predicate is derived only from the
 entity being read, its declared `asOfAttribute` dimensions, and the explicit pin
 or default selected for those dimensions.
 
+### Edge-pinned history results
+
+A `history` / `asOfRange` read returns **one result per milestone**, and each
+materialized result is **edge-pinned**: its as-of coordinate on the scanned axis
+is its milestone's own **from-instant** — for a half-open `[from, to)` interval,
+the one instant guaranteed to select exactly that milestone. (This follows
+Reladomo's `equalsEdgePoint`, whose edge column is the from column when the
+interval is exclusive.) The edge pin is what gives an unpinned scan's results a
+well-defined coordinate — for identity (`m-identity-map`) and for relationship
+dereferencing at the source's own pin (`m-navigate`) — without pretending the
+scan itself was pinned.
+
 ## Bitemporal reads (both axes)
 
 A **bitemporal** entity declares **two** `asOfAttribute` dimensions — one

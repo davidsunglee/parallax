@@ -62,6 +62,17 @@ milestones. The propagated as-of term is appended **after** the navigation/IN-li
 predicate (the bind order is the correlation keys, then the per-axis as-of binds,
 business axis first).
 
+The rule extends from the query algebra to **object graphs**: every relationship
+dereference from an already-materialized object — a deferred relationship load
+on a managed object (`m-deep-fetch`), a hard pointer inside a plain value graph
+(`m-snapshot-read`) — resolves the target timeline **at the source object's own
+pinned coordinates**, matched by axis. An object's coordinates are part of its
+identity (`m-identity-map`), so a dereference never has to guess which instant
+to propagate: the source *is* a pin. This is what makes both materializations
+temporally coherent — a graph's pointers cannot silently cross temporal
+contexts, and a view materialized from a `history` read (edge-pinned at its
+milestone's from-instant, `m-temporal-read`) dereferences at its own edge.
+
 ## Dependent and reverse relationships
 
 - A **reverse** relationship (`reverseName`) is the same association navigated

@@ -16,7 +16,7 @@
 # `to` columns above the year-9000 floor (selecting the fully-current rectangle on both
 # dialects) and pins the matched owner identity.
 model: models/branch.yaml
-tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, bitemporal, as-of, both-axes, materialization, graph, slice-mvp-1]
+tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, bitemporal, as-of, both-axes, materialization, graph, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

@@ -6,7 +6,7 @@
 # This is the `NOT IN` NULL footgun the spec explicitly pins; the negative 3VL
 # companion to m-op-algebra-019 (notIn over non-null data).
 model: models/orders.yaml
-tags: [m-op-algebra, notIn, membership, "null", three-valued-logic, slice-mvp-1]
+tags: [m-op-algebra, notIn, membership, "null", three-valued-logic, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

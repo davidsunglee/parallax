@@ -2,7 +2,7 @@
 # it is a pure existence check, lowering to a correlated EXISTS with only the
 # correlation predicate. Orders 1, 2, 42 have items; 3, 4, 5 do not.
 model: models/orders.yaml
-tags: [m-navigate, exists, relationship, slice-mvp-1]
+tags: [m-navigate, exists, relationship, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

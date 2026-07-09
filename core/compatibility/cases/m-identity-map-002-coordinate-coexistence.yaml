@@ -1,0 +1,65 @@
+# Coordinate coexistence (m-identity-map): the identity key of a temporal entity
+# includes its lowered as-of coordinates, so two pins of ONE primary key coexist
+# within one unit of work as DISTINCT pinned views.
+#
+# Balance id 1 has two milestones: value 100.00 known [2024-01-01, 2024-06-01)
+# (superseded) and 150.00 known [2024-06-01, infinity) (current). Step 0 reads the
+# latest pin (injected `out_z = ?`, bind infinity -> 150.00); step 1 reads the same
+# primary key pinned at 2024-04-01 (containment predicate -> the superseded
+# 100.00). Per the identity key the two pins MUST be distinct pinned views — each
+# dereferences at its own pin; the harness's row-level observable shows that only
+# through the differing milestone rows, and the object-reference distinctness is
+# asserted per-language by the API Conformance Suite. Step 2 repeats the latest
+# pin: SAME lowered coordinate => the SAME managed view as step 0
+# (`sameObjectAs`), still costing a round trip (no query-cache claim).
+model: models/balance.yaml
+tags: [m-identity-map, m-temporal-read, identity, as-of, temporal, audit-only, scenario, slice-managed-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - find:
+        eq:
+          attr: Balance.id
+          value: 1
+      roundTrips: 1
+      note: latest pin (default-injected current-row predicate)
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+          binds: [1, infinity]
+      expectRows:
+        - { bal_id: 1, val: 150.00 }
+    - find:
+        asOf:
+          operand:
+            eq:
+              attr: Balance.id
+              value: 1
+          asOfAttr: Balance.processingDate
+          date: "2024-04-01T00:00:00+00:00"
+      roundTrips: 1
+      note: finite past pin — a DISTINCT pinned view of the same primary key (the superseded milestone)
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
+          binds: [1, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+      expectRows:
+        - { bal_id: 1, val: 100.00 }
+    - find:
+        eq:
+          attr: Balance.id
+          value: 1
+      roundTrips: 1
+      sameObjectAs: 0
+      identityAttr: bal_id
+      note: latest pin again — same lowered coordinate, the SAME managed view as step 0
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+          binds: [1, infinity]
+      expectRows:
+        - { bal_id: 1, val: 150.00 }
+then:
+  roundTrips: 3

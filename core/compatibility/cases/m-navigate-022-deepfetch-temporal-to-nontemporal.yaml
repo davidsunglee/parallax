@@ -4,7 +4,7 @@
 # `lease_id in (?)` with binds = parent keys only. Lease 10 -> notes signed,
 # renewed.
 model: models/lease.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-mvp-1]
+tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

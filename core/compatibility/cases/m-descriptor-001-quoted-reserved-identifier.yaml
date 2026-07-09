@@ -10,7 +10,7 @@
 # is applied per identifier rather than blanket. The trivial single-table predicate
 # needs no `then.referenceSql` — the two `then.rows` are eyeball-verifiable.
 model: models/grade.yaml
-tags: [m-descriptor, m-sql, m-dialect, identifier, quoting, reserved-word, slice-mvp-1]
+tags: [m-descriptor, m-sql, m-dialect, identifier, quoting, reserved-word, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

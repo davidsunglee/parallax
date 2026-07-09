@@ -274,8 +274,10 @@ optimistic-lock conflicts, dialect differences, and cross-process coherence.
 
 The TypeScript implementation in
 [`languages/typescript/`](languages/typescript/README.md) is the first worked
-example: it declares the canonical `slice-mvp-1` Conformance Slice and proves it
-with both official artifacts. Further language implementations should treat
+example: it declares the (now-deprecated) `slice-mvp-1` Conformance Slice — its
+migration target is `slice-managed-1`, one of the two object-lifecycle slices in
+[core/spec/slices.md](core/spec/slices.md) — and proves it with both official
+artifacts. Further language implementations should treat
 `core/` as the shared contract and use `reference-harness/` as the executable
 oracle. See
 [Building A Language Implementation](#building-a-language-implementation) for the

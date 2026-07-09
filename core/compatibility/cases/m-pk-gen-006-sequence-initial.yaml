@@ -3,7 +3,7 @@
 # ticket_seq: init 1000, inc 5, batch 1. One allocation advances by 1*5=5
 # (1000 -> 1005); id 1000.
 model: models/pk-sequence.yaml
-tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-mvp-1]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

@@ -9,7 +9,7 @@
 #   id 3:  50.00 ([2024-03-01, 2024-08-01) contains 2024-04-01)
 # The later id-1 (150.00) milestone is excluded — it was not yet known.
 model: models/balance.yaml
-tags: [m-temporal-read, m-sql, as-of, audit-only, past, slice-mvp-1]
+tags: [m-temporal-read, m-sql, as-of, audit-only, past, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

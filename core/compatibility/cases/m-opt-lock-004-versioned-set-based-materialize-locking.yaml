@@ -22,7 +22,7 @@
 # shape) per row. Optimistic mode (m-opt-lock-003) adds the `and version = ?` gate per row.
 # roundTrips = 4 (one materialize read + two per-object updates + one verify read).
 model: models/account.yaml
-tags: [m-opt-lock, m-sql, m-unit-work, locking-mode, materialize, set-based, scenario, slice-mvp-1]
+tags: [m-opt-lock, m-sql, m-unit-work, locking-mode, materialize, set-based, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
 when:
   uow:

@@ -6,7 +6,7 @@
 # MariaDB `datetime(6)` both carry microsecond precision (m-dialect), so the one
 # authored expected value holds on both dialects.
 model: models/event.yaml
-tags: [m-core, m-sql, m-dialect, timestamp, precision, microsecond, write-sequence, slice-mvp-1]
+tags: [m-core, m-sql, m-dialect, timestamp, precision, microsecond, write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

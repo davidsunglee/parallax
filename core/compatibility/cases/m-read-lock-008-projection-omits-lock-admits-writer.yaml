@@ -13,7 +13,7 @@
 # block/raise). m-read-lock-008, not m-temporal-read-009: m-temporal-read-009–m-temporal-read-012 are the Phase-6 temporal-close-optimistic
 # family.
 model: models/account.yaml
-tags: [m-read-lock, m-dialect, concurrency, projection-omits-lock, slice-mvp-1]
+tags: [m-read-lock, m-dialect, concurrency, projection-omits-lock, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: concurrencySuccess
 given:
   fixtures: true

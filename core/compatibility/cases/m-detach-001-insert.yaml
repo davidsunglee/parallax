@@ -14,7 +14,7 @@
 # asserted in prose. The version column is initialized to 1 on insert (the m-opt-lock
 # optimistic-lock baseline).
 model: models/account.yaml
-tags: [m-detach, m-sql, detached-insert, write-sequence]
+tags: [m-detach, m-sql, detached-insert, write-sequence, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

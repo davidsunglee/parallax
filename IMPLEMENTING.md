@@ -105,11 +105,13 @@ this build actually claims, and everything downstream — the module/package map
 the case/dialect matrix, the conformance grade, the API Conformance Suite — is
 scoped by it. Choose (or define) the named Conformance Slice:
 
-- **Adopt an existing slice.** A fresh first build ordinarily adopts the
-  canonical `slice-mvp-1` slice defined in
-  [core/spec/slices.md](core/spec/slices.md): Postgres-only, 123
-  cases selected by the single `caseTags.include: ["slice-mvp-1"]` tag. Copy its
-  `capabilities` block verbatim, changing only the `adapter` identity.
+- **Adopt an existing slice.** A fresh first build ordinarily adopts one of the
+  two object-lifecycle slices defined in
+  [core/spec/slices.md](core/spec/slices.md) — `slice-snapshot-1` (plain
+  snapshot-graph reads, explicit writes) or `slice-managed-1` (managed objects
+  with the transaction-scoped identity map). Both are Postgres-only, selected by
+  a single `caseTags.include` tag. Copy the chosen claim's `capabilities` block
+  verbatim, changing only the `adapter` identity.
 - **Or define a new slice.** If no existing slice fits, define one in
   [core/spec/slices.md](core/spec/slices.md) following the
   slice-naming convention (`^slice-[a-z0-9][a-z0-9-]*$`, where the slice's name

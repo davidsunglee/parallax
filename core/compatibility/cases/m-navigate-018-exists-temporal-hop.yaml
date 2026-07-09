@@ -8,7 +8,7 @@
 # independent referenceSql oracle (an `id in (select policy_id ...)`
 # reformulation, as-of included) returning the same rows.
 model: models/policy.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, slice-mvp-1]
+tags: [m-navigate, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

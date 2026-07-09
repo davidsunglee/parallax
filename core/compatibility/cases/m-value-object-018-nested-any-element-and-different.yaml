@@ -16,7 +16,7 @@
 # and Postgres would ERROR; each conjunct's array-type guard collapses the non-array
 # `phones` to not-present, so 10 (and the JSON-null 8 and scalar 9) are excluded.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-mvp-1]
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

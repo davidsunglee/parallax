@@ -6,7 +6,7 @@
 # independent `right(sku, 3)` oracle would catch an unescaped `%` (which would
 # match any suffix). Companion to m-op-algebra-033 (startsWith) and m-op-algebra-015 (contains).
 model: models/orders.yaml
-tags: [m-op-algebra, endsWith, string, escape, slice-mvp-1]
+tags: [m-op-algebra, endsWith, string, escape, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

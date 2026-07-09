@@ -7,8 +7,9 @@ be edited entirely **outside** any transaction (a *detached* copy) and later mer
 back into the persisted store.
 
 `m-detach` depends on `m-unit-work` — the unit of work and the buffered-write
-machinery it is layered on — and on nothing below that. Object identity (one
-interned object per primary key) is `m-process-cache`. Like `m-unit-work`,
+machinery it is layered on — and on `m-identity-map`, the transaction-scoped
+identity map that persisted objects are interned in and that detached copies
+live *outside* of. Like `m-unit-work`,
 `m-detach` is expressed in terms of **operations and object state**, not SQL; the
 concrete DML a merge-back flushes is produced by `m-sql` and run through the
 `m-db-port` execution seam, so `m-detach` takes no direct edge to SQL generation.
@@ -26,7 +27,7 @@ and the legal transitions between them:
 | State | Meaning |
 |---|---|
 | `in-memory` | newly constructed, not yet inserted; mutations stay in memory |
-| `persisted` | backed by a database row; interned in the identity cache; mutations buffer into the unit of work |
+| `persisted` | backed by a database row; interned in the identity map (`m-identity-map`); mutations buffer into the unit of work |
 | `deleted` | marked for deletion within a unit of work; the `DELETE` flushes at the boundary |
 | `detached` | a deep copy decoupled from the cache; mutations stay in the copy (no SQL) |
 | `detached-deleted` | a detached copy marked for deletion; merge-back deletes the original |
@@ -52,8 +53,18 @@ The transitions an implementation **MUST** support:
   identity cache.
 - **`persisted → deleted`.** Deleting a persisted object marks it; the `DELETE`
   flushes at the unit-of-work boundary (`m-unit-work` ordering rules apply).
-- **`persisted → detached`.** Taking a **detached copy** (below) yields a new
-  object in the `detached` state, fully decoupled from the cache.
+- **`persisted → detached`.** Two triggers:
+  - **Deliberate** — taking a **detached copy** (below) yields a *new* object in
+    the `detached` state, fully decoupled from the cache, while the original
+    stays live.
+  - **Automatic, at owning-scope end** — when the scope that owns a managed
+    object ends (the unit of work, at commit **or** abort), every managed object
+    user code still holds transitions to `detached` **in place**: reading its
+    loaded state works, mutations land only in the object (no SQL, no error),
+    and persistence goes through merge-back inside a new unit of work. On
+    **abort**, the object's visible state first **reverts to its as-materialized
+    values** — the buffered operations know the pre-write values (`m-unit-work`),
+    so an escaped object never shows discarded writes.
 - **`detached → detached-deleted`.** Deleting a detached copy marks the copy; no
   SQL is issued until merge-back.
 - **`detached / detached-deleted → persisted / deleted`.** **Merging back**
@@ -74,11 +85,14 @@ observable contract:
 - A **`persisted`** object's mutations **buffer** into the enclosing unit of work
   (`m-unit-work`) and flush as SQL at the boundary — never eagerly, one statement
   per set.
-- A **`detached`** object's mutations land **only in the copy**. A detached object
-  is **not** enrolled in any unit of work and issues **no** SQL when mutated; the
-  database is untouched until merge-back. This is the property that makes a
-  detached object usable across transaction boundaries (e.g. carried through a UI
-  edit) without holding a transaction open.
+- A **`detached`** object's mutations land **only in the object**. A detached
+  object is **not** enrolled in any unit of work and issues **no** SQL when
+  mutated; the database is untouched until merge-back. This is the property that
+  makes a detached object usable across transaction boundaries (e.g. carried
+  through a UI edit) without holding a transaction open. A **deferred
+  relationship load** (`m-deep-fetch`) on a detached object raises a defined
+  Parallax Error — there is no live unit of work to resolve through; only
+  already-loaded state is readable.
 
 ## Detached copy — a deep copy decoupled from the cache
 
@@ -93,8 +107,8 @@ brand-new object in the `detached` state, with **no** link to the identity cache
   key.
 
 Because the copy is decoupled, two detached copies of the same row are
-independent objects (the one-object-per-PK identity rule, `m-process-cache`,
-governs the **cache** — detached copies live *outside* it by construction).
+independent objects (the one-object-per-key identity rule, `m-identity-map`,
+governs the **map** — detached copies live *outside* it by construction).
 
 ### `isModifiedSinceDetachment`
 

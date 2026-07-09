@@ -3,7 +3,7 @@
 # voucher_seq batch 2, inc 10: insert 4 -> two allocations (next_val 100->120->140).
 # Block 1 (base 100): 100,110. Block 2 (base 120): 120,130.
 model: models/pk-sequence.yaml
-tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

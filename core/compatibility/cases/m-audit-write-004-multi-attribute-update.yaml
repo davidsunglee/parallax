@@ -23,7 +23,7 @@
 # as the native-infinity Postgres golden does. The chaining DML is identical on both
 # dialects (the open bound rides as a bind), so the goldens are byte-equal.
 model: models/balance.yaml
-tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-mvp-1]
+tags: [m-audit-write, m-sql, write-sequence, update, audit-only, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

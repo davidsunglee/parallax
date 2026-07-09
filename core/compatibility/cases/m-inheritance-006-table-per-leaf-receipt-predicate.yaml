@@ -4,7 +4,7 @@
 # injected (the leaf is selected by its table); the user predicate is the only
 # WHERE clause. The single authored receipt (paidAmount 120.00) qualifies.
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-leaf]
+tags: [m-inheritance, m-sql, table-per-leaf, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

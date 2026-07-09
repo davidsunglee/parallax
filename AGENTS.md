@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Core Spec Authoring
+
+- The slice ⇒ module reference is **one-way**: `core/spec/slices.md` names modules; a module spec (`core/spec/m-*.md`) never names a slice or its claim status. Express "who uses this" in terms of surfaces or sibling modules.
+
 ## Language Implementation Work
 
 - Before implementing a language target, read `README.md`, `IMPLEMENTING.md`, `core/spec/00-overview.md`, `core/spec/modules.md`, `core/spec/slices.md`, `core/spec/m-conformance-adapter.md`, and the target language spec.

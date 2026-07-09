@@ -32,7 +32,7 @@
 # element. `then.tableState` decodes the document column so the authored documents
 # compare identically on both dialects.
 model: models/branch.yaml
-tags: [m-value-object, m-bitemp-write, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, nested, to-many]
+tags: [m-value-object, m-bitemp-write, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, nested, to-many, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

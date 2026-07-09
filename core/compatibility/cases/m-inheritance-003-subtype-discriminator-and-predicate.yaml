@@ -6,7 +6,7 @@
 # the Visa card row (id 1, amount 100.00) qualifies; the Amex card row (50.00) is
 # filtered out by the amount predicate.
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator]
+tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

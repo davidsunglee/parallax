@@ -4,7 +4,7 @@
 # one `then.statements` entry — a membership matrix row alongside the `eq` one. The
 # value list {1, 2, 42} returns the three matching orders.
 model: models/orders.yaml
-tags: [m-op-algebra, in, membership, slice-mvp-1]
+tags: [m-op-algebra, in, membership, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

@@ -20,7 +20,7 @@
 #   attempt 1 (retry) : the loop re-reads the fresh version (2), re-applies => 1 row,
 #                       advancing the version to 3.
 model: models/account.yaml
-tags: [m-opt-lock, m-auto-retry, m-sql, conflict, success, slice-mvp-1]
+tags: [m-opt-lock, m-auto-retry, m-sql, conflict, success, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
 given:
   apply:

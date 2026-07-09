@@ -6,7 +6,7 @@
 # it back unchanged witnesses the write boundary at the declared limit — the largest
 # value the bounded column accepts (a ninth character would overflow the column).
 model: models/writable-scalars.yaml
-tags: [m-core, m-sql, scalar, string, write-sequence, slice-mvp-1]
+tags: [m-core, m-sql, scalar, string, write-sequence, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

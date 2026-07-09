@@ -15,7 +15,7 @@
 # state confirms our stale write never applied: id 1 still carries the concurrent
 # writer's values (888.00, version 2).
 model: models/account.yaml
-tags: [m-opt-lock, m-detach, m-sql, conflict, merge-back]
+tags: [m-opt-lock, m-detach, m-sql, conflict, merge-back, slice-managed-1]
 shape: conflict
 given:
   apply:

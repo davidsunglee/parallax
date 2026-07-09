@@ -3,7 +3,7 @@
 # combine with `and`; the injected temporal term is appended after the user term.
 # As-of now, account A's current balance is the 150.00 milestone (id 1).
 model: models/balance.yaml
-tags: [m-temporal-read, m-sql, as-of, audit-only, composed, slice-mvp-1]
+tags: [m-temporal-read, m-sql, as-of, audit-only, composed, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   operation:

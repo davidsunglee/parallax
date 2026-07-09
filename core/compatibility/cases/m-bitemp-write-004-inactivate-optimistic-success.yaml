@@ -11,7 +11,7 @@
 # chain, so `then.tableState` shows R3 closed at 2024-10-01 with R1/R2 untouched —
 # conflict granularity is the rectangle, not the primary key.
 model: models/position.yaml
-tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-mvp-1]
+tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
 when:
   uow:

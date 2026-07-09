@@ -8,7 +8,8 @@ the spec:
 * every ``active`` module whose coverage source is ``cases`` (read from the
   ``modules.md`` catalog table) has at least one fixture tagged to it;
 * no ``active`` module depends on a ``deferred`` one;
-* the ``slice-mvp-1`` slice is consistent with its canonical claim in ``slices.md``.
+* every Conformance Slice is consistent with its canonical claim in
+  ``slices.md``, and no case carries a slice tag with no claim.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ import pytest
 import yaml
 
 from reference_harness.dep_graph_check import (
-    _SLICE_TAG,
     DepGraphFailure,
     active_deferred_edge_errors,
     catalog_graph_consistency_errors,
@@ -29,7 +29,7 @@ from reference_harness.dep_graph_check import (
     gated_modules,
     parse_catalog,
     parse_edges,
-    parse_profile_claim,
+    parse_profile_claims,
     profile_errors,
 )
 
@@ -209,18 +209,13 @@ def test_deferred_to_active_edge_is_allowed() -> None:
 # per gate dimension plus a clean pass.
 
 
-def _synthetic_slices(
+def _claim_block(
     modules: str = '["m-core","m-op-algebra"]',
     shapes: str = '["read","writeSequence"]',
     case_tags: str = '{ "include": ["slice-mvp-1"] }',
 ) -> str:
-    """A minimal slices.md carrying the slice heading + a json claim."""
     return textwrap.dedent(
         f"""\
-        ## First-implementation Conformance Slice
-
-        Some prose about the slice.
-
         ```json
         {{
           "schemaVersion": "1", "command": "describe", "status": "ok",
@@ -235,9 +230,22 @@ def _synthetic_slices(
           }}
         }}
         ```
-
-        Trailing prose.
         """
+    )
+
+
+def _synthetic_slices(
+    modules: str = '["m-core","m-op-algebra"]',
+    shapes: str = '["read","writeSequence"]',
+    case_tags: str = '{ "include": ["slice-mvp-1"] }',
+    extra_claims: str = "",
+) -> str:
+    """A minimal slices.md: a heading, one json claim, optional extra claims."""
+    return (
+        "## Some Conformance Slice\n\nSome prose about the slice.\n\n"
+        + _claim_block(modules, shapes, case_tags)
+        + "\nTrailing prose.\n"
+        + extra_claims
     )
 
 
@@ -259,11 +267,23 @@ def _clean_read_case(tags: list[str]) -> dict:
     }
 
 
-def test_parse_profile_claim_extracts_the_embedded_claim() -> None:
-    capabilities = parse_profile_claim(_synthetic_slices())
-    assert capabilities["modules"] == ["m-core", "m-op-algebra"]
-    assert capabilities["caseShapes"] == ["read", "writeSequence"]
-    assert capabilities["caseTags"] == {"include": ["slice-mvp-1"]}
+def test_parse_profile_claims_extracts_every_embedded_claim() -> None:
+    claims = parse_profile_claims(_synthetic_slices())
+    assert list(claims) == ["slice-mvp-1"]
+    assert claims["slice-mvp-1"]["modules"] == ["m-core", "m-op-algebra"]
+    assert claims["slice-mvp-1"]["caseShapes"] == ["read", "writeSequence"]
+
+
+def test_parse_profile_claims_keys_multiple_claims_by_slice_tag() -> None:
+    two = _synthetic_slices(extra_claims=_claim_block(case_tags='{ "include": ["slice-other-1"] }'))
+    claims = parse_profile_claims(two)
+    assert sorted(claims) == ["slice-mvp-1", "slice-other-1"]
+
+
+def test_parse_profile_claims_rejects_duplicate_slice_tags() -> None:
+    dupe = _synthetic_slices(extra_claims=_claim_block())
+    with pytest.raises(DepGraphFailure, match="same tag"):
+        parse_profile_claims(dupe)
 
 
 def test_profile_gate_passes_on_a_consistent_slice(tmp_path: Path) -> None:
@@ -275,7 +295,7 @@ def test_profile_gate_passes_on_a_consistent_slice(tmp_path: Path) -> None:
     assert profile_errors(_synthetic_slices(), tmp_path) == []
 
 
-def test_profile_gate_requires_the_canonical_single_include_tag(tmp_path: Path) -> None:
+def test_profile_gate_requires_a_single_wellformed_include_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
     _write_case(cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-mvp-1"]))
@@ -283,10 +303,39 @@ def test_profile_gate_requires_the_canonical_single_include_tag(tmp_path: Path) 
     for case_tags in (
         "{}",
         '{ "include": ["renamed-slice"] }',
-        '{ "include": ["slice-mvp-1", "extra-slice"] }',
+        '{ "include": ["slice-mvp-1", "slice-extra-1"] }',
     ):
         errors = profile_errors(_synthetic_slices(case_tags=case_tags), tmp_path)
-        assert any("caseTags.include" in e and _SLICE_TAG in e for e in errors)
+        assert any("caseTags.include" in e for e in errors)
+
+
+def test_profile_gate_fails_on_a_slice_tag_with_no_claim(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(
+        cases,
+        "m-op-algebra-002.yaml",
+        _clean_read_case(["m-op-algebra", "slice-mvp-1", "slice-ghost-1"]),
+    )
+    errors = profile_errors(_synthetic_slices(), tmp_path)
+    assert any("slice-ghost-1" in e and "no claim" in e for e in errors)
+
+
+def test_profile_gate_checks_every_claim_independently(tmp_path: Path) -> None:
+    cases = tmp_path / "cases"
+    # slice-mvp-1 is fully consistent; slice-other-1 claims m-op-algebra with no
+    # tagged case carrying it -> exactly the second slice fails.
+    _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-mvp-1"]))
+    _write_case(
+        cases,
+        "m-op-algebra-002.yaml",
+        _clean_read_case(["m-op-algebra", "slice-mvp-1"]),
+    )
+    _write_case(cases, "m-core-001.yaml", _clean_read_case(["m-core", "slice-other-1"]))
+    two = _synthetic_slices(extra_claims=_claim_block(case_tags='{ "include": ["slice-other-1"] }'))
+    errors = profile_errors(two, tmp_path)
+    assert any("[slice-other-1]" in e and "m-op-algebra" in e for e in errors)
+    assert not any("[slice-mvp-1]" in e for e in errors)
 
 
 def test_profile_gate_fails_when_a_claimed_module_is_uncovered(tmp_path: Path) -> None:
@@ -414,29 +463,15 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 
 # --- the profile gate over the real corpus -----------------------------------
 #
-# The family-selected cases are internally consistent with the canonical claim,
-# and exactly 197 cases carry the slice tag (a drift tripwire — adding or losing a
-# tagged case fails the count). Phase 11 added the 42 value-object cases (the
-# whole m-value-object module except the deferred bitemporal rectangle-split
-# value-object write, m-value-object-033), lifting the slice from 123 to 165; COR-26
-# promoted the eight m-bitemp-write cases (m-bitemp-write-001..008), lifting it to 173,
-# then added seven audit-chaining / unit-work RYOW cases (m-audit-write-004..006,
-# m-unit-work-005..008) on already-claimed modules, lifting it to 180, then five
-# batch-DELETE / opt-lock-edge / mixed-op cases (m-batch-write-003/004,
-# m-opt-lock-012/013, m-unit-work-009) in COR-26 Phase 3, lifting it to 185, then
-# twelve type-fidelity / value-object-write / pk-gen cases in COR-26 Phase 5
-# (m-core-005..008, m-value-object-044..046, and the promoted m-pk-gen-001/002/004/006
-# plus the new m-pk-gen-014 sequence x temporal insert), promoting m-pk-gen into the
-# claim and lifting it to 197. (m-db-error-009, the serialization-failure witness,
-# stays harness-only.)
+# Every slice's tagged cases are internally consistent with its canonical claim,
+# and the tagged-case counts are drift tripwires — adding or losing a tagged case
+# fails the count. The two object-lifecycle slices share the non-lifecycle base
+# (dual-tagged cases); slice-snapshot-1 excludes the m-op-list-tagged cases and
+# adds the m-snapshot-read cases, slice-managed-1 adds m-detach, the detached
+# merge-back conflict, and the m-identity-map cases.
 
 
-def test_real_corpus_profile_is_consistent() -> None:
-    slices = (_SPEC_DIR / "slices.md").read_text(encoding="utf-8")
-    assert profile_errors(slices, _COMPATIBILITY_ROOT) == []
-
-
-def test_profile_slice_tag_count() -> None:
+def _slice_tag_count(slice_tag: str) -> list[str]:
     cases_dir = _COMPATIBILITY_ROOT / "cases"
     tagged = []
     for path in sorted(cases_dir.glob("**/*.yaml")) + sorted(cases_dir.glob("**/*.yml")):
@@ -444,8 +479,32 @@ def test_profile_slice_tag_count() -> None:
         if not isinstance(doc, dict):
             continue
         tags = [t for t in doc.get("tags", []) if isinstance(t, str)]
-        if _SLICE_TAG in tags:
+        if slice_tag in tags:
             tagged.append(path.name)
-    assert len(tagged) == 197, (
-        f"expected exactly 197 cases tagged {_SLICE_TAG!r}, found {len(tagged)}: {sorted(tagged)}"
-    )
+    return tagged
+
+
+def test_real_corpus_profile_is_consistent() -> None:
+    slices = (_SPEC_DIR / "slices.md").read_text(encoding="utf-8")
+    assert profile_errors(slices, _COMPATIBILITY_ROOT) == []
+
+
+def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
+    # slice-mvp-1 is deprecated and survives only until the TypeScript claim
+    # migrates to slice-managed-1 (see slices.md).
+    slices = (_SPEC_DIR / "slices.md").read_text(encoding="utf-8")
+    claims = parse_profile_claims(slices)
+    assert sorted(claims) == ["slice-managed-1", "slice-mvp-1", "slice-snapshot-1"]
+
+
+def test_profile_slice_tag_counts() -> None:
+    for slice_tag, expected in (
+        ("slice-mvp-1", 197),
+        ("slice-snapshot-1", 202),
+        ("slice-managed-1", 219),
+    ):
+        tagged = _slice_tag_count(slice_tag)
+        assert len(tagged) == expected, (
+            f"expected exactly {expected} cases tagged {slice_tag!r}, "
+            f"found {len(tagged)}: {sorted(tagged)}"
+        )

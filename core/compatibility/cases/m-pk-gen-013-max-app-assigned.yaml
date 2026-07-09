@@ -3,7 +3,7 @@
 # Seed an app-assigned high id (100), then allocate: max(id)+1 = 101. Proves `max`
 # is computed from the actual maximum regardless of how prior ids were assigned.
 model: models/pk-max.yaml
-tags: [m-pk-gen, m-unit-work, max, write-sequence]
+tags: [m-pk-gen, m-unit-work, max, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

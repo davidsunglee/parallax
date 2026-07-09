@@ -3,7 +3,7 @@
 # voucher_seq: init 100, inc 10, batch 2. ONE allocation reserves a block of 2 at
 # stride 10 -> next_val advances by 2*10=20 (100 -> 120), base 100; ids 100,110.
 model: models/pk-sequence.yaml
-tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

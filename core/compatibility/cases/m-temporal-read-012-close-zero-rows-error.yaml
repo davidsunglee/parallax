@@ -9,7 +9,7 @@
 # is 0 and `then.tableState` is the fixtures with id 2 already terminated (unchanged
 # by the close).
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, locking, slice-mvp-1]
+tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, locking, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
 given:
   apply:
