@@ -15,8 +15,8 @@ The configured application-side entry point for Parallax reads and for opening t
 _Avoid_: client, database connection, global session, ambient context
 
 **Parallax Transaction**:
-The explicit entry point for reads, writes, and managed object graph mutation inside a transaction.
-_Avoid_: transaction client, ambient transaction, hidden unit of work
+The explicit entry point for reads, writes, and managed object graph mutation inside a transaction; it is also the scope that owns managed objects and the Identity Map.
+_Avoid_: transaction client, ambient transaction, hidden unit of work, session
 
 **Inheritance Family**:
 A closed polymorphic entity family with an abstract root and concrete leaf types, where reads may address the family position or narrow to specific leaves.
@@ -63,6 +63,10 @@ _Avoid_: comparator callback, order callback
 **Result Collection**:
 An operation-backed result collection returned by `find`; it may resolve to zero, one, or many objects.
 _Avoid_: array, result array
+
+**Snapshot Graph**:
+A typed plain value graph returned by a snapshot read: identity-resolved within the graph (one node per row), connected by hard pointers, pinned whole-graph at one set of as-of coordinates, and closed-world — it never issues further database work.
+_Avoid_: domain snapshot, JSON output, serialization form, lazy collection
 
 **Includes**:
 The query option that requests eager relationship loading for a `find`.
@@ -114,13 +118,29 @@ _Avoid_: generic relationship, untyped relationship
 A named relationship view produced by subtype narrowing, representing the exact narrowed relationship that was requested without implying the full relationship collection is loaded.
 _Avoid_: partially loaded relationship, filtered array
 
+**Managed Object**:
+A live domain object owned by an open Parallax Transaction: interned in the Identity Map, with mutations buffered into the unit of work as operations at mutation time.
+_Avoid_: tracked entity, active record, entity instance
+
+**Detached Object**:
+An object no longer owned by any transaction — because its owning transaction ended or it was deliberately copied out. Mutations land only in the object; persistence happens through merge-back inside a new transaction.
+_Avoid_: stale object, evicted object, offline entity
+
 **Managed Object Graph Mutation**:
 A change made through a managed domain object or one of its relationship references.
 _Avoid_: object write, direct persistence
 
+**Deferred Relationship Load**:
+An on-demand resolution of a relationship for one or more already-materialized managed objects, batched over the requested set and resolved through the live transaction at each source object's as-of coordinates. The trigger idiom is per-language; the semantic is one.
+_Avoid_: lazy loading, implicit fetch, N+1 loop
+
 **Identity Cache**:
 A Parallax cache scope that interns managed objects so the same database identity resolves to the same logical object within that scope.
-_Avoid_: global object store, equality cache
+_Avoid_: global object store, equality cache, session cache
+
+**Identity Map**:
+The transaction-scoped Identity Cache: within one Parallax Transaction, one managed object per entity family, primary key, and as-of coordinates. It makes no promise across transactions.
+_Avoid_: session, session cache, first-level cache
 
 ### Writes And Correctness
 
@@ -154,6 +174,14 @@ _Avoid_: now, current row (when the current wall-clock instant is meant)
 A read pinned to a finite point in time on an as-of axis; it selects the milestone whose half-open interval contains that instant (`from <= instant and to > instant`), which may be a superseded version rather than the latest.
 _Avoid_: as of now (for a finite past pin), point-in-time row
 
+**As-Of Coordinate**:
+The lowered pin value for one declared as-of axis under which a read, managed object, or snapshot graph is resolved; latest lowers to the infinity sentinel. A temporal object's identity and its relationship dereferencing are both anchored to its coordinates.
+_Avoid_: date parameter, timestamp property
+
+**Edge Pin**:
+The from-instant of a milestone used as its as-of coordinate when history and range reads return one view per milestone, so each returned version is identified and navigable at its own pin.
+_Avoid_: edge point (as a result shape), version date
+
 **Now**:
 The current wall-clock instant. It coincides with **Latest** on the processing axis (milestones there are never future-dated) but not necessarily on the business axis, where a future-effective milestone can make the latest version differ from the version effective at the current instant.
 _Avoid_: latest (treating the two as interchangeable)
@@ -167,8 +195,8 @@ _Avoid_: per-hop as-of, manual temporal join
 ### Serialization And Input
 
 **Domain Snapshot**:
-A plain JSON-serializable representation of a domain object graph, detached from Parallax relationship references and runtime state.
-_Avoid_: POJO, DTO
+A plain JSON-serializable representation of a domain object graph, detached from Parallax relationship references and runtime state. It is a serialization output produced through a Serialization Shape, not a query result.
+_Avoid_: POJO, DTO, snapshot graph, read result
 
 **Serialization Shape**:
 The declared JSON form used to convert managed domain objects into domain snapshots, expressed in terms of selected attributes and relationships.
