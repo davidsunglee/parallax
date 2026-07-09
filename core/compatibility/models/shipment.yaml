@@ -1,0 +1,46 @@
+# Shipment: a NON-NULLABLE top-level value-object owner — the write-validation
+# exemplar for the "required top-level value object missing" negative
+# (m-value-object, resolved Q7).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Every
+# existing value-object owner (customer / supplier / branch / contact) declares its
+# top-level `address` as `nullable: true` (a null document is a legal write), so a
+# write that OMITS a required top-level value object had no witness. Shipment's
+# `destination` top-level value object is `nullable: false`: a write that omits it
+# entirely MUST be refused PRE-SQL with `write-required-value-object-missing`.
+#
+# There are NO fixtures and NO golden SQL: the `rejected` case asserts a model-
+# invalid write is refused before any DML (m-value-object write validation), so
+# nothing is provisioned or executed. Shipment is the FIRST (and only) entity so
+# the rejected-case runner resolves it as the validated entity.
+entity:
+  name: Shipment
+  namespace: parallax.compatibility
+  table: shipment
+  mutability: transactional
+  temporal: non-temporal
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGenerator: none
+    - name: name
+      type: string
+      column: name
+      maxLength: 64
+  valueObjects:
+    - name: destination
+      column: destination
+      mapping: json
+      cardinality: one
+      nullable: false
+      attributes:
+        - name: street
+          type: string
+        - name: city
+          type: string
+  indices:
+    - name: shipment_pk
+      attributes: [id]
+      unique: true

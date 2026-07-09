@@ -229,6 +229,53 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "unit-of-work flush idiom is already exercised by m-unit-work-001/-003 in transactions.api-conformance.test.ts — " +
       "this is a cross-kind flush-ordering variant whose specific golden the run lane grades.",
   },
+  // --- type fidelity + value-object write gaps + pk-gen (COR-26 Phase 5) ------
+  ...["005", "006", "007", "008"].map((n) => ({
+    id: `m-core-${n}`,
+    reason:
+      "scalar WRITE round-trip / boundary (float32/float64/bytes/time/uuid round-trip, explicit-null write, " +
+      "decimal-precision and string-max-length boundaries): that the value survives the encode-at-bind / " +
+      "decode-at-read boundary is proven end-to-end by the reference harness (both dialects) AND the conformance " +
+      "runner's run lane (slice-run grades the resulting tableState). The developer scalar-write idiom is already " +
+      "exercised by the timestamp inserts m-core-002/-003 in transactions.api-conformance.test.ts — these are " +
+      "type-fidelity variants whose specific goldens the run lane grades.",
+  })),
+  {
+    id: "m-value-object-044",
+    reason:
+      "rejected: a pre-SQL refusal negative (m-value-object resolved Q7) — a write OMITTING a required TOP-LEVEL " +
+      "value object is refused before any DML with write-required-value-object-missing. Like the other rejected " +
+      "negatives, there is no idiomatic developer query to author; the refusal is proven by the @parallax/operation " +
+      "validators and the harness run lane (slice-run emits the rejected rule).",
+  },
+  {
+    id: "m-value-object-045",
+    reason:
+      "value-object multi-row batched INSERT: two Customers collapse into one multi-row INSERT, each address " +
+      "document bound atomically. The collapsed DML + decoded read-back is proven end-to-end by the reference " +
+      "harness AND the conformance runner's run lane (slice-run grades tableState). The value-object developer write " +
+      "idiom is exercised by m-value-object-025 and the batched collapse by m-batch-write-001 — this is the " +
+      "composition whose specific golden the run lane grades.",
+  },
+  {
+    id: "m-value-object-046",
+    reason:
+      "value-object document WRITE under an optimistic gate: a versioned UPDATE replaces the whole address document " +
+      "and advances the version once, gated on the observed version. The affected-row count + decoded tableState is " +
+      "proven end-to-end by the reference harness AND the conformance runner's run lane (slice-run drives " +
+      "@parallax/conformance's conflict plan). The value-object write is exercised by m-value-object-025 and the " +
+      "optimistic gate by m-opt-lock-005/-006 — this is the composition whose specific golden the run lane grades.",
+  },
+  ...["m-pk-gen-001", "m-pk-gen-002", "m-pk-gen-004", "m-pk-gen-006", "m-pk-gen-014"].map((id) => ({
+    id,
+    reason:
+      "primary-key generation (the max strategy `coalesce(max(col), ?) + ?`; the simulated-sequence " +
+      "`next_val += n` reserve then the reserved id; and the sequence x audit-only-temporal milestone insert): pk " +
+      "allocation is a framework concern a developer never authors as DML. The allocated ids + advanced counter + " +
+      "resulting rows are proven end-to-end by the reference harness (the pk-allocation oracle AND the run lane " +
+      "grading tableState) and the conformance runner's run lane (slice-run). No idiomatic developer query spells " +
+      "the coalesce/max or the sequence-reservation SQL.",
+  })),
 ];
 
 /** The set of skipped case ids, for the coverage check. */

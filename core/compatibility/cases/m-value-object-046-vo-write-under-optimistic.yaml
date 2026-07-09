@@ -1,0 +1,51 @@
+# valueObject document WRITE under an OPTIMISTIC gate (m-value-object + m-opt-lock):
+# a versioned UPDATE replaces the whole `address` document and advances the version
+# exactly once, gated on the observed version.
+#
+# No existing model combines a value object with an optimistic-lock version, so a
+# versioned document write had no witness. The unit of work observes Subscriber 1 at
+# version 1 and assigns a NEW `address` document. The golden SET lists the domain
+# column (address, the whole document bound atomically in columnOrder position)
+# ahead of the framework-owned version advance (version = observed + 1 = 2), gated
+# on the observed version (1). With no concurrent writer the fresh gate matches
+# exactly ONE row — success — so the new document lands and the version advances to
+# 2. The harness loads the version-1 fixture, applies the golden UPDATE, and asserts
+# affectedRows = 1 and the resulting row (decoding the document column).
+model: models/subscriber.yaml
+tags: [m-value-object, m-opt-lock, m-sql, conflict, json, slice-mvp-1]
+shape: conflict
+when:
+  uow:
+    concurrency: optimistic
+  write:
+    id: 1
+    observedVersion: 1
+    address:
+      street: 9 Fjord Way
+      city: Oslo
+      geo:
+        country: "NO"
+then:
+  statements:
+    - sql:
+        postgres: update subscriber set address = ?, version = ? where id = ? and version = ?
+        mariadb: update subscriber set address = ?, version = ? where id = ? and version = ?
+      binds:
+        - street: 9 Fjord Way
+          city: Oslo
+          geo:
+            country: "NO"
+        - 2
+        - 1
+        - 1
+  affectedRows: 1
+  tableState:
+    subscriber:
+      - id: 1
+        version: 2
+        address:
+          street: 9 Fjord Way
+          city: Oslo
+          geo:
+            country: "NO"
+  roundTrips: 1

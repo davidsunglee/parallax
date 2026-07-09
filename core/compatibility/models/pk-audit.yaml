@@ -1,0 +1,61 @@
+# PK generation composed with a TEMPORAL (audit-only) entity (m-pk-gen +
+# m-audit-write) — net-new: no existing model puts a pkGenerator on a temporal
+# entity.
+#
+# `AuditSeq` is the simulated-sequence registry (Reladomo SimulatedSequence): one
+# row per named sequence (`name` PK) holding the next value (`next_val`) to hand
+# out. `AuditEntry` is an audit-only (unitemporal-processing) entity whose primary
+# key is allocated by that sequence (`pkGenerator: { strategy: sequence, ... }`):
+# an insert first reserves a block from the registry (`next_val += 1`), then opens
+# a milestone `[in_z = txInstant, out_z = infinity)` carrying the reserved id.
+#
+# The two disciplines compose without conflict: the reserved id is a plain domain
+# value on the milestone (the sequence oracle re-derives it from the config), and
+# the in_z/out_z bookkeeping is the ordinary audit-write milestone open. The
+# interval columns are `timestamp` (instants are UTC); the open upper bound is the
+# database-native infinity (m-core/m-dialect). Row data (the registry seed) lives
+# in fixtures/pk-audit.yaml; the AuditEntry milestone is built by the case's DML.
+entities:
+  - name: AuditSeq
+    namespace: parallax.compatibility
+    table: audit_seq
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - { name: name, type: string, column: name, primaryKey: true, maxLength: 64, pkGenerator: none }
+      - { name: nextVal, type: int64, column: next_val }
+    indices:
+      - { name: audit_seq_pk, attributes: [name], unique: true }
+  - name: AuditEntry
+    namespace: parallax.compatibility
+    table: audit_entry
+    mutability: transactional
+    temporal: unitemporal-processing
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: { strategy: sequence, sequenceName: entry_seq, initialValue: 1, incrementSize: 1, batchSize: 1 }
+      - name: note
+        type: string
+        column: note
+        maxLength: 64
+      - name: processingFrom
+        type: timestamp
+        column: in_z
+      - name: processingTo
+        type: timestamp
+        column: out_z
+    asOfAttributes:
+      - name: processingDate
+        fromColumn: in_z
+        toColumn: out_z
+        axis: processing
+        toIsInclusive: false
+        infinity: infinity
+        default: now
+    indices:
+      - name: audit_entry_pk
+        attributes: [id, processingFrom]
+        unique: true

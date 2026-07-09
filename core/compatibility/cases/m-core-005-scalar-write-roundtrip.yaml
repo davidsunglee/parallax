@@ -1,0 +1,54 @@
+# Scalar WRITE round-trip for the less-common m-core scalar mappings — float32,
+# float64, bytes, time, uuid — on Postgres AND MariaDB (the dialect IS the
+# assertion, m-core / m-dialect).
+#
+# m-core-001/-004 prove these five scalars on the READ side only (scalars.yaml is
+# read-only). This is the first asserted WRITE round-trip for them: insert one row
+# binding each type, then read the table back and assert the value survived the
+# encode-at-bind / decode-at-read boundary. The INSERT DML is identical on both
+# dialects (a plain column bind); only the physical column type diverges (float32 ->
+# real / float, bytes -> bytea / longblob, uuid -> uuid / char(36)), so the single
+# authored `then.tableState` holds on each. The write-sequence oracle reads the row
+# back with the harness's stable decoders — bytes as lowercase hex text, time / uuid
+# as text — so `payload` compares as `"01020304"` on both dialects. `amount` and
+# `label` are unset, so they read back null.
+model: models/writable-scalars.yaml
+tags: [m-core, m-sql, m-dialect, scalar, write-sequence, slice-mvp-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: WritableScalar
+      statements: 1
+      note: insert one row binding float32/float64/bytes/time/uuid
+      rows:
+        - id: 1
+          f32: 1.5
+          f64: 2.25
+          payload: "01020304"
+          localTime: "12:34:56"
+          externalId: "123e4567-e89b-12d3-a456-426614174000"
+then:
+  statements:
+    - sql:
+        postgres: insert into writable_scalars(id, f32, f64, payload, local_time, external_id) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into writable_scalars(id, f32, f64, payload, local_time, external_id) values (?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - 1.5
+        - 2.25
+        - !!binary |
+            AQIDBA==
+        - "12:34:56"
+        - "123e4567-e89b-12d3-a456-426614174000"
+  tableState:
+    writable_scalars:
+      - id: 1
+        f32: 1.5
+        f64: 2.25
+        payload: "01020304"
+        local_time: "12:34:56"
+        external_id: "123e4567-e89b-12d3-a456-426614174000"
+        amount: null
+        label: null
+  roundTrips: 1

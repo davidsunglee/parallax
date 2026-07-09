@@ -6,7 +6,7 @@
 # the DML and asserts the resulting row. There is no oracle — `max` is pinned by its
 # self-describing statement plus `then.tableState` against the real database.
 model: models/pk-max.yaml
-tags: [m-pk-gen, m-unit-work, max, write-sequence]
+tags: [m-pk-gen, m-unit-work, max, write-sequence, slice-mvp-1]
 shape: writeSequence
 when:
   writeSequence:

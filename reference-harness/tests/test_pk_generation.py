@@ -22,6 +22,7 @@ from reference_harness.case_runner import (
     _expected_sequence_counter,
     _expected_sequence_ids,
     _pk_sequence_counter_column,
+    _pk_sequence_target,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -227,3 +228,46 @@ def test_pkgen_sequence_increment_amount_corruption_is_rejected() -> None:
     step["rows"][0]["nextVal"] = {"increment": 99}
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
+
+
+# --- pk-gen x temporal composition (m-pk-gen-014) -----------------------------
+
+
+def test_pkgen_temporal_composition_targets_the_temporal_entity() -> None:
+    """The sequence oracle resolves the AUDIT-ONLY temporal entity as its target.
+
+    `m-pk-gen-014` composes a `sequence`-strategy PK with an audit-only temporal
+    entity: the registry advance (AuditSeq, a Family-A `increment`) and the
+    milestone insert (AuditEntry, a Family-B full-row temporal write) both
+    cross-check against the golden, and `_pk_sequence_target` selects the temporal
+    AuditEntry (not the string-PK registry) as the sequence target.
+    """
+    case = _pkgen_case("m-pk-gen-014")
+    _assert_write_input_columns(case, "postgres")  # must not raise (Family A + Family B)
+    target = _pk_sequence_target(case)
+    assert target is not None
+    entity, gen, pk_attr = target
+    assert entity.name == "AuditEntry"
+    # The target is audit-only temporal: it carries a processing as-of axis.
+    assert any(axis["axis"] == "processing" for axis in entity.as_of_attributes)
+    assert gen["sequenceName"] == "entry_seq"
+    assert pk_attr["column"] == "id"
+
+
+def test_pkgen_temporal_composition_allocation_oracle_passes() -> None:
+    """The single milestone allocates id 1 and advances the registry 1 -> 2."""
+    case = _pkgen_case("m-pk-gen-014")
+    db = _FakePkDb(
+        {
+            "audit_entry": [
+                {
+                    "id": 1,
+                    "note": "opened",
+                    "in_z": "2024-05-01T00:00:00+00:00",
+                    "out_z": "infinity",
+                }
+            ],
+            "audit_seq": [{"name": "entry_seq", "next_val": 2}],
+        }
+    )
+    _assert_pk_allocation(case, db)  # no raise

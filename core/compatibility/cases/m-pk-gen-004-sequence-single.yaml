@@ -5,7 +5,7 @@
 # the PK-generation oracle (case_runner._assert_pk_allocation), which re-derives
 # them from the declared config; this case asserts the target table only.
 model: models/pk-sequence.yaml
-tags: [m-pk-gen, m-unit-work, sequence, write-sequence]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-mvp-1]
 shape: writeSequence
 given:
   fixtures: true

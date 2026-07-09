@@ -1,0 +1,70 @@
+# valueObject multi-row batched INSERT: two Customers collapse into ONE multi-row
+# INSERT, each `address` document binding atomically in columnOrder position
+# (m-value-object write + m-batch-write set-based flush).
+#
+# m-value-object-025 proves the single-row atomic document insert; m-batch-write-001
+# proves the multi-row collapse for a plain entity. This composes them: two buffered
+# Customer inserts flush as one `insert into customer(id, name, address) values
+# (?, ?, ?), (?, ?, ?)`, and each third `?` carries a WHOLE `address` document
+# (never decomposed into path-level binds). The write-sequence oracle applies the
+# collapsed DML and reads both rows back, decoding each document column so
+# `then.tableState` compares structurally.
+model: models/customer.yaml
+tags: [m-value-object, m-batch-write, m-sql, write-sequence, insert, json, slice-mvp-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Customer
+      statements: 1
+      note: two Customers collapse into one multi-row INSERT, each address document atomic
+      rows:
+        - id: 200
+          name: Ann
+          address:
+            street: 1 Aurora Ave
+            city: Oslo
+            geo:
+              country: "NO"
+        - id: 201
+          name: Bo
+          address:
+            street: 2 Birch Rd
+            city: Bergen
+            geo:
+              country: "NO"
+then:
+  statements:
+    - sql:
+        postgres: insert into customer(id, name, address) values (?, ?, ?), (?, ?, ?)
+        mariadb: insert into customer(id, name, address) values (?, ?, ?), (?, ?, ?)
+      binds:
+        - 200
+        - Ann
+        - street: 1 Aurora Ave
+          city: Oslo
+          geo:
+            country: "NO"
+        - 201
+        - Bo
+        - street: 2 Birch Rd
+          city: Bergen
+          geo:
+            country: "NO"
+  tableState:
+    customer:
+      - id: 200
+        name: Ann
+        address:
+          street: 1 Aurora Ave
+          city: Oslo
+          geo:
+            country: "NO"
+      - id: 201
+        name: Bo
+        address:
+          street: 2 Birch Rd
+          city: Bergen
+          geo:
+            country: "NO"
+  roundTrips: 1

@@ -23,8 +23,10 @@ import {
   type BatchTarget,
   collapsedDelete,
   combineWrites,
+  incrementUpdate,
   keyedDelete,
   keyedUpdate,
+  maxPlusOneInsert,
   multiRowInsert,
   uniformUpdate,
   versionedDelete,
@@ -90,6 +92,29 @@ describe("batched delete forms", () => {
     // The versioned entity carries a `version` column; the gate rides the `where`.
     expect(versionedDelete({ ...WALLET, table: "account" }, "version")).toBe(
       "delete from account where id = ? and version = ?",
+    );
+  });
+});
+
+describe("pk-gen generators (m-pk-gen)", () => {
+  /** The `attendee` max-strategy target (id/name, pk id) — the m-pk-gen-001/002 shape. */
+  const ATTENDEE: BatchTarget = { table: "attendee", columns: ["id", "name"], pkColumn: "id" };
+  /** The `pk_sequence` registry target (name/next_val, pk name) — the m-pk-gen-004/006 shape. */
+  const PK_SEQUENCE: BatchTarget = {
+    table: "pk_sequence",
+    columns: ["name", "next_val"],
+    pkColumn: "name",
+  };
+
+  it("renders a `max`-strategy insert-select deriving the pk (m-pk-gen-001)", () => {
+    expect(maxPlusOneInsert(ATTENDEE, "id")).toBe(
+      "insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0",
+    );
+  });
+
+  it("renders a self-referential increment update for a sequence registry (m-pk-gen-004)", () => {
+    expect(incrementUpdate(PK_SEQUENCE, "next_val")).toBe(
+      "update pk_sequence set next_val = next_val + ? where name = ?",
     );
   });
 });

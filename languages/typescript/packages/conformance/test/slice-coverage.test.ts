@@ -73,10 +73,10 @@ describe("conformance slice coverage report", () => {
     const report = buildConformanceSliceCoverageReport(cases, SLICE_MVP_1_CAPABILITIES);
 
     expect(report.sliceTag).toBe("slice-mvp-1");
-    expect(report.claimedCases).toBe(185);
+    expect(report.claimedCases).toBe(197);
     expect(report.byCommand.map((c) => [c.command, c.claimedCases])).toEqual([
-      ["compile", 185],
-      ["run", 185],
+      ["compile", 197],
+      ["run", 197],
     ]);
     expect(renderConformanceSliceCoverageMarkdown(report)).toContain(
       "TypeScript Conformance Slice Coverage",

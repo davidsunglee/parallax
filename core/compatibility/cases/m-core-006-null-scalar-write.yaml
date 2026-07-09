@@ -1,0 +1,44 @@
+# Null-scalar WRITE: every nullable scalar column bound explicitly NULL round-trips
+# as null on Postgres AND MariaDB (m-core / m-dialect).
+#
+# The complement of m-core-005: insert a row that binds SQL NULL into each nullable
+# scalar column (including the less-common bytes / time / uuid types and the decimal
+# / max-length string), then read the row back and assert every column is null. This
+# proves a null neutral value binds and decodes as null across the whole type set,
+# on both dialects (a null bytes / time / uuid must not decode to a spurious empty
+# value). The INSERT DML and binds are identical on both dialects.
+model: models/writable-scalars.yaml
+tags: [m-core, m-sql, m-dialect, scalar, "null", write-sequence, slice-mvp-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: WritableScalar
+      statements: 1
+      note: insert a row binding every nullable scalar column explicitly NULL
+      rows:
+        - id: 2
+          f32: null
+          f64: null
+          payload: null
+          localTime: null
+          externalId: null
+          amount: null
+          label: null
+then:
+  statements:
+    - sql:
+        postgres: insert into writable_scalars(id, f32, f64, payload, local_time, external_id, amount, label) values (?, ?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into writable_scalars(id, f32, f64, payload, local_time, external_id, amount, label) values (?, ?, ?, ?, ?, ?, ?, ?)
+      binds: [2, null, null, null, null, null, null, null]
+  tableState:
+    writable_scalars:
+      - id: 2
+        f32: null
+        f64: null
+        payload: null
+        local_time: null
+        external_id: null
+        amount: null
+        label: null
+  roundTrips: 1

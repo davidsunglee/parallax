@@ -1,0 +1,61 @@
+# WritableScalar: a TRANSACTIONAL scalar-fidelity model — the write-boundary
+# complement of the read-only `scalars.yaml` (m-core, m-dialect).
+#
+# `scalars.yaml` (mutability: read-only) proves float32/float64/bytes/time/uuid on
+# the READ side only; those types have no asserted WRITE round-trip anywhere in the
+# corpus. This model is deliberately `transactional` so a writeSequence can insert
+# each of those types and read the row back, asserting the value survives the
+# encode-at-bind / decode-at-read boundary on BOTH dialects (the dialect IS the
+# assertion — m-core-005/006). It also carries a `decimal(18,4)` column (a
+# precision/scale beyond the corpus's ubiquitous decimal(18,2) money column) and a
+# max-length `string` so the decimal-precision and string-max-length write
+# boundaries are witnessed too (m-core-007/008).
+#
+# Every non-key column is nullable so a single model serves the full-row round-trip
+# (005), the explicit-null write (006), and the single-column boundary writes
+# (007/008). There are NO fixtures: each case builds its own row from its own DML.
+entity:
+  name: WritableScalar
+  namespace: parallax.compatibility
+  table: writable_scalars
+  mutability: transactional
+  temporal: non-temporal
+  attributes:
+    - name: id
+      type: int64
+      column: id
+      primaryKey: true
+      pkGenerator: none
+    - name: f32
+      type: float32
+      column: f32
+      nullable: true
+    - name: f64
+      type: float64
+      column: f64
+      nullable: true
+    - name: payload
+      type: bytes
+      column: payload
+      nullable: true
+    - name: localTime
+      type: time
+      column: local_time
+      nullable: true
+    - name: externalId
+      type: uuid
+      column: external_id
+      nullable: true
+    - name: amount
+      type: decimal(18,4)
+      column: amount
+      nullable: true
+    - name: label
+      type: string
+      column: label
+      maxLength: 8
+      nullable: true
+  indices:
+    - name: writable_scalars_pk
+      attributes: [id]
+      unique: true

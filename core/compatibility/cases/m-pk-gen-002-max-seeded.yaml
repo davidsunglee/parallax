@@ -3,7 +3,7 @@
 # Self-seed a baseline row (id 5) via an initial literal insert, then allocate:
 # max(id)+1 = 6. Empty-schema start; the case builds its own state (no fixtures).
 model: models/pk-max.yaml
-tags: [m-pk-gen, m-unit-work, max, write-sequence]
+tags: [m-pk-gen, m-unit-work, max, write-sequence, slice-mvp-1]
 shape: writeSequence
 when:
   writeSequence:
