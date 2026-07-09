@@ -14,7 +14,7 @@
 # current pair) are untouched, proving the close is keyed on (bal_id AND out_z =
 # infinity), not a table-wide set.
 model: models/balance.yaml
-tags: [m-detach, m-audit-write, m-sql, write-sequence, audit-only]
+tags: [m-detach, m-audit-write, m-sql, write-sequence, audit-only, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

@@ -534,9 +534,12 @@ def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
         claims = parse_profile_claims(claim_markdown)
     except DepGraphFailure as exc:
         return [str(exc)]
+    return _profile_errors_from(claims, _load_cases(compatibility_root))
 
+
+def _profile_errors_from(claims: dict[str, dict], cases: list[tuple[Path, dict]]) -> list[str]:
+    """The profile checks over already-parsed claims and already-loaded cases."""
     errors: list[str] = []
-    cases = _load_cases(compatibility_root)
 
     for path, doc in cases:
         for tag in doc.get("tags", []):
@@ -617,7 +620,15 @@ def run_profile(spec_dir: Path, compatibility_root: Path) -> int:
         return 2
 
     claim_markdown = claim_path.read_text(encoding="utf-8")
-    errors = profile_errors(claim_markdown, compatibility_root)
+    claims: dict[str, dict] = {}
+    cases: list[tuple[Path, dict]] = []
+    try:
+        claims = parse_profile_claims(claim_markdown)
+    except DepGraphFailure as exc:
+        errors = [str(exc)]
+    else:
+        cases = _load_cases(compatibility_root)
+        errors = _profile_errors_from(claims, cases)
     if errors:
         print(
             f"profile gate FAILED ({len(errors)} inconsistency(ies)):",
@@ -627,8 +638,6 @@ def run_profile(spec_dir: Path, compatibility_root: Path) -> int:
             print(f"  - {error}", file=sys.stderr)
         return 1
 
-    claims = parse_profile_claims(claim_markdown)
-    cases = _load_cases(compatibility_root)
     counts = {
         slice_tag: sum(
             1

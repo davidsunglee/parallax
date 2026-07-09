@@ -17,7 +17,7 @@
 # identical to the loaded fixture (Ada, 100.00, version 1). roundTrips = 1 (the single
 # find; the no-op merge and the cache hit cost nothing).
 model: models/account.yaml
-tags: [m-detach, m-unit-work, no-op, scenario]
+tags: [m-detach, m-unit-work, no-op, scenario, slice-managed-1]
 shape: scenario
 when:
   scenario:

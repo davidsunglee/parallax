@@ -10,7 +10,7 @@
 # are untouched. Locking mode (m-read-lock shared read lock), so no `and version = ?`
 # gate — the version still advances on the successful write (the m-opt-lock baseline).
 model: models/account.yaml
-tags: [m-detach, m-sql, detached-update, write-sequence]
+tags: [m-detach, m-sql, detached-update, write-sequence, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

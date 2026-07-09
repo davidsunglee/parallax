@@ -466,9 +466,10 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 # Every slice's tagged cases are internally consistent with its canonical claim,
 # and the tagged-case counts are drift tripwires — adding or losing a tagged case
 # fails the count. The two object-lifecycle slices share the non-lifecycle base
-# (dual-tagged cases); slice-snapshot-1 excludes the m-op-list-tagged cases and
-# adds the m-snapshot-read cases, slice-managed-1 adds m-detach, the detached
-# merge-back conflict, and the m-identity-map cases.
+# (dual-tagged cases, including the inheritance read AND write cases);
+# slice-snapshot-1 excludes the m-op-list-tagged cases and adds the
+# m-snapshot-read cases, slice-managed-1 adds the m-detach lifecycle cases, the
+# detached merge-back conflict, and the m-identity-map cases.
 
 
 def _slice_tag_count(slice_tag: str) -> list[str]:
@@ -497,14 +498,17 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
     assert sorted(claims) == ["slice-managed-1", "slice-mvp-1", "slice-snapshot-1"]
 
 
-def test_profile_slice_tag_counts() -> None:
-    for slice_tag, expected in (
+@pytest.mark.parametrize(
+    ("slice_tag", "expected"),
+    [
         ("slice-mvp-1", 197),
-        ("slice-snapshot-1", 202),
-        ("slice-managed-1", 219),
-    ):
-        tagged = _slice_tag_count(slice_tag)
-        assert len(tagged) == expected, (
-            f"expected exactly {expected} cases tagged {slice_tag!r}, "
-            f"found {len(tagged)}: {sorted(tagged)}"
-        )
+        ("slice-snapshot-1", 206),
+        ("slice-managed-1", 226),
+    ],
+)
+def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:
+    tagged = _slice_tag_count(slice_tag)
+    assert len(tagged) == expected, (
+        f"expected exactly {expected} cases tagged {slice_tag!r}, "
+        f"found {len(tagged)}: {sorted(tagged)}"
+    )

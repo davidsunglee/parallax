@@ -8,7 +8,7 @@
 # its table stays empty. Starts from an EMPTY schema and asserts the single inserted
 # invoice row.
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-leaf, write-sequence]
+tags: [m-inheritance, m-sql, table-per-leaf, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

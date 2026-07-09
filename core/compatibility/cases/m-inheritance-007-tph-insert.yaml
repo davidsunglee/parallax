@@ -14,7 +14,7 @@
 # carries kind='card'. This is the write mirror of the read cases m-inheritance-001..
 # 003, where the discriminator is INJECTED into the SELECT, never written by the user.
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator, write-sequence]
+tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:

@@ -56,6 +56,14 @@ flavor (`m-business-only`), cascade delete (`m-cascade-delete`), MariaDB, or
 benchmarks (`m-perf-bench`). The `snapshot-history-includes` feature
 (`m-snapshot-read`) is feature-tagged and claimed by neither.
 
+One staging note, recorded rather than implied: `slice-snapshot-1` pins graph
+materialization through the `m-snapshot-read` cases plus the temporal
+deep-fetch propagation cases; snapshot-surface twins of the remaining
+materialization shapes proven today only through `m-op-list`-tagged cases
+(null to-one, empty root, empty intermediate, shared prefix, one-to-one,
+declared child ordering) are future `m-snapshot-read` cases, not part of the
+claim yet.
+
 ## Snapshot Conformance Slice
 
 The canonical `describe` claim for `slice-snapshot-1`:

@@ -8,7 +8,7 @@
 # here). Only row 1's amount changes; its kind stays 'card' and the other three rows
 # (the second card, the cash, the plain root-kind) are untouched.
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, write-sequence, update]
+tags: [m-inheritance, m-sql, table-per-hierarchy, write-sequence, update, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

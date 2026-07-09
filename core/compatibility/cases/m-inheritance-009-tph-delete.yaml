@@ -7,7 +7,7 @@
 # plain root-kind row remain, proving the delete is keyed, not a discriminator-wide
 # sweep.
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, write-sequence, delete]
+tags: [m-inheritance, m-sql, table-per-hierarchy, write-sequence, delete, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

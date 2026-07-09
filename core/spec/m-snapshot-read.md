@@ -71,8 +71,8 @@ After materialization a snapshot graph **never issues SQL**:
   absence surfaces (a missing property, a typed empty marker, an error on
   access) is per-language, but issuing a load is **not** a legal surfacing.
   There is no lazy loading and no deferred-load trigger of any kind — the
-  deferred relationship load (`m-deep-fetch`) is a managed-slice feature
-  requiring a live unit of work, which a snapshot graph never has.
+  deferred relationship load (`m-deep-fetch`) belongs to the managed-object
+  surface and requires a live unit of work, which a snapshot graph never has.
 - A snapshot graph is never enrolled in a unit of work: mutating a node is a
   plain in-memory change with no persistence meaning. Persisting a change means
   reformulating it as an explicit write.
@@ -86,10 +86,10 @@ Materialization is `m-deep-fetch`'s contract observed through the graph: **at
 most `1 + L` statements** for `L` distinct relationship hops, one statement per
 non-empty level, empty parent-key levels issuing no child SQL. Constructing the
 query is side-effect-free; the single explicit execution is the only moment the
-database is touched. (For managed slices this round-trip observability rides the
-lazy operation-backed list, `m-op-list`; a snapshot read is **not** an
-operation-backed list — the count is pinned here instead, on the same golden
-statements.)
+database is touched. (For the managed-object surface this round-trip
+observability rides the lazy operation-backed list, `m-op-list`; a snapshot
+read is **not** an operation-backed list — the count is pinned here instead,
+on the same golden statements.)
 
 ## What the suite pins down
 

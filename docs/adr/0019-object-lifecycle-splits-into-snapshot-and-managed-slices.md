@@ -61,7 +61,8 @@ object a deferred load raises a defined Parallax Error.
 ends — today, the unit of work, whether it commits or aborts** — reads work,
 mutations land only in the object, persistence goes through merge-back in a new
 transaction — and on abort their visible state first reverts to
-as-materialized values, so an escaped object never shows discarded writes. Write-through outside transactions (the Reladomo/ActiveRecord
-model, where a bare setter executes standalone DML) was rejected as hidden I/O,
+as-materialized values, so an escaped object never shows discarded writes.
+Write-through outside transactions (the Reladomo/ActiveRecord model, where a
+bare setter executes standalone DML) was rejected as hidden I/O,
 consistent with the TypeScript decision that writes require explicit
 transactions (TS ADR 0021).
