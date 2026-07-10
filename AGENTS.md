@@ -4,15 +4,21 @@
 
 - The slice ⇒ module reference is **one-way**: `core/spec/slices.md` names modules; a module spec (`core/spec/m-*.md`) never names a slice or its claim status. Express "who uses this" in terms of surfaces or sibling modules.
 
+## Language Spec Authoring
+
+- Before authoring a language spec, follow the spec-authoring reading order in `IMPLEMENTING.md`: start with `README.md`, then read `core/spec/00-overview.md`, `core/spec/modules.md`, `core/spec/slices.md`, `core/spec/m-conformance-adapter.md`, and `core/spec/language-spec-template.md` before the selected behavioral modules, schemas, and compatibility corpus.
+- Select a canonical Conformance Slice from `core/spec/slices.md`, copy `core/spec/language-spec-template.md` into the language target, and complete it before writing runtime code.
+
 ## Language Implementation Work
 
-- Before implementing a language target, read `README.md`, `IMPLEMENTING.md`, `core/spec/00-overview.md`, `core/spec/modules.md`, `core/spec/slices.md`, `core/spec/m-conformance-adapter.md`, and the target language spec.
+- Before implementing a language target, confirm its completed language spec has no unresolved decisions, then read `README.md`, `IMPLEMENTING.md`, `core/spec/00-overview.md`, `core/spec/modules.md`, `core/spec/slices.md`, `core/spec/m-conformance-adapter.md`, the target language spec, and the target's `AGENTS.md` and operational guide when present.
+- Keep per-language operational guides limited to dependency-respecting milestones, executable commands, database setup, current status, and blockers. Language design decisions belong in the completed language spec.
 - Do not change `core/spec`, `core/schemas`, or `core/compatibility` only to make a language implementation pass. Treat those artifacts as the source of truth; any change to them must update the spec, schema, fixtures, and cases consistently.
 - Implement capabilities in dependency-graph order from `core/spec/modules.md`, and preserve any language-module dependency-boundary enforcement.
 - Use compatibility corpus cases as the primary behavioral verification. Add language unit tests for internal seams, diagnostics, and failure modes.
 - Expose implementation conformance through `core/spec/m-conformance-adapter.md`; do not invent a different language-specific conformance surface.
 - The reference harness's internals are non-normative and MUST NOT be used as design input for a language implementation; the binding inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the conformance-adapter contract.
-- For implementation changes, run the smallest relevant language conformance slice plus feasible root verification. Report any skipped database-backed checks.
+- For implementation changes, run the smallest relevant active-claim and capability-tag intersection plus feasible root verification. Report any skipped database-backed checks.
 
 ## Prior Art: Reladomo
 

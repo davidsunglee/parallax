@@ -39,9 +39,10 @@ adapter grade is not conformant.
 
 ## Required properties
 
-A language implementation that claims a Conformance Slice MUST ship an API
-Conformance Suite with all of the following properties. They are stated as
-portable requirements; the mechanism that satisfies each is language-local.
+A language implementation whose adapter reports `m-api-conformance` in its
+capability set MUST ship an API Conformance Suite with all of the following
+properties. They are stated as portable requirements; the mechanism that
+satisfies each is language-local.
 
 1. **Idiomatic public API only.** The suite MUST exercise the same public surface
    an application developer uses — the finders, predicate builders, transaction
@@ -60,13 +61,15 @@ portable requirements; the mechanism that satisfies each is language-local.
    shipped adapter, so the real database work still runs the production path. This
    is **not** a substitute adapter: it is the shipped adapter plus a seam-level
    fault, the minimum needed to exercise a retry-loop branch deterministically.
-3. **Coverage partition over the claimed slice.** The suite MUST mechanically
-   assert that the cases it exercises and the cases it explicitly skips partition
-   the claimed slice exactly: exercised ∪ skipped equals the slice, the two sets
-   are disjoint, no exercised or skipped id is stale (every id is a real in-slice
-   case), and every skip records a non-empty reason. A silent gap — an in-slice
-   case that is neither exercised nor reasoned-skipped — MUST fail the build. The
-   partition covers **every** in-slice case regardless of lane: an
+3. **Coverage partition over the adapter-described case set.** The suite MUST
+   mechanically assert that the cases it exercises and the cases it explicitly
+   skips partition exactly the cases selected by the adapter's reported module,
+   dialect, case-shape, and case-tag capabilities: exercised ∪ skipped equals
+   the selected set, the two sets are disjoint, no exercised or skipped id is
+   stale (every id is a real selected case), and every skip records a non-empty
+   reason. A silent gap — a selected case that is neither exercised nor
+   reasoned-skipped — MUST fail the build. The partition covers **every** selected
+   case regardless of lane: an
    `api-conformance`-lane case (a boundary retry case, a read-lock-matrix read) is
    satisfied here — by construction, since the `m-case-format` harness only
    schema-validates it — so its id MUST be exercised or reasoned-skipped exactly
@@ -115,7 +118,7 @@ mandate on other languages:
   idiomatic `px.*` / `px.transaction` surface over the shipped `@parallax/db-postgres`
   adapter against a Testcontainers `postgres:17`;
 - `coverage.test.ts` is the Docker-free partition assertion (exercised ∪ skipped ==
-  the implementation's claimed Conformance Slice, no strays, every skip reasoned), with the
+  the adapter-described case set, no strays, every skip reasoned), with the
   exercised map in `covered.ts` and the reasoned skips in `skip-manifest.ts`;
 - the no-drift guard is `assertSameOperation` in `_harness.ts`;
 - the value-shape assertion is `assertManagedShape` in `_harness.ts`;

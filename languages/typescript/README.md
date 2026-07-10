@@ -16,21 +16,13 @@ discharges them.
 > modules, `core/schemas/`, the compatibility corpus, and the conformance-adapter
 > contract.
 
-## Conformance Slice
+## Current Conformance Claim
 
-TypeScript V1 declares the canonical **`slice-mvp-1`** Conformance Slice defined
-in [`../../core/spec/slices.md`](../../core/spec/slices.md). It
-claims the cases tagged `slice-mvp-1` (the module set enumerated in that claim) on
-the Postgres dialect, for the `read`, `writeSequence`, `scenario`, and `conflict`
-case shapes.
-
-Capabilities the core defines but this first slice does not yet claim —
-aggregation and projection, the `m-process-cache` identity/query caches, value
-objects, inheritance, bounded business-window and bitemporal writes,
-`m-perf-bench` benchmarks, and `m-coherence` coherence, among others — are
-documented as future TypeScript surface but are not claimed until their
-compatibility slice passes. The full deferral list is in
-[`spec/00-overview.md`](spec/00-overview.md) §16.
+TypeScript V1 declares the canonical **`slice-mvp-1`** Conformance Slice. The
+authoritative capabilities and compatibility-case membership live only in the
+[`../../core/spec/slices.md`](../../core/spec/slices.md) catalog; the completed
+[TypeScript language spec](spec/01-implementation-spec.md) records the
+TypeScript-specific decisions and deferrals for that claim.
 
 MariaDB is different: it is not part of the V1 `describe` claim, but TypeScript
 does ship it as the second concrete dialect/adapter behind the database seam
@@ -39,13 +31,13 @@ adapter/provider contract tests, a selectable API Conformance lane, and the
 declared `mariadb-curated-36` partial matrix profile.
 
 The adapter's machine-readable form is a `describe` envelope whose `capabilities`
-are byte-equal to the canonical slice, differing only in adapter identity. An
+are byte-equal to the canonical claim, differing only in adapter identity. An
 anti-drift test in the reference harness asserts that equality so the two can
 never silently diverge — see [`IMPLEMENTING.md`](IMPLEMENTING.md).
 
 ## Two Proofs
 
-The slice is proven the two official ways described under
+The claim is proven the two official ways described under
 [Building A Language Implementation](../../README.md#building-a-language-implementation)
 in the root README:
 
@@ -122,7 +114,7 @@ languages/typescript/
   examples/
     orders-app/   Runnable example: descriptors, config, and the generated API
   scripts/        Coverage and guide-rendering tooling
-  IMPLEMENTING.md Operational path for the first implementation
+  IMPLEMENTING.md Commands, milestones, database setup, and current status
   AGENTS.md       Standing instructions for agents working in this directory
   CONTEXT.md      TypeScript API glossary
 ```
@@ -142,7 +134,7 @@ just ts-typecheck              # tsc -b across project references
 just ts-lint                   # Biome + the dependency-cruiser DAG gate
 just ts-test                   # vitest unit / adapter tests
 just ts-db-fast                # Docker-free dialect, provider-selection, profile checks
-just ts-conformance-compile    # full-slice compile sweep + honesty gate (Docker-free)
+just ts-conformance-compile    # active-claim compile sweep + honesty gate (Docker-free)
 just ts-db                     # primary DB gate: adapter/provider, Postgres matrix/API (Docker)
 just ts-db-all                 # exhaustive DB sweep: primary gate + MariaDB matrix/API (Docker)
 ```
@@ -156,8 +148,8 @@ Docker-free conformance, the primary TypeScript DB gate, and the Python suite.
 
 - [`spec/00-overview.md`](spec/00-overview.md) — the TypeScript surface at a glance
 - [`spec/01-implementation-spec.md`](spec/01-implementation-spec.md) — the normative TypeScript spec
-- [`IMPLEMENTING.md`](IMPLEMENTING.md) — first claim, milestones, and verification
+- [`IMPLEMENTING.md`](IMPLEMENTING.md) — commands, database setup, milestones, and status
 - [Usage Guide](docs/guide/index.md) — a tour of the API, rendered from tests
 - [`examples/orders-app`](examples/orders-app) — a runnable example application
 - [`CONTEXT.md`](CONTEXT.md) — the TypeScript API glossary
-- [Root README](../../README.md#building-a-language-implementation) — the slice-first process for any language
+- [Root README](../../README.md#building-a-language-implementation) — the two-stage workflow for any language

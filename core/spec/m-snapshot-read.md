@@ -59,7 +59,7 @@ at its **edge pin** — the milestone's own from-instant (`m-temporal-read`; for
 half-open `[from, to)` interval the from-instant is the one instant guaranteed
 to select exactly that milestone). Combining a history read with `includes` is
 the **`snapshot-history-includes` feature** — carried on its own feature tag so
-a Conformance Slice can claim or defer it independently. It is a staged
+an adapter capability set can include or defer it independently. It is a staged
 feature, **not a rejection**: no case may mandate that history-with-includes be
 refused.
 

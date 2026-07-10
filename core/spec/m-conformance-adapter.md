@@ -50,7 +50,7 @@ Human-readable logs MAY be written to stderr.
 | `2` | CLI usage error, such as a missing flag or unreadable file |
 
 The `unsupported` result is only valid when the adapter has not claimed the
-requested command, dialect, case shape, module tags, or case-tag slice in
+requested command, dialect, case shape, module tags, or case-tag selection in
 `describe`.
 
 ## Common Output Envelope
@@ -127,7 +127,7 @@ Example:
 }
 ```
 
-Capability claims are deliberately **case-slice aware**. `modules`,
+Capability claims are deliberately **case-tag aware**. `modules`,
 `dialects`, and `caseShapes` are broad filters; `caseTags` is an optional
 fine-grained filter over the compatibility case's own `tags` array. This lets a
 partial implementation honestly claim, for example, `m-op-algebra` predicate reads
@@ -143,19 +143,10 @@ navigation, narrowed deep fetch, and concrete-subtype writes are all ordinary ca
 commands under the existing `describe` / `compile` / `run` contract, with no new
 command, dialect, case shape, or observation field.
 
-The example above is intentionally minimal. For worked, canonical
-**include-driven** slices, see the Conformance Slices in
-[`slices.md`](slices.md): each `describe` claim selects its Postgres-only cases
-by a single `caseTags.include` tag rather than by a fragile list of exclusions,
-and a consistency gate keeps the tagged corpus aligned with every claim. A fresh
-implementer authoring a first build ordinarily adopts an existing claim's
-`capabilities` verbatim (only the `adapter` identity differs).
-
-That canonical block is the general rule, not a one-off: a slice's
-machine-readable form is a `describeOk` envelope validated against this schema,
-and its name is its `caseTags.include` tag, which follows the slice-tag
-convention `^slice-[a-z0-9][a-z0-9-]*$`. Both the rule and the convention are
-stated in [`slices.md`](slices.md#the-slice-tag-convention).
+The example above is intentionally minimal. An include-driven claim selects an
+exact case subset with `caseTags.include`, avoiding a fragile list of
+exclusions. A completed language spec ordinarily adopts its selected canonical
+`capabilities` block verbatim; only the `adapter` identity differs.
 
 A case command is claimed only when **all** of these are true:
 

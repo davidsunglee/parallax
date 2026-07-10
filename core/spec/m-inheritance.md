@@ -158,7 +158,7 @@ case with a `then.rejectedRule` (`m-case-format`). `m-sql` fixes the resulting D
   concrete-subtype existing-row write is **keyed** by the primary key (the tag guard
   rides with the identity predicates, `m-sql` / resolved Q9), so a payload carrying
   **no primary-key** field denotes a predicate-driven **set-based** write over a
-  result collection — unsupported for an inheritance family in this slice
+  result collection — unsupported for inheritance-family writes
   (`subtype-write-set-based-unsupported`). Changing an existing row's concrete
   subtype is likewise out of scope.
 

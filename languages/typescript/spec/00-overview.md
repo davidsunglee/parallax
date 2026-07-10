@@ -6,12 +6,12 @@ language-neutral contract remains the core specification in
 choices the core deliberately leaves open.
 
 This spec describes the first TypeScript API shape. TypeScript V1 adopts the
-canonical `slice-mvp-1` conformance slice: it claims only cases tagged for that
+canonical `slice-mvp-1` Conformance Slice: it claims only cases tagged for that
 slice, a subset of the full module catalog. Some core
 capabilities are therefore recorded here as future TypeScript surface decisions
 but deferred from the first conformance claim. A deferred capability is not
 removed from Parallax; it is simply not claimed by the TypeScript conformance
-adapter until the corresponding compatibility slice passes.
+adapter until a canonical claim that includes the capability passes.
 
 ## 1. Generated Import Surface
 
@@ -53,7 +53,7 @@ matters.
 TypeScript generates only artifacts derivable from the canonical descriptor. The
 descriptor has no enum element and does not describe value-object fields, so
 TypeScript does not generate enum types or structured value-object interfaces.
-When value-object descriptors are claimed by a later compatibility slice, value
+When value-object descriptors are included in a later canonical claim, value
 objects are exposed as `ParallaxJsonValue` / `null` according to their
 nullability, and nested value-object predicates use untyped string paths after
 the declared value-object name.
@@ -136,15 +136,15 @@ JSON envelope required by
 [`../../../core/spec/m-conformance-adapter.md`](../../../core/spec/m-conformance-adapter.md)
 to stdout.
 
-The m-perf-bench benchmark command is a post-slice conformance command:
+The m-perf-bench benchmark command is a post-claim conformance command:
 
 ```text
 parallax-conformance benchmark --benchmark <benchmark.yaml> --dialect <dialect>
 ```
 
 TypeScript V1 may document that command shape, but it does not claim
-`benchmark` in `parallax-conformance describe` until the m-perf-bench slice is
-implemented.
+`benchmark` in `parallax-conformance describe` until the m-perf-bench
+capability is implemented.
 
 ## 4. Parallax Handle
 
@@ -532,14 +532,14 @@ Processing instants come from a `Clock Strategy` configured when `Parallax` is
 created. Application code does not pass processing instants to individual
 transactions or operations.
 
-Temporal writes use explicit verbs. The first TypeScript conformance slice
+Temporal writes use explicit verbs. The current TypeScript Conformance Slice
 claims only non-temporal writes and audit-only processing-temporal writes:
 
 - ordinary `update` performs entity-normal semantics: in-place for non-temporal,
   close-and-chain for temporal
 - `terminate` closes the current temporal row
 
-The business-axis and full-bitemporal write surface is post-slice:
+The business-axis and full-bitemporal write surface is post-claim:
 
 - `createUntil`, `updateUntil`, and `terminateUntil` are bounded business-window
   operations; `createUntil` maps to the core `insertUntil` mutation
@@ -607,9 +607,9 @@ results, not runtime capability branching.
 The conformance adapter reports claimed modules through `parallax-conformance
 describe`. TypeScript V1 claims the m-unit-work transaction and unit-of-work cases tagged
 `slice-mvp-1`, including read-your-own-writes, but it does not yet
-claim the m-process-cache identity-cache and query-cache scenario slice. Until that cache
-slice is claimed, repeated reads of the same primary key are not guaranteed to
-return the same JavaScript object instance. A resolved `ParallaxList` remains
+claim the m-process-cache identity-cache and query-cache scenario capabilities.
+Until those capabilities are claimed, repeated reads of the same primary key are
+not guaranteed to return the same JavaScript object instance. A resolved `ParallaxList` remains
 stable for its own materialized result, but that is not the full core
 identity-cache guarantee.
 
@@ -664,4 +664,4 @@ slice:
 
 Deferred TypeScript API does not weaken the core spec. The implementation must
 not claim a core module, dialect, command, case tag, or case shape until the
-corresponding compatibility slice passes.
+corresponding capability is included in a canonical claim and passes.

@@ -1,113 +1,108 @@
-# Implementing Parallax TypeScript
+# Operating The TypeScript Implementation
 
-This handoff note is the operational path for the first TypeScript
-implementation. The normative contract remains `core/spec`, `core/schemas`,
-`core/compatibility`, and `languages/typescript/spec/01-implementation-spec.md`.
+This guide contains the TypeScript implementation's commands, database setup,
+milestone checks, and status-reporting rules. It does not define the
+implementation's design or repeat its canonical claim.
 
-The reference harness's internals are non-normative and
-MUST NOT be used as design input for a language implementation; the binding
-inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the
-conformance-adapter contract.
+Before changing runtime code, follow the two-stage workflow in the
+[repository README](../../README.md#building-a-language-implementation) and the
+[root implementation guide](../../IMPLEMENTING.md). Treat the completed
+[TypeScript language spec](spec/01-implementation-spec.md) as the source of
+TypeScript API, lifecycle, source-boundary, deployable-topology, database, and
+quality-toolchain decisions. The [slice catalog](../../core/spec/slices.md) is
+the sole source of the current claim's capabilities and case membership.
 
-## First Claim
+The reference harness's internals are non-normative and MUST NOT be used as
+design input. The binding inputs are the core module specs, schemas,
+compatibility corpus, conformance-adapter contract, and completed TypeScript
+language spec.
 
-Implement the canonical `slice-mvp-1` conformance slice first. It is
-an include-driven slice: a case is in scope only when it carries the
-`slice-mvp-1` tag and passes the broad claim filters in
-`core/spec/slices.md`.
+## Operational Milestones
 
-The TypeScript adapter's `describe` response must claim exactly the canonical
-slice capabilities, changing only the adapter identity:
+Use the dependency-respecting common spine and lifecycle branch in the
+[root guide](../../IMPLEMENTING.md#dependency-respecting-milestones)
+for sequencing. At each milestone, run the narrowest applicable TypeScript
+check below before expanding to the active-claim verification lanes.
 
-```json
-{
-  "schemaVersion": "1",
-  "command": "describe",
-  "status": "ok",
-  "adapter": {
-    "language": "typescript",
-    "name": "@parallax/typescript",
-    "version": "0.1.0"
-  },
-  "capabilities": {
-    "modules": ["m-api-conformance", "m-audit-write", "m-auto-retry", "m-batch-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-navigate", "m-op-algebra", "m-op-list", "m-opt-lock", "m-read-lock", "m-sql", "m-temporal-read", "m-unit-work"],
-    "dialects": ["postgres"],
-    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess"],
-    "caseTags": { "include": ["slice-mvp-1"] },
-    "commands": ["describe","compile","run"],
-    "provisioning": "self-managed"
-  }
-}
-```
+| Milestone evidence | Command |
+| --- | --- |
+| Workspace, source boundaries, lint, and static types | `just ts-lint && just ts-typecheck && just ts-typecheck-tests` |
+| Unit-level internal seams and diagnostics | `just ts-test` |
+| Package exports and built-artifact health | `just ts-package-check` |
+| Dialect and provider-profile declarations without Docker | `just ts-db-fast` |
+| Active-claim compile coverage and capability honesty | `just ts-conformance-compile` |
+| Primary database adapter, compatibility matrix, API suite, and Usage Guide | `just ts-db` |
+| Additional database profile and API lanes | `just ts-db-all` |
 
-Return `status: "unsupported"` for every out-of-slice command, dialect, case
-shape, module tag, or case tag. Returning `unsupported` for an in-slice case is a
-conformance failure.
+Case-focused development must select the intersection of the active
+Conformance Slice tag and the capability tags for the current milestone. Do not
+use filename prefixes as the complete selection rule. The initial database
+proof is a tracer case or walking skeleton, not a Conformance Slice.
 
-## Workspace Shape
+## Local Database Setup
 
-TypeScript implementation source lives under `languages/typescript/packages/*`.
-The `languages/typescript/spec` and `languages/typescript/docs` directories are
-documentation, not runtime packages.
-
-The first scaffold should create real pnpm workspace packages that match the
-package map in the TypeScript implementation spec, including the composition
-package `@parallax/typescript` for the CLI, generator config, public
-facade, and generated-barrel support.
-
-## First Milestones
-
-1. Scaffold the workspace, package manifests, shared TypeScript config, vitest,
-   dependency-cruiser, and empty `parallax` / `parallax-conformance` CLI entry
-   points.
-2. Make the dependency-boundary check fail on an illegal package import.
-3. Implement `m-core` scalar utilities and `m-descriptor` parsing/normalization
-   until all descriptors in `core/compatibility/models` parse and round-trip
-   through JSON and YAML.
-4. Implement `m-op-algebra` operation serde until the `m-op-algebra-*` predicate
-   cases parse and round-trip.
-5. Implement the first database-backed walking skeleton:
-   `core/compatibility/cases/m-op-algebra-002-eq.yaml` compiles to matching Postgres SQL and
-   binds, runs against `postgres:17`, and reports a valid conformance-adapter
-   JSON envelope.
-6. Expand by module in dependency-graph order, using the tagged
-   `slice-mvp-1` slice as the active matrix.
-
-## Explicitly Out Of V1
-
-Do not claim or implement these for the first slice unless the conformance claim
-is deliberately expanded with matching green cases:
-
-- aggregation and projection
-- the `m-process-cache` identity-cache and query-cache scenarios
-- PK generation cases
-- `m-inheritance` cases (value objects are **in** the slice: `m-value-object`
-  nested-predicate reads, atomic document writes, inherited-temporality reads,
-  the materialization graph, and the pre-SQL `rejected` negatives all gate the
-  build; only the bitemporal rectangle-split value-object write stays deferred
-  with the rest of `m-bitemp-write`)
-- `m-detach` detached merge-back lifecycle
-- `m-db-error` database error classification
-- bounded business-window and bitemporal rectangle-split writes
-- MariaDB
-- `m-perf-bench` benchmark command and numeric targets
-- `m-coherence` cross-process coherence
-
-## Verification
-
-Use the smallest relevant TypeScript test while developing, then walk upward:
+Install the repository's pinned Node dependencies and make sure a
+Docker-compatible daemon is available:
 
 ```sh
-pnpm --filter @parallax/typescript test
-pnpm --filter @parallax/typescript run typecheck
-pnpm --filter @parallax/typescript run dep-graph
+pnpm install --frozen-lockfile
+docker info
 ```
 
-Also keep the core profile gate green:
+The database-backed Vitest suites provision their containers and reset schemas
+through the TypeScript provider composition root; no manually maintained local
+schema is required. Postgres is the default API Conformance Suite database.
+Select an explicitly supported alternative for a focused run with
+`PARALLAX_DATABASES`, for example:
+
+```sh
+PARALLAX_DATABASES=postgres pnpm exec vitest run \
+  --root languages/typescript packages/typescript/test/api-conformance
+PARALLAX_DATABASES=mariadb pnpm exec vitest run \
+  --root languages/typescript packages/typescript/test/api-conformance
+```
+
+Use the named `just ts-db` and `just ts-db-all` recipes for the maintained
+provider profiles rather than reconstructing profile membership by hand.
+
+## Focused Development Commands
+
+Run a single TypeScript test file while developing, then move upward through
+the milestone checks:
+
+```sh
+pnpm exec vitest run --root languages/typescript path/to/test.ts
+pnpm run ts:typecheck
+pnpm run ts:lint
+```
+
+Keep the core claim and dependency gates green when implementation boundaries
+or conformance selection change:
 
 ```sh
 just core-dep-graph
+just core-schemas
 ```
 
-For database-backed work, report whether the Postgres conformance slice was run
-or skipped, and why.
+The repository-level primary merge gate is:
+
+```sh
+just verify
+```
+
+## Status And Verification Reporting
+
+Treat the commands above as executable status: a milestone is complete only
+when its applicable command is green. Every implementation handoff must report:
+
+- the active canonical claim, obtained from the implementation's `describe`
+  response and checked against `core/spec/slices.md`;
+- the smallest active-claim and capability-tag intersection exercised;
+- the static, package, adapter, API, and root commands that ran;
+- each database-backed command skipped, with the unavailable substrate or
+  other reason; and
+- any blocker that requires a decision change in the completed TypeScript
+  language spec.
+
+If a blocker changes an API, lifecycle, topology, provider, or quality-toolchain
+decision, update the completed language spec first. Keep this guide operational.

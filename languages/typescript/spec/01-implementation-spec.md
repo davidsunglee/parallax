@@ -59,7 +59,7 @@ declared in [`slices.md`](../../../core/spec/slices.md#first-implementation-conf
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
 the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
-so V1 claims precisely the 198 cases tagged for the slice and returns
+so V1 claims every case selected by the canonical claim and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads and writes** +
 audit-only processing-temporal), optimistic-locking, and value-object (typed nested
@@ -130,22 +130,23 @@ important V1 rule is the slice boundary:
 - Aggregation and projection are deferred by §2.8, so 04xx `aggregate` /
   `groupBy` / `having` cases and cases tagged `projection` are untagged and
   therefore outside the claim even though basic m-op-algebra predicate reads are inside it.
-- The transaction/read-lock/batched-write slice of m-read-lock is inside §4, but the m-read-lock
-  identity-cache and query-cache scenario slice is deferred by TS-0027. Those
+- The transaction, read-lock, and batched-write case subset is inside §4, but the
+  m-read-lock identity-cache and query-cache scenario capability set is deferred
+  by TS-0027. Those
   cache/identity cases are untagged and outside the V1 claim.
 - The `scenario` shape is **inside** the claim: the read-your-own-writes scenario
   `m-unit-work-001-read-your-own-writes` is tagged `slice-mvp-1` and runs as
-  part of the m-unit-work unit-of-work slice. The deferred m-unit-work cache `scenario` cases
+  part of the m-unit-work unit-of-work case subset. The deferred m-unit-work cache `scenario` cases
   (identity / query cache) are simply untagged, so they fall outside the claim
   without excluding the shape.
 - m-detach detached merge-back is deferred by the lifecycle section, so the `detached` /
   `lifecycle detach` cases are untagged and outside the V1 claim unless a later
-  implementation explicitly adds that slice.
+  implementation adopts a canonical claim that includes them.
 - m-perf-bench benchmarks are **outside** the V1 claim: `m-perf-bench` is not in `modules` and the
   `benchmark` command is not in `commands` (TS-0032, core ADR 0018). TypeScript still
   binds to the shared m-perf-bench methodology and report shape (§11), but the first build
-  does not *claim* benchmark execution in its conformance slice — the benchmark
-  surface lands after the first slice.
+  does not *claim* benchmark execution in its Conformance Slice — the benchmark
+  surface lands after the current claim.
 - MariaDB cases remain outside the V1 **conformance adapter claim** because
   `dialects` contains only `postgres`. Separately, TypeScript ships MariaDB as
   the second concrete m-db-port dialect/adapter/provider and proves it through
@@ -721,12 +722,12 @@ options. They come from the clock strategy supplied to `parallax({ clock })`, so
 production code cannot rewrite audit history while tests can inject a fixed
 clock.
 
-The canonical TypeScript V1 `slice-mvp-1` slice requires only the
+The canonical TypeScript V1 `slice-mvp-1` claim requires only the
 audit-only processing-temporal write surface below, plus the temporal read
 surface in §2.3. Business-temporal-only writes and bounded bitemporal
-rectangle-split writes are specified here as the post-slice m-bitemp-write surface, but they
-are not claimed by V1 until the canonical slice's case tags and capabilities are
-expanded.
+rectangle-split writes are specified here as the post-claim m-bitemp-write
+surface, but they remain outside V1 until the implementation adopts a later
+canonical claim that includes them.
 
 ```ts
 type WriteResult = {
@@ -758,7 +759,7 @@ for non-temporal entities.
 
 #### Deferred business-axis temporal writes
 
-The following types and methods belong to a later slice that claims
+The following types and methods belong to a later canonical claim that includes
 business-axis writes:
 
 ```ts
@@ -883,7 +884,7 @@ The suite MUST begin with `parallax-conformance describe` and use the returned
 capability claims to decide whether a case is expected to run or expected to
 return `status: "unsupported"`. TypeScript uses the core
 `caseTags.include` / `caseTags.exclude` claim model; it MUST NOT treat broad
-`modules` + `caseShapes` claims as sufficient when a V1 slice deliberately
+`modules` + `caseShapes` claims as sufficient when the V1 claim deliberately
 defers part of a module.
 
 ### 5.3 Provisioning seam
@@ -940,24 +941,24 @@ The V1 `parallax-conformance describe` claim remains **Postgres-only**. That is
 the official adapter grade for `slice-mvp-1`. TypeScript nevertheless ships two
 database implementations behind the m-dialect seam:
 
-- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 186
-  harness-lane `slice-mvp-1` cases over `postgres:17` (including the 42
+- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): every
+  harness-lane case selected by `slice-mvp-1` over `postgres:17` (including all
   value-object cases — their nested-predicate reads, materialization graph,
   atomic document writes, inherited-temporality reads, and pre-SQL `rejected`
   refusals, plus the standalone plain-bitemporal-insert witness `m-bitemp-write-009`,
   a Postgres-only golden that stays off the curated MariaDB profile), included in
   `just ts-db`.
 - **MariaDB curated m-case-format profile** (`mariadb-curated-36`): a first-class partial
-  profile over `mariadb:11.4`, included in `just ts-db-all`. It preserves the
-  36-case set: 25
-  harness-lane slice cases whose `then.statements` entries carry a `mariadb` `sql`
+  profile over `mariadb:11.4`, included in `just ts-db-all`. Its mechanically
+  checked membership includes harness-lane cases whose `then.statements` entries
+  carry a `mariadb` `sql`
   key (COR-26 added the audit-chaining backfill `m-audit-write-002`/`-003`/`-004`, then the
-  eight full-bitemporal `position` write/conflict cases `m-bitemp-write-001`-`-008` once the
-  harness reserved-word set became per-dialect — those eight now EXECUTE on the TS run-lane
-  too, six rectangle-split write sequences plus two optimistic-conflict closes, because the
+  full-bitemporal `position` write/conflict cases `m-bitemp-write-001`-`-008` once the
+  harness reserved-word set became per-dialect — those cases now EXECUTE on the TS run-lane
+  too, covering rectangle-split write sequences and optimistic-conflict closes, because the
   temporal-insert builder emits the sqlglot-canonical quoted-table spacing
   (`` insert into `position` (…) ``); the reference-harness oracle is the independent second
-  witness) plus 11 marquee MariaDB
+  witness) plus the marquee MariaDB
   dialect/error-classification proofs (`m-read-lock-009`, `m-temporal-read-021`, `m-core-004`, `m-db-error-001`-`m-db-error-008`).
   The value-object cases DO carry `mariadb` golden, but they are deliberately
   **not** run through the curated run-lane profile: their MariaDB golden-SQL
@@ -1011,7 +1012,7 @@ TypeScript implements the portable database-provider test contract in
 `languages/typescript/docs/guide/`.** Beyond the wire-level conformance adapter of
 [§5](#5-test-double-integration-m-case-format-dq15), TypeScript proves that the idiomatic
 developer surface of [§2](#2-api-surface-non-normative--dq3) reproduces the
-claimed slice against a real Postgres through the shipped `@parallax/db-postgres`
+claimed case set against a real Postgres through the shipped `@parallax/db-postgres`
 adapter by default (`just ts-db`), with a MariaDB fan-out lane (`just ts-db-all`)
 that runs the same developer reads and writes through `@parallax/db-mariadb`.
 It also renders a Usage Guide from that same suite source. Both are the
@@ -1035,8 +1036,9 @@ partition below.
 
 ### 6.2 Coverage partition and no-drift guard
 
-- **Coverage partition.** `coverage.test.ts` (Docker-free) discovers exactly the
-  198 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
+- **Coverage partition.** `coverage.test.ts` (Docker-free) discovers every case
+  selected by the canonical `slice-mvp-1` claim and asserts
+  `exercised ∪ skipped == claimed cases`
   with no stale ids: every in-slice case is either exercised by a family suite
   (`covered.ts`) or listed in the reasoned skip manifest (`skip-manifest.ts`),
   and every skip carries a non-empty reason — a silent gap fails the build.
@@ -1052,7 +1054,7 @@ partition below.
 
 ### 6.3 Reasoned skips
 
-Cases (of the 198) are reason-skipped because what they prove is
+Cases are reason-skipped because what they prove is
 serde/harness machinery a developer never authors, not a developer-facing
 surface — the five below, the eleven value-object `rejected` negatives
 (`m-value-object-034`-`m-value-object-044`), whose whole assertion is a **pre-SQL
@@ -1150,8 +1152,8 @@ language-local realization of the contract's guide drift-check requirement.
   would fail; since generated files are uncommitted, this is not a git drift
   check). Conformance is exposed through the **separate** `parallax-conformance`
   CLI, not the generated `#parallax` API. The canonical V1 command claim exposes
-  `describe` / `compile` / `run`; `benchmark` is the post-slice m-perf-bench command
-  described in §11 and is not claimed by the `slice-mvp-1` slice —
+  `describe` / `compile` / `run`; `benchmark` is the post-claim m-perf-bench command
+  described in §11 and is not claimed by `slice-mvp-1` —
   see [§5](#5-test-double-integration-m-case-format-dq15).
 - **Where generated artifacts live / regeneration.** Generated output is derived
   code: gitignored by default, written to `./.parallax/generated` (outside
@@ -1357,7 +1359,7 @@ port depends on nothing application-specific**. The composition-root conformance
 providers retain provisioning (Testcontainers + `reset`/`applyDdl`/`loadFixtures`)
 but delegate SQL execution to concrete `@parallax/db-*` instances, then render
 managed scalars to the canonical wire form for the run envelope — so there is **no
-`m-case-format → m-dialect` edge** and the claimed slice is continuous proof the shipped adapters
+`m-case-format → m-dialect` edge** and the claimed case set is continuous proof the shipped adapters
 work.
 
 ### 9.3 Legal-edge contract
@@ -1442,10 +1444,10 @@ the core graph.
 **DEFERRED-with-rationale — non-normative, no V1 decision; see
 [TS-0033](../docs/adr/0033-optimized-data-structures-non-normative-no-v1-decision.md).**
 This section is **non-normative**: the optional optimized data structures exist
-only to back the `m-process-cache` identity / query caches, and that cache/identity slice of
+only to back the `m-process-cache` identity / query caches, and that cache/identity capability set in
 m-unit-work is deferred from TypeScript V1 (TS-0027,
-[§4](#4-transaction-block-demarcation-m-unit-work)). The transaction/read-lock/write
-slice specified in §4 still belongs to V1. There is nothing cache-specific to
+[§4](#4-transaction-block-demarcation-m-unit-work)). The transaction, read-lock, and write
+capability set specified in §4 still belongs to V1. There is nothing cache-specific to
 optimize for V1, so no V1 decision is recorded. The core itself marks these
 techniques optional and non-normative — a language may hit its targets any way it
 likes.
@@ -1458,15 +1460,15 @@ is deliberate rather than an omission:
 - **Key-derived hashing analogue** (`HashingStrategy`) — index domain objects by
   a derived (e.g. composite-PK) key without allocating wrapper key objects.
 
-**Post-V1 note (non-binding):** when the m-unit-work identity/query-cache slice lands, a
+**Post-V1 note (non-binding):** when the m-unit-work identity/query-cache capabilities land, a
 built-in `Map` keyed by a canonical primary-key string is the idiomatic
 JavaScript baseline for both caches. The Java open-addressing /
 no-wrapper-key-allocation techniques have **no compelling direct JavaScript
 analogue** — short string keys are effectively interned by the engine and V8
 `Map`s are already compact, so a composite-PK string key captures the same
 benefit without a custom hashing strategy or an open-addressing table. This
-decision is deferred with the cache/identity slice and made when that slice is
-implemented.
+decision is deferred with the cache/identity capabilities and made when that
+surface is implemented.
 
 ## 11. Per-language performance targets (m-perf-bench, DQ10)
 
@@ -1474,17 +1476,18 @@ implemented.
 `expectRoundTrips` invariant is binding for V1 compatibility cases — see
 [TS-0032](../docs/adr/0032-performance-methodology-bound-numeric-targets-deferred.md).**
 TypeScript records the shared `m-perf-bench` methodology now, but the canonical
-`slice-mvp-1` conformance slice does **not** claim module `m-perf-bench` or
-the `benchmark` command. A V1 adapter adopting that slice may therefore return
+`slice-mvp-1` Conformance Slice does **not** claim module `m-perf-bench` or
+the `benchmark` command. A V1 adapter adopting that claim may therefore return
 `unsupported` for `parallax-conformance benchmark`. The benchmark command and
-numeric targets are enabled by a later m-perf-bench slice, after a real implementation can
-produce a baseline. Numbers invented against a non-existent implementation would
-be fabricated rather than measured.
+numeric targets are enabled by a later canonical claim that includes
+m-perf-bench, after a real implementation can produce a baseline. Numbers
+invented against a non-existent implementation would be fabricated rather than
+measured.
 
-### 11.1 Post-slice benchmark methodology
+### 11.1 Post-claim benchmark methodology
 
 The methodology is the durable, comparable part of `m-perf-bench`. When TypeScript claims
-the m-perf-bench benchmark slice, it uses this contract:
+the m-perf-bench benchmark capability, it uses this contract:
 
 - **Shared fixtures.** The same benchmark fixtures under
   [`core/compatibility/benchmarks/`](../../../core/compatibility/benchmarks)
@@ -1540,7 +1543,7 @@ in V1 through m-conformance-adapter and, once m-perf-bench is claimed, by the be
   `len(then.statements[].sql[dialect])` MUST equal the case's `then.roundTrips`
   ([§5.2](#52-case-discovery-and-execution-boundary) compares this via the
   `parallax-conformance` envelope's `roundTrips`).
-- **Post-slice `m-perf-bench` benchmark runner** — when the benchmark command is claimed,
+- **Post-claim `m-perf-bench` benchmark runner** — when the benchmark command is claimed,
   a workload's actual round trips MUST equal its declared `expectRoundTrips`; a
   deep fetch that silently regresses to N+1 fails the benchmark run.
 

@@ -19,7 +19,7 @@ prove conformance by running the same suite; the TypeScript implementation in
 
 ```text
 core/
-  spec/                 Normative modules, dependency graph, and slices
+  spec/                 Modules, dependency graph, slice catalog, and language template
   schemas/              JSON Schemas for descriptors, operations, and cases
   compatibility/
     models/             Canonical entity descriptors
@@ -60,8 +60,9 @@ A module names a *behavior*, not a package: a language MAY group many modules in
 one package as long as it enforces the dependency graph. `core/spec/modules.md`
 is the authoritative catalog — every module's status (`active` / `deferred`), its
 coverage source, and the normative module dependency graph — checked by the
-harness tooling so coverage cannot drift. `core/spec/slices.md` declares the
-slices that compose modules into deliverables.
+harness tooling so coverage cannot drift. [`core/spec/slices.md`](core/spec/slices.md)
+is the authoritative catalog of named Conformance Slice claims and their
+compatibility-case membership.
 
 ### 2. Describe the domain with models
 
@@ -247,15 +248,24 @@ When adding a dialect, implement a new provider behind the database seam
 
 ## Building A Language Implementation
 
-Building an idiomatic Parallax for a new language starts by declaring a
-**Conformance Slice**: the subset of the compatibility corpus this first build
-claims right now, captured as a machine-readable `describe` claim (see
-[`core/spec/slices.md`](core/spec/slices.md)). A slice is
-case-granular — it may claim some features of a module while deferring others,
-without redefining that module's boundary — so an early build can commit to
-exactly what it can honestly prove.
+Building an idiomatic Parallax target is a two-stage workflow: author the
+language spec, then implement that completed spec. Follow this path in order:
 
-The declared slice is then proven two ways, and both are official deliverables:
+1. Read the [core overview](core/spec/00-overview.md) and
+   [behavioral-module catalog and dependency graph](core/spec/modules.md).
+2. Select one canonical **Conformance Slice** from the
+   [slice catalog](core/spec/slices.md). That catalog alone owns the claim's
+   machine-readable capabilities and compatibility-case membership.
+3. Copy and complete the
+   [language-spec template](core/spec/language-spec-template.md). The completed
+   per-language spec records the target's lifecycle, API, source enforcement,
+   deployable topology, database support, and quality-toolchain decisions.
+4. Implement the completed spec by following the dependency-respecting
+   milestones and verification ladder in
+   [IMPLEMENTING.md](IMPLEMENTING.md). A per-language operational guide may add
+   commands, database setup, milestones, current status, and blockers, but does
+   not repeat the language-design decisions.
+5. Prove the selected claim through both required verification surfaces:
 
 - the wire-level **conformance-adapter grade** in
   [`core/spec/m-conformance-adapter.md`](core/spec/m-conformance-adapter.md)
@@ -267,11 +277,9 @@ The declared slice is then proven two ways, and both are official deliverables:
   — the idiomatic code an application writes, run through the shipped adapter
   against a real database, reproducing the corpus's results.
 
-Both prove the same slice while each language builds its own idiomatic public
-API. [`IMPLEMENTING.md`](IMPLEMENTING.md) is the step-by-step playbook: it lays
-out the reading order, planning deliverables, implementation sequence,
-verification ladder, and completion checklist that carry you from the shared
-contract to a conforming target.
+Both surfaces prove the same named claim while each language builds its own
+idiomatic public API. The slice catalog owns what is claimed; the completed
+language spec owns language decisions; the implementation guide owns sequence.
 
 ## Current Status
 
@@ -287,7 +295,7 @@ example: it declares the (now-deprecated) `slice-mvp-1` Conformance Slice — it
 migration target is `slice-managed-1`, one of the two object-lifecycle slices in
 [core/spec/slices.md](core/spec/slices.md) — and proves it with both official
 artifacts. Further language implementations should treat
-`core/` as the shared contract and use `reference-harness/` as the executable
+`core/` as the shared contract and the compatibility corpus as the behavioral
 oracle. See
 [Building A Language Implementation](#building-a-language-implementation) for the
-slice-first process and its two official proof artifacts.
+two-stage author-spec, implement-spec workflow and its two proof artifacts.
