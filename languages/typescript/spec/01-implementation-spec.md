@@ -59,7 +59,7 @@ declared in [`slices.md`](../../../core/spec/slices.md#first-implementation-conf
 conformance adapter MUST report a case-slice-aware `describe`
 result whose `capabilities` are **exactly** that canonical slice's capabilities —
 the slice is **include-driven** (`caseTags.include: ["slice-mvp-1"]`),
-so V1 claims precisely the 197 cases tagged for the slice and returns
+so V1 claims precisely the 198 cases tagged for the slice and returns
 `unsupported` for everything else. A V1 adapter that implements the specified
 transaction, relationship, list, temporal (bitemporal **reads and writes** +
 audit-only processing-temporal), optimistic-locking, and value-object (typed nested
@@ -841,11 +841,13 @@ The V1 `parallax-conformance describe` claim remains **Postgres-only**. That is
 the official adapter grade for `slice-mvp-1`. TypeScript nevertheless ships two
 database implementations behind the m-dialect seam:
 
-- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 185
+- **Postgres full m-case-format profile** (`postgres-full-slice-mvp-1`): the 186
   harness-lane `slice-mvp-1` cases over `postgres:17` (including the 42
   value-object cases — their nested-predicate reads, materialization graph,
   atomic document writes, inherited-temporality reads, and pre-SQL `rejected`
-  refusals), included in `just ts-db`.
+  refusals, plus the standalone plain-bitemporal-insert witness `m-bitemp-write-009`,
+  a Postgres-only golden that stays off the curated MariaDB profile), included in
+  `just ts-db`.
 - **MariaDB curated m-case-format profile** (`mariadb-curated-36`): a first-class partial
   profile over `mariadb:11.4`, included in `just ts-db-all`. It preserves the
   36-case set: 25
@@ -935,7 +937,7 @@ partition below.
 ### 6.2 Coverage partition and no-drift guard
 
 - **Coverage partition.** `coverage.test.ts` (Docker-free) discovers exactly the
-  197 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
+  198 `slice-mvp-1` cases and asserts `exercised ∪ skipped == slice`
   with no stale ids: every in-slice case is either exercised by a family suite
   (`covered.ts`) or listed in the reasoned skip manifest (`skip-manifest.ts`),
   and every skip carries a non-empty reason — a silent gap fails the build.
@@ -951,7 +953,7 @@ partition below.
 
 ### 6.3 Reasoned skips
 
-Cases (of the 197) are reason-skipped because what they prove is
+Cases (of the 198) are reason-skipped because what they prove is
 serde/harness machinery a developer never authors, not a developer-facing
 surface — the five below, the eleven value-object `rejected` negatives
 (`m-value-object-034`-`m-value-object-044`), whose whole assertion is a **pre-SQL
@@ -960,8 +962,8 @@ refusal**: the invalid input (a value-object root, an unknown nested path, a
 missing required attribute or a missing required nested / top-level value object)
 is refused before any query is built, so there is no idiomatic developer query to
 author — the refusal is proven by the harness run lane and the
-`@parallax/operation` validators; the eight bitemporal milestone-chaining writes
-(`m-bitemp-write-001`-`m-bitemp-write-008`), whose rectangle-split / plain /
+`@parallax/operation` validators; the nine bitemporal milestone-chaining writes
+(`m-bitemp-write-001`-`m-bitemp-write-009`), whose rectangle-split / plain /
 optimistic-gated DML is proven end-to-end by the harness and conformance run lanes
 (`slice-run` drives `@parallax/conformance`'s write-sequence / conflict plan), not
 the developer-surface object API; and the COR-26 Phase-5 type-fidelity,

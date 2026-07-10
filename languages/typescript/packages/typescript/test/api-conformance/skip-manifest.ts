@@ -30,10 +30,11 @@
  * locking cases (`m-opt-lock-005` / `m-opt-lock-007`), applied harness-side — those
  * cases ARE exercised.
  *
- * The eight full-bitemporal milestone-chaining writes (`m-bitemp-write-001`–`-008`,
- * promoted into `slice-mvp-1` by COR-26 — the windowed / plain rectangle splits and
- * the optimistic-gated close) are all skipped here: their rectangle-split /
- * plain-split / optimistic-gated DML is proven end-to-end by the reference harness AND
+ * The nine full-bitemporal milestone-chaining writes (`m-bitemp-write-001`–`-009`,
+ * promoted into `slice-mvp-1` by COR-26 plus the standalone plain-insert witness `-009`
+ * from COR-9 — the windowed / plain rectangle splits, the plain fully-current insert, and
+ * the optimistic-gated close) are all skipped here: their rectangle-split / plain-write /
+ * optimistic-gated DML is proven end-to-end by the reference harness AND
  * the TypeScript conformance runner's run lane (`slice-run` / `mariadb-run` drive
  * `@parallax/conformance`'s write-sequence / conflict plan), not the developer-surface
  * object-lifecycle API — a developer never authors the milestone-chaining DML directly
@@ -165,13 +166,15 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "before any query is built — so there is no idiomatic developer query to author. The refusal is proven by " +
       "the `@parallax/operation` validators and the harness run lane (slice-run emits the rejected rule).",
   })),
-  // --- bitemporal milestone-chaining writes (m-bitemp-write, promoted by COR-26) ---
-  ...["001", "002", "003", "004", "005", "006", "007", "008"].map((n) => ({
+  // --- bitemporal milestone-chaining writes (m-bitemp-write, promoted by COR-26;
+  //     the standalone plain-insert witness -009 added by COR-9 Phase 1) ---
+  ...["001", "002", "003", "004", "005", "006", "007", "008", "009"].map((n) => ({
     id: `m-bitemp-write-${n}`,
     reason:
-      "bitemporal milestone-chaining write (rectangle split / plain split / optimistic-gated close): the " +
-      "windowed `*Until` and plain `update`/`terminate` rectangle splits and the optimistic-gated inactivation " +
-      "close never mutate in place — they close the original on the processing axis and chain milestone rows. " +
+      "bitemporal milestone-chaining write (rectangle split / plain insert-update-terminate / optimistic-gated " +
+      "close): the windowed `*Until` and plain `insert`/`update`/`terminate` writes and the optimistic-gated " +
+      "inactivation close never mutate in place — they open a fully-current rectangle or close the original on " +
+      "the processing axis and chain milestone rows. " +
       "Their DML is proven end-to-end by the reference harness AND the TypeScript conformance runner's run lane " +
       "(slice-run drives @parallax/conformance's write-sequence / conflict plan, grading the resulting tableState " +
       "/ affectedRows), not the developer-surface object API — a developer never authors the milestone-chaining " +

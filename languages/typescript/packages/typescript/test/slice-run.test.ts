@@ -78,9 +78,10 @@ const CASES = casesForProfile(POSTGRES_FULL_PROFILE);
 // m-bitemp-write cases (COR-26), then by the 7 audit-chaining / unit-work RYOW
 // cases (COR-26 Phase 2), then by the 5 batch-DELETE / opt-lock-edge / mixed-op
 // cases (COR-26 Phase 3), then by the 12 type-fidelity / value-object-write /
-// pk-gen cases (COR-26 Phase 5) — all harness-lane.
-it("discovers the harness-lane slice-mvp-1 slice (185 cases)", () => {
-  expect(CASES.length).toBe(185);
+// pk-gen cases (COR-26 Phase 5), then by the standalone plain-bitemporal-insert
+// witness m-bitemp-write-009 (COR-9 Phase 1 extension) — all harness-lane.
+it("discovers the harness-lane slice-mvp-1 slice (186 cases)", () => {
+  expect(CASES.length).toBe(186);
 });
 
 group.skipIf(!HAS_DOCKER)(
@@ -139,7 +140,7 @@ group.skipIf(!HAS_DOCKER)(
     it("the case-matrix report is GREEN with no residuals", () => {
       const report = matrix.report();
       expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-      expect(report.total).toBe(185);
+      expect(report.total).toBe(186);
       expect(report.residuals).toEqual([]);
     });
   },
