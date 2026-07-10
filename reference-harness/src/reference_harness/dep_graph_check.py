@@ -48,9 +48,11 @@ from pathlib import Path
 import yaml
 
 _FENCE_RE = re.compile(r"```dependency-graph\n(.*?)```", re.DOTALL)
-_SLUG = r"m-[a-z0-9]+(?:-[a-z0-9]+)*"
-_EDGE_RE = re.compile(rf"^\s*({_SLUG})\s*-->\s*({_SLUG})\s*$")
-_MODULE_RE = re.compile(rf"^{_SLUG}$")  # doubles as the fixture-tag pattern
+# The canonical module-slug body. Anchored below as the edge/fixture-tag pattern;
+# other modules wrap it in word boundaries to extract slugs from prose.
+MODULE_SLUG = r"m-[a-z0-9]+(?:-[a-z0-9]+)*"
+_EDGE_RE = re.compile(rf"^\s*({MODULE_SLUG})\s*-->\s*({MODULE_SLUG})\s*$")
+_MODULE_RE = re.compile(rf"^{MODULE_SLUG}$")  # doubles as the fixture-tag pattern
 
 # The heading under which the module catalog table lives in modules.md, normalized
 # to lower case. The coverage gate parses that table (module | summary | status |
@@ -84,8 +86,11 @@ _CASE_SHAPES = frozenset(
 # slices.md, one fenced json block per slice.
 _SLICE_TAG_RE = re.compile(r"^slice-[a-z0-9][a-z0-9-]*$")
 
-# Every fenced json block in slices.md is a canonical slice claim.
-_JSON_FENCE_RE = re.compile(r"```json\n(.*?)```", re.DOTALL)
+# Every fenced json block in slices.md is a canonical slice claim. The shared
+# fence pattern (also used by the language-spec validator) tolerates trailing
+# whitespace after the ```json marker so the two extractors cannot silently
+# diverge; on the real slices.md and fixtures it matches identically.
+JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 
 
 class DepGraphFailure(Exception):
@@ -110,6 +115,27 @@ def parse_edges(markdown: str) -> list[tuple[str, str]]:
     if not edges:
         raise DepGraphFailure("dependency-graph block declares no edges")
     return edges
+
+
+def transitive_prerequisites(claimed_modules: set[str], edges: list[tuple[str, str]]) -> list[str]:
+    """Modules the claim transitively depends on but does not itself claim.
+
+    Walks the depends-on ``edges`` from every claimed module and returns the
+    reachable dependencies that fall outside ``claimed_modules``, sorted.
+    """
+    dependencies: dict[str, set[str]] = {}
+    for module, dependency in edges:
+        dependencies.setdefault(module, set()).add(dependency)
+
+    reached: set[str] = set()
+    pending = list(claimed_modules)
+    while pending:
+        module = pending.pop()
+        for dependency in dependencies.get(module, set()):
+            if dependency not in reached:
+                reached.add(dependency)
+                pending.append(dependency)
+    return sorted(reached - claimed_modules)
 
 
 def _find_cycle(edges: list[tuple[str, str]]) -> list[str] | None:
@@ -322,8 +348,8 @@ def catalog_graph_consistency_errors(modules_markdown: str) -> list[str]:
 # --- profile (conformance-slice) consistency gate --------------------------
 
 
-def parse_profile_claims(claim_markdown: str) -> dict[str, dict]:
-    """Return ``{slice_tag: capabilities}`` for every claim in ``slices.md``.
+def parse_profile_envelopes(claim_markdown: str) -> dict[str, dict]:
+    """Return ``{slice_tag: describe_envelope}`` for every claim in ``slices.md``.
 
     Every fenced ```` ```json ```` block in ``slices.md`` is a canonical slice
     ``describe`` claim — the single source of truth for one Conformance Slice.
@@ -331,7 +357,7 @@ def parse_profile_claims(claim_markdown: str) -> dict[str, dict]:
     exactly one well-formed ``slice-*`` tag; two claims MUST NOT name the same
     slice tag.
     """
-    blocks = _JSON_FENCE_RE.findall(claim_markdown)
+    blocks = JSON_FENCE_RE.findall(claim_markdown)
     if not blocks:
         raise DepGraphFailure("no ```json slice claim found in slices.md")
     claims: dict[str, dict] = {}
@@ -358,8 +384,16 @@ def parse_profile_claims(claim_markdown: str) -> dict[str, dict]:
         slice_tag = include[0]
         if slice_tag in claims:
             raise DepGraphFailure(f"two slice claims name the same tag {slice_tag!r}")
-        claims[slice_tag] = capabilities
+        claims[slice_tag] = claim
     return claims
+
+
+def parse_profile_claims(claim_markdown: str) -> dict[str, dict]:
+    """Return ``{slice_tag: capabilities}`` for every claim in ``slices.md``."""
+    return {
+        slice_tag: envelope["capabilities"]
+        for slice_tag, envelope in parse_profile_envelopes(claim_markdown).items()
+    }
 
 
 def _case_shape(doc: dict) -> str | None:
@@ -427,7 +461,7 @@ def _has_postgres_golden(doc: dict, shape: str) -> bool:
     return False
 
 
-def _load_cases(compatibility_root: Path) -> list[tuple[Path, dict]]:
+def load_cases(compatibility_root: Path) -> list[tuple[Path, dict]]:
     """Load (path, doc) for every ``cases/`` fixture.
 
     Benchmarks are intentionally ignored — a slice is a subset of ``cases/``.
@@ -534,7 +568,7 @@ def profile_errors(claim_markdown: str, compatibility_root: Path) -> list[str]:
         claims = parse_profile_claims(claim_markdown)
     except DepGraphFailure as exc:
         return [str(exc)]
-    return _profile_errors_from(claims, _load_cases(compatibility_root))
+    return _profile_errors_from(claims, load_cases(compatibility_root))
 
 
 def _profile_errors_from(claims: dict[str, dict], cases: list[tuple[Path, dict]]) -> list[str]:
@@ -627,7 +661,7 @@ def run_profile(spec_dir: Path, compatibility_root: Path) -> int:
     except DepGraphFailure as exc:
         errors = [str(exc)]
     else:
-        cases = _load_cases(compatibility_root)
+        cases = load_cases(compatibility_root)
         errors = _profile_errors_from(claims, cases)
     if errors:
         print(

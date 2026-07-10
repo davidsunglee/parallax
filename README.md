@@ -200,6 +200,22 @@ Validate schemas, SQL shape, and the module dependency graph:
 just core-dep-graph
 ```
 
+Inspect a canonical slice's claim, cases, module-tag union, supported surfaces,
+and unclaimed implementation prerequisites:
+
+```bash
+just core-slice-inspect slice-snapshot-1
+```
+
+Validate a completed language spec against the selected canonical claim and
+the language-spec template's lifecycle, topology, and quality requirements.
+The path below is illustrative; point the check at a target's completed
+language spec:
+
+```bash
+just core-language-spec-check languages/<target>/spec/implementation.md
+```
+
 Run the compatibility suite against available database providers:
 
 ```bash

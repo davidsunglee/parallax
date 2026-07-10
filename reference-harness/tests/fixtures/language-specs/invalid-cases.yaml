@@ -1,0 +1,142 @@
+- name: unresolved-marker
+  base: valid-snapshot.md
+  old: "The implementation selects `slice-snapshot-1` and the snapshot lifecycle."
+  new: "The implementation selects `slice-snapshot-1`. TODO: choose the lifecycle."
+  code: unresolved-marker
+  message: "line 5 contains unresolved marker 'TODO'"
+
+- name: both-lifecycles
+  base: valid-snapshot.md
+  old: "## 4. Result collections and materialization"
+  new: |-
+    ### Managed-object lifecycle
+
+    Managed objects are also retained.
+
+    ## 4. Result collections and materialization
+  code: lifecycle-profile
+  message: "retain exactly one lifecycle heading"
+
+- name: unknown-slice
+  base: valid-snapshot.md
+  old: '"caseTags": { "include": ["slice-snapshot-1"] }'
+  new: '"caseTags": { "include": ["slice-unknown-1"] }'
+  code: unknown-slice
+  message: "selected slice 'slice-unknown-1' is not declared"
+
+- name: claim-drift
+  base: valid-snapshot.md
+  old: '"dialects": ["postgres"]'
+  new: '"dialects": ["postgres", "mariadb"]'
+  code: claim-mismatch
+  message: "capabilities.dialects differs from the canonical claim"
+
+- name: invalid-describe-envelope
+  base: valid-snapshot.md
+  old: '"provisioning": "self-managed"'
+  new: '"provisioning": "self-managed", "unknownCapability": null'
+  code: invalid-describe-envelope
+  message: "describe claim does not satisfy conformance-adapter.schema.json"
+
+- name: unclaimed-conditional
+  base: valid-snapshot.md
+  old: "No conditional capability is part of this claim."
+  new: |-
+    No conditional capability is part of this claim.
+
+    ### Process cache
+
+    A process cache is configured.
+  code: unexpected-conditional-section
+  message: "remove 'Process cache'; m-process-cache is not claimed"
+
+- name: missing-source-topology
+  base: valid-snapshot.md
+  old: "## 7. Source-enforcement topology"
+  new: "## 7. Source layout notes"
+  code: missing-section
+  message: "missing '## 7. Source-enforcement topology'"
+
+- name: incomplete-quality-row
+  base: valid-snapshot.md
+  old: "| Linting | Ruff 0.x | pyproject.toml | `ruff check .` | `ci lint` | Selected rules block; suppressions require rationale. |"
+  new: "| Linting | Ruff 0.x | pyproject.toml | | `ci lint` | Selected rules block; suppressions require rationale. |"
+  code: incomplete-quality-row
+  message: "quality row 'Linting' has a blank Local command cell"
+
+- name: missing-common-runtime
+  base: valid-snapshot.md
+  old: |-
+    | example common runtime | production | shared scopes | yaml | none | runtime API |
+    | example snapshot lifecycle extension | production | snapshot | none | common runtime | snapshot API |
+    | example postgres adapter | production | db-port adapter | postgres-driver | common runtime | adapter API |
+    | example conformance tools | development-only | api-proof, conformance | pytest | common runtime, postgres adapter | conformance CLI |
+  new: |-
+    | example base runtime | production | shared scopes | yaml | none | runtime API |
+    | example snapshot lifecycle extension | production | snapshot | none | base runtime | snapshot API |
+    | example postgres adapter | production | db-port adapter | postgres-driver | base runtime | adapter API |
+    | example conformance tools | development-only | api-proof, conformance | pytest | base runtime, postgres adapter | conformance CLI |
+  code: missing-artifact-role
+  message: "artifact topology has no common runtime row"
+
+- name: missing-lifecycle-extension
+  base: valid-snapshot.md
+  old: "example snapshot lifecycle extension"
+  new: "example snapshot extension"
+  code: missing-artifact-role
+  message: "artifact topology has no snapshot lifecycle extension row"
+
+- name: missing-dialect-adapter
+  base: valid-snapshot.md
+  old: |-
+    | example postgres adapter | production | db-port adapter | postgres-driver | common runtime | adapter API |
+    | example conformance tools | development-only | api-proof, conformance | pytest | common runtime, postgres adapter | conformance CLI |
+  new: |-
+    | example postgres bridge | production | db-port bridge | postgres-driver | common runtime | bridge API |
+    | example conformance tools | development-only | api-proof, conformance | pytest | common runtime, postgres bridge | conformance CLI |
+  code: missing-artifact-role
+  message: "artifact topology has no separate postgres adapter row"
+
+- name: missing-development-tooling
+  base: valid-snapshot.md
+  old: "| example conformance tools | development-only | api-proof, conformance | pytest | common runtime, postgres adapter | conformance CLI |"
+  new: "| example conformance tools | production | api-proof, conformance | pytest | common runtime, postgres adapter | conformance CLI |"
+  code: missing-artifact-role
+  message: "artifact topology has no development-only tooling row"
+
+- name: incomplete-artifact-row
+  base: valid-snapshot.md
+  old: "| example common runtime | production | shared scopes | yaml | none | runtime API |"
+  new: "| example common runtime | production | shared scopes | yaml |  | runtime API |"
+  code: incomplete-topology-row
+  message: "table under '## 8. Deployable artifact topology' has a row with blank or missing cells"
+
+- name: artifact-topology-header
+  base: valid-snapshot.md
+  old: "| Depends on artifacts | Public exports/entry points |"
+  new: "| Dependent artifacts | Public exports/entry points |"
+  code: topology-header
+  message: "table under '## 8. Deployable artifact topology' does not retain the canonical columns"
+
+- name: missing-result-profile
+  base: valid-snapshot.md
+  old: "### Snapshot results"
+  new: "### Snapshot output"
+  code: result-profile
+  message: "retain exactly one result heading"
+
+- name: mismatched-result-profile
+  base: valid-snapshot.md
+  old: "### Snapshot results"
+  new: "### Managed-object results"
+  code: result-profile
+  message: "slice requires 'Snapshot results'"
+
+- name: stray-lifecycle-extension
+  base: valid-snapshot.md
+  old: "| example snapshot lifecycle extension | production | snapshot | none | common runtime | snapshot API |"
+  new: |-
+    | example snapshot lifecycle extension | production | snapshot | none | common runtime | snapshot API |
+    | example managed lifecycle extension | production | identity-map, detach, lists | none | common runtime | managed API |
+  code: unexpected-artifact-role
+  message: "artifact topology lists a stray managed lifecycle extension row"
