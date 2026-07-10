@@ -1,0 +1,68 @@
+# Table-per-concrete-subtype BITEMPORAL plain TERMINATE: the inactivation targets the
+# subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql — Phase 8).
+#
+# A plain bitemporal terminate inactivates the original current rectangle on the
+# processing axis and chains only a HEAD (business [from_z, B)) — no tail, no middle
+# (m-bitemp-write). In a table-per-concrete-subtype family the concrete subtype is selected
+# by WHICH table the DML targets, so terminating a DepositRate inactivates and chains in the
+# concrete `deposit_rate` table: the inactivation is `update deposit_rate set out_z = ?
+# where id = ? and out_z = ?`, binds [2024-07-01, 1, infinity], with NO tag guard (contrast
+# the table-per-hierarchy inactivation m-inheritance-094, whose `update instrument` carries
+# `and kind = ?`).
+#
+# The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-007 and to the
+# table-per-hierarchy composed variant m-inheritance-094 (same dates, same 2-row result),
+# differing ONLY in table/tag routing.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert    : open the current rectangle, amount 2.50, business [2024-01-01, inf),
+#                      processing [2024-01-01, inf), grade A               (1 statement)
+#   step 2 terminate : end from business B = 2024-06-01 at txInstant 2024-07-01 —
+#                      inactivate the original and chain head only         (2 statements)
+model: models/rate.yaml
+tags: [m-inheritance, m-bitemp-write, m-sql, table-per-concrete-subtype, temporal, bitemporal, write-sequence, plain-terminate, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: DepositRate
+      statements: 1
+      note: open the original current rectangle in the concrete deposit_rate table
+      rows:
+        - { id: 1, amount: 2.50, grade: A, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: terminate
+      entity: DepositRate
+      statements: 2
+      note: inactivate the original in the concrete table (no tag guard), then chain head only
+      rows:
+        - { id: 1, businessFrom: "2024-06-01T00:00:00+00:00" }
+      at: "2024-07-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into deposit_rate(id, amount, from_z, thru_z, in_z, out_z, grade) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, 2.50, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity, A]
+    - sql:
+        postgres: update deposit_rate set out_z = ? where id = ? and out_z = ?
+      binds: ["2024-07-01T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into deposit_rate(id, amount, from_z, thru_z, in_z, out_z, grade) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [1, 2.50, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity, A]
+  tableState:
+    deposit_rate:
+      - id: 1
+        amount: 2.50
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-07-01T00:00:00+00:00"
+        grade: A
+      - id: 1
+        amount: 2.50
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-07-01T00:00:00+00:00"
+        out_z: infinity
+        grade: A
+  roundTrips: 3

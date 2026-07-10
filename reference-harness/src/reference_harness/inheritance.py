@@ -430,6 +430,25 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     resolved = copy.deepcopy(definition)
     resolved["attributes"] = merged
 
+    # Inherit the temporal AXES (asOfAttributes) + classification (temporal) from the
+    # nearest ancestor that declares them (m-inheritance: temporal axes declared on an
+    # abstract ancestor are inherited by every descendant). A family's temporal profile
+    # lives on the ROOT, so a concrete subtype declares no asOfAttributes of its own —
+    # the harness surfaces the inherited axes here, exactly as it derives the inherited
+    # attribute chain, so the DDL builds the milestone key, is_temporal is true, and the
+    # milestone-write / as-of-read oracles treat the concrete as the milestone-owning row
+    # it is. A per-entity metamodel reader (which does not flatten inheritance) still
+    # classifies the concrete non-temporal from its own empty axes — this is the
+    # inheritance-aware view.
+    if "asOfAttributes" not in resolved:
+        for ancestor in reversed(family.ancestry(name)[:-1]):
+            ancestor_def = family.defs.get(ancestor, {})
+            if "asOfAttributes" in ancestor_def:
+                resolved["asOfAttributes"] = copy.deepcopy(ancestor_def["asOfAttributes"])
+                if "temporal" in ancestor_def and "temporal" not in resolved:
+                    resolved["temporal"] = ancestor_def["temporal"]
+                break
+
     role = role_of(definition)
     strategy = family.strategy_of(name)
     if role == ROLE_CONCRETE and strategy == STRATEGY_TPH:

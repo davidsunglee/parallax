@@ -1,0 +1,99 @@
+# Rate: a TABLE-PER-CONCRETE-SUBTYPE inheritance family whose BITEMPORAL axes are
+# declared on the abstract root and inherited by every concrete subtype
+# (m-inheritance x m-bitemp-write x m-temporal-read — Phase 8 temporal composition).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is the TPCS
+# counterpart of the table-per-hierarchy `instrument` family: a NEW, small temporal
+# family whose concrete subtypes each map to their OWN table (no shared table, no tag),
+# so an abstract-target read lowers to `union all` over the effective concrete tables
+# with the injected as-of predicate applied PER BRANCH (m-sql). The bitemporal axes are
+# declared on the ROOT and thread into every concrete table via the ancestry chain, so
+# each concrete table physically carries the interval columns and admits the milestone
+# rectangles.
+#
+#   Rate (root, ABSTRACT)          — strategy + the two as-of axes; owns id + amount +
+#                                    the four interval columns; tableless, rowless
+#     DepositRate (concrete)       — its own `deposit_rate` table; adds grade
+#     LoanRate    (concrete)       — its own `loan_rate` table;    adds spread
+#
+# Branch alpha order: DepositRate, LoanRate. A temporal abstract-target `union all`
+# read (m-inheritance-093) carries the per-branch as-of binds (business-axis-first,
+# repeated in alphabetical branch order); the bitemporal terminate / terminateUntil
+# writes (m-inheritance-095 / -097) route to the concrete subtype's OWN table — the
+# standalone m-bitemp-write shapes, no tag guard.
+#
+# Row data lives in the sibling fixtures/rate.yaml (the temporal `union all` read). The
+# write-sequence cases construct their own milestone history from ordered DML.
+entities:
+  - name: Rate
+    namespace: parallax.compatibility
+    mutability: transactional
+    temporal: bitemporal
+    inheritance:
+      role: root
+      strategy: table-per-concrete-subtype
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: amount
+        type: decimal(18,2)
+        column: amount
+      - name: businessFrom
+        type: timestamp
+        column: from_z
+      - name: businessTo
+        type: timestamp
+        column: thru_z
+      - name: processingFrom
+        type: timestamp
+        column: in_z
+      - name: processingTo
+        type: timestamp
+        column: out_z
+    asOfAttributes:
+      - name: businessDate
+        fromColumn: from_z
+        toColumn: thru_z
+        axis: business
+        toIsInclusive: false
+        infinity: infinity
+        default: now
+      - name: processingDate
+        fromColumn: in_z
+        toColumn: out_z
+        axis: processing
+        toIsInclusive: false
+        infinity: infinity
+        default: now
+    indices:
+      - name: rate_pk
+        attributes: [id, businessFrom, processingFrom]
+        unique: true
+  - name: DepositRate
+    namespace: parallax.compatibility
+    table: deposit_rate
+    mutability: transactional
+    inheritance:
+      role: concrete-subtype
+      parent: Rate
+    attributes:
+      - name: grade
+        type: string
+        column: grade
+        maxLength: 8
+        nullable: true
+  - name: LoanRate
+    namespace: parallax.compatibility
+    table: loan_rate
+    mutability: transactional
+    inheritance:
+      role: concrete-subtype
+      parent: Rate
+    attributes:
+      - name: spread
+        type: decimal(18,2)
+        column: spread
+        nullable: true

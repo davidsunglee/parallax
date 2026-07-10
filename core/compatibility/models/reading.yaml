@@ -1,0 +1,65 @@
+# Reading: a TABLE-PER-HIERARCHY inheritance family whose AUDIT-ONLY (processing) axis
+# is declared on the abstract root and inherited by the concrete subtype
+# (m-inheritance x m-audit-write — Phase 8 temporal composition).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is a NEW,
+# small unitemporal-processing family: the whole family maps to ONE shared `reading`
+# table discriminated by the root's `tag` column (`kind`), and every row is an
+# audit-only MILESTONE over [in_z, out_z). The single processing axis lives on the
+# ROOT, inherited by the concrete subtype (which declares no asOfAttributes of its
+# own; the inheritance-aware harness flattens the axis in).
+#
+#   Reading (root, ABSTRACT)     — strategy + tag column + the processing axis; owns
+#                                  id + celsius + the interval columns
+#     MeterReading (concrete)    — tagValue 'meter'; all members inherited
+#
+# The audit-only concrete-subtype TERMINATE (m-inheritance-090) closes the
+# current-on-processing milestone with the tag GUARD among the identity predicates
+# (`… where id = ? and kind = ? and out_z = ?`) — the standalone m-audit-write close,
+# routed to the shared table. The write-sequence case builds its milestone history
+# from ordered DML, so this family needs no fixtures.
+entities:
+  - name: Reading
+    namespace: parallax.compatibility
+    mutability: transactional
+    temporal: unitemporal-processing
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: celsius
+        type: decimal(18,2)
+        column: celsius
+      - name: processingFrom
+        type: timestamp
+        column: in_z
+      - name: processingTo
+        type: timestamp
+        column: out_z
+    asOfAttributes:
+      - name: processingDate
+        fromColumn: in_z
+        toColumn: out_z
+        axis: processing
+        toIsInclusive: false
+        infinity: infinity
+        default: now
+    indices:
+      - name: reading_pk
+        attributes: [id, processingFrom]
+        unique: true
+  - name: MeterReading
+    namespace: parallax.compatibility
+    table: reading
+    mutability: transactional
+    inheritance:
+      role: concrete-subtype
+      parent: Reading
+      tagValue: meter

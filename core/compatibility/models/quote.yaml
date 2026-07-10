@@ -1,0 +1,68 @@
+# Quote: a TABLE-PER-CONCRETE-SUBTYPE inheritance family whose AUDIT-ONLY (processing)
+# axis is declared on the abstract root and inherited by the concrete subtype
+# (m-inheritance x m-audit-write — Phase 8 temporal composition).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is the TPCS
+# counterpart of the table-per-hierarchy `reading` family: a NEW, small
+# unitemporal-processing family whose concrete subtype maps to its OWN table (no shared
+# table, no tag). The single processing axis lives on the ROOT and threads into the
+# concrete table via the ancestry chain, so the concrete table carries [in_z, out_z)
+# and admits the milestone chain.
+#
+#   Quote (root, ABSTRACT)     — strategy + the processing axis; owns id + price + the
+#                                interval columns; tableless, rowless
+#     SpotQuote (concrete)     — its own `spot_quote` table; adds symbol
+#
+# The audit-only concrete-subtype TERMINATE (m-inheritance-091) closes the
+# current-on-processing milestone in the concrete subtype's OWN table with NO tag guard
+# (contrast the table-per-hierarchy `reading` close m-inheritance-090). The
+# write-sequence case builds its own milestone history, so this family needs no
+# fixtures.
+entities:
+  - name: Quote
+    namespace: parallax.compatibility
+    mutability: transactional
+    temporal: unitemporal-processing
+    inheritance:
+      role: root
+      strategy: table-per-concrete-subtype
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: price
+        type: decimal(18,2)
+        column: price
+      - name: processingFrom
+        type: timestamp
+        column: in_z
+      - name: processingTo
+        type: timestamp
+        column: out_z
+    asOfAttributes:
+      - name: processingDate
+        fromColumn: in_z
+        toColumn: out_z
+        axis: processing
+        toIsInclusive: false
+        infinity: infinity
+        default: now
+    indices:
+      - name: quote_pk
+        attributes: [id, processingFrom]
+        unique: true
+  - name: SpotQuote
+    namespace: parallax.compatibility
+    table: spot_quote
+    mutability: transactional
+    inheritance:
+      role: concrete-subtype
+      parent: Quote
+    attributes:
+      - name: symbol
+        type: string
+        column: symbol
+        maxLength: 8
+        nullable: true

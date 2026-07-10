@@ -894,6 +894,12 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
         case.model.entity_defs, case.operation, position=case.when.get("targetEntity")
     )
 
+    # Temporal composition (m-sql / m-temporal-read): a table-per-concrete-subtype
+    # abstract read over a TEMPORAL family applies the injected as-of predicate PER
+    # `union all` branch; recompute the per-branch as-of binds from the read's pin and
+    # assert the golden carries them (a no-op for a non-temporal / non-TPCS-abstract read).
+    _assert_temporal_union_binds(case, dialect)
+
     golden_rows = _query_rows(db, golden, case.statement_binds(0, dialect))
     expected = case.expected_rows
     tolerance = case.tolerance
@@ -939,6 +945,77 @@ def _read_effective_set(case: Case, family: Family, target_name: str) -> list[st
         else:
             break
     return family.effective_concrete_set(target_name)
+
+
+def _read_asof_pins(case: Case) -> dict[str, str]:
+    """Map ``{axis: pinned date}`` from the ``asOf`` nodes wrapping a READ operation.
+
+    The read counterpart of :func:`_root_asof_pins` (which walks a deep-fetch root
+    operand): peel the result-directive / narrow wrappers, then descend the nested
+    ``asOf`` pins. An axis absent here defaults to the child's own default ("now") at
+    :func:`_expected_asof_suffix` time. Empty when the read is unpinned (an omitted
+    axis then defaults to now per the default-injection rule).
+    """
+    pins: dict[str, str] = {}
+    node: Any = case.operation
+    while isinstance(node, dict) and len(node) == 1:
+        tag = next(iter(node))
+        if tag in ("distinct", "orderBy", "limit", "narrow"):
+            node = node[tag].get("operand")
+        elif tag == "asOf":
+            asof = node["asOf"]
+            entity_name, attr_name = asof["asOfAttr"].split(".", 1)
+            entity = case.model.entity(entity_name)
+            axis = next(a["axis"] for a in entity.as_of_attributes if a["name"] == attr_name)
+            pins[axis] = asof["date"]
+            node = asof.get("operand")
+        else:
+            break
+    return pins
+
+
+def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
+    """Assert a temporal TPCS abstract ``union all`` read's PER-BRANCH as-of binds.
+
+    The read-side temporal-composition oracle (m-sql / m-temporal-read): a
+    table-per-concrete-subtype abstract-target read over a TEMPORAL family lowers to
+    ``union all``, and the injected as-of predicate is applied PER BRANCH. Every
+    concrete branch inherits the same axes from the abstract root, so each branch
+    carries the same as-of suffix (business-axis-first bind order); the union's binds
+    are those per-branch suffixes repeated in the family's canonical ALPHABETICAL branch
+    order. Recomputed from the read's pin (defaulting an omitted axis to now,
+    :func:`_expected_asof_suffix`), independent of the authored golden. A no-op unless
+    the target is an abstract table-per-concrete-subtype TEMPORAL position.
+    """
+    target_name = case.when.get("targetEntity")
+    if not isinstance(target_name, str):
+        return
+    family = Family(case.model.entity_defs)
+    if target_name not in family.defs:
+        return
+    target_def = family.defs[target_name]
+    if inheritance_of(target_def) is None or not is_abstract(target_def):
+        return
+    if family.strategy_of(target_name) != STRATEGY_TPCS:
+        return
+    ordered = family.canonical_concrete_order(_read_effective_set(case, family, target_name))
+    branch_entities = [case.model.entity(name) for name in ordered]
+    if not any(entity.is_temporal for entity in branch_entities):
+        return  # a non-temporal TPCS abstract read carries no injected as-of binds
+    pins = _read_asof_pins(case)
+    expected: list[Any] = []
+    for entity in branch_entities:
+        expected.extend(_expected_asof_suffix(entity, pins))
+    actual = case.statement_binds(0, dialect)
+    if len(actual) != len(expected) or not all(
+        _write_value_equal(want, got) for want, got in zip(expected, actual, strict=False)
+    ):
+        raise CaseFailure(
+            f"{case.path.name}: temporal table-per-concrete-subtype abstract read binds "
+            f"{actual!r} != the per-branch as-of binds {expected!r} — each branch injects "
+            f"its as-of predicate over its own alias (business-axis-first), repeated in "
+            f"alphabetical branch order {ordered} (m-sql / m-temporal-read)."
+        )
 
 
 def _golden_projection_columns(case: Case) -> set[str]:
@@ -2070,26 +2147,42 @@ def _primary_key_columns(entity: Entity) -> list[str]:
     return [a["column"] for a in entity.attributes if a.get("primaryKey")]
 
 
+def _is_existing_row_statement(statement: str) -> bool:
+    """True for an existing-row write (UPDATE / DELETE), False for an INSERT.
+
+    A table-per-hierarchy existing-row statement carries the tag guard; an INSERT
+    derives the tag COLUMN instead. This classifies by the leading verb so it covers
+    the milestone TEMPORAL closes / inactivations (an ``update <table> set out_z = ?
+    …``, m-audit-write / m-bitemp-write) alongside the plain non-temporal
+    ``update`` / ``delete`` — both are existing-row writes that MUST carry the guard,
+    while the chained milestone INSERTs are not.
+    """
+    head = statement.lstrip().lower()
+    return head.startswith("update ") or head.startswith("delete ")
+
+
 def _assert_inheritance_write_routing(
     case: Case,
     entity: Entity,
-    mutation: str,
     step_statements: list[str],
     step_binds: list[list[Any]],
 ) -> None:
-    """Assert an inheritance write's golden DML routes/guards correctly (Phase 7).
+    """Assert an inheritance write's golden DML routes/guards correctly (Phase 7/8).
 
-    A no-op on a non-inheritance entity. For a TABLE-PER-HIERARCHY concrete subtype an
-    EXISTING-ROW write (``update`` / ``delete``) MUST carry the tag GUARD among the
-    identity predicates — canonically right after the primary key (m-inheritance,
-    m-sql; an insert derives the tag COLUMN instead, cross-checked by
-    :func:`_assert_insert_statement`). For a TABLE-PER-CONCRETE-SUBTYPE concrete
-    subtype every write MUST target the subtype's OWN table (no shared table, no tag).
+    A no-op on a non-inheritance entity. For a TABLE-PER-HIERARCHY concrete subtype
+    every EXISTING-ROW statement in the step — a plain ``update`` / ``delete`` OR a
+    milestone TEMPORAL close / inactivation (m-audit-write / m-bitemp-write) — MUST
+    carry the tag GUARD among the identity predicates, canonically right after the
+    primary key (m-inheritance, m-sql); a chained milestone INSERT derives the tag
+    COLUMN instead (cross-checked by :func:`_assert_insert_statement` /
+    :func:`_assert_temporal_input`). For a TABLE-PER-CONCRETE-SUBTYPE concrete subtype
+    every write (insert / close / delete) MUST target the subtype's OWN table (no
+    shared table, no tag).
     """
     tag = _tag(entity)
     if tag is not None:  # table-per-hierarchy concrete subtype
-        if mutation in ("update", "delete"):
-            for statement, binds in zip(step_statements, step_binds, strict=True):
+        for statement, binds in zip(step_statements, step_binds, strict=True):
+            if _is_existing_row_statement(statement):
                 _assert_existing_row_tag_guard(case, entity, statement, binds)
         return
     if entity.role == "concrete-subtype":  # table-per-concrete-subtype (tag is None)
@@ -2284,12 +2377,13 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             )
         else:
             _assert_update_input(case, entity, classified, step_statements, step_binds)
-        # Inheritance write routing (m-inheritance, Phase 7): a TABLE-PER-HIERARCHY
-        # existing-row write carries the tag guard after the pk; a
-        # TABLE-PER-CONCRETE-SUBTYPE write targets the subtype's own table. A no-op on
-        # a non-inheritance entity and on a table-per-hierarchy insert (whose tag COLUMN
-        # is cross-checked by _assert_insert_statement).
-        _assert_inheritance_write_routing(case, entity, mutation, step_statements, step_binds)
+        # Inheritance write routing (m-inheritance, Phase 7/8): a TABLE-PER-HIERARCHY
+        # existing-row statement (a plain update/delete OR a temporal close/inactivation)
+        # carries the tag guard after the pk; a TABLE-PER-CONCRETE-SUBTYPE write targets
+        # the subtype's own table. A no-op on a non-inheritance entity and on a chained
+        # INSERT (whose tag COLUMN is cross-checked by _assert_insert_statement /
+        # _assert_temporal_input).
+        _assert_inheritance_write_routing(case, entity, step_statements, step_binds)
         stmt_index += count
 
 
@@ -2579,6 +2673,12 @@ def _assert_temporal_input(
             f"milestone bookkeeping, never read from the golden."
         )
     columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
+    # A TABLE-PER-HIERARCHY concrete subtype's milestone rows carry the framework-owned
+    # tag column, DERIVED from its `tagValue` (m-inheritance) — the chained INSERT sets
+    # it in columnOrder position and the close GUARDS on it right after the pk, exactly
+    # as the non-temporal concrete-subtype write does. `None` for a table-per-concrete-
+    # subtype / non-inheritance entity (an ordinary single-table milestone write).
+    tag = _tag(entity)
 
     def assert_open(statement: str, binds: list[Any]) -> None:
         golden_columns = _parse_insert_columns(case, statement)
@@ -2589,15 +2689,28 @@ def _assert_temporal_input(
                 f"whole row (metamodel-sourced, not derived from ①)."
             )
         expected = [
-            at if column == in_z else infinity if column == out_z else columns.get(column)
+            at
+            if column == in_z
+            else infinity
+            if column == out_z
+            else tag[1]
+            if (tag is not None and column == tag[0])
+            else columns.get(column)
             for column in full_columns
         ]
         _assert_write_values(case, expected, binds, statement)
 
     def assert_close(statement: str, binds: list[Any]) -> None:
         # A close sets `out_z = at` keyed on the still-open current row
-        # (`pk and out_z = infinity`) — no domain values, just the derived bounds.
-        _assert_write_values(case, [at, pk, infinity], binds, statement)
+        # (`pk and out_z = infinity`) — no domain values, just the derived bounds. For a
+        # table-per-hierarchy subtype the tag GUARD rides with the identity predicates,
+        # right after the pk and BEFORE the current-row `out_z` predicate (its SQL shape
+        # is cross-checked by _assert_inheritance_write_routing), so its tagValue binds
+        # between the pk and infinity.
+        if tag is not None:
+            _assert_write_values(case, [at, pk, tag[1], infinity], binds, statement)
+        else:
+            _assert_write_values(case, [at, pk, infinity], binds, statement)
 
     mutation = step["mutation"]
     if mutation == "insert":
@@ -2688,6 +2801,12 @@ def _assert_until_input(
             f"business window start (`businessFrom` → {from_z}), which discriminates the "
             f"chained rows."
         )
+    # A TABLE-PER-HIERARCHY concrete subtype guards its inactivation on the framework-
+    # derived tag column right after the pk (m-inheritance), so the tagValue binds
+    # between the pk and the current-row `out_z` predicate; the tag guard's SQL shape is
+    # cross-checked by _assert_inheritance_write_routing. `None` for a table-per-
+    # concrete-subtype / non-inheritance entity (an ordinary own-table inactivation).
+    tag = _tag(entity)
 
     business_binds: list[Any] = []
     for statement, binds in zip(step_statements, step_binds, strict=True):
@@ -2705,7 +2824,7 @@ def _assert_until_input(
             # tolerated as gated. A gated close then pairs those two predicates with EXACTLY
             # two trailing binds — the currently-open row's (from_z, in_z), reconstructed
             # from prior insert steps and DISTINCT from the window boundary.
-            expected = [at, pk, infinity]
+            expected = [at, pk, tag[1], infinity] if tag is not None else [at, pk, infinity]
             gated = _has_temporal_gate(statement, from_z, in_z)
             if gated:
                 open_rect = _open_rectangle_binds(case, entity, step, pk, from_z)

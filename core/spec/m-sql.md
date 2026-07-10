@@ -832,6 +832,87 @@ shared one (`memo` for a `Memo`, `invoice` for an `Invoice`). A concrete-subtype
 `UPDATE` under table-per-concrete-subtype is the ordinary single-table versioned /
 non-versioned form (`m-opt-lock`); no tag guard applies.
 
+### Inheritance — temporal composition
+
+A temporal inheritance participant composes the milestone-chaining **writes**
+(`m-audit-write` / `m-bitemp-write`) and the as-of **reads** (`m-temporal-read`)
+with the strategy's routing and tag guard. The temporal semantics are
+**unchanged** — the close/inactivate keying, the head/middle/tail chaining, and the
+injected as-of predicate are exactly the standalone forms above; only the **table**
+the DML names and the **identity predicates** it carries differ. The temporal axes
+are declared on the family's abstract root and inherited by every concrete subtype
+(`m-inheritance`), so every concrete instance is a milestone-owning row.
+
+#### Table-per-hierarchy temporal writes — tag-guarded closes, tag-set chains
+
+Under `table-per-hierarchy` the whole family shares one milestone table. Every
+temporal statement that targets **existing** rows — the audit-only **close**
+(`m-audit-write`) and the bitemporal **inactivation** (`m-bitemp-write`) — carries
+the **tag guard** among the identity predicates, immediately **after** the
+primary-key equality and **before** the current-on-processing predicate; every
+chained **insert** (the audit chain, or the bitemporal `head` / `middle` / `tail`)
+sets the tag column from the subtype's `tagValue` in its `columnOrder` position,
+exactly as a non-temporal concrete-subtype insert does (above). There is no temporal
+exception to the resolved-Q9 bind order: the tag guard rides with the identity
+predicates; any gate the temporal write already carries (the optimistic
+processing-from `in_z` gate, `m-audit-write` / `m-bitemp-write`) still binds
+**last**.
+
+| Statement | Canonical Postgres DML | Binds |
+|---|---|---|
+| **audit-only insert** | `insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)` | `[<pk>, <tagValue>, …row…, <txInstant>, infinity]` |
+| **audit-only close** (`terminate` / `update` step 1) | `update reading set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
+| **bitemporal inactivation** (`terminate` / `terminateUntil` / `update` / `*Until` step 1) | `update instrument set out_z = ? where id = ? and kind = ? and out_z = ?` | `[<txInstant>, <pk>, <tagValue>, infinity]` |
+| **bitemporal head / middle / tail insert** | `insert into instrument(id, kind, price, from_z, thru_z, in_z, out_z, coupon) values (?, …, ?)` | `[<pk>, <tagValue>, …row…, <from_z>, <thru_z>, <txInstant>, infinity, …own…]` |
+
+The close / inactivation is keyed by the **current-on-processing** predicate
+(`out_z = ?` / `infinity`) exactly as its standalone form (the audit / bitemporal
+write sequences above); the tag guard is inserted **between** the primary key and
+that predicate — `… where id = ? and kind = ? and out_z = ?` — so it touches only
+the subtype's own milestones in the shared table. The chained inserts write the full
+physical row (a milestone always writes the whole row) with the tag column slotted
+after the primary key. The corpus witnesses are `m-inheritance-090` (audit terminate),
+`-094` (bitemporal terminate), `-096` (bitemporal `terminateUntil`).
+
+#### Table-per-concrete-subtype temporal writes — own-table routing
+
+Under `table-per-concrete-subtype` each concrete subtype owns its milestone table and
+carries no tag, so a temporal write is the ordinary standalone milestone-chaining
+sequence (`m-audit-write` / `m-bitemp-write`) targeting **that subtype's own table** —
+no tag guard, no shared table. The close / inactivation is `update <concrete> set
+out_z = ? where <pk> = ? and out_z = ?`; every chained insert writes `<concrete>`.
+The witnesses are `m-inheritance-091` / `-095` / `-097`.
+
+#### Temporal abstract reads — per-branch as-of
+
+A temporal **abstract-target** read composes the injected as-of predicate
+(`m-temporal-read`) with the strategy's abstract-read lowering. Under
+`table-per-hierarchy` it is the single shared-table select of the abstract-read
+lowering above with the injected as-of predicate appended after the tag predicate
+(or, for an abstract-**root** read, after the projection with no tag predicate); the
+raw tag column is still projected so `familyVariant` materializes (`m-inheritance-092`).
+Under `table-per-concrete-subtype` it is the `union all` of the abstract-read
+lowering, and the injected as-of predicate is applied **per branch**: every branch
+carries its own as-of `where` fragment over its own alias, in the same
+**business-axis-first** bind order as a single-entity as-of read (`m-temporal-read` /
+`m-navigate` as-of propagation). Because every concrete branch inherits the same axes
+from the root, each branch's as-of fragment is identical, so the union's binds are
+the per-branch as-of binds repeated in **alphabetical branch order**:
+
+```yaml
+# targetEntity: Rate (bitemporal abstract root over DepositRate / LoanRate), business
+# past b, processing now — each branch injects `from_z <= ? and thru_z > ? and out_z = ?`
+# (business-first) and the binds repeat per branch in alphabetical branch order:
+- sql:
+    postgres: select t0.id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.grade, cast(null as decimal(18, 2)) spread, 'DepositRate' family_variant from deposit_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? union all select t0.id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, cast(null as varchar(8)) grade, t0.spread, 'LoanRate' family_variant from loan_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+  binds: [b, b, infinity, b, b, infinity]
+```
+
+The witness is `m-inheritance-093`. As with any abstract read, the projection is the
+stable superset (here the interval columns are part of the inherited chain) plus the
+per-branch `familyVariant` literal; a column not applicable to a branch is the
+`cast(null as <type>)` placeholder in that dialect's type (`m-dialect`).
+
 ### valueObject — structured-column read and filter
 
 A `valueObject` is stored in **one structured-document column** (`m-core` /
