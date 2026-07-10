@@ -1,0 +1,29 @@
+# Table-per-hierarchy ABSTRACT-SUBTYPE read: Pet over only its concrete descendants
+# (m-inheritance, m-sql).
+#
+# Targeting the abstract subtype Pet resolves to its concrete descendants {Dog, Cat}
+# — NOT the sibling WildBoar in the same shared table. So the read injects
+# `t0.kind in (?, ?)` (binds [dog, cat], descriptor order), excluding the boar row.
+# The projection is the superset over {Dog, Cat} only — id, name, license_id,
+# bark_volume, indoor — PLUS the tag column; tusk_length (WildBoar's) is NOT reached.
+# familyVariant is materialized from the tag map (dog -> Dog, cat -> Cat).
+#
+# Non-trivial (tag) case => referenceSql is the independent oracle.
+model: models/animal.yaml
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Pet
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.kind from animal t0 where t0.kind in (?, ?)
+      binds: [dog, cat]
+  referenceSql: select id, name, license_id, bark_volume, indoor, kind from animal where kind in ('dog', 'cat')
+  rows:
+    - { id: 1, name: Rex, license_id: L-100, bark_volume: 7, indoor: null, familyVariant: Dog }
+    - { id: 2, name: Fido, license_id: L-101, bark_volume: 3, indoor: null, familyVariant: Dog }
+    - { id: 3, name: Whiskers, license_id: L-200, bark_volume: null, indoor: true, familyVariant: Cat }
+  roundTrips: 1

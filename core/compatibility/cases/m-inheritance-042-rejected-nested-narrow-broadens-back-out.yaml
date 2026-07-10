@@ -1,0 +1,28 @@
+# Negative (m-inheritance, m-op-algebra): a NESTED narrow broadens back out of the
+# position the enclosing narrow established.
+#
+# The outer narrow constrains the family root to [Dog], so the active polymorphic
+# position inside its operand is {Dog}. The inner narrow declares the broader `entity`
+# Animal and narrows to [Cat] — a concrete subtype of the family but OUTSIDE the {Dog}
+# position now in scope. A narrow can only ever CONSTRAIN the active position, never
+# broaden it: the inner `to` set {Cat} is non-empty yet not a SUBSET of the active
+# position {Dog}, so a model-aware validator MUST reject the operation pre-SQL
+# (narrow-outside-position). This pins that the subset check binds to the THREADED
+# active position (re-narrowed at every hop), not to the inner narrow's self-declared
+# `entity` — naming a broader `entity` cannot re-widen a narrowed position.
+model: models/animal.yaml
+tags: [m-inheritance, m-op-algebra, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    narrow:
+      entity: Pet
+      to: [Dog]
+      operand:
+        narrow:
+          entity: Animal
+          to: [Cat]
+          operand:
+            all: {}
+then:
+  rejectedRule: narrow-outside-position

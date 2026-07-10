@@ -1,0 +1,20 @@
+# Negative (m-inheritance, m-op-algebra): a narrow BROADENS beyond its position.
+#
+# The narrow names the abstract subtype Pet (effective concrete set {Dog, Cat}) but
+# narrows it to [WildBoar] — a concrete subtype in the same family root but OUTSIDE
+# Pet. The resolved set {WildBoar} is non-empty yet not a SUBSET of the position's
+# effective set, so a model-aware validator MUST reject the operation pre-SQL
+# (narrow-outside-position). The narrow node self-declares its position via `entity`,
+# so no targetEntity is needed to detect the broadening.
+model: models/animal.yaml
+tags: [m-inheritance, m-op-algebra, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    narrow:
+      entity: Pet
+      to: [WildBoar]
+      operand:
+        all: {}
+then:
+  rejectedRule: narrow-outside-position

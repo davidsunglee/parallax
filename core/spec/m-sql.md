@@ -538,32 +538,83 @@ select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
 
 ## Metamodel-extension lowering — inheritance + valueObject
 
-### Inheritance discriminator filter (table-per-hierarchy)
+### Inheritance — table-per-hierarchy lowering
 
-A `table-per-hierarchy` entity stores the whole hierarchy in one table, with a
-**discriminator column** carrying each leaf's `discriminatorValue`
-(`m-inheritance`). A query for a single subtype injects a **discriminator-equality**
-predicate; a query across a family of subtypes injects a discriminator `in (…)`.
-The injected term is an ordinary predicate over the root alias `t0`, composed with
-any user predicate via `and`, with the discriminator value(s) carried as `?` binds:
+A `table-per-hierarchy` family stores every concrete subtype in one **shared
+table**; rows are told apart by the root's **tag column** (`tag.column`, carrying
+each concrete subtype's `tagValue`, `m-inheritance`). The tag is **framework-owned
+metadata, not a declared attribute** (resolved Q6), so it appears in the golden
+SQL only where the lowering puts it, never because a user named it.
 
-| Query | Canonical predicate fragment | Binds |
+#### Tag-predicate selection
+
+A read's queried position (`targetEntity`, optionally further constrained by a
+`narrow`, `m-op-algebra`) resolves to an **effective concrete-subtype set**. The
+lowering injects a tag predicate over the root alias `t0` from that set, composed
+with any user predicate via `and` (appended **after** it, so binds read
+user-first then tag):
+
+| Position resolves to | Canonical tag fragment | Binds |
 |---|---|---|
-| one subtype | `t0.kind = ?` | `[<discriminatorValue>]` |
-| a family of subtypes | `t0.kind in (?, ?)` | `[<value1>, <value2>]` |
-| the root (all rows) | *(no discriminator predicate)* | — |
+| the whole family (abstract root, no narrow) | *(no tag predicate)* | — |
+| one concrete subtype | `t0.kind = ?` | `[<tagValue>]` |
+| several concrete subtypes (abstract subtype, or a narrow) | `t0.kind in (?, …)` | `[<tagValue>, …]` (descriptor order) |
 
-```yaml
-# find Card-payments (Payment table-per-hierarchy, discriminator `kind`, value 'card'):
-- sql:
-    postgres: select t0.id, t0.amount, t0.kind from payment t0 where t0.kind = ?
-  binds: ['card']
+An abstract **root** read spans the whole shared table, so it injects **no** tag
+predicate; the *absence* is the contract. An abstract **subtype** read (or any
+narrow) that resolves to a **proper subset** of the table's concretes injects the
+`in (…)` list of exactly those `tagValue`s, in descriptor order, so a sibling
+branch in the same table is excluded. A single concrete subtype lowers to
+`t0.kind = ?`.
+
+#### Grouped branch predicates
+
+A predicate over a **concrete-subtype-declared** attribute is only meaningful for
+that branch's rows, so it is **guarded by that branch's tag predicate**. The tag
+guard is appended **after** the branch predicate (binds read branch-predicate-first
+then tag), exactly as an injected tag composes after a user predicate above. When a
+read ORs across two concrete branches, each branch is a **grouped** `(branch-
+predicate AND tag)` and the branches are joined by `or`:
+
+```text
+# targetEntity: Animal, or( narrow[Dog] & barkVolume>5, narrow[Cat] & indoor=true ):
+  → select … from animal t0
+    where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
+    binds: [5, 'dog', true, 'cat']
 ```
 
-A `table-per-leaf` subtype query injects **no** discriminator at all — the leaf
-is selected by querying its **own** table — so its golden SQL is an ordinary
-single-table read of that leaf's table. The independent `then.referenceSql` oracle
-for a discriminator query spells the value inline (`where kind = 'card'`).
+A single narrow to one concrete subtype with a branch predicate needs no grouping:
+`narrow[Dog] & barkVolume>5` lowers to `t0.bark_volume > ? and t0.kind = ?` with
+binds `[5, 'dog']`.
+
+#### Abstract-read projection and `familyVariant`
+
+An **abstract-target** read must materialize complete concrete instances, so its
+projection is the **full concrete-subtype attribute superset** reachable from the
+position — inherited (root + abstract-ancestor) columns first, then each concrete
+subtype's declared columns in descriptor traversal order — **plus the raw tag
+column** (resolved Q6). A subtype column not applicable to a returned row reads
+back `NULL`; the tag column is projected explicitly because it is no longer a
+declared attribute:
+
+```yaml
+# targetEntity: Animal (root over Dog / Cat / WildBoar) — full superset + tag:
+- sql:
+    postgres: select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.tusk_length, t0.kind from animal t0
+```
+
+`familyVariant` is **not projected as SQL**. It is materialized from the tag
+metadata map (`tagValue` -> concrete subtype **name**) at row construction — the
+same independent, metadata-derived recomputation as the as-of and PK-allocation
+oracles — and appears only in the compatibility rows/graphs (`m-case-format`). A
+**concrete-target** read needs no tag in its projection (the caller already knows
+the variant) and carries no `familyVariant`: it projects the concrete instance's
+own columns and injects `t0.kind = ?`.
+
+The independent `then.referenceSql` oracle for a tag-filtered read spells the
+value inline (`where kind = 'card'`); for an abstract-root read it is the plain
+whole-table select. Table-per-concrete-subtype lowering (`union all` over the
+effective concrete tables) is specified in the TPCS section.
 
 ### valueObject — structured-column read and filter
 

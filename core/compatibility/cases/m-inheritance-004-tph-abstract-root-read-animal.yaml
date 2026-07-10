@@ -1,0 +1,27 @@
+# Table-per-hierarchy abstract-root read over the intermediate-abstract Animal family
+# (m-inheritance, m-sql).
+#
+# Targeting the abstract root Animal spans the whole `animal` table (Dog, Cat, and the
+# sibling WildBoar) with NO tag predicate. The projection is the full concrete
+# superset reachable from Animal — inherited (id, name), the abstract subtype Pet's
+# license_id, then each concrete subtype's own columns (bark_volume, indoor,
+# tusk_length) — PLUS the raw tag column `kind`. familyVariant is materialized from
+# the tag map (dog -> Dog, cat -> Cat, boar -> WildBoar); columns not applicable to a
+# row are null (shared table). Every fixture row is returned.
+model: models/animal.yaml
+tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Animal
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.tusk_length, t0.kind from animal t0
+  rows:
+    - { id: 1, name: Rex, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, familyVariant: Dog }
+    - { id: 2, name: Fido, license_id: L-101, bark_volume: 3, indoor: null, tusk_length: null, familyVariant: Dog }
+    - { id: 3, name: Whiskers, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null, familyVariant: Cat }
+    - { id: 4, name: Tusker, license_id: null, bark_volume: null, indoor: null, tusk_length: 12.50, familyVariant: WildBoar }
+  roundTrips: 1

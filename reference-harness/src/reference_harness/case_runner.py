@@ -29,22 +29,38 @@ import threading
 from decimal import Decimal
 from typing import Any
 
+import sqlglot
+from sqlglot import exp
+
 from . import errors, serde
 from .case import Case, Entity, Model
 from .data_loader import load_model
 from .ddl_builder import column_order, ddl_for, physical_entities_by_table, quote_identifier
-from .inheritance import MODEL_REJECTED_RULES, tag_of, validate_family
+from .inheritance import (
+    MODEL_REJECTED_RULES,
+    OPERATION_REJECTED_RULES,
+    STRATEGY_TPH,
+    Family,
+    concrete_superset_columns,
+    inheritance_of,
+    is_abstract,
+    tag_of,
+    tag_value_to_subtype,
+    validate_family,
+    validate_operation_inheritance,
+)
 from .op_validate import validate_operation
 from .providers import DatabaseProvider
-from .sql_normalize import normalize
+from .sql_normalize import normalize, sqlglot_dialect
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_validate import validate_write
 
 # The full pre-SQL rejection vocabulary: value-object / operation rules
-# (m-value-object / m-op-algebra) plus the inheritance family-invariant rules
-# (m-inheritance). The compatibility-case schema's `rejectedRule` enum is the
-# source of truth; these two sets MUST stay in lockstep with it.
-ALL_REJECTED_RULES = REJECTED_RULES | MODEL_REJECTED_RULES
+# (m-value-object / m-op-algebra) plus the inheritance family-invariant rules and
+# the narrow / subtype-scope operation rules (m-inheritance x m-op-algebra). The
+# compatibility-case schema's `rejectedRule` enum is the source of truth; these
+# sets MUST stay in lockstep with it.
+ALL_REJECTED_RULES = REJECTED_RULES | MODEL_REJECTED_RULES | OPERATION_REJECTED_RULES
 
 
 class CaseFailure(AssertionError):
@@ -748,9 +764,20 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     dialect = db.dialect
     (golden,) = case.golden_statements(dialect)
 
+    # An inheritance narrow constrains the queried polymorphic position; validate it
+    # pre-execution (the read-side counterpart of the write-derivation oracle).
+    validate_operation_inheritance(
+        case.model.entity_defs, case.operation, position=case.when.get("targetEntity")
+    )
+
     golden_rows = _query_rows(db, golden, case.statement_binds(0, dialect))
     expected = case.expected_rows
     tolerance = case.tolerance
+
+    # Abstract-target inheritance read oracle (m-inheritance / m-sql, resolved Q6):
+    # the golden SQL projects the RAW tag column; `familyVariant` is materialized
+    # from the tag metadata map, never projected as SQL.
+    golden_rows = _materialize_family_variant(case, golden_rows)
 
     if not _rows_equal(golden_rows, expected, tolerance):
         raise CaseFailure(
@@ -761,13 +788,137 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
-        reference_rows = db.query(reference_sql)
+        reference_rows = _materialize_family_variant(case, db.query(reference_sql))
         if not _rows_equal(reference_rows, expected, tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != then.rows.\n"
                 f"  reference: {reference_rows!r}\n"
                 f"  expected:  {expected!r}"
             )
+
+
+def _read_effective_set(case: Case, family: Family, target_name: str) -> list[str]:
+    """The effective concrete-subtype set an abstract-target read resolves over.
+
+    The queried position is *target_name*, further constrained when the operation's
+    leading node (after result-directive / temporal wrappers) is a ``narrow`` — then
+    the narrowed ``to`` set drives the projection superset. A ``narrow`` buried in an
+    ``or`` (grouped branch predicates) leaves the target's full family in scope.
+    """
+    node: Any = case.operation
+    while isinstance(node, dict) and len(node) == 1:
+        tag = next(iter(node))
+        if tag in ("distinct", "orderBy", "limit", "asOf", "asOfRange", "history"):
+            node = node[tag].get("operand")
+        elif tag == "narrow":
+            return family.resolve_to_set(node["narrow"].get("to", []) or [])
+        else:
+            break
+    return family.effective_concrete_set(target_name)
+
+
+def _golden_projection_columns(case: Case) -> set[str]:
+    """The OUTPUT column names the case's (single) golden SELECT projects.
+
+    Parses the golden ``select`` with sqlglot and returns each projection's output
+    name — a plain ``t0.col`` projects ``col`` (the table alias is dropped), matching
+    the DB result-key semantics. This reads the projection SHAPE from the SQL text,
+    not a sample row, so the abstract-read projection check that consumes it is
+    row-count-INDEPENDENT (a zero-row read still witnesses a dropped column).
+
+    Postgres is parsed when present (the abstract-read goldens author it), else the
+    first declared golden dialect. A ``*`` or a function-wrapped / literal projection
+    contributes no static column name, so it is skipped: canonical m-sql golden SQL
+    always projects explicit, qualified columns, so this only trims degenerate shapes.
+    """
+    dialects = case.golden_dialects
+    dialect = "postgres" if "postgres" in dialects else next(iter(dialects), None)
+    if dialect is None:
+        return set()
+    statements = case.golden_statements(dialect)
+    if not statements:
+        return set()
+    select = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect)).find(exp.Select)
+    if select is None:
+        return set()
+    return {
+        name
+        for projection in select.expressions
+        if (name := projection.output_name) and name != "*"
+    }
+
+
+def _materialize_family_variant(
+    case: Case, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Materialize ``familyVariant`` for an abstract-target table-per-hierarchy read.
+
+    A non-inheritance / concrete-target read (or a non-TPH strategy) returns *rows*
+    unchanged. For an abstract target the golden SQL projects the raw tag column and
+    the full concrete superset; this asserts that projection shape, then replaces the
+    tag column with the derived ``familyVariant`` (``tagValue`` -> concrete subtype
+    name) so the materialized rows can be compared to ``then.rows``.
+    """
+    target_name = case.when.get("targetEntity")
+    if not isinstance(target_name, str):
+        return rows
+    entity_defs = case.model.entity_defs
+    family = Family(entity_defs)
+    if target_name not in family.defs:
+        return rows
+    target_def = family.defs[target_name]
+    if inheritance_of(target_def) is None or not is_abstract(target_def):
+        return rows  # concrete-target (or non-inheritance) read carries no familyVariant
+    if family.strategy_of(target_name) != STRATEGY_TPH:
+        return rows  # table-per-concrete-subtype projects familyVariant as a literal (Phase 5)
+
+    tag_column = family.tag_column_of(target_name)
+    if tag_column is None:
+        return rows
+    effective = _read_effective_set(case, family, target_name)
+    expected_columns = set(concrete_superset_columns(entity_defs, effective))
+    variant_map = tag_value_to_subtype(entity_defs)
+
+    # Projection-shape assertion, derived from the GOLDEN SQL projection rather than a
+    # sample row, so it is row-count-INDEPENDENT: a zero-row abstract read still
+    # witnesses a golden that drops the raw tag column or a concrete-superset column
+    # (an empty result set carries no keys to inspect, but the golden text always does).
+    # The tag column is checked first so a tag-only omission reports the specific tag
+    # diagnostic (the superset set below also contains the tag).
+    projected = _golden_projection_columns(case)
+    if tag_column not in projected:
+        raise CaseFailure(
+            f"{case.path.name}: abstract-target read does not project the tag "
+            f"column {tag_column!r}; an abstract read MUST project the raw tag column "
+            f"so familyVariant can be materialized (m-sql / m-inheritance, resolved Q6)."
+        )
+    missing = expected_columns - projected
+    if missing:
+        raise CaseFailure(
+            f"{case.path.name}: abstract-target read projection is missing "
+            f"concrete-superset column(s) {sorted(missing)}; an abstract read MUST "
+            f"project the full concrete superset PLUS the raw tag column "
+            f"(m-sql / m-inheritance, resolved Q6)."
+        )
+
+    materialized: list[dict[str, Any]] = []
+    for row in rows:
+        new_row = dict(row)
+        if tag_column not in new_row:
+            raise CaseFailure(
+                f"{case.path.name}: abstract-target read does not project the tag "
+                f"column {tag_column!r}; familyVariant cannot be materialized."
+            )
+        tag_value = new_row.pop(tag_column)
+        variant = variant_map.get(tag_value)
+        if variant is None:
+            raise CaseFailure(
+                f"{case.path.name}: tag value {tag_value!r} maps to no concrete subtype "
+                f"in the family (tag metadata {sorted(variant_map)})."
+            )
+        new_row["familyVariant"] = variant
+        materialized.append(new_row)
+    return materialized
 
 
 def _sorted_by_order_keys(
@@ -1240,6 +1391,10 @@ def _assert_rejected(case: Case) -> None:
     try:
         if "operation" in case.when:
             validate_operation(entity, case.when["operation"])
+            # Inheritance narrow / subtype-scope validation (m-op-algebra x
+            # m-inheritance): a no-op on a non-inheritance model, so it runs after
+            # the value-object validation without disturbing the existing cases.
+            validate_operation_inheritance(case.model.entity_defs, case.when["operation"])
         elif "write" in case.when:
             validate_write(entity, case.write or {})
         elif "model" in case.when:

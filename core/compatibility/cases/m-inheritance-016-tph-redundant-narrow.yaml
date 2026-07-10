@@ -1,0 +1,31 @@
+# Table-per-hierarchy VALID redundant narrow (m-inheritance, m-op-algebra, m-sql).
+#
+# targetEntity is the abstract subtype Pet; narrowing it to [Pet] is a no-op — the
+# resolved effective set {Dog, Cat} equals the position's own set, so it is a valid
+# (redundant) narrow, not a rejection. It lowers to the same `t0.kind in (?, ?)` an
+# unnarrowed Pet read does (m-inheritance-011). This pins that narrowing a position to
+# itself is accepted (the subset rule holds with equality); familyVariant per row.
+#
+# Non-trivial (tag) case => referenceSql is the independent oracle.
+model: models/animal.yaml
+tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Pet
+  operation:
+    narrow:
+      entity: Pet
+      to: [Pet]
+      operand:
+        all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.kind from animal t0 where t0.kind in (?, ?)
+      binds: [dog, cat]
+  referenceSql: select id, name, license_id, bark_volume, indoor, kind from animal where kind in ('dog', 'cat')
+  rows:
+    - { id: 1, name: Rex, license_id: L-100, bark_volume: 7, indoor: null, familyVariant: Dog }
+    - { id: 2, name: Fido, license_id: L-101, bark_volume: 3, indoor: null, familyVariant: Dog }
+    - { id: 3, name: Whiskers, license_id: L-200, bark_volume: null, indoor: true, familyVariant: Cat }
+  roundTrips: 1

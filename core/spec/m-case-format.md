@@ -253,6 +253,22 @@ of an abstract target is consistent, a sibling or a broader position is not. For
 non-inheritance entity the effective set is the entity itself, so "subset" reduces
 to the pre-inheritance "equal".
 
+An abstract-target read (an abstract `targetEntity`, or an abstract position
+`narrow`ed with `m-op-algebra`'s `narrow` node) materializes complete concrete
+instances. Its `then.rows` / `then.graph` leaves carry a **`familyVariant`** key —
+the **concrete subtype name** of each row (`Dog`, `Cat`, …). `familyVariant` is
+**not projected as SQL**: under `table-per-hierarchy` the golden SQL projects the
+**raw tag column** (`m-sql`, resolved Q6) and the harness materializes
+`familyVariant` from the tag metadata map (`tagValue` -> subtype name) — an
+independent, metadata-derived recomputation like the as-of and PK-allocation
+oracles. The row also carries the full **concrete-superset** columns (inherited
+first, then each concrete subtype's own columns), with non-applicable subtype
+columns `null`. A **concrete-target** read carries no `familyVariant` (the caller
+already knows the variant) and projects only that concrete instance's columns. A
+`narrow` node inside `when.operation` is validated pre-SQL against the family's
+effective concrete-subtype set (`m-op-algebra`); an invalid narrow is a `rejected`
+case (see the narrow rules in *Rejected cases*).
+
 ### `then.statements`, `then.referenceSql`, `then.rows` (the oracle question)
 
 Each case carries **three independent things**, and the harness cross-checks all
@@ -531,6 +547,18 @@ materialization/navigation and write-validation contracts. **Operation** rules:
   value object (`m-value-object` contract 4, `m-navigate`).
 - `find-root-value-object` — a `find()` is rooted at a value object
   (`m-value-object` contract 5).
+- `narrow-outside-position` — a `narrow` node's resolved effective concrete-subtype
+  set is not a **subset** of the **active** polymorphic position: the position
+  threaded into the node (the read's `targetEntity`, or the enclosing `narrow`'s
+  resolved set) intersected with — **clamped to** — the position the node's `entity`
+  names, so a nested `narrow`, or one whose `entity` is broader than the threaded
+  position, cannot broaden back out (`m-op-algebra` × `m-inheritance`).
+- `narrow-empty-effective-set` — a `narrow`'s authored `to` list resolves to the
+  **empty** concrete-subtype set (`m-op-algebra` × `m-inheritance`).
+- `subtype-attribute-outside-narrow-scope` — a predicate references a
+  concrete-subtype-declared attribute at a polymorphic position that is not
+  `narrow`ed to that subtype, so the attribute is not available to every concrete
+  in the effective set (`m-op-algebra` × `m-inheritance`).
 
 **Write** rules (`m-value-object` write validation — a value object is written
 atomically as one whole document):

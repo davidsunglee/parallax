@@ -1,0 +1,18 @@
+# Negative (m-inheritance, m-op-algebra): a concrete-subtype attribute used OUTSIDE a
+# compatible narrowing scope.
+#
+# The operation filters on `Dog.barkVolume` — an attribute declared only on the
+# concrete subtype Dog — at the abstract-root position (the whole family {Dog, Cat,
+# WildBoar}), with NO narrow to Dog. Because the effective set is not a subset of the
+# concretes that possess barkVolume ({Dog}), the attribute is not available to every
+# concrete in scope, so a model-aware validator MUST reject the operation pre-SQL
+# (subtype-attribute-outside-narrow-scope). Wrapping the predicate in a narrow to
+# [Dog] (m-inheritance-012) makes it valid.
+model: models/animal.yaml
+tags: [m-inheritance, m-op-algebra, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    greaterThan: { attr: Dog.barkVolume, value: 5 }
+then:
+  rejectedRule: subtype-attribute-outside-narrow-scope
