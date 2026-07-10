@@ -29,7 +29,8 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - find:
+    - targetEntity: Account
+      find:
         lessThan:
           attr: Account.balance
           value: 200.00
@@ -52,7 +53,8 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
           binds: [0.00, 2, 3, 1]
-    - find:
+    - targetEntity: Account
+      find:
         lessThan:
           attr: Account.balance
           value: 200.00

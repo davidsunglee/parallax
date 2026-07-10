@@ -11,6 +11,7 @@ model: models/customer.yaml
 tags: [m-value-object, m-op-algebra, m-sql, nested, json, absence-collapse, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Customer
   operation:
     nestedIsNotNull: { path: Customer.address.geo.country }
 then:

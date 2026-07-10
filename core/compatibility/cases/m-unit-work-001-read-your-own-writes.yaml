@@ -22,7 +22,8 @@ when:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
           binds: [7, Newton, 5.00, 1]
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 7

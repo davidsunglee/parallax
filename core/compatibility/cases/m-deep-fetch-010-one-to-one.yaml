@@ -11,12 +11,13 @@ model: models/person.yaml
 tags: [m-deep-fetch, m-op-list, one-to-one, relationship, nullable, slice-mvp-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Person
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - [Person.passport]
+        - [{ rel: Person.passport }]
 then:
   statements:
     - sql:

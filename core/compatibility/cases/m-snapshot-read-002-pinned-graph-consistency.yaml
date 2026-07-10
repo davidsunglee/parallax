@@ -13,6 +13,7 @@ model: models/invoice.yaml
 tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, temporal, as-of, past, propagation, graph, audit-only, slice-snapshot-1]
 shape: read
 when:
+  targetEntity: Invoice
   operation:
     deepFetch:
       operand:
@@ -21,7 +22,7 @@ when:
           asOfAttr: Invoice.processingDate
           date: "2024-02-01T00:00:00+00:00"
       paths:
-        - [Invoice.lines]
+        - [{ rel: Invoice.lines }]
 then:
   statements:
     - sql:

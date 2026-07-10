@@ -17,6 +17,7 @@ model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, default-injection, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Policy
   operation:
     exists:
       rel: Policy.coverages

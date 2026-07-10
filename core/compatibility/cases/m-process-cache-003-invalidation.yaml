@@ -18,7 +18,8 @@ tags: [m-process-cache, query cache, cache-invalidation, freshness, scenario]
 shape: scenario
 when:
   scenario:
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 2
@@ -37,7 +38,8 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [777.00, 2, 2]
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 2

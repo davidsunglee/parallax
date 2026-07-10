@@ -13,6 +13,7 @@ model: models/reservation.yaml
 tags: [m-temporal-read, m-sql, business_temporal, temporal, as-of, business-only, defaulted]
 shape: read
 when:
+  targetEntity: Reservation
   operation:
     all: {}
 then:

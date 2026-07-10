@@ -7,12 +7,13 @@ model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, to-one, nullable, relationship, slice-mvp-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: OrderStatus
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - [OrderStatus.orderItem]
+        - [{ rel: OrderStatus.orderItem }]
 then:
   statements:
     - sql:

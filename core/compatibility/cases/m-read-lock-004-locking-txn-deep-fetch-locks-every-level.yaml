@@ -19,6 +19,7 @@ tags: [m-read-lock, m-dialect, m-deep-fetch, m-op-list, m-api-conformance, locki
 lane: api-conformance
 shape: read
 when:
+  targetEntity: OrderItem
   uow:
     concurrency: locking
   operation:
@@ -26,7 +27,7 @@ when:
       operand:
         all: {}
       paths:
-        - [OrderItem.order]
+        - [{ rel: OrderItem.order }]
 then:
   statements:
     - sql:

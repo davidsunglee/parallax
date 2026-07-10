@@ -13,6 +13,7 @@ model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, empty-intermediate, relationship, slice-mvp-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Order
   operation:
     deepFetch:
       operand:
@@ -20,7 +21,7 @@ when:
           attr: Order.id
           value: 4
       paths:
-        - [Order.items, OrderItem.statuses]
+        - [{ rel: Order.items }, { rel: OrderItem.statuses }]
 then:
   statements:
     - sql:

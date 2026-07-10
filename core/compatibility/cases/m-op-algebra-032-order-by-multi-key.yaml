@@ -10,6 +10,7 @@ model: models/orders.yaml
 tags: [m-op-algebra, orderBy, limit, directive, multi-key, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Order
   operation:
     limit:
       count: 2

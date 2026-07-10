@@ -11,6 +11,7 @@ model: models/reservation.yaml
 tags: [m-temporal-read, m-sql, business_temporal, temporal, history, business-only]
 shape: read
 when:
+  targetEntity: Reservation
   operation:
     history:
       operand:

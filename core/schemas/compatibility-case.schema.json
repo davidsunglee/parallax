@@ -13,8 +13,10 @@
       "properties": {
         "shape": { "const": "read" },
         "when": {
-          "required": ["operation"],
-          "propertyNames": { "enum": ["operation", "uow", "equivalentEncodings"] }
+          "required": ["operation", "targetEntity"],
+          "propertyNames": {
+            "enum": ["operation", "targetEntity", "uow", "equivalentEncodings"]
+          }
         },
         "then": {
           "required": ["statements"],
@@ -266,6 +268,10 @@
           "description": "A canonical m-op-algebra algebra node (validated separately against operation.schema.json). Present on read cases; absent on writeSequence cases.",
           "type": "object"
         },
+        "targetEntity": {
+          "description": "read cases only. The entity a read TARGETS — the queried position `when.operation` starts from (m-case-format, resolved Q1). It names the whole family for an abstract root, its concrete descendants for an abstract subtype, and itself for a concrete subtype; today every entity is concrete, so it names exactly the entity whose rows the read returns. REQUIRED on every read case, so the read side reaches the same explicit-entity standard the write side already meets with `writeSequence[].entity` (an `all: {}` read no longer names its subject only in a comment or the golden SQL). A model-aware harness cross-checks it against every queried-entity `Class.attribute` / `Class.relationship` reference in the operation (until inheritance families exist, 'consistent' means 'equal').",
+          "$ref": "#/$defs/entityName"
+        },
         "equivalentEncodings": {
           "description": "Optional alternate surface encodings of the same operation (e.g. a prefix vs a fluent spelling, or differently-ordered keys). Each MUST canonicalize to `when.operation` via the serde seam; the harness asserts this dialect-agnostically (layer 4c), proving precedence/serialization fidelity in the fixture itself.",
           "type": "array",
@@ -362,8 +368,8 @@
             "additionalProperties": false,
             "oneOf": [
               {
-                "description": "A read step: issues a find. A cache miss costs >= 1 round trip and lists golden SQL; a cache hit costs 0 and lists none.",
-                "required": ["find", "roundTrips"]
+                "description": "A read step: issues a find. A cache miss costs >= 1 round trip and lists golden SQL; a cache hit costs 0 and lists none. It names its queried entity with `targetEntity` (m-case-format, resolved Q1), exactly as a read case does.",
+                "required": ["find", "roundTrips", "targetEntity"]
               },
               {
                 "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` the DML is applied and then ROLLED BACK. A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`.",
@@ -374,6 +380,10 @@
               "find": {
                 "description": "The operation a READ step issues (a canonical m-op-algebra algebra node). Validated against operation.schema.json by the harness. Present on read steps; absent on write steps.",
                 "type": "object"
+              },
+              "targetEntity": {
+                "description": "read steps only. The entity this step's `find` targets — the queried position it starts from (m-case-format, resolved Q1). REQUIRED on every read step and absent on write steps, mirroring a read case's `when.targetEntity`.",
+                "$ref": "#/$defs/entityName"
               },
               "write": {
                 "description": "Marks a WRITE step and labels the mutation it applies (e.g. `insert` / `update`). The step's golden DML is applied on the unit of work's connection and, by default, COMMITTED.",
@@ -423,6 +433,16 @@
             "type": "object",
             "additionalProperties": false,
             "required": ["node", "kind", "statements"],
+            "allOf": [
+              {
+                "description": "A read step (`kind: read`) issues a `find` and MUST name its queried entity with `targetEntity` (m-case-format, resolved Q1), exactly as a read case does.",
+                "if": {
+                  "required": ["kind"],
+                  "properties": { "kind": { "const": "read" } }
+                },
+                "then": { "required": ["targetEntity"] }
+              }
+            ],
             "properties": {
               "node": {
                 "description": "Which application-server node (which connection) this step runs on. `A` is the writer; `B` is the peer whose cache must converge on A's committed state.",
@@ -435,6 +455,10 @@
               "find": {
                 "description": "The operation a `read` step issues (a canonical m-op-algebra algebra node, validated against operation.schema.json). Present on read steps; absent on write steps.",
                 "type": "object"
+              },
+              "targetEntity": {
+                "description": "read steps only. The entity this step's `find` targets — the queried position it starts from (m-case-format, resolved Q1). REQUIRED on every `read` step and absent on `write` steps, mirroring a read case's `when.targetEntity`.",
+                "$ref": "#/$defs/entityName"
               },
               "statements": {
                 "description": "The golden SQL this step emits, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form). A read step's is a SELECT; a write step's is the committing DML.",
@@ -659,6 +683,11 @@
     }
   },
   "$defs": {
+    "entityName": {
+      "description": "A metamodel entity name (the queried/target entity a read starts from, m-case-format `targetEntity`). Matches the `Class` grammar the operation schema's attribute/relationship references use before the dot.",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9]*$"
+    },
     "statementEntry": {
       "description": "One logical statement in the execution sequence: a closed `{sql, binds}` object. `sql` is a plain string at naive locations (`given.apply`) or a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`); `binds` is authored once per statement (dialect-agnostic) and defaults to `[]`. The `{sql, binds}` wrapper keeps dialect keys and entry-level keys in separate namespaces, so the schema needs no reserved-key carve-outs. Golden and naive locations narrow `sql` to the map / string form respectively via `goldenStatements` / `naiveStatements`.",
       "type": "object",

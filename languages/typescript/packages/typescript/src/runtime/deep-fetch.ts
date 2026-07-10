@@ -22,7 +22,7 @@
 import type { ParallaxDatabase, ParallaxRow } from "@parallax/db";
 import type { Dialect } from "@parallax/dialect";
 import type { EntityMetadata, Metamodel } from "@parallax/metamodel";
-import type { Operation } from "@parallax/operation";
+import type { Operation, PathSegment } from "@parallax/operation";
 import {
   type DeepFetchNode,
   type Key,
@@ -44,10 +44,10 @@ export interface DeepFetchGraph {
   readonly roundTrips: number;
 }
 
-/** The `{ operand, paths }` body of a deep-fetch operation. */
+/** The `{ operand, paths }` body of a deep-fetch operation (segments are `{ rel }` objects). */
 interface DeepFetchBody {
   readonly operand: Operation;
-  readonly paths: readonly (readonly string[])[];
+  readonly paths: readonly (readonly PathSegment[])[];
 }
 
 /**
@@ -209,10 +209,10 @@ function scalarColumns(row: Row, entity: EntityMetadata): ParallaxRow {
  */
 function deepFetchRootEntity(
   metamodel: Metamodel,
-  paths: readonly (readonly string[])[],
+  paths: readonly (readonly PathSegment[])[],
   operand: Operation,
 ): EntityMetadata {
-  const firstRef = paths[0]?.[0];
+  const firstRef = paths[0]?.[0]?.rel;
   if (firstRef !== undefined) {
     return metamodel.entity(firstRef.slice(0, firstRef.indexOf(".")));
   }
@@ -260,7 +260,7 @@ function peelDirectives(node: unknown): unknown {
 /** Build the de-duplicated relationship-hop tree from the navigation paths. */
 function buildTree(
   metamodel: Metamodel,
-  paths: readonly (readonly string[])[],
+  paths: readonly (readonly PathSegment[])[],
   rootPins: AxisPins,
   dialect: Dialect,
   locking: boolean,
@@ -268,7 +268,8 @@ function buildTree(
   const roots: NodeBuilder[] = [];
   for (const path of paths) {
     let siblings = roots;
-    for (const relRef of path) {
+    for (const segment of path) {
+      const relRef = segment.rel;
       let node = siblings.find((n) => n.relRef === relRef);
       if (!node) {
         node = { relRef, children: [] };

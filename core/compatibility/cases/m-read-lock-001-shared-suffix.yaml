@@ -21,6 +21,7 @@ model: models/account.yaml
 tags: [m-read-lock, m-dialect, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Account
   operation:
     eq:
       attr: Account.id

@@ -12,6 +12,7 @@ model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Customer
   operation:
     nestedNotEq: { path: Customer.address.city, value: Oslo }
 then:

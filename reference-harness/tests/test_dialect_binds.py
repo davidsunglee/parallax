@@ -75,7 +75,7 @@ def _read_case_doc() -> dict[str, Any]:
         "model": "models/customer.yaml",
         "tags": ["m-value-object"],
         "shape": "read",
-        "when": {"operation": {"all": {}}},
+        "when": {"targetEntity": "Customer", "operation": {"all": {}}},
         "then": {
             "statements": [
                 {

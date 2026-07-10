@@ -5,12 +5,13 @@ model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, empty-root, relationship, slice-mvp-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Order
   operation:
     deepFetch:
       operand:
         eq: { attr: Order.id, value: 999 }
       paths:
-        - [Order.items, OrderItem.statuses]
+        - [{ rel: Order.items }, { rel: OrderItem.statuses }]
 then:
   statements:
     - sql:

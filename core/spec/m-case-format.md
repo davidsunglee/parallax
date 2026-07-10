@@ -68,8 +68,8 @@ read by the coverage gate and the language gate; grouping them buys no readabili
 
 A case is one of **nine shapes**, named by the required top-level `shape`:
 
-- **`read`** — a queryable `when.operation`, asserting `then.rows` or a deep-fetch
-  `then.graph`.
+- **`read`** — a queryable `when.operation` naming its `when.targetEntity`,
+  asserting `then.rows` or a deep-fetch `then.graph`.
 - **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
   resulting `then.tableState` (the temporal writes `m-audit-write` /
   `m-bitemp-write` / `m-business-only`, the set-based `m-batch-write`,
@@ -194,11 +194,12 @@ the open-bound `infinity` as the literal string `infinity`.
 | `model` | top-level | yes | path (relative to `core/compatibility/`) to the model descriptor |
 | `tags` | top-level | yes | module/feature tags (e.g. `["m-op-algebra", "eq"]`); drive coverage + test selection |
 | `lane` | top-level | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
-| `shape` | top-level | yes | the explicit shape discriminator — one of the eight shapes above; the schema `oneOf` keys on this `const` |
+| `shape` | top-level | yes | the explicit shape discriminator — one of the nine shapes above; the schema `oneOf` keys on this `const` |
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | conflict | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after fixtures load and before the golden `UPDATE` — a concurrent transaction's stale-version mutation |
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
 | `when.operation` | `when` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
+| `when.targetEntity` | `when` | read | the entity the read TARGETS — the queried position `when.operation` starts from (see *Read targeting*, below); REQUIRED on every read case and every scenario / coherence read step |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only, business-only, **and full-bitemporal** — the plain, unbounded bitemporal writes are all first-class degenerate rectangle splits with no `until`: plain `insert` is a single fully-current `INSERT`, plain `update` is inactivate + `head` + new `tail`, plain `terminate` is inactivate + `head` only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the bounded full-bitemporal rectangle split |
 | `when.scenario` | `when` | scenario | an ordered list of read / committed-write steps, each carrying its own per-step golden `statements` |
 | `when.coherence` | `when` | coherence | a two-node (A / B) operation sequence, each step carrying its node, kind, and per-step golden `statements` |
@@ -221,6 +222,31 @@ the open-bound `infinity` as the literal string `infinity`.
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
 | `then.roundTrips` | `then` | no | declared statement count (default `1`); for a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count; for a scenario the SUM of per-step round trips |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
+
+#### Read targeting (`targetEntity`)
+
+Every read names the entity it targets. A read case carries **`when.targetEntity`**
+(a metamodel entity name) alongside `when.operation`, and every **read step** of a
+scenario or coherence case carries a step-level `targetEntity` alongside its
+`find`. This is REQUIRED — the read side reaches the same explicit-entity standard
+the write side already meets with `writeSequence[].entity`, so an `all: {}` read no
+longer names its subject only in a comment or in the golden SQL.
+
+`targetEntity` names the **queried position** the operation starts from. When an
+entity participates in an inheritance family, that position may be abstract: an
+abstract **root** targets the whole family, an abstract **subtype** targets its
+concrete descendants, and a concrete subtype targets itself. Today every entity is
+concrete, so `targetEntity` names exactly the entity whose rows the read returns —
+the forward-referencing abstract vocabulary changes nothing until inheritance
+families exist.
+
+`targetEntity` is a first-class, machine-checkable field, not documentation: a
+model-aware harness cross-checks it against every queried-entity `Class.attribute`
+/ `Class.relationship` reference in the operation (the class part of each top-level
+predicate, order-by key, nested-value-object path, navigation relationship, and
+deep-fetch root hop MUST name `targetEntity`; a navigation's inner operation
+resolves against the *related* entity and is not cross-checked). Until inheritance
+families exist, "consistent" means "equal".
 
 ### `then.statements`, `then.referenceSql`, `then.rows` (the oracle question)
 
@@ -372,8 +398,9 @@ landed. (Golden SQL lives per attempt, so there is no top-level `then.statements
 
 A **scenario** case proves the unit-of-work / identity / query-cache contract as
 an ordered list of steps over one provisioned database. A **read step** issues a
-`find` with a declared round-trip count (a cache hit declares `0` and lists no
-golden SQL); a **write step** (`write`) **commits** golden DML between finds. The
+`find` (naming its `targetEntity`, as a read case does) with a declared round-trip
+count (a cache hit declares `0` and lists no golden SQL); a **write step**
+(`write`) **commits** golden DML between finds. The
 write step is what makes **read-your-own-writes** and **query-cache
 invalidation** expressible: a dependent find after a committed write must observe
 it (and cannot be modeled as a cache hit, since reusing the stale pre-write rows
@@ -404,7 +431,8 @@ observes another's committed write) by running a two-node operation sequence ove
 = the provider's own connection, with the model's fixtures loaded so the seed read
 sees a row), opens a second independent connection via the provider's **two-node
 seam** (`open_peer`, below), and runs each `coherence` step on its declared node:
-a `write` step **commits** DML on its node; a `read` step queries. The final
+a `write` step **commits** DML on its node; a `read` step queries (naming its
+`targetEntity`, as a read case does). The final
 node-B re-fetch carries **`observeRows`** — node A's committed **post-write**
 state, which node B **MUST** observe (never the stale pre-write rows). Each step's
 golden SQL is normalized (layer 3), and the read steps' operations and the

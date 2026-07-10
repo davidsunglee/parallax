@@ -17,6 +17,7 @@ tags: [m-read-lock, m-dialect, m-api-conformance, locking-mode, slice-mvp-1, sli
 lane: api-conformance
 shape: read
 when:
+  targetEntity: Account
   uow:
     concurrency: locking
   operation:

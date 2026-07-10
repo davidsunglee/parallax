@@ -24,6 +24,7 @@ model: models/balance.yaml
 tags: [m-temporal-read, m-dialect, m-sql, as-of, audit-only, infinity-fallback]
 shape: read
 when:
+  targetEntity: Balance
   operation:
     all: {}
 then:

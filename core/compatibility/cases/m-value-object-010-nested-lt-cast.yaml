@@ -11,6 +11,7 @@ model: models/customer.yaml
 tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Customer
   operation:
     nestedLt: { path: Customer.address.geo.elevation, value: 8 }
 then:

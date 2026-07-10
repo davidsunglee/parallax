@@ -9,6 +9,7 @@ model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, root, no-discriminator, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Payment
   operation:
     all: {}
 then:

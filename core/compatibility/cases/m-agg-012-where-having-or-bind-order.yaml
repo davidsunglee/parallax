@@ -4,6 +4,7 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, groupBy, having, or, bind-order]
 shape: read
 when:
+  targetEntity: OrderItem
   operation:
     groupBy:
       operand:

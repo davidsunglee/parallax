@@ -19,6 +19,7 @@ model: models/branch.yaml
 tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, bitemporal, as-of, both-axes, materialization, graph, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Branch
   operation:
     asOf:
       operand:

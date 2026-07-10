@@ -367,9 +367,12 @@ function checkNavigation(entity: EntityMetadata, body: Record<string, unknown>):
 }
 
 function checkDeepFetch(entity: EntityMetadata, body: Record<string, unknown>): void {
-  for (const path of (body.paths as string[][] | undefined) ?? []) {
+  // A path segment is a closed object `{ rel, narrow? }` (m-op-algebra); the
+  // value-object misuse rule is about the traversed relationship ref.
+  for (const path of (body.paths as { rel?: string }[][] | undefined) ?? []) {
     for (const segment of path) {
-      const [cls, member] = segment.split(".");
+      const rel = segment?.rel ?? "";
+      const [cls, member] = rel.split(".");
       if (
         cls === entity.name &&
         member !== undefined &&
@@ -377,7 +380,7 @@ function checkDeepFetch(entity: EntityMetadata, body: Record<string, unknown>): 
       ) {
         throw new RejectionError(
           RejectedRule.DEEP_FETCH_VALUE_OBJECT_SEGMENT,
-          `deepFetch path segment '${segment}' names value object '${member}' — a value-object ` +
+          `deepFetch path segment '${rel}' names value object '${member}' — a value-object ` +
             `segment is invalid in a deep-fetch path`,
         );
       }

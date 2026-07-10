@@ -20,11 +20,20 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
     },
+    "pathSegment": {
+      "description": "One hop in a deep-fetch navigation path: a CLOSED object naming the relationship to traverse via `rel` (a `Class.relationship` reference). The object shape is the single structural carrier for a hop, so a polymorphic hop can later add an optional `narrow` alongside `rel` (subtype narrowing of the hop's effective concrete set) without introducing a second spelling of a path; until that phase a segment carries EXACTLY `rel`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rel"],
+      "properties": {
+        "rel": { "$ref": "#/$defs/relationshipRef" }
+      }
+    },
     "navigationPath": {
-      "description": "An ordered list of relationship references naming one path to eager-fetch, e.g. ['Order.items'] (one hop) or ['Order.items', 'OrderItem.product'] (multi-hop).",
+      "description": "An ordered list of path SEGMENTS naming one path to eager-fetch, e.g. [{ rel: 'Order.items' }] (one hop) or [{ rel: 'Order.items' }, { rel: 'OrderItem.product' }] (multi-hop). Each segment is a closed object (`pathSegment`) rather than a bare string, so broad and (later) narrowed hops share one uniform shape.",
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/relationshipRef" }
+      "items": { "$ref": "#/$defs/pathSegment" }
     },
     "literal": {
       "description": "A scalar literal value usable as a bind.",

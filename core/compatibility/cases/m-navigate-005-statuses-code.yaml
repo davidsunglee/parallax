@@ -6,6 +6,7 @@ model: models/orders.yaml
 tags: [m-navigate, navigate, relationship, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Order
   operation:
     navigate:
       rel: Order.statuses

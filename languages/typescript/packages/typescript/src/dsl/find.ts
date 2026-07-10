@@ -115,7 +115,11 @@ export function buildFindOperation(predicate: Predicate, options: FindOptions = 
   }
 
   if (options.includes && options.includes.length > 0) {
-    const paths: readonly NavigationPathRefs[] = options.includes.map((p) => p.refs);
+    // Each include is an ordered list of relationship refs; a deep-fetch path
+    // segment is a closed `{ rel }` object (m-op-algebra), so wrap each ref.
+    const paths: readonly NavigationPathRefs[] = options.includes.map((p) =>
+      p.refs.map((rel) => ({ rel })),
+    );
     op = { deepFetch: { operand: op, paths } };
   }
   return op;

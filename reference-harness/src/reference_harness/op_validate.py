@@ -217,11 +217,14 @@ def _check_navigation(entity: Entity, body: dict[str, Any]) -> None:
 def _check_deep_fetch(entity: Entity, body: dict[str, Any]) -> None:
     for path in body.get("paths", []):
         for segment in path:
-            cls, _, member = segment.partition(".")
+            # A path segment is a closed object ``{rel, narrow?}`` (m-op-algebra);
+            # the value-object misuse rule is about the traversed relationship ref.
+            rel = segment["rel"] if isinstance(segment, dict) else segment
+            cls, _, member = rel.partition(".")
             if cls == entity.name and find_top_value_object(entity, member) is not None:
                 raise RejectionError(
                     DEEP_FETCH_VALUE_OBJECT_SEGMENT,
-                    f"deepFetch path segment {segment!r} names value object {member!r} — "
+                    f"deepFetch path segment {rel!r} names value object {member!r} — "
                     f"a value-object segment is invalid in a deep-fetch path",
                 )
 

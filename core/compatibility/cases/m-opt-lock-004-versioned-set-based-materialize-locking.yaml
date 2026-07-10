@@ -28,7 +28,8 @@ when:
   uow:
     concurrency: locking
   scenario:
-    - find:
+    - targetEntity: Account
+      find:
         lessThan:
           attr: Account.balance
           value: 200.00
@@ -51,7 +52,8 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [0.00, 2, 3]
-    - find:
+    - targetEntity: Account
+      find:
         lessThan:
           attr: Account.balance
           value: 200.00

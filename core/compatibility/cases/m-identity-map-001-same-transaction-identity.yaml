@@ -17,7 +17,8 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 2
@@ -29,7 +30,8 @@ when:
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.owner
           value: Linus

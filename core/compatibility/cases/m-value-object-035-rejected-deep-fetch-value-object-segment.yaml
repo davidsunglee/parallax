@@ -16,6 +16,6 @@ when:
       operand:
         all: {}
       paths:
-        - [Customer.address]
+        - [{ rel: Customer.address }]
 then:
   rejectedRule: deep-fetch-value-object-segment

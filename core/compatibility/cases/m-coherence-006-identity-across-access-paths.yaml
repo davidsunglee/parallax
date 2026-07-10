@@ -22,6 +22,7 @@ when:
   coherence:
     - node: B
       kind: read
+      targetEntity: Account
       find:
         eq:
           attr: Account.owner
@@ -44,6 +45,7 @@ when:
       note: node A commits an in-place update (version advances 1 -> 2) on a separate connection
     - node: B
       kind: read
+      targetEntity: Account
       find:
         eq:
           attr: Account.id
