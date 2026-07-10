@@ -28,6 +28,16 @@
 # table-per-leaf is strictly replaced by table-per-concrete-subtype; table-per-leaf
 # and table-per-class are rejected by the metamodel schema (m-inheritance).
 #
+# Phase 6 adds a POLYMORPHIC OWNER: `Folder` owns documents through the inherited
+# `folder_id` foreign key (declared on the abstract ROOT `Document`, so it threads into
+# EVERY concrete table — invoice, receipt, memo — via the ancestry chain). The
+# relationship `Folder.documents -> Document` targets the abstract root, so navigating
+# it under table-per-concrete-subtype lowers to a grouped `OR` of one correlated
+# `EXISTS` per concrete table, in alphabetical order (m-navigate / m-sql):
+#   Folder.documents -> Document (abstract ROOT)   — reaches any {Invoice, Memo, Receipt}
+# A narrow in the filter's `op` restricts that to a subset (e.g. FinancialDocument ->
+# {Invoice, Receipt}), dropping the Memo `EXISTS` branch.
+#
 # Row data lives in the sibling fixtures/document.yaml, keyed per concrete subtype.
 entities:
   - name: Document
@@ -47,6 +57,15 @@ entities:
         type: string
         column: title
         maxLength: 64
+      # The polymorphic owner FK, inherited by every concrete subtype (Phase 6): a
+      # nullable back-pointer to Folder. Because it is declared on the abstract ROOT,
+      # the ancestry chain threads `folder_id` into invoice, receipt, AND memo, so an
+      # abstract-target read projects it in the concrete superset (right after the
+      # inherited title, before the FinancialDocument branch's currency).
+      - name: folderId
+        type: int64
+        column: folder_id
+        nullable: true
   - name: FinancialDocument
     namespace: parallax.compatibility
     inheritance:
@@ -102,3 +121,34 @@ entities:
         type: string
         column: body
         maxLength: 64
+  # The polymorphic OWNER (Phase 6): a plain non-inheritance entity whose relationship
+  # targets the abstract root Document, so navigation crosses a table-per-concrete-
+  # subtype polymorphic boundary and lowers to a grouped `OR` of per-branch `EXISTS`.
+  - name: Folder
+    namespace: parallax.compatibility
+    table: folder
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: name
+        type: string
+        column: name
+        maxLength: 32
+    relationships:
+      # Targets the abstract ROOT Document: reaches any concrete {Invoice, Memo,
+      # Receipt}. A narrow in a navigation filter's `op` may restrict it to a subset.
+      - name: documents
+        relatedEntity: Document
+        cardinality: one-to-many
+        join: this.id = Document.folderId
+        reverseName: folder
+        foreignKey: folder_id
+    indices:
+      - name: folder_pk
+        attributes: [id]
+        unique: true

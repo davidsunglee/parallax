@@ -48,12 +48,54 @@ def _animal_defs() -> list[dict[str, Any]]:
 
 def test_effective_and_narrow_resolution() -> None:
     family = Family(_animal_defs())
-    assert family.effective_concrete_set("Animal") == ["Dog", "Cat", "WildBoar"]
-    assert family.effective_concrete_set("Pet") == ["Dog", "Cat"]
+    # The effective concrete set is in canonical sibling-set order: ALPHABETICAL by
+    # entity name (Cat < Dog < WildBoar), independent of the descriptor's file layout
+    # (which declares Dog, Cat, WildBoar).
+    assert family.effective_concrete_set("Animal") == ["Cat", "Dog", "WildBoar"]
+    assert family.effective_concrete_set("Pet") == ["Cat", "Dog"]
     assert family.effective_concrete_set("Dog") == ["Dog"]
     # An abstract subtype and its explicit concrete list resolve to the same SET.
     assert set(family.resolve_to_set(["Pet"])) == {"Dog", "Cat"}
     assert set(family.resolve_to_set(["Cat", "Dog"])) == {"Dog", "Cat"}
+
+
+def test_canonical_order_is_independent_of_descriptor_layout() -> None:
+    # The canonical sibling-set order is ALPHABETICAL by entity name, a total order
+    # that does NOT depend on the order the descriptor declares the subtypes. This
+    # inline family declares its concretes in REVERSE-alphabetical order (Zebra, Mule,
+    # Ant) yet the effective set comes back alphabetical (Ant, Mule, Zebra).
+    defs = [
+        {
+            "name": "Beast",
+            "inheritance": {
+                "role": "root",
+                "strategy": "table-per-hierarchy",
+                "tag": {"column": "kind"},
+            },
+            "attributes": [{"name": "id", "type": "int64", "column": "id", "primaryKey": True}],
+        },
+        {
+            "name": "Zebra",
+            "table": "beast",
+            "inheritance": {"role": "concrete-subtype", "parent": "Beast", "tagValue": "z"},
+            "attributes": [],
+        },
+        {
+            "name": "Mule",
+            "table": "beast",
+            "inheritance": {"role": "concrete-subtype", "parent": "Beast", "tagValue": "m"},
+            "attributes": [],
+        },
+        {
+            "name": "Ant",
+            "table": "beast",
+            "inheritance": {"role": "concrete-subtype", "parent": "Beast", "tagValue": "a"},
+            "attributes": [],
+        },
+    ]
+    family = Family(defs)
+    assert family.effective_concrete_set("Beast") == ["Ant", "Mule", "Zebra"]
+    assert family.canonical_concrete_order(["Zebra", "Ant", "Mule"]) == ["Ant", "Mule", "Zebra"]
 
 
 # --- the narrow four-step validation ----------------------------------------
@@ -217,11 +259,30 @@ def test_tag_value_to_subtype_map() -> None:
 
 def test_concrete_superset_columns() -> None:
     defs = _animal_defs()
-    # Pet's descendants only — no tusk_length; the tag column is included.
+    # Pet's descendants only — no tusk_length; the inherited owner_id and the tag
+    # column are included.
     pet = set(concrete_superset_columns(defs, ["Dog", "Cat"]))
-    assert pet == {"id", "kind", "name", "license_id", "bark_volume", "indoor"}
+    assert pet == {"id", "kind", "name", "owner_id", "license_id", "bark_volume", "indoor"}
     whole = set(concrete_superset_columns(defs, ["Dog", "Cat", "WildBoar"]))
     assert whole == pet | {"tusk_length"}
+
+
+def test_tpcs_superset_column_order_is_canonical() -> None:
+    # The stable superset ORDER (not just the set): the inherited prefix in ANCESTRY
+    # order (id, title, folder_id, currency) then the per-subtype OWN-column blocks in
+    # ALPHABETICAL subtype order — Invoice's amount_due, then Memo's body, then Receipt's
+    # paid_amount. The passed effective set is deliberately shuffled to prove the
+    # function canonicalizes.
+    defs = _document_defs()
+    assert concrete_superset_columns(defs, ["Receipt", "Memo", "Invoice"]) == [
+        "id",
+        "title",
+        "folder_id",
+        "currency",
+        "amount_due",
+        "body",
+        "paid_amount",
+    ]
 
 
 # --- _materialize_family_variant --------------------------------------------
@@ -231,7 +292,7 @@ def test_concrete_superset_columns() -> None:
 # (`kind`) — the shape an abstract-root read of Animal MUST emit. The failing-mode
 # tests drop one column from this to witness the row-count-independent check.
 _ANIMAL_GOLDEN = (
-    "select t0.id, t0.name, t0.license_id, t0.bark_volume, "
+    "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, "
     "t0.indoor, t0.tusk_length, t0.kind from animal t0"
 )
 
@@ -252,6 +313,7 @@ def _dog_row() -> dict[str, Any]:
     return {
         "id": 1,
         "name": "Rex",
+        "owner_id": 10,
         "license_id": "L-100",
         "bark_volume": 7,
         "indoor": None,
@@ -267,6 +329,7 @@ def test_materialize_replaces_tag_with_family_variant() -> None:
         {
             "id": 1,
             "name": "Rex",
+            "owner_id": 10,
             "license_id": "L-100",
             "bark_volume": 7,
             "indoor": None,
@@ -286,7 +349,8 @@ def test_materialize_fails_when_superset_column_missing() -> None:
     # The GOLDEN drops WildBoar's tusk_length, so the Animal superset is not projected.
     # The check reads the projection from the golden SQL, not the sampled row.
     golden = (
-        "select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.kind from animal t0"
+        "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, "
+        "t0.indoor, t0.kind from animal t0"
     )
     case = _read_case("Animal", {"all": {}}, golden=golden)
     with pytest.raises(CaseFailure, match="concrete-superset column"):
@@ -295,9 +359,19 @@ def test_materialize_fails_when_superset_column_missing() -> None:
 
 def test_materialize_fails_when_tag_column_missing() -> None:
     # Pet's superset (no tusk_length) but with the tag column `kind` dropped from the GOLDEN.
-    golden = "select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor from animal t0"
+    golden = (
+        "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, "
+        "t0.indoor from animal t0"
+    )
     case = _read_case("Pet", {"all": {}}, golden=golden)
-    row = {"id": 1, "name": "Rex", "license_id": "L-100", "bark_volume": 7, "indoor": None}
+    row = {
+        "id": 1,
+        "name": "Rex",
+        "owner_id": 10,
+        "license_id": "L-100",
+        "bark_volume": 7,
+        "indoor": None,
+    }
     with pytest.raises(CaseFailure, match="tag column"):
         _materialize_family_variant(case, [row])
 
@@ -313,7 +387,7 @@ def test_materialize_fails_when_tag_column_missing() -> None:
 
 def test_materialize_zero_row_missing_superset_column_still_fails() -> None:
     golden = (
-        "select t0.id, t0.name, t0.license_id, t0.bark_volume, "
+        "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, "
         "t0.indoor, t0.kind from animal t0"  # WildBoar's tusk_length dropped
     )
     case = _read_case("Animal", {"all": {}}, golden=golden)
@@ -323,7 +397,7 @@ def test_materialize_zero_row_missing_superset_column_still_fails() -> None:
 
 def test_materialize_zero_row_missing_tag_column_still_fails() -> None:
     golden = (
-        "select t0.id, t0.name, t0.license_id, t0.bark_volume, "
+        "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, "
         "t0.indoor, t0.tusk_length from animal t0"  # tag column `kind` dropped
     )
     case = _read_case("Animal", {"all": {}}, golden=golden)
@@ -342,9 +416,10 @@ def test_materialize_zero_row_correct_golden_passes() -> None:
 #
 # The TPCS counterpart of the TPH projection-shape check: from the descriptor alone
 # the harness recomputes the `union all` branch count/order (the effective concrete
-# set in descriptor order), the stable superset projection every branch shares, and
-# each branch's `familyVariant` subtype-name LITERAL (the settled TPCS asymmetry —
-# TPCS projects the variant literal per branch, TPH derives it from the raw tag).
+# set in ALPHABETICAL order by entity name), the stable superset projection every
+# branch shares, and each branch's `familyVariant` subtype-name LITERAL (the settled
+# TPCS asymmetry — TPCS projects the variant literal per branch, TPH derives it from
+# the raw tag).
 
 
 def _document_model() -> Any:
@@ -355,20 +430,25 @@ def _document_defs() -> list[dict[str, Any]]:
     return _document_model().entity_defs
 
 
-# The canonical three-branch abstract-root golden (Document over Invoice / Receipt /
-# Memo). The failing-mode tests mutate one aspect of this to witness the check.
+# The canonical three-branch abstract-root golden (Document over Invoice / Memo /
+# Receipt — ALPHABETICAL branch order). The stable superset is inherited
+# (id, title, folder_id) first, then the OWN-column blocks in alphabetical subtype
+# order — Invoice's amount_due, Memo's body, Receipt's paid_amount (currency is
+# FinancialDocument's inherited attribute, contributed where Invoice's chain first
+# surfaces it; folder_id is the Phase 6 polymorphic-owner FK on the root). The
+# failing-mode tests mutate one aspect of this to witness the check.
 _DOCUMENT_ROOT_UNION = (
-    "select t0.id, t0.title, t0.currency, t0.amount_due, "
-    "cast(null as decimal(18, 2)) paid_amount, cast(null as varchar(64)) body, "
+    "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, "
+    "cast(null as varchar(64)) body, cast(null as decimal(18, 2)) paid_amount, "
     "'Invoice' family_variant from invoice t0 "
     "union all "
-    "select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, "
-    "t0.paid_amount, cast(null as varchar(64)) body, 'Receipt' family_variant "
-    "from receipt t0 "
+    "select t0.id, t0.title, t0.folder_id, cast(null as varchar(3)) currency, "
+    "cast(null as decimal(18, 2)) amount_due, t0.body, "
+    "cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0 "
     "union all "
-    "select t0.id, t0.title, cast(null as varchar(3)) currency, "
-    "cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, "
-    "t0.body, 'Memo' family_variant from memo t0"
+    "select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, "
+    "cast(null as varchar(64)) body, t0.paid_amount, 'Receipt' family_variant "
+    "from receipt t0"
 )
 
 
@@ -386,9 +466,11 @@ def _document_case(
     return Case(path=Path("m-inheritance-999-x.yaml"), raw=raw, model=model)
 
 
-def test_document_effective_sets_and_descriptor_order() -> None:
+def test_document_effective_sets_and_canonical_order() -> None:
     family = Family(_document_defs())
-    assert family.concrete_descendants("Document") == ["Invoice", "Receipt", "Memo"]
+    # Canonical sibling-set order is ALPHABETICAL (Invoice < Memo < Receipt), NOT the
+    # descriptor's declaration order (Invoice, Receipt, Memo).
+    assert family.concrete_descendants("Document") == ["Invoice", "Memo", "Receipt"]
     assert family.effective_concrete_set("FinancialDocument") == ["Invoice", "Receipt"]
     assert family.strategy_of("Document") == "table-per-concrete-subtype"
 
@@ -427,11 +509,12 @@ def test_tpcs_wrong_branch_count_is_rejected() -> None:
 
 
 def test_tpcs_wrong_branch_order_is_rejected() -> None:
-    # Swap the Invoice and Receipt branches: branch order must be descriptor order.
+    # Swap the first two branches: branch order must be the canonical alphabetical
+    # order (Invoice, Memo, Receipt), so a leading Memo branch is rejected.
     parts = _DOCUMENT_ROOT_UNION.split(" union all ")
     swapped = " union all ".join([parts[1], parts[0], parts[2]])
     case = _document_case("Document", {"all": {}}, golden=swapped)
-    with pytest.raises(CaseFailure, match="descriptor-order"):
+    with pytest.raises(CaseFailure, match="alphabetical-order"):
         _materialize_family_variant(case, [])
 
 
@@ -463,13 +546,13 @@ def test_tpcs_concrete_target_is_a_noop() -> None:
 
 
 def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
-    # A narrow to [Invoice, Memo] lowers to a two-branch union in descriptor order;
-    # the oracle recomputes the shape from the narrow's effective set.
+    # A narrow to [Invoice, Memo] lowers to a two-branch union in alphabetical order
+    # (Invoice, Memo); the oracle recomputes the shape from the narrow's effective set.
     golden = (
-        "select t0.id, t0.title, t0.currency, t0.amount_due, "
+        "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, "
         "cast(null as varchar(64)) body, 'Invoice' family_variant from invoice t0 "
         "union all "
-        "select t0.id, t0.title, cast(null as varchar(3)) currency, "
+        "select t0.id, t0.title, t0.folder_id, cast(null as varchar(3)) currency, "
         "cast(null as decimal(18, 2)) amount_due, t0.body, 'Memo' family_variant "
         "from memo t0"
     )
@@ -574,3 +657,140 @@ def test_tpcs_family_variant_column_collision_is_rejected() -> None:
             )
     with pytest.raises(CaseFailure, match="collides"):
         _materialize_family_variant(case, [])
+
+
+# --- Phase 6: polymorphic navigation + narrowed deep-fetch view keys ------------
+#
+# The relationship-target narrowing (resolved Q10) and the deterministic narrowed
+# view key `<rel>[<Concrete>,<Concrete>]` (m-deep-fetch), derived from the descriptor
+# alone.
+
+from reference_harness.inheritance import (  # noqa: E402
+    NARROW_OUTSIDE_RELATIONSHIP_TARGET,
+    narrowed_view_key,
+    resolve_hop_effective_set,
+)
+
+
+def _person_op(rel: str, narrow_entity: str, to: list[str]) -> dict[str, Any]:
+    return {
+        "exists": {
+            "rel": rel,
+            "op": {"narrow": {"entity": narrow_entity, "to": to, "operand": {"all": {}}}},
+        }
+    }
+
+
+def test_relationship_target_resolution() -> None:
+    family = Family(_animal_defs())
+    assert family.relationship_target("Person.pets") == "Pet"
+    assert family.relationship_target("Person.animals") == "Animal"
+    assert family.relationship_target("Person.missing") is None
+
+
+def test_narrowed_view_key_is_canonical_ordered_and_spaceless() -> None:
+    family = Family(_animal_defs())
+    # Equivalent authored spellings converge on ONE key, in canonical alphabetical
+    # order (Cat before Dog), independent of the authored `to` spelling.
+    assert narrowed_view_key(family, "Person.pets", ["Cat", "Dog"]) == "pets[Cat,Dog]"
+    assert narrowed_view_key(family, "Person.pets", ["Dog"]) == "pets[Dog]"
+    assert narrowed_view_key(family, "Person.pets", ["Cat"]) == "pets[Cat]"
+
+
+def test_resolve_hop_effective_set_broad_and_narrowed() -> None:
+    family = Family(_animal_defs())
+    # Broad hop: the relationship target's own effective set, canonically (alphabetically) ordered.
+    assert resolve_hop_effective_set(family, "Person.pets", None) == (["Cat", "Dog"], False)
+    assert resolve_hop_effective_set(family, "Person.animals", None) == (
+        ["Cat", "Dog", "WildBoar"],
+        False,
+    )
+    # Narrowed hops: equivalent spellings converge; a single concrete stays singular.
+    assert resolve_hop_effective_set(family, "Person.pets", ["Pet"]) == (["Cat", "Dog"], True)
+    assert resolve_hop_effective_set(family, "Person.pets", ["Cat", "Dog"]) == (
+        ["Cat", "Dog"],
+        True,
+    )
+    assert resolve_hop_effective_set(family, "Person.pets", ["Dog"]) == (["Dog"], True)
+
+
+def test_resolve_hop_outside_relationship_target_is_rejected() -> None:
+    family = Family(_animal_defs())
+    # WildBoar shares the family root but is a SIBLING of Pet — not reachable via pets.
+    with pytest.raises(RejectionError) as exc:
+        resolve_hop_effective_set(family, "Person.pets", ["WildBoar"])
+    assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
+
+
+def test_operation_narrow_in_navigation_filter_accepts_valid() -> None:
+    defs = _animal_defs()
+    # narrow the pets target (Pet) to [Cat] — valid; animals (Animal) to [Pet] — valid.
+    validate_operation_inheritance(
+        defs, _person_op("Person.pets", "Pet", ["Cat"]), position="Person"
+    )
+    validate_operation_inheritance(
+        defs, _person_op("Person.animals", "Animal", ["Pet"]), position="Person"
+    )
+
+
+def test_operation_narrow_in_navigation_filter_rejects_outside_target() -> None:
+    defs = _animal_defs()
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            defs, _person_op("Person.pets", "Pet", ["WildBoar"]), position="Person"
+        )
+    assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
+
+
+def test_operation_narrow_in_navigation_filter_rejects_entity_naming_wrong_position() -> None:
+    # Reproduce-then-green (Phase 6 review, Finding 1): a narrow in a navigation
+    # filter's `op` MUST NAME the relationship target as its `entity` (m-navigate).
+    # `Person.pets` targets Pet ({Cat, Dog}); a narrow declaring the BROADER root
+    # Animal as its `entity` — even one whose `to` ([Dog]) lands inside Pet's set —
+    # is invalid: the relationship-scope narrow does NOT clamp a broader entity the
+    # way a top-level narrow does; it must name the target and reach subtypes via
+    # `to`. Before the fix the entity-vs-target check was absent and this was wrongly
+    # ACCEPTED (Animal ∩ Pet = {Cat, Dog} ⊇ {Dog}).
+    defs = _animal_defs()
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            defs, _person_op("Person.pets", "Animal", ["Dog"]), position="Person"
+        )
+    assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
+
+
+def test_operation_narrow_in_navigation_filter_naming_rule_holds_under_and() -> None:
+    # The naming requirement is position-scoped, so it survives a position-preserving
+    # `and` wrapper: a target-position narrow nested directly under `and` in the
+    # filter's `op` still MUST name the relationship target (Pet). A mismatched
+    # `entity` (Animal) is rejected; the correctly-named twin passes.
+    defs = _animal_defs()
+    animals_and = {
+        "exists": {
+            "rel": "Person.pets",
+            "op": {
+                "and": {
+                    "operands": [
+                        {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}}
+                    ]
+                }
+            },
+        }
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(defs, animals_and, position="Person")
+    assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
+    # Positive lock: the same shape naming the target (Pet) is accepted.
+    pet_and = {
+        "exists": {
+            "rel": "Person.pets",
+            "op": {
+                "and": {
+                    "operands": [
+                        {"narrow": {"entity": "Pet", "to": ["Dog"], "operand": {"all": {}}}}
+                    ]
+                }
+            },
+        }
+    }
+    validate_operation_inheritance(defs, pet_and, position="Person")

@@ -8,21 +8,45 @@
 # own table; an abstract-target read `union all`s across the effective concrete
 # tables (m-sql). Primary keys are per-table, so id 1 recurs across Invoice /
 # Receipt / Memo — the rows are distinguished by their concrete variant, never by id.
+#
+# Phase 6 adds the polymorphic owner FK `folderId` (column folder_id, inherited from
+# Document), plus the owning `Folder` rows. Documents thread into their folders across
+# concrete tables:
+#
+#   Folder 100 Alpha owns Invoice-A (Invoice) + Receipt-A (Receipt) — reached via BOTH
+#                    the invoice AND receipt `EXISTS` branches
+#   Folder 101 Beta  owns Invoice-B (Invoice)                        — invoice branch only
+#   Folder 102 Gamma owns Memo-A (Memo)                              — memo branch only; so a
+#                    narrow to FinancialDocument ({Invoice, Receipt}) DROPS Gamma
+#   Folder 103 Empty owns nothing                                    — matched by NO branch
 Invoice:
   - id: 1
     title: Invoice-A
     currency: USD
     amountDue: 120.00
+    folderId: 100
   - id: 2
     title: Invoice-B
     currency: EUR
     amountDue: 80.00
+    folderId: 101
 Receipt:
   - id: 1
     title: Receipt-A
     currency: USD
     paidAmount: 120.00
+    folderId: 100
 Memo:
   - id: 1
     title: Memo-A
     body: Reminder
+    folderId: 102
+Folder:
+  - id: 100
+    name: Alpha
+  - id: 101
+    name: Beta
+  - id: 102
+    name: Gamma
+  - id: 103
+    name: Empty

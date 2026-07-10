@@ -283,3 +283,104 @@ def test_null_placeholder_cast_binds_type_params_tight() -> None:
         )
         == canonical
     )
+
+
+# --- flat grouped `OR` of per-branch correlated EXISTS (m-sql rule 1) ---------
+# A table-per-concrete-subtype polymorphic semi-join lowers to a grouped `OR` of one
+# correlated `EXISTS` per concrete branch (m-navigate / m-sql; the corpus witness is
+# m-inheritance-070). The canonical form is the FLAT left-deep spine `a or b or c`
+# with the branch tables numbered `t1, t2, t3` in a single source-order sequence
+# (continuing the outer `t0`). A right-nested fold `a or (b or c)` is NOT a second
+# canonical form — it normalizes to the flat spine.
+
+_FLAT_GROUPED_OR = (
+    "select t0.id, t0.name from folder t0 where "
+    "(exists (select 1 from invoice t1 where t1.folder_id = t0.id) "
+    "or exists (select 1 from memo t2 where t2.folder_id = t0.id) "
+    "or exists (select 1 from receipt t3 where t3.folder_id = t0.id))"
+)
+
+_FOLDED_GROUPED_OR = (
+    "select t0.id, t0.name from folder t0 where "
+    "(exists (select 1 from invoice t1 where t1.folder_id = t0.id) "
+    "or (exists (select 1 from memo t2 where t2.folder_id = t0.id) "
+    "or exists (select 1 from receipt t3 where t3.folder_id = t0.id)))"
+)
+
+
+def test_flat_grouped_or_exists_is_a_normalization_fixed_point() -> None:
+    # The flat three-branch grouped `OR` is canonical: it is the golden form of
+    # m-inheritance-070, and normalizing it is idempotent.
+    assert is_canonical(_FLAT_GROUPED_OR, "postgres")
+    assert normalize(_FLAT_GROUPED_OR, "postgres") == _FLAT_GROUPED_OR
+
+
+def test_folded_grouped_or_normalizes_to_the_flat_form() -> None:
+    # The right-nested fold `a or (b or c)` — the shape a contributor previously had
+    # to hand-author so the branch tables numbered in source order — is now
+    # non-canonical and normalizes to the single flat canonical form. This is the
+    # reassociation (m-sql rule 1) that removes the need for the fold.
+    assert not is_canonical(_FOLDED_GROUPED_OR, "postgres")
+    assert normalize(_FOLDED_GROUPED_OR, "postgres") == _FLAT_GROUPED_OR
+
+
+def test_grouped_or_uses_a_single_global_source_order_alias_sequence() -> None:
+    # Scheme (A): the branch tables continue the outer `t0` in ONE global sequence
+    # (`t1, t2, t3`), they do NOT restart per subquery. A per-subquery-restart
+    # spelling (every branch `t1`) is rejected — the sibling tables are not in
+    # source order `t1, t2, t3`.
+    per_branch_restart = (
+        "select t0.id, t0.name from folder t0 where "
+        "(exists (select 1 from invoice t1 where t1.folder_id = t0.id) "
+        "or exists (select 1 from memo t1 where t1.folder_id = t0.id) "
+        "or exists (select 1 from receipt t1 where t1.folder_id = t0.id))"
+    )
+    assert not is_canonical(per_branch_restart, "postgres")
+
+
+def test_flat_grouped_or_rejects_out_of_source_order_branch_aliases() -> None:
+    # The branches must number in the order they are written; a scrambled sequence
+    # (memo `t1` before invoice `t2`, though invoice is written first) is rejected.
+    scrambled = (
+        "select t0.id, t0.name from folder t0 where "
+        "(exists (select 1 from invoice t2 where t2.folder_id = t0.id) "
+        "or exists (select 1 from memo t1 where t1.folder_id = t0.id))"
+    )
+    assert not is_canonical(scrambled, "postgres")
+
+
+def test_sibling_correlated_exists_number_globally_t1_t2() -> None:
+    # Two independent (ANDed) correlated `EXISTS` in one predicate — the existing
+    # value-object shape (m-value-object-018) — alias `t1` and `t2` in one global
+    # sequence, not `t1`/`t1`. This is the convention scheme (A) preserves.
+    canonical = (
+        "select t0.id from customer t0 where "
+        "exists (select 1 from phone t1 where t1.customer_id = t0.id and t1.kind = ?) "
+        "and exists (select 1 from phone t2 where t2.customer_id = t0.id and t2.kind = ?)"
+    )
+    assert is_canonical(canonical, "postgres")
+    per_branch_restart = (
+        "select t0.id from customer t0 where "
+        "exists (select 1 from phone t1 where t1.customer_id = t0.id and t1.kind = ?) "
+        "and exists (select 1 from phone t1 where t1.customer_id = t0.id and t1.kind = ?)"
+    )
+    assert not is_canonical(per_branch_restart, "postgres")
+
+
+def test_reassociation_preserves_precedence_significant_parentheses() -> None:
+    # Reassociation only flattens SAME-connector chains. A parenthesis over a
+    # DIFFERENT connector is precedence-significant and MUST survive, so a mixed
+    # `and (… or …)` predicate is left untouched (a fixed point).
+    mixed = "select t0.id from orders t0 where t0.a = ? and (t0.b = ? or t0.c = ?)"
+    assert is_canonical(mixed, "postgres")
+    assert normalize(mixed, "postgres") == mixed
+
+
+def test_reassociation_flattens_a_nested_and_chain() -> None:
+    # `and` is associative too: a right-nested `a and (b and c)` normalizes to the
+    # flat left-deep spine, matching how a flat `a and b and c` is stored.
+    folded = "select t0.id from orders t0 where t0.a = ? and (t0.b = ? and t0.c = ?)"
+    flat = "select t0.id from orders t0 where t0.a = ? and t0.b = ? and t0.c = ?"
+    assert not is_canonical(folded, "postgres")
+    assert normalize(folded, "postgres") == flat
+    assert is_canonical(flat, "postgres")

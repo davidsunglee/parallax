@@ -32,8 +32,8 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-dialect` | Pure dialect rules (quoting, lock suffix, casing) | active | cases |
 | `m-db-port` | Database execution port | active | contract |
 | `m-db-error` | Database error classification | active | cases |
-| `m-navigate` | Relationship navigation & semi-join | active | cases |
-| `m-deep-fetch` | Deep fetch (N+1 elimination) | active | cases |
+| `m-navigate` | Relationship navigation & semi-join (incl. polymorphic targets) | active | cases |
+| `m-deep-fetch` | Deep fetch (N+1 elimination) & narrowed relationship views | active | cases |
 | `m-snapshot-read` | Snapshot graph materialization (plain value graphs) | active | cases |
 | `m-op-list` | Operation-backed list results | active | cases |
 | `m-batch-write` | Set-based / batched writes | active | cases |
@@ -101,6 +101,7 @@ m-cascade-delete --> m-unit-work
 m-navigate --> m-op-list
 m-navigate --> m-unit-work
 m-navigate --> m-temporal-read
+m-navigate --> m-inheritance
 m-deep-fetch --> m-navigate
 m-deep-fetch --> m-op-list
 m-snapshot-read --> m-deep-fetch
@@ -142,6 +143,16 @@ construction it may reference any behavioral module it harnesses.
 - **`m-navigate --> m-op-list`.** A list is an operation-backed collection;
   navigation *yields* lists and deep fetch *populates* them, so navigation
   depends on lists, not the reverse.
+- **`m-navigate --> m-inheritance`.** A relationship target may be a **polymorphic
+  position** (`m-inheritance`): navigation resolves it to its effective
+  concrete-subtype set (single-`EXISTS` interior tag predicate under
+  table-per-hierarchy, grouped-`OR` per-branch `EXISTS` under
+  table-per-concrete-subtype), and a relationship-scope `narrow` must stay within
+  it. Navigation therefore references the inheritance family model directly.
+  `m-deep-fetch` (which owns narrowed relationship views and their derived keys)
+  reaches `m-inheritance` **transitively** through `m-navigate`, so it needs no
+  separate `m-deep-fetch --> m-inheritance` declaration — the same transitive
+  pattern `m-sql` uses to reach `m-inheritance` through `m-op-algebra`.
 - **`m-navigate --> m-temporal-read`.** Navigation is temporal-aware: a pinned
   as-of value propagates per hop to every temporal entity in the path. As-of
   *reads* are algebra-level, so navigation references `m-temporal-read`, not the

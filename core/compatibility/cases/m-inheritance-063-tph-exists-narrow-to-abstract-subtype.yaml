@@ -1,0 +1,37 @@
+# `exists` over a polymorphic target NARROWED to an ABSTRACT subtype
+# (m-navigate, m-op-algebra, m-inheritance, resolved Q10).
+#
+# `Person.animals` targets the abstract root Animal; the `narrow` in the filter's
+# `op` constrains that relationship target to the abstract subtype [Pet], which
+# resolves to {Cat, Dog}. The narrow lifts into the EXISTS's tag selection as
+# `t1.kind in (?, ?)` (binds [cat, dog], alphabetical order) — so this narrowed read of
+# the abstract-ROOT relationship produces the SAME shared-table semi-join as the
+# broad read of the abstract-SUBTYPE relationship (m-inheritance-061), witnessing that
+# the effective set, not the authored spelling, drives the tag predicate. Alice and
+# Bob match; Carol (WildBoar only) drops out.
+#
+# Non-trivial (semi-join + tag) case => referenceSql is the naive `id in (select fk …)` oracle.
+model: models/animal.yaml
+tags: [m-navigate, m-op-algebra, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Person
+  operation:
+    exists:
+      rel: Person.animals
+      op:
+        narrow:
+          entity: Animal
+          to: [Pet]
+          operand:
+            all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))
+      binds: [cat, dog]
+  referenceSql: select id, name from person where id in (select owner_id from animal where kind in ('cat', 'dog'))
+  rows:
+    - { id: 10, name: Alice }
+    - { id: 11, name: Bob }
+  roundTrips: 1

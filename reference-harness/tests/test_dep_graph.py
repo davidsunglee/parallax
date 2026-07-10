@@ -537,9 +537,32 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # -053 narrow-to-multiple-concrete). The two rewritten TPCS concrete reads
         # (m-inheritance-005/-006, renamed off the table-per-leaf spelling) keep their
         # existing slice tags, so those two counts rise by 4 and slice-mvp-1 is unchanged.
+        #
+        # COR-9 Phase 6 adds 8 polymorphic-relationship / narrowed-deep-fetch cases
+        # (m-inheritance-060..067) tagged slice-snapshot-1 + slice-managed-1 (never
+        # slice-mvp-1): two abstract-root / abstract-subtype relationship existence reads,
+        # two relationship-scope narrows, one relationship-scope narrow rejection, and
+        # three narrowed deep fetches (single-view, equivalent-spellings dedup, two-view
+        # prefix dedup). Both counts rise by 8 and slice-mvp-1 is unchanged.
+        #
+        # A COR-9 Phase 6 design-change pass (canonical concrete-subtype ordering ->
+        # alphabetical) then closes the table-per-concrete-subtype polymorphic-navigation
+        # coverage gap with 2 more cases tagged slice-snapshot-1 + slice-managed-1
+        # (never slice-mvp-1): m-inheritance-070 (grouped-`OR` per-branch `EXISTS` over
+        # the abstract root Document, via the new `Folder.documents` relationship) and
+        # -071 (the same narrowed to the abstract subtype FinancialDocument, dropping the
+        # memo branch). Both counts rise by 2 more (244 / 264) and slice-mvp-1 is unchanged.
+        #
+        # A COR-9 Phase 6 review (Finding 1) then adds one relationship-scope narrow
+        # `rejected` case tagged slice-snapshot-1 + slice-managed-1 (never slice-mvp-1):
+        # m-inheritance-072, a narrow in a navigation filter's `op` whose `entity` names
+        # the abstract ROOT Animal instead of the relationship target Pet — the
+        # entity-mismatch trigger of `narrow-outside-relationship-target` (the same rule
+        # as -064's to-outside-target trigger). Both counts rise by one more (245 / 265)
+        # and slice-mvp-1 is unchanged.
         ("slice-mvp-1", 198),
-        ("slice-snapshot-1", 234),
-        ("slice-managed-1", 254),
+        ("slice-snapshot-1", 245),
+        ("slice-managed-1", 265),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

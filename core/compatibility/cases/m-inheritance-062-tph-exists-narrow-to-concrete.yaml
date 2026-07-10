@@ -1,0 +1,33 @@
+# `exists` over a polymorphic target NARROWED to ONE concrete subtype
+# (m-navigate, m-op-algebra, m-inheritance, resolved Q10).
+#
+# The relationship-target narrowing reuses the `narrow` operation node in the
+# navigation filter's `op` position: `narrow.entity` names the relationship target
+# (Pet), narrowed to [Cat]. The narrow lifts into the EXISTS's tag selection exactly
+# as it does for a top-level read — one concrete resolves to `t1.kind = ?` (bind
+# [cat]). Only Alice owns a Cat (Whiskers); Bob owns only a Dog, Carol only a boar.
+#
+# Non-trivial (semi-join + tag) case => referenceSql is the naive `id in (select fk …)` oracle.
+model: models/animal.yaml
+tags: [m-navigate, m-op-algebra, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Person
+  operation:
+    exists:
+      rel: Person.pets
+      op:
+        narrow:
+          entity: Pet
+          to: [Cat]
+          operand:
+            all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind = ?)
+      binds: [cat]
+  referenceSql: select id, name from person where id in (select owner_id from animal where kind = 'cat')
+  rows:
+    - { id: 10, name: Alice }
+  roundTrips: 1

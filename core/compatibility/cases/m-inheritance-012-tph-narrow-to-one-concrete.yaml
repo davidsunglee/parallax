@@ -6,7 +6,7 @@
 # inside the narrow's operand. The narrow lowers to the branch's tag guard, appended
 # AFTER the branch predicate: `t0.bark_volume > ? and t0.kind = ?` (binds [3, dog]).
 # Only Rex (bark_volume 7 > 3) matches; Fido (3) does not. The projection is Dog's
-# superset (id, name, license_id, bark_volume) PLUS the tag; familyVariant is Dog.
+# superset (id, name, owner_id, license_id, bark_volume) PLUS the tag; familyVariant is Dog.
 #
 # Non-trivial (tag) case => referenceSql is the independent oracle.
 model: models/animal.yaml
@@ -23,9 +23,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.kind from animal t0 where t0.bark_volume > ? and t0.kind = ?
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.kind from animal t0 where t0.bark_volume > ? and t0.kind = ?
       binds: [3, dog]
-  referenceSql: select id, name, license_id, bark_volume, kind from animal where bark_volume > 3 and kind = 'dog'
+  referenceSql: select id, name, owner_id, license_id, bark_volume, kind from animal where bark_volume > 3 and kind = 'dog'
   rows:
-    - { id: 1, name: Rex, license_id: L-100, bark_volume: 7, familyVariant: Dog }
+    - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, familyVariant: Dog }
   roundTrips: 1

@@ -269,6 +269,17 @@ already knows the variant) and projects only that concrete instance's columns. A
 effective concrete-subtype set (`m-op-algebra`); an invalid narrow is a `rejected`
 case (see the narrow rules in *Rejected cases*).
 
+A **deep-fetch `then.graph`** keys each eager-fetched related set under the
+**relationship name** — or, for a **narrowed polymorphic hop** (`m-deep-fetch`,
+`m-inheritance`), under the **derived narrowed view key** `<rel>[<Concrete>,
+<Concrete>]` (the local relationship name, the effective concrete-subtype set in
+canonical alphabetical order by entity name, no spaces). Equivalent authored
+narrowings (`to: [Pet]` vs `[Cat, Dog]`) key the same view; a broad and a narrowed hop over one relationship
+key **different** views. A polymorphic narrowed view's child objects carry
+`familyVariant` just as a flat abstract read's rows do (a single-concrete narrowed
+view carries none). A `narrow` escaping the relationship target's effective set is a
+`rejected` case (`narrow-outside-relationship-target`).
+
 ### `then.statements`, `then.referenceSql`, `then.rows` (the oracle question)
 
 Each case carries **three independent things**, and the harness cross-checks all
@@ -559,6 +570,12 @@ materialization/navigation and write-validation contracts. **Operation** rules:
   concrete-subtype-declared attribute at a polymorphic position that is not
   `narrow`ed to that subtype, so the attribute is not available to every concrete
   in the effective set (`m-op-algebra` × `m-inheritance`).
+- `narrow-outside-relationship-target` — a `narrow` in a navigation filter's `op`,
+  or a deep-fetch path segment's `narrow`, resolves to a concrete-subtype set that
+  is **not a subset** of the **relationship target's** effective concrete set —
+  narrowing a polymorphic relationship to a concrete outside its reachable set, even
+  a **sibling** sharing the family root (`m-navigate` / `m-deep-fetch` ×
+  `m-inheritance`, resolved Q10).
 
 **Write** rules (`m-value-object` write validation — a value object is written
 atomically as one whole document):

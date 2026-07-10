@@ -1,11 +1,12 @@
 # Table-per-hierarchy ABSTRACT-SUBTYPE read: Pet over only its concrete descendants
 # (m-inheritance, m-sql).
 #
-# Targeting the abstract subtype Pet resolves to its concrete descendants {Dog, Cat}
+# Targeting the abstract subtype Pet resolves to its concrete descendants {Cat, Dog}
 # — NOT the sibling WildBoar in the same shared table. So the read injects
-# `t0.kind in (?, ?)` (binds [dog, cat], descriptor order), excluding the boar row.
-# The projection is the superset over {Dog, Cat} only — id, name, license_id,
-# bark_volume, indoor — PLUS the tag column; tusk_length (WildBoar's) is NOT reached.
+# `t0.kind in (?, ?)` (binds [cat, dog], alphabetical order), excluding the boar row.
+# The projection is the superset over {Cat, Dog} only — id, name, owner_id, license_id,
+# then each subtype's own columns in alphabetical order (Cat's indoor, Dog's
+# bark_volume) — PLUS the tag column; tusk_length (WildBoar's) is NOT reached.
 # familyVariant is materialized from the tag map (dog -> Dog, cat -> Cat).
 #
 # Non-trivial (tag) case => referenceSql is the independent oracle.
@@ -19,11 +20,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.kind from animal t0 where t0.kind in (?, ?)
-      binds: [dog, cat]
-  referenceSql: select id, name, license_id, bark_volume, indoor, kind from animal where kind in ('dog', 'cat')
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.kind from animal t0 where t0.kind in (?, ?)
+      binds: [cat, dog]
+  referenceSql: select id, name, owner_id, license_id, indoor, bark_volume, kind from animal where kind in ('cat', 'dog')
   rows:
-    - { id: 1, name: Rex, license_id: L-100, bark_volume: 7, indoor: null, familyVariant: Dog }
-    - { id: 2, name: Fido, license_id: L-101, bark_volume: 3, indoor: null, familyVariant: Dog }
-    - { id: 3, name: Whiskers, license_id: L-200, bark_volume: null, indoor: true, familyVariant: Cat }
+    - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, familyVariant: Dog }
+    - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, indoor: null, familyVariant: Dog }
+    - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, familyVariant: Cat }
   roundTrips: 1

@@ -1,0 +1,43 @@
+# Deep fetch of ONE narrowed subtype view `pets[Dog]` (m-deep-fetch, m-inheritance).
+#
+# The deep-fetch path segment carries `{ rel: Person.pets, narrow: { to: [Dog] } }`.
+# The narrowed hop populates a DISTINCT view keyed by the derived
+# `pets[Dog]` (the local relationship name + the effective concrete set in alphabetical
+# order, no spaces) rather than the ordinary `pets` — it does NOT mark the broad
+# relationship loaded. Under table-per-hierarchy the single-concrete narrow lowers the
+# child level to the shared table with `t0.kind = ?` (bind [dog], appended after the
+# IN-list of gathered parent keys). One concrete, so the view carries no
+# `familyVariant` (the caller queried a known variant). `1 + L` = 2 statements.
+model: models/animal.yaml
+tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Person
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [{ rel: Person.pets, narrow: { to: [Dog] } }]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0
+    - sql:
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind = ?
+      binds: [10, 11, 12, dog]
+  referenceSql: select id, name from person
+  graph:
+    Person:
+      - id: 10
+        name: Alice
+        "pets[Dog]":
+          - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7 }
+      - id: 11
+        name: Bob
+        "pets[Dog]":
+          - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3 }
+      - id: 12
+        name: Carol
+        "pets[Dog]": []
+  roundTrips: 2

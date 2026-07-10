@@ -1,0 +1,31 @@
+# Polymorphic relationship targeting the abstract SUBTYPE (m-navigate, m-inheritance).
+#
+# `Person.pets` targets the abstract subtype Pet, so it reaches only Pet's concrete
+# descendants {Cat, Dog} — NOT the sibling WildBoar in the same shared table. Under
+# table-per-hierarchy this is ONE child-table `exists` semi-join with the tag
+# predicate INSIDE it (resolved Q7): `t1.kind in (?, ?)` (binds [cat, dog],
+# alphabetical order). Alice (Rex, Whiskers) and Bob (Fido) match; Carol drops out —
+# her only animal is the WildBoar Tusker, which the interior tag predicate excludes.
+# The contrast with m-inheritance-060 (same fixtures, abstract-root relationship, no
+# tag predicate, Carol included) is the whole point of the abstract-root-vs-subtype
+# distinction.
+#
+# Non-trivial (semi-join + tag) case => referenceSql is the naive `id in (select fk …)` oracle.
+model: models/animal.yaml
+tags: [m-navigate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, exists, tag, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Person
+  operation:
+    exists:
+      rel: Person.pets
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))
+      binds: [cat, dog]
+  referenceSql: select id, name from person where id in (select owner_id from animal where kind in ('cat', 'dog'))
+  rows:
+    - { id: 10, name: Alice }
+    - { id: 11, name: Bob }
+  roundTrips: 1

@@ -26,16 +26,30 @@
       "pattern": "^[a-z][a-z0-9_]*$"
     },
     "pathSegment": {
-      "description": "One hop in a deep-fetch navigation path: a CLOSED object naming the relationship to traverse via `rel` (a `Class.relationship` reference). The object shape is the single structural carrier for a hop, so a polymorphic hop can later add an optional `narrow` alongside `rel` (subtype narrowing of the hop's effective concrete set) without introducing a second spelling of a path; until that phase a segment carries EXACTLY `rel`.",
+      "description": "One hop in a deep-fetch navigation path: a CLOSED object naming the relationship to traverse via `rel` (a `Class.relationship` reference) and OPTIONALLY narrowing that hop's polymorphic target with `narrow`. The object shape is the single structural carrier for a hop, so a POLYMORPHIC hop (a relationship whose target is an abstract root / abstract subtype, m-inheritance) may carry `narrow` alongside `rel` without a second spelling of a path. A broad hop (no `narrow`) populates the ORDINARY relationship view keyed by the local relationship name; a narrowed hop populates a DISTINCT narrowed view keyed `<rel>[<Concrete>,<Concrete>]` (the effective concrete set, canonical alphabetical order by entity name, no spaces — m-deep-fetch), and does NOT mark the broad relationship loaded. Two authored spellings resolving to the same effective set (`narrow.to: [Pet]` vs `[Cat, Dog]`) derive the SAME view key and DEDUPLICATE to one hop; a broad hop and a narrowed hop over the same relationship are DISTINCT hops.",
       "type": "object",
       "additionalProperties": false,
       "required": ["rel"],
       "properties": {
-        "rel": { "$ref": "#/$defs/relationshipRef" }
+        "rel": { "$ref": "#/$defs/relationshipRef" },
+        "narrow": { "$ref": "#/$defs/pathNarrow" }
+      }
+    },
+    "pathNarrow": {
+      "description": "The subtype narrowing of ONE deep-fetch hop: constrain the relationship's polymorphic target to a NON-EMPTY subset of its subtypes (m-inheritance). Unlike the operation-position `narrow` node (which carries `entity` + `operand`), a path narrow carries ONLY `to` — the position is the relationship's target (implicit) and there is no inner predicate, because a hop eagerly fetches a whole VIEW rather than filtering. Each `to` entry is an authored subtype name (an abstract subtype resolves to its concrete descendants, a concrete subtype to itself; the serde keeps the authored spelling). Validation resolves `to` to the effective concrete set and accepts iff it is NON-EMPTY and a SUBSET of the relationship target's effective concrete set (`narrow-outside-relationship-target` otherwise, m-navigate / m-deep-fetch).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["to"],
+      "properties": {
+        "to": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/entityName" }
+        }
       }
     },
     "navigationPath": {
-      "description": "An ordered list of path SEGMENTS naming one path to eager-fetch, e.g. [{ rel: 'Order.items' }] (one hop) or [{ rel: 'Order.items' }, { rel: 'OrderItem.product' }] (multi-hop). Each segment is a closed object (`pathSegment`) rather than a bare string, so broad and (later) narrowed hops share one uniform shape.",
+      "description": "An ordered list of path SEGMENTS naming one path to eager-fetch, e.g. [{ rel: 'Order.items' }] (one hop) or [{ rel: 'Order.items' }, { rel: 'OrderItem.product' }] (multi-hop). Each segment is a closed object (`pathSegment`) rather than a bare string, so broad and narrowed hops share one uniform shape; a polymorphic hop MAY carry `narrow` (subtype narrowing of that hop's target).",
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/pathSegment" }
@@ -417,7 +431,7 @@
     },
 
     "narrow": {
-      "description": "narrow(entity, to, operand): constrain a POLYMORPHIC entity position to a subset of its subtypes (m-op-algebra, m-inheritance). `entity` names the polymorphic position in whose operand scope this node appears — the queried entity at top level (the read's `targetEntity`), or a relationship target inside a navigation filter (a later phase). `to` is the non-empty, ORDER-PRESERVED list of authored subtype names the position is narrowed to (an abstract subtype resolves to its concrete descendants, a concrete subtype to itself; the serde keeps the authored spelling). `operand` is the inner operation evaluated over the narrowed position, so a concrete-subtype-declared attribute becomes referenceable there. Semantic validation (never the serde) threads the ACTIVE polymorphic position as it descends — the read's `targetEntity` at top level (defaulting to the family root), the enclosing narrow's resolved set inside a nested narrow. It resolves `entity` and CLAMPS it to (intersects it with) the active position — an `entity` naming a broader position is narrowed to the active position, never allowed to re-widen it — then resolves each `to` entry to its effective concrete-subtype set and accepts iff their union is NON-EMPTY and a SUBSET of that clamped/active position; the resolved set becomes the active position for `operand`, so a nested narrow cannot broaden back out. Redundant narrowing (to the position itself) is valid; broadening beyond the active position is not (`narrow-outside-position`); a `to` resolving to the empty set is `narrow-empty-effective-set` (m-inheritance / m-op-algebra). SQL lowering lifts the narrow into tag/branch selection (m-sql).",
+      "description": "narrow(entity, to, operand): constrain a POLYMORPHIC entity position to a subset of its subtypes (m-op-algebra, m-inheritance). `entity` names the polymorphic position in whose operand scope this node appears — the queried entity at top level (the read's `targetEntity`), or the RELATIONSHIP TARGET inside a navigation filter's `op` (`exists` / `navigate` / `notExists`), where the active position is the related entity the hop reaches (m-navigate, resolved Q10). `to` is the non-empty, ORDER-PRESERVED list of authored subtype names the position is narrowed to (an abstract subtype resolves to its concrete descendants, a concrete subtype to itself; the serde keeps the authored spelling). `operand` is the inner operation evaluated over the narrowed position, so a concrete-subtype-declared attribute becomes referenceable there. Semantic validation (never the serde) threads the ACTIVE polymorphic position as it descends — the read's `targetEntity` at top level (defaulting to the family root), the enclosing narrow's resolved set inside a nested narrow. It resolves `entity` and CLAMPS it to (intersects it with) the active position — an `entity` naming a broader position is narrowed to the active position, never allowed to re-widen it — then resolves each `to` entry to its effective concrete-subtype set and accepts iff their union is NON-EMPTY and a SUBSET of that clamped/active position; the resolved set becomes the active position for `operand`, so a nested narrow cannot broaden back out. Redundant narrowing (to the position itself) is valid; broadening beyond the active position is not (`narrow-outside-position`); a `to` resolving to the empty set is `narrow-empty-effective-set` (m-inheritance / m-op-algebra). SQL lowering lifts the narrow into tag/branch selection (m-sql).",
       "type": "object",
       "additionalProperties": false,
       "required": ["narrow"],

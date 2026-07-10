@@ -119,9 +119,11 @@ def test_table_per_concrete_subtype_model_validates() -> None:
     assert model.entity("FinancialDocument").is_abstract
     assert model.entity("FinancialDocument").table == ""
     # Each concrete subtype maps to its OWN table (no shared table, no tag) —
-    # Invoice/Receipt under FinancialDocument, plus the concrete sibling Memo.
+    # Invoice/Receipt under FinancialDocument, plus the concrete sibling Memo. The
+    # Phase 6 polymorphic owner `Folder` is a plain (non-inheritance) row-owning entity
+    # with its own `folder` table.
     tables = {e.table for e in model.entities if not e.is_abstract}
-    assert tables == {"invoice", "receipt", "memo"}
+    assert tables == {"invoice", "receipt", "memo", "folder"}
     for name in ("Invoice", "Receipt", "Memo"):
         assert "tag" not in model.entity(name).definition["inheritance"]
         assert "tagValue" not in model.entity(name).definition["inheritance"]
@@ -139,18 +141,20 @@ def test_concrete_subtype_derives_the_full_inherited_attribute_chain() -> None:
         "card_network",
     ]
     # table-per-concrete-subtype: the concrete table carries the full inherited chain,
-    # with NO tag column. Invoice's chain threads the intermediate abstract subtype
-    # FinancialDocument (currency) between the root (id, title) and its own amount_due.
+    # with NO tag column. Invoice's chain threads the root (id, title, folder_id) and
+    # the intermediate abstract subtype FinancialDocument (currency) before its own
+    # amount_due. folder_id is the Phase 6 polymorphic-owner FK on the root Document.
     document = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
     assert list(column_order(document.entity("Invoice"))) == [
         "id",
         "title",
+        "folder_id",
         "currency",
         "amount_due",
     ]
     # The concrete sibling Memo sits directly under the root, so it inherits only the
-    # root chain (id, title) — NOT FinancialDocument's currency — plus its own body.
-    assert list(column_order(document.entity("Memo"))) == ["id", "title", "body"]
+    # root chain (id, title, folder_id) — NOT FinancialDocument's currency — plus body.
+    assert list(column_order(document.entity("Memo"))) == ["id", "title", "folder_id", "body"]
 
 
 def test_intermediate_abstract_subtype_inheritance_chain() -> None:
@@ -164,12 +168,14 @@ def test_intermediate_abstract_subtype_inheritance_chain() -> None:
         "id",
         "kind",
         "name",
+        "owner_id",
         "license_id",
         "bark_volume",
     ]
-    # WildBoar is under Animal directly, so it inherits name (root) but NOT license_id (Pet).
+    # WildBoar is under Animal directly, so it inherits name + owner_id (root) but NOT
+    # license_id (Pet).
     boar_columns = list(column_order(model.entity("WildBoar")))
-    assert boar_columns == ["id", "kind", "name", "tusk_length"]
+    assert boar_columns == ["id", "kind", "name", "owner_id", "tusk_length"]
     assert "license_id" not in boar_columns
 
 

@@ -357,22 +357,31 @@ result into an **object graph** rather than a flat row set.
 
 | Operation | Encoding | Effect |
 |---|---|---|
-| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ [ { "rel": … }, … ], … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
+| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ [ { "rel": …, "narrow"? }, … ], … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
 
 Each `path` is an ordered list of **path segments** naming a chain to fetch, and
 every segment is a **closed object** carrying the relationship to traverse under
 `rel` (a `Class.relationship` reference) — one hop (`[{ "rel": "Order.items" }]`)
 or multi-hop
 (`[{ "rel": "Order.items" }, { "rel": "OrderItem.statuses" }]`). The object
-segment is the single structural carrier for a hop, so a polymorphic hop can
-later add an optional `narrow` (subtype narrowing of the hop's effective concrete
-set) alongside `rel` without a second spelling of a path; until then a segment
-carries exactly `rel`. The normative guarantee is **one SQL
+segment is the single structural carrier for a hop, so a **polymorphic** hop (a
+relationship whose target is an abstract position, `m-inheritance`) MAY add an
+optional `narrow` alongside `rel` — the `{ "to": [ … ] }` subtype narrowing of that
+hop's effective concrete set — without a second spelling of a path. Unlike the
+operation-position `narrow` node (which carries `entity` + `operand`), a path
+narrow carries only `to`: the position is the relationship target (implicit) and a
+hop fetches a whole **view**, not a filtered predicate. A narrowed hop populates a
+**distinct narrowed view** keyed `<rel>[<Concrete>,<Concrete>]`; the narrow must
+resolve within the relationship target's effective set
+(`narrow-outside-relationship-target`). The normative guarantee is **one SQL
 statement per relationship level** (N+1 elimination): the root query plus one
-statement per distinct relationship hop, regardless of how many parent rows fan
-out. Paths sharing a prefix fetch the shared hop **once**. This is specified in
-full in [`m-deep-fetch.md`](m-deep-fetch.md) and proven by the round-trip-count
-layer of the compatibility harness (`m-case-format`).
+statement per distinct hop, where hop identity is the pair **(relationship,
+effective concrete set)** — a broad hop and a narrowed hop over the same
+relationship, or two hops narrowed to different sets, are distinct; equivalent
+narrow spellings resolving to the same set converge. Paths sharing a hop fetch it
+**once**. This is specified in full in [`m-deep-fetch.md`](m-deep-fetch.md) and
+proven by the round-trip-count layer of the compatibility harness
+(`m-case-format`).
 
 ## Subtype narrowing
 
@@ -382,7 +391,8 @@ zero or more `abstract-subtype` interior nodes, and the instantiable
 `targetEntity` (`m-case-format`) — which may be abstract: an abstract root spans
 the whole family, an abstract subtype spans its concrete descendants, a concrete
 subtype is itself. The **effective concrete-subtype set** of a position is the
-concrete leaves it resolves over (`m-inheritance`), in descriptor order.
+concrete leaves it resolves over (`m-inheritance`), in the family's **canonical
+sibling-set order** — alphabetical by entity name (`m-inheritance`).
 
 `narrow` constrains a polymorphic position to a subset of its subtypes. It is a
 node like any other — a single-key tagged object joining the operation `oneOf`:
@@ -392,7 +402,16 @@ node like any other — a single-key tagged object joining the operation `oneOf`
 | `narrow` | `{ "narrow": { "entity", "to": [ … ], "operand" } }` | evaluate `operand` over the position `entity` narrowed to the subtypes `to` |
 
 - **`entity`** names the polymorphic position this node narrows — the queried
-  entity at top level (so `entity` equals the read's `targetEntity`).
+  entity at top level (so `entity` equals the read's `targetEntity`), or the
+  **relationship target** when the `narrow` appears inside a navigation filter's
+  `op` (`exists` / `navigate` / `notExists`), where the active position is the
+  related entity the hop reaches (`m-navigate`). Inside a navigation filter's `op`
+  the naming is **exact**: `narrow.entity` **MUST equal** the relationship target
+  (`m-navigate` owns this rule), and subtypes are reached only through `to` — naming
+  a **different** position there, even a broader ancestor, is
+  `narrow-outside-relationship-target`, **not** clamped. A narrow whose resolved
+  `to` set then escapes the relationship target's effective set is the same rule
+  (`narrow-outside-relationship-target`, `m-navigate`, `m-case-format`).
 - **`to`** is the non-empty, **order-preserved** list of authored subtype names
   the position is narrowed to. Each entry may name an abstract subtype (which
   resolves to its concrete descendants) or a concrete subtype (itself).
@@ -419,15 +438,22 @@ narrow:
 
 1. Resolve `entity` to its effective concrete-subtype set and **intersect** it with
    the active position threaded into this node — the **effective position's set**.
-   `entity` names the position this node narrows, but it can only ever *constrain*
-   the active position, never broaden it: an `entity` naming a position **broader**
-   than the one in scope is **clamped** to the active position (not rejected), and
-   when `entity` equals the active position — the normal case, where a top-level
-   `narrow`'s `entity` equals the read's `targetEntity` — the intersection is a
-   no-op.
+   This clamp governs the **top-level** narrow and any **nested same-position**
+   narrow (a narrow inside another narrow's `operand`): `entity` names the position
+   this node narrows, but it can only ever *constrain* the active position, never
+   broaden it, so an `entity` naming a position **broader** than the one in scope is
+   **clamped** to the active position (not rejected), and when `entity` equals the
+   active position — the normal case, where a top-level `narrow`'s `entity` equals
+   the read's `targetEntity` — the intersection is a no-op. **Exception (relationship
+   scope):** a narrow appearing in a **navigation filter's `op`** does **not** clamp
+   — its `entity` **MUST first name the relationship target exactly** (`m-navigate`),
+   and only then does the `to` effective-set subset check (step 4) apply; naming a
+   different position there is `narrow-outside-relationship-target`, never a clamp.
 2. Resolve each `to` entry to its effective concrete-subtype set (a concrete
    subtype -> itself; an abstract subtype -> its concrete descendants).
-3. **Union** the resolved sets, **preserving descriptor order** and deduplicating.
+3. **Union** the resolved sets and **deduplicate**; the resolved effective set is
+   presented in the family's **canonical alphabetical order** (`m-inheritance`),
+   independent of the authored `to` spelling.
 4. **Accept iff** the resolved set is **non-empty** and a **subset** of the
    effective position's set. The resolved set then becomes the active position for
    `operand`, so a nested `narrow` cannot broaden back out.

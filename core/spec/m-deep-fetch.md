@@ -71,6 +71,55 @@ placement differs, so the golden SQL achieves this per dialect (the `m-dialect`
 seam), but the observable order is the same everywhere: non-`NULL` values in the
 declared direction, then `NULL`s.
 
+## Polymorphic and narrowed deep fetch
+
+A deep-fetch hop whose relationship target is a **polymorphic position**
+(`m-inheritance` — an abstract root or abstract subtype) eagerly fetches concrete
+instances across the family. A path segment MAY carry a `narrow` (`m-op-algebra`,
+the `{ to: [ … ] }` on the segment) to fetch only a **subset** of the target's
+concrete subtypes; the narrow must resolve **within** the relationship target's
+effective concrete set (`narrow-outside-relationship-target`, `m-navigate`).
+
+**A narrowed hop populates a distinct narrowed relationship view**, keyed by a
+**derived** name rather than the ordinary relationship name:
+
+```text
+<relationshipName>[<ConcreteSubtype>,<ConcreteSubtype>]
+```
+
+- the **local** relationship name (never the qualified `Class.rel` ref);
+- the **effective concrete-subtype set**, in the family's canonical **alphabetical
+  order** (by entity name, `m-inheritance`; never abstract names, never a
+  `tagValue`), comma-joined with **no spaces**.
+
+So `Person.pets` narrowed to `[Pet]` (or, equivalently, `[Cat, Dog]`) both derive
+`pets[Cat,Dog]`. A narrowed include populates that view **only**; it does **not**
+mark the broad relationship loaded, and a **broad** hop keeps the ordinary
+relationship key. The polymorphic view's child objects additionally carry
+`familyVariant` (the concrete subtype name), materialized from the tag map exactly
+as an abstract-target flat read (`m-case-format`); a single-concrete narrowed view
+carries none (the caller fetched a known variant).
+
+**Dedup identity is the pair `(relationship hop, effective concrete set)`**, not
+the relationship alone. Two paths whose segments resolve to the **same** effective
+set deduplicate to **one** hop (one statement) — this is what makes the equivalent
+spellings `[Pet]` and `[Cat, Dog]` converge. A **broad** hop and a **narrowed** hop
+over the same relationship, or two hops narrowed to **different** sets
+(`pets[Dog]` and `pets[Cat]`), are **distinct** hops that each count toward `L`, so
+`1 + L` is preserved with narrowed hops counting as distinct.
+
+**One statement per hop, both strategies.** Under `table-per-hierarchy` a
+polymorphic hop is one shared-table `IN`-keyed read with the effective set's tag
+predicate appended (`… where t0.owner_id in (?, …) and t0.kind in (?, …)`). Under
+`table-per-concrete-subtype` a polymorphic hop is **one `union all` statement**
+(`m-sql`) whose branches — one per effective concrete subtype in canonical
+alphabetical order — share the **same** parent-id `IN` list, so the hop stays a
+**single** statement and
+`1 + L` holds verbatim; the per-branch as-of binds propagate exactly as
+`m-navigate` specifies. Splitting a polymorphic hop into one statement per branch is
+**not** permitted — it would make the statement count strategy- and
+narrowing-dependent and weaken every `roundTrips` assertion.
+
 ## Simplified `IN` vs. temp-table threshold
 
 The per-level child query uses a **simplified `IN (…)` list** of the gathered

@@ -51,7 +51,9 @@ from .inheritance import (
     concrete_superset_columns,
     inheritance_of,
     is_abstract,
+    narrowed_view_key,
     resolve_effective_definition,
+    resolve_hop_effective_set,
     tag_of,
     tag_value_to_subtype,
     validate_family,
@@ -470,10 +472,21 @@ def _deepfetch_paths(case: Case) -> list[list[str]]:
     """The deep-fetch paths as ordered lists of ``Class.relationship`` refs.
 
     A path segment is a closed object ``{rel, narrow?}`` in the canonical operation
-    (m-op-algebra); the deep-fetch machinery here keys hops by the relationship ref,
-    so each segment is projected to its ``rel``. ``narrow`` (deferred) is ignored.
+    (m-op-algebra); this projection keeps only the ``rel`` and is used where narrowing
+    is irrelevant (root-entity resolution). Narrow-aware hop identity is built from
+    :func:`_deepfetch_segments`.
     """
     return [[segment["rel"] for segment in path] for path in case.operation["deepFetch"]["paths"]]
+
+
+def _deepfetch_segments(case: Case) -> list[list[dict[str, Any]]]:
+    """The deep-fetch paths as ordered lists of raw ``{rel, narrow?}`` segments.
+
+    Preserves the optional per-hop ``narrow`` so the fetch machinery can derive the
+    narrowed view key and dedup identity ``(relationship hop, effective concrete set)``
+    (m-deep-fetch, Phase 6).
+    """
+    return [list(path) for path in case.operation["deepFetch"]["paths"]]
 
 
 def _deepfetch_root_operand(case: Case) -> dict[str, Any]:
@@ -681,7 +694,16 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
 
 
 class _FetchStep:
-    """One relationship hop = one golden statement (after the root)."""
+    """One relationship hop = one golden statement (after the root).
+
+    A hop is identified by :attr:`hop_key` — the pair (relationship ref, effective
+    concrete set), so a BROAD hop and a NARROWED hop over the same relationship, or
+    two narrowed hops with different effective sets, are DISTINCT levels (each counts
+    toward ``L`` in ``1 + L``), while equivalent authored narrowings that resolve to
+    the same effective set DEDUPLICATE (m-deep-fetch, Phase 6). Its graph attach key
+    is :attr:`view_key` — the ordinary relationship name for a broad hop, the derived
+    ``<rel>[<Concrete>,<Concrete>]`` for a narrowed one.
+    """
 
     def __init__(
         self,
@@ -692,6 +714,15 @@ class _FetchStep:
         child_attr: str,
         cardinality: str,
         order_by: list[dict[str, Any]] | None = None,
+        *,
+        hop_key: tuple[str, tuple[str, ...] | None],
+        view_key: str,
+        effective_set: list[str] | None,
+        is_narrowed: bool,
+        tag_column: str | None,
+        tag_binds: list[Any],
+        polymorphic: bool,
+        variant_map: dict[Any, str],
     ) -> None:
         self.rel_ref = rel_ref
         self.rel_name = rel_ref.split(".", 1)[1]
@@ -701,31 +732,87 @@ class _FetchStep:
         self.child_attr = child_attr
         self.cardinality = cardinality
         self.order_by = order_by or []
+        self.hop_key = hop_key
+        self.view_key = view_key
+        self.effective_set = effective_set
+        self.is_narrowed = is_narrowed
+        self.tag_column = tag_column
+        self.tag_binds = tag_binds
+        self.polymorphic = polymorphic
+        self.variant_map = variant_map
 
     @property
     def to_many(self) -> bool:
         return self.cardinality in ("one-to-many", "many-to-many")
 
 
+def _hop_key_of(
+    rel_ref: str, effective_set: list[str] | None, is_narrowed: bool
+) -> tuple[str, tuple[str, ...] | None]:
+    """The dedup identity of a hop: ``(rel_ref, None)`` broad, ``(rel_ref, set)`` narrowed."""
+    return (rel_ref, tuple(effective_set) if (is_narrowed and effective_set is not None) else None)
+
+
 def _fetch_steps(case: Case) -> list[_FetchStep]:
     """Ordered, de-duplicated relationship hops for a deep fetch.
 
-    Each distinct relationship across all paths is exactly one statement (one
-    query per relationship level — the N+1-eliminating contract). Paths that
-    share a prefix (e.g. ``[Order.items]`` and ``[Order.items, OrderItem.statuses]``)
-    therefore fetch ``Order.items`` once, not twice.
+    Each distinct hop across all paths is exactly one statement (one query per level
+    — the N+1-eliminating contract). Dedup identity is ``(relationship, effective
+    concrete set)``: paths sharing a prefix (``[Order.items]`` /
+    ``[Order.items, OrderItem.statuses]``) fetch ``Order.items`` once; a broad and a
+    narrowed hop over the same relationship, or two differently-narrowed hops, are
+    DISTINCT; equivalent authored narrowings (``[Pet]`` vs ``[Cat, Dog]``) converge.
     """
     model = case.model
+    family = Family(model.entity_defs)
+    variant_map = tag_value_to_subtype(model.entity_defs)
     steps: list[_FetchStep] = []
-    seen: set[str] = set()
-    for path in _deepfetch_paths(case):
-        for rel_ref in path:
-            if rel_ref in seen:
-                continue
-            seen.add(rel_ref)
+    seen: set[tuple[str, tuple[str, ...] | None]] = set()
+    for path in _deepfetch_segments(case):
+        for segment in path:
+            rel_ref = segment["rel"]
+            narrow_to = segment["narrow"]["to"] if isinstance(segment.get("narrow"), dict) else None
+
             parent_entity, relationship = _resolve_rel_ref(model, rel_ref)
             child_entity = model.entity(relationship["relatedEntity"])
             this_attr, other_attr = _join_endpoints(relationship)
+
+            target = family.relationship_target(rel_ref)
+            polymorphic_target = (
+                target is not None and inheritance_of(family.defs.get(target, {})) is not None
+            )
+
+            if target is not None and polymorphic_target:
+                effective_set, is_narrowed = resolve_hop_effective_set(family, rel_ref, narrow_to)
+                # The shared table holds the WHOLE family's concretes (the root's
+                # descendants), not just the relationship target's — so a hop targeting
+                # an abstract SUBTYPE still needs a tag predicate to exclude sibling
+                # branches in the same table.
+                root = family.root_of(target)
+                whole = family.effective_concrete_set(root) if root is not None else effective_set
+                tag_column = family.tag_column_of(target)
+                # No tag predicate when the hop spans the whole shared table; otherwise a
+                # tag `=`/`in` over the effective set's tagValues.
+                if set(effective_set) == set(whole):
+                    tag_binds: list[Any] = []
+                else:
+                    tag_binds = _hop_tag_binds(family, effective_set)
+                view_key = (
+                    narrowed_view_key(family, rel_ref, effective_set)
+                    if is_narrowed
+                    else rel_ref.split(".", 1)[1]
+                )
+                polymorphic = len(effective_set) > 1 and family.strategy_of(target) == STRATEGY_TPH
+            else:
+                effective_set, is_narrowed = None, False
+                tag_column, tag_binds, polymorphic = None, [], False
+                view_key = rel_ref.split(".", 1)[1]
+
+            hop_key = _hop_key_of(rel_ref, effective_set, is_narrowed)
+            if hop_key in seen:
+                continue
+            seen.add(hop_key)
+
             steps.append(
                 _FetchStep(
                     rel_ref=rel_ref,
@@ -735,9 +822,34 @@ def _fetch_steps(case: Case) -> list[_FetchStep]:
                     child_attr=other_attr,
                     cardinality=relationship["cardinality"],
                     order_by=relationship.get("orderBy"),
+                    hop_key=hop_key,
+                    view_key=view_key,
+                    effective_set=effective_set,
+                    is_narrowed=is_narrowed,
+                    tag_column=tag_column,
+                    tag_binds=tag_binds,
+                    polymorphic=bool(polymorphic),
+                    variant_map=variant_map,
                 )
             )
     return steps
+
+
+def _hop_tag_binds(family: Family, effective_set: list[str]) -> list[Any]:
+    """The ``tagValue`` list for a table-per-hierarchy hop's effective set.
+
+    A single concrete lowers to ``kind = ?`` (one bind); several to ``kind in (?, …)``
+    (one bind per concrete). *effective_set* is already in the family's canonical
+    sibling-set order (ALPHABETICAL by entity name, m-inheritance), so the binds follow
+    that order. Mirrors the top-level TPH tag-selection rule (m-sql), applied to a
+    deep-fetch child level.
+    """
+    binds: list[Any] = []
+    for name in effective_set:
+        block = inheritance_of(family.defs.get(name, {}))
+        if block is not None and block.get("tagValue") is not None:
+            binds.append(block["tagValue"])
+    return binds
 
 
 # --- assertions -------------------------------------------------------------
@@ -940,19 +1052,16 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
 _TPCS_VARIANT_COLUMN = "family_variant"
 
 
-def _descriptor_ordered(family: Family, target_name: str, effective: list[str]) -> list[str]:
-    """*effective* re-sorted into the family's descriptor concrete-subtype order.
+def _canonical_concrete_order(family: Family, target_name: str, effective: list[str]) -> list[str]:
+    """*effective* re-sorted into the family's CANONICAL sibling-set order.
 
-    The `union all` branch order is the effective concrete set in DESCRIPTOR order
-    (m-sql), independent of an authored `narrow.to` spelling — so `[Memo, Invoice]`
-    and `[Invoice, Memo]` yield the same branch order. Derived from the root's
-    concrete-descendant walk (already descriptor-ordered); any name outside it sorts
-    last (defensive — the effective set is always a subset).
+    The `union all` branch order is the effective concrete set in ALPHABETICAL order
+    (by entity name, ordinal ascending — m-inheritance / m-sql), independent of an
+    authored `narrow.to` spelling and of the descriptor's file layout, so
+    `[Memo, Invoice]` and `[Invoice, Memo]` yield the same branch order. *target_name*
+    is accepted for call-site symmetry but does not affect the order.
     """
-    root = family.root_of(target_name)
-    order = family.concrete_descendants(root) if root is not None else list(effective)
-    index = {name: position for position, name in enumerate(order)}
-    return sorted(effective, key=lambda name: index.get(name, len(order)))
+    return family.canonical_concrete_order(effective)
 
 
 def _assert_union_all_only(case: Case, tree: Any) -> None:
@@ -1086,9 +1195,10 @@ def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> 
 
     The read-side inheritance oracle for TPCS (the counterpart of the TPH
     projection-shape check): from the descriptor alone it recomputes the branch
-    count/order (the effective concrete set in descriptor order), the stable superset
-    projection every branch shares (inherited columns first, then subtype-declared in
-    descriptor traversal order, then the `familyVariant` literal), each branch's
+    count/order (the effective concrete set in ALPHABETICAL order by entity name), the
+    stable superset projection every branch shares (inherited columns first, then
+    subtype-declared OWN-column blocks in alphabetical subtype order, then the
+    `familyVariant` literal), each branch's
     per-column shape (an applicable column is a real reference; a non-applicable column
     is a `cast(null as <declared type>)` placeholder in that dialect's type), and each
     branch's `familyVariant` literal (the concrete subtype NAME). EVERY declared golden
@@ -1131,7 +1241,7 @@ def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> 
             if not branch_tables or branch_tables[0] != table:
                 raise CaseFailure(
                     f"{case.path.name}: `union all` branch {position} must read from "
-                    f"{table!r} (the descriptor-order concrete subtype {name!r}), got "
+                    f"{table!r} (the alphabetical-order concrete subtype {name!r}), got "
                     f"{branch_tables[0] if branch_tables else None!r}."
                 )
             out_columns = [projection.output_name for projection in branch.expressions]
@@ -1140,7 +1250,7 @@ def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> 
                     f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
                     f"{out_columns}, not the stable superset + familyVariant literal "
                     f"{expected_columns} (inherited first, then subtype-declared in "
-                    f"descriptor order, then familyVariant; m-sql)."
+                    f"alphabetical order by entity name, then familyVariant; m-sql)."
                 )
             applicable = set(concrete_superset_columns(entity_defs, [name]))
             _assert_branch_projection_shape(
@@ -1166,7 +1276,7 @@ def _materialize_tpcs_family_variant(
     TPH tag-to-variant materialization (m-inheritance / m-sql).
     """
     effective = _read_effective_set(case, family, target_name)
-    ordered = _descriptor_ordered(family, target_name, effective)
+    ordered = _canonical_concrete_order(family, target_name, effective)
     _assert_tpcs_union_shape(case, family, ordered)
 
     materialized: list[dict[str, Any]] = []
@@ -1212,7 +1322,7 @@ def _sorted_by_order_keys(
 def _assert_child_ordering(
     case_name: str,
     steps: list[_FetchStep],
-    children_by_step: dict[str, dict[Any, list[dict[str, Any]]]],
+    children_by_step: dict[tuple[str, tuple[str, ...] | None], dict[Any, list[dict[str, Any]]]],
 ) -> None:
     """Assert each ordered to-many level returned its children in the declared order.
 
@@ -1240,7 +1350,7 @@ def _assert_child_ordering(
             )
             for key in step.order_by
         ]
-        bucket = children_by_step.get(step.rel_ref, {})
+        bucket = children_by_step.get(step.hop_key, {})
         for parent_key, rows in bucket.items():
             if not rows:
                 continue
@@ -1287,8 +1397,8 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     # rows_by_entity[entity_name] -> list of result-rows fetched for that entity.
     rows_by_entity: dict[str, list[dict[str, Any]]] = {root_entity.name: root_rows}
 
-    # Execute each relationship level once, keyed by gathered parent keys.
-    children_by_step: dict[str, dict[Any, list[dict[str, Any]]]] = {}
+    # Execute each hop once, keyed by gathered parent keys, bucketed by hop identity.
+    children_by_step: dict[tuple[str, tuple[str, ...] | None], dict[Any, list[dict[str, Any]]]] = {}
     statement_index = 1
     for step in steps:
         parents = rows_by_entity.get(step.parent_entity.name, [])
@@ -1299,25 +1409,38 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
 
         if not parent_keys:
             rows_by_entity[step.child_entity.name] = []
-            children_by_step[step.rel_ref] = {}
+            children_by_step[step.hop_key] = {}
             continue
 
         if statement_index >= len(statements):
             raise CaseFailure(
                 f"{case.path.name}: then.statements ({dialect}) has no child statement "
-                f"for {step.rel_ref}, but the previous level gathered parent "
+                f"for {step.view_key}, but the previous level gathered parent "
                 f"keys {parent_keys!r}."
             )
 
+        # Bind layout per child level: the IN-list of gathered parent keys, then the
+        # polymorphic hop's tag binds (table-per-hierarchy `kind = ?` / `in (?, …)`
+        # over the effective set, alphabetical order), then the propagated as-of binds.
         raw_authored = case.statement_binds(statement_index, dialect)
         in_slice = raw_authored[: len(parent_keys)]
-        asof_suffix = list(raw_authored[len(parent_keys) :])
+        rest = list(raw_authored[len(parent_keys) :])
+        tag_slice = rest[: len(step.tag_binds)]
+        asof_suffix = rest[len(step.tag_binds) :]
         if sorted(_coerce_identity_key(b) for b in in_slice) != parent_keys:
             raise CaseFailure(
                 f"{case.path.name}: then.statements ({dialect}) level {statement_index} "
-                f"({step.rel_ref}) IN-list binds {in_slice!r} != gathered parent "
+                f"({step.view_key}) IN-list binds {in_slice!r} != gathered parent "
                 f"keys {parent_keys!r}. The child level MUST be keyed by exactly "
                 f"the parents from the previous level (the N+1-eliminating IN list)."
+            )
+        if list(tag_slice) != list(step.tag_binds):
+            raise CaseFailure(
+                f"{case.path.name}: then.statements ({dialect}) level {statement_index} "
+                f"({step.view_key}) tag binds {tag_slice!r} != the effective-set tag "
+                f"values {step.tag_binds!r}. A polymorphic table-per-hierarchy hop over a "
+                f"proper subset MUST filter its shared-table read by the effective set's "
+                f"tag values (m-navigate / m-inheritance)."
             )
 
         # As-of propagation oracle: the root pin propagates per-hop, matched by
@@ -1330,24 +1453,31 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
             if step.child_entity.is_temporal
             else []
         )
-        if asof_suffix != expected_suffix:
+        if list(asof_suffix) != expected_suffix:
             raise CaseFailure(
                 f"{case.path.name}: then.statements ({dialect}) level {statement_index} "
-                f"({step.rel_ref}) as-of suffix {asof_suffix!r} != the propagated "
+                f"({step.view_key}) as-of suffix {asof_suffix!r} != the propagated "
                 f"as-of binds {expected_suffix!r}. The root pin MUST propagate to "
                 f"this temporal child (matched by axis), appended after the IN list."
             )
 
         child_rows = _query_rows(
-            db, statements[statement_index], list(parent_keys) + expected_suffix
+            db,
+            statements[statement_index],
+            list(parent_keys) + list(step.tag_binds) + expected_suffix,
         )
+        # A polymorphic (multi-concrete, table-per-hierarchy) hop projects the raw tag
+        # column; materialize each row's `familyVariant` from the tag map (never a
+        # projected SQL column), exactly as an abstract-target flat read does (Q6).
+        if step.polymorphic and step.tag_column is not None:
+            child_rows = [_materialize_hop_variant(case, step, row) for row in child_rows]
         rows_by_entity[step.child_entity.name] = child_rows
 
         child_col = _column_of(step.child_entity, step.child_attr)
         bucket: dict[Any, list[dict[str, Any]]] = {}
         for row in child_rows:
             bucket.setdefault(_coerce_identity_key(row[child_col]), []).append(row)
-        children_by_step[step.rel_ref] = bucket
+        children_by_step[step.hop_key] = bucket
         statement_index += 1
 
     _assert_child_ordering(case.path.name, steps, children_by_step)
@@ -1394,61 +1524,97 @@ def _project_like(row: dict[str, Any], template_rows: list[dict[str, Any]]) -> d
     return {k: v for k, v in row.items() if k in keep}
 
 
+def _materialize_hop_variant(case: Case, step: _FetchStep, row: dict[str, Any]) -> dict[str, Any]:
+    """Replace a polymorphic deep-fetch child row's raw tag column with ``familyVariant``.
+
+    The table-per-hierarchy analogue of :func:`_materialize_family_variant` for a
+    deep-fetch hop: a polymorphic view projects the raw tag column so the harness can
+    derive the concrete subtype name; this pops it and inserts ``familyVariant``. A
+    tag value that maps to no concrete subtype is a loud failure.
+    """
+    new_row = dict(row)
+    if step.tag_column not in new_row:
+        raise CaseFailure(
+            f"{case.path.name}: polymorphic hop {step.view_key} does not project the tag "
+            f"column {step.tag_column!r}; familyVariant cannot be materialized (m-inheritance)."
+        )
+    tag_value = new_row.pop(step.tag_column)
+    variant = step.variant_map.get(tag_value)
+    if variant is None:
+        raise CaseFailure(
+            f"{case.path.name}: hop {step.view_key} tag value {tag_value!r} maps to no "
+            f"concrete subtype (tag metadata {sorted(step.variant_map)})."
+        )
+    new_row["familyVariant"] = variant
+    return new_row
+
+
 def _assemble_graph(
     case: Case,
     steps: list[_FetchStep],
     rows_by_entity: dict[str, list[dict[str, Any]]],
-    children_by_step: dict[str, dict[Any, list[dict[str, Any]]]],
+    children_by_step: dict[tuple[str, tuple[str, ...] | None], dict[Any, list[dict[str, Any]]]],
 ) -> dict[str, list[dict[str, Any]]]:
     """Build the root-keyed object graph following the deep-fetch paths.
 
-    Each path is walked hop by hop; at each hop the child rows for a given parent
-    are attached under the relationship name (a list for to-many, a single object
-    or ``None`` for to-one).
+    Each path is walked hop by hop; at each hop the child rows for a given parent are
+    attached under the hop's VIEW KEY — the ordinary relationship name for a broad
+    hop, the derived ``<rel>[<Concrete>,<Concrete>]`` for a narrowed one (m-deep-fetch).
     """
     root_entity = _deepfetch_root_entity(case)
-    step_by_ref = {step.rel_ref: step for step in steps}
+    family = Family(case.model.entity_defs)
+    step_by_hopkey = {step.hop_key: step for step in steps}
 
-    # Build per-entity row registries keyed by primary key so a shared hop
-    # (e.g. Order.items consumed by two paths) reuses the same child objects;
-    # nodes are keyed by (entity, pk) identity.
+    def seg_hop_key(segment: dict[str, Any]) -> tuple[str, tuple[str, ...] | None]:
+        rel_ref = segment["rel"]
+        narrow_to = segment["narrow"]["to"] if isinstance(segment.get("narrow"), dict) else None
+        target = family.relationship_target(rel_ref)
+        if target is not None and inheritance_of(family.defs.get(target, {})):
+            effective_set, is_narrowed = resolve_hop_effective_set(family, rel_ref, narrow_to)
+        else:
+            effective_set, is_narrowed = None, False
+        return _hop_key_of(rel_ref, effective_set, is_narrowed)
+
+    # Build per-view row registries keyed by primary key so a shared hop (e.g.
+    # Order.items consumed by two paths) reuses the same child objects, while two
+    # DISTINCT views over one relationship (a broad and a narrowed hop, or two
+    # narrowed hops) keep independent node sets. Nodes key by (view, entity, pk).
     def pk_attr(entity: Entity) -> str:
         for attribute in entity.attributes:
             if attribute.get("primaryKey"):
                 return attribute["name"]
         return entity.attributes[0]["name"]
 
-    # node registry: (entity_name, pk_value) -> assembled node (dict)
-    registry: dict[tuple[str, Any], dict[str, Any]] = {}
+    registry: dict[tuple[str, str, Any], dict[str, Any]] = {}
 
-    def node_for(entity: Entity, raw_row: dict[str, Any]) -> dict[str, Any]:
+    def node_for(view: str, entity: Entity, raw_row: dict[str, Any]) -> dict[str, Any]:
         pk_col = _column_of(entity, pk_attr(entity))
-        key = (entity.name, _coerce_identity_key(raw_row[pk_col]))
+        key = (view, entity.name, _coerce_identity_key(raw_row[pk_col]))
         if key not in registry:
             registry[key] = _normalize_row(raw_row)
         return registry[key]
 
-    root_nodes = [node_for(root_entity, r) for r in rows_by_entity[root_entity.name]]
+    root_nodes = [node_for("", root_entity, r) for r in rows_by_entity[root_entity.name]]
 
-    for path in _deepfetch_paths(case):
+    for path in _deepfetch_segments(case):
         parent_entities = [root_entity]
         parent_nodes_levels: list[list[dict[str, Any]]] = [root_nodes]
-        for rel_ref in path:
-            step = step_by_ref[rel_ref]
+        for segment in path:
+            step = step_by_hopkey[seg_hop_key(segment)]
             parent_entity = parent_entities[-1]
             parent_nodes = parent_nodes_levels[-1]
             parent_col = _column_of(parent_entity, step.parent_attr)
-            bucket = children_by_step[rel_ref]
+            bucket = children_by_step[step.hop_key]
 
             next_nodes: list[dict[str, Any]] = []
             for parent_node in parent_nodes:
                 parent_key = _coerce_identity_key(parent_node.get(parent_col))
                 matched = bucket.get(parent_key, [])
-                child_nodes = [node_for(step.child_entity, c) for c in matched]
+                child_nodes = [node_for(step.view_key, step.child_entity, c) for c in matched]
                 if step.to_many:
-                    parent_node[step.rel_name] = child_nodes
+                    parent_node[step.view_key] = child_nodes
                 else:
-                    parent_node[step.rel_name] = child_nodes[0] if child_nodes else None
+                    parent_node[step.view_key] = child_nodes[0] if child_nodes else None
                 next_nodes.extend(child_nodes)
             parent_entities.append(step.child_entity)
             parent_nodes_levels.append(next_nodes)

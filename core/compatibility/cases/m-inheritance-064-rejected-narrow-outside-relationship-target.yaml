@@ -1,0 +1,25 @@
+# REJECTED: narrowing a relationship past its target's effective set
+# (m-navigate, m-op-algebra, m-inheritance, resolved Q10).
+#
+# `Person.pets` targets the abstract subtype Pet, whose effective concrete set is
+# {Dog, Cat}. Narrowing the relationship target to [WildBoar] — a concrete that
+# shares the family ROOT (Animal) but is a SIBLING of Pet, not a descendant — is
+# invalid: it is not a subset of the relationship target's reachable set, even though
+# both live in the same shared table. A model-aware validator MUST refuse this
+# BEFORE any SQL, naming `narrow-outside-relationship-target`. This is the
+# relationship-scope analogue of `narrow-outside-position` for a queried position.
+model: models/animal.yaml
+tags: [m-navigate, m-op-algebra, m-inheritance, table-per-hierarchy, narrow, rejected, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    exists:
+      rel: Person.pets
+      op:
+        narrow:
+          entity: Pet
+          to: [WildBoar]
+          operand:
+            all: {}
+then:
+  rejectedRule: narrow-outside-relationship-target
