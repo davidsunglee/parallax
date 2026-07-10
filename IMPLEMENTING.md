@@ -86,8 +86,9 @@ Before implementation, produce a short plan in the language module that records:
   [core/spec/slices.md](core/spec/slices.md) — recorded as its
   `describe` claim. This is the first decision; see
   [Declaring The Conformance Slice](#declaring-the-conformance-slice).
-- The module → package map covering the catalog in
-  [core/spec/modules.md](core/spec/modules.md), plus any support packages.
+- The behavioral-module → source-ownership / enforcement-scope map covering the
+  catalog in [core/spec/modules.md](core/spec/modules.md), plus any support
+  scopes.
 - The dependency-boundary enforcement tool and configuration.
 - The conformance adapter entry point.
 - The concrete provider reset lifecycle for database-backed cases, including the
@@ -101,9 +102,10 @@ Before implementation, produce a short plan in the language module that records:
 ## Declaring The Conformance Slice
 
 Slice selection is the first step, taken before any runtime code. It decides what
-this build actually claims, and everything downstream — the module/package map,
-the case/dialect matrix, the conformance grade, the API Conformance Suite — is
-scoped by it. Choose (or define) the named Conformance Slice:
+this build actually claims, and everything downstream — the
+behavioral-module/source-enforcement map, the case/dialect matrix, the
+conformance grade, the API Conformance Suite — is scoped by it. Choose (or
+define) the named Conformance Slice:
 
 - **Adopt an existing slice.** A fresh first build ordinarily adopts one of the
   two object-lifecycle slices defined in

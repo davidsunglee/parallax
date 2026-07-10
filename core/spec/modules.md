@@ -1,14 +1,87 @@
 # The Module Catalog
 
 Parallax's normative behavior is organized into **modules** with canonical
-`m-<slug>` identifiers. A module is a **language-neutral behavioral module, not
-a package**: a language implementation MAY group many modules into one
-package / artifact / crate, so long as it enforces the module-dependency graph
-internally. The identifier names *what behavior* a module owns, never *how* a
-language ships it.
+`m-<slug>` identifiers. A module is a **language-neutral behavioral module**,
+not a source or deployment unit. The identifier names *what behavior* a module
+owns, never *where* a language implements it or *how* that implementation ships.
 
 The catalog is **open**: a module is added when a real, separable behavior
 exists — modules are not pre-registered for anticipated work.
+
+## Implementation topology vocabulary
+
+The core behavioral catalog, a language's source topology, and its deployable
+topology are three different views:
+
+- A **behavioral module** is a normative `m-<slug>` behavior and a node in the
+  dependency graph below.
+- A **source module** is an implementation-owned unit of source organization.
+  Depending on the ecosystem, it may be a file, folder, namespace, internal
+  package, crate, or another import-addressable unit. It need not be published
+  or independently installable.
+- An **enforcement scope** is a named source boundary that a dependency-analysis
+  tool treats as a node. A scope may be a source module, a subdivision of one,
+  or a set of them, but the behavioral-module-to-scope mapping MUST remain fine
+  grained enough to reject every dependency direction forbidden by this catalog.
+- A **deployable artifact** is an independently installable or publishable
+  production unit with its own declared external dependencies. One artifact may
+  contain many source modules and enforcement scopes.
+- The **common runtime** is the independently deployable, lifecycle-neutral
+  artifact that supplies behavior shared by all supported object lifecycle
+  styles.
+- A **lifecycle extension** is a separately deployable production artifact that
+  implements exactly one supported object lifecycle style, such as snapshot
+  graphs or managed objects, over the common runtime.
+- A **database adapter** is a separately deployable production artifact that
+  implements the abstract database port for exactly one database type over one
+  concrete driver.
+- A **composition root** is the application- or test-owned assembly point that
+  selects one lifecycle extension and the concrete database adapter or adapters
+  the application uses, then injects them into the runtime. It is a wiring
+  boundary, not another behavioral module.
+
+The normative DAG applies to behavioral dependencies between enforcement scopes
+regardless of how many deployable artifacts contain those scopes. A language MAY
+place many behavioral modules in one source tree or deployable artifact, provided
+its dependency tooling still enforces the DAG between files, folders, namespaces,
+internal packages, crates, or equivalent scopes. Co-location in an artifact does
+not make a forbidden source dependency legal, and the DAG does not imply one
+artifact per behavioral module.
+
+## Required production artifact topology
+
+Deployable artifacts follow optional-dependency seams rather than the
+behavioral-module catalog:
+
+- Every language implementation MUST ship the common runtime independently of
+  every lifecycle extension and concrete database adapter. The common runtime
+  MUST depend on neither a lifecycle extension nor a concrete database driver.
+- Every supported lifecycle style MUST ship as its own lifecycle extension.
+  Each extension depends downward on the common runtime and MUST NOT depend on a
+  sibling lifecycle extension or a concrete database adapter.
+- Every concrete database adapter MUST ship as its own deployable artifact. Its
+  manifest is the only Parallax production-artifact manifest that MAY declare
+  that adapter's concrete driver; the adapter depends on the abstract port and
+  its matching driver-free dialect strategy, wherever those driver-free
+  components ship.
+- Installing or using a selected lifecycle extension and database adapter MUST
+  NOT install, initialize, or load an unselected lifecycle extension, adapter,
+  or driver. A mandatory umbrella artifact that depends on all lifecycle styles
+  or concrete adapters is therefore forbidden.
+- Pure, driver-free dialect strategies MAY ship in the common runtime or in
+  further independently deployable artifacts. Languages MAY split any required
+  artifact further, but MUST NOT collapse the common runtime into a lifecycle
+  extension or combine concrete drivers into a mandatory artifact.
+- Conformance harnesses, benchmarks, container tooling, and other
+  development-only tools MUST NOT enter a production runtime dependency graph.
+
+The composition root may import the selected concrete artifacts. Common-runtime
+code above the database seam binds to lifecycle-neutral interfaces and the
+abstract database port whether the port is co-packaged or supplied by another
+driver-free artifact; each lifecycle extension depends only downward on that
+common behavior. No runtime layer above the database seam imports a concrete
+adapter. The rationale and consequences are recorded in
+[ADR 0022](../../docs/adr/0022-deployable-artifacts-follow-optional-dependency-seams.md).
 
 ## The module catalog
 
@@ -67,6 +140,9 @@ The fenced `dependency-graph` block below is the machine-readable source of
 truth. The reference harness parses it
 (`reference-harness/src/reference_harness/dep_graph_check.py`) and asserts the
 graph is acyclic with legal directions. The prose and the block MUST agree.
+This graph says nothing about artifact count: implementations enforce it across
+their declared source enforcement scopes, including scopes co-located in one
+deployable artifact.
 
 ```dependency-graph
 m-descriptor --> m-core
@@ -186,7 +262,7 @@ construction it may reference any behavioral module it harnesses.
   mechanism (dependency-cruiser, import-linter, ArchUnit, crate boundaries, …)
   that fails the build on any dependency the graph does not permit — the common
   failure mode being a wrong-direction edge. Each records its tool and the
-  module → package / crate mapping (see the
+  behavioral-module → source-ownership / enforcement-scope mapping (see the
   [language-spec template](language-spec-template.md), §9).
 
 ### The coverage gate

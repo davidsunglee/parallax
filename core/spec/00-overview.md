@@ -21,15 +21,18 @@ compatibility cases that pin it down; a deferred module carries a short stub.
 Modules depend on one another only in the directions permitted by the **normative
 module-dependency graph**.
 
-A module is a **language-neutral behavioral module, not a package**: a language
-implementation MAY group many modules into one package / artifact / crate, so long
-as it enforces the module-dependency graph internally. The identifier names *what
-behavior* a module owns, never *how* a language ships it.
+A module is a **language-neutral behavioral module**, not a source module or a
+deployable artifact. A language implementation MAY group many behavioral modules
+in one source tree or artifact, so long as its declared source enforcement scopes
+preserve the module-dependency graph. Required deployable seams instead follow
+optional production dependencies: a lifecycle-neutral common runtime, separate
+lifecycle extensions, and separate concrete database adapters. The canonical
+vocabulary and topology rules live in [`modules.md`](modules.md).
 
 The catalog — every module, its status (`active` / `deferred`), its coverage
 source, and the normative dependency graph — lives in
-[`modules.md`](modules.md). **Slices**, the mechanism that composes modules into
-concrete deliverables, live in [`slices.md`](slices.md).
+[`modules.md`](modules.md). **Slices**, the named compatibility-corpus claims
+that select covered behavior, live in [`slices.md`](slices.md).
 
 ## Normative vs. non-normative boundary (DQ3)
 
@@ -46,12 +49,17 @@ idiomatic developer experience while still guaranteeing parity.
   operation algebra (**and** its serde), the canonical model-descriptor schema,
   and the database-dialect interface.
 - **The module-dependency graph** — the *direction* of allowed dependencies
-  between modules (not the internal class layout within a module).
+  between behavioral modules, enforced across language source scopes regardless
+  of artifact count.
+- **The production artifact topology** — the required common-runtime,
+  lifecycle-extension, and concrete-database-adapter seams described in
+  [`modules.md`](modules.md).
 
 **Non-normative** (guidance only; a language MAY diverge):
 
-- Internal class/package decomposition *within* a module. A "portal", a
-  "manager", or any specific class need not exist.
+- Internal class and source-module decomposition within the required enforcement
+  and deployable boundaries. A "portal", a "manager", or any specific class need
+  not exist.
 - The developer-facing API surface, configuration ergonomics, and whether the
   implementation uses codegen, dynamic proxies, or metaprogramming.
 - The suggested reference architecture mirroring Reladomo's decomposition.

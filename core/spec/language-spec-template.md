@@ -20,12 +20,12 @@ whole core spec**.
 ## 1. Conformance Slice declaration
 
 The **named Conformance Slice** this build claims leads the template because it
-scopes everything downstream — the module → package map, the case/dialect
-matrix, the conformance-adapter grade, and the API Conformance Suite ([§6](#6-api-conformance-suite--usage-guide))
-are all bounded by it. A Conformance Slice is a declared, **case-granular**
-subset of the compatibility corpus (it may claim some *features* of a module
-while deferring others). Its machine-readable form is a `describeOk` envelope
-validated against
+scopes everything downstream — the behavioral-module → source-enforcement map,
+the case/dialect matrix, the conformance-adapter grade, and the API Conformance
+Suite ([§6](#6-api-conformance-suite--usage-guide)) are all bounded by it. A
+Conformance Slice is a declared, **case-granular** subset of the compatibility
+corpus (it may claim some *features* of a module while deferring others). Its
+machine-readable form is a `describeOk` envelope validated against
 [`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json),
 and its name is its `caseTags.include` tag. Slice mechanics and the canonical
 claims live in [`slices.md`](slices.md#the-slice-tag-convention).
@@ -98,8 +98,11 @@ developer authors a domain model** is the per-language choice.
   cover precision-sensitive values (`int64`, `decimal(p,s)`, `bytes`,
   `timestamp`) and distinguish wall-clock `date` / `time` from instant
   `timestamp` semantics.
-- **(decide and record)** Serde module: the dedicated package whose sole job is
-  metamodel serialize/deserialize, with **round-trip
+- **(decide and record)** Metamodel serde ownership: the source ownership and
+  enforcement scope for metamodel serialization/deserialization, and the
+  deployable artifact containing that scope. The scope MAY share a source module
+  or deployable artifact with other scopes where the module DAG remains
+  enforceable. Specify **round-trip
   (serialize → deserialize → serialize) tests** in both JSON and YAML.
 
 ## 4. Transaction-block demarcation (`m-unit-work`)
@@ -227,28 +230,34 @@ is mandated; *how* the in-memory model and the typed surface are produced is ope
 
 ## 9. Build-time dependency enforcement (DQ3, module graph)
 
-The normative module-dependency graph is **MUST** in core; each language
-**SHOULD** enforce it mechanically at build time so a wrong-direction edge fails
-the build.
+The normative behavioral-module dependency graph is **MUST** in core; each
+language **SHOULD** enforce it mechanically at build time so a wrong-direction
+edge fails the build. The terms **behavioral module**, **source module**,
+**enforcement scope**, and **deployable artifact** are defined in
+[`modules.md`](modules.md); they are not interchangeable.
 
 - **(decide and record)** The enforcement tool and its config. Ecosystem
   examples: `import-linter` / `tach` (Python), **ArchUnit** or Gradle module
   boundaries (Java), `dependency-cruiser` / `eslint-plugin-boundaries`
   (TypeScript), **crate boundaries + visibility** (Rust).
-- **(decide and record)** The mapping from the core modules onto this language's
-  packages/modules/crates, any support packages required by the language topology,
-  and the contract that encodes the legal edges (the module DAG in
-  [`modules.md`](modules.md), plus any explicitly documented support-package edges).
-- **(decide and record)** **The database seam maps to more than one package.** It
-  is normatively decomposed into a **pure dialect / portability** module
-  (`m-dialect`), an **abstract runtime database port** module (`m-db-port`), **N
-  concrete adapter** modules (one per database type, each depending only on the
-  port and the dialect layer), and **error classification** (`m-db-error`) — see
-  [`m-dialect.md`](m-dialect.md) and [`m-db-port.md`](m-db-port.md). Record each as
-  its own row in the module → package mapping, and encode the two structural rules
-  in the legal-edge contract: **only the composition root may depend on a concrete
-  adapter**, and **the port depends on nothing application-specific**. Collapsing
-  the seam into a single package is a gap — the decomposition is normative.
+- **(decide and record)** The mapping from core behavioral modules to this
+  language's source ownership and enforcement scopes, any support scopes required
+  by the language topology, and the contract that encodes the legal edges (the
+  module DAG in [`modules.md`](modules.md), plus any explicitly documented support
+  edges). Multiple scopes MAY ship in one deployable artifact; co-location MUST
+  NOT weaken dependency enforcement.
+- **(decide and record)** The database seam's source scopes and deployable
+  artifacts. It is normatively decomposed into a **pure dialect / portability**
+  layer (`m-dialect`), an **abstract runtime database port** (`m-db-port`), **N
+  independently deployable concrete adapter artifacts** (one per database type,
+  each depending only on the port, matching dialect strategy, and its driver), and
+  **error classification** (`m-db-error`) — see [`m-dialect.md`](m-dialect.md) and
+  [`m-db-port.md`](m-db-port.md). Encode the structural rules that **only the
+  composition root may depend on a concrete adapter**, **the port depends on
+  nothing application-specific**, and **only an adapter artifact may introduce
+  its concrete driver**. Collapsing these source enforcement scopes or combining
+  drivers in a mandatory artifact is a gap; grouping the driver-free port and
+  dialect scopes in the common runtime is allowed.
 
 ## 10. Optional optimized data structures (`m-perf-bench`, DQ10)
 

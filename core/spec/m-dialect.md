@@ -9,9 +9,9 @@ precisely because dialect divergence is localized to one swappable component.
 This mirrors Reladomo's `DatabaseType` seam — obtained from the connection
 manager at every SQL decision point, never from a global registry.
 
-The database seam is **normatively decomposed** into three cooperating parts:
-this **pure dialect / portability layer** (`m-dialect`), an **abstract runtime
-database port** plus its **N concrete adapters** (`m-db-port`), and **error
+The database seam comprises this **pure dialect / portability layer**
+(`m-dialect`), an **abstract runtime database port** (`m-db-port`) implemented by
+**N independently deployable concrete adapter artifacts**, and **error
 classification** (`m-db-error`). The pure dialect layer performs **no I/O**: it
 holds no connection, opens no socket, and imports no database driver. It is the
 single source of truth for every dialect-specific string and every

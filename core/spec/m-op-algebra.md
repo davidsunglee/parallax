@@ -2,11 +2,11 @@
 
 `m-op-algebra` defines the **operation algebra** — the framework's own query
 language — and its **canonical serialization**. The algebra *is* the protocol: the
-compatibility suite's queries are instances of it, and every implementation ships
-a serde module that round-trips them. `m-op-algebra` depends on `m-descriptor`
-(operations are bound to metamodel attributes) and on `m-inheritance` (the
-`narrow` node constrains a polymorphic entity position against the family's
-effective concrete-subtype set).
+compatibility suite's queries are instances of it, and every implementation
+provides operation serde behavior that round-trips them. `m-op-algebra` depends
+on `m-descriptor` (operations are bound to metamodel attributes) and on
+`m-inheritance` (the `narrow` node constrains a polymorphic entity position
+against the family's effective concrete-subtype set).
 
 The canonical schema is
 [`core/schemas/operation.schema.json`](../schemas/operation.schema.json).
@@ -37,11 +37,14 @@ encodings exist in at least **JSON and YAML** (a format-agnostic core plus
 pluggable writers); the format set is consistent with metamodel serde
 (`m-descriptor`).
 
-Every implementation **MUST** ship a serde module whose sole job is operation
-serialize/deserialize, with **round-trip** tests:
+Every implementation **MUST** provide operation serialization/deserialization
+behavior, with **round-trip** tests:
 `serialize(deserialize(op)) == op`. The reference harness asserts this per case,
-in both JSON and YAML. Idiomatic per-language re-expressions of a query (fluent
-builders, etc.) are **illustrative only** — never the normative encoding.
+in both JSON and YAML. This behavior does not execute operations; its source
+ownership, enforcement scope, and deployable-artifact placement are
+language-owned under the topology rules in [`modules.md`](modules.md). Idiomatic
+per-language re-expressions of a query (fluent builders, etc.) are **illustrative
+only** — never the normative encoding.
 
 The encoding is a tagged object: each node is a single-key object whose key names
 the operation. Attribute references are `Class.attribute` strings, resolved

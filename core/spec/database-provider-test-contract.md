@@ -37,7 +37,7 @@ provider row is incomplete.
 
 ## 2. Real-database adapter smoke contract
 
-Each concrete adapter module is driver-bound and therefore needs a small
+Each concrete adapter artifact is driver-bound and therefore needs a small
 database-backed smoke suite. This suite proves the shipped adapter path, not the
 `m-case-format` case runner.
 

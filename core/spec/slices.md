@@ -2,9 +2,10 @@
 
 A **slice** is a declared subset of the compatibility corpus that an
 implementation claims through the conformance adapter for a specific milestone.
-Slices — not module tiers — are how modules compose into deliverables: a slice
-names exactly the cases one build honestly supports right now, and MAY defer
-*parts* of a module without redefining that module's boundary.
+Slices — not module tiers — are how cases compose into named behavioral claims:
+a slice names exactly the cases one build honestly supports right now, and MAY
+defer *parts* of a module without redefining that module's boundary. A slice is
+coverage, not a source or deployable topology.
 
 The slice ⇒ module reference is **one-way**: this file names modules; a module
 spec never names a slice.
