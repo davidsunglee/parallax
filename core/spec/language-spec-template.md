@@ -1,302 +1,422 @@
 # Language-Spec Template
 
-This is the **checklist every per-language spec must pin down** before an
-implementation begins. The core spec — a catalog of `m-<slug>` capability modules
-— fixes the *language-neutral* contract: observable behavior, the protocol seams,
-the module-dependency graph. It deliberately leaves the *developer-facing surface*
-— API shape, configuration ergonomics, whether codegen is used — to each language.
-This template is the boundary list: fill in every section and an agent can author
-an implementation that passes the compatibility suite **without re-reading the
-whole core spec**.
+This is the checklist every per-language spec must complete before implementation
+begins. The core specification fixes language-neutral behavior, protocol seams,
+the behavioral-module dependency graph, and the required production artifact
+topology. A language spec records the remaining developer-surface, source,
+packaging, and toolchain decisions once.
 
-> **How to use this.** Copy this file into `<language>/spec/` and replace every
-> *(decide and record)* with the language's concrete answer plus a one-line
-> rationale. A section left blank is a gap an implementer will have to guess at —
-> which is exactly the failure this template exists to prevent. Nothing here may
-> contradict the core spec or the normative module-dependency graph
-> ([`modules.md`](modules.md)); this template only fills in the non-normative,
-> per-language choices the core spec leaves open (DQ3).
+> **How to use this template.** Copy this file into `<language>/spec/`. Replace
+> every **(decide and record)** marker with a concrete answer and a short
+> rationale. Apply the applicability rules below, then delete their instructions
+> from the completed spec. Nothing here may contradict the core specification,
+> the canonical slice claim in [`slices.md`](slices.md), or the normative module
+> DAG and artifact topology in [`modules.md`](modules.md).
 
-## 1. Conformance Slice declaration
+## Applicability rules
 
-The **named Conformance Slice** this build claims leads the template because it
-scopes everything downstream — the behavioral-module → source-enforcement map,
-the case/dialect matrix, the conformance-adapter grade, and the API Conformance
-Suite ([§6](#6-api-conformance-suite--usage-guide)) are all bounded by it. A
-Conformance Slice is a declared, **case-granular** subset of the compatibility
-corpus (it may claim some *features* of a module while deferring others). Its
-machine-readable form is a `describeOk` envelope validated against
-[`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json),
-and its name is its `caseTags.include` tag. Slice mechanics and the canonical
-claims live in [`slices.md`](slices.md#the-slice-tag-convention).
+Every decision prompt carries one of these labels:
 
-- **(decide and record)** The named **Conformance Slice** this build claims — its
-  name **MUST** equal the `caseTags.include` tag and follow the slice-tag
-  convention `^slice-[a-z0-9][a-z0-9-]*$` — or the definition of a new named
-  slice in [`slices.md`](slices.md). A first implementation should choose an
-  existing include-driven slice such as
-  [`slice-snapshot-1`](slices.md#snapshot-conformance-slice) or
-  [`slice-managed-1`](slices.md#managed-object-conformance-slice), whose
-  canonical `describe` claim lives in `slices.md` and is the single source of
-  truth (a slice may defer parts of a module).
-- **(decide and record)** The adapter's `capabilities` block
-  (`modules` / `dialects` / `caseShapes` / `caseTags.include`) — **byte-equal to
-  the canonical claim except for the `adapter` identity**. This block is the
-  slice's machine-readable declaration; the parallax-core `--profile` gate proves
-  the tagged corpus stays consistent with it.
-- **(decide and record)** The `unsupported` discipline for out-of-slice cases:
-  confirm the adapter returns `status: "unsupported"` (exit `10`) for every case
-  command outside the slice (out-of-claim shape, dialect, module tag, or case
-  tag) while **never** returning `unsupported` for an in-slice case. The
-  slice-matching rules and a worked `describe` example are in
+- **All slices** — retain and answer it for every selected Conformance Slice.
+- **Snapshot lifecycle** — retain and answer it only when the selected slice uses
+  the plain-value snapshot lifecycle. Delete the managed-object alternative.
+- **Managed-object lifecycle** — retain and answer it only when the selected
+  slice uses managed objects. Delete the snapshot alternative.
+- **When claimed: _capability_** — retain and answer it only when the selected
+  canonical claim contains the named module, feature, dialect, or command. A
+  module implemented only as a transitive prerequisite is not claimed behavior
+  and does not activate one of these prompts. When several capabilities are
+  named, the prompt states whether any or all must be claimed.
+
+A completed language spec retains exactly one lifecycle profile in
+[§3](#3-object-lifecycle-profile) and the matching result branch in
+[§4](#4-result-collections-and-materialization). The canonical snapshot and
+managed-object slices are sibling choices over a shared behavioral base; neither
+is a prerequisite for the other. If a new slice does not identify its lifecycle
+unambiguously, define that choice in [`slices.md`](slices.md) before completing a
+language spec.
+
+The deprecated `slice-mvp-1` predates these lifecycle-complete authoring paths
+and is not a starting point for a new language spec. An existing implementation
+may retain its historical spec until its claim migrates; do not invent unclaimed
+identity or detach behavior merely to force the legacy claim through this
+template.
+
+## 1. Scope and exact claim
+
+Complete this table first. Its claim fields copy, rather than reinterpret, the
+canonical `describe` envelope in [`slices.md`](slices.md). A slice's
+`capabilities.modules` is the union of module tags on its cases; it is coverage,
+not a dependency closure or packaging plan. Compute implementation prerequisites
+separately from the DAG in [`modules.md`](modules.md).
+
+| Scope decision | Required record |
+|---|---|
+| Conformance Slice | **(decide and record — All slices)** The canonical slice name, its one `caseTags.include` tag, lifecycle profile, and link to its definition in `slices.md`. |
+| Exact `describe` claim | **(decide and record — All slices)** The complete canonical `describeOk` envelope. It MUST be structurally equal to the claim in `slices.md` after JSON parsing, except for the implementation's `adapter` identity. |
+| Claimed capability coverage | **(decide and record — All slices)** The exact `modules`, `dialects`, `caseShapes`, `caseTags`, `commands`, and `provisioning` values copied from the canonical claim. State that `modules` is the tagged-case union, not a dependency closure. |
+| Unclaimed implementation prerequisites | **(decide and record — All slices)** Every transitive prerequisite in the module DAG that is absent from claimed `capabilities.modules`, with the claimed module that reaches it and the source scope that supplies it. These are implementation dependencies, not developer-surface claims. |
+| Deferred capabilities | **(decide and record — All slices)** Every known module, feature tag, dialect, command, or lifecycle style intentionally deferred from this milestone. Distinguish deferral from unsupported input classification. |
+| Supported dialects and commands | **(decide and record — All slices)** The exact dialect and command sets in the canonical claim, plus the local and CI commands that exercise each supported combination. Do not describe an out-of-claim expansion as part of this claim. |
+
+- **(decide and record — All slices)** Confirm that the adapter returns
+  `status: "unsupported"` with exit `10` for every case command outside the
+  claim, while never returning `unsupported` for an in-slice case. Record how
+  out-of-claim shape, dialect, module tag, and slice tag are classified. See
   [`m-conformance-adapter.md`](m-conformance-adapter.md).
+- **(decide and record — All slices)** Record the case-selection expression used
+  for verification. It MUST select the intersection of the active slice tag and
+  the relevant capability tags; filename prefixes are not a conformance target.
 
-## 2. API surface (non-normative — DQ3)
+## 2. Shared developer API and model surface
 
-The shape of the developer-facing API is **per-language and non-normative**. The
-core mandates only the *canonical operation algebra* (`m-op-algebra`) and its
-serde; how a developer *spells* an operation in this language is a DX choice.
+### Query and operation API
 
-- **(decide and record)** The finder/query entry point: how does a developer
-  start an operation (`OrderFinder.orderId().eq(42)` fluent builder, a function,
-  a query DSL, …)? Show the idiomatic spelling of the running example
-  `Order where orderId == 42 and items.sku in ['A','B']`.
-- **(decide and record)** Result types: what does a `findMany` return (a lazy
-  operation-backed list per `m-op-list`, an iterator, a materialized collection)?
-  How is a single-object find spelled, and what happens on not-found / multiple?
-- **(decide and record)** The `group` operator surface (`m-op-algebra`): prefix
-  `group(a.or(b)).and(c)` vs. fluent `a.or(b).group().and(c)`. Both **MUST**
-  serialize to the same canonical `group` node; the surface choice is yours.
-- **(decide and record)** Deep-fetch spelling (`m-deep-fetch`): how a developer
-  declares the eager-fetch navigation set on a query.
-- **(decide and record)** Aggregation spelling (`m-agg`, deferred): `groupBy` /
-  aggregate-function / `having` surface.
-- **(decide and record)** Temporal read spelling (`m-temporal-read`): how a
-  developer requests a point-in-time read (`asOf`), a range/edge-point read
-  (`asOfRange` in core), and full history (`history`). Record the public axis
-  names for processing and business time, the runtime timestamp type and precision
-  boundary from `m-core`, how `now` / omitted axes are represented, and how invalid
-  combinations are rejected (for example, point and history on the same axis).
+- **(decide and record — All slices)** The finder/query entry point. Show the
+  idiomatic spelling of `Order where orderId == 42 and items.sku in ['A','B']`
+  and its canonical `m-op-algebra` serialization.
+- **(decide and record — All slices)** The single-object find spelling and the
+  behavior on no result and multiple results.
+- **(decide and record — All slices)** The `group` operator spelling. It MUST
+  serialize to the canonical `group` node regardless of surface syntax.
+- **(decide and record — All slices)** Deep-fetch/include spelling and how a
+  developer declares an eager-fetch navigation set.
+- **(decide and record — All slices)** Temporal-read spelling for `asOf`,
+  `asOfRange`, and `history`: public axis names, timestamp type and precision,
+  `now`/omitted axes, and rejection of invalid combinations.
+- **(decide and record — When claimed: `m-agg`)** Aggregation result and operation
+  spelling for `groupBy`, aggregate functions, and `having`. Also record SQL
+  lowering only when `m-sql-agg` is claimed.
 
-## 3. Metadata / model input format (DQ5, DQ6)
+### Metadata and model input
 
-The metamodel is a **mandated protocol** (introspection **and** serde); the
-canonical descriptor (`metamodel.schema.json`) is its serialized form. **How a
-developer authors a domain model** is the per-language choice.
+- **(decide and record — All slices)** The primary model-authoring format:
+  canonical YAML/JSON, annotations/decorators, a builder DSL, or a hybrid. It
+  MUST produce an in-memory metamodel that round-trips through canonical JSON
+  and YAML serde.
+- **(decide and record — All slices)** The runtime introspection API for
+  attributes, primary keys, as-of attributes, relationships, inheritance, value
+  objects, and name lookup.
+- **(decide and record — All slices)** For every neutral scalar type, the
+  generated property/read type, create/update input type, adapter bind type, and
+  result materialization rule. Cover `int64`, `decimal(p,s)`, `bytes`, and
+  `timestamp`, and distinguish wall-clock `date`/`time` from instant semantics.
+- **(decide and record — All slices)** Metamodel serde ownership: source owner,
+  enforcement scope, deployable artifact, and JSON/YAML round-trip tests.
 
-- **(decide and record)** Primary authoring format: the canonical YAML/JSON
-  descriptor directly, language-native **annotations/decorators**, a builder DSL,
-  or a hybrid. Whatever the surface, it **MUST** produce an in-memory metamodel
-  that round-trips through the canonical serde (JSON **and** YAML).
-- **(decide and record)** Introspection API: how a program reads the metamodel at
-  runtime (attribute list, primary-key attributes, as-of attributes, relationship
-  finders, attribute-by-name) — the `RelatedFinder` / `ReladomoClassMetaData`
-  analogue.
-- **(decide and record)** Scalar runtime mapping (`m-core`): for every neutral
-  scalar type, specify the language's generated property/read type, create/update
-  input type, adapter bind type, and result materialization rule. The mapping MUST
-  cover precision-sensitive values (`int64`, `decimal(p,s)`, `bytes`,
-  `timestamp`) and distinguish wall-clock `date` / `time` from instant
-  `timestamp` semantics.
-- **(decide and record)** Metamodel serde ownership: the source ownership and
-  enforcement scope for metamodel serialization/deserialization, and the
-  deployable artifact containing that scope. The scope MAY share a source module
-  or deployable artifact with other scopes where the module DAG remains
-  enforceable. Specify **round-trip
-  (serialize → deserialize → serialize) tests** in both JSON and YAML.
+### Code generation or runtime realization
 
-## 4. Transaction-block demarcation (`m-unit-work`)
+- **(decide and record — All slices)** Whether code generation, dynamic proxies,
+  metaprogramming, reflection, or handwritten classes realize the typed finder
+  and object surface, and why.
+- **(decide and record — All slices)** If code generation is used, its entry
+  point, canonical descriptor inputs, output locations, regeneration command,
+  and drift check. Otherwise record how equivalent drift is prevented.
+- **(decide and record — All slices)** Which typed artifacts are derivable from
+  the canonical descriptor. Do not promise a generated surface for information
+  absent from the descriptor schema.
 
-The transaction **boundary** is **user-specified per-language and never expressed
-in raw SQL** in the core spec. Pin down the idiom.
+## 3. Object lifecycle profile
 
-- **(decide and record)** The demarcation construct: a **closure**
-  (`inTransaction { … }`), a **context manager** (`with transaction(): …`), a
-  **decorator** (`@transactional`), or several. Show commit-on-success and
-  rollback-on-exception semantics.
-- **(decide and record)** How nested / re-entrant transactions behave.
-- **(decide and record)** How the unit of work surfaces buffered/batched writes
-  to the developer (implicit flush at commit vs. explicit flush).
-- **(decide and record)** Temporal write spelling (`m-audit-write` /
-  `m-bitemp-write`): the developer-facing names for audit-only `insert` /
-  `update` / `terminate`, the full-bitemporal `insertUntil` / `updateUntil` /
-  `terminateUntil` trio, and any language-specific aliases (for example,
-  `createUntil` if ordinary insert is spelled `create`). Record where processing
-  instants come from, how business start/window options are passed, and which
-  timestamp precision validation applies.
+Retain exactly one of the following subsections in the completed language spec.
 
-## 5. Test-double integration (`m-case-format`, DQ15)
+### Snapshot lifecycle
 
-The compatibility suite is the **primary behavioral surface**; most tests bubble
-up to it rather than living in per-language units. Pin down how the language's
-test runner wires to the **database provider**.
+- **(decide and record — Snapshot lifecycle)** The public root result, entity
+  node, to-one, and to-many collection types. State when execution occurs and
+  how the one materialized plain-value graph is returned.
+- **(decide and record — Snapshot lifecycle)** Graph-local identity resolution:
+  the `(entity family, primary key, lowered as-of coordinates)` key, shared-node
+  reference behavior for diamonds, cycles/back-references, projection merging,
+  and the non-identity of value objects. Identity MUST NOT escape one graph.
+- **(decide and record — Snapshot lifecycle)** Whole-graph temporal pinning,
+  including latest defaults, per-hop axis propagation, and the graph-per-edge-pin
+  representation of `history` and `asOfRange`. If
+  `snapshot-history-includes` is deferred, say so without rejecting it as an
+  invalid operation.
+- **(decide and record — Snapshot lifecycle)** The closed-world relationship
+  representation: how included to-one and to-many relationships are populated,
+  how an unloaded relationship is distinguished from loaded-empty or loaded-null,
+  and the defined result of accessing it. Access MUST NOT issue SQL.
+- **(decide and record — Snapshot lifecycle)** Eager include execution and graph
+  assembly, including one query per non-empty relationship level, empty-level
+  behavior, ordering, narrowed views, and the `1 + L` round-trip ceiling.
+- **(decide and record — Snapshot lifecycle)** Explicit writes: the create/update/
+  delete and temporal-write input types and entry points, and how graph edits are
+  kept semantically separate from persistence. A snapshot graph has no change
+  tracking or merge-back.
 
-- **(decide and record)** Test runner: `pytest` / JUnit / `cargo test` /
-  `vitest` / … and how a suite run discovers and executes
-  `core/compatibility/cases/**`.
-- **(decide and record)** Provisioning mechanism: **Testcontainers** (the default
-  — first-class across JVM / Python / Node / Go / Rust / .NET, so the *same
-  substrate everywhere*) pinned to the latest-stable-major Postgres image, or an
-  **embedded binary** that satisfies the same clean / migrated / isolated
-  reset contract. Either way it sits behind the same provider seam.
-- **(decide and record)** The provider reset lifecycle: the exact mechanism that
-  returns the database to an empty, isolated state before a database-backed case,
-  when DDL is applied, and when fixtures are loaded. If the implementation uses a
-  snapshot/restore optimization, name the concrete package API, version
-  assumptions, and fallback reset path; do not assume a portable Testcontainers
-  snapshot API exists across languages or database modules.
-- **(decide and record)** Which dialects this language runs in CI (Postgres is
-  the round-1 normative target; MariaDB is the proven second dialect) and how the
-  per-dialect golden SQL is selected.
-- The named **Conformance Slice** this build claims — the cases the test runner
-  provisions and executes — is declared and recorded in
-  [§1](#1-conformance-slice-declaration), including the `unsupported` discipline
-  for out-of-slice case commands.
+### Managed-object lifecycle
 
-### 5.5 Database provider support and matrix profiles
+- **(decide and record — Managed-object lifecycle)** The public managed entity,
+  single-result, and set-result types, including how managed state is visible or
+  intentionally hidden from developers.
+- **(decide and record — Managed-object lifecycle)** The unit-of-work-owned
+  identity map and exact `(entity family, primary key, lowered as-of coordinates)`
+  key. Record inheritance-family normalization, latest lowering, finite pins,
+  interning timing for read/application/generated identities, and coexistence of
+  distinct pinned views.
+- **(decide and record — Managed-object lifecycle)** The operation-backed list
+  type and its operation binding, lazy first resolution, stable re-access,
+  iteration/index/size/bulk ergonomics, and coalescing through the identity map
+  without claiming query-cache round-trip elimination.
+- **(decide and record — Managed-object lifecycle)** Eager and deferred
+  relationship loading: explicit and any transparent load spellings, batching
+  for ad-hoc object sets and coordinate groups, loaded/unloaded state, ordering,
+  narrowed views, read-your-own-writes, and the defined Parallax Error raised
+  when a detached object attempts a deferred load.
+- **(decide and record — Managed-object lifecycle)** Mutation buffering for
+  in-memory and persisted objects, implicit or explicit flush, write ordering,
+  dependent-read flushing, generated-key transition timing, and deletion state.
+- **(decide and record — Managed-object lifecycle)** Commit and abort transitions
+  for the `in-memory`, `persisted`, `deleted`, `detached`, and
+  `detached-deleted` states. On scope end, held managed objects detach in place;
+  abort restores as-materialized values before detaching, discards buffered and
+  flushed transactional work, and does not return a callback value as durable.
+- **(decide and record — Managed-object lifecycle)** Deliberate detach: deep-copy
+  boundaries, relationship state, identity-map separation, offline mutation,
+  deletion marking, and `isModifiedSinceDetachment` semantics.
+- **(decide and record — Managed-object lifecycle)** Merge-back spelling and the
+  inside-unit-of-work rules for update-existing, insert-new, delete-existing,
+  unmodified no-op, optimistic conflict, and the returned/re-associated managed
+  object.
 
-Every language that supports a database must declare its concrete proof of
-[`database-provider-test-contract.md`](database-provider-test-contract.md):
+## 4. Result collections and materialization
 
-- **(decide and record)** The Docker-free dialect contract suite location and the
-  one-row-per-database table it uses. Adding a database should add one row for
-  quoting, null ordering, read locks, column types, bytes, infinity, placeholders,
-  parse/bind behavior, and error classification.
-- **(decide and record)** The real-database adapter smoke suite location and the
-  adapters it runs, including connection construction, managed scalar reads,
-  transaction callback behavior, bytes write round trip, affected-row semantics,
-  and feasible transient classification.
-- **(decide and record)** The provider contract suite location and the provider
-  operations it proves: `reset`, `applyDdl`, `loadFixtures`, `query`, `exec`,
-  `execRolledBack`, and any independent `peer` connection the composition root
-  exposes.
-- **(decide and record)** The named database matrix profiles, marking each as
-  full or partial. A partial profile MUST list explicit exclusions with reasons;
-  cases whose `then.statements` entries carry no `sql` key for that dialect are
-  exclusions, not silent skips.
-- **(decide and record)** The commands that run the fast Docker-free checks,
-  adapter smoke checks, provider contract checks, API conformance lanes, and full
-  or partial matrix profiles. Record how skipped database-backed checks are
-  reported when Docker or the equivalent database substrate is unavailable.
+Retain the branch matching the lifecycle profile; do not answer both.
 
-## 6. API Conformance Suite & Usage Guide
+### Snapshot results
 
-The **API Conformance Suite** proves that the idiomatic developer surface of
-[§2](#2-api-surface-non-normative--dq3) — not merely the wire-level conformance
-adapter — reproduces the claimed slice against a real database through the
-shipped adapter, and the **Usage Guide** is a rendered document generated from
-that suite's source so demonstration prose and executed proof cannot drift. Both
-are official deliverables and additive proof beside the conformance-adapter grade
-— never a substitute, and they never touch the grader. The portable discipline
-(coverage-partition rule, expected-results assertions, the no-drift guard,
-golden-SQL-text exclusion, and the guide's CI drift check) is normative in
-[`m-api-conformance.md`](m-api-conformance.md).
+- **(decide and record — Snapshot lifecycle)** The eager materialized collection
+  types and iteration/indexing/bulk ergonomics. Query construction is
+  side-effect-free, but explicit execution returns a value; it is not an
+  `m-op-list` operation-backed lazy list.
+- **(decide and record — Snapshot lifecycle)** How root-empty, relationship-empty,
+  relationship-null, unloaded, ordered children, shared prefixes, and graph-local
+  shared identity appear in the public result.
 
-- **(decide and record)** The test framework and the location of the API
-  Conformance Suite, which runs the idiomatic public API against a real database
-  of a claimed dialect through the shipped adapter.
-- **(decide and record)** How the coverage partition is asserted: that every
-  in-slice case is either exercised or carries a reasoned skip (exercised ∪
-  skipped == the claimed slice, no stale ids, every skip records a non-empty
-  reason), and how the no-drift guard ties each idiomatically-built operation to
-  the corpus operation.
-- **(decide and record)** How the Usage Guide is rendered from the suite's source
-  and drift-checked in CI so the guide can never diverge from the executed proof.
+### Managed-object results
 
-## 7. Codegen-or-not (DQ5)
+- **(decide and record — Managed-object lifecycle)** The lazy operation-backed
+  collection surface and the access points that trigger resolution. Record the
+  type returned by relationship navigation and how already-populated
+  relationships avoid re-querying.
+- **(decide and record — Managed-object lifecycle)** How root-empty,
+  relationship-empty/null/unloaded, ordered children, shared prefixes, and
+  identity-map-coalesced objects appear in the public result.
 
-Code generation is a **per-language technique, never a mandate.** The metamodel
-is mandated; *how* the in-memory model and the typed surface are produced is open.
+## 5. Transactions and writes
 
-- **(decide and record)** Whether the implementation uses **codegen**, **dynamic
-  proxies / metaprogramming**, **reflection**, or **hand-written** classes to
-  realize the typed finder/object surface from the metamodel — and why.
-- **(decide and record)** If codegen: the generator entry point, its inputs (the
-  canonical descriptor), and where generated artifacts live / how they are
-  regenerated.
-- **(decide and record)** Which generated artifacts are derivable from the
-  canonical descriptor and which are intentionally absent. Do not promise
-  generated enum types, structured value-object types, field-level value-object
-  paths, or other typed surfaces unless the core descriptor schema contains the
-  data needed to generate them.
+- **(decide and record — All slices)** The transaction demarcation construct.
+  Show commit-on-success and rollback-on-exception, and state how callback
+  results are withheld when rollback or commit fails.
+- **(decide and record — All slices)** Nested/re-entrant transaction behavior,
+  owner/concurrency rules, and the selected per-transaction locking or optimistic
+  participation mode.
+- **(decide and record — All slices)** Buffered/batched write surfacing, flush
+  controls, foreign-key ordering, and read-your-own-writes behavior.
+- **(decide and record — All slices)** Developer-facing audit-only `insert`,
+  `update`, and `terminate`, and bitemporal `insertUntil`, `updateUntil`, and
+  `terminateUntil` names. Record processing-instant sourcing, business windows,
+  and precision validation.
 
-## 8. Collection idioms (`m-op-list`)
+## 6. Database support and compatibility proof
 
-- **(decide and record)** The concrete collection type a list result exposes
-  (the language's idiomatic lazy/eager collection), and how laziness +
-  query-backing (`m-op-list`) is surfaced.
-- **(decide and record)** Iteration, indexing, and bulk-operation ergonomics on
-  list results.
+### Database provider integration
 
-## 9. Build-time dependency enforcement (DQ3, module graph)
+- **(decide and record — All slices)** The test runner and exact discovery/filter
+  mechanism for `core/compatibility/cases/**`, including active-slice and module
+  tag intersection.
+- **(decide and record — All slices)** The development-only provisioning
+  mechanism and pinned database image/binary policy. Testcontainers, container
+  clients, and embedded test binaries MUST stay out of production artifacts.
+- **(decide and record — All slices)** The reset lifecycle: isolation, emptying,
+  DDL application, fixture loading, any snapshot optimization and fallback.
+- **(decide and record — All slices)** Golden SQL selection for every claimed
+  dialect.
+- **(decide and record — All slices)** The Docker-free dialect contract suite,
+  its one-row-per-database matrix, and coverage of quoting, null ordering, locks,
+  types, bytes, infinity, placeholders, binds, and error classification.
+- **(decide and record — All slices)** Each real-adapter smoke suite and provider
+  contract suite. Cover connection construction, scalar reads, transaction
+  callbacks, byte writes, affected rows, feasible transient classification,
+  `reset`, `applyDdl`, `loadFixtures`, `query`, `exec`, `execRolledBack`, and any
+  independent `peer` connection.
+- **(decide and record — All slices)** Named full and partial database matrix
+  profiles. A partial profile MUST list exclusions with reasons; absent dialect
+  SQL is an explicit exclusion, never a silent skip.
+- **(decide and record — All slices)** Exact local and CI commands for fast
+  dialect contracts, adapter smoke checks, provider contracts, API conformance,
+  and every full/partial matrix profile. Define the visible report produced when
+  database-backed checks cannot run.
+- **(decide and record — All slices)** Database Error mapping at the port
+  boundary, including native code preservation and unsupported/error
+  classification.
 
-The normative behavioral-module dependency graph is **MUST** in core; each
-language **SHOULD** enforce it mechanically at build time so a wrong-direction
-edge fails the build. The terms **behavioral module**, **source module**,
-**enforcement scope**, and **deployable artifact** are defined in
-[`modules.md`](modules.md); they are not interchangeable.
+### Additional dialects
 
-- **(decide and record)** The enforcement tool and its config. Ecosystem
-  examples: `import-linter` / `tach` (Python), **ArchUnit** or Gradle module
-  boundaries (Java), `dependency-cruiser` / `eslint-plugin-boundaries`
-  (TypeScript), **crate boundaries + visibility** (Rust).
-- **(decide and record)** The mapping from core behavioral modules to this
-  language's source ownership and enforcement scopes, any support scopes required
-  by the language topology, and the contract that encodes the legal edges (the
-  module DAG in [`modules.md`](modules.md), plus any explicitly documented support
-  edges). Multiple scopes MAY ship in one deployable artifact; co-location MUST
-  NOT weaken dependency enforcement.
-- **(decide and record)** The database seam's source scopes and deployable
-  artifacts. It is normatively decomposed into a **pure dialect / portability**
-  layer (`m-dialect`), an **abstract runtime database port** (`m-db-port`), **N
-  independently deployable concrete adapter artifacts** (one per database type,
-  each depending only on the port, matching dialect strategy, and its driver), and
-  **error classification** (`m-db-error`) — see [`m-dialect.md`](m-dialect.md) and
-  [`m-db-port.md`](m-db-port.md). Encode the structural rules that **only the
-  composition root may depend on a concrete adapter**, **the port depends on
-  nothing application-specific**, and **only an adapter artifact may introduce
-  its concrete driver**. Collapsing these source enforcement scopes or combining
-  drivers in a mandatory artifact is a gap; grouping the driver-free port and
-  dialect scopes in the common runtime is allowed.
+- **(decide and record — When claimed: an additional dialect)** For each
+  additional claimed dialect, the dialect strategy,
+  separately deployable adapter and driver, case/profile coverage, golden SQL,
+  and clean-install proof. If the canonical claim has only its initial dialect,
+  delete this subsection and list future dialects as deferred in §1.
 
-## 10. Optional optimized data structures (`m-perf-bench`, DQ10)
+### API Conformance Suite and Usage Guide
 
-These are **optional, non-normative** levers for hitting performance targets —
-enumerated so an implementer knows the proven techniques exist, not so they must
-use them.
+- **(decide and record — All slices)** The test framework and suite location for
+  idiomatic public-API proof against a real database through a shipped adapter.
+- **(decide and record — All slices)** The coverage-partition assertion:
+  exercised union reasoned-skipped equals the active slice, with no stale IDs and
+  no empty skip reasons. Record the no-drift guard tying idiomatic operations to
+  corpus operations.
+- **(decide and record — All slices)** Usage Guide generation from suite source
+  and the CI drift check. The guide and API suite are additive to, not substitutes
+  for, conformance-adapter proof.
 
-- **(decide and record, optional)** Whether to use **open-addressing map/set**
-  analogues (`UnifiedMap` / `UnifiedSet`) for the identity / query caches.
-- **(decide and record, optional)** Whether to use a **key-derived hashing**
-  analogue (`HashingStrategy`) to index domain objects by a *derived* (e.g.
-  composite-primary) key without allocating wrapper key objects.
-- **(decide and record, optional)** Any language-specific result-interchange
-  technique (e.g. Apache Arrow in Python) — wholly per-language; the core spec
-  makes no Arrow mandate or seam (DQ12).
+## 7. Source-enforcement topology
 
-## 11. Per-language performance targets (`m-perf-bench`, DQ10)
+The behavioral-module DAG governs dependencies between source enforcement
+scopes even when many scopes live in one source tree or common-runtime artifact.
+Complete a row for every claimed module, every unclaimed transitive prerequisite,
+and every language support scope. Do not use this table as a deployable-artifact
+list.
 
-The benchmark **fixtures and the measurement protocol** are shared and normative
-(`m-perf-bench`); the **numeric ceilings are per-language placeholders** — a Rust
-target is not a Python target.
+| Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
+|---|---|---|---|---|
+| **(decide and record — All slices)** | | | | |
 
-- **(decide and record)** Wall-time targets (`p50` / `p95`) per benchmark
-  workload family (operation mix, deep-fetch shapes, milestone writes,
-  aggregation).
-- **(decide and record)** Memory targets (peak / steady resident set).
-- **(decide and record)** Round-trip expectations are **already fixed** by the
-  fixtures' `expectRoundTrips` (a deep fetch is `1 + levels`, never N+1) — confirm
-  the implementation honors them; they are not a per-language placeholder.
-- **(decide and record)** How `parallax-conformance benchmark` emits the
-  `m-perf-bench` report shape fixed by `m-perf-bench.md` and
-  `m-conformance-adapter.md`: the adapter stdout envelope carries
-  `report.generatedAt`, `report.benchmarks[]`, and `report.memory`, while any
-  local `report.json` file is only an artifact copy.
+- **(decide and record — All slices)** The dependency-analysis tool, exact
+  configuration path, local command, and blocking CI command. State how the
+  configuration is checked against the complete DAG in [`modules.md`](modules.md)
+  and how a forbidden direction fails.
+- **(decide and record — All slices)** If several enforcement scopes live inside
+  one source tree or deployable artifact, the import/namespace/internal-package
+  boundaries that keep their directions mechanically distinguishable. Artifact
+  co-location MUST NOT make a forbidden source edge legal.
+- **(decide and record — All slices)** Database seam scopes for pure dialect
+  strategy, abstract `m-db-port`, error classification, each concrete adapter,
+  and the composition root. Only the composition root imports a concrete adapter;
+  the port imports nothing application-specific.
+
+## 8. Deployable artifact topology
+
+Complete a separate row for every production artifact and development-only
+tooling artifact. At minimum this includes one independently deployable,
+lifecycle-neutral common runtime; the selected lifecycle extension; and one
+separately deployable adapter per supported database.
+
+| Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
+|---|---|---|---|---|---|
+| **(decide and record — All slices)** | | | | | |
+
+- **(decide and record — All slices)** The common runtime manifest and proof that
+  it depends on neither lifecycle extension nor concrete database driver.
+- **(decide and record — All slices)** The selected lifecycle extension manifest
+  and proof that it depends downward on common behavior but not a sibling
+  lifecycle or concrete adapter.
+- **(decide and record — All slices)** Each concrete adapter manifest and proof
+  that it alone introduces its matching driver. Record where pure driver-free
+  dialect strategies ship.
+- **(decide and record — All slices)** The application/test composition root that
+  selects the lifecycle extension and adapter without leaking either dependency
+  into common runtime code.
+- **(decide and record — All slices)** Clean-install and runtime-load checks for:
+  common runtime alone; common plus the selected lifecycle; and common plus that
+  lifecycle plus one adapter. Each check MUST prove unselected lifecycles,
+  adapters, drivers, conformance harnesses, benchmarks, and container tooling are
+  absent from the installed and loaded production graph.
+
+## 9. Conditional capability decisions
+
+Delete every subsection whose applicability condition is false and record that
+capability as deferred in §1 when appropriate.
+
+### Process cache
+
+- **(decide and record — When claimed: `m-process-cache`)** Process-wide identity
+  and query cache scopes, keying, cache-hit behavior, write invalidation,
+  transaction interaction, freshness, and public configuration.
+- **(decide and record — When claimed: `m-process-cache`)** Cache data structures
+  and any key-derived hashing or open-addressing choices. These techniques are
+  non-normative; justify them against measurements rather than prior art alone.
+
+### Cross-process coherence
+
+- **(decide and record — When claimed: `m-coherence`)** Invalidation transport,
+  delivery/failure policy, freshness boundary, mark-dirty/refetch behavior, and
+  identity-preserving refresh across processes.
+
+### Aggregation
+
+- **(decide and record — When both `m-agg` and `m-sql-agg` are claimed)** The
+  complete algebra-to-SQL ownership path, aggregate result types, bind ordering,
+  numeric/nullable behavior, and API/corpus proof. Partial aggregation claims
+  require a separately defined canonical slice.
+
+### Benchmarks and performance targets
+
+- **(decide and record — When claimed: `m-perf-bench`)** Wall-time `p50`/`p95`
+  and peak/steady-memory thresholds for every claimed workload family, including
+  measurement environment and regression policy.
+- **(decide and record — When claimed: `m-perf-bench`)** The benchmark command,
+  report-envelope implementation, artifact-copy location, and CI gate. Confirm
+  fixture-defined round-trip expectations remain normative.
+- **(decide and record — When claimed: `m-perf-bench`)** Any language-specific
+  result-interchange or optimized collection technique and the evidence for it.
+
+## 10. Mandatory quality toolchain
+
+Every row is mandatory. Name executable tools rather than categories, and give
+exact repository-relative config paths and copy-pasteable commands. A completed
+row cannot say only “the ecosystem default” or “run in CI.” Every CI gate is
+blocking unless its policy cell defines a narrower, objective exception.
+
+| Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
+|---|---|---|---|---|---|
+| Dependency directions within and across artifacts | **(decide and record — All slices)** | | | | Include DAG drift and wrong-direction failure policy. |
+| Unit tests | **(decide and record — All slices)** | | | | Define unit/integration boundary and failure policy. |
+| Code coverage | **(decide and record — All slices)** | | | | Give an explicit numeric threshold, metric, generated/vendor exclusions, and no-new-uncovered-code policy. |
+| Linting | **(decide and record — All slices)** | | | | List enabled rule sets and suppression policy. |
+| Deterministic formatter check | **(decide and record — All slices)** | | | | CI MUST check without rewriting; name the write command separately. |
+| Strict static typing | **(decide and record — All slices)** | | | | Enable ecosystem strict mode across production and tests; Python MUST use a strict Pyright- or mypy-style policy. List and justify exclusions. |
+| Import-cycle detection | **(decide and record — All slices)** | | | | Cover all production source scopes. |
+| Dead code and unused exports | **(decide and record — All slices)** | | | | If ecosystem tooling cannot check one class, state the limitation, evidence, and compensating check. |
+| Built-artifact and public-export health | **(decide and record — All slices)** | | | | Inspect packed artifacts, entry points, types/metadata, and accidental files/exports. |
+| Clean-install production smoke tests | **(decide and record — All slices)** | | | | Exercise every selective topology from §8 in clean environments. |
+| Supported language/runtime versions | **(decide and record — All slices)** | | | | List the exact version matrix, minimum policy, and end-of-life policy. |
+| Dependency and supply-chain audit | **(decide and record — All slices)** | | | | Define lockfile/freshness policy, severity threshold, exception owner, expiry, and provenance/license checks if used. |
+| Compatibility Conformance Suite | **(decide and record — All slices)** | | | | Select active slice ∩ capability tags and validate adapter envelopes. |
+| API Conformance Suite and Usage Guide | **(decide and record — All slices)** | | | | Enforce coverage partition, no-drift guard, real-adapter proof, and guide drift. |
+| Database-backed verification | **(decide and record — All slices)** | | | | Name required profiles and define how every skipped check is reported with reason; silent skips are forbidden. |
+
+- **(decide and record — All slices)** The single local static-verification
+  command and CI job that aggregate all database-free rows above.
+- **(decide and record — All slices)** The full verification command and CI lane,
+  including database-backed checks, plus the exact summary format for checks that
+  were run, failed, or skipped.
 
 ## Completion check
 
-A finished language spec has **no remaining *(decide and record)* markers**, never
-contradicts the core spec or the dependency graph, and is sufficient for an agent
-to author an implementation and run the compatibility suite to green — the test in
-the outline's manual-verification step: *hand it to a fresh reader and confirm it
-is sufficient without re-reading the whole core spec.*
+A finished language spec satisfies every item:
+
+- no **(decide and record)** marker or blank required table cell remains;
+- exactly one §3 lifecycle profile and its matching §4 result branch remain, and
+  every instruction for the unselected profile has been removed;
+- the selected slice exists in `slices.md`, is lifecycle-complete rather than
+  deprecated, and the recorded `describe` envelope equals its canonical claim
+  except for `adapter` identity;
+- claimed capability coverage is the canonical tagged-case union, while every
+  transitive unclaimed prerequisite and every explicit deferral is listed
+  separately;
+- conditional sections exist exactly when their applicability condition is true;
+- the source-enforcement map covers all claimed modules, transitive prerequisites,
+  and support scopes and gives a mechanically enforceable legal DAG;
+- the artifact map contains an independent common runtime, exactly the retained
+  lifecycle extension, and separate selected database adapters, with manifests
+  and selective clean-install proofs that exclude alternatives and development
+  tooling;
+- every mandatory quality row names a tool, config, local command, blocking CI
+  command/job, and concrete enforcement policy; coverage has a numeric threshold,
+  strict typing is explicit, and database skips cannot be silent; and
+- a fresh reader can implement the language and run both conformance surfaces
+  without inventing a lifecycle, source-boundary, packaging, or tooling decision.
