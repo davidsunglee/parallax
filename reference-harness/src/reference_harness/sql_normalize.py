@@ -33,7 +33,7 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect
-from sqlglot.expressions.core import Expr
+from sqlglot.expressions.core import Expr, Expression
 from sqlglot.parser import Parser
 from sqlglot.tokenizer_core import Token, TokenType
 
@@ -194,13 +194,13 @@ def _reassociate_connectors(node: Expr) -> Expr:
         return result
     rebuilt = node.copy()
     for key, value in list(rebuilt.args.items()):
-        if isinstance(value, exp.Expression):
+        if isinstance(value, Expression):
             rebuilt.set(key, _reassociate_connectors(value))
         elif isinstance(value, list):
             rebuilt.set(
                 key,
                 [
-                    _reassociate_connectors(item) if isinstance(item, exp.Expression) else item
+                    _reassociate_connectors(item) if isinstance(item, Expression) else item
                     for item in value
                 ],
             )
