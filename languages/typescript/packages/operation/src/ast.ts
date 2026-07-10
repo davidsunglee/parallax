@@ -25,19 +25,32 @@ export type NestedRef = string;
 export type ValueObjectRef = string;
 /** `field[.field…]` — an element-relative path used inside a scoped `where`. */
 export type ElementRef = string;
+/** A bare metamodel entity name (the `Class` grammar before the dot) — a `narrow` target. */
+export type EntityName = string;
 /** A scalar literal usable as a bind. */
 export type Literal = string | number | boolean | null;
 /** An ISO-8601 UTC instant, or the keyword `now`. */
 export type TemporalDate = string;
 /**
+ * The subtype narrowing of one deep-fetch hop: constrain the relationship's
+ * polymorphic target to a non-empty subset of its subtypes (m-inheritance). A path
+ * narrow carries only `to` (the position is the relationship target, implicit; a
+ * hop fetches a whole view rather than a filtered predicate). The claimed
+ * `slice-mvp-1` cases never carry it — only polymorphic (inheritance) hops do.
+ */
+export interface PathNarrow {
+  readonly to: readonly EntityName[];
+}
+/**
  * One hop in a deep-fetch navigation path: a closed object naming the
- * relationship to traverse via `rel`. The object shape is the single structural
- * carrier for a hop, so a polymorphic hop can later add an optional `narrow`
- * alongside `rel` without a second spelling of a path; until then a segment
- * carries exactly `rel`.
+ * relationship to traverse via `rel` and optionally narrowing that hop's
+ * polymorphic target with `narrow` (m-inheritance). A broad hop populates the
+ * ordinary relationship view; a narrowed hop populates a distinct view keyed
+ * `<rel>[<Concrete>,<Concrete>]` (m-deep-fetch).
  */
 export interface PathSegment {
   readonly rel: RelationshipRef;
+  readonly narrow?: PathNarrow;
 }
 /** An ordered list of path segments naming one eager-fetch path. */
 export type NavigationPath = readonly PathSegment[];

@@ -126,6 +126,41 @@ of that subtype's table — the subtype is selected by *which table* is queried.
 Each concrete table **physically contains columns for the full inherited attribute
 chain** plus the concrete subtype's own attributes, derived from the ancestry.
 
+## Canonical concrete-subtype ordering
+
+Whenever a family's concrete subtypes are **enumerated** in a canonical artifact,
+they appear in one fixed **total order**: **ascending by concrete-subtype entity
+name, compared codepoint-by-codepoint (Unicode scalar value)** — i.e. plain
+**alphabetical order by entity name**. This order is a pure function of the entity
+names and is **independent of the descriptor's declaration order and file layout**:
+reordering the subtype entries in a model file, or splitting them across files,
+never changes it. The **effective concrete-subtype set** of any polymorphic
+position (root, abstract subtype, concrete subtype, or a resolved `narrow`) is
+presented in this order.
+
+This canonical sibling-set order is the one every downstream module uses to
+enumerate a family's concretes:
+
+- the table-per-hierarchy tag predicate `in (…)` list and its binds (`m-sql`);
+- the table-per-concrete-subtype `union all` **branch order** (`m-sql`);
+- the grouped-`OR` per-branch `EXISTS` **branch order** for polymorphic navigation
+  (`m-navigate`, `m-sql`);
+- the derived **narrowed view key** `<rel>[<Concrete>,<Concrete>]` (`m-deep-fetch`);
+- the **per-subtype own-column blocks** of an abstract-read superset projection
+  (`m-sql`, below).
+
+Three orderings are deliberately **not** this alphabetical sibling order and are
+specified elsewhere:
+
+- The **inherited-column prefix** of a superset stays **ancestry order**
+  (root → abstract-subtype → concrete): columns are enumerated down the inheritance
+  chain, never alphabetized across it.
+- A **single entity's own attributes/columns** keep their **declared order**.
+- A `narrow` node's authored **`to` list** is preserved **verbatim** by serde
+  (`m-op-algebra`); only the *resolved/effective* concrete set it denotes is
+  canonicalized to this alphabetical order, so `to: [Pet]` and `to: [Cat, Dog]`
+  round-trip as distinct spellings yet resolve to the same ordered set.
+
 ## Family invariants
 
 The following cross-entity invariants hold for every family. They are **semantic**

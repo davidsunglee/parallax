@@ -1,0 +1,29 @@
+# Polymorphic relationship targeting the abstract ROOT (m-navigate, m-inheritance).
+#
+# `Person.animals` targets the abstract root Animal, so it reaches ANY concrete
+# subtype in the family {Dog, Cat, WildBoar}. Its effective set is the WHOLE shared
+# `animal` table, so the table-per-hierarchy `exists` semi-join injects NO tag
+# predicate — the single child-table EXISTS is unconstrained by kind. Every person
+# who owns any animal matches: Alice (Rex, Whiskers), Bob (Fido), and Carol — whose
+# only animal is the WildBoar Tusker, reachable precisely BECAUSE the abstract-root
+# relationship is unconstrained (contrast m-inheritance-061, where Carol drops out).
+#
+# Non-trivial (semi-join) case => referenceSql is the naive `id in (select fk …)` oracle.
+model: models/animal.yaml
+tags: [m-navigate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, exists, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Person
+  operation:
+    exists:
+      rel: Person.animals
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where exists (select 1 from animal t1 where t1.owner_id = t0.id)
+  referenceSql: select id, name from person where id in (select owner_id from animal)
+  rows:
+    - { id: 10, name: Alice }
+    - { id: 11, name: Bob }
+    - { id: 12, name: Carol }
+  roundTrips: 1

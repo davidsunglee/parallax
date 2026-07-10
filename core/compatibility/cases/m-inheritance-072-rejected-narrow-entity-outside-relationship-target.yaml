@@ -1,0 +1,28 @@
+# REJECTED: a relationship-scope narrow whose `entity` names the WRONG position
+# (m-navigate, m-op-algebra, m-inheritance, resolved Q10).
+#
+# `Person.pets` targets the abstract subtype Pet, whose effective concrete set is
+# {Cat, Dog}. A narrow in the filter's `op` MUST NAME that relationship target as its
+# `entity` (m-navigate); subtypes are reached via `to`, never by declaring a broader
+# position. Here the narrow declares the abstract ROOT Animal as its `entity` — even
+# though its `to` ([Dog]) resolves INSIDE Pet's set. A relationship-scope narrow does
+# NOT clamp a broader `entity` the way a top-level read's narrow does: naming a
+# position other than the relationship target is invalid on its own. A model-aware
+# validator MUST refuse this BEFORE any SQL, naming `narrow-outside-relationship-target`
+# — the same rule as narrowing `to` outside the target (m-inheritance-064); both the
+# entity-mismatch and the to-outside-target triggers map to it.
+model: models/animal.yaml
+tags: [m-navigate, m-op-algebra, m-inheritance, table-per-hierarchy, narrow, rejected, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    exists:
+      rel: Person.pets
+      op:
+        narrow:
+          entity: Animal
+          to: [Dog]
+          operand:
+            all: {}
+then:
+  rejectedRule: narrow-outside-relationship-target

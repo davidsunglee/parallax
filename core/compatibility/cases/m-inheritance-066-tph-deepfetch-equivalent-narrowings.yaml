@@ -1,0 +1,47 @@
+# Deep fetch of EQUIVALENT authored narrowings that derive the SAME view key
+# (m-deep-fetch, m-inheritance).
+#
+# Two paths narrow the same `Person.pets` hop with different authored spellings —
+# `to: [Pet]` (the abstract subtype) and `to: [Cat, Dog]` (its concretes). Both
+# resolve to the SAME effective concrete set {Cat, Dog} and therefore the SAME
+# derived view key `pets[Cat,Dog]` (alphabetical order, no spaces), so they DEDUPLICATE
+# to ONE hop: `1 + L` = 2 statements, not 3. The dedup identity is (relationship hop,
+# effective concrete set), which is what makes the two spellings converge. The view
+# is polymorphic (two concretes), so the shared-table child level projects the raw
+# tag column and the harness materializes `familyVariant` per child; the tag
+# predicate is `t0.kind in (?, ?)` (binds [cat, dog], alphabetical order).
+model: models/animal.yaml
+tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Person
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [{ rel: Person.pets, narrow: { to: [Pet] } }]
+        - [{ rel: Person.pets, narrow: { to: [Cat, Dog] } }]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0
+    - sql:
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.kind from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind in (?, ?)
+      binds: [10, 11, 12, cat, dog]
+  referenceSql: select id, name from person
+  graph:
+    Person:
+      - id: 10
+        name: Alice
+        "pets[Cat,Dog]":
+          - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, familyVariant: Dog }
+          - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, familyVariant: Cat }
+      - id: 11
+        name: Bob
+        "pets[Cat,Dog]":
+          - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, indoor: null, familyVariant: Dog }
+      - id: 12
+        name: Carol
+        "pets[Cat,Dog]": []
+  roundTrips: 2

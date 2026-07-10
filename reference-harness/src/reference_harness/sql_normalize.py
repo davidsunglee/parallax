@@ -2,7 +2,12 @@
 
 The normative rules (m-sql, ``core/spec/m-sql.md``):
 
-1. Table-alias scheme ``t0, t1, …``; columns always alias-qualified.
+1. Table-alias scheme ``t0, t1, …`` assigned in **source order** (the left-to-right
+   textual order table sources first appear, reading the statement as written —
+   including correlated ``EXISTS`` subquery tables, which continue the outer
+   numbering and do NOT restart per subquery); columns always alias-qualified.
+   ``and`` / ``or`` chains are reassociated to a left-deep spine (they are
+   associative) so a grouped predicate has one canonical shape.
 2. Lowercase keywords and unquoted identifiers.
 3. Whitespace collapsed to single spaces; trimmed.
 4. Literal parameters rendered as ``?`` bind placeholders.
@@ -136,6 +141,70 @@ def _lowercase_unquoted_identifiers(tree: Expr) -> None:
     for node in tree.walk():
         if isinstance(node, exp.Identifier) and not node.args.get("quoted"):
             node.set("this", node.this.lower())
+
+
+# The associative binary connectors m-sql reassociates to a canonical left-deep
+# spine. ``and`` and ``or`` are fully associative, so a grouped predicate can be
+# written right-nested (``a or (b or c)``) or left-deep (``(a or b) or c``); both
+# denote the same predicate. Canonical m-sql pins the **left-deep** spine, which
+# renders WITHOUT interior parentheses (``a or b or c``).
+_ASSOCIATIVE_CONNECTORS = (exp.And, exp.Or)
+
+
+def _flatten_connector(node: exp.Connector, kind: type[exp.Connector]) -> list[Expr]:
+    """The operands of a maximal same-*kind* connector chain, in source order.
+
+    Recursively descends through operands that are themselves *kind* connectors —
+    including a *kind* connector wrapped in a redundant same-*kind* parenthesis
+    (``a or (b or c)``, whose right operand is ``(...)`` over an ``or``) — and
+    reassociates every non-chain operand's own subtree. A parenthesis over a
+    DIFFERENT connector (``a or (b and c)``) is precedence-significant and kept.
+    """
+    operands: list[Expr] = []
+    for child in (node.this, node.expression):
+        inner = child
+        while isinstance(inner, exp.Paren) and isinstance(inner.this, kind):
+            inner = inner.this
+        if isinstance(inner, kind):
+            operands.extend(_flatten_connector(inner, kind))
+        else:
+            operands.append(_reassociate_connectors(child))
+    return operands
+
+
+def _reassociate_connectors(node: Expr) -> Expr:
+    """Return *node* with every ``and`` / ``or`` chain reassociated left-deep.
+
+    m-sql rule 1's canonical form is the left-deep spine so a grouped predicate —
+    notably the table-per-concrete-subtype polymorphic semi-join's grouped ``OR``
+    of one correlated ``EXISTS`` per concrete branch — has ONE canonical shape:
+    ``(a or b) or c`` rendered ``a or b or c``, with branches in source order.
+    Without this a contributor would have to hand-fold the chain right-nested
+    (``a or (b or c)``) purely to make the tables number ``t1, t2, t3`` in source
+    order — a normalizer artifact, not a semantic requirement. Reassociation is a
+    no-op on an already left-deep chain and preserves precedence-significant
+    parentheses over a different connector.
+    """
+    if isinstance(node, _ASSOCIATIVE_CONNECTORS):
+        kind = type(node)
+        operands = _flatten_connector(node, kind)
+        result = operands[0]
+        for operand in operands[1:]:
+            result = kind(this=result, expression=operand)
+        return result
+    rebuilt = node.copy()
+    for key, value in list(rebuilt.args.items()):
+        if isinstance(value, exp.Expression):
+            rebuilt.set(key, _reassociate_connectors(value))
+        elif isinstance(value, list):
+            rebuilt.set(
+                key,
+                [
+                    _reassociate_connectors(item) if isinstance(item, exp.Expression) else item
+                    for item in value
+                ],
+            )
+    return rebuilt
 
 
 def _render_tokens(tokens: list[Token], dialect: str) -> str:
@@ -297,18 +366,33 @@ def _canonical_select_scopes(tree: Expr) -> list[exp.Select]:
 
 
 def _assert_select_canonical(select: exp.Select) -> None:
-    """Enforce m-sql rule 1 over one SELECT scope (a read or one union branch)."""
+    """Enforce m-sql rule 1 over one SELECT scope (a read or one union branch).
+
+    Aliases must be ``t0, t1, …`` in **source order** — the left-to-right textual
+    order the table sources first appear reading the statement as written. This is
+    a single global sequence over the whole SELECT scope: a correlated ``EXISTS``
+    subquery's tables continue the outer numbering rather than restarting, and
+    sibling subqueries do NOT reset (``t0`` outer, ``t1`` first subquery table,
+    ``t2`` the next — whether nested inside ``t1`` or a following sibling). Source
+    order is the DFS pre-order (``bfs=False``) walk, which visits table sources in
+    the order they are written; the default ``find_all`` walk is breadth-first and
+    would mis-order the branches of a flat grouped ``OR`` (``a or b or c`` parses
+    left-deep, so its shallowest branch sits at the top of the tree), which is
+    exactly the false negative that used to force such a chain to be hand-folded
+    right-nested.
+    """
     # A row-lock suffix (`for share of t0`) references an existing alias and
     # sqlglot models that reference as its own Table node; it is not a FROM
     # source, so exclude it from the alias sequence.
     aliases = [
-        table.alias for table in select.find_all(exp.Table) if table.find_ancestor(exp.Lock) is None
+        table.alias
+        for table in select.find_all(exp.Table, bfs=False)
+        if table.find_ancestor(exp.Lock) is None
     ]
     expected = [f"t{index}" for index in range(len(aliases))]
     if aliases != expected:
         raise NonCanonicalError(
-            f"read table aliases must be {expected} in first-appearance order "
-            f"(m-sql rule 1), got {aliases}"
+            f"read table aliases must be {expected} in source order (m-sql rule 1), got {aliases}"
         )
     for column in select.find_all(exp.Column):
         if not column.table:
@@ -376,6 +460,7 @@ def normalize(sql: str, dialect: str = "postgres") -> str:
     """
     engine = sqlglot_dialect(dialect)
     tree = sqlglot.parse_one(sql, read=engine)
+    tree = _reassociate_connectors(tree)
     _assert_canonical(tree)
     lock_suffix = _detach_read_lock(tree, dialect)
     _lowercase_unquoted_identifiers(tree)

@@ -7,8 +7,9 @@
 # m-inheritance-007, which writes `kind`). The INSERT binds the inherited id + title
 # (from the abstract root Document) plus the subtype's own amount_due, derived from the
 # ancestry. The inherited abstract-subtype attribute currency is nullable and omitted
-# here, so it reads back null. The abstract Document root owns no rows. Starts from an
-# EMPTY schema and asserts the single inserted invoice row.
+# here, so it reads back null; likewise the inherited root FK folder_id (Phase 6). The
+# abstract Document root owns no rows. Starts from an EMPTY schema and asserts the
+# single inserted invoice row.
 model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -27,5 +28,5 @@ then:
       binds: [10, Invoice-C, 300.00]
   tableState:
     invoice:
-      - { id: 10, title: Invoice-C, currency: null, amount_due: 300.00 }
+      - { id: 10, title: Invoice-C, folder_id: null, currency: null, amount_due: 300.00 }
   roundTrips: 1

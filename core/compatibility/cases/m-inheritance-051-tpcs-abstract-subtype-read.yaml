@@ -4,11 +4,13 @@
 # Targeting the abstract subtype FinancialDocument resolves to its concrete
 # descendants {Invoice, Receipt} — NOT the sibling Memo (whose branch is directly
 # under the root Document). So the read `union all`s over exactly the invoice and
-# receipt tables, in descriptor order, and Memo's `memo` table is not touched. The
-# stable superset is the union over {Invoice, Receipt} only — id, title, currency
-# (inherited from FinancialDocument, common to both), then amount_due, paid_amount —
-# plus the `familyVariant` literal; `body` (Memo's) is NOT reached. Each branch NULLs
-# the sibling's own column with a dialect cast.
+# receipt tables, in alphabetical order (Invoice, Receipt), and Memo's `memo` table is
+# not touched. The
+# stable superset is the union over {Invoice, Receipt} only — id, title, folder_id
+# (inherited from the root Document), currency (inherited from FinancialDocument,
+# common to both), then amount_due, paid_amount — plus the `familyVariant` literal;
+# `body` (Memo's) is NOT reached. Each branch NULLs the sibling's own column with a
+# dialect cast (only `decimal` casts here, so the postgres / mariadb goldens coincide).
 model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-concrete-subtype, union-all, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -19,10 +21,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, 'Receipt' family_variant from receipt t0
-        mariadb: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, 'Receipt' family_variant from receipt t0
+        postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, 'Receipt' family_variant from receipt t0
+        mariadb: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, 'Receipt' family_variant from receipt t0
   rows:
-    - { id: 1, title: Invoice-A, currency: USD, amount_due: 120.00, paid_amount: null, familyVariant: Invoice }
-    - { id: 2, title: Invoice-B, currency: EUR, amount_due: 80.00, paid_amount: null, familyVariant: Invoice }
-    - { id: 1, title: Receipt-A, currency: USD, amount_due: null, paid_amount: 120.00, familyVariant: Receipt }
+    - { id: 1, title: Invoice-A, folder_id: 100, currency: USD, amount_due: 120.00, paid_amount: null, familyVariant: Invoice }
+    - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: 80.00, paid_amount: null, familyVariant: Invoice }
+    - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, amount_due: null, paid_amount: 120.00, familyVariant: Receipt }
   roundTrips: 1

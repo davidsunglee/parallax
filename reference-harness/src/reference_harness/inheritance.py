@@ -87,12 +87,16 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
 NARROW_OUTSIDE_POSITION = "narrow-outside-position"
 NARROW_EMPTY_EFFECTIVE_SET = "narrow-empty-effective-set"
 SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE = "subtype-attribute-outside-narrow-scope"
+# A narrow in a navigation filter's `op` (or a deep-fetch path segment) that
+# resolves outside the RELATIONSHIP TARGET's effective concrete set (Phase 6, Q10).
+NARROW_OUTSIDE_RELATIONSHIP_TARGET = "narrow-outside-relationship-target"
 
 OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
     {
         NARROW_OUTSIDE_POSITION,
         NARROW_EMPTY_EFFECTIVE_SET,
         SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
+        NARROW_OUTSIDE_RELATIONSHIP_TARGET,
     }
 )
 
@@ -187,7 +191,13 @@ class Family:
         ]
 
     def children_of(self, name: str) -> list[str]:
-        """Direct subtypes of *name*, in descriptor declaration order."""
+        """Direct subtypes of *name*, in descriptor declaration order.
+
+        This is a structural tree edge used only for traversal (it may yield abstract
+        interior nodes as well as concretes); it is NOT the canonical sibling-set
+        ordering. The canonical concrete-subtype order is alphabetical
+        (:func:`concrete_descendants` / :func:`canonical_concrete_order`).
+        """
         return [child for child in self.order if parent_of(self.defs[child]) == name]
 
     def ancestry(self, name: str) -> list[str]:
@@ -226,10 +236,18 @@ class Family:
         return tag.get("column") if isinstance(tag, dict) else None
 
     def concrete_descendants(self, name: str) -> list[str]:
-        """The concrete subtypes reachable from *name*, in descriptor order.
+        """The concrete subtypes reachable from *name*, in CANONICAL sibling-set order.
 
         A concrete node resolves to itself; an abstract node to its concrete
-        descendants (depth-first, cycle-guarded, deduplicated preserving order).
+        descendants (collected depth-first, cycle-guarded, deduplicated). The
+        returned set is presented in the family's **canonical sibling-set order** —
+        ALPHABETICAL by concrete-subtype entity name, ordinal (Unicode codepoint)
+        ascending — a total order independent of the descriptor's file layout
+        (m-inheritance). This is the order every canonical enumeration of a family's
+        concretes uses: the table-per-hierarchy tag ``in`` list + binds, the
+        table-per-concrete-subtype ``union all`` branch order, the grouped-``OR``
+        per-branch ``EXISTS`` order, the narrowed view keys, and the per-subtype
+        OWN-column blocks of an abstract-read superset projection.
         """
         result: list[str] = []
         seen: set[str] = set()
@@ -245,13 +263,15 @@ class Family:
                 visit(child)
 
         visit(name)
-        return result
+        return sorted(result)
 
     def effective_concrete_set(self, name: str) -> list[str]:
         """The concrete subtype set a query at position *name* resolves over.
 
         Abstract root = the whole family; abstract subtype = its concrete
-        descendants; concrete subtype (or a non-inheritance entity) = itself.
+        descendants; concrete subtype (or a non-inheritance entity) = itself. A
+        multi-member set is in the family's canonical sibling-set order (ALPHABETICAL
+        by entity name, :func:`concrete_descendants`).
         """
         if name not in self.defs:
             return [name]
@@ -264,9 +284,11 @@ class Family:
 
         Each entry resolves to its own effective concrete set (a concrete subtype
         to itself, an abstract subtype to its concrete descendants); the union is
-        deduplicated preserving DESCRIPTOR order — an entry appearing first keeps
-        its concretes in descriptor order, so ``[Pet]`` and ``[Cat, Dog]`` may
-        differ in authored spelling yet resolve to the same set.
+        deduplicated by first appearance. The RESULTING SET — not this transient
+        order — is what matters: callers canonicalize it to the family's alphabetical
+        sibling-set order (:func:`canonical_concrete_order`) before it drives any
+        golden artifact, so ``[Pet]`` and ``[Cat, Dog]`` resolve to the same set and
+        therefore the same canonical order.
         """
         result: list[str] = []
         for name in to_list:
@@ -274,6 +296,34 @@ class Family:
                 if concrete not in result:
                     result.append(concrete)
         return result
+
+    def relationship_target(self, rel_ref: str) -> str | None:
+        """The ``relatedEntity`` a ``Class.relationship`` ref points at, else ``None``.
+
+        Used to resolve the polymorphic position a navigation filter (or deep-fetch
+        hop) reaches: ``Person.pets`` -> ``Pet``. Returns ``None`` when the class or
+        relationship is absent (the caller then treats the target as non-polymorphic).
+        """
+        if not isinstance(rel_ref, str) or "." not in rel_ref:
+            return None
+        cls, _, rel_name = rel_ref.partition(".")
+        definition = self.defs.get(cls)
+        if definition is None:
+            return None
+        for relationship in definition.get("relationships", []) or []:
+            if relationship.get("name") == rel_name:
+                return relationship.get("relatedEntity")
+        return None
+
+    def canonical_concrete_order(self, concretes: list[str]) -> list[str]:
+        """*concretes* re-sorted into the family's CANONICAL sibling-set order.
+
+        The canonical order is ALPHABETICAL by concrete-subtype entity name, ordinal
+        (Unicode codepoint) ascending (m-inheritance) — a total order independent of
+        the authored spelling and of the descriptor's file layout, so ``[Cat, Dog]``
+        and ``[Pet]`` both yield ``[Cat, Dog]``.
+        """
+        return sorted(concretes)
 
     def declaring_entity(self, cls: str, attr_name: str) -> str | None:
         """The NEAREST entity in *cls*'s ancestry that literally declares *attr_name*.
@@ -566,6 +616,59 @@ def _root_name(entity_defs: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def narrowed_view_key(family: Family, rel_ref: str, effective_set: list[str]) -> str:
+    """The deterministic graph key of a NARROWED deep-fetch hop (m-deep-fetch).
+
+    ``<relationshipName>[<Concrete>,<Concrete>]`` — the LOCAL relationship name
+    (never the qualified ref), the effective concrete-subtype set in the family's
+    CANONICAL sibling-set order (ALPHABETICAL by entity name, m-inheritance; never
+    abstract names, never a ``tagValue``), no spaces inside the brackets. Equivalent
+    authored spellings (``to: [Pet]`` vs ``to: [Cat, Dog]``) resolve to the same
+    effective set and therefore the same key. A BROAD hop uses the ordinary
+    relationship name and never calls this.
+    """
+    rel_name = rel_ref.split(".", 1)[1] if "." in rel_ref else rel_ref
+    ordered = family.canonical_concrete_order(effective_set)
+    return f"{rel_name}[{','.join(ordered)}]"
+
+
+def resolve_hop_effective_set(
+    family: Family, rel_ref: str, narrow_to: list[str] | None
+) -> tuple[list[str], bool]:
+    """The (canonically-ordered effective concrete set, is_narrowed) of a deep-fetch hop.
+
+    A BROAD hop (``narrow_to`` is ``None``) resolves to the relationship target's own
+    effective concrete set; a NARROWED hop resolves ``narrow_to`` (each entry to its
+    concretes) and CLAMPS it to the target's set. Raises
+    :class:`RejectionError` (``narrow-outside-relationship-target``) when a narrowed
+    hop resolves outside the target's reachable concretes or to the empty set. The
+    returned set is always in the family's canonical sibling-set order (ALPHABETICAL
+    by entity name) so the view key is canonical.
+    """
+    target = family.relationship_target(rel_ref)
+    target_set = family.effective_concrete_set(target) if target is not None else []
+    if narrow_to is None:
+        return family.canonical_concrete_order(target_set) if target else target_set, False
+    resolved = family.resolve_to_set([t for t in narrow_to if isinstance(t, str)])
+    if not resolved:
+        raise RejectionError(
+            NARROW_OUTSIDE_RELATIONSHIP_TARGET,
+            f"deep-fetch narrow of {rel_ref!r} to {narrow_to!r} resolves to the empty "
+            f"concrete-subtype set",
+        )
+    if not set(resolved) <= set(target_set):
+        raise RejectionError(
+            NARROW_OUTSIDE_RELATIONSHIP_TARGET,
+            f"deep-fetch narrow of {rel_ref!r} to {narrow_to!r} resolves to "
+            f"{sorted(resolved)}, which is not a subset of the relationship target's "
+            f"effective concrete set {sorted(target_set)}",
+        )
+    # Reaching here, `resolved` is a non-empty subset of `target_set`, so `target` is
+    # non-None (a None target yields target_set == [], failing the subset check above).
+    ordered = family.canonical_concrete_order(resolved) if target is not None else resolved
+    return ordered, True
+
+
 def validate_operation_inheritance(
     entity_defs: list[dict[str, Any]],
     operation: Any,
@@ -594,14 +697,64 @@ def validate_operation_inheritance(
     _walk_narrow(family, family.effective_concrete_set(start), operation)
 
 
-def _walk_narrow(family: Family, current_set: list[str], node: Any) -> None:
-    """Walk *node*, tracking the current effective concrete set (narrowed per hop)."""
+def _walk_narrow(
+    family: Family,
+    current_set: list[str],
+    node: Any,
+    outside_rule: str = NARROW_OUTSIDE_POSITION,
+    expected_entity: str | None = None,
+) -> None:
+    """Walk *node*, tracking the current effective concrete set (narrowed per hop).
+
+    *outside_rule* is the rejected rule a broadening narrow raises: at the queried
+    (top-level) position a broadening narrow is ``narrow-outside-position``; inside a
+    navigation filter's ``op`` (where the active position is the RELATIONSHIP TARGET)
+    it is ``narrow-outside-relationship-target`` (resolved Q10).
+
+    *expected_entity* is the entity a positional ``narrow`` at THIS position MUST name
+    (``m-navigate``): inside a navigation filter's ``op`` the active position is the
+    relationship target, so a narrow there MUST set ``narrow.entity`` to that target
+    exactly — narrowing to subtypes is always via ``to``, never by declaring a broader
+    (or narrower) ``entity``. A mismatch is ``narrow-outside-relationship-target``. It
+    is ``None`` at the queried (top-level) position and inside a narrow's ``operand``,
+    where the general CLAMP (``m-op-algebra``) governs instead; it is carried through
+    the position-preserving wrappers (``and`` / ``or`` / ``not`` / …) and re-seeded
+    per hop at each nested navigation filter, and cleared when descending through a
+    narrow's ``operand`` (the position becomes the narrowed set — a same-position
+    narrow, clamped, not name-checked).
+    """
     if not isinstance(node, dict) or len(node) != 1:
         return
     tag, body = next(iter(node.items()))
+    if tag in ("navigate", "exists", "notExists"):
+        # A navigation filter re-roots the active polymorphic position at the
+        # relationship TARGET; a narrow in its `op` narrows THAT position, MUST NAME
+        # the target as its `entity`, and a broadening narrow there is
+        # `narrow-outside-relationship-target`. A non-polymorphic (or unresolved)
+        # target contributes its own singleton set. Re-seeds `expected_entity` to the
+        # new hop's target (never inherits the enclosing position's).
+        op = body.get("op")
+        if op is None:
+            return
+        target = family.relationship_target(body.get("rel"))
+        target_set = family.effective_concrete_set(target) if target is not None else []
+        _walk_narrow(family, target_set, op, NARROW_OUTSIDE_RELATIONSHIP_TARGET, target)
+        return
     if tag == "narrow":
         entity = body.get("entity")
         to_list = body.get("to", []) or []
+        # Relationship-scope naming (m-navigate): when this narrow sits at a navigation
+        # filter's relationship-target position, its `entity` MUST NAME that target
+        # exactly — subtypes are reached via `to`, not by renaming (or broadening) the
+        # position. `expected_entity` is None at the queried / nested same-position
+        # levels, where the CLAMP below is the whole rule.
+        if expected_entity is not None and entity != expected_entity:
+            raise RejectionError(
+                NARROW_OUTSIDE_RELATIONSHIP_TARGET,
+                f"narrow at the relationship-target position names entity {entity!r}, "
+                f"but the relationship target is {expected_entity!r}; narrow to subtypes "
+                f"with `to`, not by naming a different position",
+            )
         # The effective polymorphic position this narrow operates on is the
         # `entity`-declared position CLAMPED to the active position threaded into
         # this walk (`current_set`): the read's `targetEntity` at top level, or the
@@ -628,27 +781,43 @@ def _walk_narrow(family: Family, current_set: list[str], node: Any) -> None:
             )
         if not set(to_set) <= set(position_set):
             raise RejectionError(
-                NARROW_OUTSIDE_POSITION,
+                outside_rule,
                 f"narrow of {entity!r} to {to_list!r} resolves to {sorted(to_set)}, "
                 f"which is not a subset of the active position's effective set "
                 f"{sorted(position_set)} (the entity position {sorted(entity_set)} "
                 f"clamped to the threaded position {sorted(current_set)})",
             )
-        _walk_narrow(family, to_set, body.get("operand"))
+        # Descending into `operand`: the position becomes the narrowed set, so a
+        # nested narrow is a SAME-POSITION narrow governed by the clamp — clear
+        # `expected_entity` (the naming requirement was this narrow's alone).
+        _walk_narrow(family, to_set, body.get("operand"), outside_rule, None)
     elif tag in ("and", "or"):
+        # Position-preserving: a narrow directly under `and` / `or` is still the
+        # target-position narrow, so it inherits the naming requirement.
         for operand in body.get("operands", []) or []:
-            _walk_narrow(family, current_set, operand)
+            _walk_narrow(family, current_set, operand, outside_rule, expected_entity)
     elif tag in ("not", "group", "distinct", "limit", "asOf", "asOfRange", "history"):
-        _walk_narrow(family, current_set, body.get("operand"))
+        _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
     elif tag == "orderBy":
-        _walk_narrow(family, current_set, body.get("operand"))
+        _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
         for key in body.get("keys", []) or []:
             if isinstance(key, dict):
                 _check_subtype_attr(family, current_set, key.get("attr"))
+    elif tag == "deepFetch":
+        # A deep-fetch path segment MAY narrow its (polymorphic) hop with `{to: […]}`;
+        # each such narrow must resolve within the hop's relationship target
+        # (`narrow-outside-relationship-target`). The operand is the root query,
+        # walked at the queried position.
+        for path in body.get("paths", []) or []:
+            for segment in path if isinstance(path, list) else []:
+                rel = segment.get("rel") if isinstance(segment, dict) else None
+                if isinstance(rel, str) and isinstance(segment.get("narrow"), dict):
+                    to_list = segment["narrow"].get("to")
+                    resolve_hop_effective_set(family, rel, to_list)
+        _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
     elif tag in _ATTR_BEARING_TAGS:
         _check_subtype_attr(family, current_set, body.get("attr"))
-    # navigate / exists / notExists / deepFetch / nested* / all / none carry no
-    # queried-position subtype-attribute reference to validate in this phase.
+    # nested* / all / none carry no queried-position subtype-attribute reference here.
 
 
 def _check_subtype_attr(family: Family, current_set: list[str], attr_ref: Any) -> None:
@@ -706,11 +875,14 @@ def concrete_superset_columns(
     Each concrete subtype's flattened definition carries its full inherited chain
     plus, for table-per-hierarchy, the synthesized tag column
     (:func:`resolve_effective_definition`), so this is exactly the superset an
-    abstract-target read MUST project — inherited columns first, then each
-    concrete's declared columns in descriptor order, and the tag column.
+    abstract-target read MUST project. The union walks the concretes in the family's
+    CANONICAL sibling-set order (ALPHABETICAL by entity name, m-inheritance), so the
+    per-subtype OWN-column blocks aggregate in that order; the INHERITED-column prefix
+    each block contributes stays ANCESTRY order (root -> ... -> self) — columns are
+    never alphabetized across the inheritance chain.
     """
     columns: list[str] = []
-    for name in effective_set:
+    for name in sorted(effective_set):
         resolved = resolve_effective_definition(entity_defs, name)
         for attribute in resolved.get("attributes", []) or []:
             column = attribute.get("column")

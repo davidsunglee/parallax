@@ -18,9 +18,18 @@
 #
 # Abstract nodes (Animal, Pet) are tableless and rowless; only concrete subtypes
 # own rows. Concrete subtypes do NOT repeat inherited attributes — the full chain
-# (Animal.id/name, Pet.license_id) is derived from the ancestry. Every
+# (Animal.id/name/owner_id, Pet.license_id) is derived from the ancestry. Every
 # subtype-declared column is nullable (shared table). The `kind` tag is
 # framework-owned metadata, not a declared attribute.
+#
+# Phase 6 adds a POLYMORPHIC OWNER: `Person` owns animals through the shared
+# `owner_id` foreign key (declared on the abstract ROOT `Animal`, so every concrete
+# subtype inherits it). Two relationships prove targeting both polymorphic
+# positions:
+#   Person.animals -> Animal (abstract ROOT)     — reaches any concrete {Dog,Cat,WildBoar}
+#   Person.pets    -> Pet    (abstract SUBTYPE)   — reaches only {Dog,Cat}
+# A narrowed include/navigation over either derives a distinct narrowed view keyed
+# `pets[Dog,Cat]` etc. (m-navigate / m-deep-fetch).
 #
 # Row data lives in the sibling fixtures/animal.yaml, keyed per concrete subtype.
 entities:
@@ -43,6 +52,14 @@ entities:
         type: string
         column: name
         maxLength: 32
+      # The polymorphic owner FK, inherited by every concrete subtype (Phase 6): a
+      # nullable back-pointer to Person on the shared `animal` table. It is part of
+      # the inherited attribute chain, so an abstract-target read projects it in the
+      # concrete superset.
+      - name: ownerId
+        type: int64
+        column: owner_id
+        nullable: true
   - name: Pet
     namespace: parallax.compatibility
     inheritance:
@@ -96,3 +113,42 @@ entities:
         type: decimal(18,2)
         column: tusk_length
         nullable: true
+  # The polymorphic OWNER (Phase 6): a plain non-inheritance entity whose
+  # relationships target the abstract root and the abstract subtype, so navigation
+  # and deep fetch cross a polymorphic boundary.
+  - name: Person
+    namespace: parallax.compatibility
+    table: person
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: name
+        type: string
+        column: name
+        maxLength: 32
+    relationships:
+      # Targets the abstract ROOT: reaches any concrete subtype in the family.
+      - name: animals
+        relatedEntity: Animal
+        cardinality: one-to-many
+        join: this.id = Animal.ownerId
+        reverseName: owner
+        foreignKey: owner_id
+      # Targets the abstract SUBTYPE Pet: reaches only {Dog, Cat}, never the sibling
+      # WildBoar — so the shared-table EXISTS / deep-fetch hop carries a tag `in`
+      # predicate over Pet's concretes.
+      - name: pets
+        relatedEntity: Pet
+        cardinality: one-to-many
+        join: this.id = Pet.ownerId
+        reverseName: owner
+        foreignKey: owner_id
+    indices:
+      - name: person_pk
+        attributes: [id]
+        unique: true

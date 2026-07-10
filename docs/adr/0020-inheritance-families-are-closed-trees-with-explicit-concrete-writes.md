@@ -18,9 +18,10 @@ family unless the target is the root. Subtype narrowing may be authored with
 abstract or concrete subtype names; validation resolves the authored names to an
 effective concrete subtype set, accepts only non-empty subsets of the current
 polymorphic position, and treats redundant narrowing as valid. Narrowed
-relationship views are keyed from the effective concrete subtype set in
-descriptor order, so equivalent authored narrowings assemble under the same
-view.
+relationship views are keyed from the effective concrete subtype set in the
+family's **canonical concrete-subtype order** (alphabetical by entity name — see
+the Amendment below, which supersedes the originally recorded descriptor order),
+so equivalent authored narrowings assemble under the same view.
 
 Abstract-target reads materialize complete concrete instances. The canonical SQL
 projection includes every attribute needed by every reachable concrete subtype,
@@ -53,3 +54,29 @@ the inheritance roles, family strategy, variant tag metadata, narrowing rules,
 materialization guarantee, and concrete-subtype write routing part of the core
 descriptor, operation, SQL, compatibility-case, and conformance-adapter
 contract.
+
+## Amendment (2026-07): canonical concrete-subtype ordering is alphabetical
+
+The original decision made **descriptor (declaration) order** the canonical order
+in which a family's concrete subtypes are enumerated — for the table-per-hierarchy
+tag `in (…)` list, the table-per-concrete-subtype `union all` branch order, the
+grouped-`OR` per-branch `EXISTS` order, the narrowed view key
+`<rel>[<Concrete>,<Concrete>]`, and the per-subtype own-column blocks of an
+abstract-read superset projection. This made model-file layout semantically
+load-bearing: reordering subtype entries, or splitting them across files, would
+change golden SQL, view keys, and binds.
+
+**Superseding decision:** the canonical sibling-set order is now **alphabetical by
+concrete-subtype entity name, ordinal (Unicode codepoint) ascending** — a total
+order that is a pure function of the entity names and **independent of the
+descriptor's declaration order and file layout**. This is specified normatively in
+`m-inheritance.md` ("Canonical concrete-subtype ordering") and referenced by
+`m-op-algebra`, `m-sql`, `m-navigate`, `m-deep-fetch`, and `m-case-format`.
+
+Unchanged by this amendment: the **inherited-column prefix** of a superset stays
+**ancestry order** (root → abstract-subtype → concrete); a single entity's own
+attribute/column order stays as declared; and a `narrow` node's authored `to` list
+is still preserved verbatim by serde — only the *resolved* effective set is
+canonicalized. The rationale for the earlier descriptor-order choice (a single fixed
+order so equivalent authored narrowings converge) is preserved; only the choice of
+*which* total order changed, to remove the layout dependence.

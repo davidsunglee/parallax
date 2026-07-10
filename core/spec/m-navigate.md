@@ -73,6 +73,48 @@ temporally coherent — a graph's pointers cannot silently cross temporal
 contexts, and a view materialized from a `history` read (edge-pinned at its
 milestone's from-instant, `m-temporal-read`) dereferences at its own edge.
 
+## Polymorphic navigation
+
+A relationship target (`relatedEntity`) may be a **polymorphic position** in an
+inheritance family (`m-inheritance`): an **abstract root** (reaching any concrete
+subtype in the family), an **abstract subtype** (reaching only its concrete
+descendants), or a **concrete subtype** (monomorphic). The navigation semi-join
+resolves the target to its **effective concrete-subtype set** and constrains the
+correlated sub-select to exactly that set — the same effective-set derivation a
+top-level read uses, applied at the relationship target.
+
+`narrow` (`m-op-algebra`) MAY appear in a navigation filter's inner operation
+(`op`) to constrain the relationship target: `narrow.entity` names the
+**relationship target's** polymorphic position, and the narrowed set drives the
+semi-join. A narrow whose resolved concrete set is **not a subset** of the
+relationship target's effective concrete set is rejected
+(`narrow-outside-relationship-target`, `m-case-format`) — narrowing to a concrete
+outside the reachable set, even a **sibling** sharing the family root, is invalid.
+
+The lowering per strategy (fixed by `m-sql`):
+
+- **`table-per-hierarchy`** — one shared child table, so a polymorphic hop is a
+  **single correlated `EXISTS`** whose sub-select carries the correlation predicate
+  **plus the interior tag predicate** over the effective set's `tagValue`s
+  (`t1.kind = ?` for one concrete, `t1.kind in (?, …)` for several, in the family's
+  canonical alphabetical order, `m-inheritance`). An abstract-**root** target spans
+  the whole shared table and injects **no** tag predicate; an abstract-**subtype**
+  (or narrowed) target injects the `in`-list so sibling branches in the same table
+  are excluded.
+- **`table-per-concrete-subtype`** — each concrete subtype has its own table, so a
+  polymorphic hop is a **grouped `OR` of one correlated `EXISTS` per effective
+  concrete subtype**, in the family's canonical **alphabetical order**
+  (`m-inheritance`): `(exists (select 1 from invoice …) or exists (select 1 from
+  memo …) or exists (select 1 from receipt …))`. The grouped `OR` is a **flat
+  left-deep** chain (`m-sql` rule 1), so each branch's `EXISTS` alias continues the
+  single source-order sequence (`t1`, `t2`, `t3` — the outer query is `t0`); it is
+  never hand-folded right-nested. A single concrete is one `EXISTS` (no grouping).
+
+**As-of propagation** (above) is unchanged by polymorphism: the root as-of value
+propagates per hop, matched by axis, to **every temporal concrete branch** reached
+— evaluated at the root's pinned coordinates, appended after each branch's
+correlation predicate (and, for `table-per-concrete-subtype`, per `EXISTS` branch).
+
 ## Dependent and reverse relationships
 
 - A **reverse** relationship (`reverseName`) is the same association navigated

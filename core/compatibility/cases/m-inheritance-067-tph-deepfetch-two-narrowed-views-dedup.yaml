@@ -1,0 +1,51 @@
+# Deep fetch of TWO narrowed views sharing a relationship prefix — prefix dedup
+# includes narrowed-view identity (m-deep-fetch, m-inheritance).
+#
+# Both paths narrow the same `Person.pets` relationship, but to DIFFERENT concrete
+# sets — `to: [Dog]` and `to: [Cat]`. Because dedup identity is (relationship hop,
+# effective concrete set), these are TWO DISTINCT hops (they do NOT collapse the way
+# the equivalent spellings in m-inheritance-066 do), so each contributes to `L`:
+# `1 + L` = 3 statements, and the two narrowed views `pets[Dog]` and `pets[Cat]`
+# populate independently. Each is a single-concrete view (no `familyVariant`); the
+# child levels project each concrete's own superset and inject `t0.kind = ?`.
+model: models/animal.yaml
+tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Person
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [{ rel: Person.pets, narrow: { to: [Dog] } }]
+        - [{ rel: Person.pets, narrow: { to: [Cat] } }]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0
+    - sql:
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind = ?
+      binds: [10, 11, 12, dog]
+    - sql:
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind = ?
+      binds: [10, 11, 12, cat]
+  referenceSql: select id, name from person
+  graph:
+    Person:
+      - id: 10
+        name: Alice
+        "pets[Dog]":
+          - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7 }
+        "pets[Cat]":
+          - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, indoor: true }
+      - id: 11
+        name: Bob
+        "pets[Dog]":
+          - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3 }
+        "pets[Cat]": []
+      - id: 12
+        name: Carol
+        "pets[Dog]": []
+        "pets[Cat]": []
+  roundTrips: 3

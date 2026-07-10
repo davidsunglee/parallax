@@ -34,8 +34,18 @@ emitted SQL is compared **after applying the same normalization**. Normalization
 makes the comparison deterministic and language-neutral. The rules:
 
 1. **Table-alias scheme `t0, t1, …`.** Every table reference is aliased; aliases
-   are assigned `t0`, `t1`, … in first-appearance order. Column references are
-   always qualified by alias (`t0.id`, never bare `id`).
+   are assigned `t0`, `t1`, … in **source order** — the left-to-right textual order
+   the table sources first appear reading the statement as written. This is a
+   **single global sequence** over the whole read: a correlated `EXISTS`
+   sub-select's table **continues** the outer numbering (the outer query is `t0`,
+   the first sub-select's table is `t1`) and **sibling** sub-selects do **not**
+   restart — two independent `EXISTS` in one predicate alias `t1` and `t2`, a
+   sub-select nested inside `t1` aliases `t2`. (The per-branch restart to `t0`
+   applies only across the independent branches of a `union all`, below.) Column
+   references are always qualified by alias (`t0.id`, never bare `id`). Because
+   `and` / `or` are associative, a grouped predicate is stored in its **left-deep**
+   spine — `a or b or c`, never the right-nested `a or (b or c)` — so a chain has
+   one canonical shape and the branches number in source order without a hand-fold.
 2. **Lowercase keywords and identifiers.** SQL keywords and unquoted identifiers
    are lowercased.
 3. **Whitespace collapsed.** Runs of whitespace collapse to a single space;
@@ -59,12 +69,13 @@ per case (`m-case-format`, layer 3).
 > immediately, before any database is touched.
 
 The textual rules (2 lowercase, 3 whitespace, 5 clause order) are produced by
-re-rendering, so a violation simply changes the string. The structural rules are
-enforced by **rejection**, since re-rendering alone would pass a lowercase-but-
-non-canonical statement through unchanged: a **read** (`select`) whose table
-aliases are not `t0, t1, …` in first-appearance order, or whose columns are not
-alias-qualified (rule 1), and **any** statement carrying an inline literal where
-a `?` bind belongs (rule 4), is not canonical. Two literals are *not* parameters
+re-rendering, and the left-deep reassociation of `and` / `or` chains (rule 1) is
+applied during re-rendering, so a violation of any of these simply changes the
+string. The remaining structural rules are enforced by **rejection**, since
+re-rendering alone would pass a lowercase-but-non-canonical statement through
+unchanged: a **read** (`select`) whose table aliases are not `t0, t1, …` in source
+order, or whose columns are not alias-qualified (rule 1), and **any** statement
+carrying an inline literal where a `?` bind belongs (rule 4), is not canonical. Two literals are *not* parameters
 and remain canonical: the `1 = 0` `none`-identity and the `select 1` `EXISTS`
 probe. DML keeps its own canonical shape — an **unaliased** target table with
 **bare** columns (`update balance set out_z = ? where bal_id = ?`) — so rule 1
@@ -196,6 +207,42 @@ The independent `then.referenceSql` oracle for a navigation filter is the naive
 `id in (select fk from child where <op>)` subquery form — a different
 formulation that must return the same rows (`m-case-format`).
 
+### Polymorphic navigation lowering
+
+When a relationship target is a **polymorphic position** (`m-inheritance` — an
+abstract root / abstract subtype, optionally narrowed by a `narrow` in the filter's
+`op`, `m-op-algebra`), the semi-join constrains the sub-select to the target's
+**effective concrete-subtype set**. The shape depends on the strategy:
+
+- **`table-per-hierarchy`** — one shared child table, so the hop is a **single**
+  correlated `EXISTS` with the **interior tag predicate** over the effective set,
+  appended after the correlation predicate. An abstract-**root** target spans the
+  whole shared table and injects **no** tag predicate; an abstract-**subtype** (or
+  narrowed) target injects `t1.kind in (?, …)` (or `t1.kind = ?` for one concrete),
+  in the family's canonical alphabetical order (`m-inheritance`), excluding sibling
+  branches:
+
+  ```text
+  exists(Person.pets)  # Pet -> {Cat, Dog}, a proper subset of the animal table
+    → select … from person t0
+      where exists (select 1 from animal t1
+                    where t1.owner_id = t0.id and t1.kind in (?, ?))
+      binds: ['cat', 'dog']
+  ```
+
+- **`table-per-concrete-subtype`** — each concrete subtype has its own table, so
+  the hop is a **grouped `OR` of one correlated `EXISTS` per effective concrete
+  subtype**, in the family's canonical **alphabetical order** (`m-inheritance`; a
+  single concrete is one ungrouped `EXISTS`):
+
+  ```text
+  exists(Folder.documents)  # Document -> {Invoice, Memo, Receipt}
+    → select … from folder t0
+      where (exists (select 1 from invoice t1 where t1.folder_id = t0.id)
+          or exists (select 1 from memo    t2 where t2.folder_id = t0.id)
+          or exists (select 1 from receipt t3 where t3.folder_id = t0.id))
+  ```
+
 ## Deep fetch — one statement per relationship level
 
 `deepFetch` does **not** emit a single joined statement. It emits the **root
@@ -221,6 +268,19 @@ the harness needs to fan results back to their parents (the FK that correlates t
 the parent, and the child's own key if it is itself a parent of a deeper level).
 The temp-table variant for very large parent key sets is a **fast-follow**
 (`m-deep-fetch`); round 1 uses the simplified `IN` form only.
+
+A **polymorphic** hop (relationship target abstract, optionally narrowed by a path
+`narrow`, `m-op-algebra` / `m-deep-fetch`) stays **one statement per level**. Under
+`table-per-hierarchy` the child level is the shared-table `IN` read with the
+effective set's tag predicate appended after the `IN` list (`… where t0.owner_id in
+(?, …) and t0.kind in (?, …)`); a polymorphic view projects the raw tag column so
+`familyVariant` can be materialized, a single-concrete narrowed view projects only
+that concrete's columns. Under `table-per-concrete-subtype` the child level is a
+single **`union all`** statement whose branches — one per effective concrete
+subtype in canonical alphabetical order (`m-inheritance`) — share the **same**
+parent-id `IN` list (the stable superset projection + per-branch `familyVariant`
+literal of the abstract-read lowering below); the hop remains one statement,
+preserving `1 + L`.
 
 ## Temporal predicates and write sequences
 
@@ -558,14 +618,14 @@ user-first then tag):
 |---|---|---|
 | the whole family (abstract root, no narrow) | *(no tag predicate)* | — |
 | one concrete subtype | `t0.kind = ?` | `[<tagValue>]` |
-| several concrete subtypes (abstract subtype, or a narrow) | `t0.kind in (?, …)` | `[<tagValue>, …]` (descriptor order) |
+| several concrete subtypes (abstract subtype, or a narrow) | `t0.kind in (?, …)` | `[<tagValue>, …]` (canonical alphabetical order) |
 
 An abstract **root** read spans the whole shared table, so it injects **no** tag
 predicate; the *absence* is the contract. An abstract **subtype** read (or any
 narrow) that resolves to a **proper subset** of the table's concretes injects the
-`in (…)` list of exactly those `tagValue`s, in descriptor order, so a sibling
-branch in the same table is excluded. A single concrete subtype lowers to
-`t0.kind = ?`.
+`in (…)` list of exactly those `tagValue`s, in the family's canonical alphabetical
+order (`m-inheritance`), so a sibling branch in the same table is excluded. A single
+concrete subtype lowers to `t0.kind = ?`.
 
 #### Grouped branch predicates
 
@@ -592,15 +652,17 @@ binds `[5, 'dog']`.
 An **abstract-target** read must materialize complete concrete instances, so its
 projection is the **full concrete-subtype attribute superset** reachable from the
 position — inherited (root + abstract-ancestor) columns first, then each concrete
-subtype's declared columns in descriptor traversal order — **plus the raw tag
-column** (resolved Q6). A subtype column not applicable to a returned row reads
-back `NULL`; the tag column is projected explicitly because it is no longer a
-declared attribute:
+subtype's own columns in **alphabetical subtype order** (by entity name,
+`m-inheritance`) — **plus the raw tag column** (resolved Q6). A subtype column not
+applicable to a returned row reads back `NULL`; the tag column is projected
+explicitly because it is no longer a declared attribute:
 
 ```yaml
-# targetEntity: Animal (root over Dog / Cat / WildBoar) — full superset + tag:
+# targetEntity: Animal (root over Cat / Dog / WildBoar) — full superset + tag; the
+# subtype-own blocks aggregate alphabetically (Cat's indoor, Dog's bark_volume,
+# WildBoar's tusk_length), the inherited prefix stays ancestry order:
 - sql:
-    postgres: select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.tusk_length, t0.kind from animal t0
+    postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length, t0.kind from animal t0
 ```
 
 `familyVariant` is **not projected as SQL**. It is materialized from the tag
@@ -642,17 +704,18 @@ the concrete instance's full inherited-chain-plus-own columns, and it carries **
 A read whose queried position resolves to **two or more** concrete subtypes — an
 abstract root, an abstract subtype, or a `narrow` (`m-op-algebra`) to multiple
 concretes — lowers to canonical **`union all`**, one branch per concrete subtype in
-that effective set, in **descriptor order**. Each branch is an ordinary single-table
-read of that concrete's table (each branch's alias scheme restarts at `t0`, and the
-branch order is preserved). A sibling branch outside the effective set contributes
-no branch — an abstract-subtype read `union all`s only that subtype's concrete
-descendants.
+that effective set, in the family's canonical **alphabetical order** (by entity name,
+`m-inheritance`). Each branch is an ordinary single-table read of that concrete's
+table (each branch's alias scheme restarts at `t0`, and the branch order is
+preserved). A sibling branch outside the effective set contributes no branch — an
+abstract-subtype read `union all`s only that subtype's concrete descendants.
 
 Every branch projects the **same stable superset column list**, in this order:
 
-1. **inherited** columns (root + abstract-ancestor), which every branch has;
-2. **subtype-declared** columns, in **descriptor traversal order** (the order the
-   subtypes and their attributes are declared);
+1. **inherited** columns (root + abstract-ancestor), which every branch has, in
+   **ancestry order** (never alphabetized across the inheritance chain);
+2. **subtype-declared** own-column blocks, in **alphabetical subtype order** (by
+   entity name), each block's columns in the subtype's declared order;
 3. the **`familyVariant`** literal.
 
 A column not applicable to a branch is a **`NULL` placeholder** — `cast(null as
@@ -681,19 +744,22 @@ asymmetry with table-per-hierarchy: TPH projects the raw tag column and derives
 literal directly:
 
 ```yaml
-# targetEntity: Document (abstract root over Invoice / Receipt / Memo) — union all,
-# stable superset (id, title, currency, amount_due, paid_amount, body) + variant.
-# The string placeholders diverge per dialect (Postgres varchar / MariaDB char);
-# the decimal placeholders are identical:
+# targetEntity: Document (abstract root over Invoice / Memo / Receipt — ALPHABETICAL
+# branch order) — union all, stable superset (id, title, currency, amount_due, body,
+# paid_amount) + variant. The subtype-own blocks aggregate alphabetically (Invoice's
+# amount_due, Memo's body, Receipt's paid_amount); `currency` is FinancialDocument's
+# inherited attribute, surfaced where Invoice's ancestry chain first carries it. The
+# string placeholders diverge per dialect (Postgres varchar / MariaDB char); the
+# decimal placeholders are identical:
 - sql:
-    postgres: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, cast(null as varchar(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, cast(null as varchar(64)) body, 'Receipt' family_variant from receipt t0 union all select t0.id, t0.title, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, t0.body, 'Memo' family_variant from memo t0
-    mariadb: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, cast(null as char(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, cast(null as char(64)) body, 'Receipt' family_variant from receipt t0 union all select t0.id, t0.title, cast(null as char(3)) currency, cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, t0.body, 'Memo' family_variant from memo t0
+    postgres: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as varchar(64)) body, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, cast(null as varchar(64)) body, t0.paid_amount, 'Receipt' family_variant from receipt t0
+    mariadb: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as char(64)) body, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, cast(null as char(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, cast(null as char(64)) body, t0.paid_amount, 'Receipt' family_variant from receipt t0
 ```
 
 The equivalent authored spellings of a narrow collapse to the same lowering: a
 `narrow` to an abstract subtype and a `narrow` to that subtype's explicit concrete
-list produce the same effective set and therefore the same branches, in descriptor
-order, regardless of the authored `to` order. `familyVariant` appears only in the
+list produce the same effective set and therefore the same branches, in canonical
+alphabetical order, regardless of the authored `to` order. `familyVariant` appears only in the
 compatibility rows/graphs (`m-case-format`); the projected `family_variant` literal
 is the on-the-wire carrier the harness renames to `familyVariant`.
 

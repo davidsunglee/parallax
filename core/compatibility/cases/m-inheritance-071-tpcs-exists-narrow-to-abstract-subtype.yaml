@@ -1,0 +1,39 @@
+# `exists` over a TABLE-PER-CONCRETE-SUBTYPE polymorphic target NARROWED to an
+# abstract subtype (m-navigate, m-op-algebra, m-inheritance, m-sql, resolved Q7 + Q10).
+#
+# `Folder.documents` targets the abstract root Document; the `narrow` in the filter's
+# `op` names that relationship target and constrains it to the abstract subtype
+# [FinancialDocument], whose effective concrete set is {Invoice, Receipt} — NOT the
+# sibling Memo. So the grouped-`OR` semi-join lifts the narrow into BRANCH SELECTION:
+# only the invoice + receipt `EXISTS` branches are emitted (alphabetical order), and
+# the memo branch is dropped. Alpha (Invoice-A + Receipt-A) and Beta (Invoice-B) still
+# match; Gamma DROPS OUT — its only document is a Memo, which is not a FinancialDocument.
+# This is the table-per-concrete-subtype counterpart of the table-per-hierarchy narrowed
+# navigation (m-inheritance-063), witnessing that the narrow selects branches rather
+# than injecting a tag predicate.
+#
+# Non-trivial (grouped-OR semi-join + narrow) case => referenceSql is the naive
+# per-branch `id in (select fk …)` oracle over just the narrowed branches.
+model: models/document.yaml
+tags: [m-navigate, m-op-algebra, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Folder
+  operation:
+    exists:
+      rel: Folder.documents
+      op:
+        narrow:
+          entity: Document
+          to: [FinancialDocument]
+          operand:
+            all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from folder t0 where (exists (select 1 from invoice t1 where t1.folder_id = t0.id) or exists (select 1 from receipt t2 where t2.folder_id = t0.id))
+  referenceSql: select id, name from folder where id in (select folder_id from invoice) or id in (select folder_id from receipt)
+  rows:
+    - { id: 100, name: Alpha }
+    - { id: 101, name: Beta }
+  roundTrips: 1

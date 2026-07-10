@@ -5,25 +5,46 @@
 # DERIVED from the subtype's tagValue (m-inheritance), never authored here. Inner
 # subtype columns not applicable to a row load as null (shared table).
 #
-#   id 1 Dog      name Rex      licenseId L-100  barkVolume 7   (kind=dog)
-#   id 2 Dog      name Fido     licenseId L-101  barkVolume 3   (kind=dog)
-#   id 3 Cat      name Whiskers licenseId L-200  indoor true    (kind=cat)
-#   id 4 WildBoar name Tusker   tuskLength 12.50               (kind=boar)
+# Phase 6 adds the polymorphic owner FK `ownerId` (column owner_id), inherited from
+# Animal, plus the owning `Person` rows:
+#
+#   id 1 Dog      name Rex      licenseId L-100  barkVolume 7   ownerId 10 (kind=dog)
+#   id 2 Dog      name Fido     licenseId L-101  barkVolume 3   ownerId 11 (kind=dog)
+#   id 3 Cat      name Whiskers licenseId L-200  indoor true    ownerId 10 (kind=cat)
+#   id 4 WildBoar name Tusker   tuskLength 12.50               ownerId 12 (kind=boar)
+#
+#   Person 10 Alice  owns Rex (Dog) + Whiskers (Cat)   — animals {Dog,Cat}, pets {Dog,Cat}
+#   Person 11 Bob    owns Fido (Dog)                   — animals {Dog},     pets {Dog}
+#   Person 12 Carol  owns Tusker (WildBoar) ONLY       — animals {WildBoar}, pets {} (a boar is
+#                                                        NOT a Pet — so Carol is reached by the
+#                                                        abstract-ROOT relationship `animals` but
+#                                                        NOT the abstract-SUBTYPE relationship `pets`)
 Dog:
   - id: 1
     name: Rex
     licenseId: L-100
     barkVolume: 7
+    ownerId: 10
   - id: 2
     name: Fido
     licenseId: L-101
     barkVolume: 3
+    ownerId: 11
 Cat:
   - id: 3
     name: Whiskers
     licenseId: L-200
     indoor: true
+    ownerId: 10
 WildBoar:
   - id: 4
     name: Tusker
     tuskLength: 12.50
+    ownerId: 12
+Person:
+  - id: 10
+    name: Alice
+  - id: 11
+    name: Bob
+  - id: 12
+    name: Carol

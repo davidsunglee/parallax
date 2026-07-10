@@ -4,12 +4,12 @@
 # targetEntity is the abstract root Document; the `narrow` node constrains it to the
 # explicit concrete list [Invoice, Memo] — two concretes from DIFFERENT branches of
 # the tree (Invoice under FinancialDocument, Memo directly under Document), skipping
-# Receipt. The read `union all`s over exactly the invoice + memo tables in descriptor
-# order. Invoice and Memo share only the root chain (id, title), so the stable
-# superset is id, title, currency, amount_due, body + `familyVariant`: this is the
-# focused `NULL`-placeholder witness — Invoice NULLs `body`, and Memo NULLs both
-# `currency` (FinancialDocument's, which Memo does not inherit) and `amount_due`, each
-# with a dialect cast.
+# Receipt. The read `union all`s over exactly the invoice + memo tables in alphabetical
+# order (Invoice, Memo). Invoice and Memo share only the root chain (id, title,
+# folder_id), so the stable superset is id, title, folder_id, currency, amount_due,
+# body + `familyVariant`: this is the focused `NULL`-placeholder witness — Invoice
+# NULLs `body`, and Memo NULLs both `currency` (FinancialDocument's, which Memo does
+# not inherit) and `amount_due`, each with a dialect cast.
 model: models/document.yaml
 tags: [m-inheritance, m-op-algebra, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -24,10 +24,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as varchar(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, 'Memo' family_variant from memo t0
-        mariadb: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as char(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, cast(null as char(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, 'Memo' family_variant from memo t0
+        postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as varchar(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, 'Memo' family_variant from memo t0
+        mariadb: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as char(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, cast(null as char(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, 'Memo' family_variant from memo t0
   rows:
-    - { id: 1, title: Invoice-A, currency: USD, amount_due: 120.00, body: null, familyVariant: Invoice }
-    - { id: 2, title: Invoice-B, currency: EUR, amount_due: 80.00, body: null, familyVariant: Invoice }
-    - { id: 1, title: Memo-A, currency: null, amount_due: null, body: Reminder, familyVariant: Memo }
+    - { id: 1, title: Invoice-A, folder_id: 100, currency: USD, amount_due: 120.00, body: null, familyVariant: Invoice }
+    - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: 80.00, body: null, familyVariant: Invoice }
+    - { id: 1, title: Memo-A, folder_id: 102, currency: null, amount_due: null, body: Reminder, familyVariant: Memo }
   roundTrips: 1

@@ -1,0 +1,40 @@
+# Polymorphic relationship over a TABLE-PER-CONCRETE-SUBTYPE family, targeting the
+# abstract ROOT (m-navigate, m-inheritance, m-sql, resolved Q7).
+#
+# `Folder.documents` targets the abstract root Document, whose effective concrete set
+# is {Invoice, Memo, Receipt}. Under table-per-concrete-subtype each concrete subtype
+# has its OWN table and there is no shared table or tag, so a polymorphic semi-join is
+# a GROUPED `OR` of one correlated `EXISTS` per concrete table, in the family's
+# canonical ALPHABETICAL order (invoice, memo, receipt) — the corpus witness for the
+# grouped-`OR` per-branch `EXISTS` rule that `m-navigate` / `m-sql` specify. A folder
+# matches iff it owns at least one document in ANY branch: Alpha (Invoice-A + Receipt-A)
+# and Beta (Invoice-B) via the invoice/receipt branches, Gamma (Memo-A) via the memo
+# branch; Empty owns nothing and is excluded.
+#
+# The three `EXISTS` branches form a FLAT grouped `OR` — `A or B or C` — the canonical
+# left-deep spine (m-sql rule 1: `and` / `or` chains reassociate left-deep, branches in
+# source order). The correlation aliases number in source order (t1 invoice, t2 memo,
+# t3 receipt) under the `t0, t1, …` scheme, continuing the outer `t0` across the sibling
+# subqueries. This is the shape the spec's grouped-`OR` example already shows; a
+# right-nested fold `A or (B or C)` normalizes to this same flat form.
+#
+# Non-trivial (grouped-OR semi-join) case => referenceSql is the naive per-branch
+# `id in (select fk …)` oracle.
+model: models/document.yaml
+tags: [m-navigate, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, exists, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Folder
+  operation:
+    exists:
+      rel: Folder.documents
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from folder t0 where (exists (select 1 from invoice t1 where t1.folder_id = t0.id) or exists (select 1 from memo t2 where t2.folder_id = t0.id) or exists (select 1 from receipt t3 where t3.folder_id = t0.id))
+  referenceSql: select id, name from folder where id in (select folder_id from invoice) or id in (select folder_id from memo) or id in (select folder_id from receipt)
+  rows:
+    - { id: 100, name: Alpha }
+    - { id: 101, name: Beta }
+    - { id: 102, name: Gamma }
+  roundTrips: 1

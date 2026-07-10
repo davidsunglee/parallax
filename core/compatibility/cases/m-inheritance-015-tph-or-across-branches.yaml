@@ -5,9 +5,12 @@
 # by that branch's tag (appended after the predicate) and the whole branch is grouped,
 # so the branches join with `or`:
 #   (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
-# binds [5, dog, true, cat]. Rex (bark 7) and Whiskers (indoor) match; Fido (bark 3)
-# and Tusker (a boar) do not. The top node is `or`, so the position stays the whole
-# Animal family and the projection is the full superset; familyVariant per row.
+# binds [5, dog, true, cat]. The branch order follows the authored `or` operands (Dog
+# branch, then Cat branch), NOT the sibling-set ordering. Rex (bark 7) and Whiskers
+# (indoor) match; Fido (bark 3) and Tusker (a boar) do not. The top node is `or`, so
+# the position stays the whole Animal family and the projection is the full superset —
+# its subtype-own columns in ALPHABETICAL order (indoor, bark_volume, tusk_length);
+# familyVariant per row.
 #
 # Non-trivial (grouped branches) case => referenceSql is the independent oracle.
 model: models/animal.yaml
@@ -31,10 +34,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.tusk_length, t0.kind from animal t0 where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length, t0.kind from animal t0 where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
       binds: [5, dog, true, cat]
-  referenceSql: select id, name, license_id, bark_volume, indoor, tusk_length, kind from animal where (bark_volume > 5 and kind = 'dog') or (indoor = true and kind = 'cat')
+  referenceSql: select id, name, owner_id, license_id, indoor, bark_volume, tusk_length, kind from animal where (bark_volume > 5 and kind = 'dog') or (indoor = true and kind = 'cat')
   rows:
-    - { id: 1, name: Rex, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, familyVariant: Dog }
-    - { id: 3, name: Whiskers, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null, familyVariant: Cat }
+    - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, familyVariant: Dog }
+    - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null, familyVariant: Cat }
   roundTrips: 1
