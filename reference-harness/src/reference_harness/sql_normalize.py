@@ -29,6 +29,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions.core import Expr
+from sqlglot.parser import Parser
 from sqlglot.tokenizer_core import Token, TokenType
 
 # Map a parallax dialect identifier to the sqlglot dialect that parses/renders
@@ -97,6 +98,29 @@ _FUNCTION_NAME = "function-name"
 # quoted ones tokenize as ``IDENTIFIER``, so lowercasing these VARs is safe.)
 _KEYWORD_VARS = frozenset({"SHARE", "OF"})
 
+# String-literal tokens keep their (case-sensitive) text but tokenize with the
+# surrounding quotes STRIPPED; the renderer re-wraps them in single quotes so a
+# canonical string literal survives normalization unchanged. A string literal
+# appears in canonical m-sql only as the table-per-concrete-subtype ``familyVariant``
+# branch literal (``'Dog'``, ``'Cat'``, …) — every caller-supplied value is a ``?``
+# bind (rule 4), so this path is exercised solely by the inheritance ``union all``
+# lowering.
+_STRING_TOKENS = frozenset({TokenType.STRING, TokenType.NATIONAL_STRING, TokenType.RAW_STRING})
+
+# SQL type-name tokens whose length/precision list binds TIGHT to the type name
+# (``decimal(18, 2)``, ``varchar(64)``, ``char(3)``), exactly like a function call's
+# paren. They appear in canonical m-sql inside a ``cast(null as <type>)`` NULL
+# placeholder in a table-per-concrete-subtype ``union all`` branch; without the
+# tight-binding the renderer would insert a space (``decimal (18, 2)``) because a
+# type name is neither a value token nor a VAR function name. This is sqlglot's OWN
+# full type-token classification (``Parser.TYPE_TOKENS``) rather than a hand-curated
+# allowlist, so ANY parametrized type a future cast introduces (Phase 8 temporal
+# TPCS: ``timestamp(6)``, ``datetime(6)``, ``numeric``, ...) renders correctly with
+# no edit here. It is only consulted when the token is immediately followed by ``(``
+# (a parametrized type); ``TYPE_TOKENS`` excludes clause keywords such as ``in`` /
+# ``values``, so ``in (?, …)`` still renders with its space.
+_SQL_TYPE_TOKENS = Parser.TYPE_TOKENS
+
 # The identifier-quoting character per dialect (m-sql rule 2 leaves quoted
 # identifiers intact). A quoted identifier — a reserved word or otherwise
 # non-simple column/table name — tokenizes as a single ``IDENTIFIER`` token whose
@@ -144,21 +168,29 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
         # IDENTIFIER is a value token, so its case is left intact below.
         if token.token_type is TokenType.IDENTIFIER:
             text = f"{quote_char}{text}{quote_char}"
+        # A string literal tokenizes with its surrounding quotes stripped; re-wrap
+        # it in single quotes (doubling any embedded quote) so the canonical form
+        # keeps the literal. STRING is a value token, so its case is left intact.
+        elif token.token_type in _STRING_TOKENS:
+            text = "'" + text.replace("'", "''") + "'"
+        following_is_paren = (
+            index + 1 < len(tokens) and tokens[index + 1].token_type is TokenType.L_PAREN
+        )
         # A VAR immediately followed by ``(`` is a function name (``lower(…)``),
         # not a table/column identifier. sqlglot renders function names in
         # uppercase (``LOWER``); m-sql rule 2 lowercases unquoted identifiers, so we
         # lowercase the function name and render it tight against its paren.
-        is_function_name = (
-            token.token_type is TokenType.VAR
-            and index + 1 < len(tokens)
-            and tokens[index + 1].token_type is TokenType.L_PAREN
-        )
+        is_function_name = token.token_type is TokenType.VAR and following_is_paren
+        # A parametrized type name (``decimal(18, 2)``) inside a NULL-placeholder
+        # cast binds its length list tight to the type, exactly like a function
+        # name; it is not a value token, so it is already lowercased below.
+        is_paren_type = token.token_type in _SQL_TYPE_TOKENS and following_is_paren
         # A lock-clause keyword sqlglot tokenized as VAR (``SHARE``/``OF``) must
         # be lowercased like any other keyword (m-sql rule 2), not preserved.
         is_keyword_var = token.token_type is TokenType.VAR and text.upper() in _KEYWORD_VARS
         if token.token_type not in _VALUE_TOKENS or is_function_name or is_keyword_var:
             text = text.lower()
-        token_type = _FUNCTION_NAME if is_function_name else token.token_type
+        token_type = _FUNCTION_NAME if (is_function_name or is_paren_type) else token.token_type
         parts.append((token_type, text))
 
     # Join with spaces, but keep punctuation tight (no space before ``,`` ``.``
@@ -220,37 +252,83 @@ def _inline_parameter_literal(tree: Expr) -> Expr | None:
     return None
 
 
+def is_union_all(node: exp.SetOperation) -> bool:
+    """True iff *node* is a canonical ``union all`` set operation (m-sql).
+
+    In sqlglot ``union all`` parses to ``exp.Union(distinct=False)``; a plain
+    ``union`` is ``exp.Union(distinct=True)`` — which silently **de-duplicates** rows
+    and so changes the read's semantics — and ``intersect`` / ``except`` are their own
+    ``SetOperation`` subclasses (``exp.Intersect`` / ``exp.Except``, both
+    ``distinct=True``). The ONLY canonical m-sql set operation is ``union all`` (the
+    table-per-concrete-subtype abstract-read lowering); every other set operation is
+    non-canonical. Used by the normalizer (below) and re-exported for the TPCS read
+    oracle's branch walk so both surfaces enforce the same rule.
+    """
+    return isinstance(node, exp.Union) and not node.args.get("distinct")
+
+
+def _canonical_select_scopes(tree: Expr) -> list[exp.Select]:
+    """The independent SELECT scopes rule 1 applies to, in first-appearance order.
+
+    A plain read is one scope (itself). A ``union all`` is lowered by the
+    table-per-concrete-subtype inheritance strategy as N independent branches, so
+    rule 1's alias scheme (``t0, t1, …``) restarts PER BRANCH — each branch is scored
+    on its own tables/columns, and branch order is preserved by the left-to-right leaf
+    walk. A set operation that is NOT ``union all`` (a plain de-duplicating ``union``,
+    or ``intersect`` / ``except``) is non-canonical and rejected — it never appears in
+    canonical m-sql. DML (Insert / Update / Delete) is not a SELECT and keeps its own
+    canonical shape, so it contributes no scope.
+    """
+    if isinstance(tree, exp.Select):
+        return [tree]
+    if isinstance(tree, exp.SetOperation):
+        if not is_union_all(tree):
+            raise NonCanonicalError(
+                f"set operation {tree.key!r} is not `union all`; the only canonical "
+                f"m-sql set operation is `union all` (the table-per-concrete-subtype "
+                f"abstract-read lowering) — a plain `union` de-duplicates rows and "
+                f"`intersect` / `except` are not emitted"
+            )
+        scopes: list[exp.Select] = []
+        for side in (tree.this, tree.expression):
+            scopes.extend(_canonical_select_scopes(side))
+        return scopes
+    return []
+
+
+def _assert_select_canonical(select: exp.Select) -> None:
+    """Enforce m-sql rule 1 over one SELECT scope (a read or one union branch)."""
+    # A row-lock suffix (`for share of t0`) references an existing alias and
+    # sqlglot models that reference as its own Table node; it is not a FROM
+    # source, so exclude it from the alias sequence.
+    aliases = [
+        table.alias for table in select.find_all(exp.Table) if table.find_ancestor(exp.Lock) is None
+    ]
+    expected = [f"t{index}" for index in range(len(aliases))]
+    if aliases != expected:
+        raise NonCanonicalError(
+            f"read table aliases must be {expected} in first-appearance order "
+            f"(m-sql rule 1), got {aliases}"
+        )
+    for column in select.find_all(exp.Column):
+        if not column.table:
+            raise NonCanonicalError(f"column {column.name!r} is not alias-qualified (m-sql rule 1)")
+
+
 def _assert_canonical(tree: Expr) -> None:
     """Enforce the m-sql canonical rules that re-rendering cannot. Parameters must
     be ``?`` binds (rule 4) in every statement; and for *read* (``SELECT``)
-    statements the alias scheme is ``t0, t1, …`` in first-appearance order with
-    every column alias-qualified (rule 1). DML keeps its own canonical shape (an
-    unaliased target table and bare columns), so rule 1 is not applied to it."""
+    statements — including each branch of a ``union all`` — the alias scheme is
+    ``t0, t1, …`` in first-appearance order with every column alias-qualified
+    (rule 1). DML keeps its own canonical shape (an unaliased target table and bare
+    columns), so rule 1 is not applied to it."""
     literal = _inline_parameter_literal(tree)
     if literal is not None:
         raise NonCanonicalError(
             f"inline literal where a ? bind is required (m-sql rule 4): {literal.sql()!r}"
         )
-    if isinstance(tree, exp.Select):
-        # A row-lock suffix (`for share of t0`) references an existing alias and
-        # sqlglot models that reference as its own Table node; it is not a FROM
-        # source, so exclude it from the alias sequence.
-        aliases = [
-            table.alias
-            for table in tree.find_all(exp.Table)
-            if table.find_ancestor(exp.Lock) is None
-        ]
-        expected = [f"t{index}" for index in range(len(aliases))]
-        if aliases != expected:
-            raise NonCanonicalError(
-                f"read table aliases must be {expected} in first-appearance order "
-                f"(m-sql rule 1), got {aliases}"
-            )
-        for column in tree.find_all(exp.Column):
-            if not column.table:
-                raise NonCanonicalError(
-                    f"column {column.name!r} is not alias-qualified (m-sql rule 1)"
-                )
+    for select in _canonical_select_scopes(tree):
+        _assert_select_canonical(select)
 
 
 # MariaDB's shared-row-lock suffix (m-dialect). sqlglot's ``mysql`` dialect parses both

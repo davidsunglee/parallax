@@ -129,6 +129,26 @@ obey the same absence-collapse rule as the text ones (`m-op-algebra`). A future
 dialect (Snowflake `VARIANT`) supplies its own cast spelling behind this same
 decision point.
 
+### Placeholder cast form (`m-sql` inheritance `union all`)
+
+A `table-per-concrete-subtype` abstract read lowers to `union all` over the effective
+concrete tables (`m-sql`); a column not applicable to a branch is a `cast(null as
+<type>)` placeholder in the column's declared type, so the union's result column types
+resolve deterministically. The **CAST target-type spelling is a dialect decision owned
+here** — and, for strings, it **diverges from the DDL column type**:
+
+| Declared column type | Postgres | MariaDB |
+|---|---|---|
+| `decimal(p, s)` | `cast(null as decimal(p, s))` | `cast(null as decimal(p, s))` |
+| bounded `string` (`maxLength n`) | `cast(null as varchar(n))` | `cast(null as char(n))` |
+| unbounded `string` | `cast(null as text)` | `cast(null as text)` |
+
+MariaDB's `CAST` target grammar does **not** accept `varchar`, so a bounded-string
+placeholder casts to `char(n)` even though the *column* type is `varchar(n)` on both
+dialects (the general rule: **string types map to `char` under a MariaDB `CAST`**). A
+future dialect supplies its own placeholder-cast spelling behind this same decision
+point; nothing above the seam names the concrete cast type.
+
 ### Array traversal form (`m-value-object`)
 
 A `many` value object is a JSON **array** of documents in the same column

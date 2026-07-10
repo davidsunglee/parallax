@@ -35,15 +35,23 @@ from sqlglot import exp
 from . import errors, serde
 from .case import Case, Entity, Model
 from .data_loader import load_model
-from .ddl_builder import column_order, ddl_for, physical_entities_by_table, quote_identifier
+from .ddl_builder import (
+    column_order,
+    ddl_for,
+    physical_entities_by_table,
+    placeholder_cast_type,
+    quote_identifier,
+)
 from .inheritance import (
     MODEL_REJECTED_RULES,
     OPERATION_REJECTED_RULES,
+    STRATEGY_TPCS,
     STRATEGY_TPH,
     Family,
     concrete_superset_columns,
     inheritance_of,
     is_abstract,
+    resolve_effective_definition,
     tag_of,
     tag_value_to_subtype,
     validate_family,
@@ -51,7 +59,7 @@ from .inheritance import (
 )
 from .op_validate import validate_operation
 from .providers import DatabaseProvider
-from .sql_normalize import normalize, sqlglot_dialect
+from .sql_normalize import is_union_all, normalize, sqlglot_dialect
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_validate import validate_write
 
@@ -848,9 +856,7 @@ def _golden_projection_columns(case: Case) -> set[str]:
     }
 
 
-def _materialize_family_variant(
-    case: Case, rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Materialize ``familyVariant`` for an abstract-target table-per-hierarchy read.
 
     A non-inheritance / concrete-target read (or a non-TPH strategy) returns *rows*
@@ -869,8 +875,12 @@ def _materialize_family_variant(
     target_def = family.defs[target_name]
     if inheritance_of(target_def) is None or not is_abstract(target_def):
         return rows  # concrete-target (or non-inheritance) read carries no familyVariant
-    if family.strategy_of(target_name) != STRATEGY_TPH:
-        return rows  # table-per-concrete-subtype projects familyVariant as a literal (Phase 5)
+
+    strategy = family.strategy_of(target_name)
+    if strategy == STRATEGY_TPCS:
+        return _materialize_tpcs_family_variant(case, rows, family, target_name)
+    if strategy != STRATEGY_TPH:
+        return rows
 
     tag_column = family.tag_column_of(target_name)
     if tag_column is None:
@@ -917,6 +927,258 @@ def _materialize_family_variant(
                 f"in the family (tag metadata {sorted(variant_map)})."
             )
         new_row["familyVariant"] = variant
+        materialized.append(new_row)
+    return materialized
+
+
+# The projected output column that carries the table-per-concrete-subtype
+# `familyVariant` literal per `union all` branch (the settled TPCS asymmetry,
+# m-sql): unlike table-per-hierarchy — which projects the RAW tag column and
+# derives `familyVariant` at materialization — TPCS has no tag column, so each
+# branch projects a subtype-name literal aliased to this column, which the oracle
+# renames to `familyVariant` after asserting the branch shape.
+_TPCS_VARIANT_COLUMN = "family_variant"
+
+
+def _descriptor_ordered(family: Family, target_name: str, effective: list[str]) -> list[str]:
+    """*effective* re-sorted into the family's descriptor concrete-subtype order.
+
+    The `union all` branch order is the effective concrete set in DESCRIPTOR order
+    (m-sql), independent of an authored `narrow.to` spelling — so `[Memo, Invoice]`
+    and `[Invoice, Memo]` yield the same branch order. Derived from the root's
+    concrete-descendant walk (already descriptor-ordered); any name outside it sorts
+    last (defensive — the effective set is always a subset).
+    """
+    root = family.root_of(target_name)
+    order = family.concrete_descendants(root) if root is not None else list(effective)
+    index = {name: position for position, name in enumerate(order)}
+    return sorted(effective, key=lambda name: index.get(name, len(order)))
+
+
+def _assert_union_all_only(case: Case, tree: Any) -> None:
+    """Reject any set operation in *tree* that is not a canonical `union all` (m-sql).
+
+    The TPCS abstract-read lowering is `union all` — a plain `union` silently
+    de-duplicates rows (changing the read's semantics) and `intersect` / `except` are
+    never emitted. sqlglot parses all of these into `exp.SetOperation`, so the branch
+    walk below would happily accept them; this guard makes the oracle reject a golden
+    that used the wrong set operation, mirroring the normalizer's canonicality gate.
+    """
+    for setop in tree.find_all(exp.SetOperation):
+        if not is_union_all(setop):
+            raise CaseFailure(
+                f"{case.path.name}: table-per-concrete-subtype abstract read uses set "
+                f"operation {setop.key!r}, not `union all`; only `union all` is a "
+                f"canonical TPCS lowering (a plain `union` de-duplicates rows; m-sql)."
+            )
+
+
+def _union_branch_selects(tree: Any) -> list[Any]:
+    """The leaf SELECT branches of a (possibly nested) `union all`, in order.
+
+    A plain SELECT is a single branch; a `SetOperation` yields its arms left to
+    right (``A union all B union all C`` nests left, so the walk restores authored
+    branch order). Callers assert `union all`-only separately (:func:`_assert_union_all_only`).
+    """
+    if isinstance(tree, exp.Select):
+        return [tree]
+    if isinstance(tree, exp.SetOperation):
+        return _union_branch_selects(tree.this) + _union_branch_selects(tree.expression)
+    return []
+
+
+def _projection_expr(projection: Any) -> Any:
+    """The underlying expression of a (possibly aliased) projection."""
+    return projection.this if isinstance(projection, exp.Alias) else projection
+
+
+def _string_literal_value(projection: Any) -> str | None:
+    """The string value of a (possibly aliased) string-literal projection, else None."""
+    node = _projection_expr(projection)
+    if isinstance(node, exp.Literal) and node.is_string:
+        return node.this
+    return None
+
+
+def _column_type_index(
+    entity_defs: list[dict[str, Any]], effective_set: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Map each superset column to the attribute descriptor that declares it.
+
+    Walks each concrete subtype's flattened (ancestry-resolved) attributes; an
+    inherited column is declared once and consistently, a subtype-declared column by
+    exactly one subtype, so first-writer-wins yields the descriptor (neutral `type` +
+    `maxLength`) the `cast(null as <type>)` placeholder for that column must use.
+    """
+    index: dict[str, dict[str, Any]] = {}
+    for name in effective_set:
+        resolved = resolve_effective_definition(entity_defs, name)
+        for attribute in resolved.get("attributes", []) or []:
+            column = attribute.get("column")
+            if isinstance(column, str) and column not in index:
+                index[column] = attribute
+    return index
+
+
+def _assert_branch_projection_shape(
+    case: Case,
+    branch: Any,
+    position: int,
+    name: str,
+    superset: list[str],
+    applicable: set[str],
+    column_types: dict[str, dict[str, Any]],
+    dialect: str,
+) -> None:
+    """Assert one `union all` branch's per-column projection SHAPE (m-sql).
+
+    For every superset column (all but the trailing `familyVariant` literal): a column
+    APPLICABLE to this concrete subtype (declared by it or an inherited ancestor) MUST
+    be a real column reference (``t0.<col>``); a NON-APPLICABLE column MUST be exactly
+    ``cast(null as <type>)`` in the column's declared type mapped to *dialect*
+    (`placeholder_cast_type`, m-dialect). This closes the gap where a bare `null <col>`
+    (no cast) or a wrong-typed cast shares the applicable column's output name and would
+    otherwise pass the name-only check.
+    """
+    engine = sqlglot_dialect(dialect)
+    for column_index, column in enumerate(superset):
+        node = _projection_expr(branch.expressions[column_index])
+        if column in applicable:
+            if not isinstance(node, exp.Column):
+                raise CaseFailure(
+                    f"{case.path.name}: `union all` branch {position} ({name!r}) "
+                    f"projects column {column!r} as {node.sql(dialect=engine)!r}, but "
+                    f"{column!r} is APPLICABLE to {name!r} (declared by it or an "
+                    f"inherited ancestor) and MUST be a real column reference (m-sql)."
+                )
+            continue
+        # Non-applicable: exactly `cast(null as <declared type>)` for this dialect.
+        attribute = column_types.get(column)
+        if attribute is None:
+            raise CaseFailure(
+                f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
+                f"non-applicable column {column!r}, which resolves to no descriptor "
+                f"attribute in the effective set (internal oracle error)."
+            )
+        expected = exp.DataType.build(
+            placeholder_cast_type(attribute.get("type", ""), attribute.get("maxLength"), dialect),
+            dialect=engine,
+        )
+        if not (isinstance(node, exp.Cast) and isinstance(node.this, exp.Null)):
+            raise CaseFailure(
+                f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
+                f"NON-applicable column {column!r} as {node.sql(dialect=engine)!r}, but "
+                f"it MUST be a `cast(null as {expected.sql(dialect=engine)})` placeholder "
+                f"(a bare `null` gives the union an untyped column; m-sql / m-dialect)."
+            )
+        if node.to != expected:
+            raise CaseFailure(
+                f"{case.path.name}: `union all` branch {position} ({name!r}) casts the "
+                f"NON-applicable column {column!r} placeholder to "
+                f"{node.to.sql(dialect=engine)!r}, expected the declared type "
+                f"{expected.sql(dialect=engine)!r} for dialect {dialect!r} "
+                f"(m-sql / m-dialect)."
+            )
+
+
+def _assert_tpcs_union_shape(case: Case, family: Family, ordered: list[str]) -> None:
+    """Assert the table-per-concrete-subtype abstract-read `union all` shape (m-sql).
+
+    The read-side inheritance oracle for TPCS (the counterpart of the TPH
+    projection-shape check): from the descriptor alone it recomputes the branch
+    count/order (the effective concrete set in descriptor order), the stable superset
+    projection every branch shares (inherited columns first, then subtype-declared in
+    descriptor traversal order, then the `familyVariant` literal), each branch's
+    per-column shape (an applicable column is a real reference; a non-applicable column
+    is a `cast(null as <declared type>)` placeholder in that dialect's type), and each
+    branch's `familyVariant` literal (the concrete subtype NAME). EVERY declared golden
+    dialect is checked (so a MariaDB `char` cast is asserted with the MariaDB type
+    mapping, not the Postgres one). Parsed from the golden text, so it is
+    row-count-independent — a zero-row abstract read still witnesses a mis-ordered
+    branch, a dropped superset column, a bare/mis-typed placeholder, or a wrong literal.
+    """
+    entity_defs = case.model.entity_defs
+    superset = list(concrete_superset_columns(entity_defs, ordered))
+    # Collision guard (m-sql / m-inheritance): the synthetic `family_variant` alias is
+    # the on-the-wire carrier the oracle renames to `familyVariant`; a real declared
+    # column of that name would collide with it at both the shape check and the
+    # materialization rename. Reject it with a clear diagnostic rather than silently
+    # clobbering the real column.
+    if _TPCS_VARIANT_COLUMN in superset:
+        raise CaseFailure(
+            f"{case.path.name}: a concrete subtype in family {ordered} declares a "
+            f"column {_TPCS_VARIANT_COLUMN!r}, which collides with the synthetic "
+            f"table-per-concrete-subtype variant alias; rename the column (m-sql)."
+        )
+    expected_columns = [*superset, _TPCS_VARIANT_COLUMN]
+    column_types = _column_type_index(entity_defs, ordered)
+    for dialect in sorted(case.golden_dialects):
+        statements = case.golden_statements(dialect)
+        if not statements:
+            continue
+        tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
+        _assert_union_all_only(case, tree)
+        branches = _union_branch_selects(tree)
+        if len(branches) != len(ordered):
+            raise CaseFailure(
+                f"{case.path.name}: table-per-concrete-subtype abstract read lowers to "
+                f"{len(ordered)} `union all` branch(es) (the effective concrete set "
+                f"{ordered}), but the {dialect} golden has {len(branches)}."
+            )
+        for position, (branch, name) in enumerate(zip(branches, ordered, strict=True)):
+            table = family.defs[name].get("table")
+            branch_tables = [source.name for source in branch.find_all(exp.Table)]
+            if not branch_tables or branch_tables[0] != table:
+                raise CaseFailure(
+                    f"{case.path.name}: `union all` branch {position} must read from "
+                    f"{table!r} (the descriptor-order concrete subtype {name!r}), got "
+                    f"{branch_tables[0] if branch_tables else None!r}."
+                )
+            out_columns = [projection.output_name for projection in branch.expressions]
+            if out_columns != expected_columns:
+                raise CaseFailure(
+                    f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
+                    f"{out_columns}, not the stable superset + familyVariant literal "
+                    f"{expected_columns} (inherited first, then subtype-declared in "
+                    f"descriptor order, then familyVariant; m-sql)."
+                )
+            applicable = set(concrete_superset_columns(entity_defs, [name]))
+            _assert_branch_projection_shape(
+                case, branch, position, name, superset, applicable, column_types, dialect
+            )
+            literal = _string_literal_value(branch.expressions[-1])
+            if literal != name:
+                raise CaseFailure(
+                    f"{case.path.name}: `union all` branch {position} projects familyVariant "
+                    f"literal {literal!r}, expected the concrete subtype name {name!r} "
+                    f"(TPCS projects familyVariant as a per-branch literal; m-sql)."
+                )
+
+
+def _materialize_tpcs_family_variant(
+    case: Case, rows: list[dict[str, Any]], family: Family, target_name: str
+) -> list[dict[str, Any]]:
+    """Rename the projected `familyVariant` literal column for a TPCS abstract read.
+
+    Asserts the `union all` branch/projection shape, then renames each row's
+    ``family_variant`` (the per-branch subtype-name literal) to ``familyVariant`` so
+    the materialized rows compare against ``then.rows`` — the TPCS counterpart of the
+    TPH tag-to-variant materialization (m-inheritance / m-sql).
+    """
+    effective = _read_effective_set(case, family, target_name)
+    ordered = _descriptor_ordered(family, target_name, effective)
+    _assert_tpcs_union_shape(case, family, ordered)
+
+    materialized: list[dict[str, Any]] = []
+    for row in rows:
+        new_row = dict(row)
+        if _TPCS_VARIANT_COLUMN not in new_row:
+            raise CaseFailure(
+                f"{case.path.name}: table-per-concrete-subtype abstract read does not "
+                f"project the {_TPCS_VARIANT_COLUMN!r} literal; familyVariant cannot be "
+                f"materialized (m-sql)."
+            )
+        new_row["familyVariant"] = new_row.pop(_TPCS_VARIANT_COLUMN)
         materialized.append(new_row)
     return materialized
 

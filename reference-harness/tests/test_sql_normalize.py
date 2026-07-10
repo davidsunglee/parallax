@@ -121,3 +121,165 @@ def test_accepts_exists_probe_and_correlated_alias() -> None:
 def test_accepts_dml_with_bare_columns() -> None:
     assert is_canonical("update balance set out_z = ? where bal_id = ? and out_z = ?")
     assert is_canonical("insert into balance(bal_id, val) values (?, ?)")
+
+
+# --- union all (table-per-concrete-subtype abstract-read lowering) -----------
+# `union all` over the effective concrete tables is a NEW canonical SQL surface
+# (m-sql). It must be a normalization fixed point: each branch's alias scheme and
+# column qualification (rule 1) apply PER BRANCH, branch order is preserved, and the
+# NULL-placeholder casts + `familyVariant` string literals it introduces survive.
+
+_TPCS_ROOT_UNION = (
+    "select t0.id, t0.title, t0.currency, t0.amount_due, "
+    "cast(null as decimal(18, 2)) paid_amount, cast(null as varchar(64)) body, "
+    "'Invoice' family_variant from invoice t0 "
+    "union all "
+    "select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, "
+    "t0.paid_amount, cast(null as varchar(64)) body, 'Receipt' family_variant "
+    "from receipt t0 "
+    "union all "
+    "select t0.id, t0.title, cast(null as varchar(3)) currency, "
+    "cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, "
+    "t0.body, 'Memo' family_variant from memo t0"
+)
+
+
+def test_union_all_read_is_a_normalization_fixed_point() -> None:
+    # The full three-branch abstract-root golden is already canonical, and
+    # normalizing it is idempotent (the fixed-point property sql_lint enforces).
+    assert is_canonical(_TPCS_ROOT_UNION, "postgres")
+    assert normalize(_TPCS_ROOT_UNION, "postgres") == _TPCS_ROOT_UNION
+
+
+def test_union_all_alias_scheme_restarts_per_branch() -> None:
+    # Each branch independently uses t0; the alias scheme is NOT globalized across
+    # branches (which would demand t0, t1, t2 for three branches).
+    two_branch = "select t0.id from invoice t0 union all select t0.id from receipt t0"
+    assert is_canonical(two_branch, "postgres")
+
+
+def test_union_all_preserves_all_and_branch_order() -> None:
+    # `union all` (not `union`) is preserved — de-duplication would drop rows — and
+    # the left-to-right branch order is stable (a normalizer must not reorder arms).
+    assert normalize(_TPCS_ROOT_UNION, "postgres").count(" union all ") == 2
+    order = [
+        _TPCS_ROOT_UNION.index("from invoice"),
+        _TPCS_ROOT_UNION.index("from receipt"),
+        _TPCS_ROOT_UNION.index("from memo"),
+    ]
+    assert order == sorted(order)
+
+
+# --- only `union all` is a canonical set operation (Phase 5 review, Finding 1) ------
+# `union all` is the ONLY canonical m-sql set operation (the TPCS abstract-read
+# lowering). A plain `union` silently DE-DUPLICATES rows — changing the read's
+# semantics — and `intersect` / `except` are never emitted; all three are non-canonical
+# and MUST be rejected, or a golden that used the wrong set op would slip past the lint.
+# Reproduce-then-green: before the fix `_canonical_select_scopes` walked any
+# `SetOperation`, so these were wrongly accepted as canonical.
+
+
+def test_plain_union_is_not_canonical() -> None:
+    # Same branches as the canonical golden but a de-duplicating `union` (not `union all`).
+    plain = "select t0.id from invoice t0 union select t0.id from receipt t0"
+    assert not is_canonical(plain, "postgres")
+
+
+def test_intersect_and_except_are_not_canonical() -> None:
+    assert not is_canonical("select t0.id from invoice t0 intersect select t0.id from receipt t0")
+    assert not is_canonical("select t0.id from invoice t0 except select t0.id from receipt t0")
+
+
+def test_union_all_remains_canonical() -> None:
+    # The positive twin: `union all` stays a canonical fixed point.
+    assert is_canonical("select t0.id from invoice t0 union all select t0.id from receipt t0")
+
+
+def test_nested_plain_union_inside_union_all_is_not_canonical() -> None:
+    # A single non-`union all` arm anywhere in the tree taints the whole statement.
+    mixed = (
+        "select t0.id from invoice t0 union all "
+        "select t0.id from receipt t0 union "
+        "select t0.id from memo t0"
+    )
+    assert not is_canonical(mixed, "postgres")
+
+
+# --- MariaDB `union all` + `char` NULL-placeholder casts (Phase 5 review, Finding 3) --
+# The TPCS abstract-read goldens run on BOTH dialects. MariaDB's CAST target grammar
+# does not accept `varchar`, so a bounded-string placeholder casts to `char(n)`
+# (m-dialect); `decimal(p, s)` is identical on both. The MariaDB golden must be a
+# normalization fixed point under the `mariadb` dialect.
+_TPCS_ROOT_UNION_MARIADB = (
+    "select t0.id, t0.title, t0.currency, t0.amount_due, "
+    "cast(null as decimal(18, 2)) paid_amount, cast(null as char(64)) body, "
+    "'Invoice' family_variant from invoice t0 "
+    "union all "
+    "select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, "
+    "t0.paid_amount, cast(null as char(64)) body, 'Receipt' family_variant "
+    "from receipt t0 "
+    "union all "
+    "select t0.id, t0.title, cast(null as char(3)) currency, "
+    "cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, "
+    "t0.body, 'Memo' family_variant from memo t0"
+)
+
+
+def test_mariadb_union_all_char_cast_is_a_fixed_point() -> None:
+    assert is_canonical(_TPCS_ROOT_UNION_MARIADB, "mariadb")
+    assert normalize(_TPCS_ROOT_UNION_MARIADB, "mariadb") == _TPCS_ROOT_UNION_MARIADB
+
+
+def test_mariadb_varchar_cast_normalizes_to_char() -> None:
+    # A MariaDB golden authored with `varchar` is NOT a fixed point: sqlglot's mysql
+    # dialect renders the CAST target as `char`, so lint would reject the `varchar`
+    # spelling — the mechanism that keeps the MariaDB goldens honest.
+    authored = "select cast(null as varchar(3)) currency, t0.id from memo t0"
+    expected = "select cast(null as char(3)) currency, t0.id from memo t0"
+    assert normalize(authored, "mariadb") == expected
+    assert not is_canonical(authored, "mariadb")
+
+
+def test_union_all_rejects_non_canonical_branch_alias() -> None:
+    # A bad alias in ONE branch fails the whole statement (rule 1, per branch).
+    bad = "select o.id from invoice o union all select t0.id from receipt t0"
+    assert not is_canonical(bad, "postgres")
+
+
+def test_union_all_rejects_unqualified_column_in_a_branch() -> None:
+    bad = "select id from invoice t0 union all select t0.id from receipt t0"
+    assert not is_canonical(bad, "postgres")
+
+
+def test_union_all_rejects_inline_literal_in_a_branch() -> None:
+    # A parameter literal in any branch must be a ? bind (rule 4).
+    bad = "select t0.id from invoice t0 where t0.id = 5 union all select t0.id from receipt t0"
+    assert not is_canonical(bad, "postgres")
+
+
+# --- string literals + NULL-placeholder casts (the union-all projection) -----
+# String literals (the `familyVariant` branch literal) and cast(null as <type>)
+# NULL placeholders appear in canonical m-sql only via the TPCS lowering. The
+# literal keeps its single quotes and case; a parametrized type binds its length
+# list tight (`decimal(18, 2)`, not `decimal (18, 2)`).
+
+
+def test_string_literal_is_requoted_and_case_preserved() -> None:
+    canonical = "select 'Invoice' family_variant from invoice t0"
+    assert is_canonical(canonical, "postgres")
+    # sqlglot strips the surrounding quotes on re-tokenize; the normalizer re-wraps
+    # them, and the literal's case is not lowered.
+    assert normalize("select 'Invoice' AS family_variant from invoice t0", "postgres") == canonical
+
+
+def test_null_placeholder_cast_binds_type_params_tight() -> None:
+    canonical = "select cast(null as decimal(18, 2)) amount_due, t0.id from invoice t0"
+    assert is_canonical(canonical, "postgres")
+    # `numeric` canonicalizes to `decimal`, and the length list renders tight to the
+    # type name rather than with an interposed space.
+    assert (
+        normalize(
+            "select cast(null as numeric(18,2)) amount_due, t0.id from invoice t0", "postgres"
+        )
+        == canonical
+    )

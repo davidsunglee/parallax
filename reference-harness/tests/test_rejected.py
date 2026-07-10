@@ -108,7 +108,11 @@ def test_inheritance_model_negatives_are_covered() -> None:
 def _tph_root(**overrides: Any) -> dict[str, Any]:
     definition = {
         "name": "Animal",
-        "inheritance": {"role": "root", "strategy": "table-per-hierarchy", "tag": {"column": "kind"}},
+        "inheritance": {
+            "role": "root",
+            "strategy": "table-per-hierarchy",
+            "tag": {"column": "kind"},
+        },
         "attributes": [{"name": "id", "type": "int64", "column": "id", "primaryKey": True}],
     }
     definition.update(overrides)
@@ -127,7 +131,12 @@ def test_tph_concrete_subtype_missing_tag_value_is_rejected() -> None:
                 "table": "animal",
                 "inheritance": {"role": "concrete-subtype", "parent": "Animal"},
                 "attributes": [
-                    {"name": "barkVolume", "type": "int32", "column": "bark_volume", "nullable": True}
+                    {
+                        "name": "barkVolume",
+                        "type": "int32",
+                        "column": "bark_volume",
+                        "nullable": True,
+                    }
                 ],
             },
         ]
@@ -154,7 +163,12 @@ def test_zero_root_abstract_orphan_family_is_rejected() -> None:
                 "name": "Pet",
                 "inheritance": {"role": "abstract-subtype", "parent": "Widget"},
                 "attributes": [
-                    {"name": "licenseId", "type": "string", "column": "license_id", "nullable": True}
+                    {
+                        "name": "licenseId",
+                        "type": "string",
+                        "column": "license_id",
+                        "nullable": True,
+                    }
                 ],
             },
         ]

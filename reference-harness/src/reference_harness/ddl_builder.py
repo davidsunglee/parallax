@@ -207,6 +207,38 @@ def _column_type(neutral_type: str, max_length: int | None, dialect: str) -> str
     raise ValueError(f"no DDL type mapping for dialect {dialect!r}")
 
 
+def placeholder_cast_type(neutral_type: str, max_length: int | None, dialect: str) -> str:
+    """The ``cast(null as <type>)`` target type for a table-per-concrete-subtype
+    ``union all`` NULL placeholder (m-sql), per dialect (m-dialect).
+
+    A column not applicable to a union branch is projected as ``cast(null as <type>)``
+    in the column's declared type, so the union's result column types resolve
+    deterministically rather than defaulting to an untyped ``NULL`` (m-sql). The
+    target-type *spelling* is a dialect decision owned by m-dialect and DIVERGES from
+    the DDL column type for strings:
+
+      * ``decimal(p, s)`` is identical on both dialects.
+      * A bounded ``string`` casts to Postgres ``varchar(n)`` but MariaDB ``char(n)`` —
+        MariaDB's ``CAST`` target grammar does NOT accept ``varchar`` (it uses
+        ``char``), whereas the *column* type is ``varchar(n)`` on both. An unbounded
+        string casts to ``text`` (a legal CAST target on both).
+      * Every other neutral type reuses the DDL column-type mapping (``int64`` ->
+        ``bigint``, ...), which is a legal CAST target on both dialects.
+
+    This is the read-side counterpart of :func:`_column_type`; it exists separately
+    because CAST targets and column types are not the same grammar (the string
+    divergence above).
+    """
+    decimal = _DECIMAL_RE.match(neutral_type)
+    if decimal:
+        return f"decimal({decimal.group(1)},{decimal.group(2)})"
+    if neutral_type == "string":
+        if dialect == "mariadb":
+            return f"char({max_length})" if max_length else "text"
+        return f"varchar({max_length})" if max_length else "text"
+    return _column_type(neutral_type, max_length, dialect)
+
+
 def _create_table(entity: Entity, dialect: str) -> str:
     columns: list[str] = []
     pk_columns: list[str] = []

@@ -1,19 +1,29 @@
-# Document: a TABLE-PER-CONCRETE-SUBTYPE inheritance model (m-inheritance).
+# Document: a TABLE-PER-CONCRETE-SUBTYPE inheritance model with an INTERMEDIATE
+# abstract subtype and a concrete SIBLING branch (m-inheritance).
 #
-# This descriptor is an instance of core/schemas/metamodel.schema.json. The closed
-# tree is:
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is the
+# TPCS counterpart of the table-per-hierarchy `animal` family: a closed tree whose
+# concrete subtypes each map to their OWN table (no shared table, no tag), so an
+# abstract-target read lowers to `union all` over exactly the effective concrete
+# tables (m-sql). The tree is:
 #
-#   Document (root, ABSTRACT)     — declares the strategy; tableless, rowless;
-#                                    owns the inherited id + title
-#   Invoice  (concrete-subtype)   — its own `invoice` table; adds amount_due
-#   Receipt  (concrete-subtype)   — its own `receipt` table; adds paid_amount
+#   Document          (root, ABSTRACT)          — declares the strategy; tableless,
+#                                                  rowless; owns id + title
+#     FinancialDocument (abstract-subtype)       — tableless, rowless; adds currency
+#       Invoice       (concrete-subtype)         — its own `invoice` table; adds amount_due
+#       Receipt       (concrete-subtype)         — its own `receipt` table; adds paid_amount
+#     Memo            (concrete-subtype)         — its own `memo` table; adds body;
+#                                                  SIBLING branch directly under Document
+#                                                  — proves an abstract-subtype read of
+#                                                  FinancialDocument covers ONLY {Invoice,
+#                                                  Receipt}, never Memo, and that narrowing
+#                                                  Document to FinancialDocument cannot
+#                                                  broaden back to Memo.
 #
-# Each concrete subtype maps to its OWN table (no shared table, no tag). A concrete
-# read is an ordinary single-table read of that subtype's table; the subtype is
-# selected by WHICH table is queried. Concrete subtypes do NOT repeat the inherited
-# id/title — the concrete table physically carries the full inherited attribute
-# chain (id, title) plus its own columns, derived from the ancestry. The abstract
-# `Document` root owns no table and no rows.
+# Abstract nodes (Document, FinancialDocument) are tableless and rowless; only the
+# concrete subtypes own rows. Concrete subtypes do NOT repeat inherited attributes —
+# each concrete table physically carries the full inherited chain derived from its
+# ancestry (Invoice/Receipt: id, title, currency, + own; Memo: id, title, + own).
 #
 # table-per-leaf is strictly replaced by table-per-concrete-subtype; table-per-leaf
 # and table-per-class are rejected by the metamodel schema (m-inheritance).
@@ -37,6 +47,24 @@ entities:
         type: string
         column: title
         maxLength: 64
+  - name: FinancialDocument
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: Document
+    attributes:
+      # Nullable so a concrete-subtype insert MAY omit an inherited abstract-subtype
+      # attribute (e.g. m-inheritance-010 inserts an Invoice without a currency); the
+      # abstract subtype threads currency into both Invoice's and Receipt's concrete
+      # tables (the TPCS ancestry chain), never into the sibling Memo's.
+      # PHASE-7 FOLLOW-UP: this nullability is a write expedient, NOT settled model
+      # semantics — revisit when Phase 7 specifies the concrete-subtype write payload
+      # and rewrites m-inheritance-007..010 (see the outline's Open Questions).
+      - name: currency
+        type: string
+        column: currency
+        maxLength: 3
+        nullable: true
   - name: Invoice
     namespace: parallax.compatibility
     table: invoice
@@ -44,7 +72,7 @@ entities:
     temporal: non-temporal
     inheritance:
       role: concrete-subtype
-      parent: Document
+      parent: FinancialDocument
     attributes:
       - name: amountDue
         type: decimal(18,2)
@@ -56,8 +84,21 @@ entities:
     temporal: non-temporal
     inheritance:
       role: concrete-subtype
-      parent: Document
+      parent: FinancialDocument
     attributes:
       - name: paidAmount
         type: decimal(18,2)
         column: paid_amount
+  - name: Memo
+    namespace: parallax.compatibility
+    table: memo
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: concrete-subtype
+      parent: Document
+    attributes:
+      - name: body
+        type: string
+        column: body
+        maxLength: 64
