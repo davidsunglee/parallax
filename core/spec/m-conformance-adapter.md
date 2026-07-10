@@ -135,6 +135,14 @@ while deferring aggregation (`m-agg`) reads, or `m-unit-work` transaction/write
 cases while deferring the `m-process-cache` query-cache and identity-cache
 scenarios.
 
+Inheritance capability follows this same shape and needs **no**
+inheritance-specific adapter surface. An adapter claims it by listing
+`m-inheritance` in `modules` and, where a claim defers part of the module, by the
+ordinary `caseTags` filter; abstract-target reads, subtype `narrow`, polymorphic
+navigation, narrowed deep fetch, and concrete-subtype writes are all ordinary case
+commands under the existing `describe` / `compile` / `run` contract, with no new
+command, dialect, case shape, or observation field.
+
 The example above is intentionally minimal. For worked, canonical
 **include-driven** slices, see the Conformance Slices in
 [`slices.md`](slices.md): each `describe` claim selects its Postgres-only cases
@@ -296,6 +304,18 @@ assert different things:
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`
 - coherence cases report the final observed `rows`, and `identityChecks` for any step that declares `sameObjectAs`
+
+An **abstract-target read** — an abstract `targetEntity`, or an abstract position
+`narrow`ed with `m-op-algebra`'s `narrow` node — materializes complete concrete
+instances, so each observed row (and each `graph` leaf) additionally carries a
+**`familyVariant`** key: the concrete subtype name of that instance (`Dog`, `Cat`,
+…). `familyVariant` is a materialized observation, **never projected as SQL** —
+under `table-per-hierarchy` the emitted SQL projects the raw tag column and the
+implementation materializes `familyVariant` from the tag metadata map, and under
+`table-per-concrete-subtype` it is a per-branch subtype-name literal
+(`m-inheritance` / `m-sql`). It rides inside the already-open `rows` / `graph`
+observation objects, so the adapter output gains no field for it. A
+concrete-target read carries no `familyVariant`.
 
 ## `benchmark`
 

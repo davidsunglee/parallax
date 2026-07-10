@@ -74,10 +74,19 @@ the spec:
   one-to-many relationships for navigation and deep fetch.
 - `balance.yaml` models audit-style temporal rows with processing milestones.
 - `position.yaml` models two temporal axes for rectangle-split write behavior.
-- `payment.yaml` covers table-per-hierarchy inheritance with a discriminator.
+- `payment.yaml` and `animal.yaml` cover `table-per-hierarchy` inheritance —
+  closed entity trees mapped to one shared table and discriminated by a `tag`
+  column that carries each concrete subtype's `tagValue`; `animal.yaml` adds an
+  abstract subtype, a concrete sibling branch, and polymorphic owner
+  relationships for subtype narrowing, navigation, and deep fetch.
 - `customer.yaml` covers JSON-backed value objects and nested attribute access.
-- `document.yaml` and `reservation.yaml` cover additional descriptor shapes used
-  by later compatibility cases.
+- `document.yaml` covers `table-per-concrete-subtype` inheritance (one table per
+  concrete subtype, with abstract reads assembled through `union all`);
+  `instrument`, `rate`, `reading`, and `quote` add small temporal inheritance
+  families that compose subtype routing with audit and bitemporal milestone
+  writes.
+- `reservation.yaml` and further descriptors cover additional shapes used by
+  later compatibility cases.
 
 The metamodel is validated by `core/schemas/metamodel.schema.json`. It gives
 each implementation a stable input format before any language-specific API or
