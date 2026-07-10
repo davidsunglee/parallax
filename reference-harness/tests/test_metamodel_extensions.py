@@ -115,10 +115,14 @@ def test_table_per_concrete_subtype_model_validates() -> None:
     assert root.definition["inheritance"]["strategy"] == "table-per-concrete-subtype"
     assert root.is_abstract
     assert root.table == ""
-    # Each concrete subtype maps to its OWN table (no shared table, no tag).
+    # The intermediate abstract subtype (FinancialDocument) is tableless too.
+    assert model.entity("FinancialDocument").is_abstract
+    assert model.entity("FinancialDocument").table == ""
+    # Each concrete subtype maps to its OWN table (no shared table, no tag) —
+    # Invoice/Receipt under FinancialDocument, plus the concrete sibling Memo.
     tables = {e.table for e in model.entities if not e.is_abstract}
-    assert tables == {"invoice", "receipt"}
-    for name in ("Invoice", "Receipt"):
+    assert tables == {"invoice", "receipt", "memo"}
+    for name in ("Invoice", "Receipt", "Memo"):
         assert "tag" not in model.entity(name).definition["inheritance"]
         assert "tagValue" not in model.entity(name).definition["inheritance"]
 
@@ -135,9 +139,18 @@ def test_concrete_subtype_derives_the_full_inherited_attribute_chain() -> None:
         "card_network",
     ]
     # table-per-concrete-subtype: the concrete table carries the full inherited chain,
-    # with NO tag column.
+    # with NO tag column. Invoice's chain threads the intermediate abstract subtype
+    # FinancialDocument (currency) between the root (id, title) and its own amount_due.
     document = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
-    assert list(column_order(document.entity("Invoice"))) == ["id", "title", "amount_due"]
+    assert list(column_order(document.entity("Invoice"))) == [
+        "id",
+        "title",
+        "currency",
+        "amount_due",
+    ]
+    # The concrete sibling Memo sits directly under the root, so it inherits only the
+    # root chain (id, title) — NOT FinancialDocument's currency — plus its own body.
+    assert list(column_order(document.entity("Memo"))) == ["id", "title", "body"]
 
 
 def test_intermediate_abstract_subtype_inheritance_chain() -> None:

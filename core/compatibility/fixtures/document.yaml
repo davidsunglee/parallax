@@ -2,17 +2,27 @@
 # (models/document.yaml).
 #
 # Each concrete subtype has its OWN table, so rows are keyed per concrete subtype.
-# Each row carries the inherited attributes (id, title) plus the subtype's own
-# column; the abstract `Document` root owns no rows. A concrete read reads only its
-# own table.
+# Each row carries the full inherited chain (id, title, and — for the
+# FinancialDocument branch — currency) plus the subtype's own column; the abstract
+# `Document` / `FinancialDocument` nodes own no rows. A concrete read reads only its
+# own table; an abstract-target read `union all`s across the effective concrete
+# tables (m-sql). Primary keys are per-table, so id 1 recurs across Invoice /
+# Receipt / Memo — the rows are distinguished by their concrete variant, never by id.
 Invoice:
   - id: 1
     title: Invoice-A
+    currency: USD
     amountDue: 120.00
   - id: 2
     title: Invoice-B
+    currency: EUR
     amountDue: 80.00
 Receipt:
   - id: 1
     title: Receipt-A
+    currency: USD
     paidAmount: 120.00
+Memo:
+  - id: 1
+    title: Memo-A
+    body: Reminder

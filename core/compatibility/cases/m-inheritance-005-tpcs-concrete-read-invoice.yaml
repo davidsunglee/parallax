@@ -1,0 +1,28 @@
+# Table-per-concrete-subtype CONCRETE read: find all Invoices (m-inheritance, m-sql).
+#
+# Each concrete subtype maps to its OWN table, so an Invoice read is an ordinary
+# single-table read of the `invoice` table with NO union and NO tag predicate — the
+# subtype is selected by WHICH table is queried (contrast table-per-hierarchy, which
+# shares one table and injects a tag). The projection carries the full inherited
+# chain — id + title (from the abstract root Document) and currency (from the
+# abstract subtype FinancialDocument) — plus the subtype's own amount_due, derived
+# from the ancestry chain; the concrete table physically holds them all. There is
+# NO familyVariant: the caller queried a known concrete variant.
+#
+# Trivial single-table read => referenceSql supplied as the independent oracle.
+model: models/document.yaml
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Invoice
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.title, t0.currency, t0.amount_due from invoice t0
+  referenceSql: select id, title, currency, amount_due from invoice
+  rows:
+    - { id: 1, title: Invoice-A, currency: USD, amount_due: 120.00 }
+    - { id: 2, title: Invoice-B, currency: EUR, amount_due: 80.00 }
+  roundTrips: 1

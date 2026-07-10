@@ -1,0 +1,32 @@
+# Table-per-concrete-subtype narrow to an ABSTRACT SUBTYPE (m-inheritance,
+# m-op-algebra, m-sql).
+#
+# targetEntity is the abstract root Document; the `narrow` node constrains it to the
+# abstract subtype [FinancialDocument], whose effective concrete set is {Invoice,
+# Receipt}. The narrow lowers to the same `union all` over the invoice + receipt
+# tables as targeting FinancialDocument directly (m-inheritance-051) — two authored
+# spellings, one effective set — pinning that narrowing a broader abstract target to
+# an abstract subtype selects exactly that subtype's concrete descendants and cannot
+# broaden back to the sibling Memo. The serde preserves the authored `to: [Financial-
+# Document]`; lowering derives the effective concrete set.
+model: models/document.yaml
+tags: [m-inheritance, m-op-algebra, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Document
+  operation:
+    narrow:
+      entity: Document
+      to: [FinancialDocument]
+      operand:
+        all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, 'Receipt' family_variant from receipt t0
+        mariadb: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, 'Receipt' family_variant from receipt t0
+  rows:
+    - { id: 1, title: Invoice-A, currency: USD, amount_due: 120.00, paid_amount: null, familyVariant: Invoice }
+    - { id: 2, title: Invoice-B, currency: EUR, amount_due: 80.00, paid_amount: null, familyVariant: Invoice }
+    - { id: 1, title: Receipt-A, currency: USD, amount_due: null, paid_amount: 120.00, familyVariant: Receipt }
+  roundTrips: 1

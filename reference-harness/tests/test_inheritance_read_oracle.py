@@ -155,7 +155,11 @@ def test_narrow_to_empty_effective_set_is_rejected() -> None:
     defs = [
         {
             "name": "Root",
-            "inheritance": {"role": "root", "strategy": "table-per-hierarchy", "tag": {"column": "kind"}},
+            "inheritance": {
+                "role": "root",
+                "strategy": "table-per-hierarchy",
+                "tag": {"column": "kind"},
+            },
             "attributes": [{"name": "id", "type": "int64", "column": "id", "primaryKey": True}],
         },
         {
@@ -282,8 +286,7 @@ def test_materialize_fails_when_superset_column_missing() -> None:
     # The GOLDEN drops WildBoar's tusk_length, so the Animal superset is not projected.
     # The check reads the projection from the golden SQL, not the sampled row.
     golden = (
-        "select t0.id, t0.name, t0.license_id, t0.bark_volume, "
-        "t0.indoor, t0.kind from animal t0"
+        "select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.kind from animal t0"
     )
     case = _read_case("Animal", {"all": {}}, golden=golden)
     with pytest.raises(CaseFailure, match="concrete-superset column"):
@@ -333,3 +336,241 @@ def test_materialize_zero_row_correct_golden_passes() -> None:
     # materializes nothing and does NOT raise.
     case = _read_case("Animal", {"all": {}})
     assert _materialize_family_variant(case, []) == []
+
+
+# --- table-per-concrete-subtype `union all` oracle (Phase 5) -----------------
+#
+# The TPCS counterpart of the TPH projection-shape check: from the descriptor alone
+# the harness recomputes the `union all` branch count/order (the effective concrete
+# set in descriptor order), the stable superset projection every branch shares, and
+# each branch's `familyVariant` subtype-name LITERAL (the settled TPCS asymmetry —
+# TPCS projects the variant literal per branch, TPH derives it from the raw tag).
+
+
+def _document_model() -> Any:
+    return load_model(_COMPATIBILITY_ROOT, "models/document.yaml")
+
+
+def _document_defs() -> list[dict[str, Any]]:
+    return _document_model().entity_defs
+
+
+# The canonical three-branch abstract-root golden (Document over Invoice / Receipt /
+# Memo). The failing-mode tests mutate one aspect of this to witness the check.
+_DOCUMENT_ROOT_UNION = (
+    "select t0.id, t0.title, t0.currency, t0.amount_due, "
+    "cast(null as decimal(18, 2)) paid_amount, cast(null as varchar(64)) body, "
+    "'Invoice' family_variant from invoice t0 "
+    "union all "
+    "select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, "
+    "t0.paid_amount, cast(null as varchar(64)) body, 'Receipt' family_variant "
+    "from receipt t0 "
+    "union all "
+    "select t0.id, t0.title, cast(null as varchar(3)) currency, "
+    "cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, "
+    "t0.body, 'Memo' family_variant from memo t0"
+)
+
+
+def _document_case(
+    target: str, operation: dict[str, Any], golden: str = _DOCUMENT_ROOT_UNION
+) -> Case:
+    model = _document_model()
+    raw = {
+        "model": "models/document.yaml",
+        "tags": ["m-inheritance"],
+        "shape": "read",
+        "when": {"targetEntity": target, "operation": operation},
+        "then": {"statements": [{"sql": {"postgres": golden}}], "rows": []},
+    }
+    return Case(path=Path("m-inheritance-999-x.yaml"), raw=raw, model=model)
+
+
+def test_document_effective_sets_and_descriptor_order() -> None:
+    family = Family(_document_defs())
+    assert family.concrete_descendants("Document") == ["Invoice", "Receipt", "Memo"]
+    assert family.effective_concrete_set("FinancialDocument") == ["Invoice", "Receipt"]
+    assert family.strategy_of("Document") == "table-per-concrete-subtype"
+
+
+def test_tpcs_materialize_renames_family_variant_literal() -> None:
+    # The DB projects the per-branch literal under `family_variant`; the oracle
+    # renames it to `familyVariant` (no raw tag column exists to map).
+    case = _document_case("Document", {"all": {}})
+    invoice_row = {
+        "id": 1,
+        "title": "Invoice-A",
+        "currency": "USD",
+        "amount_due": 120,
+        "paid_amount": None,
+        "body": None,
+        "family_variant": "Invoice",
+    }
+    (out,) = _materialize_family_variant(case, [invoice_row])
+    assert "family_variant" not in out
+    assert out["familyVariant"] == "Invoice"
+
+
+def test_tpcs_zero_row_still_asserts_union_shape() -> None:
+    # A correct golden over an empty result raises nothing but still runs the shape
+    # assertion (row-count-independent, parsed from the golden text).
+    case = _document_case("Document", {"all": {}})
+    assert _materialize_family_variant(case, []) == []
+
+
+def test_tpcs_wrong_branch_count_is_rejected() -> None:
+    # Two branches for a three-concrete abstract root (Memo branch dropped).
+    two_branch = " union all ".join(_DOCUMENT_ROOT_UNION.split(" union all ")[:2])
+    case = _document_case("Document", {"all": {}}, golden=two_branch)
+    with pytest.raises(CaseFailure, match="union all"):
+        _materialize_family_variant(case, [])
+
+
+def test_tpcs_wrong_branch_order_is_rejected() -> None:
+    # Swap the Invoice and Receipt branches: branch order must be descriptor order.
+    parts = _DOCUMENT_ROOT_UNION.split(" union all ")
+    swapped = " union all ".join([parts[1], parts[0], parts[2]])
+    case = _document_case("Document", {"all": {}}, golden=swapped)
+    with pytest.raises(CaseFailure, match="descriptor-order"):
+        _materialize_family_variant(case, [])
+
+
+def test_tpcs_missing_superset_column_is_rejected() -> None:
+    # Drop `body` from every branch's projection: the stable superset is incomplete.
+    golden = _DOCUMENT_ROOT_UNION.replace(", cast(null as varchar(64)) body", "")
+    golden = golden.replace(", t0.body", "")
+    case = _document_case("Document", {"all": {}}, golden=golden)
+    with pytest.raises(CaseFailure, match="stable superset"):
+        _materialize_family_variant(case, [])
+
+
+def test_tpcs_wrong_variant_literal_is_rejected() -> None:
+    # A branch whose familyVariant literal is not its concrete subtype name.
+    golden = _DOCUMENT_ROOT_UNION.replace("'Memo' family_variant", "'Note' family_variant")
+    case = _document_case("Document", {"all": {}}, golden=golden)
+    with pytest.raises(CaseFailure, match="familyVariant literal"):
+        _materialize_family_variant(case, [])
+
+
+def test_tpcs_concrete_target_is_a_noop() -> None:
+    # A concrete-target TPCS read (Invoice) is an ordinary single-table read with no
+    # familyVariant and no union — the oracle leaves it untouched.
+    case = _document_case(
+        "Invoice", {"all": {}}, golden="select t0.id, t0.amount_due from invoice t0"
+    )
+    rows = [{"id": 1, "amount_due": 120}]
+    assert _materialize_family_variant(case, rows) == rows
+
+
+def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
+    # A narrow to [Invoice, Memo] lowers to a two-branch union in descriptor order;
+    # the oracle recomputes the shape from the narrow's effective set.
+    golden = (
+        "select t0.id, t0.title, t0.currency, t0.amount_due, "
+        "cast(null as varchar(64)) body, 'Invoice' family_variant from invoice t0 "
+        "union all "
+        "select t0.id, t0.title, cast(null as varchar(3)) currency, "
+        "cast(null as decimal(18, 2)) amount_due, t0.body, 'Memo' family_variant "
+        "from memo t0"
+    )
+    case = _document_case(
+        "Document",
+        {"narrow": {"entity": "Document", "to": ["Invoice", "Memo"], "operand": {"all": {}}}},
+        golden=golden,
+    )
+    memo_row = {
+        "id": 1,
+        "title": "Memo-A",
+        "currency": None,
+        "amount_due": None,
+        "body": "Reminder",
+        "family_variant": "Memo",
+    }
+    (out,) = _materialize_family_variant(case, [memo_row])
+    assert out["familyVariant"] == "Memo"
+
+
+# --- Phase 5 review remediations -------------------------------------------------
+#
+# Finding 1 (oracle side): the branch walk accepted any `SetOperation`, so a golden
+# using a de-duplicating plain `union` (or `intersect`) passed the shape check.
+# Finding 2: the shape check validated output NAMES and the trailing literal but not
+# the per-column cast SHAPE, so a bare `null <col>` or a wrong-typed cast passed.
+# Finding 3: the per-column cast type is asserted per dialect (Postgres `varchar` /
+# MariaDB `char`). Finding 5: a real column colliding with the synthetic
+# `family_variant` alias is rejected. All reproduce-then-green.
+
+
+def test_tpcs_plain_union_is_rejected() -> None:
+    # First arm is a de-duplicating `union`, not `union all` — the oracle must reject it.
+    plain = _DOCUMENT_ROOT_UNION.replace(" union all ", " union ", 1)
+    case = _document_case("Document", {"all": {}}, golden=plain)
+    with pytest.raises(CaseFailure, match="union all"):
+        _materialize_family_variant(case, [])
+
+
+def test_tpcs_bare_null_placeholder_no_cast_is_rejected() -> None:
+    # A non-applicable column projected as a bare `null` (no cast) gives the union an
+    # untyped column; the placeholder MUST be `cast(null as <type>)`.
+    golden = _DOCUMENT_ROOT_UNION.replace(
+        "cast(null as decimal(18, 2)) paid_amount", "null paid_amount"
+    )
+    case = _document_case("Document", {"all": {}}, golden=golden)
+    with pytest.raises(CaseFailure, match="cast"):
+        _materialize_family_variant(case, [])
+
+
+def test_tpcs_wrong_typed_placeholder_cast_is_rejected() -> None:
+    # A non-applicable decimal column cast to a string type — same output name, wrong type.
+    golden = _DOCUMENT_ROOT_UNION.replace(
+        "cast(null as decimal(18, 2)) paid_amount", "cast(null as varchar(9)) paid_amount"
+    )
+    case = _document_case("Document", {"all": {}}, golden=golden)
+    with pytest.raises(CaseFailure, match="declared type"):
+        _materialize_family_variant(case, [])
+
+
+def test_tpcs_applicable_column_projected_as_null_is_rejected() -> None:
+    # Invoice's own `amount_due` projected as a NULL placeholder rather than the real
+    # column reference — an applicable column MUST be a real reference.
+    golden = _DOCUMENT_ROOT_UNION.replace(
+        "t0.amount_due,", "cast(null as decimal(18, 2)) amount_due,", 1
+    )
+    case = _document_case("Document", {"all": {}}, golden=golden)
+    with pytest.raises(CaseFailure, match="APPLICABLE"):
+        _materialize_family_variant(case, [])
+
+
+# The MariaDB abstract-root golden: bounded strings cast to `char`, decimals identical.
+_DOCUMENT_ROOT_UNION_MARIADB = _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char(64)").replace(
+    "varchar(3)", "char(3)"
+)
+
+
+def test_tpcs_mariadb_char_cast_golden_is_accepted() -> None:
+    case = _document_case("Document", {"all": {}})
+    case.raw["then"]["statements"][0]["sql"]["mariadb"] = _DOCUMENT_ROOT_UNION_MARIADB
+    assert _materialize_family_variant(case, []) == []
+
+
+def test_tpcs_mariadb_varchar_cast_golden_is_rejected() -> None:
+    # A MariaDB golden that used `varchar` (a Postgres-only CAST target) is rejected by
+    # the per-dialect cast-type check — proving Finding 3's assertion is dialect-aware.
+    bad_mariadb = _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char(64)")  # leaves varchar(3)
+    case = _document_case("Document", {"all": {}})
+    case.raw["then"]["statements"][0]["sql"] = {"mariadb": bad_mariadb}
+    with pytest.raises(CaseFailure, match="declared type"):
+        _materialize_family_variant(case, [])
+
+
+def test_tpcs_family_variant_column_collision_is_rejected() -> None:
+    # A concrete subtype that declares a real column named `family_variant` collides
+    # with the synthetic variant alias; the oracle rejects it with a clear diagnostic.
+    case = _document_case("Document", {"all": {}})
+    for definition in case.model.entity_defs:
+        if definition["name"] == "Memo":
+            definition["attributes"].append(
+                {"name": "familyVariant", "type": "string", "column": "family_variant"}
+            )
+    with pytest.raises(CaseFailure, match="collides"):
+        _materialize_family_variant(case, [])

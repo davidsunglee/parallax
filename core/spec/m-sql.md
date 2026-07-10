@@ -614,7 +614,88 @@ own columns and injects `t0.kind = ?`.
 The independent `then.referenceSql` oracle for a tag-filtered read spells the
 value inline (`where kind = 'card'`); for an abstract-root read it is the plain
 whole-table select. Table-per-concrete-subtype lowering (`union all` over the
-effective concrete tables) is specified in the TPCS section.
+effective concrete tables) is specified next.
+
+### Inheritance — table-per-concrete-subtype lowering
+
+A `table-per-concrete-subtype` family maps **each concrete subtype to its own
+table** (`m-inheritance`); there is **no shared table and no tag column**. A
+concrete table physically carries the full inherited attribute chain (root +
+abstract-ancestor columns) plus that subtype's own columns.
+
+#### Concrete-subtype read
+
+A read whose queried position resolves to a **single** concrete subtype is an
+**ordinary single-table read** of that subtype's table — no tag predicate, no
+`union all`. The subtype is selected by *which* table is queried. The projection is
+the concrete instance's full inherited-chain-plus-own columns, and it carries **no
+`familyVariant`** (the caller queried a known variant):
+
+```yaml
+# targetEntity: Invoice — ordinary single-table read of the concrete table:
+- sql:
+    postgres: select t0.id, t0.title, t0.currency, t0.amount_due from invoice t0
+```
+
+#### Abstract read — `union all` over the effective concrete tables
+
+A read whose queried position resolves to **two or more** concrete subtypes — an
+abstract root, an abstract subtype, or a `narrow` (`m-op-algebra`) to multiple
+concretes — lowers to canonical **`union all`**, one branch per concrete subtype in
+that effective set, in **descriptor order**. Each branch is an ordinary single-table
+read of that concrete's table (each branch's alias scheme restarts at `t0`, and the
+branch order is preserved). A sibling branch outside the effective set contributes
+no branch — an abstract-subtype read `union all`s only that subtype's concrete
+descendants.
+
+Every branch projects the **same stable superset column list**, in this order:
+
+1. **inherited** columns (root + abstract-ancestor), which every branch has;
+2. **subtype-declared** columns, in **descriptor traversal order** (the order the
+   subtypes and their attributes are declared);
+3. the **`familyVariant`** literal.
+
+A column not applicable to a branch is a **`NULL` placeholder** — `cast(null as
+<type>)` in that branch's declared column type, so the union's result column types
+resolve deterministically rather than defaulting to an untyped `NULL`. The cast
+**target-type spelling is a dialect decision** owned by `m-dialect` and **diverges
+from the DDL column type for strings**:
+
+| Declared column type | Postgres placeholder cast | MariaDB placeholder cast |
+|---|---|---|
+| `decimal(p, s)` | `cast(null as decimal(p, s))` | `cast(null as decimal(p, s))` (identical) |
+| bounded `string` (`maxLength n`) | `cast(null as varchar(n))` | `cast(null as char(n))` |
+| unbounded `string` | `cast(null as text)` | `cast(null as text)` |
+
+MariaDB's `CAST` target grammar **does not accept `varchar`** — a bounded string
+placeholder casts to **`char(n)`** even though the *column* type is `varchar(n)` on
+both dialects (`m-dialect`: string types map to `char` under MariaDB `CAST`). This is
+the general rule; a future dialect supplies its own placeholder-cast spelling behind
+the same `m-dialect` seam.
+
+Because nothing else identifies a row's source table after the union, `familyVariant`
+is projected **as a subtype-name string literal per branch** (the concrete subtype
+**name**, not the physical `tagValue` — there is none). This is the settled
+asymmetry with table-per-hierarchy: TPH projects the raw tag column and derives
+`familyVariant` at materialization (resolved Q6), whereas TPCS projects the variant
+literal directly:
+
+```yaml
+# targetEntity: Document (abstract root over Invoice / Receipt / Memo) — union all,
+# stable superset (id, title, currency, amount_due, paid_amount, body) + variant.
+# The string placeholders diverge per dialect (Postgres varchar / MariaDB char);
+# the decimal placeholders are identical:
+- sql:
+    postgres: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, cast(null as varchar(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, cast(null as varchar(64)) body, 'Receipt' family_variant from receipt t0 union all select t0.id, t0.title, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, t0.body, 'Memo' family_variant from memo t0
+    mariadb: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, cast(null as char(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, cast(null as char(64)) body, 'Receipt' family_variant from receipt t0 union all select t0.id, t0.title, cast(null as char(3)) currency, cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, t0.body, 'Memo' family_variant from memo t0
+```
+
+The equivalent authored spellings of a narrow collapse to the same lowering: a
+`narrow` to an abstract subtype and a `narrow` to that subtype's explicit concrete
+list produce the same effective set and therefore the same branches, in descriptor
+order, regardless of the authored `to` order. `familyVariant` appears only in the
+compatibility rows/graphs (`m-case-format`); the projected `family_variant` literal
+is the on-the-wire carrier the harness renames to `familyVariant`.
 
 ### valueObject — structured-column read and filter
 

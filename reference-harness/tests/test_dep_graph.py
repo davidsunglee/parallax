@@ -529,9 +529,17 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # `then.rows: []`), tagged slice-snapshot-1 + slice-managed-1, exercising the now
         # row-count-independent abstract-read projection oracle against Postgres; those
         # two counts rise by one more (230 / 250) and slice-mvp-1 is unchanged.
+        #
+        # COR-9 Phase 5 adds 4 table-per-concrete-subtype `union all` abstract-read
+        # cases tagged slice-snapshot-1 + slice-managed-1 (never slice-mvp-1):
+        # the abstract-root and abstract-subtype union reads (m-inheritance-050/-051)
+        # and the two narrowed union reads (m-inheritance-052 narrow-to-abstract-subtype,
+        # -053 narrow-to-multiple-concrete). The two rewritten TPCS concrete reads
+        # (m-inheritance-005/-006, renamed off the table-per-leaf spelling) keep their
+        # existing slice tags, so those two counts rise by 4 and slice-mvp-1 is unchanged.
         ("slice-mvp-1", 198),
-        ("slice-snapshot-1", 230),
-        ("slice-managed-1", 250),
+        ("slice-snapshot-1", 234),
+        ("slice-managed-1", 254),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

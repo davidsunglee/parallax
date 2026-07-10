@@ -1,0 +1,39 @@
+# Table-per-concrete-subtype ABSTRACT-ROOT read: the whole Document family via
+# `union all` (m-inheritance, m-sql).
+#
+# Targeting the abstract root Document resolves to every concrete descendant
+# {Invoice, Receipt, Memo} (descriptor order). With no shared table and no tag, the
+# read lowers to canonical `union all` over exactly those three concrete tables, one
+# branch per concrete subtype IN DESCRIPTOR ORDER. Every branch projects the SAME
+# stable superset column list — inherited (id, title) first, then subtype-declared in
+# descriptor traversal order (currency, amount_due, paid_amount, body), then the
+# `familyVariant` literal. Columns not applicable to a branch are `NULL` PLACEHOLDERS
+# with a dialect cast to the column's type, so the union's column types resolve
+# deterministically. The cast spelling is a dialect decision (m-dialect): a bounded
+# string casts to Postgres `varchar(n)` but MariaDB `char(n)` (MariaDB's CAST target
+# grammar does not accept `varchar`); `decimal(18, 2)` is identical on both — hence
+# the per-dialect `postgres` / `mariadb` goldens below.
+#
+# This is the canonical `union all` witness: three branches, branch order, the stable
+# superset projection, NULL placeholders with dialect casts, and the per-branch
+# `familyVariant` subtype-name literal (the settled TPCS asymmetry vs table-per-
+# hierarchy — TPCS has no tag column, so each branch projects the subtype NAME
+# directly rather than a raw tag the harness maps at materialization).
+model: models/document.yaml
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, union-all, root, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Document
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, cast(null as varchar(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, cast(null as varchar(64)) body, 'Receipt' family_variant from receipt t0 union all select t0.id, t0.title, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, t0.body, 'Memo' family_variant from memo t0
+        mariadb: select t0.id, t0.title, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, cast(null as char(64)) body, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, cast(null as char(64)) body, 'Receipt' family_variant from receipt t0 union all select t0.id, t0.title, cast(null as char(3)) currency, cast(null as decimal(18, 2)) amount_due, cast(null as decimal(18, 2)) paid_amount, t0.body, 'Memo' family_variant from memo t0
+  rows:
+    - { id: 1, title: Invoice-A, currency: USD, amount_due: 120.00, paid_amount: null, body: null, familyVariant: Invoice }
+    - { id: 2, title: Invoice-B, currency: EUR, amount_due: 80.00, paid_amount: null, body: null, familyVariant: Invoice }
+    - { id: 1, title: Receipt-A, currency: USD, amount_due: null, paid_amount: 120.00, body: null, familyVariant: Receipt }
+    - { id: 1, title: Memo-A, currency: null, amount_due: null, paid_amount: null, body: Reminder, familyVariant: Memo }
+  roundTrips: 1
