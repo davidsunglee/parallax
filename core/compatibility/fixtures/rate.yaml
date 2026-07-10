@@ -1,0 +1,30 @@
+# Fixture rows for the Rate table-per-concrete-subtype BITEMPORAL model
+# (models/rate.yaml) — the milestone history the temporal abstract-target `union all`
+# read (m-inheritance-093) queries.
+#
+# Each concrete subtype owns its OWN table (deposit_rate / loan_rate), keyed by CONCRETE
+# subtype (the abstract root Rate is rowless). There is no shared table and no tag.
+# Interval columns are authored as ISO-8601 UTC strings; the open upper bound is the
+# literal `infinity`. The loader resolves attribute names to columns (businessFrom/
+# businessTo -> from_z/thru_z, processingFrom/processingTo -> in_z/out_z).
+#
+# Each rate is a single fully-current rectangle (business [2024-01-01, infinity),
+# processing [2024-01-01, infinity)), so an abstract read pinned business-past
+# 2024-06-01 / processing-now returns both branches' rows, each carrying its
+# per-branch familyVariant literal (DepositRate / LoanRate).
+DepositRate:
+  - id: 1
+    amount: 2.50
+    grade: A
+    businessFrom: "2024-01-01T00:00:00+00:00"
+    businessTo: infinity
+    processingFrom: "2024-01-01T00:00:00+00:00"
+    processingTo: infinity
+LoanRate:
+  - id: 2
+    amount: 6.75
+    spread: 1.25
+    businessFrom: "2024-01-01T00:00:00+00:00"
+    businessTo: infinity
+    processingFrom: "2024-01-01T00:00:00+00:00"
+    processingTo: infinity

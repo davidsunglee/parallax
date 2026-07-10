@@ -35,6 +35,15 @@ Key invariants the suite pins down:
 This matches `AuditOnlyTemporalDirector` / `GenericBiTemporalDirector`'s
 close-old-insert-new discipline (research §6), restricted to the processing axis.
 
+### Composition with inheritance
+
+A milestone-chaining write on an inheritance participant (a concrete subtype of a
+family whose processing axis is declared on the abstract root, `m-inheritance`) is
+the **same** close-and-open sequence — `insert` / `update` / `terminate` are
+unchanged. Routing and tag guards are physical, owned by `m-inheritance` / `m-sql`,
+not restated here. The corpus proves audit terminate composed with both strategies
+(`m-inheritance-090` / `-091`).
+
 ## Affected-row conflict contract for closes
 
 The close `UPDATE` **MUST** affect exactly **one** row. A close that affects

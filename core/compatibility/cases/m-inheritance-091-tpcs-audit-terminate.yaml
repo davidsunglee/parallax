@@ -1,0 +1,47 @@
+# Table-per-concrete-subtype AUDIT-ONLY concrete-subtype TERMINATE: the milestone close
+# targets the subtype's OWN table with NO tag guard (m-inheritance x m-audit-write x
+# m-sql — Phase 8 temporal composition).
+#
+# In a table-per-concrete-subtype family the concrete subtype is selected by WHICH table
+# the DML targets, so terminating a SpotQuote closes the current milestone in the concrete
+# `spot_quote` table — an ordinary audit-only close `update spot_quote set out_z = ? where
+# id = ? and out_z = ?`, binds [2024-08-01, 1, infinity], with NO tag guard (contrast the
+# table-per-hierarchy close m-inheritance-090, whose `update reading` carries `and kind = ?`).
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert    : open [2024-01-01, infinity) price 50.00, symbol ACME   (1 statement)
+#   step 2 terminate : close the current milestone (out_z = 2024-08-01)        (1 statement)
+#
+# Resulting state: one CLOSED milestone (out_z finite) in the spot_quote table — no
+# out_z = infinity row remains, the observable signature of termination.
+model: models/quote.yaml
+tags: [m-inheritance, m-audit-write, m-sql, table-per-concrete-subtype, temporal, audit-only, write-sequence, terminate, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: SpotQuote
+      statements: 1
+      note: open a current milestone [2024-01-01, infinity) in the concrete spot_quote table
+      rows:
+        - { id: 1, price: 50.00, symbol: ACME }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: terminate
+      entity: SpotQuote
+      statements: 1
+      note: close the current row in the concrete table; no tag guard, insert nothing
+      rows:
+        - { id: 1 }
+      at: "2024-08-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into spot_quote(id, price, in_z, out_z, symbol) values (?, ?, ?, ?, ?)
+      binds: [1, 50.00, "2024-01-01T00:00:00+00:00", infinity, ACME]
+    - sql:
+        postgres: update spot_quote set out_z = ? where id = ? and out_z = ?
+      binds: ["2024-08-01T00:00:00+00:00", 1, infinity]
+  tableState:
+    spot_quote:
+      - { id: 1, price: 50.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00", symbol: ACME }
+  roundTrips: 2

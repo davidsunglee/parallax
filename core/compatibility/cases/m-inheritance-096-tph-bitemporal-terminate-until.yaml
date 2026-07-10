@@ -1,0 +1,86 @@
+# Table-per-hierarchy BITEMPORAL terminateUntil: the inactivation is tag-GUARDED
+# (m-inheritance x m-bitemp-write x m-sql — Phase 8 temporal composition).
+#
+# A terminateUntil over a BOUNDED business window [businessFrom, businessTo) inactivates
+# the original on the processing axis and chains only HEAD (business [from_z, businessFrom))
+# + TAIL (business [businessTo, infinity)) — NO middle — so the value is absent INSIDE the
+# window while intact before and after (m-bitemp-write, the rectangle split). Under
+# table-per-hierarchy the family shares the `instrument` table, so the inactivation carries
+# the tag GUARD `and kind = ?` right after the pk: `where id = ? and kind = ? and out_z = ?`,
+# binds [2024-02-15, 2, stock, infinity]; the chained head + tail set the tag from Stock's
+# tagValue.
+#
+# The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-002 (same window,
+# same 3-row result), differing ONLY in table/tag routing.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert         : open the current rectangle, price 100, business [2024-01-01, inf),
+#                           processing [2024-01-01, inf), kind=stock, ticker ACME   (1 statement)
+#   step 2 terminateUntil : terminate the value for business window [2024-03-01, 2024-09-01)
+#                           at txInstant 2024-02-15 — inactivate (tag-guarded) + head + tail (3 statements)
+model: models/instrument.yaml
+tags: [m-inheritance, m-bitemp-write, m-sql, table-per-hierarchy, tag, temporal, bitemporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Stock
+      statements: 1
+      note: open the original current rectangle; kind=stock derived from tagValue
+      rows:
+        - { id: 2, price: 100.00, ticker: ACME, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: terminateUntil
+      entity: Stock
+      statements: 3
+      note: inactivate the original (tag-guarded on kind='stock'), then chain head + tail (no middle)
+      rows:
+        - { id: 2, businessFrom: "2024-03-01T00:00:00+00:00" }
+      at: "2024-02-15T00:00:00+00:00"
+      until: "2024-09-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into instrument(id, kind, price, from_z, thru_z, in_z, out_z, ticker) values (?, ?, ?, ?, ?, ?, ?, ?)
+      binds: [2, stock, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity, ACME]
+    - sql:
+        postgres: update instrument set out_z = ? where id = ? and kind = ? and out_z = ?
+      binds: ["2024-02-15T00:00:00+00:00", 2, stock, infinity]
+    - sql:
+        postgres: insert into instrument(id, kind, price, from_z, thru_z, in_z, out_z, ticker) values (?, ?, ?, ?, ?, ?, ?, ?)
+      binds: [2, stock, 100.00, "2024-01-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-15T00:00:00+00:00", infinity, ACME]
+    - sql:
+        postgres: insert into instrument(id, kind, price, from_z, thru_z, in_z, out_z, ticker) values (?, ?, ?, ?, ?, ?, ?, ?)
+      binds: [2, stock, 100.00, "2024-09-01T00:00:00+00:00", infinity, "2024-02-15T00:00:00+00:00", infinity, ACME]
+  tableState:
+    # The shared `instrument` table physically carries BOTH subtypes' own columns, so a
+    # Stock row leaves the sibling `coupon` (Bond's) null.
+    instrument:
+      - id: 2
+        kind: stock
+        price: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-02-15T00:00:00+00:00"
+        coupon: null
+        ticker: ACME
+      - id: 2
+        kind: stock
+        price: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-03-01T00:00:00+00:00"
+        in_z: "2024-02-15T00:00:00+00:00"
+        out_z: infinity
+        coupon: null
+        ticker: ACME
+      - id: 2
+        kind: stock
+        price: 100.00
+        from_z: "2024-09-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-02-15T00:00:00+00:00"
+        out_z: infinity
+        coupon: null
+        ticker: ACME
+  roundTrips: 4

@@ -108,6 +108,17 @@ is the separate MAY-tier `purge`. The plain writes mirror `GenericBiTemporalDire
 unbounded `insert` / `update` / `terminate` (research §6), the open-window / tailless
 companions of the `*Until` trio.
 
+## Composition with inheritance
+
+A rectangle-split write on an inheritance participant (a concrete subtype of a family
+whose bitemporal axes are declared on the abstract root, `m-inheritance`) is the
+**same** inactivate-and-chain sequence — the plain `terminate` and the windowed
+`terminateUntil`, and their `update` / `*Until` siblings, are unchanged. Routing and
+tag guards are physical, owned by `m-inheritance` / `m-sql`, not restated here; the
+composed milestone shapes stay identical to the standalone witnesses, differing only
+in table / tag routing. The corpus pins both strategies
+(`m-inheritance-094` / `-095` terminate, `-096` / `-097` `terminateUntil`).
+
 ## MAY-tier mutations
 
 The remaining dated mutations Reladomo defines —

@@ -1,0 +1,79 @@
+# Table-per-concrete-subtype BITEMPORAL terminateUntil: the inactivation targets the
+# subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql — Phase 8).
+#
+# A terminateUntil over a bounded business window inactivates the original on the
+# processing axis and chains HEAD + TAIL (no middle), so the value is absent inside the
+# window (m-bitemp-write). In a table-per-concrete-subtype family the subtype is selected by
+# WHICH table the DML targets, so terminating a LoanRate inactivates and chains in the
+# concrete `loan_rate` table: the inactivation is `update loan_rate set out_z = ? where
+# id = ? and out_z = ?`, binds [2024-02-15, 2, infinity], with NO tag guard (contrast the
+# table-per-hierarchy inactivation m-inheritance-096, whose `update instrument` carries
+# `and kind = ?`).
+#
+# The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-002 and to the
+# table-per-hierarchy composed variant m-inheritance-096 (same window, same 3-row result),
+# differing ONLY in table/tag routing.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert         : open the current rectangle, amount 6.75, business [2024-01-01, inf),
+#                           processing [2024-01-01, inf), spread 1.25         (1 statement)
+#   step 2 terminateUntil : terminate for business window [2024-03-01, 2024-09-01) at
+#                           txInstant 2024-02-15 — inactivate + head + tail   (3 statements)
+model: models/rate.yaml
+tags: [m-inheritance, m-bitemp-write, m-sql, table-per-concrete-subtype, temporal, bitemporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: LoanRate
+      statements: 1
+      note: open the original current rectangle in the concrete loan_rate table
+      rows:
+        - { id: 2, amount: 6.75, spread: 1.25, businessFrom: "2024-01-01T00:00:00+00:00", businessTo: infinity }
+      at: "2024-01-01T00:00:00+00:00"
+    - mutation: terminateUntil
+      entity: LoanRate
+      statements: 3
+      note: inactivate the original in the concrete table (no tag guard), then chain head + tail (no middle)
+      rows:
+        - { id: 2, businessFrom: "2024-03-01T00:00:00+00:00" }
+      at: "2024-02-15T00:00:00+00:00"
+      until: "2024-09-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into loan_rate(id, amount, from_z, thru_z, in_z, out_z, spread) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [2, 6.75, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity, 1.25]
+    - sql:
+        postgres: update loan_rate set out_z = ? where id = ? and out_z = ?
+      binds: ["2024-02-15T00:00:00+00:00", 2, infinity]
+    - sql:
+        postgres: insert into loan_rate(id, amount, from_z, thru_z, in_z, out_z, spread) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [2, 6.75, "2024-01-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-15T00:00:00+00:00", infinity, 1.25]
+    - sql:
+        postgres: insert into loan_rate(id, amount, from_z, thru_z, in_z, out_z, spread) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [2, 6.75, "2024-09-01T00:00:00+00:00", infinity, "2024-02-15T00:00:00+00:00", infinity, 1.25]
+  tableState:
+    loan_rate:
+      - id: 2
+        amount: 6.75
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-02-15T00:00:00+00:00"
+        spread: 1.25
+      - id: 2
+        amount: 6.75
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-03-01T00:00:00+00:00"
+        in_z: "2024-02-15T00:00:00+00:00"
+        out_z: infinity
+        spread: 1.25
+      - id: 2
+        amount: 6.75
+        from_z: "2024-09-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-02-15T00:00:00+00:00"
+        out_z: infinity
+        spread: 1.25
+  roundTrips: 4

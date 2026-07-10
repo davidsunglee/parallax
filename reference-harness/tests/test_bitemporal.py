@@ -22,9 +22,11 @@ from reference_harness.case import discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_conflict_input,
+    _assert_temporal_union_binds,
     _assert_write_input_columns,
     _assert_write_step_count,
     _has_temporal_gate,
+    _read_asof_pins,
 )
 from reference_harness.ddl_builder import ddl_for
 
@@ -472,3 +474,139 @@ def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:
     step = next(s for s in update_until.write_sequence if s["mutation"] == "updateUntil")
     assert step["statements"] == 4
     assert len(update_until.golden_statements("postgres")) == 5
+
+
+# --- Phase 8 temporal inheritance composition (m-inheritance x m-audit/m-bitemp/m-sql) ---
+#
+# A temporal inheritance participant composes the milestone-chaining writes / as-of reads
+# with the strategy's routing + tag guard. Under table-per-hierarchy every EXISTING-ROW
+# temporal statement (an audit close, a bitemporal inactivation) carries the tag GUARD
+# right after the pk; chained inserts set the tag COLUMN. Under table-per-concrete-subtype
+# every statement targets the subtype's own table with no tag. A temporal TPCS abstract
+# `union all` read carries the injected as-of predicate PER BRANCH (business-first, repeated
+# in alphabetical branch order). The temporal families are NEW (instrument / rate /
+# reading / quote); the existing families stay non-temporal.
+
+
+def _inheritance_case(prefix: str):
+    return next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith(prefix))
+
+
+def test_temporal_axes_are_inherited_by_concrete_subtypes() -> None:
+    # The bitemporal axes declared on the abstract root are inherited by the concrete
+    # subtype (the inheritance-aware harness flattens them in), so the concrete is temporal
+    # and its shared-table DDL carries the milestone key PLUS the framework-owned tag column.
+    model = load_model(COMPATIBILITY_ROOT, "models/instrument.yaml")
+    bond = model.entity("Bond")
+    assert bond.is_temporal
+    assert {dim["axis"] for dim in bond.as_of_attributes} == {"business", "processing"}
+    (create,) = ddl_for(model, "postgres")  # one shared `instrument` table
+    assert "primary key (id, from_z, in_z)" in create
+    assert "kind" in create  # the framework-owned tag column, synthesized for the DDL
+
+    # The table-per-concrete-subtype counterpart: each concrete owns its table, inherits the
+    # axes, and carries the milestone key with NO tag column.
+    rate = load_model(COMPATIBILITY_ROOT, "models/rate.yaml")
+    deposit = rate.entity("DepositRate")
+    assert deposit.is_temporal
+    deposit_ddl = next(s for s in ddl_for(rate, "postgres") if "deposit_rate" in s)
+    assert "primary key (id, from_z, in_z)" in deposit_ddl
+    assert "kind" not in deposit_ddl
+
+
+def test_tph_audit_terminate_close_is_tag_guarded() -> None:
+    # m-inheritance-090: the audit-only close carries the tag guard among the identity
+    # predicates — right after the pk, before the current-row out_z predicate.
+    case = _inheritance_case("m-inheritance-090")
+    close = case.golden_statements("postgres")[1]
+    assert close == "update reading set out_z = ? where id = ? and kind = ? and out_z = ?"
+    assert case.statement_binds(1)[1:3] == [1, "meter"]  # pk then the derived tagValue
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_tph_bitemporal_inactivation_is_tag_guarded() -> None:
+    # m-inheritance-094: the bitemporal inactivation carries the tag guard right after the
+    # pk; the chained head insert sets the tag column from the subtype's tagValue.
+    case = _inheritance_case("m-inheritance-094")
+    inactivate = case.golden_statements("postgres")[1]
+    assert inactivate == "update instrument set out_z = ? where id = ? and kind = ? and out_z = ?"
+    assert case.statement_binds(1)[1:3] == [1, "bond"]
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_tph_temporal_close_missing_tag_guard_is_rejected() -> None:
+    # Dropping the `and kind = ?` guard from a table-per-hierarchy temporal close leaves the
+    # subtype's milestones indistinguishable in the shared table — it MUST fail.
+    case = _inheritance_case("m-inheritance-090")
+    _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
+    close = case.then["statements"][1]
+    close["sql"]["postgres"] = "update reading set out_z = ? where id = ? and out_z = ?"
+    close["binds"] = ["2024-08-01T00:00:00+00:00", 1, "infinity"]
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_tph_temporal_close_wrong_tag_bind_is_rejected() -> None:
+    # The temporal close's tag bind is pinned to the model's tagValue; a wrong value MUST
+    # fail (the tag is framework-derived, never authored).
+    case = _inheritance_case("m-inheritance-090")
+    case.then["statements"][1]["binds"][2] = "cash"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_tpcs_temporal_terminate_routes_to_own_table_no_tag() -> None:
+    # m-inheritance-095: the bitemporal inactivation targets the concrete deposit_rate table
+    # with NO tag guard (contrast the table-per-hierarchy inactivation above).
+    case = _inheritance_case("m-inheritance-095")
+    inactivate = case.golden_statements("postgres")[1]
+    assert inactivate == "update deposit_rate set out_z = ? where id = ? and out_z = ?"
+    assert "kind" not in inactivate
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_tpcs_temporal_close_routed_to_wrong_table_is_rejected() -> None:
+    # A table-per-concrete-subtype temporal close MUST target the subtype's own table;
+    # routing it elsewhere MUST fail the routing oracle.
+    case = _inheritance_case("m-inheritance-091")
+    _assert_write_input_columns(case, "postgres")  # sanity
+    case.then["statements"][1]["sql"]["postgres"] = (
+        "update wrong_table set out_z = ? where id = ? and out_z = ?"
+    )
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
+    # m-inheritance-093: the temporal abstract `union all` read carries the per-branch as-of
+    # binds — business-first [b, b, infinity], repeated in alphabetical branch order. The
+    # oracle recomputes them from the read's pin, independent of the authored golden.
+    case = _inheritance_case("m-inheritance-093")
+    assert _read_asof_pins(case) == {"business": "2024-06-01T00:00:00+00:00"}
+    _assert_temporal_union_binds(case, "postgres")  # must not raise
+    _assert_temporal_union_binds(case, "mariadb")  # the shared binds hold per dialect
+
+
+def test_tpcs_temporal_union_read_corrupt_branch_asof_bind_is_rejected() -> None:
+    # Corrupting the SECOND branch's business-from as-of bind (index 3) breaks the recomputed
+    # per-branch propagation, so the oracle MUST fail.
+    case = _inheritance_case("m-inheritance-093")
+    case.then["statements"][0]["binds"][3] = "1999-12-31T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_temporal_union_binds(case, "postgres")
+
+
+def test_tpcs_temporal_union_read_dropped_branch_binds_is_rejected() -> None:
+    # Dropping the second branch's as-of binds entirely fails the per-branch arity (two
+    # branches x three as-of binds each).
+    case = _inheritance_case("m-inheritance-093")
+    case.then["statements"][0]["binds"] = case.then["statements"][0]["binds"][:3]
+    with pytest.raises(CaseFailure):
+        _assert_temporal_union_binds(case, "postgres")
+
+
+def test_non_temporal_tpcs_union_read_asof_oracle_is_noop() -> None:
+    # The per-branch as-of oracle is a no-op on a NON-temporal TPCS abstract union read
+    # (the existing document family), so it never touches the Phase 3-6 union cases.
+    case = _inheritance_case("m-inheritance-050")
+    _assert_temporal_union_binds(case, "postgres")  # must not raise (returns early)

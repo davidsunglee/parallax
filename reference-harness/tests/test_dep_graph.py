@@ -572,9 +572,22 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # rewrites (table-per-hierarchy update/delete gain tag guards; 010 renamed to the
         # tpcs slug) keep their existing slice tags, so both counts rise by 10 and
         # slice-mvp-1 is unchanged.
+        #
+        # COR-9 Phase 8 adds 8 net-new TEMPORAL-composition cases tagged slice-snapshot-1
+        # + slice-managed-1 (never slice-mvp-1), on NEW small temporal inheritance families
+        # (instrument/rate = bitemporal, reading/quote = audit-only — the existing
+        # payment/animal/document/vehicle families stay non-temporal): the two audit-only
+        # concrete-subtype terminates (m-inheritance-090 table-per-hierarchy tag-guarded
+        # close, -091 table-per-concrete-subtype own-table close), the two temporal abstract
+        # reads (-092 table-per-hierarchy as-of + tag/superset projection, -093
+        # table-per-concrete-subtype `union all` with per-branch as-of binds), the two
+        # bitemporal terminates (-094 table-per-hierarchy tag-guarded inactivation, -095
+        # table-per-concrete-subtype), and the two bitemporal terminateUntils (-096
+        # table-per-hierarchy, -097 table-per-concrete-subtype). Both counts rise by 8 and
+        # slice-mvp-1 is unchanged.
         ("slice-mvp-1", 198),
-        ("slice-snapshot-1", 255),
-        ("slice-managed-1", 275),
+        ("slice-snapshot-1", 263),
+        ("slice-managed-1", 283),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:
