@@ -3,39 +3,170 @@
 `m-inheritance` is the **class-hierarchy mapping** strategy a metamodel entity may
 declare. It depends on `m-descriptor` (the entity it annotates).
 
-An entity that participates in a class hierarchy declares an `inheritance`
-element naming its **strategy** and its **role**. Core admits exactly two
-strategies and **rejects the third**:
+Inheritance is a **closed tree** of entities: one abstract **root**, zero or more
+abstract intermediate nodes, and the concrete, instantiable leaves (or any
+concrete node). The family behaves conceptually like a **discriminated union** —
+every returned row has exactly one concrete variant — even when the physical
+strategy uses no discriminator column. An entity that participates declares an
+`inheritance` element naming its **role** and, for the root, the family
+**strategy**.
+
+## Roles
+
+| Role | Meaning | Table / rows |
+|---|---|---|
+| `root` | the abstract hierarchy root; declares the family strategy and (for table-per-hierarchy) the `tag` column | **tableless, rowless** — a polymorphic position naming the whole family |
+| `abstract-subtype` | an abstract interior node between the root and its concrete descendants | **tableless, rowless** — a polymorphic position naming its concrete descendants |
+| `concrete-subtype` | an instantiable participant, the only one that owns rows | owns the physical table the family strategy requires |
+
+The `root` and every `abstract-subtype` are **abstract**: tableless, rowless, and
+addressable only as **polymorphic entity positions** (`targetEntity`, a `narrow`
+target, or a relationship target). Only a `concrete-subtype` is instantiable and
+row-owning. An `abstract-subtype` MAY have abstract or concrete descendants; a
+`concrete-subtype` is the leaf of instantiation.
+
+## Strategies
+
+The **root alone** declares the family strategy; every descendant inherits it and
+**MUST NOT** redeclare it. Core admits exactly two strategies and **rejects the
+rest**:
 
 | Strategy | Meaning | In core? |
 |---|---|---|
-| `table-per-hierarchy` | the whole hierarchy in **one** table; rows discriminated by a `discriminator` column | **yes** |
-| `table-per-leaf` | one table **per concrete leaf**; no discriminator | **yes** |
+| `table-per-hierarchy` | the whole family in **one** shared table; rows discriminated by the root's `tag` column carrying each concrete subtype's `tagValue` | **yes** |
+| `table-per-concrete-subtype` | one table **per concrete subtype**; no shared table, no tag | **yes** |
+| `table-per-leaf` | the pre-ADR name for per-concrete-subtype mapping | **REJECTED** — strictly replaced by `table-per-concrete-subtype`; not a canonical alias |
 | `table-per-class` | one table per class, joined at query time | **REJECTED** — the metamodel schema does not admit it |
 
-`table-per-class` is intentionally excluded (DQ9): per-query joins to assemble a
-single object are exactly the kind of hidden N+1 / fan-out cost the suite exists
-to prevent, and the two admitted strategies cover the field's real use. A
-descriptor declaring `strategy: table-per-class` **MUST** fail schema validation
-(a negative compatibility test asserts this).
+`table-per-class` is intentionally excluded: per-query joins to assemble a single
+object are exactly the hidden N+1 / fan-out cost the suite exists to prevent, and
+the two admitted strategies cover the field's real use. `table-per-leaf` is the
+retired name; the descriptor vocabulary uses `table-per-concrete-subtype`. A
+descriptor declaring either **MUST** fail schema validation (negative
+metamodel-extension tests assert this).
+
+## Descriptor surface
 
 | Property | Values / meaning |
 |---|---|
-| `strategy` | `table-per-hierarchy` \| `table-per-leaf` (REQUIRED) |
-| `role` | `root` (owns / names the hierarchy) \| `subtype` (a leaf) (REQUIRED) |
-| `parent` | for a `subtype`: the entity it extends (REQUIRED for a subtype, FORBIDDEN for a root) |
-| `discriminator` | table-per-hierarchy only, REQUIRED there and FORBIDDEN for table-per-leaf: `{ column }`, the column distinguishing leaves in the shared table |
-| `discriminatorValue` | table-per-hierarchy only, REQUIRED there and FORBIDDEN for table-per-leaf: the discriminator value THIS entity's rows carry |
+| `role` | `root` \| `abstract-subtype` \| `concrete-subtype` (REQUIRED) |
+| `strategy` | `table-per-hierarchy` \| `table-per-concrete-subtype`; declared by the `root` ONLY (REQUIRED there, FORBIDDEN on any descendant) |
+| `parent` | the entity this node directly extends (REQUIRED for a non-root, FORBIDDEN for a root) |
+| `tag` | `{ column }`, the shared-table discriminator column — declared on the `table-per-hierarchy` ROOT only (FORBIDDEN elsewhere and under table-per-concrete-subtype) |
+| `tagValue` | the value the tag column carries for THIS concrete subtype's rows — a `concrete-subtype` under `table-per-hierarchy` only |
 
-**Table-per-hierarchy.** The `root` and every `subtype` map to the **same
-table** and declare the shared `discriminator` column plus their own
-`discriminatorValue`; a query for a subtype injects a
-**discriminator-equality predicate** (`t0.<discriminator> = ?`), and a query
-across a family of subtypes injects a discriminator `in (?, …)`. The root query
-(no discriminator predicate) sees every row. `m-sql` fixes the
-discriminator-filter golden SQL.
+The pre-ADR `discriminator` / `discriminatorValue` vocabulary is **strictly
+replaced** by `tag` / `tagValue`; the inheritance block is closed, so the retired
+keys fail validation.
 
-**Table-per-leaf.** Each concrete leaf maps to its **own table** (its own
-`table`), so a leaf query is an ordinary single-table read of that table with
-**no** discriminator — the subtype is selected by *which table* is queried. No
-shared table and no discriminator column exist.
+### Canonical descriptor blocks
+
+Table-per-hierarchy root (abstract, tableless):
+
+```yaml
+inheritance:
+  role: root
+  strategy: table-per-hierarchy
+  tag:
+    column: kind
+```
+
+Abstract subtype (tableless):
+
+```yaml
+inheritance:
+  role: abstract-subtype
+  parent: Animal
+```
+
+Table-per-hierarchy concrete subtype:
+
+```yaml
+table: animal
+inheritance:
+  role: concrete-subtype
+  parent: Pet
+  tagValue: dog
+```
+
+Table-per-concrete-subtype concrete subtype:
+
+```yaml
+table: dog
+inheritance:
+  role: concrete-subtype
+  parent: Pet
+```
+
+## Inherited members
+
+Attributes, value objects, relationships, temporal axes (`asOfAttribute`), and
+mutability declared on an abstract ancestor are **inherited by every descendant**.
+A concrete subtype descriptor **does not repeat** inherited attributes merely to
+satisfy `table-per-concrete-subtype`; validation and lowering **derive the full
+inherited attribute/column chain from the ancestry** (root → … → self). A
+concrete subtype whose members are entirely inherited declares no `attributes` of
+its own (the conditional requirement in `m-descriptor`).
+
+## Physical mapping
+
+**Table-per-hierarchy.** The whole family maps to **one shared table** owned by
+its concrete subtypes; the root's `tag` column distinguishes them. The shared
+table physically carries the union of every concrete subtype's columns, so a
+subtype-declared column is **nullable** in the shared table (a `card` row leaves
+the `cash` column null and vice-versa). The `tag` column is **framework-owned
+metadata, not a declared attribute**: a concrete-subtype read injects
+`t0.<tag> = ?` (its `tagValue`); an abstract-target read projects the tag column
+raw so `familyVariant` can be materialized (`m-sql` / `m-case-format`). `m-sql`
+fixes the tag-filter golden SQL.
+
+**Table-per-concrete-subtype.** Each concrete subtype maps to its **own table**;
+no shared table and no tag exist. A concrete read is an ordinary single-table read
+of that subtype's table — the subtype is selected by *which table* is queried.
+Each concrete table **physically contains columns for the full inherited attribute
+chain** plus the concrete subtype's own attributes, derived from the ancestry.
+
+## Family invariants
+
+The following cross-entity invariants hold for every family. They are **semantic**
+(not expressible per-entity in the schema) and a model-aware validator **MUST**
+reject a descriptor that violates one, before any SQL; the compatibility corpus
+pins each as a portable `rejected` / `when.model` case with a
+`then.rejectedRule`:
+
+- **Parent resolution** — every `parent` resolves to another entity in the
+  descriptor (`inheritance-unknown-parent`).
+- **Acyclicity** — parent links form no cycle (`inheritance-cycle`).
+- **Single root** — a family has **exactly one** root. A descriptor with
+  inheritance participants but **no** root (a zero-root / abstract-orphan family) is
+  rejected with `inheritance-missing-root`; one that reaches **more than one** root
+  is rejected with `inheritance-multiple-roots`. (A concrete participant that never
+  tops out at a root is the distinct concrete-without-abstract-root case below.)
+- **Concrete under an abstract root** — every concrete subtype has an abstract
+  root ancestor (`inheritance-concrete-without-abstract-root`).
+- **Tableless abstract nodes** — a `root` / `abstract-subtype` declares no table
+  (`inheritance-abstract-node-with-table`) and owns no fixture rows
+  (`inheritance-abstract-node-fixture-rows`).
+- **Root-only strategy** — a non-root does not redeclare the strategy
+  (`inheritance-strategy-redeclared`).
+- **Tag presence** — under table-per-hierarchy, **every** concrete subtype
+  declares a `tagValue` (`inheritance-missing-tag-value`); the shared table cannot
+  discriminate a subtype's rows without one. The per-entity schema leaves
+  `tagValue` optional and delegates this presence rule (a family-strategy fact) to
+  semantic validation.
+- **Family-wide tag uniqueness** — under table-per-hierarchy, `tagValue` values
+  are unique across the **whole family**, not just siblings
+  (`inheritance-duplicate-tag-value`).
+- **Shared-table consistency** — under table-per-hierarchy, all concrete subtypes
+  map to one physical table (`inheritance-inconsistent-hierarchy-table`).
+- **Tag placement** — a table-per-concrete-subtype family declares no `tag` /
+  `tagValue` anywhere (`inheritance-tag-on-concrete-subtype-strategy`).
+
+## Prior art (Reladomo)
+
+Reladomo's `table-for-all-subclasses` and `table-per-subclass` correspond to the
+two admitted strategies; its own "not recommended" `table-per-class` mirrors this
+module's rejection. Parallax's declarative `tag` / `tagValue` metadata
+deliberately diverges from Reladomo's code-level `createObject` discriminator
+dispatch — the portable contract lives in descriptors and golden SQL, not
+generated code.

@@ -1,0 +1,30 @@
+# Negative (m-inheritance, resolved Q3/Q4): a table-per-concrete-subtype family
+# carries a `tagValue`.
+#
+# `Document` declares `table-per-concrete-subtype`, which has no shared table and no
+# tag — yet its concrete subtype `Invoice` declares `tagValue: inv`. No `tag` or
+# `tagValue` exists under table-per-concrete-subtype, so a model-aware validator MUST
+# reject it. The per-entity schema cannot catch this — a concrete subtype does not
+# declare the family strategy — so only the cross-entity semantic check does.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Document
+        inheritance:
+          strategy: table-per-concrete-subtype
+          role: root
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Invoice
+        table: invoice
+        inheritance:
+          role: concrete-subtype
+          parent: Document
+          tagValue: inv
+        attributes:
+          - { name: amountDue, type: decimal(18,2), column: amount_due }
+then:
+  rejectedRule: inheritance-tag-on-concrete-subtype-strategy

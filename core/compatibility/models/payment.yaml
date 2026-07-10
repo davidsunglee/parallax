@@ -1,100 +1,60 @@
-# Payment: a TABLE-PER-HIERARCHY inheritance model (m-inheritance, Phase 9).
+# Payment: a TABLE-PER-HIERARCHY inheritance model (m-inheritance).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. The whole
-# Payment hierarchy maps to ONE table (`payment`); rows are discriminated by the
-# `kind` column (the discriminator). Each entity declares its own
-# discriminator metadata:
+# Payment family maps to ONE shared table (`payment`); rows are discriminated by
+# the root's `tag` column (`kind`). The closed tree is:
 #
-#   Payment      (root)    — the hierarchy root; its own rows carry kind 'payment'
-#   CardPayment  (subtype) — kind 'card'; adds the card-network column
-#   CashPayment  (subtype) — kind 'cash'; adds the tendered-amount column
+#   Payment      (root, ABSTRACT)     — declares the strategy + tag column;
+#                                        tableless, rowless; owns id + amount
+#   CardPayment  (concrete-subtype)   — tagValue 'card'; adds card_network
+#   CashPayment  (concrete-subtype)   — tagValue 'cash'; adds tendered
 #
-# Because every leaf shares the table, the subtype-specific columns are nullable
-# (a card row leaves `tendered` null and vice-versa). A subtype query injects a
-# discriminator-equality predicate (`t0.kind = ?`); a query across a family of
-# subtypes injects `t0.kind in (?, ?)`; the root query (no discriminator
-# predicate) sees every row. m-sql fixes the discriminator-filter golden SQL.
+# The abstract root owns no table and no rows; only concrete subtypes are
+# instantiable. Concrete subtypes do NOT repeat the inherited id/amount — the full
+# inherited attribute chain is derived from the ancestry. Because every concrete
+# subtype shares the table, its subtype-declared columns are nullable (a card row
+# leaves `tendered` null and vice-versa). The `kind` tag column is framework-owned
+# metadata, NOT a declared attribute: a concrete-subtype read injects `t0.kind = ?`
+# (its tagValue) and an abstract-target read projects the tag column raw so
+# familyVariant can be materialized (m-sql / m-case-format, resolved Q6).
 #
-# table-per-class is NOT a legal strategy (DQ9): a YAML compatibility case cannot
-# carry an invalid model (the whole corpus must pass schema validation), so the
-# negative test lives in the harness — test_metamodel_extensions
-# .test_schema_rejects_table_per_class asserts the metamodel schema rejects it.
+# table-per-leaf and table-per-class are NOT legal strategies (m-inheritance): the
+# strategy enum rejects both, proven by the harness metamodel-extension tests.
 #
-# Row data lives in the sibling fixtures/payment.yaml.
+# Row data lives in the sibling fixtures/payment.yaml, keyed per concrete subtype.
 entities:
   - name: Payment
     namespace: parallax.compatibility
-    table: payment
     mutability: transactional
     temporal: non-temporal
     inheritance:
-      strategy: table-per-hierarchy
       role: root
-      discriminator:
+      strategy: table-per-hierarchy
+      tag:
         column: kind
-      discriminatorValue: payment
     attributes:
       - name: id
         type: int64
         column: id
         primaryKey: true
         pkGenerator: none
-      - name: kind
-        type: string
-        column: kind
-        maxLength: 16
       - name: amount
         type: decimal(18,2)
         column: amount
-      - name: cardNetwork
-        type: string
-        column: card_network
-        maxLength: 16
-        nullable: true
-      - name: tendered
-        type: decimal(18,2)
-        column: tendered
-        nullable: true
-    indices:
-      - name: payment_pk
-        attributes: [id]
-        unique: true
-      - name: payment_kind
-        attributes: [kind]
-        unique: false
   - name: CardPayment
     namespace: parallax.compatibility
     table: payment
     mutability: transactional
     temporal: non-temporal
     inheritance:
-      strategy: table-per-hierarchy
-      role: subtype
+      role: concrete-subtype
       parent: Payment
-      discriminator:
-        column: kind
-      discriminatorValue: card
+      tagValue: card
     attributes:
-      - name: id
-        type: int64
-        column: id
-        primaryKey: true
-        pkGenerator: none
-      - name: kind
-        type: string
-        column: kind
-        maxLength: 16
-      - name: amount
-        type: decimal(18,2)
-        column: amount
       - name: cardNetwork
         type: string
         column: card_network
         maxLength: 16
-        nullable: true
-      - name: tendered
-        type: decimal(18,2)
-        column: tendered
         nullable: true
   - name: CashPayment
     namespace: parallax.compatibility
@@ -102,30 +62,10 @@ entities:
     mutability: transactional
     temporal: non-temporal
     inheritance:
-      strategy: table-per-hierarchy
-      role: subtype
+      role: concrete-subtype
       parent: Payment
-      discriminator:
-        column: kind
-      discriminatorValue: cash
+      tagValue: cash
     attributes:
-      - name: id
-        type: int64
-        column: id
-        primaryKey: true
-        pkGenerator: none
-      - name: kind
-        type: string
-        column: kind
-        maxLength: 16
-      - name: amount
-        type: decimal(18,2)
-        column: amount
-      - name: cardNetwork
-        type: string
-        column: card_network
-        maxLength: 16
-        nullable: true
       - name: tendered
         type: decimal(18,2)
         column: tendered

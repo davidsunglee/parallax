@@ -1,0 +1,32 @@
+# Negative (m-inheritance, resolved Q3/Q4): a table-per-hierarchy concrete subtype
+# declares no `tagValue`.
+#
+# `Dog` is a concrete subtype under a table-per-hierarchy root but omits `tagValue`.
+# Under table-per-hierarchy every concrete subtype's rows share ONE table and are
+# told apart ONLY by the tag column carrying each subtype's `tagValue`, so a concrete
+# subtype with no `tagValue` cannot be discriminated in the shared table. The
+# per-entity metamodel schema leaves `tagValue` optional (its presence is a
+# family-strategy fact the root owns), so a model-aware validator MUST reject the
+# missing value semantically, before any SQL.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Dog
+        table: animal
+        inheritance:
+          role: concrete-subtype
+          parent: Animal
+        attributes:
+          - { name: barkVolume, type: int32, column: bark_volume, nullable: true }
+then:
+  rejectedRule: inheritance-missing-tag-value

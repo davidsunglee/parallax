@@ -505,9 +505,15 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # Phase 1 extension) carries all three lifecycle slice tags, matching its
         # plain update/terminate siblings m-bitemp-write-006/-007, so each count
         # ticked up by one.
+        #
+        # COR-9 Phase 3 adds 13 inheritance model-negative `when.model` rejected cases
+        # (m-inheritance-020..032), each tagged slice-snapshot-1 + slice-managed-1
+        # (never slice-mvp-1), so those two counts rise by 13 and slice-mvp-1 is
+        # unchanged. (The Phase 3 review added -031 tph-missing-tag-value and -032
+        # missing-root, closing the tagValue-presence and exactly-one-root holes.)
         ("slice-mvp-1", 198),
-        ("slice-snapshot-1", 207),
-        ("slice-managed-1", 227),
+        ("slice-snapshot-1", 220),
+        ("slice-managed-1", 240),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

@@ -1,0 +1,32 @@
+# Negative (m-inheritance, resolved Q3/Q4): a non-root participant redeclares the
+# family strategy.
+#
+# `Dog` is a concrete subtype but redeclares `strategy: table-per-hierarchy`. The root
+# ALONE declares the strategy; descendants inherit it and MUST NOT redeclare it, so a
+# model-aware validator MUST reject a strategy on a non-root. (The metamodel schema's
+# inheritance-block conditional also rejects this; the semantic validator enforces it
+# portably.)
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Dog
+        table: animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: concrete-subtype
+          parent: Animal
+          tagValue: dog
+        attributes:
+          - { name: barkVolume, type: int32, column: bark_volume, nullable: true }
+then:
+  rejectedRule: inheritance-strategy-redeclared

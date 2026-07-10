@@ -27,13 +27,21 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness.case import Case, discover_cases, load_model
-from reference_harness.case_runner import CaseFailure, run_case
+from reference_harness.case_runner import ALL_REJECTED_RULES, CaseFailure, run_case
+from reference_harness.inheritance import (
+    INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
+    INHERITANCE_MISSING_ROOT,
+    INHERITANCE_MISSING_TAG_VALUE,
+    INHERITANCE_MULTIPLE_ROOTS,
+    INHERITANCE_UNKNOWN_PARENT,
+    MODEL_REJECTED_RULES,
+    validate_family,
+)
 from reference_harness.op_validate import validate_operation
 from reference_harness.value_object_resolve import (
     NESTED_LITERAL_TYPE_MISMATCH,
     NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
     NESTED_PATH_UNKNOWN_MEMBER,
-    REJECTED_RULES,
     WRITE_REQUIRED_ATTRIBUTE_MISSING,
     WRITE_REQUIRED_VALUE_OBJECT_MISSING,
     WRITE_VALUE_TYPE_MISMATCH,
@@ -63,12 +71,124 @@ def _contact_entity():
 
 def test_rejected_cases_exist() -> None:
     cases = _rejected_cases()
-    assert cases, "no rejected-shape m-value-object cases discovered"
-    # Every named rule is a member of the closed vocabulary.
+    assert cases, "no rejected-shape cases discovered"
+    # Every named rule is a member of the closed vocabulary (value-object / operation
+    # rules plus the inheritance family-invariant rules).
     for case in cases:
-        assert case.rejected_rule in REJECTED_RULES, (
+        assert case.rejected_rule in ALL_REJECTED_RULES, (
             f"{case.path.name}: {case.rejected_rule!r} is not a known rejectedRule"
         )
+
+
+def test_inheritance_model_negatives_are_covered() -> None:
+    """The corpus pins every inheritance family invariant as a portable model
+    rejected case (m-inheritance, resolved Q3/Q4): each `when.model` case's named
+    rule is in the closed inheritance vocabulary, and the corpus covers the whole
+    set of family invariants across its cases."""
+    model_cases = [c for c in _rejected_cases() if "model" in c.when]
+    assert model_cases, "no inheritance `when.model` rejected cases discovered"
+    used = {c.rejected_rule for c in model_cases}
+    for rule in used:
+        assert rule in MODEL_REJECTED_RULES, f"{rule!r} is not an inheritance model rule"
+    # Structural invariants that a family MUST reject have at least one witness.
+    assert {INHERITANCE_UNKNOWN_PARENT, INHERITANCE_MULTIPLE_ROOTS} <= used
+
+
+# --- inheritance family invariants closed by the Phase 3 review --------------
+#
+# Two family invariants the per-entity metamodel schema deliberately delegates to
+# the semantic validator (m-inheritance): under table-per-hierarchy every concrete
+# subtype MUST declare a `tagValue` (else its rows are indistinguishable in the
+# shared table), and a family has EXACTLY ONE root (zero roots is as invalid as
+# more than one). These are the reproduce-then-green regressions for the two holes
+# the review found: before the fix `validate_family` ACCEPTED both malformed
+# descriptors.
+
+
+def _tph_root(**overrides: Any) -> dict[str, Any]:
+    definition = {
+        "name": "Animal",
+        "inheritance": {"role": "root", "strategy": "table-per-hierarchy", "tag": {"column": "kind"}},
+        "attributes": [{"name": "id", "type": "int64", "column": "id", "primaryKey": True}],
+    }
+    definition.update(overrides)
+    return definition
+
+
+def test_tph_concrete_subtype_missing_tag_value_is_rejected() -> None:
+    # A table-per-hierarchy concrete subtype with NO `tagValue` is schema-valid (the
+    # per-entity schema leaves tagValue optional) but semantically invalid: the shared
+    # table cannot discriminate its rows. The semantic validator MUST reject it.
+    descriptor = {
+        "entities": [
+            _tph_root(),
+            {
+                "name": "Dog",
+                "table": "animal",
+                "inheritance": {"role": "concrete-subtype", "parent": "Animal"},
+                "attributes": [
+                    {"name": "barkVolume", "type": "int32", "column": "bark_volume", "nullable": True}
+                ],
+            },
+        ]
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_MISSING_TAG_VALUE
+
+
+def test_zero_root_abstract_orphan_family_is_rejected() -> None:
+    # An abstract-only orphan chain (an `abstract-subtype` whose parent is a plain,
+    # non-inheritance entity): inheritance participants exist, there are ZERO roots and
+    # no concrete subtype, so check #6 (concrete-without-abstract-root) never fires. A
+    # family has exactly one root, so the zero-root shape MUST be rejected as
+    # missing-root rather than silently accepted.
+    descriptor = {
+        "entities": [
+            {
+                "name": "Widget",
+                "table": "widget",
+                "attributes": [{"name": "id", "type": "int64", "column": "id", "primaryKey": True}],
+            },
+            {
+                "name": "Pet",
+                "inheritance": {"role": "abstract-subtype", "parent": "Widget"},
+                "attributes": [
+                    {"name": "licenseId", "type": "string", "column": "license_id", "nullable": True}
+                ],
+            },
+        ]
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_MISSING_ROOT
+
+
+def test_concrete_without_abstract_root_is_not_reclassified_as_missing_root() -> None:
+    # Guard the taxonomy boundary: m-inheritance-023's descriptor (a concrete subtype
+    # whose parent is a plain entity) has zero roots too, but check #6 runs BEFORE the
+    # zero-root check, so it MUST still resolve to concrete-without-abstract-root — the
+    # missing-root rule is reserved for the abstract-orphan shape with no concrete.
+    descriptor = {
+        "entities": [
+            {
+                "name": "Widget",
+                "table": "widget",
+                "attributes": [{"name": "id", "type": "int64", "column": "id", "primaryKey": True}],
+            },
+            {
+                "name": "Gadget",
+                "table": "gadget",
+                "inheritance": {"role": "concrete-subtype", "parent": "Widget"},
+                "attributes": [
+                    {"name": "voltage", "type": "int32", "column": "voltage", "nullable": True}
+                ],
+            },
+        ]
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT
 
 
 def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None:

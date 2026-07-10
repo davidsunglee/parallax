@@ -1,11 +1,13 @@
-# Table-per-hierarchy DELETE: a subtype delete removes its row from the shared table
-# by primary key (m-inheritance, m-sql).
+# Table-per-hierarchy DELETE: a concrete-subtype delete removes its row from the shared
+# table by primary key (m-inheritance, m-sql).
 #
 # Fixtures are loaded first. Deleting CardPayment 2 removes exactly that row from the
-# shared `payment` table — keyed on `id` (unique across the hierarchy), so no
-# discriminator predicate is required. The other card row, the cash row, and the
-# plain root-kind row remain, proving the delete is keyed, not a discriminator-wide
-# sweep.
+# shared `payment` table — keyed on `id` (unique across the family), so the other card
+# row and the cash row remain, proving the delete is keyed, not a tag-wide sweep.
+#
+# The concrete-subtype tag GUARD (`and kind = ?`) on existing-row deletes lands in
+# Phase 7 with its spec; this Phase-3 case keeps the keyed form green under the
+# migrated model.
 model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, write-sequence, delete, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -28,5 +30,4 @@ then:
     payment:
       - { id: 1, kind: card, amount: 100.00, card_network: Visa, tendered: null }
       - { id: 3, kind: cash, amount: 20.00, card_network: null, tendered: 25.00 }
-      - { id: 4, kind: payment, amount: 10.00, card_network: null, tendered: null }
   roundTrips: 1

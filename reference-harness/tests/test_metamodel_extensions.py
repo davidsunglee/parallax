@@ -1,16 +1,20 @@
-"""Unit tests for the Phase 9 metamodel extensions (inheritance + valueObject).
+"""Unit tests for the metamodel extensions (inheritance + valueObject), DB-free.
 
-These pin the DB-free invariants of the two definitely-do metamodel features:
+These pin the DB-free invariants of the two metamodel features:
 
 * the metamodel schema **accepts** the two legal inheritance strategies
-  (table-per-hierarchy with a discriminator, table-per-leaf) and a valueObject
-  mapped to the neutral ``json`` storage mapping, and
-* it **rejects** a ``table-per-class`` descriptor (the negative test) and a
-  subtype that omits its ``parent``.
+  (table-per-hierarchy with a ``tag``/``tagValue`` discriminator,
+  table-per-concrete-subtype) and a valueObject mapped to the neutral ``json``
+  storage mapping;
+* it **rejects** the retired strategies (``table-per-class`` / ``table-per-leaf``)
+  and vocabulary (``discriminator`` / ``discriminatorValue``), enforces the
+  role-conditional ``table`` / ``attributes`` requirements (resolved Q5), and the
+  harness derives a concrete subtype's full inherited attribute chain (plus, for
+  table-per-hierarchy, the synthesized tag column) from the ancestry.
 
-The full discriminator-filter and Postgres JSONB read/filter golden SQL is
-exercised end-to-end against real Postgres by the compatibility suite (cases
-09xx); these tests cover only the schema contract, which needs no database.
+The full tag-filter and Postgres read/write golden SQL is exercised end-to-end
+against real Postgres by the compatibility suite (m-inheritance-*); these tests
+cover the schema/derivation contract, which needs no database.
 """
 
 from __future__ import annotations
@@ -19,12 +23,18 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness.case import Entity, Model, discover_cases, load_model
-from reference_harness.case_runner import _assert_write_input_columns, _discriminator
+from reference_harness.case_runner import _assert_write_input_columns, _tag
 from reference_harness.ddl_builder import _create_table, column_order, ddl_for
+from reference_harness.inheritance import (
+    INHERITANCE_ABSTRACT_NODE_FIXTURE_ROWS,
+    assert_no_abstract_fixture_rows,
+)
 from reference_harness.paths import schemas_dir
+from reference_harness.value_object_resolve import RejectionError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -88,18 +98,66 @@ def test_table_per_hierarchy_model_validates() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     assert _is_valid(model.descriptor)
     root = model.entity("Payment")
+    # The abstract root declares the family strategy + tag column; it is tableless.
     assert root.definition["inheritance"]["strategy"] == "table-per-hierarchy"
-    assert root.definition["inheritance"]["discriminator"]["column"] == "kind"
-    # Every entity in the hierarchy maps to the SAME shared table.
-    assert {e.table for e in model.entities} == {"payment"}
+    assert root.definition["inheritance"]["role"] == "root"
+    assert root.definition["inheritance"]["tag"]["column"] == "kind"
+    assert root.is_abstract
+    assert root.table == ""
+    # Every CONCRETE subtype maps to the SAME shared table; abstract nodes are tableless.
+    assert {e.table for e in model.entities if not e.is_abstract} == {"payment"}
 
 
-def test_table_per_leaf_model_validates() -> None:
+def test_table_per_concrete_subtype_model_validates() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
     assert _is_valid(model.descriptor)
-    # Each concrete leaf maps to its OWN table (no shared table).
-    tables = {e.table for e in model.entities}
-    assert {"invoice", "receipt"}.issubset(tables)
+    root = model.entity("Document")
+    assert root.definition["inheritance"]["strategy"] == "table-per-concrete-subtype"
+    assert root.is_abstract
+    assert root.table == ""
+    # Each concrete subtype maps to its OWN table (no shared table, no tag).
+    tables = {e.table for e in model.entities if not e.is_abstract}
+    assert tables == {"invoice", "receipt"}
+    for name in ("Invoice", "Receipt"):
+        assert "tag" not in model.entity(name).definition["inheritance"]
+        assert "tagValue" not in model.entity(name).definition["inheritance"]
+
+
+def test_concrete_subtype_derives_the_full_inherited_attribute_chain() -> None:
+    # A concrete subtype does not repeat inherited attributes; the harness derives
+    # the full ancestry chain (root -> ... -> self). For table-per-hierarchy it also
+    # synthesizes the framework-owned tag column after the primary key.
+    payment = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+    assert list(column_order(payment.entity("CardPayment"))) == [
+        "id",
+        "kind",
+        "amount",
+        "card_network",
+    ]
+    # table-per-concrete-subtype: the concrete table carries the full inherited chain,
+    # with NO tag column.
+    document = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
+    assert list(column_order(document.entity("Invoice"))) == ["id", "title", "amount_due"]
+
+
+def test_intermediate_abstract_subtype_inheritance_chain() -> None:
+    # The animal family threads an intermediate abstract subtype (Pet) between the
+    # root (Animal) and concrete leaves (Dog/Cat); a concrete sibling (WildBoar) sits
+    # directly under the root, so it does NOT inherit Pet's licenseId.
+    model = load_model(COMPATIBILITY_ROOT, "models/animal.yaml")
+    assert _is_valid(model.descriptor)
+    assert model.entity("Pet").is_abstract
+    assert list(column_order(model.entity("Dog"))) == [
+        "id",
+        "kind",
+        "name",
+        "license_id",
+        "bark_volume",
+    ]
+    # WildBoar is under Animal directly, so it inherits name (root) but NOT license_id (Pet).
+    boar_columns = list(column_order(model.entity("WildBoar")))
+    assert boar_columns == ["id", "kind", "name", "tusk_length"]
+    assert "license_id" not in boar_columns
 
 
 def test_value_object_model_validates_and_maps_to_dialect_json() -> None:
@@ -170,75 +228,102 @@ def test_value_object_ddl_emits_one_document_column_and_no_nested_columns() -> N
 # --- negative: table-per-class is rejected (the Phase 9 negative test) --------
 
 
-def test_schema_rejects_table_per_class() -> None:
-    """A ``table-per-class`` descriptor MUST fail metamodel validation (DQ9).
+@pytest.mark.parametrize("strategy", ["table-per-class", "table-per-leaf"])
+def test_schema_rejects_rejected_strategies(strategy: str) -> None:
+    """``table-per-class`` and ``table-per-leaf`` MUST fail metamodel validation.
 
-    The strategy enum admits only table-per-hierarchy and table-per-leaf, so a
-    descriptor declaring table-per-class is not a valid model — proving the
-    exclusion mechanically rather than only in prose.
+    The strategy enum admits ONLY table-per-hierarchy and table-per-concrete-subtype
+    (m-inheritance), so a descriptor declaring either rejected strategy is not a valid
+    model — proving the exclusion mechanically rather than only in prose.
     """
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     descriptor = copy.deepcopy(model.descriptor)
-    descriptor["entities"][0]["inheritance"]["strategy"] = "table-per-class"
-    assert not _is_valid(descriptor), "table-per-class must be rejected by the metamodel schema"
+    descriptor["entities"][0]["inheritance"]["strategy"] = strategy
+    assert not _is_valid(descriptor), f"{strategy} must be rejected by the metamodel schema"
+
+
+def test_schema_rejects_legacy_discriminator_vocabulary() -> None:
+    """The pre-ADR ``discriminator`` / ``discriminatorValue`` keys are REJECTED.
+
+    The inheritance block is closed (``additionalProperties: false``) and names only
+    ``tag`` / ``tagValue``, so the retired discriminator vocabulary fails validation.
+    """
+    model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+    descriptor = copy.deepcopy(model.descriptor)
+    descriptor["entities"][0]["inheritance"]["discriminator"] = {"column": "kind"}
+    assert not _is_valid(descriptor)
+
+    descriptor = copy.deepcopy(model.descriptor)
+    descriptor["entities"][1]["inheritance"]["discriminatorValue"] = "card"
+    assert not _is_valid(descriptor)
 
 
 def test_schema_rejects_subtype_without_parent() -> None:
-    """A ``subtype`` that omits ``parent`` MUST fail validation (a subtype always
+    """A non-root participant that omits ``parent`` MUST fail validation (it always
     names the entity it extends)."""
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     descriptor = copy.deepcopy(model.descriptor)
     subtype = descriptor["entities"][1]  # CardPayment
-    assert subtype["inheritance"]["role"] == "subtype"
+    assert subtype["inheritance"]["role"] == "concrete-subtype"
     del subtype["inheritance"]["parent"]
     assert not _is_valid(descriptor)
 
 
-def test_schema_requires_table_per_hierarchy_discriminator_metadata() -> None:
+def test_schema_requires_table_per_hierarchy_root_tag() -> None:
+    """A table-per-hierarchy root MUST declare its ``tag`` column; a non-root MUST NOT."""
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     descriptor = copy.deepcopy(model.descriptor)
-
-    root = descriptor["entities"][0]
-    del root["inheritance"]["discriminator"]
+    del descriptor["entities"][0]["inheritance"]["tag"]
     assert not _is_valid(descriptor)
 
+    # A concrete subtype (non-root) MUST NOT declare a tag.
     descriptor = copy.deepcopy(model.descriptor)
-    subtype = descriptor["entities"][1]
-    del subtype["inheritance"]["discriminatorValue"]
+    descriptor["entities"][1]["inheritance"]["tag"] = {"column": "kind"}
     assert not _is_valid(descriptor)
 
 
-def test_schema_rejects_table_per_leaf_discriminator_metadata() -> None:
+def test_schema_rejects_table_per_concrete_subtype_root_tag() -> None:
+    """A table-per-concrete-subtype root MUST NOT declare a tag (no shared table)."""
     model = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
     descriptor = copy.deepcopy(model.descriptor)
-    subtype = descriptor["entities"][1]
-    assert subtype["inheritance"]["strategy"] == "table-per-leaf"
-
-    subtype["inheritance"]["discriminator"] = {"column": "kind"}
-    assert not _is_valid(descriptor)
-
-    descriptor = copy.deepcopy(model.descriptor)
-    subtype = descriptor["entities"][1]
-    subtype["inheritance"]["discriminatorValue"] = "invoice"
+    assert descriptor["entities"][0]["inheritance"]["strategy"] == "table-per-concrete-subtype"
+    descriptor["entities"][0]["inheritance"]["tag"] = {"column": "kind"}
     assert not _is_valid(descriptor)
 
 
-def test_shared_hierarchy_table_ddl_includes_later_subtype_columns() -> None:
+def test_schema_conditionally_requires_table_and_attributes() -> None:
+    """resolved Q5: an abstract node MUST NOT declare a table; a concrete subtype MUST;
+    an inheritance participant MAY omit its own ``attributes`` (all inherited)."""
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+
+    # An abstract root MUST NOT declare a table.
     descriptor = copy.deepcopy(model.descriptor)
-    root = descriptor["entities"][0]
-    root["attributes"] = [
-        attribute
-        for attribute in root["attributes"]
-        if attribute["column"] not in {"card_network", "tendered"}
-    ]
-    sparse_root_model = Model(path=model.path, descriptor=descriptor)
+    descriptor["entities"][0]["table"] = "payment"
+    assert not _is_valid(descriptor)
 
-    (create,) = ddl_for(sparse_root_model, "postgres")
+    # A concrete subtype MUST declare its table.
+    descriptor = copy.deepcopy(model.descriptor)
+    del descriptor["entities"][1]["table"]
+    assert not _is_valid(descriptor)
 
-    assert "card_network varchar(16)" in create
-    assert "tendered numeric(18,2)" in create
-    assert len(ddl_for(sparse_root_model, "postgres")) == 1
+    # A concrete subtype declaring ONLY inherited attributes MAY omit `attributes`.
+    descriptor = copy.deepcopy(model.descriptor)
+    del descriptor["entities"][1]["attributes"]
+    assert _is_valid(descriptor), "a concrete subtype with only inherited attributes may omit them"
+
+
+def test_shared_hierarchy_table_ddl_unions_subtype_columns_and_the_derived_tag() -> None:
+    """The table-per-hierarchy shared table is the UNION of every concrete subtype's
+    columns plus the framework-derived tag column (m-inheritance), even though each
+    concrete subtype declares only its own subtype-specific column."""
+    model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+    statements = ddl_for(model, "postgres")
+    assert len(statements) == 1, "one shared table for the whole family"
+    (create,) = statements
+    assert "kind varchar" in create  # the framework-derived tag column
+    assert "card_network varchar(16)" in create  # CardPayment's declared column
+    assert "tendered numeric(18,2)" in create  # CashPayment's declared column
+    assert "amount numeric(18,2)" in create  # the inherited root column
 
 
 # --- negative: optimistic-lock x temporal composition is rejected (COR-14) ---
@@ -280,37 +365,58 @@ def test_phase9_cases_are_discovered() -> None:
 # --- inheritance WRITE: the discriminator is derived from the metamodel ------
 
 
-def test_table_per_hierarchy_write_derives_the_discriminator_column() -> None:
-    """A TPH write derives the discriminator column from the entity's declared
-    ``discriminatorValue`` (m-inheritance) — it is never carried in the neutral write
-    input. The metamodel is the source of the value; the corpus insert case
-    (m-inheritance-007) cross-checks against it."""
+def test_table_per_hierarchy_write_derives_the_tag_column() -> None:
+    """A TPH write derives the tag column from the concrete subtype's declared
+    ``tagValue`` (m-inheritance) — it is never carried in the neutral write input.
+    The metamodel is the source of the value; the corpus insert case
+    (m-inheritance-007) cross-checks against it. The abstract root owns no rows and
+    no tagValue, so it derives no tag."""
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
-    # Each entity's discriminator (shared column, own value) comes from the model.
-    assert _discriminator(model.entity("Payment")) == ("kind", "payment")
-    assert _discriminator(model.entity("CardPayment")) == ("kind", "card")
-    assert _discriminator(model.entity("CashPayment")) == ("kind", "cash")
+    # A concrete subtype's tag (shared column, own value) comes from the model.
+    assert _tag(model.entity("CardPayment")) == ("kind", "card")
+    assert _tag(model.entity("CashPayment")) == ("kind", "cash")
+    # The abstract root is rowless and carries no tagValue.
+    assert _tag(model.entity("Payment")) is None
 
     cases = {c.path.stem: c for c in discover_cases(COMPATIBILITY_ROOT)}
     tph_insert = cases["m-inheritance-007-tph-insert"]
-    # The golden INSERT includes the discriminator column with the discriminatorValue
-    # as its bind, and the ① ↔ ② cross-check accepts the derived column.
+    # The golden INSERT includes the tag column with the tagValue as its bind, and the
+    # ① ↔ ② cross-check accepts the derived column.
     (insert,) = tph_insert.golden_statements("postgres")
     assert "kind" in insert
     assert tph_insert.statement_binds(0)[1] == "card"
     _assert_write_input_columns(tph_insert, "postgres")
 
 
-def test_table_per_leaf_write_has_no_discriminator() -> None:
-    """A TPL write targets the leaf's own table with no discriminator column
-    (m-inheritance): ``_discriminator`` is None and the golden INSERT names the leaf
-    table, not a shared hierarchy table."""
+def test_table_per_concrete_subtype_write_has_no_tag() -> None:
+    """A table-per-concrete-subtype write targets the subtype's own table with no tag
+    column (m-inheritance): ``_tag`` is None and the golden INSERT names the concrete
+    subtype's table, not a shared family table."""
     cases = {c.path.stem: c for c in discover_cases(COMPATIBILITY_ROOT)}
-    tpl_insert = cases["m-inheritance-010-tpl-insert"]
-    assert _discriminator(tpl_insert.model.entity("Invoice")) is None
-    (insert,) = tpl_insert.golden_statements("postgres")
+    tpcs_insert = cases["m-inheritance-010-tpl-insert"]
+    assert _tag(tpcs_insert.model.entity("Invoice")) is None
+    (insert,) = tpcs_insert.golden_statements("postgres")
     assert insert.startswith("insert into invoice(")
-    _assert_write_input_columns(tpl_insert, "postgres")
+    _assert_write_input_columns(tpcs_insert, "postgres")
+
+
+# --- fixture rows are keyed to concrete subtypes only ------------------------
+
+
+def test_abstract_node_fixture_rows_are_rejected() -> None:
+    """An abstract node is rowless (m-inheritance): fixture rows keyed to an abstract
+    root / abstract subtype are refused before load."""
+    model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+    assert_no_abstract_fixture_rows(model)  # the migrated corpus model is clean
+    # Injecting rows keyed to the abstract root is refused with the named rule.
+    bad = Model(
+        path=model.path,
+        descriptor=model.descriptor,
+        fixtures={"Payment": [{"id": 99, "amount": 1.0}]},
+    )
+    with pytest.raises(RejectionError) as exc:
+        assert_no_abstract_fixture_rows(bad)
+    assert exc.value.rule == INHERITANCE_ABSTRACT_NODE_FIXTURE_ROWS
 
 
 # --- unique-index DDL emission (Task 5) --------------------------------------

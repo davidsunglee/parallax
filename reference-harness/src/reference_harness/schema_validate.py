@@ -27,7 +27,9 @@ import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 
+from .inheritance import Family, validate_family_defs
 from .paths import schemas_dir
+from .value_object_resolve import RejectionError
 
 _SCHEMA_FILES = (
     "metamodel.schema.json",
@@ -64,14 +66,29 @@ def _validate(instance: Any, schema: dict[str, Any], label: str, errors: list[st
         errors.append(f"{label}: at {location}: {match.message}")
 
 
-# --- targetEntity consistency (m-case-format, resolved Q1) ------------------
+def _descriptor_entity_defs(descriptor: Any) -> list[dict[str, Any]]:
+    """Lift a descriptor (single ``entity`` or ``entities`` list) to a flat list."""
+    if not isinstance(descriptor, dict):
+        return []
+    if "entities" in descriptor:
+        entities = descriptor.get("entities")
+        return [d for d in entities if isinstance(d, dict)] if isinstance(entities, list) else []
+    entity = descriptor.get("entity")
+    return [entity] if isinstance(entity, dict) else []
+
+
+# --- targetEntity consistency (m-case-format, resolved Q1; m-inheritance) ----
 #
 # A read names the entity it targets with `targetEntity`; the class part of every
-# queried-entity reference in the operation MUST name it. This is the structural
-# invariant that makes the read-targeting migration self-verifying. Until
-# inheritance families exist, "consistent" means "equal" (a concrete target names
-# exactly the entity whose rows the read returns); a navigation's INNER operation
-# resolves against the RELATED entity, so it is intentionally not descended into.
+# queried-entity reference in the operation MUST be CONSISTENT with it. This is the
+# structural invariant that makes the read-targeting migration self-verifying. It
+# is FAMILY-AWARE (m-inheritance): a reference class is consistent when its
+# effective concrete-subtype set is a subset of the target's — an abstract root
+# names its whole family, an abstract subtype its concrete descendants, a concrete
+# subtype itself. For a non-inheritance entity the effective set is the entity
+# itself, so "subset" reduces to "equal" (the pre-inheritance meaning). A
+# navigation's INNER operation resolves against the RELATED entity, so it is
+# intentionally not descended into.
 
 _ATTR_REF_TAGS = frozenset(
     {
@@ -180,13 +197,24 @@ def _collect_queried_classes(node: Any, acc: set[str]) -> None:
     # all / none carry no queried-entity reference.
 
 
-def _check_target_entity(operation: Any, target_entity: Any, label: str, errors: list[str]) -> None:
-    """Assert every queried-entity reference class equals *target_entity*."""
+def _check_target_entity(
+    operation: Any,
+    target_entity: Any,
+    family: Family | None,
+    label: str,
+    errors: list[str],
+) -> None:
+    """Assert every queried-entity reference class is family-consistent with *target_entity*."""
     if not isinstance(target_entity, str):
         return  # a missing / malformed targetEntity is already a schema error
     classes: set[str] = set()
     _collect_queried_classes(operation, classes)
-    inconsistent = sorted(cls for cls in classes if cls != target_entity)
+
+    def effective(name: str) -> set[str]:
+        return set(family.effective_concrete_set(name)) if family is not None else {name}
+
+    target_set = effective(target_entity)
+    inconsistent = sorted(cls for cls in classes if not (effective(cls) <= target_set))
     if inconsistent:
         errors.append(
             f"{label}: targetEntity {target_entity!r} is inconsistent with the "
@@ -212,16 +240,29 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     operation_schema = schema_map["operation.schema.json"]
     case_schema = schema_map["compatibility-case.schema.json"]
 
-    # 2. Every model descriptor validates against the metamodel schema.
+    # 2. Every model descriptor validates against the metamodel schema AND, if it
+    #    declares an inheritance family, satisfies the cross-entity closed-tree
+    #    invariants the per-entity schema cannot express (m-inheritance). A family
+    #    resolver per model backs the family-aware targetEntity cross-check below.
     models_dir = compatibility_root / "models"
+    families: dict[str, Family] = {}
     for model_path in sorted(models_dir.glob("**/*.y*ml")):
         descriptor = _load_yaml(model_path)
         _validate(descriptor, metamodel_schema, f"model {model_path.name}", errors)
+        entity_defs = _descriptor_entity_defs(descriptor)
+        families[model_path.name] = Family(entity_defs)
+        try:
+            validate_family_defs(entity_defs)
+        except RejectionError as exc:
+            errors.append(f"model {model_path.name}: {exc.rule}: {exc.detail}")
 
     # 3. Every case + its operation validate against their schemas.
     cases_dir = compatibility_root / "cases"
     for case_path in sorted(cases_dir.glob("**/*.y*ml")):
         case = _load_yaml(case_path)
+        model_rel = case.get("model") if isinstance(case, dict) else None
+        model_name = Path(model_rel).name if isinstance(model_rel, str) else None
+        family = families.get(model_name) if model_name is not None else None
         _validate(case, case_schema, f"case {case_path.name}", errors)
         # The action under test lives under `when`; a read case's operation and a
         # scenario/coherence step's `find` are canonical m-op-algebra nodes that
@@ -241,6 +282,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                 _check_target_entity(
                     when["operation"],
                     when.get("targetEntity"),
+                    family,
                     f"case {case_path.name}",
                     errors,
                 )
@@ -258,6 +300,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                     _check_target_entity(
                         step["find"],
                         step.get("targetEntity"),
+                        family,
                         f"case {case_path.name} scenario[{index}].find",
                         errors,
                     )
@@ -275,6 +318,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                     _check_target_entity(
                         step["find"],
                         step.get("targetEntity"),
+                        family,
                         f"case {case_path.name} coherence[{index}].find",
                         errors,
                     )

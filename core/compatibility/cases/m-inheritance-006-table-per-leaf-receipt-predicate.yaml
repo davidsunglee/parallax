@@ -1,10 +1,12 @@
-# Table-per-leaf leaf query with a predicate (m-inheritance inheritance, m-sql).
+# Table-per-concrete-subtype read with a predicate (m-inheritance, m-sql).
 #
-# Query the Receipt leaf's own table for paidAmount >= 120. No discriminator is
-# injected (the leaf is selected by its table); the user predicate is the only
-# WHERE clause. The single authored receipt (paidAmount 120.00) qualifies.
+# Read the Receipt concrete subtype's own table for paidAmount >= 120. No tag is
+# injected (the subtype is selected by its table); the user predicate is the only
+# WHERE clause. The projection carries the inherited `title` (from the abstract root
+# Document) alongside the subtype's own paid_amount. The single authored receipt
+# (paidAmount 120.00) qualifies.
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-leaf, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Receipt

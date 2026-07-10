@@ -1,0 +1,33 @@
+# Negative (m-inheritance, resolved Q3/Q4): parent links form a cycle.
+#
+# `Pet.parent = Paw` and `Paw.parent = Pet` — a two-node cycle. Parent links MUST be
+# acyclic (a closed tree has no cycles), so a model-aware validator MUST reject the
+# family before any SQL. Every named parent resolves (so it is not unknown-parent);
+# only the acyclicity check catches it.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Pet
+        inheritance:
+          role: abstract-subtype
+          parent: Paw
+        attributes:
+          - { name: licenseId, type: string, column: license_id, nullable: true }
+      - name: Paw
+        inheritance:
+          role: abstract-subtype
+          parent: Pet
+        attributes:
+          - { name: pawCount, type: int32, column: paw_count, nullable: true }
+then:
+  rejectedRule: inheritance-cycle

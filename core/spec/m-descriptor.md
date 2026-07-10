@@ -27,9 +27,10 @@ specified in those modules.
 The base elements for a single non-temporal entity are `entity`, `attribute`,
 and `pkGenerator`. A descriptor may declare **multiple entities** so relationships
 can name sibling entities, plus **`asOfAttribute`** (a temporal dimension), and
-the two metamodel extensions **`inheritance`** (table-per-hierarchy with a
-discriminator, or table-per-leaf — **never** table-per-class) and **`valueObject`**
-(an embedded composite element mapped to a single dialect-native
+the two metamodel extensions **`inheritance`** (a closed class tree —
+table-per-hierarchy with a `tag`/`tagValue` discriminator, or
+table-per-concrete-subtype; **never** table-per-leaf or table-per-class) and
+**`valueObject`** (an embedded composite element mapped to a single dialect-native
 structured-document column).
 
 ## One or many entities per descriptor
@@ -46,10 +47,30 @@ implementation **MUST** accept both.
 |---|---|
 | `name` | entity (domain class) name (REQUIRED) |
 | `namespace` | logical namespace (language-neutral; replaces Java-style "package") |
-| `table` | default table name (REQUIRED) |
+| `table` | physical table name (**conditionally** required — see below) |
 | `mutability` | `read-only` (default) \| `transactional` |
 | `temporal` | derived classification: `non-temporal` (default) \| `unitemporal-processing` \| `unitemporal-business` \| `bitemporal` |
-| children | `attributes` (REQUIRED, non-empty); `relationships`, `indices`, `asOfAttributes`, `valueObjects`, `inheritance` (optional) |
+| children | `attributes` (**conditionally** required, non-empty); `relationships`, `indices`, `asOfAttributes`, `valueObjects`, `inheritance` (optional) |
+
+### Conditional `table` / `attributes` requirements (inheritance)
+
+`table` and `attributes` are required **except** where the `inheritance` role
+(`m-inheritance`) makes them meaningless:
+
+| Entity kind | `table` | `attributes` |
+|---|---|---|
+| no `inheritance` | REQUIRED | REQUIRED (non-empty) |
+| `role: concrete-subtype` | REQUIRED (owns the family's physical table) | optional — a subtype declaring only inherited attributes has none of its own |
+| `role: root` / `abstract-subtype` | FORBIDDEN — abstract nodes are tableless and rowless | optional — the root/abstract node's own attributes, inherited by descendants |
+
+The full inherited attribute/column set of a concrete subtype is **derived from
+its ancestry chain** (root → … → self), so a concrete subtype never repeats
+inherited attributes (`m-inheritance`). An abstract root or subtype still declares
+the attributes it *introduces* (inherited by descendants) but owns no table and no
+rows.
+
+Every entity **MUST** have exactly one **primary key** — for a concrete subtype it
+may be inherited from an abstract ancestor rather than declared locally.
 
 The `temporal` classification is **derived** from the `asOfAttribute` children an
 entity declares and **MUST** be consistent with them:
@@ -64,7 +85,9 @@ entity declares and **MUST** be consistent with them:
 It is recorded explicitly for clarity and validated for consistency. The temporal
 MVP exercises `non-temporal` and `unitemporal-processing` (audit-only).
 
-Every entity **MUST** declare at least one `attribute` with `primaryKey: true`.
+Every entity **MUST** resolve to at least one `attribute` with `primaryKey: true`
+— declared locally, or (for a concrete subtype) inherited from an abstract
+ancestor through its ancestry chain (`m-inheritance`).
 
 ## `attribute` — a typed, mapped scalar field
 

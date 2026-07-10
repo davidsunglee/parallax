@@ -334,12 +334,39 @@ def ddl_for(model: Model, dialect: str) -> list[str]:
     fixture-load order unconstrained.
     """
     statements: list[str] = []
-    by_table: dict[str, list[Entity]] = {}
-    for entity in model.entities:
-        by_table.setdefault(entity.table, []).append(entity)
-    for entities in by_table.values():
+    for entities in _entities_by_table(model).values():
         statements.append(_create_table(_physical_table_entity(entities), dialect))
     return statements
+
+
+def _entities_by_table(model: Model) -> dict[str, list[Entity]]:
+    """Group the model's ROW-OWNING entities by physical table.
+
+    Abstract inheritance nodes (root / abstract-subtype) are tableless and rowless
+    (m-inheritance), so they are excluded — a `table-per-hierarchy` family's shared
+    table is the union of its concrete subtypes, and a `table-per-concrete-subtype`
+    family maps each concrete subtype to its own table.
+    """
+    by_table: dict[str, list[Entity]] = {}
+    for entity in model.entities:
+        if entity.is_abstract:
+            continue
+        by_table.setdefault(entity.table, []).append(entity)
+    return by_table
+
+
+def physical_entities_by_table(model: Model) -> dict[str, Entity]:
+    """Map each physical table to the synthesized entity carrying its full column set.
+
+    For a `table-per-hierarchy` shared table this is the union of every concrete
+    subtype mapped to it (so a table-state read projects the whole physical row,
+    not just one subtype's columns); for an ordinary or `table-per-concrete-subtype`
+    table it is the single entity that owns it.
+    """
+    return {
+        table: _physical_table_entity(entities)
+        for table, entities in _entities_by_table(model).items()
+    }
 
 
 def column_order(entity: Entity) -> Sequence[str]:

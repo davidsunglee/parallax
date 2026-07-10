@@ -172,7 +172,7 @@ describe("operation validation — path & literal rules", () => {
 describe("operation validation — value-object misuse rules", () => {
   it("rejects a deepFetch path segment naming a value object", () => {
     expectOperationRule(
-      { deepFetch: { operand: { all: {} }, paths: [["Customer.address"]] } },
+      { deepFetch: { operand: { all: {} }, paths: [[{ rel: "Customer.address" }]] } },
       RejectedRule.DEEP_FETCH_VALUE_OBJECT_SEGMENT,
     );
   });

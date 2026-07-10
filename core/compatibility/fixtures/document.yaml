@@ -1,8 +1,10 @@
-# Fixture rows for the Document table-per-leaf model (models/document.yaml).
+# Fixture rows for the Document table-per-concrete-subtype model
+# (models/document.yaml).
 #
-# Each concrete leaf has its OWN table, so rows are keyed per leaf class. The
-# abstract `Document` root owns no instance rows (its table stays empty). A leaf
-# query reads only its own table — no discriminator.
+# Each concrete subtype has its OWN table, so rows are keyed per concrete subtype.
+# Each row carries the inherited attributes (id, title) plus the subtype's own
+# column; the abstract `Document` root owns no rows. A concrete read reads only its
+# own table.
 Invoice:
   - id: 1
     title: Invoice-A

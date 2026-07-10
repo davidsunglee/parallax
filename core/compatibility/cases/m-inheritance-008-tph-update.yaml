@@ -1,12 +1,16 @@
-# Table-per-hierarchy UPDATE: a subtype update targets its row by primary key on the
-# shared table, leaving the discriminator untouched (m-inheritance, m-sql).
+# Table-per-hierarchy UPDATE: a concrete-subtype update targets its row by primary key
+# on the shared table (m-inheritance, m-sql).
 #
-# Fixtures are loaded first (the four persisted Payment rows). Updating CardPayment 1
+# Fixtures are loaded first (the three persisted concrete rows). Updating CardPayment 1
 # corrects its amount (100.00 -> 130.00). Because the primary key is unique across the
-# whole hierarchy, the UPDATE is keyed on `id` alone — no discriminator predicate is
-# needed, and `kind` is never in the SET clause (it is not a mutable domain attribute
-# here). Only row 1's amount changes; its kind stays 'card' and the other three rows
-# (the second card, the cash, the plain root-kind) are untouched.
+# whole family, the UPDATE is keyed on `id` alone, and `kind` is never in the SET clause
+# (the tag is framework-owned metadata, not a mutable domain attribute). Only row 1's
+# amount changes; its kind stays 'card' and the other two rows (the second card, the
+# cash) are untouched.
+#
+# The concrete-subtype tag GUARD (`and kind = ?`) on existing-row writes lands in
+# Phase 7 with its spec; this Phase-3 case keeps the keyed form green under the
+# migrated model.
 model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, write-sequence, update, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -30,5 +34,4 @@ then:
       - { id: 1, kind: card, amount: 130.00, card_network: Visa, tendered: null }
       - { id: 2, kind: card, amount: 50.00, card_network: Amex, tendered: null }
       - { id: 3, kind: cash, amount: 20.00, card_network: null, tendered: 25.00 }
-      - { id: 4, kind: payment, amount: 10.00, card_network: null, tendered: null }
   roundTrips: 1

@@ -64,12 +64,23 @@ group("metamodel descriptor round-trip", () => {
   it.each(modelFiles())("%s reads through the generic reader", (name) => {
     const descriptor = loadDescriptor(name);
     const metamodel = Metamodel.fromDescriptor(descriptor);
-    // Every model declares at least one entity with at least one PK attribute.
     expect(metamodel.entityNames().length).toBeGreaterThan(0);
     for (const entity of metamodel.entities()) {
-      expect(entity.table.length).toBeGreaterThan(0);
-      expect(entity.attributes().length).toBeGreaterThan(0);
-      expect(entity.primaryKey().length).toBeGreaterThan(0);
+      const role = entity.inheritance?.role;
+      const abstractNode = role === "root" || role === "abstract-subtype";
+      // An abstract inheritance node (root / abstract-subtype) is tableless
+      // (m-inheritance); every other entity maps to a physical table.
+      if (!abstractNode) {
+        expect(entity.table.length).toBeGreaterThan(0);
+      }
+      // A non-inheritance entity declares at least one attribute and a primary key
+      // LOCALLY. An inheritance participant may declare only inherited attributes and
+      // inherit its primary key from an ancestor (the generic reader does not flatten
+      // the ancestry chain), so the local-declaration check is exempt for it.
+      if (entity.inheritance === undefined) {
+        expect(entity.attributes().length).toBeGreaterThan(0);
+        expect(entity.primaryKey().length).toBeGreaterThan(0);
+      }
     }
   });
 });

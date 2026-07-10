@@ -1,0 +1,98 @@
+# Animal: a TABLE-PER-HIERARCHY inheritance model with an INTERMEDIATE abstract
+# subtype and a concrete SIBLING branch (m-inheritance).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is the
+# closed-tree fixture family the read / narrow / navigate / deep-fetch phases build
+# on. The whole family maps to ONE shared `animal` table discriminated by the
+# root's `tag` column (`kind`):
+#
+#   Animal   (root, ABSTRACT)          — strategy + tag column; owns id + name
+#     Pet    (abstract-subtype)        — tableless, rowless; adds license_id
+#       Dog  (concrete-subtype)        — tagValue 'dog';  adds bark_volume
+#       Cat  (concrete-subtype)        — tagValue 'cat';  adds indoor
+#     WildBoar (concrete-subtype)      — tagValue 'boar'; SIBLING branch directly
+#                                        under Animal — proves narrowing a read of
+#                                        Animal to Pet cannot broaden back to
+#                                        WildBoar (its effective concrete set is
+#                                        [Dog, Cat], never WildBoar)
+#
+# Abstract nodes (Animal, Pet) are tableless and rowless; only concrete subtypes
+# own rows. Concrete subtypes do NOT repeat inherited attributes — the full chain
+# (Animal.id/name, Pet.license_id) is derived from the ancestry. Every
+# subtype-declared column is nullable (shared table). The `kind` tag is
+# framework-owned metadata, not a declared attribute.
+#
+# Row data lives in the sibling fixtures/animal.yaml, keyed per concrete subtype.
+entities:
+  - name: Animal
+    namespace: parallax.compatibility
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: name
+        type: string
+        column: name
+        maxLength: 32
+  - name: Pet
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: Animal
+    attributes:
+      - name: licenseId
+        type: string
+        column: license_id
+        maxLength: 16
+        nullable: true
+  - name: Dog
+    namespace: parallax.compatibility
+    table: animal
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: concrete-subtype
+      parent: Pet
+      tagValue: dog
+    attributes:
+      - name: barkVolume
+        type: int32
+        column: bark_volume
+        nullable: true
+  - name: Cat
+    namespace: parallax.compatibility
+    table: animal
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: concrete-subtype
+      parent: Pet
+      tagValue: cat
+    attributes:
+      - name: indoor
+        type: boolean
+        column: indoor
+        nullable: true
+  - name: WildBoar
+    namespace: parallax.compatibility
+    table: animal
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: concrete-subtype
+      parent: Animal
+      tagValue: boar
+    attributes:
+      - name: tuskLength
+        type: decimal(18,2)
+        column: tusk_length
+        nullable: true

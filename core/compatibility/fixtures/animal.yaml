@@ -1,0 +1,29 @@
+# Fixture rows for the Animal table-per-hierarchy model (models/animal.yaml).
+#
+# The whole family lives in one `animal` table, but rows are keyed by CONCRETE
+# subtype — the abstract nodes (Animal, Pet) are rowless. Each row's `kind` tag is
+# DERIVED from the subtype's tagValue (m-inheritance), never authored here. Inner
+# subtype columns not applicable to a row load as null (shared table).
+#
+#   id 1 Dog      name Rex      licenseId L-100  barkVolume 7   (kind=dog)
+#   id 2 Dog      name Fido     licenseId L-101  barkVolume 3   (kind=dog)
+#   id 3 Cat      name Whiskers licenseId L-200  indoor true    (kind=cat)
+#   id 4 WildBoar name Tusker   tuskLength 12.50               (kind=boar)
+Dog:
+  - id: 1
+    name: Rex
+    licenseId: L-100
+    barkVolume: 7
+  - id: 2
+    name: Fido
+    licenseId: L-101
+    barkVolume: 3
+Cat:
+  - id: 3
+    name: Whiskers
+    licenseId: L-200
+    indoor: true
+WildBoar:
+  - id: 4
+    name: Tusker
+    tuskLength: 12.50
