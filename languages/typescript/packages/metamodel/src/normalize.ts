@@ -11,18 +11,26 @@
  * objects the reader hands out — and it never reorders arrays.
  */
 
-/** Raw (as-parsed) entity shape: a loose mirror of the schema's `entity`. */
+/**
+ * Raw (as-parsed) entity shape: a loose mirror of the schema's `entity`.
+ *
+ * `table` and `attributes` are OPTIONAL because an inheritance node may omit them
+ * (m-inheritance, resolved Q5): an abstract `root` / `abstract-subtype` is
+ * tableless, and a concrete subtype declaring only inherited attributes has none
+ * of its own. A non-inheritance entity still declares both (enforced by the
+ * metamodel schema's conditional requirements).
+ */
 export interface RawEntity {
   readonly name: string;
   readonly namespace?: string;
-  readonly table: string;
+  readonly table?: string;
   readonly mutability?: "read-only" | "transactional";
   readonly temporal?:
     | "non-temporal"
     | "unitemporal-processing"
     | "unitemporal-business"
     | "bitemporal";
-  readonly attributes: readonly RawAttribute[];
+  readonly attributes?: readonly RawAttribute[];
   readonly asOfAttributes?: readonly RawAsOfAttribute[];
   readonly relationships?: readonly RawRelationship[];
   readonly indices?: readonly RawIndex[];
@@ -118,12 +126,20 @@ export interface RawValueObject {
   readonly valueObjects?: readonly RawNestedValueObject[];
 }
 
+/**
+ * A raw (as-parsed) inheritance block (m-inheritance): a node's position in a
+ * closed class tree. The `root` alone declares the family `strategy`
+ * (table-per-hierarchy with a `tag`/`tagValue` discriminator, or
+ * table-per-concrete-subtype); descendants name their `parent`. `tag` lives on the
+ * table-per-hierarchy root; `tagValue` on each concrete subtype. The pre-ADR
+ * `table-per-leaf` / `discriminator` / `discriminatorValue` vocabulary is retired.
+ */
 export interface RawInheritance {
-  readonly strategy: "table-per-hierarchy" | "table-per-leaf";
-  readonly role: "root" | "subtype";
+  readonly role: "root" | "abstract-subtype" | "concrete-subtype";
+  readonly strategy?: "table-per-hierarchy" | "table-per-concrete-subtype";
   readonly parent?: string;
-  readonly discriminator?: { readonly column: string };
-  readonly discriminatorValue?: string;
+  readonly tag?: { readonly column: string };
+  readonly tagValue?: string;
 }
 
 /** A raw descriptor: either a single `entity` or an `entities` array. */
@@ -341,10 +357,15 @@ export function normalizeEntity(raw: RawEntity): NormalizedEntity {
       `entity '${raw.name}' declares temporal '${raw.temporal}' but its asOfAttributes derive '${derived}'`,
     );
   }
+  // An inheritance node may omit `table` (an abstract root / abstract-subtype is
+  // tableless) or `attributes` (a concrete subtype declaring only inherited
+  // attributes); default them so the normalized view is total (m-inheritance,
+  // resolved Q5). An abstract node's empty table surfaces as "".
+  const attributes = raw.attributes ?? [];
   // Optimistic-lock composition (m-descriptor/m-temporal-read/m-opt-lock): a temporal (as-of) entity derives its
   // optimistic key from the processing-from column, so it MUST NOT also declare an
   // explicit `optimisticLocking` version attribute (the combination is invalid).
-  if (raw.attributes.some((a) => a.optimisticLocking) && (raw.asOfAttributes?.length ?? 0) > 0) {
+  if (attributes.some((a) => a.optimisticLocking) && (raw.asOfAttributes?.length ?? 0) > 0) {
     throw new Error(
       `entity '${raw.name}' combines an 'optimisticLocking' attribute with 'asOfAttributes'; ` +
         `a temporal entity derives its optimistic key from the processing-from column and MUST NOT ` +
@@ -354,10 +375,10 @@ export function normalizeEntity(raw: RawEntity): NormalizedEntity {
   return {
     name: raw.name,
     ...(raw.namespace === undefined ? {} : { namespace: raw.namespace }),
-    table: raw.table,
+    table: raw.table ?? "",
     mutability: raw.mutability ?? "read-only",
     temporal: derived,
-    attributes: raw.attributes.map(normalizeAttribute),
+    attributes: attributes.map(normalizeAttribute),
     asOfAttributes,
     relationships: (raw.relationships ?? []).map(normalizeRelationship),
     indices: (raw.indices ?? []).map(normalizeIndex),

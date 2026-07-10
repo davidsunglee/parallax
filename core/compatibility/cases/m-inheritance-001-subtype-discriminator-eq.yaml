@@ -1,16 +1,17 @@
-# Table-per-hierarchy subtype query: find all CardPayments (m-inheritance inheritance, m-sql).
+# Table-per-hierarchy CONCRETE-subtype read: find all CardPayments (m-inheritance, m-sql).
 #
-# The whole Payment hierarchy lives in one `payment` table discriminated by
-# `kind`. Querying the CardPayment subtype injects a discriminator-equality
-# predicate `t0.kind = ?` (binds ['card']), so only the card rows (1, 2) match —
-# the cash row and the plain root-kind row are excluded. The operation is `all`
-# over the subtype; the discriminator is the m-sql-injected lowering, never written
-# by the user.
+# The whole Payment family lives in one `payment` table discriminated by the root's
+# `tag` column (`kind`). Reading the CardPayment concrete subtype injects a
+# tag-equality predicate `t0.kind = ?` (binds ['card']), so only the card rows
+# (1, 2) match — the cash row is excluded. The operation is `all` over the concrete
+# subtype; the tag predicate is the m-sql-injected lowering, never written by the
+# user. The projection is the concrete instance's columns (id, amount, card_network) —
+# the `kind` tag is framework-owned metadata, not a projected domain attribute for a
+# concrete-target read (the caller knows the variant: it queried CardPayment).
 #
-# Non-trivial (discriminator) case => referenceSql is the independent oracle
-# (inline `kind = 'card'`).
+# Non-trivial (tag) case => referenceSql is the independent oracle (inline kind = 'card').
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: CardPayment
@@ -19,10 +20,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.amount, t0.card_network from payment t0 where t0.kind = ?
+        postgres: select t0.id, t0.amount, t0.card_network from payment t0 where t0.kind = ?
       binds: [card]
-  referenceSql: select id, kind, amount, card_network from payment where kind = 'card'
+  referenceSql: select id, amount, card_network from payment where kind = 'card'
   rows:
-    - { id: 1, kind: card, amount: 100.00, card_network: Visa }
-    - { id: 2, kind: card, amount: 50.00, card_network: Amex }
+    - { id: 1, amount: 100.00, card_network: Visa }
+    - { id: 2, amount: 50.00, card_network: Amex }
   roundTrips: 1

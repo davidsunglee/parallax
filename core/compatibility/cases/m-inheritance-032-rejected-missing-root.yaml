@@ -1,0 +1,27 @@
+# Negative (m-inheritance, resolved Q3/Q4): an inheritance family declares no root.
+#
+# `Pet` is an `abstract-subtype` whose `parent` (`Widget`) is a plain,
+# non-inheritance entity — so the descriptor has inheritance participants but ZERO
+# roots and no concrete subtype (an abstract-orphan chain). A family has EXACTLY one
+# root, so both "more than one" (inheritance-multiple-roots) and "none" are invalid;
+# this pins the zero-root shape. Because there is no concrete subtype, the
+# concrete-without-abstract-root check never fires — only the missing-root check
+# catches it, so a model-aware validator MUST reject it before any SQL.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Widget
+        table: widget
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Pet
+        inheritance:
+          role: abstract-subtype
+          parent: Widget
+        attributes:
+          - { name: licenseId, type: string, column: license_id, nullable: true }
+then:
+  rejectedRule: inheritance-missing-root

@@ -1,27 +1,32 @@
-# Document: a TABLE-PER-LEAF inheritance model (m-inheritance, Phase 9).
+# Document: a TABLE-PER-CONCRETE-SUBTYPE inheritance model (m-inheritance).
 #
-# This descriptor is an instance of core/schemas/metamodel.schema.json. Each
-# concrete leaf maps to its OWN table (no shared table, no discriminator column):
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The closed
+# tree is:
 #
-#   Document (root)    — abstract; names the hierarchy, owns no instance rows
-#   Invoice  (subtype) — its own `invoice` table
-#   Receipt  (subtype) — its own `receipt` table
+#   Document (root, ABSTRACT)     — declares the strategy; tableless, rowless;
+#                                    owns the inherited id + title
+#   Invoice  (concrete-subtype)   — its own `invoice` table; adds amount_due
+#   Receipt  (concrete-subtype)   — its own `receipt` table; adds paid_amount
 #
-# A leaf query is an ORDINARY single-table read of that leaf's table — the
-# subtype is selected by WHICH table is queried, so no discriminator predicate is
-# injected (contrast table-per-hierarchy). The abstract root's own table stays
-# empty (it has no fixtures); it exists only so the descriptor is a valid entity.
+# Each concrete subtype maps to its OWN table (no shared table, no tag). A concrete
+# read is an ordinary single-table read of that subtype's table; the subtype is
+# selected by WHICH table is queried. Concrete subtypes do NOT repeat the inherited
+# id/title — the concrete table physically carries the full inherited attribute
+# chain (id, title) plus its own columns, derived from the ancestry. The abstract
+# `Document` root owns no table and no rows.
 #
-# Row data lives in the sibling fixtures/document.yaml, keyed per leaf class.
+# table-per-leaf is strictly replaced by table-per-concrete-subtype; table-per-leaf
+# and table-per-class are rejected by the metamodel schema (m-inheritance).
+#
+# Row data lives in the sibling fixtures/document.yaml, keyed per concrete subtype.
 entities:
   - name: Document
     namespace: parallax.compatibility
-    table: document
     mutability: transactional
     temporal: non-temporal
     inheritance:
-      strategy: table-per-leaf
       role: root
+      strategy: table-per-concrete-subtype
     attributes:
       - name: id
         type: int64
@@ -32,59 +37,27 @@ entities:
         type: string
         column: title
         maxLength: 64
-    indices:
-      - name: document_pk
-        attributes: [id]
-        unique: true
   - name: Invoice
     namespace: parallax.compatibility
     table: invoice
     mutability: transactional
     temporal: non-temporal
     inheritance:
-      strategy: table-per-leaf
-      role: subtype
+      role: concrete-subtype
       parent: Document
     attributes:
-      - name: id
-        type: int64
-        column: id
-        primaryKey: true
-        pkGenerator: none
-      - name: title
-        type: string
-        column: title
-        maxLength: 64
       - name: amountDue
         type: decimal(18,2)
         column: amount_due
-    indices:
-      - name: invoice_pk
-        attributes: [id]
-        unique: true
   - name: Receipt
     namespace: parallax.compatibility
     table: receipt
     mutability: transactional
     temporal: non-temporal
     inheritance:
-      strategy: table-per-leaf
-      role: subtype
+      role: concrete-subtype
       parent: Document
     attributes:
-      - name: id
-        type: int64
-        column: id
-        primaryKey: true
-        pkGenerator: none
-      - name: title
-        type: string
-        column: title
-        maxLength: 64
       - name: paidAmount
         type: decimal(18,2)
         column: paid_amount
-    indices:
-      - name: receipt_pk
-        attributes: [id]
-        unique: true

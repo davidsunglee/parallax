@@ -37,7 +37,31 @@ class Entity:
 
     @property
     def table(self) -> str:
-        return self.definition["table"]
+        """The physical table, or ``""`` for a tableless abstract inheritance node.
+
+        An abstract root / abstract-subtype (m-inheritance) declares no table (its
+        rows live in a concrete descendant's table), so this returns the empty
+        string rather than raising — callers that provision or read physical rows
+        filter abstract entities out (:attr:`is_abstract`).
+        """
+        return self.definition.get("table", "")
+
+    @property
+    def inheritance(self) -> dict[str, Any] | None:
+        block = self.definition.get("inheritance")
+        return block if isinstance(block, dict) else None
+
+    @property
+    def role(self) -> str | None:
+        """This entity's inheritance role (``root`` / ``abstract-subtype`` /
+        ``concrete-subtype``), or ``None`` for a non-inheritance entity."""
+        block = self.inheritance
+        return block.get("role") if block else None
+
+    @property
+    def is_abstract(self) -> bool:
+        """True for a tableless, rowless abstract node (root / abstract-subtype)."""
+        return self.role in ("root", "abstract-subtype")
 
     @property
     def attributes(self) -> list[dict[str, Any]]:
@@ -106,9 +130,21 @@ class Model:
 
     @property
     def entities(self) -> list[Entity]:
+        # Present each entity as its FLATTENED (inheritance-resolved) definition: a
+        # concrete subtype does not repeat inherited attributes, so the harness
+        # derives the full inherited chain (root -> ... -> self) plus, for
+        # table-per-hierarchy, the synthesized tag column (m-inheritance). A
+        # non-inheritance entity is returned unchanged. Imported lazily to avoid the
+        # case <- value_object_resolve <- inheritance import cycle.
+        from .inheritance import resolve_effective_definition
+
+        defs = self.entity_defs
         return [
-            Entity(definition=definition, rows=self.fixtures.get(definition["name"], []))
-            for definition in self.entity_defs
+            Entity(
+                definition=resolve_effective_definition(defs, definition["name"]),
+                rows=self.fixtures.get(definition["name"], []),
+            )
+            for definition in defs
         ]
 
     def entity(self, name: str) -> Entity:

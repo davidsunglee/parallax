@@ -1,0 +1,36 @@
+# Negative (m-inheritance, resolved Q3/Q4): a descriptor declares more than one
+# inheritance root.
+#
+# Both `Animal` and `Beast` declare `role: root`. Every family has exactly one root,
+# so a descriptor's inheritance participants MUST resolve to a single root — a
+# model-aware validator MUST reject two roots before any SQL.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Beast
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: species }
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Dog
+        table: animal
+        inheritance:
+          role: concrete-subtype
+          parent: Animal
+          tagValue: dog
+        attributes:
+          - { name: barkVolume, type: int32, column: bark_volume, nullable: true }
+then:
+  rejectedRule: inheritance-multiple-roots

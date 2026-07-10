@@ -1,0 +1,31 @@
+# Negative (m-inheritance, resolved Q3/Q4): a concrete subtype names a parent that
+# the descriptor does not declare.
+#
+# `Dog.parent = Ghost`, but no `Ghost` entity exists. Every `parent` MUST resolve to
+# another entity in the descriptor (a cross-entity invariant the per-entity metamodel
+# schema cannot express), so a model-aware validator MUST reject the family before any
+# SQL. The inline `when.model` stays quarantined in the case; the top-level `model:`
+# is a real, loadable descriptor sibling cases share.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Dog
+        table: animal
+        inheritance:
+          role: concrete-subtype
+          parent: Ghost
+          tagValue: dog
+        attributes:
+          - { name: barkVolume, type: int32, column: bark_volume, nullable: true }
+then:
+  rejectedRule: inheritance-unknown-parent

@@ -92,10 +92,11 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
 - **`boundary`** — `when.boundary` ordered actions + `then.outcome`
   (`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
   does not execute, carrying no golden SQL).
-- **`rejected`** — a schema-valid `when.operation` **or** a `when.write` a
-  model-aware validator MUST refuse **before any SQL**, naming the violated
-  normative rule in `then.rejectedRule` (`m-value-object` / `m-op-algebra` negative
-  validation, carrying no golden SQL — see *Rejected cases*, below).
+- **`rejected`** — a schema-valid `when.operation`, a `when.write`, **or** an
+  inline `when.model` a model-aware validator MUST refuse **before any SQL**,
+  naming the violated normative rule in `then.rejectedRule` (`m-value-object` /
+  `m-op-algebra` / `m-inheritance` negative validation, carrying no golden SQL —
+  see *Rejected cases*, below).
 
 #### The statement entry
 
@@ -206,7 +207,8 @@ the open-bound `infinity` as the literal string `infinity`.
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`) |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
-| `when.write` | `when` | conflict | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` (or temporal close) operates on |
+| `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` (or temporal close) operates on; on a `rejected` case, a value-object write the validator MUST refuse pre-SQL |
+| `when.model` | `when` | rejected | an inline model descriptor (`m-inheritance`) whose *family* is invalid — the cross-entity closed-tree invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
 | `when.at` / `when.observedInZ` | `when` | conflict | a temporal-close conflict's close instant (→ new `out_z`) and observed processing-from (`in_z`) the optimistic gate binds |
 | `when.equivalentEncodings` | `when` | no | alternate surface encodings of `when.operation`; each MUST canonicalize to it |
@@ -233,20 +235,23 @@ the write side already meets with `writeSequence[].entity`, so an `all: {}` read
 longer names its subject only in a comment or in the golden SQL.
 
 `targetEntity` names the **queried position** the operation starts from. When an
-entity participates in an inheritance family, that position may be abstract: an
-abstract **root** targets the whole family, an abstract **subtype** targets its
-concrete descendants, and a concrete subtype targets itself. Today every entity is
-concrete, so `targetEntity` names exactly the entity whose rows the read returns —
-the forward-referencing abstract vocabulary changes nothing until inheritance
-families exist.
+entity participates in an inheritance family (`m-inheritance`), that position may
+be abstract: an abstract **root** targets the whole family (its **effective
+concrete set**), an abstract **subtype** targets its concrete descendants, and a
+concrete subtype targets itself. A non-inheritance entity's effective concrete set
+is the entity itself.
 
 `targetEntity` is a first-class, machine-checkable field, not documentation: a
 model-aware harness cross-checks it against every queried-entity `Class.attribute`
 / `Class.relationship` reference in the operation (the class part of each top-level
 predicate, order-by key, nested-value-object path, navigation relationship, and
-deep-fetch root hop MUST name `targetEntity`; a navigation's inner operation
-resolves against the *related* entity and is not cross-checked). Until inheritance
-families exist, "consistent" means "equal".
+deep-fetch root hop MUST be **consistent** with `targetEntity`; a navigation's
+inner operation resolves against the *related* entity and is not cross-checked). The
+cross-check is **family-aware**: a reference class `C` is consistent with the
+target `T` when `C`'s effective concrete set is a **subset** of `T`'s — a subtype
+of an abstract target is consistent, a sibling or a broader position is not. For a
+non-inheritance entity the effective set is the entity itself, so "subset" reduces
+to the pre-inheritance "equal".
 
 ### `then.statements`, `then.referenceSql`, `then.rows` (the oracle question)
 
@@ -485,16 +490,17 @@ a surfaced error kind), and its retry configuration under `when.uow` (`retries` 
 error types stay per-language. Every boundary case is on the `api-conformance`
 lane.
 
-### Rejected cases (`m-value-object` / `m-op-algebra`)
+### Rejected cases (`m-value-object` / `m-op-algebra` / `m-inheritance`)
 
 A **rejected** case proves a **negative**: that a model-aware validator refuses an
 invalid input **before any SQL is emitted** (resolved question 7). It carries the
 invalid input under `when` — **exactly one** of an `operation` (a schema-valid
-`m-op-algebra` node) **or** a `write` (a neutral write row, ①) — and a
-`then.rejectedRule` naming the violated normative rule. A rejected case pins a
-**single** invalid input: carrying **both** `operation` and `write`, or **neither**,
-is invalid — enforced by the schema `oneOf` (paired with the `propertyNames` enum
-that forbids other keys) and mirrored by a harness XOR guard, so the "exactly one
+`m-op-algebra` node), a `write` (a neutral write row, ①), **or** a `model` (an
+inline invalid inheritance descriptor, below) — and a `then.rejectedRule` naming
+the violated normative rule. A rejected case pins a **single** invalid input:
+carrying **more than one** of `operation` / `write` / `model`, or **none**, is
+invalid — enforced by the schema `oneOf` (paired with the `propertyNames` enum
+that forbids other keys) and mirrored by a harness guard, so the "exactly one
 invalid input" rule holds even for a caller that reaches the runner without schema
 validation. It carries **no** golden SQL (`then.statements` is disallowed): the
 assertion is that the input never *reaches* SQL. The harness (and every language
@@ -537,11 +543,33 @@ atomically as one whole document):
 - `write-value-type-mismatch` — a document field value's type differs from the
   attribute's declared neutral type.
 
+**Model** rules (`m-inheritance` closed-tree family invariants — the cross-entity
+invariants per-entity schema validation cannot express, carried inline under
+`when.model`): `inheritance-unknown-parent`, `inheritance-cycle`,
+`inheritance-missing-root`, `inheritance-multiple-roots`,
+`inheritance-concrete-without-abstract-root`,
+`inheritance-abstract-node-with-table`, `inheritance-abstract-node-fixture-rows`,
+`inheritance-strategy-redeclared`, `inheritance-missing-tag-value`,
+`inheritance-duplicate-tag-value`, `inheritance-inconsistent-hierarchy-table`, and
+`inheritance-tag-on-concrete-subtype-strategy` (see `m-inheritance` for each
+invariant). A `when.model` case carries an **inline** model descriptor — an
+instance of `metamodel.schema.json` whose *family* is invalid — kept inside the
+case rather than in the shared `models/` registry, so an invalid family cannot
+break the sibling cases that load real models. The inline descriptor is
+**round-tripped through descriptor serde** (layer 4) like any other model before
+semantic validation asserts the rejection; the case's top-level `model:` still
+names a real, loadable descriptor (its identity/registry role is unchanged). A
+model-aware validator (and every language implementation) MUST reject the inline
+family pre-SQL with **exactly** the named rule.
+
 Purely **regex-level** negatives — an empty path after the value-object name, a
 bad-cased segment — are the operation schema's job (the `nestedRef` grammar) and
 stay **schema-validation unit tests**, never `rejected` cases: a syntactically
 malformed operation is refused at layer 1 (schema conformance) before a model-aware
-resolver ever runs.
+resolver ever runs. Likewise, purely **per-entity** inheritance negatives (a
+rejected `strategy` enum value, the retired `discriminator` vocabulary, an abstract
+role declaring a `table`) are refused at layer 1 and stay schema-validation unit
+tests; `when.model` cases pin the **cross-entity** family invariants only.
 
 ## Case-header house style
 

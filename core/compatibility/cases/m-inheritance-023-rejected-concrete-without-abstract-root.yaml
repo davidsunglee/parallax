@@ -1,0 +1,28 @@
+# Negative (m-inheritance, resolved Q3/Q4): a concrete subtype has no abstract root
+# ancestor.
+#
+# `Gadget` is a concrete subtype whose `parent` (`Widget`) is a plain, non-inheritance
+# entity — so `Gadget`'s ancestry never reaches an abstract `role: root`. Every
+# concrete subtype MUST have an abstract root ancestor (only abstract roots name a
+# family and declare its strategy), so a model-aware validator MUST reject it. The
+# parent resolves (not unknown-parent) and there is no cycle; only the
+# ancestry-reaches-a-root check catches it.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Widget
+        table: widget
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Gadget
+        table: gadget
+        inheritance:
+          role: concrete-subtype
+          parent: Widget
+        attributes:
+          - { name: voltage, type: int32, column: voltage, nullable: true }
+then:
+  rejectedRule: inheritance-concrete-without-abstract-root

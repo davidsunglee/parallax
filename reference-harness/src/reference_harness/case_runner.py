@@ -32,12 +32,19 @@ from typing import Any
 from . import errors, serde
 from .case import Case, Entity, Model
 from .data_loader import load_model
-from .ddl_builder import column_order, ddl_for, quote_identifier
+from .ddl_builder import column_order, ddl_for, physical_entities_by_table, quote_identifier
+from .inheritance import MODEL_REJECTED_RULES, tag_of, validate_family
 from .op_validate import validate_operation
 from .providers import DatabaseProvider
 from .sql_normalize import normalize
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_validate import validate_write
+
+# The full pre-SQL rejection vocabulary: value-object / operation rules
+# (m-value-object / m-op-algebra) plus the inheritance family-invariant rules
+# (m-inheritance). The compatibility-case schema's `rejectedRule` enum is the
+# source of truth; these two sets MUST stay in lockstep with it.
+ALL_REJECTED_RULES = REJECTED_RULES | MODEL_REJECTED_RULES
 
 
 class CaseFailure(AssertionError):
@@ -240,26 +247,25 @@ def _assert_schema(case: Case) -> None:
         if not case.outcome:
             raise CaseFailure(f"{case.path.name}: boundary case missing outcome")
     elif case.is_rejected:
-        if case.rejected_rule not in REJECTED_RULES:
+        if case.rejected_rule not in ALL_REJECTED_RULES:
             raise CaseFailure(
                 f"{case.path.name}: rejected case then.rejectedRule "
                 f"{case.rejected_rule!r} is not a known rule"
             )
         # A rejected case pins a SINGLE invalid input, so its `when` MUST carry
-        # EXACTLY ONE of `operation` / `write` (the normative "exactly one invalid
-        # input" rule, m-case-format Rejected cases). This XOR guard is a
+        # EXACTLY ONE of `operation` / `write` / `model` (the normative "exactly one
+        # invalid input" rule, m-case-format Rejected cases). This guard is a
         # defense-in-depth mirror of the schema's `oneOf`
         # (compatibility-case.schema.json rejected branch): it keeps the constraint
         # enforced even if some future caller reaches the runner without schema
-        # validation, and `_assert_rejected` below validates `operation` first and
-        # would otherwise SILENTLY ignore a `write` present alongside it.
-        has_operation = "operation" in case.when
-        has_write = "write" in case.when
-        if has_operation == has_write:
+        # validation, and `_assert_rejected` below dispatches on the single member
+        # present.
+        present = [member for member in ("operation", "write", "model") if member in case.when]
+        if len(present) != 1:
             raise CaseFailure(
                 f"{case.path.name}: a rejected case MUST carry EXACTLY ONE of "
-                f"when.operation / when.write (one invalid input); found "
-                f"{'both' if has_operation else 'neither'}."
+                f"when.operation / when.write / when.model (one invalid input); found "
+                f"{present or 'none'}."
             )
     elif "operation" not in case.when:
         raise CaseFailure(f"{case.path.name}: missing operation")
@@ -347,10 +353,15 @@ def _assert_serde(case: Case) -> None:
                 serde.assert_roundtrip(step["find"])
     elif case.is_rejected:
         # A rejected case carries the invalid input under `when.operation` (a
-        # schema-valid m-op-algebra node — serde it) OR `when.write` (a neutral write
-        # row, which has no operation to serde). The descriptor still round-trips.
+        # schema-valid m-op-algebra node — serde it), `when.write` (a neutral write
+        # row, which has no operation to serde), OR `when.model` (an inline invalid
+        # inheritance descriptor — round-tripped through descriptor serde before
+        # semantic validation asserts the rejection, m-inheritance resolved Q3). The
+        # referenced (valid) descriptor still round-trips below.
         if "operation" in case.when:
             serde.assert_roundtrip(case.when["operation"])
+        elif "model" in case.when:
+            serde.assert_roundtrip(case.when["model"])
     elif (
         not case.is_write_sequence
         and not case.is_conflict
@@ -1231,8 +1242,17 @@ def _assert_rejected(case: Case) -> None:
             validate_operation(entity, case.when["operation"])
         elif "write" in case.when:
             validate_write(entity, case.write or {})
+        elif "model" in case.when:
+            # A model rejected case carries an INLINE invalid inheritance descriptor
+            # (m-inheritance resolved Q3): the cross-entity family invariants a
+            # model-aware validator MUST reject, which per-entity schema validation
+            # cannot catch. The referenced top-level `model:` stays a valid, loadable
+            # descriptor; only this inline `when.model` is the invalid input.
+            validate_family(case.when["model"])
         else:  # pragma: no cover - guarded by _assert_schema
-            raise CaseFailure(f"{case.path.name}: rejected case needs when.operation or when.write")
+            raise CaseFailure(
+                f"{case.path.name}: rejected case needs when.operation / when.write / when.model"
+            )
     except RejectionError as exc:
         if exc.rule != expected:
             raise CaseFailure(
@@ -1434,25 +1454,20 @@ def _version_column(entity: Entity) -> str | None:
     return None
 
 
-def _discriminator(entity: Entity) -> tuple[str, Any] | None:
+def _tag(entity: Entity) -> tuple[str, Any] | None:
     """The (column, value) a table-per-hierarchy INSERT writes, or None (m-inheritance).
 
-    A TABLE-PER-HIERARCHY entity maps to a shared table discriminated by a
-    ``discriminator`` column; the value THIS entity's rows carry is its
-    ``discriminatorValue``. On a write that column is FRAMEWORK-DERIVED — set from the
-    declared ``discriminatorValue``, never carried in the neutral write input (①),
-    exactly as the version column's advance is derived. A TABLE-PER-LEAF entity has no
-    shared table and no discriminator (``discriminatorValue`` is FORBIDDEN, m-inheritance),
-    so this returns ``None`` and the leaf INSERT is an ordinary single-table write.
+    A TABLE-PER-HIERARCHY concrete subtype maps to a shared table discriminated by
+    the root's ``tag`` column; the value THIS subtype's rows carry is its
+    ``tagValue``. On a write that column is FRAMEWORK-DERIVED — set from the declared
+    ``tagValue``, never carried in the neutral write input (①), exactly as the version
+    column's advance is derived. A TABLE-PER-CONCRETE-SUBTYPE subtype has its own
+    table and no tag (``tagValue`` is absent, m-inheritance), so this returns
+    ``None`` and the write is an ordinary single-table write. The concrete subtype's
+    flattened definition (:func:`inheritance.resolve_effective_definition`) carries
+    both the resolved root ``tag`` column and the subtype's own ``tagValue``.
     """
-    inheritance = entity.definition.get("inheritance")
-    if not inheritance:
-        return None
-    discriminator = inheritance.get("discriminator")
-    value = inheritance.get("discriminatorValue")
-    if discriminator is None or value is None:
-        return None
-    return discriminator["column"], value
+    return tag_of(entity.definition)
 
 
 def _bytes_to_hex(value: Any) -> Any:
@@ -1625,21 +1640,17 @@ def _assert_insert_statement(
 ) -> None:
     golden_columns = _parse_insert_columns(case, statement)
     domain = [c for c in column_order(entity) if any(c in cols for cols, *_ in classified)]
-    # A TABLE-PER-HIERARCHY insert writes the discriminator column from the entity's
-    # discriminatorValue (m-inheritance) — a FRAMEWORK-DERIVED column, never carried in
-    # ① — slotted at its columnOrder position, exactly as the version column is derived.
-    discriminator = _discriminator(entity)
-    if discriminator is not None and discriminator[0] in domain:
+    # A TABLE-PER-HIERARCHY insert writes the tag column from the concrete subtype's
+    # tagValue (m-inheritance) — a FRAMEWORK-DERIVED column, never carried in ① —
+    # slotted at its columnOrder position, exactly as the version column is derived.
+    tag = _tag(entity)
+    if tag is not None and tag[0] in domain:
         raise CaseFailure(
-            f"{case.path.name}: the neutral write input (①) carries the discriminator "
-            f"column {discriminator[0]!r}, which a table-per-hierarchy write derives from "
-            f"the entity's discriminatorValue (m-inheritance), never authored."
+            f"{case.path.name}: the neutral write input (①) carries the tag "
+            f"column {tag[0]!r}, which a table-per-hierarchy write derives from "
+            f"the concrete subtype's tagValue (m-inheritance), never authored."
         )
-    emitted = [
-        c
-        for c in column_order(entity)
-        if c in domain or (discriminator is not None and c == discriminator[0])
-    ]
+    emitted = [c for c in column_order(entity) if c in domain or (tag is not None and c == tag[0])]
     # A VERSIONED insert appends the framework-owned version column with the DERIVED
     # initial value `1` (never authored in ①, so it is not in the row's columns).
     present = [*emitted, version_col] if version_col is not None else emitted
@@ -1648,7 +1659,7 @@ def _assert_insert_statement(
             f"{case.path.name}: the golden INSERT column list {golden_columns} != the "
             f"columns the neutral write input resolves to {present} (columnOrder order, "
             f"present attributes"
-            f"{' + derived discriminator' if discriminator is not None else ''}"
+            f"{' + derived tag' if tag is not None else ''}"
             f"{' + derived version' if version_col is not None else ''})."
         )
     # A DB-computed marker is a SCALAR-ATTRIBUTE-only interpretation (m-value-object):
@@ -1675,10 +1686,10 @@ def _assert_insert_statement(
     expected: list[Any] = []
     for cols, *_ in classified:
         for column in emitted:
-            if discriminator is not None and column == discriminator[0]:
-                # The discriminator's bind is the entity's discriminatorValue, DERIVED
+            if tag is not None and column == tag[0]:
+                # The tag's bind is the concrete subtype's tagValue, DERIVED
                 # from the model (m-inheritance), never an ① literal.
-                expected.append(discriminator[1])
+                expected.append(tag[1])
             else:
                 expected.append(cols[column])
         if version_col is not None:
@@ -2329,7 +2340,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
         db.execute(statement, binds)
 
     expected = case.expected_table_state
-    entity_by_table = {entity.table: entity for entity in case.model.entities}
+    entity_by_table = physical_entities_by_table(case.model)
     for table, expected_rows in expected.items():
         if table not in entity_by_table:
             raise CaseFailure(
@@ -2634,7 +2645,7 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
         )
 
     if case.expected_table_state:
-        entity_by_table = {entity.table: entity for entity in case.model.entities}
+        entity_by_table = physical_entities_by_table(case.model)
         for table, expected_rows in case.expected_table_state.items():
             if table not in entity_by_table:
                 raise CaseFailure(
@@ -2720,7 +2731,7 @@ def _assert_table_state(case: Case, db: DatabaseProvider) -> None:
     """Assert each table named in ``then.tableState`` matches (order-insensitive)."""
     if not case.expected_table_state:
         return
-    entity_by_table = {entity.table: entity for entity in case.model.entities}
+    entity_by_table = physical_entities_by_table(case.model)
     for table, expected_rows in case.expected_table_state.items():
         if table not in entity_by_table:
             raise CaseFailure(

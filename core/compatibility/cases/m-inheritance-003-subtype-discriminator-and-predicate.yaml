@@ -1,12 +1,13 @@
-# Table-per-hierarchy subtype query with a user predicate (m-inheritance inheritance, m-sql).
+# Table-per-hierarchy concrete-subtype read with a user predicate (m-inheritance, m-sql).
 #
-# Find CardPayments with amount > 60. The injected discriminator predicate
-# (`t0.kind = ?`) composes with the user predicate via `and` and is appended
-# AFTER it, so binds read user-first then discriminator: [60.00, 'card']. Only
-# the Visa card row (id 1, amount 100.00) qualifies; the Amex card row (50.00) is
-# filtered out by the amount predicate.
+# Find CardPayments with amount > 60. The injected tag predicate (`t0.kind = ?`)
+# composes with the user predicate via `and` and is appended AFTER it, so binds read
+# user-first then tag: [60.00, 'card']. Only the Visa card row (id 1, amount 100.00)
+# qualifies; the Amex card row (50.00) is filtered out by the amount predicate. The
+# `amount` predicate references an inherited attribute (declared on the abstract root
+# Payment, resolved through CardPayment's ancestry).
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, discriminator, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: CardPayment
@@ -15,9 +16,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.amount from payment t0 where t0.amount > ? and t0.kind = ?
+        postgres: select t0.id, t0.amount from payment t0 where t0.amount > ? and t0.kind = ?
       binds: [60.00, card]
-  referenceSql: select id, kind, amount from payment where amount > 60.00 and kind = 'card'
+  referenceSql: select id, amount from payment where amount > 60.00 and kind = 'card'
   rows:
-    - { id: 1, kind: card, amount: 100.00 }
+    - { id: 1, amount: 100.00 }
   roundTrips: 1

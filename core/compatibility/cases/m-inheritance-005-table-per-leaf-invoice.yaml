@@ -1,14 +1,16 @@
-# Table-per-leaf leaf query: find all Invoices (m-inheritance inheritance, m-sql).
+# Table-per-concrete-subtype read: find all Invoices (m-inheritance, m-sql).
 #
-# Each concrete leaf maps to its OWN table, so an Invoice query is an ordinary
-# single-table read of the `invoice` table with NO discriminator predicate — the
-# subtype is selected by WHICH table is queried (contrast table-per-hierarchy,
-# which shares one table and injects a discriminator). Both authored invoice rows
-# match.
+# Each concrete subtype maps to its OWN table, so an Invoice read is an ordinary
+# single-table read of the `invoice` table with NO tag predicate — the subtype is
+# selected by WHICH table is queried (contrast table-per-hierarchy, which shares one
+# table and injects a tag). The projection carries the inherited attributes (id,
+# title, declared on the abstract root Document) plus the subtype's own amount_due,
+# derived from the ancestry chain — the concrete table physically holds them all.
+# Both authored invoice rows match.
 #
 # Trivial single-table read => referenceSql optional, but supplied as the oracle.
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-leaf, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Invoice

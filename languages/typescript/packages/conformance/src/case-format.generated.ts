@@ -80,6 +80,10 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
      */
     operation?: {};
     /**
+     * rejected cases only (m-inheritance, resolved Q3). An INLINE model descriptor document (an instance of metamodel.schema.json) carrying an invalid inheritance family a model-aware semantic validator MUST reject before any SQL — the cross-entity family invariants (parent resolution / acyclicity / exactly one root / concrete-under-abstract-root / tag placement / tag presence under table-per-hierarchy / family-wide tagValue uniqueness / shared-table consistency) that per-entity schema validation cannot catch. Kept inline (never in the shared `models/` registry) so an invalid family cannot break sibling cases that load real models; round-tripped through descriptor serde before semantic validation asserts `then.rejectedRule`.
+     */
+    model?: {};
+    /**
      * read cases only. The entity a read TARGETS — the queried position `when.operation` starts from (m-case-format, resolved Q1). It names the whole family for an abstract root, its concrete descendants for an abstract subtype, and itself for a concrete subtype; today every entity is concrete, so it names exactly the entity whose rows the read returns. REQUIRED on every read case, so the read side reaches the same explicit-entity standard the write side already meets with `writeSequence[].entity` (an `all: {}` read no longer names its subject only in a comment or the golden SQL). A model-aware harness cross-checks it against every queried-entity `Class.attribute` / `Class.relationship` reference in the operation (until inheritance families exist, 'consistent' means 'equal').
      */
     targetEntity?: string;
@@ -301,7 +305,7 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
       | "serialization-failure"
       | "lock-wait-timeout";
     /**
-     * rejected cases (m-value-object / m-op-algebra negative validation, resolved Q7). The normative rule the input violates, from a small closed vocabulary a model-aware PRE-SQL validator (and every language implementation) MUST enforce, asserted BEFORE any SQL is emitted. OPERATION rules: `nested-path-first-segment-not-value-object` (a nested path's first segment names no declared value object on the queried entity — m-op-algebra nested-predicate resolver MUST); `nested-path-unknown-member` (an intermediate segment names no declared nested value object, or a leaf names no declared attribute); `nested-literal-type-mismatch` (a nested comparison/membership literal's type differs from the leaf attribute's declared neutral type — m-op-algebra typed-literal MUST); `deep-fetch-value-object-segment` (a `deepFetch` path segment names a value object — m-value-object materialization/navigation contract 4, m-deep-fetch); `navigate-value-object-target` (a `navigate`/`exists`/`notExists` targets a value object — m-value-object contract 4, m-navigate); `find-root-value-object` (a find() is rooted at a value object — m-value-object contract 5). WRITE rules: `write-required-attribute-missing` (a required `nullable:false` attribute is absent at some depth — m-value-object write validation); `write-required-value-object-missing` (a required `nullable:false` nested value object is absent, or a required `many` array is absent — emptiness is fine); `write-value-type-mismatch` (a document field value's type differs from the declared attribute's neutral type).
+     * rejected cases (m-value-object / m-op-algebra / m-inheritance negative validation, resolved Q7 + Q3/Q4). The normative rule the input violates, from a small closed vocabulary a model-aware PRE-SQL validator (and every language implementation) MUST enforce, asserted BEFORE any SQL is emitted. OPERATION rules: `nested-path-first-segment-not-value-object` (a nested path's first segment names no declared value object on the queried entity — m-op-algebra nested-predicate resolver MUST); `nested-path-unknown-member` (an intermediate segment names no declared nested value object, or a leaf names no declared attribute); `nested-literal-type-mismatch` (a nested comparison/membership literal's type differs from the leaf attribute's declared neutral type — m-op-algebra typed-literal MUST); `deep-fetch-value-object-segment` (a `deepFetch` path segment names a value object — m-value-object materialization/navigation contract 4, m-deep-fetch); `navigate-value-object-target` (a `navigate`/`exists`/`notExists` targets a value object — m-value-object contract 4, m-navigate); `find-root-value-object` (a find() is rooted at a value object — m-value-object contract 5). WRITE rules: `write-required-attribute-missing` (a required `nullable:false` attribute is absent at some depth — m-value-object write validation); `write-required-value-object-missing` (a required `nullable:false` nested value object is absent, or a required `many` array is absent — emptiness is fine); `write-value-type-mismatch` (a document field value's type differs from the declared attribute's neutral type). MODEL rules (m-inheritance closed-tree family invariants, one per invariant per resolved Q4): `inheritance-unknown-parent` (a `parent` names no entity in the descriptor); `inheritance-cycle` (parent links form a cycle); `inheritance-missing-root` (the descriptor declares inheritance participants but NO root — a zero-root/abstract-orphan family; distinct from `inheritance-multiple-roots`, which is strictly more than one); `inheritance-multiple-roots` (a family reaches strictly MORE THAN ONE root, or the descriptor declares two roots for one tree; a family has exactly one root, so both zero and more-than-one are rejected, by `inheritance-missing-root` and this rule respectively); `inheritance-concrete-without-abstract-root` (a concrete subtype whose ancestry has no abstract root); `inheritance-abstract-node-with-table` (a `root` / `abstract-subtype` declares a physical table — also caught by the entity `table` conditional); `inheritance-abstract-node-fixture-rows` (fixture rows are keyed to an abstract root / abstract subtype — enforced at fixture load); `inheritance-strategy-redeclared` (a non-root participant redeclares `strategy`); `inheritance-missing-tag-value` (a table-per-hierarchy concrete subtype declares no `tagValue` — the shared table cannot discriminate its rows without one; the per-entity schema leaves `tagValue` optional and delegates its presence-under-table-per-hierarchy to this semantic rule); `inheritance-duplicate-tag-value` (two concrete subtypes in one table-per-hierarchy family share a `tagValue`); `inheritance-inconsistent-hierarchy-table` (table-per-hierarchy concrete subtypes map to different physical tables); `inheritance-tag-on-concrete-subtype-strategy` (a table-per-concrete-subtype family declares a `tag` or `tagValue`).
      */
     rejectedRule?:
       | "nested-path-first-segment-not-value-object"
@@ -312,7 +316,19 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
       | "find-root-value-object"
       | "write-required-attribute-missing"
       | "write-required-value-object-missing"
-      | "write-value-type-mismatch";
+      | "write-value-type-mismatch"
+      | "inheritance-unknown-parent"
+      | "inheritance-cycle"
+      | "inheritance-missing-root"
+      | "inheritance-multiple-roots"
+      | "inheritance-concrete-without-abstract-root"
+      | "inheritance-abstract-node-with-table"
+      | "inheritance-abstract-node-fixture-rows"
+      | "inheritance-strategy-redeclared"
+      | "inheritance-missing-tag-value"
+      | "inheritance-duplicate-tag-value"
+      | "inheritance-inconsistent-hierarchy-table"
+      | "inheritance-tag-on-concrete-subtype-strategy";
     /**
      * Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips.
      */

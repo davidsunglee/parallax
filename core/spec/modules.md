@@ -23,7 +23,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-core` | Neutral types, UTC / timezone, temporal infinity | active | cases |
 | `m-descriptor` | Domain-model & metamodel descriptor (+ serde seam) | active | cases |
 | `m-pk-gen` | Primary-key generation (`max`, `sequence`) | active | cases |
-| `m-inheritance` | Inheritance mapping (table-per-hierarchy / -leaf) | active | cases |
+| `m-inheritance` | Closed-tree inheritance (table-per-hierarchy / -concrete-subtype) | active | cases |
 | `m-value-object` | Embedded value objects (structured-document column) | active | cases |
 | `m-op-algebra` | Query / operation algebra | active | cases |
 | `m-agg` | Aggregation algebra (group-by / having / functions) | deferred | cases |

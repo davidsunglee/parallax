@@ -1,12 +1,15 @@
-# Table-per-hierarchy ROOT query: no discriminator predicate (m-inheritance inheritance, m-sql).
+# Table-per-hierarchy ABSTRACT-ROOT read: no tag predicate (m-inheritance, m-sql).
 #
-# m-inheritance-001–m-inheritance-003 all query a SUBTYPE and inject a discriminator filter (`kind = ?` /
-# `kind in (?, ?)`). This pins the complementary rule: a query rooted at the
-# hierarchy root (Payment) injects NO discriminator predicate and so sees EVERY
-# row across the shared table — the two card rows, the cash row, and the plain
-# root-kind row. The golden SQL has no WHERE clause; its absence is the contract.
+# m-inheritance-001/003 read a CONCRETE subtype and inject a tag filter (`kind = ?`).
+# This pins the complementary rule: a read rooted at the abstract root (Payment)
+# spans the WHOLE family and injects NO tag predicate, so it sees every concrete row
+# across the shared table — the two card rows and the cash row (the abstract root
+# owns none of its own). The golden SQL has no WHERE clause; its absence is the
+# contract. The projection is the Phase-3 minimal-green root superset (id, amount);
+# the raw tag column and per-row familyVariant arrive with the full abstract-read
+# rewrite in Phase 4.
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, root, no-discriminator, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-hierarchy, root, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: Payment
@@ -15,11 +18,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.amount from payment t0
-  referenceSql: select id, kind, amount from payment
+        postgres: select t0.id, t0.amount from payment t0
+  referenceSql: select id, amount from payment
   rows:
-    - { id: 1, kind: card, amount: 100.00 }
-    - { id: 2, kind: card, amount: 50.00 }
-    - { id: 3, kind: cash, amount: 20.00 }
-    - { id: 4, kind: payment, amount: 10.00 }
+    - { id: 1, amount: 100.00 }
+    - { id: 2, amount: 50.00 }
+    - { id: 3, amount: 20.00 }
   roundTrips: 1

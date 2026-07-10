@@ -1,21 +1,22 @@
-# Table-per-leaf INSERT: writing a leaf targets its OWN table, with no discriminator
-# (m-inheritance, m-sql).
+# Table-per-concrete-subtype INSERT: writing a concrete subtype targets its OWN table,
+# with no tag (m-inheritance, m-sql).
 #
-# In a table-per-leaf hierarchy each concrete leaf maps to its own table, so inserting
-# an Invoice is an ordinary single-table INSERT into `invoice` — no shared table and
-# no discriminator column exist (contrast the table-per-hierarchy insert
-# m-inheritance-007, which writes `kind`). The abstract Document root owns no rows;
-# its table stays empty. Starts from an EMPTY schema and asserts the single inserted
-# invoice row.
+# In a table-per-concrete-subtype family each concrete subtype maps to its own table,
+# so inserting an Invoice is an ordinary single-table INSERT into `invoice` — no shared
+# table and no tag column exist (contrast the table-per-hierarchy insert
+# m-inheritance-007, which writes `kind`). The INSERT binds the full inherited column
+# chain (id, title, from the abstract root Document) plus the subtype's own amount_due,
+# derived from the ancestry. The abstract Document root owns no rows. Starts from an
+# EMPTY schema and asserts the single inserted invoice row.
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-leaf, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
       entity: Invoice
       statements: 1
-      note: insert an Invoice into its own leaf table; no discriminator column
+      note: insert an Invoice into its own concrete-subtype table; no tag column
       rows:
         - { id: 10, title: Invoice-C, amountDue: 300.00 }
 then:

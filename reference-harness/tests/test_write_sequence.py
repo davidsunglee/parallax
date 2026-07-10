@@ -20,9 +20,9 @@ from reference_harness.case_runner import (
     _assert_scenario_count_consistency,
     _assert_write_input_columns,
     _assert_write_step_count,
-    _discriminator,
     _increment_marker,
     _is_computed_marker,
+    _tag,
 )
 from reference_harness.ddl_builder import ddl_for
 
@@ -168,17 +168,17 @@ def test_collapsed_delete_input_requires_exact_ordered_binds() -> None:
         _assert_write_input_columns(duplicated, "postgres")
 
 
-# --- table-per-hierarchy discriminator on write (m-inheritance) --------------
+# --- table-per-hierarchy tag on write (m-inheritance) ------------------------
 #
-# A TPH insert writes the discriminator column (`kind`) from the entity's
-# discriminatorValue, NOT from the neutral write input (①) — a framework-derived
-# column, exactly like the version bump. A TPL insert has no discriminator.
+# A table-per-hierarchy insert writes the tag column (`kind`) from the concrete
+# subtype's tagValue, NOT from the neutral write input (①) — a framework-derived
+# column, exactly like the version bump. A table-per-concrete-subtype insert has no tag.
 
 
-def test_tph_insert_writes_discriminator_from_discriminator_value() -> None:
-    # m-inheritance-007: the golden INSERT emits `kind` = the discriminatorValue
-    # ('card'); the ① row carries only the domain attributes. The ① ↔ ② cross-check
-    # MUST accept the derived discriminator (its bind is the discriminatorValue).
+def test_tph_insert_writes_tag_from_tag_value() -> None:
+    # m-inheritance-007: the golden INSERT emits `kind` = the tagValue ('card'); the ①
+    # row carries only the domain attributes. The ① ↔ ② cross-check MUST accept the
+    # derived tag (its bind is the tagValue).
     case = _write_case_by_id("m-inheritance-007")
     (insert,) = case.golden_statements("postgres")
     assert insert == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
@@ -187,36 +187,37 @@ def test_tph_insert_writes_discriminator_from_discriminator_value() -> None:
     _assert_write_input_columns(case, "postgres")
 
 
-def test_discriminator_helper_reads_the_inheritance_metadata() -> None:
+def test_tag_helper_reads_the_inheritance_metadata() -> None:
     case = _write_case_by_id("m-inheritance-007")
-    assert _discriminator(case.model.entity("CardPayment")) == ("kind", "card")
-    assert _discriminator(case.model.entity("Payment")) == ("kind", "payment")
-    # A table-per-leaf entity has no discriminator (discriminatorValue is FORBIDDEN).
+    assert _tag(case.model.entity("CardPayment")) == ("kind", "card")
+    # The abstract root owns no rows and no tagValue, so it derives no tag.
+    assert _tag(case.model.entity("Payment")) is None
+    # A table-per-concrete-subtype entity has no tag (tagValue is absent).
     document = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
-    assert _discriminator(document.entity("Invoice")) is None
+    assert _tag(document.entity("Invoice")) is None
 
 
-def test_tph_insert_rejects_wrong_discriminator_bind() -> None:
-    # Corrupting the discriminator bind to the wrong discriminatorValue MUST fail the
-    # cross-check: the derived value is pinned to the model's discriminatorValue.
+def test_tph_insert_rejects_wrong_tag_bind() -> None:
+    # Corrupting the tag bind to the wrong tagValue MUST fail the cross-check: the
+    # derived value is pinned to the model's tagValue.
     case = _write_case_by_id("m-inheritance-007")
     case.then["statements"][0]["binds"][1] = "cash"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 
 
-def test_tph_insert_rejects_discriminator_authored_in_row() -> None:
-    # Authoring the discriminator column in ① MUST be rejected — it is framework-derived
-    # from discriminatorValue, never authored (m-inheritance).
+def test_tph_insert_rejects_tag_authored_in_row() -> None:
+    # Authoring the tag column in ① MUST be rejected — it is framework-derived from
+    # tagValue, never authored (m-inheritance).
     case = _write_case_by_id("m-inheritance-007")
     case.write_sequence[0]["rows"][0]["kind"] = "card"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 
 
-def test_tpl_insert_targets_leaf_table_without_discriminator() -> None:
-    # m-inheritance-010: a table-per-leaf INSERT targets the leaf's own table with no
-    # discriminator column and no shared table.
+def test_tpcs_insert_targets_concrete_table_without_tag() -> None:
+    # m-inheritance-010: a table-per-concrete-subtype INSERT targets the subtype's own
+    # table with no tag column and no shared table.
     case = _write_case_by_id("m-inheritance-010")
     (insert,) = case.golden_statements("postgres")
     assert insert == "insert into invoice(id, title, amount_due) values (?, ?, ?)"
