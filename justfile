@@ -26,8 +26,9 @@ default:
 # Full merge gate: repo lint + core gates + primary TS lanes + the harness suite (Docker).
 verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-typecheck-tests ts-lint ts-package-check ts-conformance-compile ts-db oracle-test
 
-# Every static check that needs no database: harness ruff, markdown, core schema/SQL.
-lint: oracle-lint lint-md core-schemas
+# Every static check that needs no database: harness ruff, markdown, core schema/SQL,
+# and the language-contract diagnostic tools.
+lint: oracle-lint lint-md core-schemas core-contract-tools
 
 # Markdown lint across core/spec, languages/**/spec, and root.
 lint-md:
@@ -55,6 +56,19 @@ core-dep-graph:
 core-schemas:
     cd {{harness}} && uv run python -m reference_harness.schema_validate ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.sql_lint ../core/compatibility
+
+# Inspect one canonical slice using the claims, module DAG, and compatibility corpus.
+core-slice-inspect slice:
+    cd {{harness}} && uv run python -m reference_harness.slice_inspect ../core/spec ../core/compatibility {{slice}}
+
+# Validate a completed, root-relative language-spec path against the canonical template.
+core-language-spec-check language_spec:
+    cd {{harness}} && uv run python -m reference_harness.language_spec_validate ../{{language_spec}} ../core/spec
+
+# Docker-free tests and canonical-input smoke check for the language-contract diagnostics.
+core-contract-tools:
+    cd {{harness}} && uv run pytest tests/test_slice_inspect.py tests/test_language_spec_validate.py
+    cd {{harness}} && uv run python -m reference_harness.slice_inspect --check-all ../core/spec ../core/compatibility
 
 # ===========================================================================
 # Oracle: the Python reference harness — its own code health, and running it as

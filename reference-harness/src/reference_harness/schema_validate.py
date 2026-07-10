@@ -57,13 +57,21 @@ def _load_schemas(schemas: Path) -> dict[str, dict[str, Any]]:
     return {name: _load_json(schemas / name) for name in _SCHEMA_FILES}
 
 
-def _validate(instance: Any, schema: dict[str, Any], label: str, errors: list[str]) -> None:
+def validation_error(instance: Any, schema: dict[str, Any]) -> str | None:
+    """Return the most relevant JSON Schema failure, or ``None`` when valid."""
     validator = Draft202012Validator(schema)
     found = sorted(validator.iter_errors(instance), key=lambda e: e.path)
-    if found:
-        match = best_match(found)
-        location = "/".join(str(p) for p in match.absolute_path) or "<root>"
-        errors.append(f"{label}: at {location}: {match.message}")
+    if not found:
+        return None
+    match = best_match(found)
+    location = "/".join(str(p) for p in match.absolute_path) or "<root>"
+    return f"at {location}: {match.message}"
+
+
+def _validate(instance: Any, schema: dict[str, Any], label: str, errors: list[str]) -> None:
+    problem = validation_error(instance, schema)
+    if problem is not None:
+        errors.append(f"{label}: {problem}")
 
 
 def _descriptor_entity_defs(descriptor: Any) -> list[dict[str, Any]]:
