@@ -100,6 +100,7 @@ metadata is exposed on the `RelatedFinder` and every `Attribute`.
 | [22-source-routing-and-parallel-deep-fetch.md](22-source-routing-and-parallel-deep-fetch.md) | Source attributes route one operation across per-shard connections; deep fetch parallelizes per relationship node and degrades to IN-clause queries across databases |
 | [23-transaction-integration.md](23-transaction-integration.md) | Nesting joins the outer transaction (no savepoints); JTA/XA integration spans container TMs, pooled XA connections, and JMS two-phase commit |
 | [24-pure-temp-objects-and-extraction.md](24-pure-temp-objects-and-extraction.md) | Pure objects are cache-only (no-op persister), temp objects are real temp tables with scoped contexts, and extractor/reverse-engineering tools round-trip data and schema |
+| [25-cascade-operations.md](25-cascade-operations.md) | Cascade operations walk dependent lifecycle graphs for insert, delete, and temporal termination, including list and business-window-bounded variants |
 
 ## Research questions
 
@@ -135,9 +136,16 @@ repair/recovery ([18](18-temporal-repair-and-recovery.md)), cache operations
 ([23](23-transaction-integration.md)), and pure/temp objects plus extraction tooling
 ([24](24-pure-temp-objects-and-extraction.md)).
 
+**Applied cascade pass (2026-07-10, same commit).** A task-directed source pass enumerated the public
+cascade insert/delete/terminate families, mixed-temporality dispatch, list behavior, and detached
+integration, then applied those findings to a Parallax module-boundary recommendation and compatibility
+case matrix ([25](25-cascade-operations.md)). Unlike the descriptive first and second passes, this
+applied note intentionally includes recommendations.
+
 ## Scope — what this research does not cover
 
-Coverage spans the 13 original questions plus the second-pass gap files (16–24). Against the
+Coverage spans the 13 original questions plus the second-pass gap files (16–24) and the applied
+cascade study (25). Against the
 capability inventory in [reladomo-gap-priority.md](../reladomo-gap-priority.md), every rank is now
 documented except the following, which remain shallow by choice:
 
@@ -150,12 +158,16 @@ documented except the following, which remain shallow by choice:
 - The serialization/GraphQL module test suites — noted as not enumerated in depth in
   [14](14-metamodel-introspection.md).
 
-## Methodology (verbatim)
+## Original research methodology (verbatim)
 
 This document will remain objective and factual. It does not contain any recommendations or implementation suggestions.
 Open questions will not ask Why things haven't been built or what should be built in the future.
 
 There is no "implementation" section - that is intentional.
+
+This methodology governs the original descriptive research and the second-pass gap inventory.
+Finding 25 is separately labeled applied research and includes the Parallax recommendations requested
+for that task.
 
 ## Open questions
 
