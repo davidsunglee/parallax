@@ -8,6 +8,7 @@ model: models/person.yaml
 tags: [m-navigate, navigate, relationship, one-to-one, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Person
   operation:
     navigate:
       rel: Person.passport

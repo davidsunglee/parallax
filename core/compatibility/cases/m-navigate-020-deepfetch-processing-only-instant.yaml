@@ -7,6 +7,7 @@ model: models/invoice.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, audit-only, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Invoice
   operation:
     deepFetch:
       operand:
@@ -15,7 +16,7 @@ when:
           asOfAttr: Invoice.processingDate
           date: "2024-02-01T00:00:00+00:00"
       paths:
-        - [Invoice.lines]
+        - [{ rel: Invoice.lines }]
 then:
   statements:
     - sql:

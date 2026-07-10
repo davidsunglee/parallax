@@ -17,7 +17,8 @@ tags: [m-process-cache, query cache, cache-hit, scenario]
 shape: scenario
 when:
   scenario:
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 1
@@ -29,7 +30,8 @@ when:
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 1

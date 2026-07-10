@@ -7,6 +7,7 @@ model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Policy
   operation:
     deepFetch:
       operand:
@@ -19,7 +20,7 @@ when:
           asOfAttr: Policy.businessDate
           date: now
       paths:
-        - [Policy.coverages]
+        - [{ rel: Policy.coverages }]
 then:
   statements:
     - sql:

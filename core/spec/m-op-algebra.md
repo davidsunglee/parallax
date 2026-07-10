@@ -355,11 +355,17 @@ result into an **object graph** rather than a flat row set.
 
 | Operation | Encoding | Effect |
 |---|---|---|
-| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ [rel, …], … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
+| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ [ { "rel": … }, … ], … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
 
-Each `path` is an ordered list of relationship references naming a chain to
-fetch — one hop (`["Order.items"]`) or multi-hop
-(`["Order.items", "OrderItem.statuses"]`). The normative guarantee is **one SQL
+Each `path` is an ordered list of **path segments** naming a chain to fetch, and
+every segment is a **closed object** carrying the relationship to traverse under
+`rel` (a `Class.relationship` reference) — one hop (`[{ "rel": "Order.items" }]`)
+or multi-hop
+(`[{ "rel": "Order.items" }, { "rel": "OrderItem.statuses" }]`). The object
+segment is the single structural carrier for a hop, so a polymorphic hop can
+later add an optional `narrow` (subtype narrowing of the hop's effective concrete
+set) alongside `rel` without a second spelling of a path; until then a segment
+carries exactly `rel`. The normative guarantee is **one SQL
 statement per relationship level** (N+1 elimination): the root query plus one
 statement per distinct relationship hop, regardless of how many parent rows fan
 out. Paths sharing a prefix fetch the shared hop **once**. This is specified in

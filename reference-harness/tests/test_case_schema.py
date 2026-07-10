@@ -42,7 +42,7 @@ def _read_case() -> dict[str, Any]:
         "model": "models/orders.yaml",
         "tags": ["m-agg"],
         "shape": "read",
-        "when": {"operation": {"all": {}}},
+        "when": {"targetEntity": "Order", "operation": {"all": {}}},
         "then": {
             "statements": [{"sql": {"postgres": "select t0.id from orders t0"}, "binds": []}],
             "rows": [{"id": 1}],
@@ -78,6 +78,7 @@ def _scenario_case() -> dict[str, Any]:
         "when": {
             "scenario": [
                 {
+                    "targetEntity": "Account",
                     "find": {"eq": {"attr": "Account.id", "value": 7}},
                     "roundTrips": 1,
                     "statements": [
@@ -124,7 +125,13 @@ def _coherence_case() -> dict[str, Any]:
         "shape": "coherence",
         "when": {
             "coherence": [
-                {"node": "B", "kind": "read", "statements": step_sql, "observeRows": [{"id": 2}]},
+                {
+                    "node": "B",
+                    "kind": "read",
+                    "targetEntity": "Account",
+                    "statements": step_sql,
+                    "observeRows": [{"id": 2}],
+                },
                 {
                     "node": "A",
                     "kind": "write",
@@ -414,12 +421,33 @@ def _cross_shape_when_member() -> dict[str, Any]:
     """A read case carrying a stray cross-shape `when.boundary` block (finding 2).
 
     The read branch now constrains `when` to only that shape's members
-    (`operation` / `uow` / `equivalentEncodings`), so a mislabeled/mixed document
-    that also carries an unrelated action member fails its shape branch and no
-    other branch matches — the `oneOf` rejects it.
+    (`operation` / `targetEntity` / `uow` / `equivalentEncodings`), so a
+    mislabeled/mixed document that also carries an unrelated action member fails its
+    shape branch and no other branch matches — the `oneOf` rejects it.
     """
     doc = _read_case()
     doc["when"]["boundary"] = [{"action": "read"}]
+    return doc
+
+
+def _read_missing_target_entity() -> dict[str, Any]:
+    """A read case missing `when.targetEntity` (m-case-format Q1): the branch requires it."""
+    doc = _read_case()
+    del doc["when"]["targetEntity"]
+    return doc
+
+
+def _scenario_find_missing_target_entity() -> dict[str, Any]:
+    """A scenario read step missing `targetEntity` (Q1): the read-step branch requires it."""
+    doc = _scenario_case()
+    del doc["when"]["scenario"][0]["targetEntity"]
+    return doc
+
+
+def _coherence_read_missing_target_entity() -> dict[str, Any]:
+    """A coherence read step missing `targetEntity` (Q1): the read conditional requires it."""
+    doc = _coherence_case()
+    del doc["when"]["coherence"][0]["targetEntity"]
     return doc
 
 
@@ -485,6 +513,9 @@ REJECTED_CASES = {
     "binds-outside-statement-entry": _binds_outside_statement_entry,
     "attempt-legacy-affected-rows": _attempt_legacy_affected_rows,
     "cross-shape-when-member": _cross_shape_when_member,
+    "read-missing-target-entity": _read_missing_target_entity,
+    "scenario-find-missing-target-entity": _scenario_find_missing_target_entity,
+    "coherence-read-missing-target-entity": _coherence_read_missing_target_entity,
     "rejected-without-rule": _rejected_without_rule,
     "rejected-unknown-rule": _rejected_unknown_rule,
     "rejected-with-golden-statements": _rejected_with_golden_statements,

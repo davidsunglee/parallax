@@ -16,6 +16,7 @@ model: models/orders.yaml
 tags: [m-snapshot-read, m-deep-fetch, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 when:
+  targetEntity: Order
   operation:
     deepFetch:
       operand:
@@ -23,8 +24,8 @@ when:
           attr: Order.id
           value: 1
       paths:
-        - [Order.items]
-        - [Order.itemsByShipDate]
+        - [{ rel: Order.items }]
+        - [{ rel: Order.itemsByShipDate }]
 then:
   statements:
     - sql:

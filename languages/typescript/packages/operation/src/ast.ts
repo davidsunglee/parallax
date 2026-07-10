@@ -29,8 +29,18 @@ export type ElementRef = string;
 export type Literal = string | number | boolean | null;
 /** An ISO-8601 UTC instant, or the keyword `now`. */
 export type TemporalDate = string;
-/** An ordered list of relationship refs naming one eager-fetch path. */
-export type NavigationPath = readonly RelationshipRef[];
+/**
+ * One hop in a deep-fetch navigation path: a closed object naming the
+ * relationship to traverse via `rel`. The object shape is the single structural
+ * carrier for a hop, so a polymorphic hop can later add an optional `narrow`
+ * alongside `rel` without a second spelling of a path; until then a segment
+ * carries exactly `rel`.
+ */
+export interface PathSegment {
+  readonly rel: RelationshipRef;
+}
+/** An ordered list of path segments naming one eager-fetch path. */
+export type NavigationPath = readonly PathSegment[];
 
 /** An order-by key: an attribute plus an optional direction (default `asc`). */
 export interface OrderKey {

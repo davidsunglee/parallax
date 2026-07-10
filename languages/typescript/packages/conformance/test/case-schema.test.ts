@@ -39,7 +39,7 @@ function readCase(): Record<string, unknown> {
     model: "models/orders.yaml",
     tags: ["m-agg"],
     shape: "read",
-    when: { operation: { all: {} } },
+    when: { targetEntity: "Order", operation: { all: {} } },
     then: {
       statements: [{ sql: { postgres: "select t0.id from orders t0" }, binds: [] }],
       rows: [{ id: 1 }],
@@ -71,6 +71,7 @@ function scenarioCase(): Record<string, unknown> {
     when: {
       scenario: [
         {
+          targetEntity: "Account",
           find: { eq: { attr: "Account.id", value: 7 } },
           roundTrips: 1,
           statements: [
@@ -149,7 +150,13 @@ function coherenceCase(): Record<string, unknown> {
     shape: "coherence",
     when: {
       coherence: [
-        { node: "B", kind: "read", statements: stepSql, observeRows: [{ id: 2 }] },
+        {
+          node: "B",
+          kind: "read",
+          targetEntity: "Account",
+          statements: stepSql,
+          observeRows: [{ id: 2 }],
+        },
         {
           node: "A",
           kind: "write",

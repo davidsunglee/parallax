@@ -10,6 +10,7 @@ model: models/orders.yaml
 tags: [m-navigate, notExists, relationship, multi-hop, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Order
   operation:
     notExists:
       rel: Order.items

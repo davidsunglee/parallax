@@ -11,6 +11,7 @@ model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-leaf, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Invoice
   operation:
     all: {}
 then:

@@ -22,7 +22,8 @@ when:
         - sql:
             postgres: delete from account where id = ?
           binds: [3]
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 3

@@ -3,6 +3,7 @@ model: models/orders.yaml
 tags: [m-op-algebra, lessThan, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Order
   operation:
     lessThan:
       attr: Order.qty

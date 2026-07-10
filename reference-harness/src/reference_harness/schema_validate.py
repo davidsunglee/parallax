@@ -64,6 +64,136 @@ def _validate(instance: Any, schema: dict[str, Any], label: str, errors: list[st
         errors.append(f"{label}: at {location}: {match.message}")
 
 
+# --- targetEntity consistency (m-case-format, resolved Q1) ------------------
+#
+# A read names the entity it targets with `targetEntity`; the class part of every
+# queried-entity reference in the operation MUST name it. This is the structural
+# invariant that makes the read-targeting migration self-verifying. Until
+# inheritance families exist, "consistent" means "equal" (a concrete target names
+# exactly the entity whose rows the read returns); a navigation's INNER operation
+# resolves against the RELATED entity, so it is intentionally not descended into.
+
+_ATTR_REF_TAGS = frozenset(
+    {
+        "eq",
+        "notEq",
+        "greaterThan",
+        "greaterThanEquals",
+        "lessThan",
+        "lessThanEquals",
+        "between",
+        "isNull",
+        "isNotNull",
+        "like",
+        "notLike",
+        "startsWith",
+        "endsWith",
+        "contains",
+        "in",
+        "notIn",
+    }
+)
+_PATH_REF_TAGS = frozenset(
+    {
+        "nestedEq",
+        "nestedNotEq",
+        "nestedGt",
+        "nestedGte",
+        "nestedLt",
+        "nestedLte",
+        "nestedIn",
+        "nestedIsNull",
+        "nestedIsNotNull",
+        "nestedExists",
+        "nestedNotExists",
+    }
+)
+
+
+def _class_of(ref: Any) -> str | None:
+    if not isinstance(ref, str) or "." not in ref:
+        return None
+    return ref.split(".", 1)[0]
+
+
+def _collect_queried_classes(node: Any, acc: set[str]) -> None:
+    """Collect the class part of every QUERIED-ENTITY reference in *node*.
+
+    Descends through the same-entity boolean combinators, the result / temporal
+    directive wrappers, and (for a deep fetch) the operand plus each path's FIRST
+    hop — but NOT a navigation's inner operation, which resolves against the
+    related entity.
+    """
+    if not isinstance(node, dict) or len(node) != 1:
+        return
+    tag, body = next(iter(node.items()))
+    if tag == "deepFetch":
+        if isinstance(body, dict):
+            _collect_queried_classes(body.get("operand"), acc)
+            for path in body.get("paths", []) or []:
+                if path:
+                    segment = path[0]
+                    rel = segment.get("rel") if isinstance(segment, dict) else segment
+                    cls = _class_of(rel)
+                    if cls:
+                        acc.add(cls)
+        return
+    if not isinstance(body, dict):
+        return
+    if tag in _ATTR_REF_TAGS:
+        cls = _class_of(body.get("attr"))
+        if cls:
+            acc.add(cls)
+    elif tag in _PATH_REF_TAGS:
+        cls = _class_of(body.get("path"))
+        if cls:
+            acc.add(cls)
+    elif tag in ("navigate", "exists", "notExists"):
+        cls = _class_of(body.get("rel"))
+        if cls:
+            acc.add(cls)
+    elif tag in ("and", "or"):
+        for operand in body.get("operands", []) or []:
+            _collect_queried_classes(operand, acc)
+    elif tag in ("not", "group", "distinct", "asOf", "asOfRange", "history", "limit"):
+        _collect_queried_classes(body.get("operand"), acc)
+    elif tag == "orderBy":
+        _collect_queried_classes(body.get("operand"), acc)
+        for key in body.get("keys", []) or []:
+            if isinstance(key, dict):
+                cls = _class_of(key.get("attr"))
+                if cls:
+                    acc.add(cls)
+    elif tag == "groupBy":
+        _collect_queried_classes(body.get("operand"), acc)
+        for key in body.get("keys", []) or []:
+            cls = _class_of(key)
+            if cls:
+                acc.add(cls)
+        for aggregate in body.get("aggregates", []) or []:
+            if isinstance(aggregate, dict) and len(aggregate) == 1:
+                inner = next(iter(aggregate.values()))
+                if isinstance(inner, dict):
+                    cls = _class_of(inner.get("attr"))
+                    if cls:
+                        acc.add(cls)
+    # all / none carry no queried-entity reference.
+
+
+def _check_target_entity(operation: Any, target_entity: Any, label: str, errors: list[str]) -> None:
+    """Assert every queried-entity reference class equals *target_entity*."""
+    if not isinstance(target_entity, str):
+        return  # a missing / malformed targetEntity is already a schema error
+    classes: set[str] = set()
+    _collect_queried_classes(operation, classes)
+    inconsistent = sorted(cls for cls in classes if cls != target_entity)
+    if inconsistent:
+        errors.append(
+            f"{label}: targetEntity {target_entity!r} is inconsistent with the "
+            f"queried-entity reference class(es) {inconsistent}"
+        )
+
+
 def validate_tree(compatibility_root: Path) -> list[str]:
     """Validate every schema and every fixture; return a list of error strings."""
     compatibility_root = compatibility_root.resolve()
@@ -105,6 +235,15 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                 f"case {case_path.name} operation",
                 errors,
             )
+            # A read case names its queried entity with `targetEntity`; cross-check it
+            # against the operation's queried-entity references (m-case-format Q1).
+            if case.get("shape") == "read":
+                _check_target_entity(
+                    when["operation"],
+                    when.get("targetEntity"),
+                    f"case {case_path.name}",
+                    errors,
+                )
         # A scenario case carries its operations per step (under `when.scenario[].find`);
         # each one must also validate against the operation algebra schema.
         if isinstance(when.get("scenario"), list):
@@ -116,6 +255,12 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         f"case {case_path.name} scenario[{index}].find",
                         errors,
                     )
+                    _check_target_entity(
+                        step["find"],
+                        step.get("targetEntity"),
+                        f"case {case_path.name} scenario[{index}].find",
+                        errors,
+                    )
         # A coherence case (Phase 11) likewise carries read-step operations under
         # `when.coherence[].find`; each must validate against the operation algebra schema.
         if isinstance(when.get("coherence"), list):
@@ -124,6 +269,12 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                     _validate(
                         step["find"],
                         operation_schema,
+                        f"case {case_path.name} coherence[{index}].find",
+                        errors,
+                    )
+                    _check_target_entity(
+                        step["find"],
+                        step.get("targetEntity"),
                         f"case {case_path.name} coherence[{index}].find",
                         errors,
                     )

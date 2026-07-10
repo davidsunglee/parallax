@@ -21,7 +21,8 @@ tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1, slice-snapshot-1, sl
 shape: scenario
 when:
   scenario:
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 1
@@ -41,7 +42,8 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [999.00, 2, 1]
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 1

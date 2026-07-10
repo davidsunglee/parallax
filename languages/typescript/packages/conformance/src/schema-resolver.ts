@@ -33,6 +33,7 @@ import {
   type NormalizedRelationship,
   type NormalizedValueObjectMember,
   type Operation,
+  type PathSegment,
 } from "@parallax/operation";
 import type {
   AsOfFragment,
@@ -366,16 +367,16 @@ function attributeProjection(attr: NormalizedAttribute, dialect: Dialect): Proje
  */
 export function rootDeepFetchProjection(
   loaded: LoadedCase,
-  paths: readonly (readonly string[])[],
+  paths: readonly (readonly PathSegment[])[],
   dialect: Dialect,
 ): readonly ProjectionColumn[] {
   const graph = caseGraph(loaded);
   const rootEntityName = Object.keys(graph)[0];
   const rootRows = rootEntityName ? (graph[rootEntityName] ?? []) : [];
   const witness = rootRows[0];
-  const topLevelRels = new Set(paths.map((path) => relName(path[0] ?? "")));
+  const topLevelRels = new Set(paths.map((path) => relName(path[0]?.rel ?? "")));
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
-  const rootClass = classOf(paths[0]?.[0]) ?? rootEntityName;
+  const rootClass = classOf(paths[0]?.[0]?.rel) ?? rootEntityName;
   const rootEntity = rootClass ? metamodel.entity(rootClass) : metamodel.entities()[0];
   if (witness && typeof witness === "object") {
     return objectColumns(witness as Record<string, unknown>, topLevelRels, rootEntity, dialect);

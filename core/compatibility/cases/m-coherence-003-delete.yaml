@@ -8,6 +8,7 @@ when:
   coherence:
     - node: B
       kind: read
+      targetEntity: Account
       find:
         eq:
           attr: Account.id
@@ -30,6 +31,7 @@ when:
       note: node A commits the delete on a separate connection
     - node: B
       kind: read
+      targetEntity: Account
       find:
         eq:
           attr: Account.id

@@ -9,6 +9,7 @@ model: models/scalars.yaml
 tags: [m-core, m-descriptor, m-sql, scalar, postgres, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: ScalarThing
   operation:
     all: {}
 then:

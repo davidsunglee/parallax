@@ -7,6 +7,7 @@ model: models/lease.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Lease
   operation:
     deepFetch:
       operand:
@@ -15,7 +16,7 @@ when:
           asOfAttr: Lease.processingDate
           date: now
       paths:
-        - [Lease.notes]
+        - [{ rel: Lease.notes }]
 then:
   statements:
     - sql:

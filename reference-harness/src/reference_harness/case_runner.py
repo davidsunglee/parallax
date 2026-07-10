@@ -432,7 +432,13 @@ def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]
 
 
 def _deepfetch_paths(case: Case) -> list[list[str]]:
-    return case.operation["deepFetch"]["paths"]
+    """The deep-fetch paths as ordered lists of ``Class.relationship`` refs.
+
+    A path segment is a closed object ``{rel, narrow?}`` in the canonical operation
+    (m-op-algebra); the deep-fetch machinery here keys hops by the relationship ref,
+    so each segment is projected to its ``rel``. ``narrow`` (deferred) is ignored.
+    """
+    return [[segment["rel"] for segment in path] for path in case.operation["deepFetch"]["paths"]]
 
 
 def _deepfetch_root_operand(case: Case) -> dict[str, Any]:

@@ -22,7 +22,8 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [175.00, 2, 1]
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 1

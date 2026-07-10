@@ -6,11 +6,12 @@ model: models/lease.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Tenant
   operation:
     deepFetch:
       operand: { all: {} }
       paths:
-        - [Tenant.leases]
+        - [{ rel: Tenant.leases }]
 then:
   statements:
     - sql:

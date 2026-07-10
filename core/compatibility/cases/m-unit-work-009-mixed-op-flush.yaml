@@ -38,7 +38,8 @@ when:
         - sql:
             postgres: delete from account where id = ?
           binds: [3]
-    - find:
+    - targetEntity: Account
+      find:
         lessThan:
           attr: Account.balance
           value: 50.00

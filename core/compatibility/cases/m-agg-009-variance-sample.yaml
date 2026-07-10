@@ -12,6 +12,7 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, variance, varianceSample, twoColumn]
 shape: read
 when:
+  targetEntity: OrderItem
   operation:
     groupBy:
       operand:

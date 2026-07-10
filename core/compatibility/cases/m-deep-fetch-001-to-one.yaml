@@ -15,12 +15,13 @@ model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, to-one, relationship, slice-mvp-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: OrderItem
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - [OrderItem.order]
+        - [{ rel: OrderItem.order }]
 then:
   statements:
     - sql:

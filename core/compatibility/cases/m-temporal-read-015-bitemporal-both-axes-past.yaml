@@ -16,6 +16,7 @@ model: models/position.yaml
 tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, both-axes, past, audit, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Position
   operation:
     asOf:
       operand:

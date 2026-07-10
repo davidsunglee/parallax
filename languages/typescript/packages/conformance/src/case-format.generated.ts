@@ -80,6 +80,10 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
      */
     operation?: {};
     /**
+     * read cases only. The entity a read TARGETS — the queried position `when.operation` starts from (m-case-format, resolved Q1). It names the whole family for an abstract root, its concrete descendants for an abstract subtype, and itself for a concrete subtype; today every entity is concrete, so it names exactly the entity whose rows the read returns. REQUIRED on every read case, so the read side reaches the same explicit-entity standard the write side already meets with `writeSequence[].entity` (an `all: {}` read no longer names its subject only in a comment or the golden SQL). A model-aware harness cross-checks it against every queried-entity `Class.attribute` / `Class.relationship` reference in the operation (until inheritance families exist, 'consistent' means 'equal').
+     */
+    targetEntity?: string;
+    /**
      * Optional alternate surface encodings of the same operation (e.g. a prefix vs a fluent spelling, or differently-ordered keys). Each MUST canonicalize to `when.operation` via the serde seam; the harness asserts this dialect-agnostically (layer 4c), proving precedence/serialization fidelity in the fixture itself.
      *
      * @minItems 1
@@ -132,97 +136,13 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
      */
     coherence?: [
       {
-        /**
-         * Which application-server node (which connection) this step runs on. `A` is the writer; `B` is the peer whose cache must converge on A's committed state.
-         */
-        node: "A" | "B";
-        /**
-         * `read` issues a query (a seed read or a re-fetch); `write` issues DML that COMMITS on its node (the change a peer must observe).
-         */
-        kind: "read" | "write";
-        /**
-         * The operation a `read` step issues (a canonical m-op-algebra algebra node, validated against operation.schema.json). Present on read steps; absent on write steps.
-         */
-        find?: {};
-        statements: GoldenStatements;
-        /**
-         * The rows this step MUST observe. On the final node-B re-fetch this is the POST-WRITE state (proving the cache converged on node A's committed write); on a seed read it is the pre-write state.
-         */
-        observeRows?: {}[];
-        /**
-         * Zero-based index of an earlier coherence step (on the SAME node) whose observed rows denote the SAME logical object(s) as this step — the identity-preservation contract: the cross-process refresh updates the interned object in place (same primary key => same object).
-         */
-        sameObjectAs?: number;
-        /**
-         * The result-column name carrying the primary-key identity, used to check `sameObjectAs`. Defaults to the model root entity's primary-key column.
-         */
-        identityAttr?: string;
-        /**
-         * Optional human-readable description of the step's role in the coherence scenario.
-         */
-        note?: string;
+        [k: string]: unknown;
       },
       {
-        /**
-         * Which application-server node (which connection) this step runs on. `A` is the writer; `B` is the peer whose cache must converge on A's committed state.
-         */
-        node: "A" | "B";
-        /**
-         * `read` issues a query (a seed read or a re-fetch); `write` issues DML that COMMITS on its node (the change a peer must observe).
-         */
-        kind: "read" | "write";
-        /**
-         * The operation a `read` step issues (a canonical m-op-algebra algebra node, validated against operation.schema.json). Present on read steps; absent on write steps.
-         */
-        find?: {};
-        statements: GoldenStatements;
-        /**
-         * The rows this step MUST observe. On the final node-B re-fetch this is the POST-WRITE state (proving the cache converged on node A's committed write); on a seed read it is the pre-write state.
-         */
-        observeRows?: {}[];
-        /**
-         * Zero-based index of an earlier coherence step (on the SAME node) whose observed rows denote the SAME logical object(s) as this step — the identity-preservation contract: the cross-process refresh updates the interned object in place (same primary key => same object).
-         */
-        sameObjectAs?: number;
-        /**
-         * The result-column name carrying the primary-key identity, used to check `sameObjectAs`. Defaults to the model root entity's primary-key column.
-         */
-        identityAttr?: string;
-        /**
-         * Optional human-readable description of the step's role in the coherence scenario.
-         */
-        note?: string;
+        [k: string]: unknown;
       },
       ...{
-        /**
-         * Which application-server node (which connection) this step runs on. `A` is the writer; `B` is the peer whose cache must converge on A's committed state.
-         */
-        node: "A" | "B";
-        /**
-         * `read` issues a query (a seed read or a re-fetch); `write` issues DML that COMMITS on its node (the change a peer must observe).
-         */
-        kind: "read" | "write";
-        /**
-         * The operation a `read` step issues (a canonical m-op-algebra algebra node, validated against operation.schema.json). Present on read steps; absent on write steps.
-         */
-        find?: {};
-        statements: GoldenStatements;
-        /**
-         * The rows this step MUST observe. On the final node-B re-fetch this is the POST-WRITE state (proving the cache converged on node A's committed write); on a seed read it is the pre-write state.
-         */
-        observeRows?: {}[];
-        /**
-         * Zero-based index of an earlier coherence step (on the SAME node) whose observed rows denote the SAME logical object(s) as this step — the identity-preservation contract: the cross-process refresh updates the interned object in place (same primary key => same object).
-         */
-        sameObjectAs?: number;
-        /**
-         * The result-column name carrying the primary-key identity, used to check `sameObjectAs`. Defaults to the model root entity's primary-key column.
-         */
-        identityAttr?: string;
-        /**
-         * Optional human-readable description of the step's role in the coherence scenario.
-         */
-        note?: string;
+        [k: string]: unknown;
       }[],
     ];
     /**
@@ -277,7 +197,7 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
      */
     attempts?: [
       {
-        statements: GoldenStatements2;
+        statements: GoldenStatements1;
         write: WriteRow;
         /**
          * conflict RETRY cases (m-opt-lock), temporal-close form. THIS attempt's close instant (→ the new `out_z` the milestone-closing UPDATE sets).
@@ -297,7 +217,7 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
         note?: string;
       },
       ...{
-        statements: GoldenStatements2;
+        statements: GoldenStatements1;
         write: WriteRow;
         /**
          * conflict RETRY cases (m-opt-lock), temporal-close form. THIS attempt's close instant (→ the new `out_z` the milestone-closing UPDATE sets).
@@ -331,7 +251,7 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
    * Everything the case asserts after the action runs: the golden SQL an implementation is expected to emit (`statements`), the naive oracle (`referenceSql`), the observed data (`rows` / `graph` / `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the portable boundary `outcome`, and the numeric-comparison `tolerance`.
    */
   then?: {
-    statements?: GoldenStatements3;
+    statements?: GoldenStatements2;
     /**
      * Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases. Authored dialect-neutrally as a plain string wherever one naive spelling runs verbatim on every dialect; a dialect-keyed map (`postgres` / `mariadb`) when the naive spelling itself is dialect-specific (e.g. the structured-document extraction, where Postgres `->>` takes a bare key and MariaDB `->>` takes a `'$.path'`). When a map, its keys MUST equal the golden `sql` map's keys (harness-asserted, exactly as for a `binds` map) so no executed dialect runs without its oracle. The harness runs the entry matching the executing dialect; a map omitting a declared dialect is a loud failure, never a silently skipped oracle.
      */
@@ -508,19 +428,6 @@ export type NaiveStatements = [
   })[],
 ];
 /**
- * The golden SQL this step emits, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form). A read step's is a SELECT; a write step's is the committing DML.
- *
- * @minItems 1
- */
-export type GoldenStatements = [
-  StatementEntry & {
-    sql?: {};
-  },
-  ...(StatementEntry & {
-    sql?: {};
-  })[],
-];
-/**
  * One node's step within a `when.concurrency` round. Carries its golden SQL as `statements` ({sql, binds} entries, dialect-keyed map form). On the concurrency-SUCCESS shape it additionally declares an explicit `kind`: a `read` step is fetched on its HELD session and its `expectRows` graded; a `write` step is executed and asserts only that it did not block/raise. `kind` is optional in this base def so the error/concurrency shape — whose only assertion is the classified error — carries no `kind`; the concurrency-success root branch requires it on every present step.
  */
 export type ConcurrencyStep = {
@@ -528,7 +435,7 @@ export type ConcurrencyStep = {
 } & {
   [k: string]: unknown;
 } & {
-  statements: GoldenStatements1;
+  statements: GoldenStatements;
   /**
    * concurrency-success form only: the EXPLICIT read-vs-write discriminator the runners branch on (replacing the brittle SQL-verb sniffing). `read` — the step is fetched on its HELD session (`session.query`) and its rows graded against `expectRows`; `write` — the step is executed (`session.execute`) and asserts only that it did not block/raise. Structural: a `read` step MUST carry `expectRows`, a `write` step MUST omit it (the if/then below).
    */
@@ -538,7 +445,7 @@ export type ConcurrencyStep = {
    */
   expectRows?: {}[];
 } & {
-  statements: GoldenStatements1;
+  statements: GoldenStatements;
   /**
    * concurrency-success form only: the EXPLICIT read-vs-write discriminator the runners branch on (replacing the brittle SQL-verb sniffing). `read` — the step is fetched on its HELD session (`session.query`) and its rows graded against `expectRows`; `write` — the step is executed (`session.execute`) and asserts only that it did not block/raise. Structural: a `read` step MUST carry `expectRows`, a `write` step MUST omit it (the if/then below).
    */
@@ -553,7 +460,7 @@ export type ConcurrencyStep = {
  *
  * @minItems 1
  */
-export type GoldenStatements1 = [
+export type GoldenStatements = [
   StatementEntry & {
     sql?: {};
   },
@@ -566,7 +473,7 @@ export type GoldenStatements1 = [
  *
  * @minItems 1
  */
-export type GoldenStatements2 = [
+export type GoldenStatements1 = [
   StatementEntry & {
     sql?: {};
   },
@@ -579,7 +486,7 @@ export type GoldenStatements2 = [
  *
  * @minItems 1
  */
-export type GoldenStatements3 = [
+export type GoldenStatements2 = [
   StatementEntry & {
     sql?: {};
   },

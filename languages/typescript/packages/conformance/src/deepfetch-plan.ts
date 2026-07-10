@@ -23,7 +23,7 @@
  * empty-intermediate path, exercised only by `m-deep-fetch-008`).
  */
 import type { Dialect } from "@parallax/dialect";
-import { type Operation, parseOperation } from "@parallax/operation";
+import { type Operation, type PathSegment, parseOperation } from "@parallax/operation";
 import type { DeepFetchNode, Key, LevelQuery } from "@parallax/relationships";
 import { type AxisPins, type Bind, compile } from "@parallax/sql";
 import type { LoadedCase } from "./discover.js";
@@ -45,10 +45,10 @@ export interface DeepFetchPlan {
   readonly tree: readonly DeepFetchNode[];
 }
 
-/** A deep-fetch operation body. */
+/** A deep-fetch operation body. Each path is an ordered list of `{ rel }` segments. */
 interface DeepFetchBody {
   readonly operand: Operation;
-  readonly paths: readonly (readonly string[])[];
+  readonly paths: readonly (readonly PathSegment[])[];
 }
 
 /** True when a case's operation is a deep fetch. */
@@ -144,13 +144,13 @@ function peelDirectiveWrappers(node: unknown): unknown {
 
 /**
  * The root entity class of a deep fetch: the class part of the first hop of the
- * first path (`OrderItem` from `[OrderItem.order]`). Every path roots at the same
- * class (they all navigate off the same root row set), so the first is
+ * first path (`OrderItem` from `[{ rel: OrderItem.order }]`). Every path roots at
+ * the same class (they all navigate off the same root row set), so the first is
  * authoritative. Returns `undefined` only for a pathless deep fetch (none in the
  * corpus), which falls back to operand-ref resolution.
  */
-function deepFetchRootEntity(paths: readonly (readonly string[])[]): string | undefined {
-  const firstRef = paths[0]?.[0];
+function deepFetchRootEntity(paths: readonly (readonly PathSegment[])[]): string | undefined {
+  const firstRef = paths[0]?.[0]?.rel;
   if (firstRef === undefined) {
     return undefined;
   }
@@ -160,20 +160,21 @@ function deepFetchRootEntity(paths: readonly (readonly string[])[]): string | un
 
 /**
  * Build the de-duplicated relationship-hop tree. Each path is a sequence of
- * `Class.rel` refs; a shared prefix is merged so the hop is one node (one level,
+ * `{ rel }` segments; a shared prefix is merged so the hop is one node (one level,
  * one statement). Each hop names its source class in the `Class.rel` ref itself,
  * so the correlation is resolved from the ref (no parent-entity threading needed).
  */
 function buildTree(
   loaded: LoadedCase,
-  paths: readonly (readonly string[])[],
+  paths: readonly (readonly PathSegment[])[],
   rootPins: AxisPins,
   dialect: Dialect,
 ): readonly DeepFetchNode[] {
   const roots: NodeBuilder[] = [];
   for (const path of paths) {
     let siblings = roots;
-    for (const relRef of path) {
+    for (const segment of path) {
+      const relRef = segment.rel;
       let node = siblings.find((n) => n.relRef === relRef);
       if (!node) {
         node = { relRef, children: [] };

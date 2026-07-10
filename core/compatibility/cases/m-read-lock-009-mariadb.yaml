@@ -15,6 +15,7 @@ model: models/account.yaml
 tags: [m-read-lock, m-dialect]
 shape: read
 when:
+  targetEntity: Account
   operation:
     eq:
       attr: Account.id

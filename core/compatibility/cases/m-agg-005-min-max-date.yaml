@@ -7,6 +7,7 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, min, max, date]
 shape: read
 when:
+  targetEntity: Order
   operation:
     groupBy:
       operand:

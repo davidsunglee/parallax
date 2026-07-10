@@ -7,6 +7,7 @@ model: models/orders.yaml
 tags: [m-op-algebra, in, membership, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
+  targetEntity: Order
   operation:
     in:
       attr: Order.id

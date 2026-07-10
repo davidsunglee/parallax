@@ -17,6 +17,7 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, stdDev, stdDevPop, twoColumn]
 shape: read
 when:
+  targetEntity: OrderItem
   operation:
     groupBy:
       operand:

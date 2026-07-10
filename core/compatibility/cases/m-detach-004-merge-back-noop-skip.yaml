@@ -21,7 +21,8 @@ tags: [m-detach, m-unit-work, no-op, scenario, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 1
@@ -36,7 +37,8 @@ when:
     - write: mergeBack
       roundTrips: 0
       note: merge back an UNMODIFIED detached copy (isModifiedSinceDetachment false) ⇒ NO DML
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 1

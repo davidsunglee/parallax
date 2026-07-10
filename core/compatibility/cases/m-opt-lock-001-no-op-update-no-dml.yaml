@@ -21,7 +21,8 @@ tags: [m-opt-lock, m-unit-work, no-op, scenario, slice-mvp-1, slice-snapshot-1, 
 shape: scenario
 when:
   scenario:
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 2
@@ -36,7 +37,8 @@ when:
     - write: update
       roundTrips: 0
       note: a versioned update whose set changes no attribute issues NO DML (no golden SQL)
-    - find:
+    - targetEntity: Account
+      find:
         eq:
           attr: Account.id
           value: 2

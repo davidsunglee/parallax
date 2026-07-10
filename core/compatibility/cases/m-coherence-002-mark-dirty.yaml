@@ -24,6 +24,7 @@ when:
   coherence:
     - node: B
       kind: read
+      targetEntity: Account
       find:
         eq:
           attr: Account.owner
@@ -45,6 +46,7 @@ when:
       note: node A commits an INSERT of the new account on a separate connection
     - node: B
       kind: read
+      targetEntity: Account
       find:
         eq:
           attr: Account.owner
