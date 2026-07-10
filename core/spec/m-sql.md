@@ -353,6 +353,33 @@ data, not merely asserted. The same multi-row physical primary key (business key
 plus each axis's `fromColumn`, `m-descriptor`) makes the chained rectangles
 admissible. The full rectangle-split semantics are `m-bitemp-write`.
 
+**Plain (unbounded) writes.** Alongside the bounded `*Until` templates, the plain
+(unbounded) `insert` / `update` / `terminate` govern a value from an effective
+business date `B` **through infinity** — the degenerate rectangle splits with no
+`until` (`m-bitemp-write`). Plain `insert` is a **single** fully-current `INSERT`;
+plain `update` is the inactivate `update` plus a `head` **and** a new `tail`; plain
+`terminate` is the inactivate `update` plus a **single `head`** (no tail):
+
+| Mutation | Golden DML | Binds |
+|---|---|---|
+| **insert** (plain) | `insert into position(cols…) values (?, …, ?)` — fully-current row, business `[B, infinity)`, processing `[txInstant, infinity)` | `[…row…, B, infinity, txInstant, infinity]` |
+| **update** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` | `[txInstant, pk, infinity]` |
+| **update** (head) | `insert into position(cols…) values (?, …, ?)` — old value, business `[from_z, B)`, processing `[txInstant, infinity)` | `[…row…, from_z, B, txInstant, infinity]` |
+| **update** (new tail) | `insert into position(cols…) values (?, …, ?)` — new value, business `[B, infinity)`, processing `[txInstant, infinity)` | `[…row…, B, infinity, txInstant, infinity]` |
+| **terminate** (inactivate) | `update position set out_z = ? where pos_id = ? and out_z = ?` | `[txInstant, pk, infinity]` |
+| **terminate** (head) | `insert into position(cols…) values (?, …, ?)` — old value, business `[from_z, B)`, processing `[txInstant, infinity)` | `[…row…, from_z, B, txInstant, infinity]` |
+
+Plain `insert` opens a fully-current rectangle (`thru_z = out_z = infinity`) with
+**no** inactivation and no prior row to close — the `businessTo = infinity`
+degenerate of `insertUntil`, sharing that template's `INSERT` shape (so the optimistic
+inactivation gate below does not apply to it). Plain `update` is **three** statements
+(inactivate + `head` + new `tail`) and plain `terminate` is **two** (inactivate +
+`head`); neither chains a `middle` or an old-`tail`, so a plain `update` runs the new
+value unbounded to infinity and a plain `terminate` leaves `[B, infinity)` covered by
+no current-on-processing row. The inactivate `update` for both is the **same**
+current-on-processing statement as the `*Until` inactivate above, so the optimistic
+gate below applies to it verbatim.
+
 **Optimistic-mode inactivation (`m-opt-lock` × `m-bitemp-write`).** In optimistic
 mode the inactivate `update` gains the observed-processing-from gate; when the
 key's current rows share an `in_z` (distinct business windows current at the same

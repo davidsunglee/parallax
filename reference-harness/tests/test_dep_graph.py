@@ -501,9 +501,13 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
 @pytest.mark.parametrize(
     ("slice_tag", "expected"),
     [
-        ("slice-mvp-1", 197),
-        ("slice-snapshot-1", 206),
-        ("slice-managed-1", 226),
+        # The standalone plain-bitemporal-insert witness m-bitemp-write-009 (COR-9
+        # Phase 1 extension) carries all three lifecycle slice tags, matching its
+        # plain update/terminate siblings m-bitemp-write-006/-007, so each count
+        # ticked up by one.
+        ("slice-mvp-1", 198),
+        ("slice-snapshot-1", 207),
+        ("slice-managed-1", 227),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

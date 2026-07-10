@@ -2,16 +2,16 @@
  * Full-bitemporal write **compile lane** over the whole `m-bitemp-write` slice,
  * Docker-free (COR-26).
  *
- * Drives the adapter's `runCompile` over all eight `m-bitemp-write` cases and asserts
+ * Drives the adapter's `runCompile` over all nine `m-bitemp-write` cases and asserts
  * the emitted SQL + binds equal the golden BY TEXT — the DB-free proof that the
  * TypeScript rectangle-split write generation is correct without a database read-back:
  *
  *  - **windowed rectangle split** (`updateUntil` `-001`, `terminateUntil` `-002`,
  *    `insertUntil` `-003`): inactivate + head / (middle) / tail chained milestones
  *    bounded to `[businessFrom, until)`;
- *  - **plain (unbounded) split** (`update` `-006`, `terminate` `-007`): inactivate +
- *    head + new-tail (update) or head only (terminate), the residual window running
- *    to the open row's `thru_z`;
+ *  - **plain (unbounded) write** (`insert` `-009`, `update` `-006`, `terminate` `-007`):
+ *    a single fully-current INSERT (insert), or inactivate + head + new-tail (update) /
+ *    head only (terminate), the residual window running to the open row's `thru_z`;
  *  - **optimistic-gated** (`-004` / `-005` conflict close, `-008` end-to-end split):
  *    the inactivating close targets the observed rectangle with `… and from_z = ? and
  *    in_z = ?`, the two trailing binds drawn from the currently-open row.
@@ -34,7 +34,7 @@ import { discoverCasePaths, type LoadedCase, loadCase } from "../src/discover.js
 import { runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
 import { buildWriteSequencePlan } from "../src/write-sequence.js";
 
-/** The eight full-bitemporal write cases, discovered off the corpus. */
+/** The nine full-bitemporal write cases, discovered off the corpus. */
 function bitempWriteCases(): readonly { id: string; path: string }[] {
   return discoverCasePaths()
     .map((path) => ({ id: path.replace(/^.*\/(m-[a-z0-9-]+-\d{3})-.*$/, "$1"), path }))
@@ -49,8 +49,8 @@ function golden(loaded: ReturnType<typeof loadCase>): readonly DialectStatement[
   return dialectStatements(goldenEntries(loaded.raw), "postgres");
 }
 
-describe("m-bitemp-write compile lane — emitted === golden over all eight cases", () => {
-  it("discovers exactly the eight m-bitemp-write cases", () => {
+describe("m-bitemp-write compile lane — emitted === golden over all nine cases", () => {
+  it("discovers exactly the nine m-bitemp-write cases", () => {
     expect(CASES.map(({ id }) => id)).toEqual([
       "m-bitemp-write-001",
       "m-bitemp-write-002",
@@ -60,6 +60,7 @@ describe("m-bitemp-write compile lane — emitted === golden over all eight case
       "m-bitemp-write-006",
       "m-bitemp-write-007",
       "m-bitemp-write-008",
+      "m-bitemp-write-009",
     ]);
   });
 

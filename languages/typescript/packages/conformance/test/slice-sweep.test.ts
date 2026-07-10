@@ -86,7 +86,7 @@ function readGolden(loaded: LoadedCase): { sql: string; binds: readonly unknown[
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the harness-lane slice-mvp-1 slice (185 cases)", () => {
+  it("discovers the harness-lane slice-mvp-1 slice (186 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case. This is the
     // harness-executable subset (api-conformance-lane cases are filtered out). It
@@ -96,8 +96,11 @@ group("full-slice compile sweep (Docker-free)", () => {
     // cases (COR-26 Phase 3: m-batch-write-003/004, m-opt-lock-012/013,
     // m-unit-work-009), then by the 12 type-fidelity / value-object-write / pk-gen
     // cases (COR-26 Phase 5: m-core-005..008, m-value-object-044..046,
-    // m-pk-gen-001/002/004/006/014) — all harness-lane.
-    expect(CASES.length).toBe(185);
+    // m-pk-gen-001/002/004/006/014) — all harness-lane — then by the standalone
+    // plain-bitemporal-insert witness m-bitemp-write-009 (COR-9 Phase 1 extension:
+    // the third member of the plain insert / update / terminate family; Postgres-only
+    // golden, so it does NOT join the curated MariaDB profile).
+    expect(CASES.length).toBe(186);
   });
 
   it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
@@ -193,15 +196,16 @@ group("case-matrix report — the slice is green at a glance", () => {
     // The rendered report is the human-facing artifact; surface it on failure so
     // a regression names the exact residual case IDs.
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(185);
-    // 174 non-rejected cases compile `ok` (143 + the 8 m-bitemp-write cases, COR-26,
+    expect(report.total).toBe(186);
+    // 175 non-rejected cases compile `ok` (143 + the 8 m-bitemp-write cases, COR-26,
     // + the 7 audit-chaining / unit-work RYOW cases, COR-26 Phase 2, + the 5
     // batch-DELETE / opt-lock-edge / mixed-op cases, COR-26 Phase 3, + the 11
     // type-fidelity / value-object-write / pk-gen `ok` cases, COR-26 Phase 5:
-    // m-core-005..008, m-value-object-045/046, m-pk-gen-001/002/004/006/014); the 11
-    // `rejected` cases are graded `pass` (a correct pre-SQL refusal naming the rule —
-    // the 10 value-object negatives plus the Phase-5 m-value-object-044).
-    expect(report.counts.ok).toBe(174);
+    // m-core-005..008, m-value-object-045/046, m-pk-gen-001/002/004/006/014, + the
+    // plain-bitemporal-insert writeSequence m-bitemp-write-009, COR-9 Phase 1
+    // extension); the 11 `rejected` cases are graded `pass` (a correct pre-SQL refusal
+    // naming the rule — the 10 value-object negatives plus the Phase-5 m-value-object-044).
+    expect(report.counts.ok).toBe(175);
     expect(report.counts.pass).toBe(11);
     expect(report.residuals).toEqual([]);
   });
