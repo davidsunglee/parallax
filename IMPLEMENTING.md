@@ -150,8 +150,8 @@ starts.
 | 6 | `m-unit-work` transactions, `m-read-lock`, `m-batch-write`, `m-auto-retry` (identity/query cache `m-process-cache` deferred) | The `m-unit-work-*`, `m-read-lock-*`, and `m-batch-write-*` cases |
 | 7 | `m-temporal-read` reads and `m-audit-write` audit temporal writes | The `m-temporal-read-*` and `m-audit-write-*` cases |
 | 8 | `m-detach` lifecycle and `m-opt-lock` optimistic locking | The `m-detach-*` and `m-opt-lock-*` cases |
-| 9 | `m-bitemp-write` two-axis writes (`m-business-only` deferred) | The `m-bitemp-write-*` cases |
-| 10 | `m-inheritance` and `m-value-object` | The `m-inheritance-*` and `m-value-object-*` cases |
+| 9 | `m-bitemp-write` two-axis writes (`m-business-only` deferred) | The `m-bitemp-write-*` cases — the bounded `*Until` / optimistic family (`-001`–`-005`, `-008`) and the plain open-interval writes `-006`/`-007`/`-009` (update split, terminate, insert); see the case-family map below |
+| 10 | `m-inheritance` and `m-value-object` | The `m-inheritance-*` and `m-value-object-*` cases; the inheritance families are enumerated in the case-family map below |
 | 11 | `m-dialect` second dialect support | The MariaDB cases (e.g. `m-read-lock-009`, `m-core-004`), then every case whose `then.statements` entries carry that dialect's `sql` key |
 | 12 | `m-coherence` cross-process coherence (deferred) | The `m-coherence-*` cases |
 | 13 | `m-perf-bench` benchmark methodology and reports | Every file in `core/compatibility/benchmarks/` |
@@ -169,6 +169,57 @@ The first green slice should be intentionally small. A useful first slice is:
 - build the operation tree
 - emit Postgres SQL and binds
 - execute against Postgres and compare rows.
+
+### Inheritance and plain-bitemporal case families (phases 9–10)
+
+Phases 9 (`m-bitemp-write`) and 10 (`m-inheritance`) each fan out into several
+case families. Run them family by family; the family names below map onto the
+`core/compatibility/cases/` file-name slugs. Every `m-inheritance-*` case is
+tagged `slice-snapshot-1` **and** `slice-managed-1` (never `slice-mvp-1`), so
+both object-lifecycle slices claim the whole family.
+
+**Plain bitemporal writes (`m-bitemp-write`, phase 9).** Beyond the bounded
+`*Until` rectangle-split and optimistic cases (`m-bitemp-write-001`–`-005`,
+`-008`), the plain open-interval write family is `m-bitemp-write-006` (plain
+update split), `m-bitemp-write-007` (plain terminate), and `m-bitemp-write-009`
+(plain insert, Postgres-only). These are the inheritance-independent
+insert/update/terminate witnesses that the temporal inheritance cases compose
+with subtype routing.
+
+**Inheritance reads (phase 10).**
+
+- Table-per-hierarchy: concrete-target reads `m-inheritance-001`/`-002`; abstract
+  reads `-003`/`-004`/`-017` (root, animal-family root, empty result); abstract
+  subtype read `-011`; subtype narrowing `-012`–`-016` (to one concrete, to an
+  abstract subtype, to multiple concretes, `or` across branches, redundant
+  narrow).
+- Table-per-concrete-subtype: concrete reads `m-inheritance-005`/`-006`; `union
+  all` abstract and narrowed reads `-050`–`-053` (abstract root, abstract
+  subtype, narrow to an abstract subtype, narrow to multiple concretes).
+
+**Polymorphic navigation and narrowed deep fetch (phase 10).**
+
+- Table-per-hierarchy: polymorphic relationships `m-inheritance-060`/`-061`;
+  narrowed `exists` `-062`/`-063`; narrowed deep fetch `-065`–`-067` (narrowed
+  view, equivalent narrowings deriving one view key, two narrowed views sharing a
+  path prefix).
+- Table-per-concrete-subtype: polymorphic relationship `m-inheritance-070`;
+  narrowed `exists` `-071`.
+
+**Concrete-subtype writes (phase 10).** Creates `m-inheritance-007`/`-010`/
+`-080`/`-081`; updates `-082`/`-083` (inherited and own attributes) and the
+optimistic-lock composition `-084`; deletes `-009`/`-085`.
+
+**Rejected cases (phase 10).** Model-invariant `when.model` rejects
+`m-inheritance-020`–`-032` (one per closed-tree invariant); operation-level
+narrow rejects `-040`–`-042`; relationship-scope narrow rejects `-064`/`-072`;
+write rejects `-086`–`-089` (sibling attribute, metadata field, abstract target,
+set-based).
+
+**Temporal inheritance composition (phase 10).** Audit-only terminate
+`m-inheritance-090`/`-091`; temporal abstract reads `-092` (as-of) / `-093`
+(`union all`); bitemporal terminate `-094`/`-095`; bitemporal terminate-until
+`-096`/`-097`.
 
 ## Conformance Adapter
 

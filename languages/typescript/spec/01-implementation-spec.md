@@ -375,6 +375,105 @@ wrapper is outside the processing-axis wrapper, matching the core bind order
 serialized; the m-temporal-read default-injection rule still applies and reads them as
 current (`now`).
 
+### 2.10 Inheritance and subtype narrowing (illustrative — deferred from V1)
+
+**Non-normative and deferred.** Inheritance is **not** part of the TypeScript V1
+`slice-mvp-1` claim (§1.1 lists it among the deferred surfaces), and nothing in
+this subsection changes that claim or adds a V1 obligation. The two
+object-lifecycle slices (`slice-snapshot-1` / `slice-managed-1`) do claim
+`m-inheritance`, so the sketches below record the idiomatic shape a later
+TypeScript build would grow to satisfy them. The **only** normative inheritance
+commitment today is the `InheritanceMeta` reader shape in §3.2; the code below
+fixes no wire contract — the binding surfaces stay the core corpus and the
+conformance-adapter observations (`familyVariant`, narrowed graph view keys).
+
+An inheritance family is a closed tree with an abstract `root`, optional
+`abstract-subtype`s, and instantiable `concrete-subtype`s (§3.2). Codegen would
+emit a symbol per participant, so a `find` over an abstract position returns a
+**discriminated union** of the concrete managed-object types, and the illustrative
+combinators below serialize to the core `narrow` operation node and read back the
+core `familyVariant`.
+
+**Abstract-target read and subtype narrowing.** A `find` over an abstract entity
+addresses the whole family; a `narrow(...)` combinator restricts a polymorphic
+position to an effective concrete set, authored with abstract-subtype and/or
+concrete-subtype symbols. Narrowing may only stay within (or below) the position's
+effective set — broadening is a validation error, mirroring the core narrow rule.
+
+```ts
+// Whole family — each object is one concrete variant.
+const animals = px.animals.find(Animal.name.startsWith("R"));
+
+// Narrow to an abstract subtype's descendants (Pet → Cat, Dog):
+const pets = px.animals.find(Animal.all().narrow(Pet));
+
+// Narrow to an explicit concrete set, with a concrete-subtype predicate in scope:
+const loudDogs = px.animals.find(
+  Animal.all().narrow(Dog).where(Dog.barkVolume.gt(5)),
+);
+```
+
+**Polymorphic navigation.** A relationship whose target is an abstract position
+navigates polymorphically; a `narrow(...)` inside the quantifier restricts the
+traversed set and must name a subset of the relationship target's effective set.
+
+```ts
+const dogOwners = px.people.find(
+  Person.pets.narrow(Dog).exists(dog => dog.barkVolume.gt(5)),
+);
+```
+
+**Narrowed includes.** A narrowed hop in `includes` eager-fetches only the
+requested concrete set and populates a distinct narrowed view; equivalent authored
+narrowings (`narrow(Pet)` vs `narrow(Cat, Dog)`) resolve to the same view.
+
+```ts
+const people = px.people.find(Person.all(), {
+  includes: [Person.pets.narrow(Dog)],   // the pets[Dog] narrowed view
+});
+```
+
+**Concrete-subtype writes.** Writes go through the concrete-subtype symbol; the
+accepted payload is exactly the ancestry chain (root + abstract ancestors + own).
+Abstract-target writes, sibling-branch attributes, and the metadata fields
+(`tag` / `tagValue` / `familyVariant`) are rejected before SQL.
+
+```ts
+await px.transaction(async tx => {
+  const dog = await tx.dogs.create({ name: "Rex", ownerId: 1, barkVolume: 7 });
+  await tx.dogs.update(Dog.id.eq(dog.id), { set: [Dog.barkVolume.set(9)] });
+  await tx.dogs.delete(Dog.id.eq(dog.id));
+});
+```
+
+**Idiomatic subtype-identity exposure.** `familyVariant` is surfaced idiomatically,
+not as a mandatory string property the caller must read. The natural TypeScript
+spellings are generated type guards, a sealed discriminated union, and pattern
+matching:
+
+```ts
+for (const animal of await animals.toArray()) {
+  if (Dog.isInstance(animal)) {
+    animal.barkVolume;          // narrowed to Dog
+  } else if (Cat.isInstance(animal)) {
+    animal.indoor;              // narrowed to Cat
+  }
+
+  // …or a sealed switch on the concrete-subtype discriminant:
+  switch (animal.variant) {
+    case "Dog": /* animal: Dog */ break;
+    case "Cat": /* animal: Cat */ break;
+    case "WildBoar": /* animal: WildBoar */ break;
+  }
+}
+```
+
+The `narrow` combinator, the `includes` narrowed hop, and the discriminant all
+serialize to (or materialize from) the same core artifacts the corpus pins — the
+`narrow` operation node, the narrowed-view graph key `pets[Cat,Dog]`, and the
+`familyVariant` observation — so a future build proves this surface against the
+existing `m-inheritance-*` cases with no TypeScript-specific conformance channel.
+
 ## 3. Metadata / model input format (DQ5, DQ6)
 
 **ANSWERED — see [TS-0008](../docs/adr/0008-metamodel-introspection-api-has-generic-and-typed-layers.md),
@@ -444,7 +543,7 @@ types**, so every property in a descriptor is reachable from §3 alone:
 | `index` | `IndexMeta` | `name`, `attributes` (ordered attribute names), `unique` |
 | `asOfAttribute` | `AsOfAttributeMeta` | `name`, `fromColumn`, `toColumn`, `axis` (`processing`/`business`), `toIsInclusive`, `infinity` (`"infinity"`), `default` (`"now"`) |
 | `valueObject` | `ValueObjectMeta` | `name`, `type` (logical struct name), `column` (single structured-document column), `mapping` (`"json"`), `nullable` |
-| `inheritance` | `InheritanceMeta` | `strategy` (`table-per-hierarchy`/`table-per-leaf`), `role` (`root`/`subtype`), `parent?`, `discriminator?` (`{ column }`), `discriminatorValue?` |
+| `inheritance` | `InheritanceMeta` | `strategy` (`table-per-hierarchy`/`table-per-concrete-subtype`; declared on the `root` only), `role` (`root`/`abstract-subtype`/`concrete-subtype`), `parent?` (non-root), `tag?` (`{ column }`; `table-per-hierarchy` root only), `tagValue?` (`table-per-hierarchy` concrete subtype only) |
 | `pkGenerator` | `PkGeneratorMeta` | `strategy` (`none`/`max`/`sequence`); for `sequence`: `sequenceName?`, `batchSize?`, `initialValue?`, `incrementSize?` (the bare-enum form normalizes to `{ strategy }`) |
 
 Defaulting follows the schema: readers surface the schema defaults
