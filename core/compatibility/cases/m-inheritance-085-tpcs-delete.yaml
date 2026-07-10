@@ -1,0 +1,32 @@
+# Table-per-concrete-subtype DELETE: a concrete-subtype delete targets its OWN table by
+# primary key, with no tag (m-inheritance, m-sql).
+#
+# In a table-per-concrete-subtype family the concrete subtype is selected by WHICH table
+# the DML targets, so deleting Invoice 1 is an ordinary keyed DELETE from the concrete
+# `invoice` table — no shared table and no tag guard (contrast the table-per-hierarchy
+# delete m-inheritance-009, whose `delete from payment` carries `and kind = ?`). Only
+# Invoice 1 is removed from the invoice table; Invoice 2 remains, and the sibling
+# concrete tables (receipt, memo) are untouched, proving the delete is scoped to the
+# subtype's own table.
+model: models/document.yaml
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, delete, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: delete
+      entity: Invoice
+      statements: 1
+      note: delete Invoice 1 from its own concrete table by pk; no tag, no shared table
+      rows:
+        - { id: 1 }
+then:
+  statements:
+    - sql:
+        postgres: delete from invoice where id = ?
+      binds: [1]
+  tableState:
+    invoice:
+      - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: 80.00 }
+  roundTrips: 1

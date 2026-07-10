@@ -412,7 +412,7 @@ def test_table_per_concrete_subtype_write_has_no_tag() -> None:
     column (m-inheritance): ``_tag`` is None and the golden INSERT names the concrete
     subtype's table, not a shared family table."""
     cases = {c.path.stem: c for c in discover_cases(COMPATIBILITY_ROOT)}
-    tpcs_insert = cases["m-inheritance-010-tpl-insert"]
+    tpcs_insert = cases["m-inheritance-010-tpcs-insert"]
     assert _tag(tpcs_insert.model.entity("Invoice")) is None
     (insert,) = tpcs_insert.golden_statements("postgres")
     assert insert.startswith("insert into invoice(")

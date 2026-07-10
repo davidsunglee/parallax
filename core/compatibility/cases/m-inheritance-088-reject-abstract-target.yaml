@@ -1,0 +1,16 @@
+# Rejected write — a create handle aimed at an ABSTRACT target (m-inheritance, Phase 7
+# write protocol).
+#
+# Writes are concrete-subtype only: a create / update / delete / terminate handle MUST
+# name a concrete subtype, never an abstract root or abstract subtype. This payload is a
+# perfectly well-formed CardPayment-shaped write (a keyed row whose fields all fit a
+# concrete subtype's chain, with no metadata) but it is aimed at the abstract root
+# `Payment`, so a model-aware validator MUST refuse it BEFORE any SQL with
+# `abstract-write-target`. No golden SQL: the rejection is pre-SQL, dialect-agnostic.
+model: models/payment.yaml
+tags: [m-inheritance, table-per-hierarchy, write, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write: { id: 10, amount: 200.00, cardNetwork: Visa }
+then:
+  rejectedRule: abstract-write-target

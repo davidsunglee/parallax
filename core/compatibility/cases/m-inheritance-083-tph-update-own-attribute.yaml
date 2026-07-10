@@ -1,0 +1,33 @@
+# Table-per-hierarchy UPDATE of a SUBTYPE-OWN attribute: still tag-guarded
+# (m-inheritance, m-sql).
+#
+# `cardNetwork` is CardPayment's OWN subtype-declared column, so updating CardPayment
+# 1's card_network corrects a leaf-declared field — the own-attribute counterpart of the
+# root-attribute update (m-inheritance-008) and the abstract-ancestor update
+# (m-inheritance-082). The UPDATE is keyed by the pk with the tag GUARD immediately
+# after it: `where id = ? and kind = ?`, binds `[Discover, 1, card]`. Only row 1's
+# card_network changes; the other card row and the cash row are untouched.
+model: models/payment.yaml
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, update, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: CardPayment
+      statements: 1
+      note: correct CardPayment 1's own card_network; keyed by pk and tag-guarded on kind='card'
+      rows:
+        - { id: 1, cardNetwork: Discover }
+then:
+  statements:
+    - sql:
+        postgres: update payment set card_network = ? where id = ? and kind = ?
+      binds: [Discover, 1, card]
+  tableState:
+    payment:
+      - { id: 1, kind: card, amount: 100.00, card_network: Discover, tendered: null }
+      - { id: 2, kind: card, amount: 50.00, card_network: Amex, tendered: null }
+      - { id: 3, kind: cash, amount: 20.00, card_network: null, tendered: 25.00 }
+  roundTrips: 1

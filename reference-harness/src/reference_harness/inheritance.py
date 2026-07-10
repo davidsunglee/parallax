@@ -100,6 +100,28 @@ OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
     }
 )
 
+# Write-scope rules (m-inheritance x concrete-subtype writes, Phase 7): a
+# SCHEMA-VALID neutral write input (1) a model-aware validator MUST refuse pre-SQL
+# because it violates the concrete-subtype write protocol — it is keyless
+# (set-based), carries framework-owned metadata, references a sibling / unrelated
+# branch's attribute, or aims at an abstract handle. These mirror the value-object
+# WRITE rules (`write-required-attribute-missing`, ...) wired through
+# ``value_object_resolve.REJECTED_RULES``, and join the runner's closed rejection
+# vocabulary via :data:`WRITE_REJECTED_RULES`.
+SUBTYPE_WRITE_SIBLING_ATTRIBUTE = "subtype-write-sibling-attribute"
+SUBTYPE_WRITE_METADATA_FIELD = "subtype-write-metadata-field"
+ABSTRACT_WRITE_TARGET = "abstract-write-target"
+SUBTYPE_WRITE_SET_BASED_UNSUPPORTED = "subtype-write-set-based-unsupported"
+
+WRITE_REJECTED_RULES: frozenset[str] = frozenset(
+    {
+        SUBTYPE_WRITE_SIBLING_ATTRIBUTE,
+        SUBTYPE_WRITE_METADATA_FIELD,
+        ABSTRACT_WRITE_TARGET,
+        SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
+    }
+)
+
 # Attribute-bearing single-entity predicate tags (they all carry an `attr` ref) —
 # the sites a concrete-subtype-attribute reference surfaces in a narrow walk.
 _ATTR_BEARING_TAGS = frozenset(

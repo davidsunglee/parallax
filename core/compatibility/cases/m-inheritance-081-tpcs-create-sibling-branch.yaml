@@ -1,0 +1,31 @@
+# Table-per-concrete-subtype CREATE of a SIBLING branch: the insert targets the
+# subtype's own table, carrying only its ancestry chain (m-inheritance, m-sql).
+#
+# Memo is a concrete sibling directly under the abstract root Document (NOT under
+# FinancialDocument), so its ancestry chain omits the FinancialDocument `currency`:
+# the accepted fields are root(Document.id/title/folder_id) -> own(Memo.body). Inserting
+# a Memo is an ordinary single-table INSERT into the concrete `memo` table — no shared
+# table, no tag, and no currency column (contrast the Invoice create m-inheritance-010,
+# whose chain runs through FinancialDocument and supplies currency). The nullable
+# inherited root FK folder_id is omitted, so it reads back null. Starts from an EMPTY
+# schema and asserts the single inserted memo row.
+model: models/document.yaml
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Memo
+      statements: 1
+      note: insert a Memo into its own concrete table; sibling branch, no currency, no tag
+      rows:
+        - { id: 5, title: Memo-C, body: Note }
+then:
+  statements:
+    - sql:
+        postgres: insert into memo(id, title, body) values (?, ?, ?)
+      binds: [5, Memo-C, Note]
+  tableState:
+    memo:
+      - { id: 5, title: Memo-C, folder_id: null, body: Note }
+  roundTrips: 1

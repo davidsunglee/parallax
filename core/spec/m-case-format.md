@@ -571,11 +571,14 @@ materialization/navigation and write-validation contracts. **Operation** rules:
   `narrow`ed to that subtype, so the attribute is not available to every concrete
   in the effective set (`m-op-algebra` × `m-inheritance`).
 - `narrow-outside-relationship-target` — a `narrow` in a navigation filter's `op`,
-  or a deep-fetch path segment's `narrow`, resolves to a concrete-subtype set that
-  is **not a subset** of the **relationship target's** effective concrete set —
-  narrowing a polymorphic relationship to a concrete outside its reachable set, even
-  a **sibling** sharing the family root (`m-navigate` / `m-deep-fetch` ×
-  `m-inheritance`, resolved Q10).
+  or a deep-fetch path segment's `narrow`, that **either** names an `entity` which is
+  not the **relationship target** exactly (a relationship-scope narrow MUST set
+  `entity` to the target and reach subtypes via `to`, never by naming a broader or
+  other position), **or** resolves its `to` set to a concrete-subtype set that is
+  **not a subset** of the relationship target's effective concrete set — narrowing a
+  polymorphic relationship to a concrete outside its reachable set, even a **sibling**
+  sharing the family root (`m-navigate` / `m-deep-fetch` × `m-inheritance`,
+  resolved Q10).
 
 **Write** rules (`m-value-object` write validation — a value object is written
 atomically as one whole document):
@@ -587,6 +590,25 @@ atomically as one whole document):
   emptiness is not a nullability violation).
 - `write-value-type-mismatch` — a document field value's type differs from the
   attribute's declared neutral type.
+
+**Subtype-write** rules (`m-inheritance` concrete-subtype write protocol — a
+schema-valid neutral write input a model-aware validator MUST refuse pre-SQL,
+checked payload-shape-first then target-validity):
+
+- `subtype-write-set-based-unsupported` — a **keyless** / predicate-driven write to
+  an inheritance family (a payload carrying no primary-key attribute): a per-object
+  concrete-subtype write is keyed (the tag guard rides with the identity predicates,
+  `m-sql`), so a keyless write is an unsupported **set-based** inheritance write.
+- `subtype-write-metadata-field` — a payload carries **framework-owned metadata**:
+  the tag column, `tag`, `tagValue`, or `familyVariant`. A concrete-subtype write
+  derives the tag from the subtype's `tagValue` and never accepts it (or the
+  read-time `familyVariant`) as input.
+- `subtype-write-sibling-attribute` — a payload carries an attribute declared on a
+  **sibling** / unrelated concrete branch, so no single concrete subtype in the
+  target's effective set accepts every field. The accepted fields are exactly the
+  target's ancestry chain (root + abstract ancestors + own).
+- `abstract-write-target` — a create / update / delete / terminate handle aimed at
+  an **abstract** root or abstract subtype. Writes are concrete-subtype only.
 
 **Model** rules (`m-inheritance` closed-tree family invariants — the cross-entity
 invariants per-entity schema validation cannot express, carried inline under

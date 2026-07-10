@@ -2,13 +2,14 @@
 # (m-inheritance, m-sql).
 #
 # The whole Payment family shares one `payment` table discriminated by the root's
-# `tag` column (`kind`). Inserting a CardPayment writes its subtype-declared columns
-# AND the tag `kind` — set to the subtype's declared `tagValue` ('card'), NOT authored
-# in the neutral write input (①). The framework derives the tag column the same way it
-# derives a version bump or a milestone bound: the ① row carries only the domain
-# attributes (id, amount, cardNetwork), and `kind` is slotted at its columnOrder
-# position with the tagValue as its bind. `tendered` (the cash subtype's column) is
-# left null.
+# `tag` column (`kind`). Inserting a CardPayment writes its full ancestry-chain
+# columns — the inherited root attributes (id, amount) plus its own (card_network) —
+# AND the tag `kind`, set to the subtype's declared `tagValue` ('card'), NOT authored
+# in the neutral write input (①). The accepted payload fields are exactly the target's
+# ancestry chain; the framework derives the tag column the same way it derives a
+# version bump or a milestone bound: the ① row carries only the domain attributes (id,
+# amount, cardNetwork), and `kind` is slotted at its columnOrder position with the
+# tagValue as its bind. `tendered` (the cash subtype's column) is left null.
 #
 # Starts from an EMPTY table (self-contained), then asserts the single inserted row
 # carries kind='card'. This is the write mirror of the read cases m-inheritance-001/

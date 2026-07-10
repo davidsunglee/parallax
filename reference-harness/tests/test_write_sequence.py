@@ -217,12 +217,92 @@ def test_tph_insert_rejects_tag_authored_in_row() -> None:
 
 def test_tpcs_insert_targets_concrete_table_without_tag() -> None:
     # m-inheritance-010: a table-per-concrete-subtype INSERT targets the subtype's own
-    # table with no tag column and no shared table.
+    # table with no tag column and no shared table. Phase 7 makes currency REQUIRED on
+    # the FinancialDocument branch, so the Invoice insert SUPPLIES it (the full ancestry
+    # chain), and the routing oracle confirms the write hits `invoice`, not a shared table.
     case = _write_case_by_id("m-inheritance-010")
     (insert,) = case.golden_statements("postgres")
-    assert insert == "insert into invoice(id, title, amount_due) values (?, ?, ?)"
+    assert insert == "insert into invoice(id, title, currency, amount_due) values (?, ?, ?, ?)"
     assert "kind" not in insert and "payment" not in insert
     _assert_write_input_columns(case, "postgres")
+
+
+# --- concrete-subtype existing-row tag guard + table routing (m-inheritance, Phase 7) ---
+#
+# A TABLE-PER-HIERARCHY existing-row write (update / delete) carries the tag GUARD among
+# the identity predicates, right after the primary-key equality, with the opt-lock gate
+# (when present) still binding LAST (resolved Q9). A TABLE-PER-CONCRETE-SUBTYPE write
+# targets the subtype's OWN table (no shared table, no tag).
+
+
+def test_tph_update_carries_tag_guard_after_pk() -> None:
+    # m-inheritance-008: the update is keyed `where id = ? and kind = ?`; the tag guard
+    # binds the subtype's tagValue right after the pk, and the SET never touches `kind`.
+    case = _write_case_by_id("m-inheritance-008")
+    (update,) = case.golden_statements("postgres")
+    assert update == "update payment set amount = ? where id = ? and kind = ?"
+    assert case.statement_binds(0) == [130.00, 1, "card"]
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_tph_delete_carries_tag_guard_after_pk() -> None:
+    # m-inheritance-009: the delete is keyed `where id = ? and kind = ?`, binds [2, card].
+    case = _write_case_by_id("m-inheritance-009")
+    (delete,) = case.golden_statements("postgres")
+    assert delete == "delete from payment where id = ? and kind = ?"
+    assert case.statement_binds(0) == [2, "card"]
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_tph_optlock_composition_binds_gate_last_after_tag_guard() -> None:
+    # m-inheritance-084: the resolved Q9 bind order visible end to end —
+    # [set values…, pk, tagValue, observed-version]: the tag guard joins the identity
+    # predicates right after the pk, the opt-lock version gate binds LAST.
+    case = _write_case_by_id("m-inheritance-084")
+    (update,) = case.golden_statements("postgres")
+    assert update == (
+        "update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?"
+    )
+    assert case.statement_binds(0) == ["Coupe", 6, 1, "car", 5]
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_tph_update_missing_tag_guard_is_rejected() -> None:
+    # Dropping the `and kind = ?` guard from a table-per-hierarchy existing-row update
+    # MUST fail the cross-check: the concrete subtype's rows are indistinguishable in the
+    # shared table without it.
+    case = _write_case_by_id("m-inheritance-008")
+    case.then["statements"][0]["sql"]["postgres"] = "update payment set amount = ? where id = ?"
+    case.then["statements"][0]["binds"] = [130.00, 1]
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_tph_update_wrong_tag_bind_is_rejected() -> None:
+    # The tag guard binds the concrete subtype's tagValue, pinned to the model. Binding
+    # the wrong subtype's value ('cash' for a CardPayment) MUST fail.
+    case = _write_case_by_id("m-inheritance-008")
+    case.then["statements"][0]["binds"][2] = "cash"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_tpcs_delete_targets_concrete_table() -> None:
+    # m-inheritance-085: the delete hits the concrete subtype's own table, no tag guard.
+    case = _write_case_by_id("m-inheritance-085")
+    (delete,) = case.golden_statements("postgres")
+    assert delete == "delete from invoice where id = ?"
+    assert "kind" not in delete
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_tpcs_write_routed_to_wrong_table_is_rejected() -> None:
+    # A table-per-concrete-subtype write MUST target the subtype's own table. Routing an
+    # Invoice delete to a different table MUST fail the routing oracle.
+    case = _write_case_by_id("m-inheritance-085")
+    case.then["statements"][0]["sql"]["postgres"] = "delete from receipt where id = ?"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
 
 
 # --- cascade delete ordering (m-cascade-delete) ------------------------------

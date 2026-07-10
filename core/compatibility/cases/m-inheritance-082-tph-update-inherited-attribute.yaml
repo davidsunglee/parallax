@@ -1,0 +1,35 @@
+# Table-per-hierarchy UPDATE of an ABSTRACT-ANCESTOR attribute: still tag-guarded
+# (m-inheritance, m-sql).
+#
+# `licenseId` is declared on the abstract subtype Pet, inherited by Dog, so updating
+# Dog 1 (Rex)'s license_id corrects an ancestor-declared column — proving an inherited
+# attribute of an INTERMEDIATE abstract node is a first-class writable field on the
+# concrete subtype. The UPDATE is keyed by the pk with the tag GUARD joining the
+# identity predicates right after it: `where id = ? and kind = ?`, binds `[L-999, 1,
+# dog]` (the tag value 'dog' is framework-derived). Only Rex's license_id changes; the
+# other Dog, the Cat, and the WildBoar are untouched.
+model: models/animal.yaml
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, update, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: update
+      entity: Dog
+      statements: 1
+      note: correct Dog 1's inherited Pet.licenseId; keyed by pk and tag-guarded on kind='dog'
+      rows:
+        - { id: 1, licenseId: L-999 }
+then:
+  statements:
+    - sql:
+        postgres: update animal set license_id = ? where id = ? and kind = ?
+      binds: [L-999, 1, dog]
+  tableState:
+    animal:
+      - { id: 1, kind: dog, name: Rex, owner_id: 10, license_id: L-999, bark_volume: 7, indoor: null, tusk_length: null }
+      - { id: 2, kind: dog, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, indoor: null, tusk_length: null }
+      - { id: 3, kind: cat, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null }
+      - { id: 4, kind: boar, name: Tusker, owner_id: 12, license_id: null, bark_volume: null, indoor: null, tusk_length: 12.50 }
+  roundTrips: 1

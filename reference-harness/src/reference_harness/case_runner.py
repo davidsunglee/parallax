@@ -47,6 +47,7 @@ from .inheritance import (
     OPERATION_REJECTED_RULES,
     STRATEGY_TPCS,
     STRATEGY_TPH,
+    WRITE_REJECTED_RULES,
     Family,
     concrete_superset_columns,
     inheritance_of,
@@ -63,14 +64,17 @@ from .op_validate import validate_operation
 from .providers import DatabaseProvider
 from .sql_normalize import is_union_all, normalize, sqlglot_dialect
 from .value_object_resolve import REJECTED_RULES, RejectionError
-from .write_validate import validate_write
+from .write_validate import validate_subtype_write, validate_write
 
 # The full pre-SQL rejection vocabulary: value-object / operation rules
-# (m-value-object / m-op-algebra) plus the inheritance family-invariant rules and
-# the narrow / subtype-scope operation rules (m-inheritance x m-op-algebra). The
-# compatibility-case schema's `rejectedRule` enum is the source of truth; these
-# sets MUST stay in lockstep with it.
-ALL_REJECTED_RULES = REJECTED_RULES | MODEL_REJECTED_RULES | OPERATION_REJECTED_RULES
+# (m-value-object / m-op-algebra) plus the inheritance family-invariant rules, the
+# narrow / subtype-scope operation rules, and the concrete-subtype WRITE rules
+# (m-inheritance x m-op-algebra / concrete-subtype writes). The compatibility-case
+# schema's `rejectedRule` enum is the source of truth; these sets MUST stay in
+# lockstep with it.
+ALL_REJECTED_RULES = (
+    REJECTED_RULES | MODEL_REJECTED_RULES | OPERATION_REJECTED_RULES | WRITE_REJECTED_RULES
+)
 
 
 class CaseFailure(AssertionError):
@@ -1825,6 +1829,10 @@ def _assert_rejected(case: Case) -> None:
             validate_operation_inheritance(case.model.entity_defs, case.when["operation"])
         elif "write" in case.when:
             validate_write(entity, case.write or {})
+            # Concrete-subtype write validation (m-inheritance x concrete-subtype
+            # writes, Phase 7): a no-op on a non-inheritance model, so it runs after
+            # the value-object write validation without disturbing the existing cases.
+            validate_subtype_write(entity, case.model.entity_defs, case.write or {})
         elif "model" in case.when:
             # A model rejected case carries an INLINE invalid inheritance descriptor
             # (m-inheritance resolved Q3): the cross-entity family invariants a
@@ -1876,6 +1884,10 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
 
 _INSERT_COLUMNS_RE = re.compile(r"insert\s+into\s+\S+\s*\(([^)]*)\)", re.IGNORECASE)
 _SET_CLAUSE_RE = re.compile(r"\bset\s+(.+?)\s+where\b", re.IGNORECASE)
+# The target table of a DML statement (m-inheritance table-per-concrete-subtype
+# routing): the identifier after `insert into` / `delete from` / `update`, stopping
+# at the following whitespace or `(` (the tight `insert into t(` column list).
+_DML_TARGET_RE = re.compile(r"^(?:insert\s+into|delete\s+from|update)\s+([^\s(]+)", re.IGNORECASE)
 
 # The full-bitemporal `*Until` rectangle-split mutations (DQ11): a business-bounded
 # write whose ① carries the valid-time window (`at`/`until`/`businessFrom`).
@@ -2053,6 +2065,95 @@ def _tag(entity: Entity) -> tuple[str, Any] | None:
     return tag_of(entity.definition)
 
 
+def _primary_key_columns(entity: Entity) -> list[str]:
+    """The physical primary-key column(s) of *entity* (its flattened definition)."""
+    return [a["column"] for a in entity.attributes if a.get("primaryKey")]
+
+
+def _assert_inheritance_write_routing(
+    case: Case,
+    entity: Entity,
+    mutation: str,
+    step_statements: list[str],
+    step_binds: list[list[Any]],
+) -> None:
+    """Assert an inheritance write's golden DML routes/guards correctly (Phase 7).
+
+    A no-op on a non-inheritance entity. For a TABLE-PER-HIERARCHY concrete subtype an
+    EXISTING-ROW write (``update`` / ``delete``) MUST carry the tag GUARD among the
+    identity predicates — canonically right after the primary key (m-inheritance,
+    m-sql; an insert derives the tag COLUMN instead, cross-checked by
+    :func:`_assert_insert_statement`). For a TABLE-PER-CONCRETE-SUBTYPE concrete
+    subtype every write MUST target the subtype's OWN table (no shared table, no tag).
+    """
+    tag = _tag(entity)
+    if tag is not None:  # table-per-hierarchy concrete subtype
+        if mutation in ("update", "delete"):
+            for statement, binds in zip(step_statements, step_binds, strict=True):
+                _assert_existing_row_tag_guard(case, entity, statement, binds)
+        return
+    if entity.role == "concrete-subtype":  # table-per-concrete-subtype (tag is None)
+        for statement in step_statements:
+            _assert_concrete_table_routing(case, entity, statement)
+
+
+def _assert_existing_row_tag_guard(
+    case: Case, entity: Entity, statement: str, binds: list[Any]
+) -> None:
+    """A table-per-hierarchy existing-row write carries the tag guard after the PK.
+
+    The tag guard is the fragment ``<pk> = ? and <tag.column> = ?`` (the tag equality
+    joins the identity predicates immediately after the primary-key equality,
+    m-inheritance / m-sql; resolved Q9), and its ``?`` binds the concrete subtype's
+    ``tagValue`` — framework-derived, so it is pinned to the model, never authored.
+    The optimistic version gate, when present, still binds LAST (after the tag).
+    """
+    tag_column, tag_value = _tag(entity)  # type: ignore[misc]
+    pk_columns = _primary_key_columns(entity)
+    if len(pk_columns) != 1:  # the inheritance families key on a single-column pk (`id`)
+        return
+    guard = f"{pk_columns[0]} = ? and {tag_column} = ?"
+    if guard not in statement:
+        raise CaseFailure(
+            f"{case.path.name}: a table-per-hierarchy existing-row write of "
+            f"{entity.name} MUST carry the tag guard immediately after the primary-key "
+            f"equality (`{guard}`), not found in golden {statement!r}."
+        )
+    # The tag guard's `?` is the (n+1)-th placeholder, where n is the count of `?`
+    # textually preceding it — so its bind index is mode-independent (it lands after
+    # the SET placeholders and the pk, before any opt-lock gate).
+    prefix = statement[: statement.index(guard) + len(f"{pk_columns[0]} = ? and {tag_column} = ")]
+    tag_bind_index = prefix.count("?")
+    if tag_bind_index >= len(binds) or not _write_value_equal(tag_value, binds[tag_bind_index]):
+        actual = binds[tag_bind_index] if tag_bind_index < len(binds) else "<missing>"
+        raise CaseFailure(
+            f"{case.path.name}: the tag guard binds {actual!r} at position "
+            f"{tag_bind_index}, but concrete subtype {entity.name}'s tagValue is "
+            f"{tag_value!r} (the tag is framework-derived, never authored)."
+        )
+
+
+def _assert_concrete_table_routing(case: Case, entity: Entity, statement: str) -> None:
+    """A table-per-concrete-subtype write targets the subtype's OWN table.
+
+    There is no shared table and no tag column (m-inheritance), so the concrete
+    subtype is selected by WHICH table the DML targets: an insert / delete of that
+    subtype MUST name its own table.
+    """
+    match = _DML_TARGET_RE.match(statement)
+    if match is None:
+        raise CaseFailure(
+            f"{case.path.name}: could not parse the DML target table from golden {statement!r}."
+        )
+    target = match.group(1)
+    if target != entity.table:
+        raise CaseFailure(
+            f"{case.path.name}: a table-per-concrete-subtype write of {entity.name} MUST "
+            f"target its own table {entity.table!r} (no shared table), but the golden "
+            f"targets {target!r}: {statement!r}."
+        )
+
+
 def _bytes_to_hex(value: Any) -> Any:
     """Render a ``bytes`` / ``memoryview`` value as lowercase hex text, else unchanged.
 
@@ -2183,6 +2284,12 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             )
         else:
             _assert_update_input(case, entity, classified, step_statements, step_binds)
+        # Inheritance write routing (m-inheritance, Phase 7): a TABLE-PER-HIERARCHY
+        # existing-row write carries the tag guard after the pk; a
+        # TABLE-PER-CONCRETE-SUBTYPE write targets the subtype's own table. A no-op on
+        # a non-inheritance entity and on a table-per-hierarchy insert (whose tag COLUMN
+        # is cross-checked by _assert_insert_statement).
+        _assert_inheritance_write_routing(case, entity, mutation, step_statements, step_binds)
         stmt_index += count
 
 
@@ -2318,8 +2425,15 @@ def _assert_versioned_update_input(
             )
         set_values = [set_cols[column] for column in set_present]
         expected = [*set_values, observed + 1, pk]
+        # A TABLE-PER-HIERARCHY concrete subtype's existing-row UPDATE carries the tag
+        # GUARD among the identity predicates — canonically right after the primary key
+        # (m-inheritance, m-sql; resolved Q9). The optimistic gate still binds LAST, so
+        # the tag value slots between the pk and the observed-version gate.
+        tag = _tag(entity)
+        if tag is not None:
+            expected.append(tag[1])
         if mode == "optimistic":
-            expected.append(observed)  # the optimistic gate bind
+            expected.append(observed)  # the optimistic gate bind — always LAST
         _assert_write_values(case, expected, binds, statement)
 
 

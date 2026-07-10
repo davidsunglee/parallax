@@ -560,9 +560,21 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # entity-mismatch trigger of `narrow-outside-relationship-target` (the same rule
         # as -064's to-outside-target trigger). Both counts rise by one more (245 / 265)
         # and slice-mvp-1 is unchanged.
+        #
+        # COR-9 Phase 7 adds 10 net-new concrete-subtype WRITE cases tagged
+        # slice-snapshot-1 + slice-managed-1 (never slice-mvp-1): two deep-chain creates
+        # (m-inheritance-080 table-per-hierarchy Dog, -081 table-per-concrete-subtype
+        # Memo), two tag-guarded updates of inherited attributes (-082 abstract-ancestor,
+        # -083 subtype-own), the opt-lock composition witness (-084, the resolved-Q9 bind
+        # order end to end on the versioned Vehicle family), the table-per-concrete-subtype
+        # delete (-085), and the four rejected-write negatives (-086 sibling attribute,
+        # -087 metadata payload, -088 abstract target, -089 set-based). The 007..010
+        # rewrites (table-per-hierarchy update/delete gain tag guards; 010 renamed to the
+        # tpcs slug) keep their existing slice tags, so both counts rise by 10 and
+        # slice-mvp-1 is unchanged.
         ("slice-mvp-1", 198),
-        ("slice-snapshot-1", 245),
-        ("slice-managed-1", 265),
+        ("slice-snapshot-1", 255),
+        ("slice-managed-1", 275),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

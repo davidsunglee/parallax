@@ -1,0 +1,17 @@
+# Rejected write — a keyless SET-BASED inheritance write (m-inheritance, Phase 7 write
+# protocol).
+#
+# A per-object concrete-subtype write is KEYED: the tag guard rides with the primary-key
+# identity predicates (resolved Q9), so the write needs the pk to route to exactly one
+# row. This payload to the Payment family carries no primary-key attribute (no `id`),
+# denoting a predicate-driven set-based write over a result collection — out of scope for
+# this slice. A model-aware validator MUST refuse it BEFORE any SQL with
+# `subtype-write-set-based-unsupported`. No golden SQL: the rejection is pre-SQL,
+# dialect-agnostic.
+model: models/payment.yaml
+tags: [m-inheritance, table-per-hierarchy, write, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write: { amount: 200.00, cardNetwork: Visa }
+then:
+  rejectedRule: subtype-write-set-based-unsupported
