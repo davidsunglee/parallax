@@ -74,6 +74,7 @@ m-pk-gen --> m-descriptor
 m-inheritance --> m-descriptor
 m-value-object --> m-descriptor
 m-op-algebra --> m-descriptor
+m-op-algebra --> m-inheritance
 m-agg --> m-op-algebra
 m-sql --> m-op-algebra
 m-sql --> m-dialect
@@ -131,6 +132,13 @@ construction it may reference any behavioral module it harnesses.
 
 ### Notable directions (and why they may surprise)
 
+- **`m-op-algebra --> m-inheritance`.** The `narrow` node constrains a
+  polymorphic entity position to a subset of its subtypes, and its validity rule
+  (the resolved `to` list must be a non-empty subset of the position's **effective
+  concrete-subtype set**) is stated in `m-inheritance`'s vocabulary. The algebra
+  therefore references the inheritance family model, not the reverse — `m-sql`'s
+  tag/branch lowering of a narrow reaches `m-inheritance` transitively through this
+  edge and needs no separate `m-sql --> m-inheritance` declaration.
 - **`m-navigate --> m-op-list`.** A list is an operation-backed collection;
   navigation *yields* lists and deep fetch *populates* them, so navigation
   depends on lists, not the reverse.

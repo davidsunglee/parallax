@@ -1,0 +1,32 @@
+# Table-per-hierarchy narrow to an ABSTRACT subtype (m-inheritance, m-op-algebra, m-sql).
+#
+# targetEntity is the abstract root Animal, narrowed to the abstract subtype [Pet],
+# which resolves to its concrete descendants {Dog, Cat} (the sibling WildBoar is
+# excluded). The narrow lowers to `t0.kind in (?, ?)` (binds [dog, cat], descriptor
+# order) — a narrow ALWAYS injects the tag predicate for its concretes, unlike a bare
+# abstract-root read. The projection is the {Dog, Cat} superset (no tusk_length);
+# familyVariant is materialized from the tag map.
+#
+# Non-trivial (tag) case => referenceSql is the independent oracle.
+model: models/animal.yaml
+tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Animal
+  operation:
+    narrow:
+      entity: Animal
+      to: [Pet]
+      operand:
+        all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.license_id, t0.bark_volume, t0.indoor, t0.kind from animal t0 where t0.kind in (?, ?)
+      binds: [dog, cat]
+  referenceSql: select id, name, license_id, bark_volume, indoor, kind from animal where kind in ('dog', 'cat')
+  rows:
+    - { id: 1, name: Rex, license_id: L-100, bark_volume: 7, indoor: null, familyVariant: Dog }
+    - { id: 2, name: Fido, license_id: L-101, bark_volume: 3, indoor: null, familyVariant: Dog }
+    - { id: 3, name: Whiskers, license_id: L-200, bark_volume: null, indoor: true, familyVariant: Cat }
+  roundTrips: 1

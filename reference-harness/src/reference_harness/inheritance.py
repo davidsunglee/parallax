@@ -81,6 +81,44 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     }
 )
 
+# Operation-level rules (m-op-algebra x m-inheritance): a SCHEMA-VALID operation a
+# model-aware validator MUST refuse pre-SQL because it narrows or references
+# subtypes incompatibly with the polymorphic position it queries (Phase 4).
+NARROW_OUTSIDE_POSITION = "narrow-outside-position"
+NARROW_EMPTY_EFFECTIVE_SET = "narrow-empty-effective-set"
+SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE = "subtype-attribute-outside-narrow-scope"
+
+OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
+    {
+        NARROW_OUTSIDE_POSITION,
+        NARROW_EMPTY_EFFECTIVE_SET,
+        SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
+    }
+)
+
+# Attribute-bearing single-entity predicate tags (they all carry an `attr` ref) —
+# the sites a concrete-subtype-attribute reference surfaces in a narrow walk.
+_ATTR_BEARING_TAGS = frozenset(
+    {
+        "eq",
+        "notEq",
+        "greaterThan",
+        "greaterThanEquals",
+        "lessThan",
+        "lessThanEquals",
+        "between",
+        "isNull",
+        "isNotNull",
+        "like",
+        "notLike",
+        "startsWith",
+        "endsWith",
+        "contains",
+        "in",
+        "notIn",
+    }
+)
+
 
 # --- per-definition accessors ----------------------------------------------
 
@@ -220,6 +258,36 @@ class Family:
         if is_concrete(self.defs[name]):
             return [name]
         return self.concrete_descendants(name)
+
+    def resolve_to_set(self, to_list: list[str]) -> list[str]:
+        """The effective concrete set a ``narrow.to`` list resolves to.
+
+        Each entry resolves to its own effective concrete set (a concrete subtype
+        to itself, an abstract subtype to its concrete descendants); the union is
+        deduplicated preserving DESCRIPTOR order — an entry appearing first keeps
+        its concretes in descriptor order, so ``[Pet]`` and ``[Cat, Dog]`` may
+        differ in authored spelling yet resolve to the same set.
+        """
+        result: list[str] = []
+        for name in to_list:
+            for concrete in self.effective_concrete_set(name):
+                if concrete not in result:
+                    result.append(concrete)
+        return result
+
+    def declaring_entity(self, cls: str, attr_name: str) -> str | None:
+        """The NEAREST entity in *cls*'s ancestry that literally declares *attr_name*.
+
+        An attribute referenced as ``Class.attr`` may be inherited; this returns the
+        entity where it is actually declared (``Payment`` for an inherited
+        ``CardPayment.amount``, ``Dog`` for a subtype-declared ``Dog.barkVolume``),
+        walking from *cls* up toward the root. ``None`` when no ancestor declares it.
+        """
+        for name in reversed(self.ancestry(cls)):
+            for attribute in self.defs.get(name, {}).get("attributes", []) or []:
+                if attribute.get("name") == attr_name:
+                    return name
+        return None
 
 
 def _entity_defs(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
@@ -482,3 +550,170 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"table-per-hierarchy concrete subtypes map to different tables "
                 f"{sorted(t for t in tables if t is not None)}; they share one table",
             )
+
+
+# --- operation-level narrow / subtype-scope validation (raises RejectionError) --
+
+
+def _has_inheritance(entity_defs: list[dict[str, Any]]) -> bool:
+    return any(inheritance_of(d) is not None for d in entity_defs if isinstance(d, dict))
+
+
+def _root_name(entity_defs: list[dict[str, Any]]) -> str | None:
+    for definition in entity_defs:
+        if isinstance(definition, dict) and role_of(definition) == ROLE_ROOT:
+            return definition["name"]
+    return None
+
+
+def validate_operation_inheritance(
+    entity_defs: list[dict[str, Any]],
+    operation: Any,
+    position: str | None = None,
+) -> None:
+    """Reject an operation that narrows / references subtypes incompatibly (Phase 4).
+
+    The read-side counterpart of the write-derivation oracle: it walks the operation
+    tree of an inheritance family and raises :class:`RejectionError` with the
+    violated ``m-op-algebra`` narrow rule. A no-op for a descriptor with no
+    inheritance family. *position* is the polymorphic position the operation starts
+    from (a read's ``targetEntity``); a rejected operation case carries no
+    ``targetEntity``, so *position* defaults to the family root. Each ``narrow``'s
+    subset check binds to this ACTIVE position (threaded and re-narrowed at every
+    hop) intersected with the narrow's own ``entity``-declared position — NOT to
+    ``effective_concrete_set(narrow.entity)`` alone — so a narrow cannot broaden
+    beyond the position actually in scope even when its ``entity`` names a broader
+    one.
+    """
+    if not _has_inheritance(entity_defs):
+        return
+    family = Family(entity_defs)
+    start = position if position is not None else _root_name(entity_defs)
+    if start is None:
+        return
+    _walk_narrow(family, family.effective_concrete_set(start), operation)
+
+
+def _walk_narrow(family: Family, current_set: list[str], node: Any) -> None:
+    """Walk *node*, tracking the current effective concrete set (narrowed per hop)."""
+    if not isinstance(node, dict) or len(node) != 1:
+        return
+    tag, body = next(iter(node.items()))
+    if tag == "narrow":
+        entity = body.get("entity")
+        to_list = body.get("to", []) or []
+        # The effective polymorphic position this narrow operates on is the
+        # `entity`-declared position CLAMPED to the active position threaded into
+        # this walk (`current_set`): the read's `targetEntity` at top level, or the
+        # enclosing narrow's narrowed set when nested. `entity` names the position
+        # the author intends to narrow, but a narrow can only ever CONSTRAIN the
+        # active position, never broaden it — so an `entity` naming a position
+        # BROADER than the one in scope is clamped (not rejected), while a narrow
+        # whose `entity` names a NARROWER sub-position (e.g. a top-level rejected
+        # case, positioned at the family root, that narrows an intermediate abstract
+        # subtype) is honored. When `entity` equals the active position — the normal
+        # case, where a top-level narrow's `entity` equals the read's targetEntity —
+        # the intersection is a no-op. Binding the subset check to this intersection
+        # (rather than to `effective_concrete_set(entity)` alone) is what stops a
+        # nested narrow, or a top-level narrow whose `entity` is broader than the
+        # threaded position, from broadening back out.
+        entity_set = family.effective_concrete_set(entity) if isinstance(entity, str) else []
+        current = set(current_set)
+        position_set = [c for c in entity_set if c in current]
+        to_set = family.resolve_to_set([t for t in to_list if isinstance(t, str)])
+        if not to_set:
+            raise RejectionError(
+                NARROW_EMPTY_EFFECTIVE_SET,
+                f"narrow to {to_list!r} resolves to the empty concrete-subtype set",
+            )
+        if not set(to_set) <= set(position_set):
+            raise RejectionError(
+                NARROW_OUTSIDE_POSITION,
+                f"narrow of {entity!r} to {to_list!r} resolves to {sorted(to_set)}, "
+                f"which is not a subset of the active position's effective set "
+                f"{sorted(position_set)} (the entity position {sorted(entity_set)} "
+                f"clamped to the threaded position {sorted(current_set)})",
+            )
+        _walk_narrow(family, to_set, body.get("operand"))
+    elif tag in ("and", "or"):
+        for operand in body.get("operands", []) or []:
+            _walk_narrow(family, current_set, operand)
+    elif tag in ("not", "group", "distinct", "limit", "asOf", "asOfRange", "history"):
+        _walk_narrow(family, current_set, body.get("operand"))
+    elif tag == "orderBy":
+        _walk_narrow(family, current_set, body.get("operand"))
+        for key in body.get("keys", []) or []:
+            if isinstance(key, dict):
+                _check_subtype_attr(family, current_set, key.get("attr"))
+    elif tag in _ATTR_BEARING_TAGS:
+        _check_subtype_attr(family, current_set, body.get("attr"))
+    # navigate / exists / notExists / deepFetch / nested* / all / none carry no
+    # queried-position subtype-attribute reference to validate in this phase.
+
+
+def _check_subtype_attr(family: Family, current_set: list[str], attr_ref: Any) -> None:
+    """Reject a concrete-subtype-declared attribute used outside a compatible narrow.
+
+    An attribute is available only to the concrete descendants of the entity that
+    DECLARES it; if the current (possibly narrowed) position's effective set is not
+    a subset of those concretes, the reference is out of scope.
+    """
+    if not isinstance(attr_ref, str) or "." not in attr_ref:
+        return
+    cls, _, attr_name = attr_ref.partition(".")
+    if cls not in family.defs or inheritance_of(family.defs[cls]) is None:
+        return  # a non-inheritance entity has no polymorphic scoping
+    declaring = family.declaring_entity(cls, attr_name)
+    if declaring is None:
+        return  # unknown attribute — other validation owns this
+    possessing = set(family.concrete_descendants(declaring))
+    if not set(current_set) <= possessing:
+        raise RejectionError(
+            SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
+            f"attribute {attr_ref!r} is declared on {declaring!r}; the current "
+            f"position {sorted(current_set)} is not narrowed to its concrete-subtype "
+            f"set {sorted(possessing)}, so the attribute is not available to every "
+            f"concrete in scope",
+        )
+
+
+# --- abstract-read materialization oracle (familyVariant + projection) ---------
+
+
+def tag_value_to_subtype(entity_defs: list[dict[str, Any]]) -> dict[Any, str]:
+    """Map each concrete subtype's ``tagValue`` to its NAME (the ``familyVariant``).
+
+    The table-per-hierarchy materialization map (resolved Q6): a returned row's raw
+    tag value resolves to the concrete subtype name the harness reports as
+    ``familyVariant``. Non-inheritance and table-per-concrete-subtype entities
+    contribute nothing.
+    """
+    mapping: dict[Any, str] = {}
+    for definition in entity_defs:
+        if not isinstance(definition, dict):
+            continue
+        block = inheritance_of(definition)
+        if block and block.get("role") == ROLE_CONCRETE and block.get("tagValue") is not None:
+            mapping[block["tagValue"]] = definition["name"]
+    return mapping
+
+
+def concrete_superset_columns(
+    entity_defs: list[dict[str, Any]], effective_set: list[str]
+) -> list[str]:
+    """The ordered union of flattened columns over *effective_set* (incl. the tag).
+
+    Each concrete subtype's flattened definition carries its full inherited chain
+    plus, for table-per-hierarchy, the synthesized tag column
+    (:func:`resolve_effective_definition`), so this is exactly the superset an
+    abstract-target read MUST project — inherited columns first, then each
+    concrete's declared columns in descriptor order, and the tag column.
+    """
+    columns: list[str] = []
+    for name in effective_set:
+        resolved = resolve_effective_definition(entity_defs, name)
+        for attribute in resolved.get("attributes", []) or []:
+            column = attribute.get("column")
+            if column is not None and column not in columns:
+                columns.append(column)
+    return columns

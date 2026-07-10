@@ -4,7 +4,9 @@
 language — and its **canonical serialization**. The algebra *is* the protocol: the
 compatibility suite's queries are instances of it, and every implementation ships
 a serde module that round-trips them. `m-op-algebra` depends on `m-descriptor`
-(operations are bound to metamodel attributes).
+(operations are bound to metamodel attributes) and on `m-inheritance` (the
+`narrow` node constrains a polymorphic entity position against the family's
+effective concrete-subtype set).
 
 The canonical schema is
 [`core/schemas/operation.schema.json`](../schemas/operation.schema.json).
@@ -371,6 +373,91 @@ statement per distinct relationship hop, regardless of how many parent rows fan
 out. Paths sharing a prefix fetch the shared hop **once**. This is specified in
 full in [`m-deep-fetch.md`](m-deep-fetch.md) and proven by the round-trip-count
 layer of the compatibility harness (`m-case-format`).
+
+## Subtype narrowing
+
+An inheritance family (`m-inheritance`) is a closed tree of one abstract `root`,
+zero or more `abstract-subtype` interior nodes, and the instantiable
+`concrete-subtype` leaves. A read starts at a **polymorphic position** — the
+`targetEntity` (`m-case-format`) — which may be abstract: an abstract root spans
+the whole family, an abstract subtype spans its concrete descendants, a concrete
+subtype is itself. The **effective concrete-subtype set** of a position is the
+concrete leaves it resolves over (`m-inheritance`), in descriptor order.
+
+`narrow` constrains a polymorphic position to a subset of its subtypes. It is a
+node like any other — a single-key tagged object joining the operation `oneOf`:
+
+| Operation | Encoding | Meaning |
+|---|---|---|
+| `narrow` | `{ "narrow": { "entity", "to": [ … ], "operand" } }` | evaluate `operand` over the position `entity` narrowed to the subtypes `to` |
+
+- **`entity`** names the polymorphic position this node narrows — the queried
+  entity at top level (so `entity` equals the read's `targetEntity`).
+- **`to`** is the non-empty, **order-preserved** list of authored subtype names
+  the position is narrowed to. Each entry may name an abstract subtype (which
+  resolves to its concrete descendants) or a concrete subtype (itself).
+- **`operand`** is the inner operation evaluated over the narrowed position, so a
+  **concrete-subtype-declared attribute** — one declared on a proper descendant,
+  not inherited by every concrete in the original position — becomes referenceable
+  inside it.
+
+```yaml
+# targetEntity: Animal (root); narrow to Pet (abstract subtype -> Dog, Cat):
+narrow:
+  entity: Animal
+  to: [Pet]
+  operand: { all: {} }
+```
+
+### The four-step validation rule
+
+A model-aware validator (never the serde) checks a `narrow` node **before any SQL
+is emitted**, threading the **active polymorphic position** as it descends — the
+read's `targetEntity` at top level (defaulting to the family root when a case pins
+no `targetEntity`), and the enclosing `narrow`'s resolved `to` set inside a nested
+narrow:
+
+1. Resolve `entity` to its effective concrete-subtype set and **intersect** it with
+   the active position threaded into this node — the **effective position's set**.
+   `entity` names the position this node narrows, but it can only ever *constrain*
+   the active position, never broaden it: an `entity` naming a position **broader**
+   than the one in scope is **clamped** to the active position (not rejected), and
+   when `entity` equals the active position — the normal case, where a top-level
+   `narrow`'s `entity` equals the read's `targetEntity` — the intersection is a
+   no-op.
+2. Resolve each `to` entry to its effective concrete-subtype set (a concrete
+   subtype -> itself; an abstract subtype -> its concrete descendants).
+3. **Union** the resolved sets, **preserving descriptor order** and deduplicating.
+4. **Accept iff** the resolved set is **non-empty** and a **subset** of the
+   effective position's set. The resolved set then becomes the active position for
+   `operand`, so a nested `narrow` cannot broaden back out.
+
+Consequences:
+
+- **Redundant narrowing is valid.** Narrowing a position to itself (an abstract
+  subtype `to` its own name, or `to` a list whose union equals the position's set)
+  is a no-op that still lowers to the tag/branch selection for those concretes.
+- **Broadening is invalid.** Narrowing the active position to a subtype **outside**
+  it — even one sharing the family root — is rejected (`narrow-outside-position`).
+  The check is against the **active** position, so a **nested** `narrow` cannot
+  broaden back out of the set the enclosing `narrow` established, and naming a
+  broader `entity` on the inner node does not re-widen it (the inner `entity` is
+  clamped to the active position first). A `to` list that resolves to the empty set
+  is rejected (`narrow-empty-effective-set`) (`m-case-format` rejected vocabulary).
+- **A concrete-subtype attribute needs a compatible narrowing scope.** Referencing
+  a concrete-subtype-declared attribute at a position whose effective set is not a
+  subset of that subtype's is rejected
+  (`subtype-attribute-outside-narrow-scope`); wrapping the predicate in a `narrow`
+  to that subtype makes it valid.
+- **The serde preserves the authored `to` list verbatim.** Semantic validation and
+  SQL lowering derive the effective concrete set without rewriting the submitted
+  operation, so two authored spellings that resolve to the same set (`to: [Pet]`
+  vs `to: [Cat, Dog]`) round-trip as **distinct** canonical nodes.
+
+`narrow`'s lowering — tag-equality / `in` selection under `table-per-hierarchy`,
+`union all` over the selected concrete tables under `table-per-concrete-subtype`,
+and grouped branch predicates when a branch carries a concrete-subtype predicate —
+is fixed by `m-sql`.
 
 ## Forward map of the rest of the algebra
 

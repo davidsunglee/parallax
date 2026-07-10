@@ -174,6 +174,12 @@ def _collect_queried_classes(node: Any, acc: set[str]) -> None:
             _collect_queried_classes(operand, acc)
     elif tag in ("not", "group", "distinct", "asOf", "asOfRange", "history", "limit"):
         _collect_queried_classes(body.get("operand"), acc)
+    elif tag == "narrow":
+        # A narrow evaluates its operand over the SAME polymorphic position (its
+        # `entity`, which equals the read's targetEntity at top level), so the
+        # operand's queried-entity references are cross-checked against the target;
+        # the narrow's subset validity is asserted separately (op-algebra narrow rule).
+        _collect_queried_classes(body.get("operand"), acc)
     elif tag == "orderBy":
         _collect_queried_classes(body.get("operand"), acc)
         for key in body.get("keys", []) or []:

@@ -511,9 +511,27 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # (never slice-mvp-1), so those two counts rise by 13 and slice-mvp-1 is
         # unchanged. (The Phase 3 review added -031 tph-missing-tag-value and -032
         # missing-root, closing the tagValue-presence and exactly-one-root holes.)
+        #
+        # COR-9 Phase 4 adds 8 more inheritance cases tagged slice-snapshot-1 +
+        # slice-managed-1 (never slice-mvp-1): the 6 table-per-hierarchy abstract /
+        # narrow read cases (m-inheritance-011..016) and the 2 operation-level
+        # narrow / subtype-scope `rejected` cases (m-inheritance-040/-041). The four
+        # rewritten reads (m-inheritance-001..004) keep their existing slice tags, so
+        # those two counts rise by 8 and slice-mvp-1 is unchanged.
+        #
+        # The Phase 4 review then added one more narrow `rejected` case
+        # (m-inheritance-042: a nested narrow that broadens back out of the position
+        # the enclosing narrow established), tagged slice-snapshot-1 + slice-managed-1,
+        # so those two counts rise by one more (229 / 249) and slice-mvp-1 is unchanged.
+        #
+        # A follow-up Phase 4 review then added one zero-row abstract-root read
+        # (m-inheritance-017: an abstract read whose predicate matches no fixture row,
+        # `then.rows: []`), tagged slice-snapshot-1 + slice-managed-1, exercising the now
+        # row-count-independent abstract-read projection oracle against Postgres; those
+        # two counts rise by one more (230 / 250) and slice-mvp-1 is unchanged.
         ("slice-mvp-1", 198),
-        ("slice-snapshot-1", 220),
-        ("slice-managed-1", 240),
+        ("slice-snapshot-1", 230),
+        ("slice-managed-1", 250),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:
