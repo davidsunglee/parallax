@@ -1,15 +1,15 @@
-# Table-per-hierarchy DELETE: a concrete-subtype delete removes its row from the shared
-# table by primary key (m-inheritance, m-sql).
+# Table-per-hierarchy DELETE: a concrete-subtype delete is tag-GUARDED (m-inheritance,
+# m-sql).
 #
 # Fixtures are loaded first. Deleting CardPayment 2 removes exactly that row from the
-# shared `payment` table — keyed on `id` (unique across the family), so the other card
-# row and the cash row remain, proving the delete is keyed, not a tag-wide sweep.
-#
-# The concrete-subtype tag GUARD (`and kind = ?`) on existing-row deletes lands in
-# Phase 7 with its spec; this Phase-3 case keeps the keyed form green under the
-# migrated model.
+# shared `payment` table — keyed on the primary key `id` with the concrete-subtype tag
+# GUARD `and kind = ?` joining the identity predicates immediately AFTER the pk
+# equality (resolved Q9): `where id = ? and kind = ?`, binds `[2, card]` (the tag value
+# is framework-derived from the subtype's tagValue). The guard scopes the delete to a
+# CardPayment row: the other card row and the cash row remain, proving the delete is
+# keyed and tag-guarded, not a tag-wide sweep.
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, write-sequence, delete, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, delete, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true
@@ -18,14 +18,14 @@ when:
     - mutation: delete
       entity: CardPayment
       statements: 1
-      note: delete CardPayment 2 from the shared table by primary key
+      note: delete CardPayment 2 from the shared table by pk, tag-guarded on kind='card'
       rows:
         - { id: 2 }
 then:
   statements:
     - sql:
-        postgres: delete from payment where id = ?
-      binds: [2]
+        postgres: delete from payment where id = ? and kind = ?
+      binds: [2, card]
   tableState:
     payment:
       - { id: 1, kind: card, amount: 100.00, card_network: Visa, tendered: null }

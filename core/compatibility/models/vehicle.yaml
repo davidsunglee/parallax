@@ -1,0 +1,75 @@
+# Vehicle: a VERSIONED TABLE-PER-HIERARCHY inheritance model (m-inheritance x m-opt-lock).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is a small
+# dedicated family for the ONE Phase-7 witness where optimistic locking composes with a
+# table-per-hierarchy tag guard end to end (m-inheritance-084): the abstract root carries
+# an `optimisticLocking` version column inherited by every concrete subtype, so a
+# concrete-subtype gated UPDATE shows the resolved bind order
+# `[set values…, pk, tagValue, observed-version]` — the tag guard riding with the
+# identity predicates (right after the pk) and the opt-lock version gate still binding
+# LAST (resolved Q9).
+#
+# It is a DEDICATED model rather than the existing `animal` family because adding a
+# version column to `Animal` would force every abstract animal read (m-inheritance-011..
+# 017 / -060..067) to project the version column in its concrete superset, rippling the
+# Phase 4 / 6 goldens — which this slice keeps untouched. The m-sql / m-opt-lock canonical
+# example keeps the `animal` / `kind` illustration (design Q9); this model mirrors that
+# shape (tag column `kind`, a `name` string, a `version`) on its own `vehicle` table.
+#
+#   Vehicle  (root, ABSTRACT)      — strategy + tag column `kind`; owns id + name + version
+#     Car    (concrete-subtype)    — tagValue 'car';   adds doors
+#     Truck  (concrete-subtype)    — tagValue 'truck'; adds axles
+#
+# Row data lives in the sibling fixtures/vehicle.yaml, keyed per concrete subtype.
+entities:
+  - name: Vehicle
+    namespace: parallax.compatibility
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: name
+        type: string
+        column: name
+        maxLength: 32
+      - name: version
+        type: int32
+        column: version
+        optimisticLocking: true
+  - name: Car
+    namespace: parallax.compatibility
+    table: vehicle
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: concrete-subtype
+      parent: Vehicle
+      tagValue: car
+    attributes:
+      - name: doors
+        type: int32
+        column: doors
+        nullable: true
+  - name: Truck
+    namespace: parallax.compatibility
+    table: vehicle
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: concrete-subtype
+      parent: Vehicle
+      tagValue: truck
+    attributes:
+      - name: axles
+        type: int32
+        column: axles
+        nullable: true

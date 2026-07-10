@@ -1,0 +1,40 @@
+# Optimistic locking composed with the table-per-hierarchy tag guard: the Q9 bind order
+# end to end (m-inheritance x m-opt-lock, m-sql).
+#
+# This is the one artifact where resolved Question 9's bind order is visible whole. Car
+# 1 (a concrete subtype of the versioned Vehicle family) is observed at version 5 and
+# renamed under OPTIMISTIC concurrency. The golden UPDATE carries THREE where-clause
+# predicates in the canonical order: the primary key, then the tag GUARD (`and kind =
+# ?`) joining the identity predicates right after the pk, then the opt-lock version gate
+# binding LAST:
+#
+#   update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
+#   binds: [Coupe, 6, 1, car, 5]  =  [set values…, pk, tagValue, observed-version]
+#
+# The version advances once (observed 5 -> 6), the tag value 'car' is framework-derived,
+# and with no concurrent writer the fresh gate matches exactly one row. The harness loads
+# the version-5 fixture, applies the gated UPDATE, and asserts the resulting row.
+model: models/vehicle.yaml
+tags: [m-inheritance, m-opt-lock, m-sql, table-per-hierarchy, tag, write-sequence, update, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  writeSequence:
+    - mutation: update
+      entity: Car
+      statements: 1
+      note: rename Car 1 under an optimistic gate; tag guard rides with the pk, gate binds last
+      rows:
+        - { id: 1, name: Coupe, observedVersion: 5 }
+then:
+  statements:
+    - sql:
+        postgres: update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
+      binds: [Coupe, 6, 1, car, 5]
+  tableState:
+    vehicle:
+      - { id: 1, kind: car, name: Coupe, version: 6, doors: 4, axles: null }
+  roundTrips: 1

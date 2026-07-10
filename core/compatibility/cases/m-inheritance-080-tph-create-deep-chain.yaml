@@ -1,0 +1,32 @@
+# Table-per-hierarchy CREATE across an intermediate abstract subtype: the insert
+# writes the FULL ancestry chain plus the derived tag (m-inheritance, m-sql).
+#
+# The animal family nests an abstract subtype (Pet) between the root (Animal) and the
+# concrete leaves, so inserting a Dog exercises a DEEPER ancestry chain than the shallow
+# Payment create (m-inheritance-007): the payload's accepted fields are exactly the
+# chain root(Animal.id/name/owner_id) -> abstract-subtype(Pet.license_id) ->
+# own(Dog.bark_volume). The shared-table tag `kind` is set to Dog's tagValue ('dog'),
+# framework-derived and slotted at its columnOrder position (right after the pk), NOT
+# authored in the neutral write input (①). The sibling columns not applicable to a Dog
+# (Cat's indoor, WildBoar's tusk_length) load null on the shared table. Starts from an
+# EMPTY schema and asserts the single inserted Dog row.
+model: models/animal.yaml
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Dog
+      statements: 1
+      note: insert a Dog; kind='dog' derived from tagValue; full inherited chain written
+      rows:
+        - { id: 5, name: Bella, ownerId: 10, licenseId: L-500, barkVolume: 5 }
+then:
+  statements:
+    - sql:
+        postgres: insert into animal(id, kind, name, owner_id, license_id, bark_volume) values (?, ?, ?, ?, ?, ?)
+      binds: [5, dog, Bella, 10, L-500, 5]
+  tableState:
+    animal:
+      - { id: 5, kind: dog, name: Bella, owner_id: 10, license_id: L-500, bark_volume: 5, indoor: null, tusk_length: null }
+  roundTrips: 1

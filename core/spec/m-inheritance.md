@@ -126,6 +126,55 @@ of that subtype's table — the subtype is selected by *which table* is queried.
 Each concrete table **physically contains columns for the full inherited attribute
 chain** plus the concrete subtype's own attributes, derived from the ancestry.
 
+## Concrete-subtype writes
+
+A create / update / delete of an inheritance participant is a **concrete-subtype
+write**: it targets exactly one concrete subtype, and the family behaves as a
+discriminated union at the write boundary just as it does at the read boundary. The
+write protocol is the write-side counterpart of `targetEntity` / `narrow` read
+targeting; a model-aware validator **MUST** enforce it **before any SQL**, and the
+compatibility corpus pins each violation as a portable `rejected` / `when.write`
+case with a `then.rejectedRule` (`m-case-format`). `m-sql` fixes the resulting DML.
+
+- **Accepted fields are exactly the target's ancestry chain.** The fields a
+  concrete-subtype write payload may carry are precisely the attributes / value
+  objects on the target's ancestry (root → abstract ancestors → the concrete
+  subtype itself) — the same inherited chain reads and DDL derive. A field declared
+  on a **sibling** concrete branch, or on any **unrelated** branch of the family, is
+  invalid: no single concrete subtype in the target's effective set accepts it
+  (`subtype-write-sibling-attribute`).
+- **Metadata is framework-owned, never authored.** A payload **MUST NOT** carry the
+  `tag` column, `tag`, `tagValue`, or `familyVariant`. Under table-per-hierarchy the
+  write **derives** the tag column from the concrete subtype's `tagValue` (exactly as
+  a version bump or a milestone bound is derived, `m-sql`); `familyVariant` is a
+  read-time materialization, not an input (resolved Q6). Authoring any of these is
+  `subtype-write-metadata-field`.
+- **Writes are concrete-subtype only.** A create / update / delete / terminate
+  handle **MUST** name a concrete subtype. An abstract **root** or **abstract
+  subtype** is a polymorphic read position, not a write handle; aiming a write at one
+  is `abstract-write-target` — even when the payload is otherwise a well-formed
+  concrete-subtype write.
+- **Per-object writes are keyed; set-based inheritance writes are out of scope.** A
+  concrete-subtype existing-row write is **keyed** by the primary key (the tag guard
+  rides with the identity predicates, `m-sql` / resolved Q9), so a payload carrying
+  **no primary-key** field denotes a predicate-driven **set-based** write over a
+  result collection — unsupported for an inheritance family in this slice
+  (`subtype-write-set-based-unsupported`). Changing an existing row's concrete
+  subtype is likewise out of scope.
+
+A validator checks these **payload-shape** rules (keyless → metadata → sibling)
+before the **target-validity** rule (abstract handle), so a payload that trips more
+than one defect pins the more specific shape defect; the harness fixes the same
+order.
+
+Physically: a **table-per-hierarchy** insert writes the shared table, setting the
+tag column from the subtype's `tagValue`, and every existing-row statement (update /
+delete / temporal close) carries a **tag guard** (`and <tag.column> = ?`) among the
+identity predicates so it touches only that subtype's rows. A
+**table-per-concrete-subtype** write targets the concrete subtype's **own table**
+(no shared table, no tag); the subtype is selected by *which* table the DML names.
+`m-sql` fixes the canonical DML, bind order, and the opt-lock composition.
+
 ## Canonical concrete-subtype ordering
 
 Whenever a family's concrete subtypes are **enumerated** in a canonical artifact,

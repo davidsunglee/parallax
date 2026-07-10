@@ -1,18 +1,17 @@
-# Table-per-hierarchy UPDATE: a concrete-subtype update targets its row by primary key
-# on the shared table (m-inheritance, m-sql).
+# Table-per-hierarchy UPDATE: a concrete-subtype update is tag-GUARDED (m-inheritance,
+# m-sql).
 #
 # Fixtures are loaded first (the three persisted concrete rows). Updating CardPayment 1
-# corrects its amount (100.00 -> 130.00). Because the primary key is unique across the
-# whole family, the UPDATE is keyed on `id` alone, and `kind` is never in the SET clause
-# (the tag is framework-owned metadata, not a mutable domain attribute). Only row 1's
-# amount changes; its kind stays 'card' and the other two rows (the second card, the
-# cash) are untouched.
-#
-# The concrete-subtype tag GUARD (`and kind = ?`) on existing-row writes lands in
-# Phase 7 with its spec; this Phase-3 case keeps the keyed form green under the
-# migrated model.
+# corrects its amount (100.00 -> 130.00, a ROOT-declared attribute on Payment). The
+# UPDATE is keyed on the primary key `id`, and the concrete-subtype tag GUARD
+# `and kind = ?` joins the identity predicates immediately AFTER the primary-key
+# equality (resolved Q9): `where id = ? and kind = ?`. The tag value ('card') is
+# framework-derived from the subtype's tagValue, never authored in the neutral write
+# input (①), and `kind` is never in the SET clause (the tag is framework-owned
+# metadata, not a mutable domain attribute). Only row 1's amount changes; its kind
+# stays 'card' and the other two rows are untouched.
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, write-sequence, update, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, update, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true
@@ -21,14 +20,14 @@ when:
     - mutation: update
       entity: CardPayment
       statements: 1
-      note: correct CardPayment 1's amount; keyed by primary key on the shared table
+      note: correct CardPayment 1's amount; keyed by pk and tag-guarded on the shared table
       rows:
         - { id: 1, amount: 130.00 }
 then:
   statements:
     - sql:
-        postgres: update payment set amount = ? where id = ?
-      binds: [130.00, 1]
+        postgres: update payment set amount = ? where id = ? and kind = ?
+      binds: [130.00, 1, card]
   tableState:
     payment:
       - { id: 1, kind: card, amount: 130.00, card_network: Visa, tendered: null }

@@ -763,6 +763,75 @@ alphabetical order, regardless of the authored `to` order. `familyVariant` appea
 compatibility rows/graphs (`m-case-format`); the projected `family_variant` literal
 is the on-the-wire carrier the harness renames to `familyVariant`.
 
+### Inheritance — concrete-subtype DML
+
+A create / update / delete of an inheritance participant is a **concrete-subtype
+write** (`m-inheritance`): the payload's accepted fields are exactly the target's
+ancestry chain, `tag` / `tagValue` / `familyVariant` are never authored, and the
+target is a concrete subtype (an abstract-target or keyless set-based write is
+refused pre-SQL, `m-case-format`). The DML shape depends on the strategy.
+
+#### Table-per-hierarchy DML
+
+Every concrete subtype shares one table discriminated by the root's tag column. The
+tag is **framework-owned metadata**: an **insert** sets it from the subtype's
+`tagValue` (slotted at its `columnOrder` position, right after the primary key, so
+the value list carries the derived tag exactly as the versioned insert carries the
+derived initial version); an existing-row statement (**update** / **delete**, and the
+temporal closes of `m-audit-write` / `m-bitemp-write`) carries a **tag guard** —
+`and <tag.column> = ?` — so it touches only that subtype's rows in the shared table.
+
+| Mutation | Canonical Postgres DML | Binds |
+|---|---|---|
+| **insert** | `insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)` | `[<pk>, <tagValue>, …row…]` |
+| **update** | `update payment set amount = ? where id = ? and kind = ?` | `[…set…, <pk>, <tagValue>]` |
+| **delete** | `delete from payment where id = ? and kind = ?` | `[<pk>, <tagValue>]` |
+
+The tag guard is positioned **immediately after the primary-key equality** — it
+joins the **identity predicates**, not the tail of the `where` clause. The insert's
+tag bind sits in `columnOrder` position; the update/delete's tag bind sits with the
+pk (right after it). DML keeps its canonical DML shape (`m-sql` rule 1): an
+**unaliased** target table with **bare** columns, so the tag guard reads `kind`, not
+`t0.kind`.
+
+**Opt-lock composition (`m-inheritance` × `m-opt-lock`).** When the entity is
+versioned and the unit of work runs optimistic (`m-opt-lock`), a concrete-subtype
+`UPDATE` advances the version in the `set` and **gates** on the observed version —
+and the gate still **binds last**. The tag guard rides with the identity predicates
+(after the pk); the version gate follows it:
+
+```yaml
+# concrete-subtype gated UPDATE (optimistic), the resolved Q9 bind order end to end:
+- sql:
+    postgres: update animal set name = ?, version = ? where id = ? and kind = ? and version = ?
+  binds: [<new-name>, <new-version>, <pk>, <tagValue>, <observed-version>]
+```
+
+That is `[…set values…, pk, tagValue, observed-version]`: the tag guard binds with
+the identity predicates immediately after the pk, and `m-opt-lock`'s invariant —
+**the version gate binds last** — survives inheritance composition verbatim (there
+is no inheritance exception to it). The locking-mode form drops the version gate and
+keeps `… where id = ? and kind = ?` (tag guard still present, no gate).
+
+#### Table-per-concrete-subtype DML
+
+Each concrete subtype owns its **own table** and carries no tag, so the subtype is
+selected by *which* table the DML targets. An **insert** writes the concrete table
+with the full inherited-chain-plus-own column set; a **delete** removes the keyed row
+from that same table. There is no tag column and therefore **no tag guard**:
+
+| Mutation | Canonical Postgres DML | Binds |
+|---|---|---|
+| **insert** | `insert into invoice(id, title, currency, amount_due) values (?, ?, ?, ?)` | `[…full chain…]` |
+| **delete** | `delete from invoice where id = ?` | `[<pk>]` |
+
+The insert's column list is the target's ancestry-derived columns present in the
+payload (a nullable inherited column the payload omits is simply absent from the
+list, defaulting to `NULL`); a sibling branch's write names *its* table, never a
+shared one (`memo` for a `Memo`, `invoice` for an `Invoice`). A concrete-subtype
+`UPDATE` under table-per-concrete-subtype is the ordinary single-table versioned /
+non-versioned form (`m-opt-lock`); no tag guard applies.
+
 ### valueObject — structured-column read and filter
 
 A `valueObject` is stored in **one structured-document column** (`m-core` /

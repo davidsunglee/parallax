@@ -1,0 +1,14 @@
+# Fixture rows for the versioned Vehicle table-per-hierarchy model
+# (models/vehicle.yaml).
+#
+# One persisted Car at version 5, so the opt-lock composition case
+# (m-inheritance-084) can observe version 5, gate on it, and advance to 6. The `kind`
+# tag is DERIVED from the subtype's tagValue (m-inheritance), never authored here; the
+# Truck subtype owns no rows.
+#
+#   id 1 Car  name Sedan  doors 4  version 5  (kind=car, derived)
+Car:
+  - id: 1
+    name: Sedan
+    doors: 4
+    version: 5

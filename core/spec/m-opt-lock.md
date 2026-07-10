@@ -174,6 +174,17 @@ a detached copy carries is the one read at detachment, so a merge-back `UPDATE`
 gates on that version and detects a conflict if the original changed in the
 interim — exactly the same `updatedRows != 1` rule.
 
+Optimistic locking composes with **inheritance** (`m-inheritance` × `m-sql`)
+without disturbing the gate-last invariant. A concrete-subtype `UPDATE` under
+table-per-hierarchy carries a **tag guard** (`and <tag.column> = ?`) that joins the
+**identity predicates** — canonically right after the primary-key equality
+(resolved Q9) — so the version gate still **binds last**:
+`update animal set name = ?, version = ? where id = ? and kind = ? and version = ?`,
+binds `[…set values…, pk, tagValue, observed-version]`. There is **no** inheritance
+exception to *the version gate binds last*: one absolute, human-memorable rule holds
+across every statement family, and the tag guard rides with the identity predicates,
+never after the gate. The zero-row `updatedRows != 1` conflict signal is unchanged.
+
 ## What the suite pins down
 
 `m-opt-lock` is proven by a **conflict case** (`m-case-format`): the golden

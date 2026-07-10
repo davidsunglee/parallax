@@ -1,0 +1,17 @@
+# Rejected write — a payload carrying a SIBLING branch's attribute (m-inheritance,
+# Phase 7 write protocol).
+#
+# The accepted fields of a concrete-subtype write are exactly the target's ancestry
+# chain (root + abstract ancestors + own). This payload to the Payment family carries
+# BOTH `cardNetwork` (CardPayment's own column) and `tendered` (CashPayment's own
+# column) — sibling branches — so no single concrete subtype accepts every field. A
+# model-aware validator MUST refuse it BEFORE any SQL with
+# `subtype-write-sibling-attribute`. No golden SQL: the rejection is pre-SQL,
+# dialect-agnostic.
+model: models/payment.yaml
+tags: [m-inheritance, table-per-hierarchy, write, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write: { id: 10, amount: 200.00, cardNetwork: Visa, tendered: 25.00 }
+then:
+  rejectedRule: subtype-write-sibling-attribute

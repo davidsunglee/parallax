@@ -72,18 +72,21 @@ entities:
       role: abstract-subtype
       parent: Document
     attributes:
-      # Nullable so a concrete-subtype insert MAY omit an inherited abstract-subtype
-      # attribute (e.g. m-inheritance-010 inserts an Invoice without a currency); the
-      # abstract subtype threads currency into both Invoice's and Receipt's concrete
-      # tables (the TPCS ancestry chain), never into the sibling Memo's.
-      # PHASE-7 FOLLOW-UP: this nullability is a write expedient, NOT settled model
-      # semantics — revisit when Phase 7 specifies the concrete-subtype write payload
-      # and rewrites m-inheritance-007..010 (see the outline's Open Questions).
+      # REQUIRED (non-null): a financial document without a currency is meaningless, so
+      # currency is a real, settled model constraint on the FinancialDocument branch.
+      # PHASE-7 DECISION: the earlier `nullable: true` was a pre-write-protocol expedient
+      # (Phase 5 review Finding 6) so a concrete-subtype insert could omit currency
+      # before the write payload was specified. Phase 7 specifies the payload, so
+      # currency is now required and every Invoice / Receipt insert SUPPLIES it
+      # (m-inheritance-010 / -081). The abstract subtype threads currency into both
+      # Invoice's and Receipt's concrete tables (the TPCS ancestry chain), never into
+      # the sibling Memo's — so an abstract-target `union all` read still NULL-casts
+      # currency for the Memo branch (m-inheritance-050..053), which is about the shared
+      # superset, not this column's nullability on the FinancialDocument branch.
       - name: currency
         type: string
         column: currency
         maxLength: 3
-        nullable: true
   - name: Invoice
     namespace: parallax.compatibility
     table: invoice

@@ -29,12 +29,17 @@ from jsonschema import Draft202012Validator
 from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_runner import ALL_REJECTED_RULES, CaseFailure, run_case
 from reference_harness.inheritance import (
+    ABSTRACT_WRITE_TARGET,
     INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
     INHERITANCE_MISSING_ROOT,
     INHERITANCE_MISSING_TAG_VALUE,
     INHERITANCE_MULTIPLE_ROOTS,
     INHERITANCE_UNKNOWN_PARENT,
     MODEL_REJECTED_RULES,
+    SUBTYPE_WRITE_METADATA_FIELD,
+    SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
+    SUBTYPE_WRITE_SIBLING_ATTRIBUTE,
+    WRITE_REJECTED_RULES,
     validate_family,
 )
 from reference_harness.op_validate import validate_operation
@@ -47,7 +52,7 @@ from reference_harness.value_object_resolve import (
     WRITE_VALUE_TYPE_MISMATCH,
     RejectionError,
 )
-from reference_harness.write_validate import validate_write
+from reference_harness.write_validate import validate_subtype_write, validate_write
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -221,6 +226,78 @@ def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None
         WRITE_REQUIRED_VALUE_OBJECT_MISSING,
         WRITE_VALUE_TYPE_MISMATCH,
     } <= used
+
+
+# --- concrete-subtype WRITE negatives (m-inheritance, Phase 7) ----------------
+#
+# A write to an inheritance family is a concrete-subtype write: its accepted fields
+# are exactly the target's ancestry chain. `validate_subtype_write` refuses a keyless
+# (set-based) payload, a framework-owned metadata field, a sibling / unrelated-branch
+# attribute, and an abstract target — each with its own rule, checked payload-shape
+# first (keyless -> metadata -> sibling) then target-validity (abstract).
+
+
+def _payment_model():
+    return load_model(_COMPATIBILITY_ROOT, "models/payment.yaml")
+
+
+def _subtype_write(row: dict[str, Any]) -> None:
+    model = _payment_model()
+    validate_subtype_write(model.root_entity, model.entity_defs, row)
+
+
+def test_subtype_write_negatives_are_covered() -> None:
+    # The corpus pins all four Phase-7 subtype-write rules as portable rejected cases.
+    used = {c.rejected_rule for c in _rejected_cases()}
+    assert WRITE_REJECTED_RULES <= used
+
+
+def test_subtype_write_accepts_a_valid_concrete_payload() -> None:
+    # A keyed payload whose fields all fit a concrete subtype's ancestry chain, aimed at
+    # that concrete subtype, is accepted (no raise). CardPayment is the model's second
+    # entity, so resolve it explicitly rather than via root_entity (the abstract root).
+    model = _payment_model()
+    card = model.entity("CardPayment")
+    validate_subtype_write(
+        card, model.entity_defs, {"id": 10, "amount": 200.00, "cardNetwork": "Visa"}
+    )
+
+
+def test_subtype_write_is_noop_on_non_inheritance_entity() -> None:
+    # A non-inheritance entity is out of scope — value-object write validation owns it.
+    entity = _customer_entity()
+    validate_subtype_write(entity, [entity.definition], {"id": 1, "name": "Ada"})  # no raise
+
+
+def test_subtype_write_rejects_sibling_attribute() -> None:
+    with pytest.raises(RejectionError) as exc:
+        _subtype_write({"id": 10, "amount": 200.00, "cardNetwork": "Visa", "tendered": 25.00})
+    assert exc.value.rule == SUBTYPE_WRITE_SIBLING_ATTRIBUTE
+
+
+def test_subtype_write_rejects_metadata_field() -> None:
+    with pytest.raises(RejectionError) as exc:
+        _subtype_write({"id": 10, "amount": 200.00, "tagValue": "card"})
+    assert exc.value.rule == SUBTYPE_WRITE_METADATA_FIELD
+
+
+def test_subtype_write_rejects_tag_column_in_payload() -> None:
+    # The raw tag column name (`kind`) is framework-owned metadata too.
+    with pytest.raises(RejectionError) as exc:
+        _subtype_write({"id": 10, "amount": 200.00, "kind": "card"})
+    assert exc.value.rule == SUBTYPE_WRITE_METADATA_FIELD
+
+
+def test_subtype_write_rejects_abstract_target() -> None:
+    with pytest.raises(RejectionError) as exc:
+        _subtype_write({"id": 10, "amount": 200.00, "cardNetwork": "Visa"})
+    assert exc.value.rule == ABSTRACT_WRITE_TARGET
+
+
+def test_subtype_write_rejects_keyless_set_based_write() -> None:
+    with pytest.raises(RejectionError) as exc:
+        _subtype_write({"amount": 200.00, "cardNetwork": "Visa"})
+    assert exc.value.rule == SUBTYPE_WRITE_SET_BASED_UNSUPPORTED
 
 
 @pytest.mark.parametrize("case", _rejected_cases(), ids=[c.path.stem for c in _rejected_cases()])

@@ -1,0 +1,16 @@
+# Rejected write — a payload carrying framework-owned METADATA (m-inheritance, Phase 7
+# write protocol).
+#
+# The tag column and the `tag` / `tagValue` / `familyVariant` handles are
+# framework-owned metadata a concrete-subtype write DERIVES from the subtype's tagValue
+# (m-inheritance) — never accepted as input. This payload authors `tagValue: card`, so a
+# model-aware validator MUST refuse it BEFORE any SQL with
+# `subtype-write-metadata-field`. No golden SQL: the rejection is pre-SQL,
+# dialect-agnostic.
+model: models/payment.yaml
+tags: [m-inheritance, table-per-hierarchy, tag, write, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write: { id: 10, amount: 200.00, tagValue: card }
+then:
+  rejectedRule: subtype-write-metadata-field
