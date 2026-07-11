@@ -4,7 +4,7 @@
 # (PG SQLSTATE 23505 / MariaDB errno 1062) is witnessed per dialect. The classify
 # seam maps both to the single neutral category.
 model: models/error-cases.yaml
-tags: [m-db-error, uniqueViolation]
+tags: [m-db-error, uniqueViolation, slice-snapshot-1, slice-managed-1]
 shape: error
 then:
   statements:

@@ -1,6 +1,6 @@
 # Lock-wait timeout on the other row: A holds row 2, B blocks on row 2.
 model: models/error-cases.yaml
-tags: [m-db-error, lockWaitTimeout]
+tags: [m-db-error, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
 shape: error
 given:
   fixtures: true

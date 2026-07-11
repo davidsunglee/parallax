@@ -20,7 +20,7 @@
 # this case carries only a `postgres` golden + native code (the harness runs it on
 # Postgres and skips MariaDB, which declares no golden here).
 model: models/error-cases.yaml
-tags: [m-db-error, deadlock, serialization]
+tags: [m-db-error, deadlock, serialization, slice-snapshot-1, slice-managed-1]
 shape: error
 given:
   fixtures: true

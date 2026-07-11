@@ -3,7 +3,7 @@
 # id 7 in the SAME case collides -- the violation is against committed data, not
 # an in-flight batch.
 model: models/error-cases.yaml
-tags: [m-db-error, uniqueViolation]
+tags: [m-db-error, uniqueViolation, slice-snapshot-1, slice-managed-1]
 shape: error
 then:
   statements:
