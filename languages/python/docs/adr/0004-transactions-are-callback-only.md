@@ -30,10 +30,17 @@ the outer callback catches it and returns, commit is refused, the refusal
 preserves the original cause and its retriability classification (the
 outermost retry loop still applies per the original failure's category), and
 the callback value is withheld as on any abort — Reladomo's root
-`setExpectRollback` discipline. Raising on nesting was considered and
+`setExpectRollback` discipline. A later `db.transact` call that would join a
+rollback-only transaction raises immediately, before its closure executes,
+with a distinct rollback-only error carrying the original failure as cause:
+no new work may start inside a doomed scope, so a callback that catches an
+inner failure has exactly one continuation — clean up and let the outermost
+boundary abort (and retry per the original failure's classification).
+Raising on nesting in general was considered and
 rejected: it breaks transaction-owning helpers composing into larger
 transactions while adding no safety (independent inner commit is the
-ambiguity, and joining removes it). Because the join rules turn on whether
+ambiguity, and joining removes it); the rollback-only raise is the one
+narrow exception, and it rejects only work that could never commit. Because the join rules turn on whether
 each option was passed, the options are sentinel-backed (`None` defaults):
 omitted options apply the outermost defaults when opening and inherit the
 active settings when joining, while an explicit option on a joining call

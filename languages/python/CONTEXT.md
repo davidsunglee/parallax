@@ -40,6 +40,13 @@ each a finite instant or the LATEST sentinel; scanned axes are absent because
 a scan is not a pin.
 _Avoid_: request shape, range marker, date parameter
 
+**Edge**:
+The frozen value `edge_of` returns for a temporal node, carrying the
+milestone's own finite from-instant on every declared as-of axis (core's edge
+pin). Unlike a Pin, every declared axis is present and every value is finite
+— never the LATEST sentinel, never absent because an axis was scanned.
+_Avoid_: pin, display instant, wall-clock timestamp, version stamp
+
 **LATEST Sentinel**:
 The module-level value spelling an explicit latest pin; it lowers to the
 infinity coordinate and is deliberately not called "now".

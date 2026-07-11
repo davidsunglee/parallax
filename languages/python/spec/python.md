@@ -356,11 +356,17 @@ never something an application developer hand-writes.
   milestone, each root **edge-pinned** at its milestone's from-instant;
   `snapshot.pin` reports only genuinely pinned axes (a scanned axis is absent,
   per the core rule that a scan is not a pin), and `parallax.core.pin_of(node)`
-  reports each node's own coordinates. `parallax.core.edge_of(node)` reports a
-  temporal node's **milestone edge** — the finite from-instant of its milestone
-  on each declared axis (core's Edge Pin), defined for every temporal node
-  regardless of how the read was pinned; calling it on a non-temporal node
-  raises. The `snapshot-history-includes` feature
+  reports each node's own coordinates. `parallax.core.edge_of(node) -> Edge`
+  reports a temporal node's **milestone edge** as a distinct frozen `Edge`
+  value: one field per axis (`processing: datetime | None`,
+  `business: datetime | None`), an axis non-`None` exactly when the entity
+  declares it, and every present value the **finite** from-instant of the
+  node's milestone on that axis (core's edge pin) — defined for every temporal
+  node regardless of how the read was pinned; calling it on a non-temporal
+  node raises. `Edge` is deliberately not a `Pin`: a `Pin` carries an entry
+  only per actually-pinned axis and may carry the `LATEST` sentinel, while an
+  `Edge` always carries every declared axis and is always finite — never
+  `LATEST`, never absent-because-scanned. The `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
   raises `UnsupportedFeatureError` naming the deferral, distinct from
   validation errors.
@@ -413,16 +419,25 @@ never something an application developer hand-writes.
   alike (§5). Write inputs are the entity classes themselves:
   full instances for `insert` (the Create Payload), edited copies or
   instances for the other verbs (§5). The **stale-web-edit** recipe
-  transports the displayed milestone's **edge**: at render time the service
-  reads the row, captures `edge_of(node).processing` (the displayed
-  milestone's own `in_z`), and sends it with the form. On submit, the service
-  re-fetches `as_of(processing=edge)` inside an optimistic transaction,
-  applies the payload fields to a copy, and updates. A milestone's
-  from-instant lies inside its own `[from, to)` interval by construction, so
-  the re-fetch selects the **displayed** milestone even after a concurrent
-  writer has chained a replacement — the transaction observes the displayed
+  transports the displayed milestone's **edge on every declared axis**: at
+  render time the service reads the row and captures `edge_of(node)` — the
+  `Edge` already carries each declared axis's from-instant (`.processing` is
+  the displayed milestone's own `in_z`) — and sends the whole edge with the
+  form. On submit, the service re-fetches with **every declared axis** pinned
+  at the transported edge — `as_of(processing=edge.processing)` for an
+  audit-only entity,
+  `as_of(processing=edge.processing, business=edge.business)` for a
+  bitemporal one — inside an optimistic transaction, applies the payload
+  fields to a copy, and updates. A milestone's from-instant lies inside its
+  own `[from, to)` interval on each axis by construction, so the re-fetch
+  selects exactly the **displayed** rectangle — never a different business
+  rectangle reached through a defaulted-latest axis — even after a concurrent
+  writer has chained a replacement: the transaction observes the displayed
   `in_z`, and the concurrent chain leaves a current row whose fresh `in_z`
-  fails the observed-`in_z` gate (a zero-row close — the conflict), while an
+  fails the observed-`in_z` gate (a zero-row close — the conflict; for a
+  bitemporal entity the gate also binds the business discriminator when the
+  key's current rows share an `in_z`, per `m-bitemp-write`, so the close
+  targets exactly the observed rectangle), while an
   untouched row succeeds. Weaker transports fail: the `LATEST` sentinel is
   not replayable (it re-resolves to whatever milestone is current at submit
   time), and a wall-clock display instant is racy because processing instants
@@ -496,7 +511,15 @@ never something an application developer hand-writes.
   original cause and its retriability classification (the outermost retry
   loop still applies per the original failure's category), and the callback's
   return value is withheld exactly as on any abort (Reladomo's root
-  `setExpectRollback` behavior). A joining call may not re-negotiate the
+  `setExpectRollback` behavior). Rollback-only also forecloses re-entry: a
+  `db.transact` call that would join a transaction already marked
+  rollback-only raises `RollbackOnlyError` **immediately, before executing
+  its closure** — a distinct error naming the rollback-only state and
+  carrying the original failure as its cause (`__cause__`) — because no new
+  work may start inside a doomed scope. A callback that catches an inner
+  failure therefore has exactly one defined continuation: clean up and let
+  the outermost boundary abort (and retry per the original failure's
+  classification). A joining call may not re-negotiate the
   boundary: an explicit (non-`None`) option whose value conflicts with the
   active transaction's setting raises, an explicit value equal to the active
   setting is accepted, and omitted (`None`) options inherit the active
@@ -560,7 +583,22 @@ never something an application developer hand-writes.
   `optimistic` mode takes none. A keyed `update` or `delete` of a versioned
   row this unit of work never observed **raises** in either mode; the
   framework never issues an implicit resolving `SELECT` on behalf of a keyed
-  write (which would add round trips no corpus golden represents). The lowered
+  write (which would add round trips no corpus golden represents). **Locking
+  mode additionally requires that the observation be of the current
+  milestone**: a temporal observation licenses a locking-mode write only when
+  its read was **latest-pinned on the written (processing) axis** — a
+  versioned non-temporal row satisfies this trivially, since its single row
+  is always the current one. Locking-mode closes are **ungated**, so the
+  shared read lock is the only protection, and a shared lock on a historical
+  or edge-pinned milestone locks the wrong row: a concurrent chain replaces
+  the current row without touching the locked one, and the ungated close
+  would then silently re-close the replacement — a lost update. A write whose
+  only transaction-scoped observation is historical or edge-pinned therefore
+  raises `HistoricalObservationError` in locking mode; the same observation
+  is legal in **optimistic** mode, where the observed-`in_z` gate detects the
+  staleness (a superseded milestone's gate matches zero rows — the conflict),
+  which is exactly why the §3 stale-web-edit recipe runs its edge-pinned
+  re-fetch inside an optimistic transaction. The lowered
   `UPDATE` sets the effective
   changed fields plus the framework-computed advance (`observed + 1`) in
   both modes and adds the `and version = ?` gate binding the observed
@@ -578,9 +616,51 @@ never something an application developer hand-writes.
   never feeds the gate or the advance. The developer-experience consequence
   is stated plainly: an edited copy whose original node was fetched
   **outside** the writing transaction cannot be updated directly — the row
-  must be re-fetched inside the transaction (observing its current version or
-  milestone) before `tx.update`, which is exactly what the §3 stale-web-edit
-  recipe already does.
+  must be re-fetched inside the transaction before `tx.update` (a
+  latest-pinned observation under locking mode; under optimistic mode the
+  milestone whose gate should bind, the displayed edge in the §3
+  stale-web-edit recipe, which runs under optimistic mode for exactly this
+  reason).
+- **Set-based write verbs.** Every mutation verb that targets existing rows
+  has a predicate-selected `_where` flavor, so the keyed and set-based
+  surfaces mirror each other completely (`insert` alone has no set-based
+  flavor — there is no matching set to select):
+
+  ```python
+  tx.update_where(op, Account.balance.set(Decimal("0.00")))  # non-temporal
+  tx.delete_where(op)                                        # non-temporal
+  tx.terminate_where(op)                                     # audit-only
+  tx.update_where(op, Position.px.set(x), business_from=b)   # bitemporal plain
+  tx.terminate_where(op, business_from=b)
+  tx.update_until_where(op, Position.px.set(x), business_from=b, until=u)
+  tx.terminate_until_where(op, business_from=b, until=u)
+  ```
+
+  Assignments are the typed `.set(value)` spelling on attribute expressions,
+  restricted to mapped scalar attributes and value-object members — the same
+  assignability rules as `model_copy`, never relationship fields. The target
+  statement must be bare (the same rejection rules as every write target);
+  resolution happens inside the transaction and participates in its mode
+  (shared-locked under `locking`, lock-free under `optimistic`). Lowering
+  follows the observation rule above: versioned and temporal targets
+  **materialize** — the resolving read records per-row observations, then one
+  keyed per-row statement (gated in optimistic mode), `1 + N` round trips —
+  while an unversioned non-temporal target lowers to a single set-based
+  statement. A set-based write whose target entity belongs to an inheritance
+  family is **rejected before SQL** with the corpus's
+  `subtype-write-set-based-unsupported` classification (`m-inheritance-089`).
+  Corpus coverage is annotated per flavor, honestly: versioned non-temporal
+  `update_where` is corpus-covered (`m-opt-lock-003` / `-004`, both
+  participation modes); every other flavor — `delete_where` (the corpus's
+  versioned-delete case `m-batch-write-004` is row-shaped, not
+  predicate-shaped), the audit-only and bitemporal `terminate_where`, the
+  bitemporal plain `update_where` and both `*_until_where` forms, and the
+  single-statement unversioned lowering — has **no predicate-shaped case in
+  the claimed slice**. Those flavors ship anyway for API consistency: they
+  are specified here, proven by language unit tests, documented in the Usage
+  Guide, sit outside the API-suite coverage partition (which spans exactly
+  the slice's cases), and are recorded as candidates for future core corpus
+  additions rather than silent extensions.
 
 ## 6. Database support and compatibility proof
 
@@ -770,7 +850,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy, internal `op_list`) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `Pin`, `meta`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy, internal `op_list`) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `Pin`, `Edge`, `meta`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
