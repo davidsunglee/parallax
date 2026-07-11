@@ -95,6 +95,109 @@ def _scenario_case() -> dict[str, Any]:
     }
 
 
+def _action_scenario_case() -> dict[str, Any]:
+    """A scenario with lifecycle ACTION steps (m-case-format, COR-30).
+
+    Exercises the new action-step vocabulary end to end: `action` verbs, `on`,
+    `path`, `set` (mutate-only), and the per-step observables `expectState` and
+    `sameObjectAs` on an action step.
+    """
+    return {
+        "model": "models/orders.yaml",
+        "tags": ["m-deep-fetch", "m-op-list"],
+        "shape": "scenario",
+        "when": {
+            "scenario": [
+                {
+                    "targetEntity": "Order",
+                    "find": {"in": {"attr": "Order.id", "values": [1, 2]}},
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {
+                                "postgres": "select t0.id from orders t0 where t0.id in (?, ?)"
+                            },
+                            "binds": [1, 2],
+                        }
+                    ],
+                    "expectRows": [{"id": 1}, {"id": 2}],
+                },
+                {
+                    "action": "load",
+                    "on": 0,
+                    "path": "items",
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {
+                                "postgres": "select t0.id, t0.order_id from order_item t0 "
+                                "where t0.order_id in (?, ?)"
+                            },
+                            "binds": [1, 2],
+                        }
+                    ],
+                    "expectRows": [{"id": 11, "order_id": 1}],
+                },
+                {
+                    "action": "access",
+                    "on": 0,
+                    "path": "items",
+                    "roundTrips": 0,
+                    "sameObjectAs": 1,
+                },
+                {
+                    "action": "mutate",
+                    "on": 0,
+                    "set": {"name": "Ada2"},
+                    "roundTrips": 0,
+                    "expectState": "persisted",
+                },
+            ]
+        },
+        "then": {"roundTrips": 2},
+    }
+
+
+def _action_identity_error_case() -> dict[str, Any]:
+    """A scenario action case exercising `differentObjectFrom`, `on` array, `expectError`."""
+    return {
+        "model": "models/orders.yaml",
+        "tags": ["m-detach"],
+        "shape": "scenario",
+        "when": {
+            "scenario": [
+                {
+                    "targetEntity": "Order",
+                    "find": {"eq": {"attr": "Order.id", "value": 1}},
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"},
+                            "binds": [1],
+                        }
+                    ],
+                    "expectRows": [{"id": 1}],
+                },
+                {
+                    "action": "detachCopy",
+                    "on": 0,
+                    "roundTrips": 0,
+                    "expectState": "detached",
+                    "differentObjectFrom": 0,
+                },
+                {
+                    "action": "load",
+                    "on": [0, 1],
+                    "path": "items",
+                    "roundTrips": 0,
+                    "expectError": "detached-relationship-load",
+                },
+            ]
+        },
+        "then": {"roundTrips": 1},
+    }
+
+
 def _conflict_case() -> dict[str, Any]:
     return {
         "model": "models/account.yaml",
@@ -274,10 +377,58 @@ def _rejected_write_case() -> dict[str, Any]:
     }
 
 
+def _action_boundary_no_on_case() -> dict[str, Any]:
+    """A scenario whose BOUNDARY action verbs (`flush` / `commit`) omit `on` (COR-30).
+
+    The boundary / unit-of-work verbs operate on the whole unit of work, not a
+    specific prior object, so `on` is inapplicable and MAY be omitted — the per-verb
+    conditional makes `on` required ONLY for the object-targeting verbs. This fixture
+    pins that a boundary step without `on` still validates.
+    """
+    return {
+        "model": "models/orders.yaml",
+        "tags": ["m-deep-fetch", "m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "scenario": [
+                {
+                    "targetEntity": "Order",
+                    "find": {"eq": {"attr": "Order.id", "value": 1}},
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"},
+                            "binds": [1],
+                        }
+                    ],
+                    "expectRows": [{"id": 1}],
+                },
+                {
+                    "action": "flush",
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {
+                                "postgres": "insert into order_item(id, order_id) values (?, ?)"
+                            },
+                            "binds": [13, 1],
+                        }
+                    ],
+                },
+                {"action": "commit", "roundTrips": 0},
+            ]
+        },
+        "then": {"roundTrips": 2},
+    }
+
+
 VALID_CASES = {
     "read": _read_case,
     "writeSequence": _write_sequence_case,
     "scenario": _scenario_case,
+    "scenario-action": _action_scenario_case,
+    "scenario-action-identity-error": _action_identity_error_case,
+    "scenario-action-boundary-no-on": _action_boundary_no_on_case,
     "conflict": _conflict_case,
     "conflict-retry": _conflict_retry_case,
     "coherence": _coherence_case,
@@ -504,6 +655,68 @@ def _rejected_neither_operation_nor_write() -> dict[str, Any]:
     return doc
 
 
+def _action_unknown_verb() -> dict[str, Any]:
+    """An action step naming a verb outside the closed enum (COR-30)."""
+    doc = _action_scenario_case()
+    doc["when"]["scenario"][1]["action"] = "teleport"
+    return doc
+
+
+def _action_stray_key() -> dict[str, Any]:
+    """An action step carrying a stray key — the step is `additionalProperties: false`."""
+    doc = _action_scenario_case()
+    doc["when"]["scenario"][1]["bogus"] = True
+    return doc
+
+
+def _action_unknown_expect_error() -> dict[str, Any]:
+    """An action step naming an `expectError` outside the closed enum (COR-30)."""
+    doc = _action_identity_error_case()
+    doc["when"]["scenario"][2]["expectError"] = "not-a-real-error"
+    return doc
+
+
+def _action_same_and_different_object() -> dict[str, Any]:
+    """One step declares BOTH `sameObjectAs` and `differentObjectFrom` (at the same step).
+
+    A single step's identity relationship to an anchor is sameness OR difference,
+    never both — the sibling `not: required[sameObjectAs, differentObjectFrom]`
+    rejects a step carrying the two together.
+    """
+    doc = _action_scenario_case()
+    doc["when"]["scenario"][2]["differentObjectFrom"] = 1
+    return doc
+
+
+def _action_set_on_non_mutate() -> dict[str, Any]:
+    """`set` on a non-`mutate` action (step 1 is a `load`) — the mutate-only `allOf` rejects it."""
+    doc = _action_scenario_case()
+    doc["when"]["scenario"][1]["set"] = {"name": "x"}
+    return doc
+
+
+def _action_object_verb_missing_on() -> dict[str, Any]:
+    """An OBJECT-TARGETING action (step 1 is a `load`) missing `on` (COR-30).
+
+    The per-verb conditional makes `on` REQUIRED for `mutate` / `detachCopy` /
+    `load` / `access` / `mergeBack` — each acts on a prior step's result — so a
+    `load` without `on` is rejected (unlike a boundary `flush` / `commit` / `abort`,
+    where `on` is optional)."""
+    doc = _action_scenario_case()
+    del doc["when"]["scenario"][1]["on"]
+    return doc
+
+
+def _action_on_duplicate_index() -> dict[str, Any]:
+    """An array-form `on` naming the SAME source twice (COR-30).
+
+    The array form is `uniqueItems`: a coordinate-grouped action references each
+    source at most once, so `on: [0, 0]` is rejected."""
+    doc = _action_identity_error_case()
+    doc["when"]["scenario"][2]["on"] = [0, 0]
+    return doc
+
+
 REJECTED_CASES = {
     "legacy-layout": _legacy_layout,
     "mislabeled-shape": _mislabeled_shape,
@@ -522,6 +735,13 @@ REJECTED_CASES = {
     "rejected-cross-shape-when-member": _rejected_cross_shape_when_member,
     "rejected-both-operation-and-write": _rejected_both_operation_and_write,
     "rejected-neither-operation-nor-write": _rejected_neither_operation_nor_write,
+    "action-unknown-verb": _action_unknown_verb,
+    "action-stray-key": _action_stray_key,
+    "action-unknown-expect-error": _action_unknown_expect_error,
+    "action-same-and-different-object": _action_same_and_different_object,
+    "action-set-on-non-mutate": _action_set_on_non_mutate,
+    "action-object-verb-missing-on": _action_object_verb_missing_on,
+    "action-on-duplicate-index": _action_on_duplicate_index,
 }
 
 

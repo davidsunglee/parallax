@@ -78,9 +78,13 @@ coordinates*, not a copy of one row:
   own pin**: a latest-pinned view shows the newly chained milestone; a view
   pinned at a finite past instant keeps showing the milestone its pin selects.
 - A view pinned at a **finite processing-axis instant** is **read-only** — the
-  processing past records what the system knew and is never rewritten. A finite
-  **business-axis** pin is writable: mutating it is the retroactive correction
-  that lowers to the `m-bitemp-write` rectangle split.
+  processing past records what the system knew and is never rewritten. Mutating
+  such a view raises the neutral **`processing-pin-read-only`** error and emits
+  **no** DML — an application-lifecycle error, distinct from the `m-db-error`
+  taxonomy, asserted by a compatibility case with a step-level `expectError:
+  processing-pin-read-only` (`m-case-format`) and graded by the API Conformance
+  Suite. A finite **business-axis** pin is writable: mutating it is the retroactive
+  correction that lowers to the `m-bitemp-write` rectangle split.
 - A `history` / `asOfRange` read materializes **one view per milestone**, each
   interned at its **edge pin** — the milestone's own from-instant, the one
   instant guaranteed to select exactly that milestone (`m-temporal-read`,

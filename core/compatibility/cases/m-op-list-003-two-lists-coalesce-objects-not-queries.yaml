@@ -1,0 +1,43 @@
+# Two operation-backed lists coalesce OBJECTS, not queries (m-op-list,
+# m-identity-map): two different finders that both resolve the same primary key
+# each execute their own query, but yield the SAME identity-mapped object.
+#
+# Step 0 resolves order 2 by id; step 1 resolves the same row by name ("Linus").
+# The two finders build two different operation-backed lists, so BOTH execute a
+# query (two round trips — there is no query-cache coalescing here). But the row
+# they share, order 2, coalesces through the identity map to one managed object
+# (sameObjectAs): objects coalesce, queries do not.
+model: models/orders.yaml
+tags: [m-op-list, m-identity-map, identity, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Order
+      find:
+        eq:
+          attr: Order.id
+          value: 2
+      roundTrips: 1
+      note: list A resolves order 2 by id (its own query)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, name: Linus }
+    - targetEntity: Order
+      find:
+        eq:
+          attr: Order.name
+          value: Linus
+      roundTrips: 1
+      sameObjectAs: 0
+      note: list B resolves the SAME row by name -> a second query, but the same coalesced object
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0 where t0.name = ?
+          binds: [Linus]
+      expectRows:
+        - { id: 2, name: Linus }
+then:
+  roundTrips: 2

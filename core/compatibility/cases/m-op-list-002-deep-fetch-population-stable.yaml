@@ -1,0 +1,51 @@
+# Deep fetch populates operation-backed relationship lists, stably (m-op-list,
+# m-deep-fetch): once a deep fetch has populated a relationship list, accessing it
+# again does not re-query.
+#
+# Step 0 finds all orders. Step 1 deep-fetches (loads) `items`, populating each
+# order's line-item list in one batched child query. Step 2 accesses `items` again
+# and emits NO SQL — the list is already populated and returns the SAME objects
+# (sameObjectAs). Two round trips total.
+model: models/orders.yaml
+tags: [m-op-list, m-deep-fetch, relationship, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Order
+      find:
+        all: {}
+      roundTrips: 1
+      note: the root orders
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0
+      expectRows:
+        - { id: 1, name: Ada }
+        - { id: 2, name: Linus }
+        - { id: 3, name: ada }
+        - { id: 4, name: Margaret }
+        - { id: 5, name: Alan }
+        - { id: 42, name: Grace }
+    - action: load
+      "on": 0
+      path: items
+      roundTrips: 1
+      note: deep fetch populates the items lists in one batched query
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?) order by t0.id desc
+          binds: [1, 2, 3, 4, 5, 42]
+      expectRows:
+        - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+        - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+        - { id: 21, order_id: 2, sku: A-300, quantity: 4 }
+        - { id: 421, order_id: 42, sku: A-999, quantity: 3 }
+        - { id: 422, order_id: 42, sku: B-200, quantity: 5 }
+    - action: access
+      "on": 0
+      path: items
+      roundTrips: 0
+      sameObjectAs: 1
+      note: accessing the populated list again -> zero SQL, the same objects
+then:
+  roundTrips: 2

@@ -1,0 +1,69 @@
+# Deferred load batches BY lowered coordinate (m-deep-fetch): when the source
+# objects are pinned at different as-of coordinates, the deferred load emits one
+# child statement PER coordinate group, each carrying that group's propagated
+# as-of binds.
+#
+# Invoice 100 is held at two pins in one unit of work: step 0 at processing-latest
+# (out_z = infinity) and step 1 at the finite instant 2024-02-01 (a DISTINCT pinned
+# view, m-identity-map). The `load` of `lines` over both views (on: [0, 1]) cannot
+# collapse into one query — each group propagates its own coordinate — so it emits
+# two child statements: the latest group (lines 75/25) and the instant group (the
+# superseded 50/25). Two round trips, binds grouped per lowered coordinate.
+model: models/invoice.yaml
+tags: [m-deep-fetch, m-temporal-read, m-navigate, temporal, propagation, audit-only, deferred-load, relationship, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Invoice
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Invoice.id
+              value: 100
+          asOfAttr: Invoice.processingDate
+          date: now
+      roundTrips: 1
+      note: source A -> invoice 100 pinned at processing-latest (out_z = infinity)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from invoice t0 where t0.id = ? and t0.out_z = ?
+          binds: [100, infinity]
+      expectRows:
+        - { id: 100, name: INV-100 }
+    - targetEntity: Invoice
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Invoice.id
+              value: 100
+          asOfAttr: Invoice.processingDate
+          date: "2024-02-01T00:00:00+00:00"
+      roundTrips: 1
+      note: source B -> the SAME primary key pinned at instant 2024-02-01 (a distinct pinned view)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from invoice t0 where t0.id = ? and t0.in_z <= ? and t0.out_z > ?
+          binds: [100, "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+      expectRows:
+        - { id: 100, name: INV-100 }
+    - action: load
+      "on": [0, 1]
+      path: lines
+      roundTrips: 2
+      note: load lines over BOTH pinned views -> one child statement per lowered coordinate group
+      statements:
+        - sql:
+            postgres: select t0.id, t0.invoice_id, t0.amount from invoice_line t0 where t0.invoice_id in (?) and t0.out_z = ?
+          binds: [100, infinity]
+        - sql:
+            postgres: select t0.id, t0.invoice_id, t0.amount from invoice_line t0 where t0.invoice_id in (?) and t0.in_z <= ? and t0.out_z > ?
+          binds: [100, "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+      expectRows:
+        - { id: 1000, invoice_id: 100, amount: 75.00 }
+        - { id: 1001, invoice_id: 100, amount: 25.00 }
+        - { id: 1000, invoice_id: 100, amount: 50.00 }
+        - { id: 1001, invoice_id: 100, amount: 25.00 }
+then:
+  roundTrips: 4

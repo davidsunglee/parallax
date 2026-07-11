@@ -138,6 +138,76 @@ def _valid_benchmark() -> dict:
     }
 
 
+def _valid_run(observations: dict) -> dict:
+    return {
+        "schemaVersion": "1",
+        "command": "run",
+        "status": "ok",
+        "adapter": {
+            "language": "typescript",
+            "name": "@parallax/typescript",
+            "version": "0.1.0",
+        },
+        "case": "core/compatibility/cases/m-deep-fetch-013-deferred-load-batches-latest.yaml",
+        "dialect": "postgres",
+        "caseShape": "scenario",
+        "emissions": [],
+        "observations": observations,
+    }
+
+
+# --- lifecycle observations: stateChecks + errors (COR-30) --------------------
+
+
+def test_run_accepts_lifecycle_observations() -> None:
+    observations = {
+        "roundTrips": 1,
+        "identityChecks": [{"left": "/scenario/1", "right": "/scenario/0", "same": False}],
+        "stateChecks": [
+            {"at": "/scenario/1", "expected": "detached", "observed": "detached", "pass": True}
+        ],
+        "errors": [{"at": "/scenario/2", "errorClass": "detached-relationship-load"}],
+    }
+    assert list(_validator().iter_errors(_valid_run(observations))) == []
+
+
+def test_run_still_valid_without_lifecycle_observations() -> None:
+    # The two new keys are optional/additive: an existing run output (roundTrips
+    # plus rows / identityChecks) stays valid unchanged.
+    observations = {
+        "roundTrips": 1,
+        "rows": [{"id": 1}],
+        "identityChecks": [{"left": "/scenario/1", "right": "/scenario/0", "same": True}],
+    }
+    assert list(_validator().iter_errors(_valid_run(observations))) == []
+
+
+def test_run_rejects_unknown_expected_state() -> None:
+    observations = {
+        "roundTrips": 1,
+        "stateChecks": [
+            {"at": "/scenario/1", "expected": "zombie", "observed": "x", "pass": False}
+        ],
+    }
+    assert list(_validator().iter_errors(_valid_run(observations)))
+
+
+def test_run_rejects_unknown_error_class() -> None:
+    observations = {
+        "roundTrips": 1,
+        "errors": [{"at": "/scenario/2", "errorClass": "not-a-real-error"}],
+    }
+    assert list(_validator().iter_errors(_valid_run(observations)))
+
+
+def test_run_rejects_state_check_missing_pass() -> None:
+    observations = {
+        "roundTrips": 1,
+        "stateChecks": [{"at": "/scenario/1", "expected": "detached", "observed": "detached"}],
+    }
+    assert list(_validator().iter_errors(_valid_run(observations)))
+
+
 def test_describe_accepts_case_tag_claims() -> None:
     errors = list(_validator().iter_errors(_valid_describe()))
     assert errors == []

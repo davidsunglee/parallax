@@ -17,7 +17,9 @@ import pytest
 from reference_harness.case import discover_cases
 from reference_harness.case_runner import (
     CaseFailure,
+    _assert_action_on,
     _assert_scenario_count_consistency,
+    _reuse_prior_rows,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -37,9 +39,11 @@ def test_scenario_cases_are_discovered_and_self_describe() -> None:
         assert "operation" not in case.when
         for step in case.scenario:
             assert "roundTrips" in step
-            # A step is EITHER a read step (carries `find`) or a write step
-            # (carries `write`), never both.
-            assert ("find" in step) ^ ("write" in step)
+            # A step is EXACTLY ONE of a read step (carries `find`), a write step
+            # (carries `write`), or a lifecycle-action step (carries `action`,
+            # m-case-format COR-30).
+            kinds = ("find" in step) + ("write" in step) + ("action" in step)
+            assert kinds == 1, "a scenario step is exactly one of find / write / action"
             if "write" in step:
                 # A committed / rolled-back write lists golden DML; a NO-OP write
                 # (a versioned UPDATE that changes no attribute, m-opt-lock) issues no DML,
@@ -166,3 +170,86 @@ def test_scenario_total_mismatch_is_rejected() -> None:
     case.then["roundTrips"] += 1
     with pytest.raises(CaseFailure):
         _assert_scenario_count_consistency(case, "postgres")
+
+
+# --- zero-round-trip reuse: loud failure vs the ONE legitimate empty case -------
+#
+# `_reuse_prior_rows` must fail LOUDLY when a zero-round-trip step names a source
+# that does not resolve (an empty reuse would let its identity / expectRows
+# assertion pass vacuously), while still permitting the operation-backed list
+# CONSTRUCTION that has not resolved yet (m-op-list-001 step 0 — no named source,
+# no non-empty assertion).
+
+
+def _any_case():
+    """A discovered case whose `path.name` the reuse / on helpers cite in errors."""
+    return next(iter(_scenario_cases()))
+
+
+def test_reuse_prior_rows_permits_unresolved_construction() -> None:
+    # A construction step (m-op-list-001 step 0): roundTrips 0, no golden SQL, no
+    # named source, and asserts nothing — it reuses the empty set until first access.
+    construction = {"find": {"all": {}}, "targetEntity": "Order", "roundTrips": 0}
+    assert _reuse_prior_rows(_any_case(), construction, 0, []) == []
+
+
+def test_reuse_prior_rows_raises_on_unresolved_named_source() -> None:
+    # A re-access whose `on` names a step that does not exist yet: the pre-refactor
+    # loud failure, restored — never a silent empty reuse.
+    step = {"action": "access", "on": 5, "roundTrips": 0}
+    with pytest.raises(CaseFailure):
+        _reuse_prior_rows(_any_case(), step, 1, [[{"id": 1}]])
+
+
+def test_reuse_prior_rows_raises_on_forward_same_object_as() -> None:
+    # `sameObjectAs` pointing at the current (or a later) step cannot resolve to an
+    # EARLIER result; the reuse MUST fail loudly rather than return [].
+    step = {"action": "access", "on": 0, "sameObjectAs": 2, "roundTrips": 0}
+    with pytest.raises(CaseFailure):
+        _reuse_prior_rows(_any_case(), step, 2, [[{"id": 1}], []])
+
+
+def test_reuse_prior_rows_rejects_construction_asserting_rows() -> None:
+    # A no-source zero-round-trip step that asserts NON-EMPTY rows is not a valid
+    # construction — a construction resolves no rows yet, so this fails loudly.
+    step = {
+        "find": {"all": {}},
+        "targetEntity": "Order",
+        "roundTrips": 0,
+        "expectRows": [{"id": 1}],
+    }
+    with pytest.raises(CaseFailure):
+        _reuse_prior_rows(_any_case(), step, 0, [])
+
+
+# --- action `on` validation: earlier, in-range, unique --------------------------
+
+
+def test_assert_action_on_accepts_earlier_unique_indices() -> None:
+    # A coordinate-grouped load over two earlier sources, one statement group each.
+    step = {"action": "load", "on": [0, 1], "path": "lines", "roundTrips": 2}
+    pairs = [("select ...", [1]), ("select ...", [2])]
+    _assert_action_on(_any_case(), 2, step, pairs)  # must not raise
+
+
+def test_assert_action_on_rejects_forward_or_self_index() -> None:
+    # `on` must name an EARLIER step — a self / forward index is an authoring error.
+    step = {"action": "load", "on": 2, "path": "items", "roundTrips": 1}
+    with pytest.raises(CaseFailure):
+        _assert_action_on(_any_case(), 2, step, [("select ...", [])])
+
+
+def test_assert_action_on_rejects_duplicate_index() -> None:
+    # The array form is unique — a source is referenced at most once.
+    step = {"action": "load", "on": [0, 0], "path": "lines", "roundTrips": 1}
+    with pytest.raises(CaseFailure):
+        _assert_action_on(_any_case(), 2, step, [("select ...", [])])
+
+
+def test_assert_action_on_rejects_more_groups_than_sources() -> None:
+    # A coordinate-grouped load must not run MORE statement groups than the sources
+    # it references — every executed group is accounted for by a referenced source.
+    step = {"action": "load", "on": [0, 1], "path": "lines", "roundTrips": 3}
+    pairs = [("select ...", [1]), ("select ...", [2]), ("select ...", [3])]
+    with pytest.raises(CaseFailure):
+        _assert_action_on(_any_case(), 2, step, pairs)

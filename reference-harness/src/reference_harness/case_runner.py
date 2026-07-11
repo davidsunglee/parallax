@@ -3244,6 +3244,181 @@ def _scenario_root_entity(case: Case) -> Entity:
     return case.model.root_entity
 
 
+# Action-step verbs (m-case-format lifecycle vocabulary, COR-30). The DML verbs
+# COMMIT their buffered golden SQL (a `flush` materializes pending writes, a
+# `mergeBack` / `commit` reconciles at the boundary); the READ verbs execute a
+# relationship / list query and return rows (a `load` triggers a deferred fetch,
+# an `access` reads an already-loaded set). Every other verb (`mutate` with no
+# DML, `detachCopy`, `abort`) is an in-memory / rollback step whose lifecycle and
+# reference-identity observables are adapter-delegated — validated by the schema
+# here, then graded by each language's API Conformance Suite.
+_ACTION_DML_VERBS = frozenset({"flush", "mergeBack", "commit"})
+_ACTION_READ_VERBS = frozenset({"load", "access"})
+
+
+def _reuse_prior_rows(
+    case: Case, step: dict[str, Any], index: int, results: list[list[dict[str, Any]]]
+) -> list[dict[str, Any]]:
+    """Rows a zero-round-trip step reuses from an earlier step.
+
+    Two mutually-exclusive shapes, kept distinct so a mis-authored step fails
+    LOUDLY rather than passing vacuously on a silently-empty reuse:
+
+    - **A named reuse** — a cache hit / re-access that returns the SAME interned
+      objects as an earlier step, named by ``sameObjectAs`` (else, on an action
+      step, its ``on`` source). The named source MUST resolve to an EARLIER step
+      (``0 <= source < index``); a forward / self / out-of-range index is an
+      authoring error, NOT an empty set (which would let a ``sameObjectAs`` /
+      ``expectRows`` assertion pass against nothing).
+    - **An operation-backed list construction that has not resolved yet**
+      (``m-op-list-001`` step 0: a ``find`` built with ``roundTrips: 0``, no
+      golden SQL, and no named source). It carries no rows until first access, so
+      it legitimately reuses the empty set — the ONE intentionally-empty case. It
+      MUST assert nothing non-empty (a construction resolves no rows yet), so a
+      non-empty ``expectRows`` here is a loud failure.
+    """
+    named = step.get("sameObjectAs", step.get("on"))
+    if named is not None:
+        source = (named[0] if named else -1) if isinstance(named, list) else named
+        if not 0 <= source < index:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] reuses prior rows from an "
+                f"UNRESOLVED source {source!r} — a zero-round-trip cache hit / "
+                f"re-access MUST name an EARLIER resolved step (0 <= source < {index}). "
+                f"An empty reuse here would let its identity / expectRows assertion "
+                f"pass vacuously."
+            )
+        return results[source]
+    if step.get("expectRows"):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] declares roundTrips 0 with no golden "
+            f"SQL and names no reuse source, but asserts non-empty expectRows. Only an "
+            f"operation-backed list CONSTRUCTION that has not resolved yet may reuse the "
+            f"empty set, and it resolves no rows until first access."
+        )
+    return []
+
+
+def _assert_action_on(
+    case: Case, index: int, step: dict[str, Any], pairs: list[tuple[str, list[Any]]]
+) -> None:
+    """Validate an action step's ``on`` source indices (m-case-format, COR-30).
+
+    Every index in ``on`` — a single int, or an array of coordinate-group sources —
+    MUST name a REAL earlier step: ``>= 0``, strictly EARLIER than this step, and,
+    for the array form, UNIQUE (each source referenced at most once). A
+    coordinate-grouped ``load`` (an array ``on``) emits one child statement per
+    lowered-coordinate group, so it MUST NOT execute MORE statement groups than it
+    references sources — every executed group is accounted for by a referenced
+    source (m-deep-fetch batching contract). ``on`` is OPTIONAL on the boundary
+    verbs (``flush`` / ``commit`` / ``abort``), which target the unit of work
+    rather than a prior object; when a boundary step DOES carry ``on`` (a ``flush``
+    documenting its buffered write), the same earlier-and-unique checks apply.
+    """
+    if "on" not in step:
+        return
+    on = step["on"]
+    indices = list(on) if isinstance(on, list) else [on]
+    if isinstance(on, list) and len(set(indices)) != len(indices):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}].on {on!r} names a DUPLICATE source; "
+            f"a coordinate-grouped action references each source at most once."
+        )
+    for src in indices:
+        if not 0 <= src < index:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}].on references step {src!r}, which "
+                f"is not a real EARLIER step (0 <= source < {index}); an action targets "
+                f"the result of a prior step."
+            )
+    is_grouped_load = isinstance(on, list) and step.get("action") in _ACTION_READ_VERBS
+    if is_grouped_load and len(pairs) > len(indices):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] executes {len(pairs)} statement "
+            f"group(s) but references only {len(indices)} coordinate source(s); a "
+            f"coordinate-grouped load emits at most one statement per referenced source, "
+            f"so every executed group MUST be accounted for by a referenced source."
+        )
+
+
+def _run_scenario_action(
+    case: Case,
+    db: DatabaseProvider,
+    index: int,
+    step: dict[str, Any],
+    pairs: list[tuple[str, list[Any]]],
+    results: list[list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Execute one action step's golden SQL and return the rows it observes.
+
+    A DML verb (`flush` / `mergeBack` / `commit`) commits every buffered statement
+    on the unit of work's connection — so a later read observes the flushed state —
+    and captures no rows. A read verb (`load` / `access`) executes EVERY listed
+    statement (a coordinate-grouped or multi-level load lists one per group / level)
+    and aggregates the returned rows; a zero-round-trip re-access reuses the source
+    rows. Any other verb (`mutate` / `detachCopy` / `abort`) commits any authored
+    golden DML (a business-past correction's split write) and captures no rows.
+    """
+    _assert_action_on(case, index, step, pairs)
+    verb = step["action"]
+    if verb in _ACTION_READ_VERBS:
+        if not pairs:
+            return _reuse_prior_rows(case, step, index, results)
+        rows: list[dict[str, Any]] = []
+        for statement, stmt_binds in pairs:
+            rows.extend(_query_rows(db, statement, stmt_binds))
+        return rows
+    for statement, stmt_binds in pairs:
+        db.execute(statement, stmt_binds)
+    return []
+
+
+def _assert_step_row_observables(
+    case: Case,
+    index: int,
+    step: dict[str, Any],
+    rows: list[dict[str, Any]],
+    results: list[list[dict[str, Any]]],
+    tolerance: Decimal | None,
+    default_identity: str,
+) -> None:
+    """Assert a step's row-level observables: ``expectRows`` and ``sameObjectAs``.
+
+    ``expectRows`` compares the step's observed rows to the fixture-derived
+    expectation; ``sameObjectAs`` checks the one-object-per-PK rule against an
+    earlier step. The reference-identity observables (``differentObjectFrom``,
+    ``expectState``, ``expectError``) are adapter-delegated — validated by the
+    schema and graded by each language's API Conformance Suite — so the wire
+    harness skips them here.
+    """
+    expect = step.get("expectRows")
+    if expect is not None and not _rows_equal(rows, expect, tolerance):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] rows != expectRows.\n"
+            f"  rows:     {rows!r}\n"
+            f"  expected: {expect!r}"
+        )
+
+    if "sameObjectAs" in step:
+        source = step["sameObjectAs"]
+        if source < 0 or source >= index:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}].sameObjectAs={source} "
+                f"must reference an EARLIER step."
+            )
+        identity_col = step.get("identityAttr", default_identity)
+        this_ids = _identity_keys(case, index, rows, identity_col)
+        that_ids = _identity_keys(case, source, results[source], identity_col)
+        if this_ids != that_ids:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] is declared to denote "
+                f"the same object(s) as step {source}, but their primary-key "
+                f"identities differ (one-object-per-PK violated).\n"
+                f"  step {index}: {this_ids!r}\n"
+                f"  step {source}: {that_ids!r}"
+            )
+
+
 def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
     """Execute the scenario against the provisioned DB and assert its contract.
 
@@ -3290,51 +3465,28 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             # stay aligned.
             results.append([])
             continue
+        if "action" in step:
+            # A lifecycle ACTION step (m-case-format, COR-30): execute its golden SQL
+            # (a load / access relationship query, a flush / mergeBack / commit DML)
+            # and grade its row-level observables; identity / state / error observables
+            # are adapter-delegated (validated, then skipped on the wire lane).
+            rows = _run_scenario_action(case, db, index, step, pairs, results)
+            results.append(rows)
+            _assert_step_row_observables(
+                case, index, step, rows, results, tolerance, default_identity
+            )
+            continue
         if pairs:
             # A DB-touching step: m-unit-work finds are single-statement, so the round-trip
             # count is one; execute it and capture the rows.
             statement, stmt_binds = pairs[0]
             rows = _query_rows(db, statement, stmt_binds)
         else:
-            # A cache hit: no statement executes. The contract is that it returns
-            # the SAME interned objects as the find it hits — modeled here as
-            # reusing the rows from the step named by `sameObjectAs` (or, absent
-            # that, the immediately preceding step).
-            source = step.get("sameObjectAs", index - 1)
-            if source < 0 or source >= len(results):
-                raise CaseFailure(
-                    f"{case.path.name}: scenario[{index}] is a cache hit "
-                    f"(roundTrips 0) but names no resolvable prior step to reuse."
-                )
-            rows = results[source]
+            # A cache hit (or an m-op-list construction that has not resolved yet): no
+            # statement executes. Reuse the SAME interned objects as the step it hits.
+            rows = _reuse_prior_rows(case, step, index, results)
         results.append(rows)
-
-        expect = step.get("expectRows")
-        if expect is not None and not _rows_equal(rows, expect, tolerance):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] rows != expectRows.\n"
-                f"  rows:     {rows!r}\n"
-                f"  expected: {expect!r}"
-            )
-
-        if "sameObjectAs" in step:
-            source = step["sameObjectAs"]
-            if source < 0 or source >= index:
-                raise CaseFailure(
-                    f"{case.path.name}: scenario[{index}].sameObjectAs={source} "
-                    f"must reference an EARLIER step."
-                )
-            identity_col = step.get("identityAttr", default_identity)
-            this_ids = _identity_keys(case, index, rows, identity_col)
-            that_ids = _identity_keys(case, source, results[source], identity_col)
-            if this_ids != that_ids:
-                raise CaseFailure(
-                    f"{case.path.name}: scenario[{index}] is declared to denote "
-                    f"the same object(s) as step {source}, but their primary-key "
-                    f"identities differ (one-object-per-PK violated).\n"
-                    f"  step {index}: {this_ids!r}\n"
-                    f"  step {source}: {that_ids!r}"
-                )
+        _assert_step_row_observables(case, index, step, rows, results, tolerance, default_identity)
 
 
 def _has_version_gate(statement: str, version_col: str) -> bool:

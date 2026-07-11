@@ -592,9 +592,15 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # untagged (m-temporal-read-018..021 business-only / MariaDB-fallback,
         # m-read-lock-009 MariaDB-specific). Both counts rise by 9 (272 / 292) and
         # slice-mvp-1 is unchanged.
+        #
+        # COR-30 Phase 2 adds the 8 managed-only deferred-load / operation-backed-list
+        # cases (m-deep-fetch-013..017, m-op-list-001..003), all scenario-shape and
+        # tagged slice-managed-1 only (never slice-snapshot-1 or slice-mvp-1). This
+        # also gives m-op-list its first owned case family. slice-managed-1 rises by 8
+        # (292 -> 300); slice-snapshot-1 and slice-mvp-1 are unchanged.
         ("slice-mvp-1", 198),
         ("slice-snapshot-1", 272),
-        ("slice-managed-1", 292),
+        ("slice-managed-1", 300),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

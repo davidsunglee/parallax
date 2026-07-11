@@ -91,8 +91,13 @@ observable contract:
   makes a detached object usable across transaction boundaries (e.g. carried
   through a UI edit) without holding a transaction open. A **deferred
   relationship load** (`m-deep-fetch`) on a detached object raises a defined
-  Parallax Error — there is no live unit of work to resolve through; only
-  already-loaded state is readable.
+  Parallax Error — the neutral **`detached-relationship-load`** error — because
+  there is no live unit of work to resolve through; only already-loaded state is
+  readable, and the load MUST NOT open a transaction. This is an
+  application-lifecycle error, distinct from the `m-db-error` DB-error taxonomy; a
+  compatibility case asserts it with a step-level `expectError:
+  detached-relationship-load` (`m-case-format`), graded by the API Conformance
+  Suite.
 
 ## Detached copy — a deep copy decoupled from the cache
 

@@ -1,0 +1,58 @@
+# Deferred load with an empty source and an empty intermediate level
+# (m-deep-fetch): an empty source set emits NO SQL, and an empty intermediate key
+# set suppresses the deeper query.
+#
+# Steps 0-1: order id 999 does not exist, so the source set is empty and the `load`
+# of `items` over it issues zero SQL (roundTrips 0). Steps 2-3: order 3 has no line
+# items, so the two-hop `items.statuses` load runs the items query (which returns
+# nothing) and then SUPPRESSES the statuses query — no item keys to fetch by. The
+# whole scenario is three round trips (0 for the empty source, 1 for the empty
+# intermediate level's own query, plus the two finds).
+model: models/orders.yaml
+tags: [m-deep-fetch, relationship, deferred-load, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Order
+      find:
+        in:
+          attr: Order.id
+          values: [999]
+      roundTrips: 1
+      note: an empty source set (no such order)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0 where t0.id in (?)
+          binds: [999]
+      expectRows: []
+    - action: load
+      "on": 0
+      path: items
+      roundTrips: 0
+      note: empty source -> NO child SQL
+      expectRows: []
+    - targetEntity: Order
+      find:
+        in:
+          attr: Order.id
+          values: [3]
+      roundTrips: 1
+      note: order 3 exists but has no line items
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0 where t0.id in (?)
+          binds: [3]
+      expectRows:
+        - { id: 3, name: ada }
+    - action: load
+      "on": 2
+      path: items.statuses
+      roundTrips: 1
+      note: empty intermediate (order 3 has no items) -> the statuses query is suppressed
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?) order by t0.id desc
+          binds: [3]
+      expectRows: []
+then:
+  roundTrips: 3

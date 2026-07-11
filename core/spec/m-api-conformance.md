@@ -78,7 +78,15 @@ satisfies each is language-local.
    suite MUST assert the developer surface produces the corpus's expected results
    (`then.rows`, `then.graph`, `then.tableState`, `then.affectedRows`,
    round-trip counts, and identity/cache expectations as applicable), using the
-   same comparison rules the conformance grade uses.
+   same comparison rules the conformance grade uses. For a case carrying the
+   per-step **lifecycle observables** (`sameObjectAs` / `differentObjectFrom`,
+   `expectState`, `expectError`), the suite MUST return and verify the
+   corresponding adapter observations (`identityChecks` — as **reference** identity
+   for managed objects — `stateChecks`, and `errors`; see
+   [`m-conformance-adapter`](m-conformance-adapter.md)), so an assertion that two
+   objects are identical / distinct / detached, or that a verb raised a defined
+   error, is **graded, not narrated** — including on `harness`-lane cases whose
+   reference-identity half the wire grade only skips.
 5. **No-drift guard.** For cases whose behavior is a query, the suite MUST assert
    that the operation the idiomatic API builds canonically equals the corpus
    operation for that case. This ties the developer-facing snippet to the graded

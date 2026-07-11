@@ -1,0 +1,50 @@
+# Deferred load flushes a pending dependent write first (m-deep-fetch,
+# m-unit-work): a buffered write that affects the relationship being loaded is
+# flushed BEFORE the relationship query runs, so the load observes it.
+#
+# Order 1 is found (step 0), then a new line item (id 13) is buffered for it and
+# flushed at step 1 — the INSERT lands. Step 2's explicit `load` of `items` runs
+# AFTER the flush, so its `order_id in (1)` query returns the two seeded items PLUS
+# the freshly flushed 13. The statement ordering (INSERT before SELECT) is the
+# observable: a load never queries a relationship over stale buffered state.
+model: models/orders.yaml
+tags: [m-deep-fetch, relationship, deferred-load, m-unit-work, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Order
+      find:
+        in:
+          attr: Order.id
+          values: [1]
+      roundTrips: 1
+      note: the source order
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0 where t0.id in (?)
+          binds: [1]
+      expectRows:
+        - { id: 1, name: Ada }
+    - action: flush
+      "on": 0
+      roundTrips: 1
+      note: flush the buffered create of a new dependent line item (INSERT before the load)
+      statements:
+        - sql:
+            postgres: insert into order_item(id, order_id, sku, quantity, shipped_on) values (?, ?, ?, ?, ?)
+          binds: [13, 1, Z-999, 7, null]
+    - action: load
+      "on": 0
+      path: items
+      roundTrips: 1
+      note: the relationship query runs after the flush -> it observes the new item 13
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?) order by t0.id desc
+          binds: [1]
+      expectRows:
+        - { id: 13, order_id: 1, sku: Z-999, quantity: 7 }
+        - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+        - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+then:
+  roundTrips: 3

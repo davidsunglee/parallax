@@ -1,0 +1,41 @@
+# Deferred multi-hop load (m-deep-fetch): an ad-hoc `load` of a two-hop path over
+# managed objects emits ONE statement per non-empty level — the same N+1 elimination
+# a materialized deep fetch proves, driven explicitly.
+#
+# Step 0 finds orders {1, 42}. Step 1 loads `items.statuses`: level items keyed by
+# the two order ids, then level statuses keyed by the four DISTINCT item ids
+# {11, 12, 421, 422} — two statements, not 1 + N + N. The load costs two round
+# trips (root already resolved at step 0), so the whole scenario is three.
+model: models/orders.yaml
+tags: [m-deep-fetch, relationship, deferred-load, multi-hop, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Order
+      find:
+        in:
+          attr: Order.id
+          values: [1, 42]
+      roundTrips: 1
+      note: the two source orders (root level)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?)
+          binds: [1, 42]
+      expectRows:
+        - { id: 1, name: Ada }
+        - { id: 42, name: Grace }
+    - action: load
+      "on": 0
+      path: items.statuses
+      roundTrips: 2
+      note: two-hop load -> one statement per non-empty level (items keyed by order id, statuses by item id)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
+          binds: [1, 42]
+        - sql:
+            postgres: select t0.id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?) order by t0.code asc
+          binds: [11, 12, 421, 422]
+then:
+  roundTrips: 3
