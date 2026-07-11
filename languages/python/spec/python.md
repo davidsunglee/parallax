@@ -89,6 +89,14 @@ never something an application developer hand-writes.
   expression objects raise on `__bool__` (catching accidental `and`/`or`/`not`
   and chained comparisons, pointing at `&`/`|`/`~` and `.between()`), and
   reflected operators (`25 | expr`) raise with parenthesization guidance.
+  Because expressions reject `__bool__`, a boolean attribute cannot be used as
+  a bare truthy predicate, and the `== True` spelling trips Ruff `E712` under
+  the mandatory §10 lint policy — so boolean attribute expressions additionally
+  offer `.is_(True)` / `.is_(False)`, a **spelling redundancy** that serializes
+  to the identical canonical `eq` node as the operator form (one canonical
+  representation, two spellings that cannot drift). The `==` spelling remains
+  legal in user code; documented examples and the generated Usage Guide use the
+  lint-clean `.is_()` form throughout.
 - **Single-object find.** Arity is negotiated on the materialized result:
   `snapshot.result()` raises `NoResultFound` on zero and `TooManyResultsFound`
   on more than one; `snapshot.result_or_none()` returns `T | None`, raising
@@ -164,7 +172,7 @@ never something an application developer hand-writes.
   ```python
   Animal.where(
       Animal.narrow(Dog, where=Dog.bark_volume > 5)
-      | Animal.narrow(Cat, where=Cat.indoor == True)
+      | Animal.narrow(Cat, where=Cat.indoor.is_(True))
   )
   ```
 
@@ -174,14 +182,26 @@ never something an application developer hand-writes.
   exact-naming rule, checked at build). The statement-level clause
   `Animal.where(...).narrow(Dog, ...)` is the whole-statement form: it wraps
   the statement's conjoined predicate as the single top-level `narrow` node's
-  operand (zero predicates ⇒ `all`), establishes the narrowed scope for the
-  statement's `where` arguments, and is single-shot like `as_of`; the clause
+  operand (zero predicates ⇒ `all`) and is single-shot like `as_of`. It is a
+  **pure result-set narrowing** that grants no attribute scope to the
+  already-built `where` arguments: every predicate is validated immediately as
+  it is built, so subtype-declared attributes are predicable **only** inside
+  the scoped constructor's `where=` —
+  `Animal.where(Dog.bark_volume > 3).narrow(Dog)` is rejected the moment the
+  first predicate is built
+  (`subtype-attribute-outside-narrow-scope`), and the valid spelling is
+  `Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))`. The clause
   and the constructor converge on the identical canonical node, so neither
   spelling can drift. On an include path, `.narrow(*subtypes)` on a hop
   (`Owner.pets.narrow(Dog)`, continuable to deeper hops) serializes to the
   path segment's `narrow: { to: [...] }` and requests a distinct **narrowed
-  view** (§3). Everywhere, the resolved set must stay within the position's
-  effective concrete-subtype set, checked at build time.
+  view** (§3). Everywhere, the resolved set must stay within the **enclosing
+  effective concrete-subtype set** — the threaded active position, re-narrowed
+  at every hop and by every enclosing `narrow` scope, never the declared base
+  type — so a nested same-position narrow can only constrain the position
+  further, and one that broadens back out (a `Cat` narrow inside a `Dog`
+  scope) is rejected at build time (`narrow-outside-position`, the corpus's
+  threaded-position rule).
 - **Temporal-read spelling.** Statement-level and axis-keyed, with the two core
   axis kinds as the public vocabulary:
 
@@ -336,7 +356,11 @@ never something an application developer hand-writes.
   milestone, each root **edge-pinned** at its milestone's from-instant;
   `snapshot.pin` reports only genuinely pinned axes (a scanned axis is absent,
   per the core rule that a scan is not a pin), and `parallax.core.pin_of(node)`
-  reports each node's own coordinates. The `snapshot-history-includes` feature
+  reports each node's own coordinates. `parallax.core.edge_of(node)` reports a
+  temporal node's **milestone edge** — the finite from-instant of its milestone
+  on each declared axis (core's Edge Pin), defined for every temporal node
+  regardless of how the read was pinned; calling it on a non-temporal node
+  raises. The `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
   raises `UnsupportedFeatureError` naming the deferral, distinct from
   validation errors.
@@ -373,7 +397,11 @@ never something an application developer hand-writes.
   override also **validates**: Pydantic's own `model_copy` does not validate
   `update=` data, so the Parallax override applies the same build-time rules
   as construction — unknown field names are rejected, framework-owned fields
-  (the version column) and primary-key fields may not be assigned, and every
+  (the version column) and primary-key fields may not be assigned,
+  **relationship fields are rejected outright** (only mapped scalar
+  attributes and value-object members are assignable; a relationship edit has
+  no canonical row lowering in this slice — no cascade and no deferred
+  association mutation semantics exist to lower it to), and every
   value passes the §2 scalar input policies — so an invalid edit raises at
   copy time, never at the database. Nodes carry no change tracking; the
   derived copy's change record is an explicit write input, and there is no
@@ -381,23 +409,30 @@ never something an application developer hand-writes.
   touched field whose current value equals its recorded original drops out of
   the **effective change set**, so a net-zero edit chain (`100 → 200 → 100`)
   contributes nothing and an update whose effective change set is empty
-  issues **no DML** (§5). Write inputs are the entity classes themselves:
+  issues **no DML** — uniformly for non-temporal and temporal entities
+  alike (§5). Write inputs are the entity classes themselves:
   full instances for `insert` (the Create Payload), edited copies or
-  instances for the other verbs (§5). The **stale-web-edit** recipe requires
-  a **finite display instant**: at render time the service captures one (a
-  UTC clock read) and pins the display read at it
-  (`as_of(processing=display_instant)`), transporting that instant with the
-  form — an unpinned latest read exposes only the `LATEST` sentinel, which is
-  not replayable (re-resolving it later selects whatever milestone is then
-  current, including a concurrent writer's, so the gate below would pass and
-  silently overwrite). On submit, the service re-fetches
-  `as_of(processing=display_instant)` inside an optimistic transaction,
-  applies the payload fields to a copy, and updates: the transaction observed
-  the displayed milestone's `in_z`, so a concurrent writer's chain leaves a
-  current row whose fresh `in_z` fails the observed-`in_z` gate (a zero-row
-  close — the conflict), while an untouched row succeeds. Any finite instant
-  inside the seen milestone's interval works; only `LATEST` cannot. The idiom
-  requires no detached objects.
+  instances for the other verbs (§5). The **stale-web-edit** recipe
+  transports the displayed milestone's **edge**: at render time the service
+  reads the row, captures `edge_of(node).processing` (the displayed
+  milestone's own `in_z`), and sends it with the form. On submit, the service
+  re-fetches `as_of(processing=edge)` inside an optimistic transaction,
+  applies the payload fields to a copy, and updates. A milestone's
+  from-instant lies inside its own `[from, to)` interval by construction, so
+  the re-fetch selects the **displayed** milestone even after a concurrent
+  writer has chained a replacement — the transaction observes the displayed
+  `in_z`, and the concurrent chain leaves a current row whose fresh `in_z`
+  fails the observed-`in_z` gate (a zero-row close — the conflict), while an
+  untouched row succeeds. Weaker transports fail: the `LATEST` sentinel is
+  not replayable (it re-resolves to whatever milestone is current at submit
+  time), and a wall-clock display instant is racy because processing instants
+  order by **assignment**, not commit — a writer whose transaction began
+  before the display fetch can commit a replacement whose `in_z` predates the
+  captured instant, which a wall-clock replay then selects, letting the stale
+  overwrite pass. Edge transport is Reladomo's own answer with the detach
+  removed: its detached copy carries the milestone's `IN_Z` offline and the
+  merge-back gate binds that carried coordinate — transport, never
+  reconstruction. The idiom requires no detached objects.
 
 ## 4. Result collections and materialization
 
@@ -428,8 +463,13 @@ never something an application developer hand-writes.
 ## 5. Transactions and writes
 
 - **Demarcation construct.** Callback-only:
-  `db.transact(fn, *, retries=10, concurrency="locking", retry_optimistic_conflicts=False)`.
-  The closure receives the Parallax Transaction (`def fn(tx): ...`),
+  `db.transact(fn, *, retries: int | None = None, concurrency: Literal["locking", "optimistic"] | None = None, retry_optimistic_conflicts: bool | None = None)`.
+  Every option is **sentinel-backed** so an omitted option is distinguishable
+  from an explicitly passed value: `None` (the default) means *apply the
+  outermost defaults when this call opens the transaction — `retries=10`,
+  `concurrency="locking"`, `retry_optimistic_conflicts=False` — and inherit
+  the active transaction's settings when this call joins one*. The closure
+  receives the Parallax Transaction (`def fn(tx): ...`),
   `tx.find(op)` reads inside the transaction (participating per the selected
   mode), and the callback's return value is returned **only after a durable
   commit** — on rollback, or on commit failure, the call raises instead of
@@ -449,10 +489,18 @@ never something an application developer hand-writes.
   commit, abort, and the bounded retry loop belong exclusively to the
   **outermost** boundary (an inner body re-executes only as part of the
   outermost closure's retry), and an inner failure aborts the whole
-  transaction. A joining call may not re-negotiate the boundary: an explicit
-  `concurrency` differing from the active mode raises, and explicit
-  `retries` / `retry_optimistic_conflicts` arguments on a joining call raise
-  (omitted arguments simply join the active settings). The active transaction
+  transaction with defined **rollback-only** semantics: before the exception
+  propagates out of the joined scope, the root transaction is marked
+  rollback-only, so even if the outer callback catches the exception and
+  returns normally, commit is **refused** — the refusal preserves the
+  original cause and its retriability classification (the outermost retry
+  loop still applies per the original failure's category), and the callback's
+  return value is withheld exactly as on any abort (Reladomo's root
+  `setExpectRollback` behavior). A joining call may not re-negotiate the
+  boundary: an explicit (non-`None`) option whose value conflicts with the
+  active transaction's setting raises, an explicit value equal to the active
+  setting is accepted, and omitted (`None`) options inherit the active
+  settings. The active transaction
   is tracked per thread; a transaction object is owned by its outermost
   closure invocation and is not thread-safe; escaping references raise on use
   after the scope ends. The per-transaction participation mode is
@@ -476,37 +524,63 @@ never something an application developer hand-writes.
   edited copy and emits the sparse row (primary key + the **effective change
   set** — touched fields whose current value differs from the copy's recorded
   original; a provenance-less instance raises, and changing a PK field
-  raises), and an update whose effective change set is empty issues **no DML
-  at all** — zero round trips and no version advance (the core no-op rule);
-  temporal `update` takes an edited copy or instance and emits
-  the full row (close-and-chain); `delete`/`terminate` take a node or
-  instance and key off it. Bitemporal plain verbs require keyword-only
+  raises); temporal `update` takes an edited copy or instance and emits the
+  full row (close-and-chain); `delete`/`terminate` take a node or
+  instance and key off it. The **no-op rule is uniform**: an `update` driven
+  by an edited copy whose effective change set is empty issues **no DML at
+  all** — zero round trips, no version advance, and for a temporal entity no
+  close and no chained row (a value-identical milestone would pollute the
+  audit history with a spurious change; Reladomo's dated setters likewise
+  refuse to enroll an equal value). A **non-empty** effective change set on a
+  temporal edited copy emits the full close-and-chain replacement row. A
+  provenance-less temporal instance carries no change record, so it always
+  chains; callers wanting no-op elision pass edited copies. Bitemporal plain
+  verbs require keyword-only
   `business_from`; the `*_until` trio additionally requires `until`, with
   `business_from < until`, both aware-UTC-microsecond datetimes, all validated
   at build. `delete` on a temporal entity and `terminate` on a non-temporal
   entity are rejected. Processing instants come from the handle-configured
   **Clock Strategy** (default system UTC; tests inject a fixed clock) — never
   from callers, with no per-operation overrides. Temporal `update`/`terminate`
-  read-before-write inside the transaction, sourcing the chained row's
-  unchanged values and, under optimistic mode, the observed `in_z` for the
-  gated close (with the business discriminator when current rows share an
-  `in_z`, per `m-bitemp-write`).
-- **Versioned non-temporal writes observe before writing.** `update` and
-  `delete` on a version-columned entity perform the same transaction-local
-  read-before-write as temporal writes: the unit of work resolves the row by
-  key inside the transaction (in `locking` mode this observation read takes
-  the dialect's shared read lock; in `optimistic` mode it takes none) and
-  records the **observed** version. The lowered `UPDATE` sets the effective
+  follow the same prior-observation rule as versioned writes (below): the
+  values a bitemporal rectangle split carries forward and, under optimistic
+  mode, the observed `in_z` for the gated close (with the business
+  discriminator when current rows share an `in_z`, per `m-bitemp-write`) come
+  from the milestone this unit of work observed via a transaction-scoped
+  read — never from an implicit write-path read.
+- **Versioned keyed writes require prior observation; set-based writes
+  materialize.** One observation rule, matching `m-opt-lock` exactly, ordered
+  no-op-first. **First**, no-op detection: an update whose effective change
+  set is empty is dropped before any observation or locking concern — no
+  observation read, no DML, zero round trips (the corpus's no-op scenario
+  shape). **Then**, for every write that survives, the version driving a keyed
+  write must already have been **observed by this unit of work** — recorded by
+  a transaction-scoped read (`tx.find`, or the set-based materialize read
+  below) that in `locking` mode takes the dialect's shared read lock and in
+  `optimistic` mode takes none. A keyed `update` or `delete` of a versioned
+  row this unit of work never observed **raises** in either mode; the
+  framework never issues an implicit resolving `SELECT` on behalf of a keyed
+  write (which would add round trips no corpus golden represents). The lowered
+  `UPDATE` sets the effective
   changed fields plus the framework-computed advance (`observed + 1`) in
   both modes and adds the `and version = ?` gate binding the observed
   version in optimistic mode only; the lowered `DELETE` is keyed and binds
   the observed version. A gated statement affecting zero rows is the
   optimistic conflict — surfaced always, retriable only via
-  `retry_optimistic_conflicts=True`. Version values are framework-owned end
+  `retry_optimistic_conflicts=True`. **Set-based** writes — selecting rows by
+  predicate rather than key — are the one path where the framework itself
+  materializes observations: one real read resolves the predicate to rows,
+  recording each matched row's observed version (locked in `locking` mode),
+  then one keyed per-object statement per resolved row (`1 + N` round trips,
+  a mid-batch zero-row gate aborting like any conflict). Version values are
+  framework-owned end
   to end: the version field on a node, an edited copy, or any caller input
-  never feeds the gate or the advance, and a versioned keyed write the
-  transaction never observed raises rather than writing blindly, in either
-  mode.
+  never feeds the gate or the advance. The developer-experience consequence
+  is stated plainly: an edited copy whose original node was fetched
+  **outside** the writing transaction cannot be updated directly — the row
+  must be re-fetched inside the transaction (observing its current version or
+  milestone) before `tx.update`, which is exactly what the §3 stale-web-edit
+  recipe already does.
 
 ## 6. Database support and compatibility proof
 
@@ -584,12 +658,22 @@ never something an application developer hand-writes.
   close the loop. Two run per example: the idiomatic statement's
   serialization equals the corpus operation, and idiomatic class descriptors
   equal corpus descriptors. The third is a Docker-free, unit-lane
-  **copy-to-row contract test** (`uv run pytest -m unit`): for every claimed
-  write case it builds the fixture node, applies the case's changes through
-  `model_copy`, lowers the edited copy, and asserts the lowering emits
-  exactly the case's neutral row-shaped write inputs (sparse row
-  non-temporal, full row temporal) — so the copy-provenance lowering
-  (ADR 0003) cannot drift while the other two proof paths stay green.
+  **copy-to-row contract test** (`uv run pytest -m unit`), scoped to the
+  write shapes that actually pass through edited-copy lowering — keyed
+  non-temporal updates and keyed temporal updates driven by an edited copy;
+  inserts, deletes/terminates, and set-based materialize paths never touch
+  `model_copy` lowering and are proven by the ordinary conformance path. For
+  each in-scope claimed write case it builds the fixture node, applies the
+  case's changes through `model_copy`, and lowers the edited copy through the
+  lowering seam, which takes the **transaction observation** (the observed
+  version or `in_z` the unit of work supplies at flush) as an explicit input:
+  the test supplies a synthetic observation and asserts the lowered
+  row-shaped write input (sparse row non-temporal, full row temporal) binds
+  exactly that observation, and a companion assertion lowers a copy carrying
+  a *different* version value and proves the node/copy-carried value is
+  ignored — so the copy-provenance lowering (ADR 0003) and the
+  framework-owned observation rule (§5) cannot drift while the other two
+  proof paths stay green.
 - **Usage Guide.** Generated from suite source (`uv run gen-usage-guide`) into
   `languages/python/docs/usage-guide.md`; CI runs `--check` and fails on
   drift. The guide and suite are additive to conformance-adapter proof, never
@@ -598,10 +682,11 @@ never something an application developer hand-writes.
 ## 7. Source-enforcement topology
 
 Behavioral modules map one-to-one onto Python submodules (enforcement scopes)
-inside the distributions of §8. import-linter forbids every scope-pair import
-the DAG does not permit — the generated forbidden-edge complement below —
-so illegal non-edges are rejected, not merely wrong directions; artifact
-co-location never legalizes a forbidden edge.
+inside the distributions of §8. import-linter forbids every production
+scope-pair import the DAG does not permit — the generated forbidden-edge
+complement below, with the conformance-family scopes exempted as importers
+per `modules.md` — so illegal non-edges are rejected, not merely wrong
+directions; artifact co-location never legalizes a forbidden edge.
 
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
@@ -627,9 +712,9 @@ co-location never legalizes a forbidden edge.
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-list`, `m-unit-work`, `m-temporal-read`, `m-inheritance` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-op-list` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-pk-gen`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-pk-gen`, `m-sql`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
-| `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format` (harnesses any behavioral module) | generated forbidden contracts (dev tree) |
+| `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api_conformance` (dev-only) | `tests.api_conformance` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
 | Entity and statement frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-descriptor`, `m-op-algebra`, `m-temporal-read` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
@@ -640,9 +725,22 @@ co-location never legalizes a forbidden edge.
   `languages/python/tools/check_dag_sync.py`, which parses the fenced
   `dependency-graph` block in `core/spec/modules.md`, computes the DAG's
   transitive closure over the table above (core edges plus the declared
-  support-scope edges), and emits the **complete forbidden-edge complement**
-  as import-linter `forbidden` contracts — one forbidden import per scope
-  pair the closure does not permit. Layer contracts alone cannot encode this
+  support-scope edges), and emits the **forbidden-edge complement**
+  as import-linter `forbidden` contracts — one forbidden import per
+  production scope pair the closure does not permit. The handle scope's
+  `m-sql` edge is deliberate: `m-unit-work` takes no edge to SQL generation
+  (core routes dialect SQL through the `m-db-port` execution seam at the
+  composition surface), so `parallax.snapshot.handle` is where claimed finds
+  are compiled and buffered DML is lowered, and the generated complement
+  permits that edge rather than forbidding it. The generator also encodes
+  the core **conformance-family exception** (`modules.md`): the
+  conformance-family scopes (`parallax.conformance.*`, plus the
+  pytest-bounded `tests.api_conformance`) are exempted from the complement
+  on the **importing** side — the CLI may import any compiler/runtime scope
+  it harnesses — while every production scope remains forbidden from
+  importing any conformance scope, so the production → conformance
+  direction stays a generated `forbidden` contract. Layer contracts alone
+  cannot encode this
   partial order: a `layers` contract lets a higher layer import *every* lower
   layer, silently legalizing illegal non-edges (e.g. `m-batch-write`
   importing `m-temporal-read`), so the gate must reject illegal non-edges,
@@ -672,7 +770,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy, internal `op_list`) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, statement API, `LATEST`, `Pin`, `meta`, `pin_of`, `is_loaded`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy, internal `op_list`) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `Pin`, `meta`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
@@ -709,7 +807,7 @@ subsection of the template is deleted from this completed spec.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py` | `uv run python tools/check_dag_sync.py && uv run lint-imports` | `python-static` job, same commands | any import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions; generated-contract drift fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py` | `uv run python tools/check_dag_sync.py && uv run lint-imports` | `python-static` job, same commands | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest -m unit` | `python-static` job | unit = no container/socket I/O; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `uv run pytest -m unit --cov --cov-branch --cov-report=xml && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100` | `python-static` job with `--cov-fail-under=90` plus the same diff-cover gate | **90% branch minimum** overall; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-static` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |

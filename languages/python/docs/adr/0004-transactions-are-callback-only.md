@@ -24,11 +24,18 @@ Nested calls join the active transaction, as Reladomo and the TypeScript
 target do (TS ADR 0022; repo ADR 0005): the inner closure receives the same
 transaction — no savepoint, no independent commit — and commit, abort, and
 the bounded retry loop belong to the outermost boundary only, so an inner
-failure aborts the whole transaction and an inner body re-executes only as
-part of the outermost retry. Raising on nesting was considered and rejected:
-it breaks transaction-owning helpers composing into larger transactions while
-adding no safety (independent inner commit is the ambiguity, and joining
-removes it). A joining call cannot re-negotiate the boundary — an explicit
-`concurrency` differing from the active mode raises, and explicit `retries`
-or `retry_optimistic_conflicts` arguments on a joining call raise; omitted
-arguments join the active settings.
+body re-executes only as part of the outermost retry. An inner failure marks
+the root transaction rollback-only before the exception propagates: even if
+the outer callback catches it and returns, commit is refused, the refusal
+preserves the original cause and its retriability classification (the
+outermost retry loop still applies per the original failure's category), and
+the callback value is withheld as on any abort — Reladomo's root
+`setExpectRollback` discipline. Raising on nesting was considered and
+rejected: it breaks transaction-owning helpers composing into larger
+transactions while adding no safety (independent inner commit is the
+ambiguity, and joining removes it). Because the join rules turn on whether
+each option was passed, the options are sentinel-backed (`None` defaults):
+omitted options apply the outermost defaults when opening and inherit the
+active settings when joining, while an explicit option on a joining call
+raises exactly when its value conflicts with the active transaction's
+setting (an explicit value equal to the active one is accepted).
