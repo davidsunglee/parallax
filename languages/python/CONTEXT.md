@@ -51,6 +51,13 @@ informational duration, and the round-trip count — mirroring the
 conformance-adapter emission convention.
 _Avoid_: query log, debug trace, profiler output
 
+**Narrowed View**:
+The distinct relationship view a narrowed include populates on a node, keyed
+by relationship name plus effective concrete-subtype set and read through the
+`narrowed` accessor; equivalent authored narrowings converge on one view, and
+differently narrowed views coexist on the same node.
+_Avoid_: filtered relationship, cast collection, subtype list
+
 ### Writes
 
 **Edited Copy**:
@@ -60,10 +67,12 @@ re-associated with anything.
 _Avoid_: dirty object, detached object, tracked entity, draft
 
 **Change Record**:
-The accumulated changed-field-name set an edited copy carries (copies of
-copies union their records); it lowers a non-temporal update to the canonical
-sparse row of primary key plus changed attributes.
-_Avoid_: dirty set, change tracking, diff log
+The map an edited copy carries from each touched field to its original
+(first-touched) value — copies of copies merge records, keeping the earliest
+original. Lowering keeps only the effective change set (fields whose current
+value differs from the original), emitting the canonical sparse row of primary
+key plus changed attributes, or no DML at all when the set is empty.
+_Avoid_: dirty set, touched-name set, change tracking, diff log
 
 ### Transactions
 

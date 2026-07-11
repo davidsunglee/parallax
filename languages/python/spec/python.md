@@ -103,17 +103,85 @@ never something an application developer hand-writes.
   the n-ary canonical form. Redundant `group` nodes are unrepresentable, so an
   idiomatic operation can never drift from canonical form over grouping. The
   internal group node type exists for serde/tooling and is not public API.
+- **Value-object predicates.** Nested value-object paths reuse chained
+  class-level attribute access: `Customer.address.city == "Berlin"` builds the
+  flat `nestedEq` node carrying the dotted canonical path
+  (`nestedEq: { path: Customer.address.city, value: Berlin }`). The scalar
+  operator surface maps one-to-one onto the flat `nested*` family —
+  `==` / `!=` / `>` / `>=` / `<` / `<=` / `.in_(...)` serialize to `nestedEq` /
+  `nestedNotEq` / `nestedGt` / `nestedGte` / `nestedLt` / `nestedLte` /
+  `nestedIn`, and `.is_null()` / `.is_not_null()` to `nestedIsNull` /
+  `nestedIsNotNull` (core's absence-collapse semantics). The first hop is
+  statically typed via the `Attr[...]` descriptor overloads; deeper hops
+  resolve dynamically and are validated at statement build against the
+  declared value-object structure — an undeclared segment or a literal
+  mismatching the leaf's declared neutral type is rejected at build, never at
+  the database. A flat predicate whose path crosses a `cardinality: many`
+  member keeps the flat node and therefore core's **any-element** semantics:
+  each such predicate matches independently, so two ANDed flat predicates may
+  be satisfied by *different* elements. **Same-element** composition and
+  member-presence tests hang off the value-object-terminated path:
+  `.any(*predicates)` serializes to `nestedExists { path, where }` and
+  `.none(*predicates)` to `nestedNotExists { path, where }`; zero arguments
+  emit the bare presence/non-empty (`nestedExists`) or absent/empty
+  (`nestedNotExists`) node with no `where`. Variadic arguments conjoin exactly
+  like `where(*predicates)`; inside the scope, sub-predicates are built from
+  the value-object class's own class-level attributes and serialize as
+  **element-relative** paths (`type`, `geo.country` — no leading entity
+  prefix), composing with `&`/`|`/`~` and parentheses. An element-scoped
+  expression is valid only inside an `.any(...)`/`.none(...)` over that
+  element type; a stray one is rejected at statement build.
+
+  ```python
+  Customer.where(
+      Customer.address.phones.any(
+          Phone.type == "home",
+          Phone.number == "555-9999",
+      )
+  )
+  ```
+
 - **Deep-fetch/include spelling.** Chained attribute paths on the statement:
   `Order.where(...).include(Order.items.statuses, Order.tags)`. One path
   grammar shared with predicates; longer paths imply their intermediates
   (glossary Include Path). The first hop is statically typed via descriptor
   `__get__` overloads; deeper hops resolve dynamically and are validated
   against the metamodel at statement-build time — never at execution and never
-  at the database. Subtype narrowing on a position or include path is spelled
-  `.narrow(ConcreteOrAbstractSubtype, ...)` (e.g.
-  `Animal.where(...).narrow(Dog)`, `Owner.pets.narrow(Dog)`) and serializes to
-  the canonical `narrow` / `pathNarrow` nodes; the resolved set must stay
-  within the position's effective concrete-subtype set, checked at build time.
+  at the database.
+- **Subtype narrowing.** The canonical `narrow` node is spelled with the
+  class-level constructor `Entity.narrow(*subtypes, where=...)` on the
+  polymorphic position's class, serializing to
+  `narrow: { entity, to, operand }` — `entity` is the position, `to` preserves
+  the authored subtype list verbatim (each entry a concrete or abstract
+  subtype class), and `operand` is the `where=` expression (omitted ⇒ `all`).
+  Inside `where=`, subtype-declared attributes become predicable
+  (`Animal.narrow(Dog, where=Dog.bark_volume > 3)`); referencing one outside a
+  compatible narrow scope is rejected at statement build
+  (`subtype-attribute-outside-narrow-scope`). A narrow expression is an
+  ordinary predicate, so separately narrowed branches compose with the
+  Boolean operators:
+
+  ```python
+  Animal.where(
+      Animal.narrow(Dog, where=Dog.bark_volume > 5)
+      | Animal.narrow(Cat, where=Cat.indoor == True)
+  )
+  ```
+
+  serializes to `or` over two `narrow` nodes, branch order preserved. Inside a
+  relationship quantifier the constructor must be called on exactly the
+  relationship target (`Person.pets.any(Pet.narrow(Cat))` — `m-navigate`'s
+  exact-naming rule, checked at build). The statement-level clause
+  `Animal.where(...).narrow(Dog, ...)` is the whole-statement form: it wraps
+  the statement's conjoined predicate as the single top-level `narrow` node's
+  operand (zero predicates ⇒ `all`), establishes the narrowed scope for the
+  statement's `where` arguments, and is single-shot like `as_of`; the clause
+  and the constructor converge on the identical canonical node, so neither
+  spelling can drift. On an include path, `.narrow(*subtypes)` on a hop
+  (`Owner.pets.narrow(Dog)`, continuable to deeper hops) serializes to the
+  path segment's `narrow: { to: [...] }` and requests a distinct **narrowed
+  view** (§3). Everywhere, the resolved set must stay within the position's
+  effective concrete-subtype set, checked at build time.
 - **Temporal-read spelling.** Statement-level and axis-keyed, with the two core
   axis kinds as the public vocabulary:
 
@@ -128,7 +196,13 @@ never something an application developer hand-writes.
   microsecond precision; naive datetimes are rejected at statement build. An
   omitted axis defaults to **latest** per the core default-injection rule; the
   module-level `LATEST` sentinel spells the same pin explicitly and lowers to
-  the identical injected predicate. `as_of` is single-shot: calling it on an
+  the identical injected predicate. Canonical serialization is deterministic:
+  each explicitly passed axis serializes exactly one wrapper node, and when
+  both axes are passed the **business** `asOf` is the outer wrapper enclosing
+  the inner **processing** `asOf` (the corpus's bitemporal nesting order); an
+  omitted axis serializes **no** wrapper — its latest default is injected at
+  lowering — while an explicit `LATEST` pin serializes its wrapper with
+  `date: now`. `as_of` is single-shot: calling it on an
   already-pinned statement raises (derive from the unpinned base instead;
   re-pinning is a deferred additive extension). Rejected at build: pinning or
   scanning an axis the entity does not declare, temporal clauses on
@@ -193,8 +267,28 @@ never something an application developer hand-writes.
   surface is realized at class-definition time by the Parallax metaclass and
   typed descriptors over user-authored Pydantic classes (class-level attribute
   access yields typed expression objects; instances are frozen plain values).
+  The static-typing carrier is the **annotation itself**: entity fields are
+  declared with the exported `Mapped[T]`-style aliases `Attr[T]` (attributes
+  and value objects) and `Rel[T]` (relationships), each backed by a descriptor
+  whose overloaded `__get__` returns the typed expression object for class
+  access and the plain `T` for instance access, so strict Pyright sees both
+  sides without a plugin or stub files. Plain `qty: int` annotations are
+  **not** the mechanism — Pyright would type class access as `int` and hide
+  the expression surface, and no runtime metaclass swap is visible to the
+  checker. The metaclass unwraps `Attr[T]` / `Rel[T]` to their inner types
+  when building the Pydantic model fields, so instances stay ordinary frozen
+  values and the classes still carry no information absent from the
+  descriptor schema.
+
+  ```python
+  class Order(Entity, frozen=True):
+      order_id: Attr[int] = Field(primary_key=True)
+      qty: Attr[int]
+      items: Rel[tuple["OrderItem", ...]] = Relationship()
+  ```
+
   Rationale: single source of truth in user code, no generated-file lifecycle,
-  strict-Pyright-friendly via descriptor `__get__` overloads.
+  strict-Pyright-clean class-level expressions via the annotation aliases.
 - **Drift prevention without codegen.** The API Conformance Suite's
   descriptor-equality guard (idiomatic class exports ≡ corpus descriptor) and
   the operation no-drift guard (idiomatic statement serialization ≡ corpus
@@ -211,7 +305,17 @@ never something an application developer hand-writes.
 - **Public result and node types.** `db.find(op)` executes exactly once,
   materializes fully, and returns `Snapshot[T]` — the Python reification of a
   core Snapshot Graph. Nodes are **frozen instances of the user's own entity
-  classes** (plain values: hashable, shareable, serializable). `Snapshot[T]`'s
+  classes** — plain values, shareable and serializable. Pydantic
+  `frozen=True` is faux-immutable (it rejects attribute assignment but cannot
+  deep-freeze field values), so every collection-valued node field is an
+  immutable type: included to-many relationships and `cardinality: many`
+  value-object members materialize as **tuples** (§4), keeping deep edits
+  unrepresentable rather than merely discouraged. Hashability is conditional,
+  stated precisely: a node is hashable exactly when hashing terminates over
+  hashable field values — scalar and value-object fields always qualify,
+  to-many tuples qualify when their elements do, and a back-reference include
+  that closes a cycle makes the derived hash non-terminating, so such nodes
+  are shareable but not hashable. `Snapshot[T]`'s
   complete surface: `result()`, `result_or_none()`, `results()` (a fresh
   `list[T]` per call), `pin` (the lowered as-of coordinates), `execution`
   (per-statement `sql`, `binds`, informational `duration`, and `round_trips`,
@@ -237,12 +341,22 @@ never something an application developer hand-writes.
   raises `UnsupportedFeatureError` naming the deferral, distinct from
   validation errors.
 - **Closed-world relationships.** An included to-one is the related node or
-  `None` (loaded-null); an included to-many is a `list` (possibly empty —
-  loaded-empty). A relationship outside the include set is **unloaded**:
-  attribute access raises `UnloadedRelationshipError` naming the path and the
-  include fix, and `parallax.core.is_loaded(node, "items")` answers without
-  raising. Access never issues SQL — there is no lazy loading in this
-  lifecycle.
+  `None` (loaded-null); an included to-many is a `tuple` (possibly empty —
+  loaded-empty is `()`). A relationship outside the include set is
+  **unloaded**: attribute access raises `UnloadedRelationshipError` naming the
+  path and the include fix, and `parallax.core.is_loaded(node, "items")`
+  answers without raising. Access never issues SQL — there is no lazy loading
+  in this lifecycle.
+- **Narrowed views.** A narrowed include populates a distinct **narrowed
+  view** keyed by relationship name plus effective concrete-subtype set — it
+  never marks the broad relationship loaded. Views are read with
+  `parallax.core.narrowed(node, Owner.pets.narrow(Dog))`: the include-path
+  grammar names the view, equivalent authored narrowings (`.narrow(Pet)` vs
+  `.narrow(Cat, Dog)`) resolve to the same effective set and therefore the
+  same loaded view, and differently narrowed views (the corpus's `pets[Dog]`
+  and `pets[Cat]`) coexist on one node as independent simultaneous views. An
+  unrequested narrowed view raises `UnloadedRelationshipError` naming the
+  derived view key; `is_loaded` accepts the same narrowed-path argument.
 - **Eager include execution.** One query per non-empty relationship level
   (semi-join against the parent level's keys); an empty level short-circuits
   its subtree; declared descriptor `orderBy` governs child ordering; narrowed
@@ -251,18 +365,39 @@ never something an application developer hand-writes.
   ceiling holds and is observable via `snapshot.execution.round_trips`.
 - **Explicit writes.** All writes go through the Parallax Transaction
   (§5) — the handle has no write methods. Graph edits are impossible (nodes
-  are frozen); the only mutation idiom is deriving an **edited copy**:
-  the Parallax base class overrides `model_copy` so a copy of a node carries
-  an accumulated changed-field record (copy-of-copy unions). Nodes carry no
-  change tracking; the derived copy's change record is an explicit write
-  input, and there is no merge-back (no re-association, no returned managed
-  object). Write inputs are the entity classes themselves: full instances for
-  `insert` (the Create Payload), edited copies or instances for the other
-  verbs (§5). The stale-web-edit pattern (fetch `as_of` the original display
-  instant inside an optimistic transaction, apply payload fields to a copy,
-  update — a concurrent writer's chain fails the observed-`in_z` gate) is the
-  documented idiom for offline-edit conflict detection and requires no
-  detached objects.
+  are frozen); the only mutation idiom is deriving an **edited copy**: the
+  Parallax base class overrides `model_copy` so a copy of a node carries a
+  **Change Record** mapping each touched field to its **original** value —
+  the value the field held when first touched in the copy chain (copies of
+  copies merge records, keeping the earliest original per field). The
+  override also **validates**: Pydantic's own `model_copy` does not validate
+  `update=` data, so the Parallax override applies the same build-time rules
+  as construction — unknown field names are rejected, framework-owned fields
+  (the version column) and primary-key fields may not be assigned, and every
+  value passes the §2 scalar input policies — so an invalid edit raises at
+  copy time, never at the database. Nodes carry no change tracking; the
+  derived copy's change record is an explicit write input, and there is no
+  merge-back (no re-association, no returned managed object). At lowering, a
+  touched field whose current value equals its recorded original drops out of
+  the **effective change set**, so a net-zero edit chain (`100 → 200 → 100`)
+  contributes nothing and an update whose effective change set is empty
+  issues **no DML** (§5). Write inputs are the entity classes themselves:
+  full instances for `insert` (the Create Payload), edited copies or
+  instances for the other verbs (§5). The **stale-web-edit** recipe requires
+  a **finite display instant**: at render time the service captures one (a
+  UTC clock read) and pins the display read at it
+  (`as_of(processing=display_instant)`), transporting that instant with the
+  form — an unpinned latest read exposes only the `LATEST` sentinel, which is
+  not replayable (re-resolving it later selects whatever milestone is then
+  current, including a concurrent writer's, so the gate below would pass and
+  silently overwrite). On submit, the service re-fetches
+  `as_of(processing=display_instant)` inside an optimistic transaction,
+  applies the payload fields to a copy, and updates: the transaction observed
+  the displayed milestone's `in_z`, so a concurrent writer's chain leaves a
+  current row whose fresh `in_z` fails the observed-`in_z` gate (a zero-row
+  close — the conflict), while an untouched row succeeds. Any finite instant
+  inside the seen milestone's interval works; only `LATEST` cannot. The idiom
+  requires no detached objects.
 
 ## 4. Result collections and materialization
 
@@ -271,17 +406,24 @@ never something an application developer hand-writes.
 - **Eager materialized collections.** Query construction is side-effect-free;
   execution happens exactly at `db.find(op)` and returns a value. Roots are
   reached only through `Snapshot[T]`'s three accessors; `results()` returns a
-  real built-in `list[T]` the caller owns (fresh copy per call). Included
-  to-many relationships are plain `list` fields on frozen nodes. Nothing is an
+  real built-in `list[T]` the caller owns (fresh copy per call — the container
+  accessor is unaffected by node immutability). Included to-many
+  relationships are `tuple` fields on frozen nodes (§3). Nothing is an
   `m-op-list` operation-backed lazy list; iteration, indexing, and bulk
-  operations are ordinary Python on ordinary lists.
+  operations are ordinary Python on ordinary lists and tuples.
 - **Result-shape appearances.** Root-empty: `results() == []`, `result()`
   raises `NoResultFound`, `result_or_none()` is `None`. Relationship-empty:
-  `[]`. Relationship-null (to-one): `None`. Unloaded: raising access as in §3.
+  `()`. Relationship-null (to-one): `None`. Unloaded: raising access as in §3.
   Ordered children: descriptor `orderBy` order. Shared prefixes: one query per
   level regardless of how many include paths share it. Graph-local shared
   identity: diamond paths yield the *same* node object (`is`-identical), which
   is also how identity expectations are observed by scenario cases.
+  Polymorphic positions: every materialized node is an instance of its
+  concrete entity class, so the corpus's `familyVariant` is observable as
+  `type(node)`. Narrowed views: `parallax.core.narrowed(node, path)` returns
+  the view's `tuple` for a to-many hop (the related node or `None` for
+  to-one); a single-concrete view is typed as that concrete class, and a
+  multi-concrete view's elements are their concrete classes.
 
 ## 5. Transactions and writes
 
@@ -299,11 +441,21 @@ never something an application developer hand-writes.
   loop, exhaustion surfaces diagnosably with the attempt count;
   optimistic-lock conflicts join the retriable set only via
   `retry_optimistic_conflicts=True`.
-- **Nesting, ownership, and participation mode.** Transactions do not nest:
-  calling `db.transact` from inside a transaction body raises (re-entrancy is
-  a deferred design question, not silent nesting). A transaction object is
-  owned by its closure invocation and is not thread-safe; escaping references
-  raise on use after the scope ends. The per-transaction participation mode is
+- **Nesting, ownership, and participation mode.** A `db.transact` call while
+  a transaction is already active on the current thread **joins** it —
+  aligning with Reladomo and the TypeScript target (ADR 0004): the inner
+  closure receives the **same** Parallax Transaction (no nested database
+  transaction, no savepoint) and its return value is returned immediately;
+  commit, abort, and the bounded retry loop belong exclusively to the
+  **outermost** boundary (an inner body re-executes only as part of the
+  outermost closure's retry), and an inner failure aborts the whole
+  transaction. A joining call may not re-negotiate the boundary: an explicit
+  `concurrency` differing from the active mode raises, and explicit
+  `retries` / `retry_optimistic_conflicts` arguments on a joining call raise
+  (omitted arguments simply join the active settings). The active transaction
+  is tracked per thread; a transaction object is owned by its outermost
+  closure invocation and is not thread-safe; escaping references raise on use
+  after the scope ends. The per-transaction participation mode is
   `locking` (default — in-transaction reads take the dialect's shared read
   lock) or `optimistic` (no read locks; keyed writes gate on the observed
   version analogue). Connections open at the database's default isolation
@@ -321,9 +473,12 @@ never something an application developer hand-writes.
   `insert_until`, `update_until`, `terminate_until`. Inputs are entity
   instances and edited copies, lowering to the canonical row-shaped write
   inputs: `insert` takes a full instance; non-temporal `update` takes an
-  edited copy and emits the sparse row (primary key + changed fields from the
-  copy's change record; a provenance-less instance raises, and changing a PK
-  field raises); temporal `update` takes an edited copy or instance and emits
+  edited copy and emits the sparse row (primary key + the **effective change
+  set** — touched fields whose current value differs from the copy's recorded
+  original; a provenance-less instance raises, and changing a PK field
+  raises), and an update whose effective change set is empty issues **no DML
+  at all** — zero round trips and no version advance (the core no-op rule);
+  temporal `update` takes an edited copy or instance and emits
   the full row (close-and-chain); `delete`/`terminate` take a node or
   instance and key off it. Bitemporal plain verbs require keyword-only
   `business_from`; the `*_until` trio additionally requires `until`, with
@@ -336,6 +491,22 @@ never something an application developer hand-writes.
   unchanged values and, under optimistic mode, the observed `in_z` for the
   gated close (with the business discriminator when current rows share an
   `in_z`, per `m-bitemp-write`).
+- **Versioned non-temporal writes observe before writing.** `update` and
+  `delete` on a version-columned entity perform the same transaction-local
+  read-before-write as temporal writes: the unit of work resolves the row by
+  key inside the transaction (in `locking` mode this observation read takes
+  the dialect's shared read lock; in `optimistic` mode it takes none) and
+  records the **observed** version. The lowered `UPDATE` sets the effective
+  changed fields plus the framework-computed advance (`observed + 1`) in
+  both modes and adds the `and version = ?` gate binding the observed
+  version in optimistic mode only; the lowered `DELETE` is keyed and binds
+  the observed version. A gated statement affecting zero rows is the
+  optimistic conflict — surfaced always, retriable only via
+  `retry_optimistic_conflicts=True`. Version values are framework-owned end
+  to end: the version field on a node, an edited copy, or any caller input
+  never feeds the gate or the advance, and a versioned keyed write the
+  transaction never observed raises rather than writing blindly, in either
+  mode.
 
 ## 6. Database support and compatibility proof
 
@@ -409,9 +580,16 @@ never something an application developer hand-writes.
   `parallax-postgres` adapter against the real Testcontainers Postgres.
 - **Coverage partition and no-drift guards.** An assertion computes
   `exercised ∪ reasoned-skipped == active slice` from corpus data at runtime,
-  failing on stale case IDs or empty skip reasons. Two no-drift guards run per
-  example: the idiomatic statement's serialization equals the corpus
-  operation, and idiomatic class descriptors equal corpus descriptors.
+  failing on stale case IDs or empty skip reasons. Three no-drift guards
+  close the loop. Two run per example: the idiomatic statement's
+  serialization equals the corpus operation, and idiomatic class descriptors
+  equal corpus descriptors. The third is a Docker-free, unit-lane
+  **copy-to-row contract test** (`uv run pytest -m unit`): for every claimed
+  write case it builds the fixture node, applies the case's changes through
+  `model_copy`, lowers the edited copy, and asserts the lowering emits
+  exactly the case's neutral row-shaped write inputs (sparse row
+  non-temporal, full row temporal) — so the copy-provenance lowering
+  (ADR 0003) cannot drift while the other two proof paths stay green.
 - **Usage Guide.** Generated from suite source (`uv run gen-usage-guide`) into
   `languages/python/docs/usage-guide.md`; CI runs `--check` and fails on
   drift. The guide and suite are additive to conformance-adapter proof, never
@@ -420,52 +598,64 @@ never something an application developer hand-writes.
 ## 7. Source-enforcement topology
 
 Behavioral modules map one-to-one onto Python submodules (enforcement scopes)
-inside the distributions of §8. import-linter enforces every DAG direction
-between scopes; artifact co-location never legalizes a forbidden edge.
+inside the distributions of §8. import-linter forbids every scope-pair import
+the DAG does not permit — the generated forbidden-edge complement below —
+so illegal non-edges are rejected, not merely wrong directions; artifact
+co-location never legalizes a forbidden edge.
 
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
-| `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | import-linter layers, `languages/python/pyproject.toml` |
-| `m-descriptor` | `parallax.core.descriptor` | `parallax.core.descriptor` | `m-core` | import-linter layers |
-| `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-descriptor` | import-linter layers |
-| `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-descriptor` | import-linter layers |
-| `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-descriptor` | import-linter layers |
-| `m-op-algebra` | `parallax.core.op_algebra` | `parallax.core.op_algebra` | `m-descriptor`, `m-inheritance` | import-linter layers |
-| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-op-algebra`, `m-dialect` | import-linter layers |
-| `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | import-linter layers |
-| `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core` | import-linter layers |
-| `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | import-linter layers |
-| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-op-algebra`, `m-db-port` | import-linter layers |
-| `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | import-linter layers |
-| `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | import-linter layers |
-| `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read` | import-linter layers |
-| `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-op-algebra` | import-linter layers |
-| `m-audit-write` | `parallax.core.audit_write` | `parallax.core.audit_write` | `m-temporal-read`, `m-unit-work` | import-linter layers |
-| `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-audit-write` | import-linter layers |
-| `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | import-linter layers |
-| `m-op-list` (unclaimed prerequisite, internal) | `parallax.core.op_list` (unexported) | `parallax.core.op_list` | `m-op-algebra`, `m-unit-work` | import-linter layers + private-module convention |
-| `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-list`, `m-unit-work`, `m-temporal-read`, `m-inheritance` | import-linter layers |
-| `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-op-list` | import-linter layers |
-| `m-snapshot-read` | `parallax.snapshot.materialize` + `parallax.snapshot.handle` | `parallax.snapshot` | `m-deep-fetch` (and transitively below) | import-linter cross-package contract |
-| `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | import-linter layers (dev tree) |
-| `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format` (harnesses any behavioral module) | import-linter layers (dev tree) |
+| `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
+| `m-descriptor` | `parallax.core.descriptor` | `parallax.core.descriptor` | `m-core` | generated forbidden contracts |
+| `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-descriptor` | generated forbidden contracts |
+| `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-descriptor` | generated forbidden contracts |
+| `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-descriptor` | generated forbidden contracts |
+| `m-op-algebra` | `parallax.core.op_algebra` | `parallax.core.op_algebra` | `m-descriptor`, `m-inheritance` | generated forbidden contracts |
+| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-op-algebra`, `m-dialect` | generated forbidden contracts |
+| `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
+| `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core` | generated forbidden contracts |
+| `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
+| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-op-algebra`, `m-db-port` | generated forbidden contracts |
+| `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
+| `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
+| `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read` | generated forbidden contracts |
+| `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-op-algebra` | generated forbidden contracts |
+| `m-audit-write` | `parallax.core.audit_write` | `parallax.core.audit_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
+| `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-audit-write` | generated forbidden contracts |
+| `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
+| `m-op-list` (unclaimed prerequisite, internal) | `parallax.core.op_list` (unexported) | `parallax.core.op_list` | `m-op-algebra`, `m-unit-work` | generated forbidden contracts + private-module convention |
+| `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-list`, `m-unit-work`, `m-temporal-read`, `m-inheritance` | generated forbidden contracts |
+| `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-op-list` | generated forbidden contracts |
+| `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-pk-gen`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
+| `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
+| `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format` (harnesses any behavioral module) | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api_conformance` (dev-only) | `tests.api_conformance` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
-| Entity and statement frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-descriptor`, `m-op-algebra`, `m-temporal-read` | import-linter layers |
-| Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-db-port`, `m-db-error`, `m-dialect`, psycopg | import-linter cross-package contract |
+| Entity and statement frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-descriptor`, `m-op-algebra`, `m-temporal-read` | generated forbidden contracts |
+| Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
 - **Dependency-analysis tool.** import-linter; configuration in
-  `languages/python/pyproject.toml` (`[tool.importlinter]`) plus the
-  drift-check script `languages/python/tools/check_dag_sync.py`, which parses
-  the fenced `dependency-graph` block in `core/spec/modules.md` and asserts
-  the contract set covers exactly those edges. Local: `uv run lint-imports &&
-  uv run python tools/check_dag_sync.py`. CI: the same pair as a blocking job;
-  any wrong-direction import or contract/DAG drift fails.
+  `languages/python/pyproject.toml` (`[tool.importlinter]`) **generated** by
+  `languages/python/tools/check_dag_sync.py`, which parses the fenced
+  `dependency-graph` block in `core/spec/modules.md`, computes the DAG's
+  transitive closure over the table above (core edges plus the declared
+  support-scope edges), and emits the **complete forbidden-edge complement**
+  as import-linter `forbidden` contracts — one forbidden import per scope
+  pair the closure does not permit. Layer contracts alone cannot encode this
+  partial order: a `layers` contract lets a higher layer import *every* lower
+  layer, silently legalizing illegal non-edges (e.g. `m-batch-write`
+  importing `m-temporal-read`), so the gate must reject illegal non-edges,
+  not merely confirm that listed edges match `modules.md`. The script
+  re-generates and fails on any diff against the committed contracts. Local:
+  `uv run python tools/check_dag_sync.py && uv run lint-imports`. CI: the
+  same pair as a blocking job; any import outside the closure, and any
+  generated-contract drift, fails.
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
-  is its own submodule; import-linter's layer contracts operate at submodule
-  granularity, so co-location in one wheel cannot legalize a forbidden edge.
-  Cross-package contracts forbid `core → snapshot`, `core → postgres`, and
-  `snapshot → postgres` in both metadata and imports.
+  is its own submodule; the generated forbidden contracts operate at
+  submodule granularity, so co-location in one wheel cannot legalize a
+  forbidden edge. Cross-package contracts forbid `core → snapshot`,
+  `core → postgres`, and `snapshot → postgres` in both metadata and imports.
 - **Database seam scopes.** Pure dialect strategy in `parallax.core.dialect`
   (driver-free), abstract port in `parallax.core.db_port`, error
   classification in `parallax.core.db_error`, the concrete adapter in
@@ -519,20 +709,20 @@ subsection of the template is deleted from this completed spec.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py` | `uv run lint-imports && uv run python tools/check_dag_sync.py` | `python-static` job, same commands | any wrong-direction edge fails; contract set must equal the `modules.md` DAG (drift fails) |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py` | `uv run python tools/check_dag_sync.py && uv run lint-imports` | `python-static` job, same commands | any import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions; generated-contract drift fails |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest -m unit` | `python-static` job | unit = no container/socket I/O; any failure blocks |
-| Code coverage | coverage.py via pytest-cov, branch mode | `[tool.coverage]` in `languages/python/pyproject.toml` | `uv run pytest -m unit --cov --cov-branch` | `python-static` job with `--cov-fail-under=90` | **90% branch minimum**; no generated/vendor code exists to exclude; conformance CLI included; new code may not lower the total |
+| Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `uv run pytest -m unit --cov --cov-branch --cov-report=xml && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100` | `python-static` job with `--cov-fail-under=90` plus the same diff-cover gate | **90% branch minimum** overall; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-static` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |
 | Deterministic formatter check | ruff format (pinned) | `[tool.ruff.format]` | check: `uv run ruff format --check`; write: `uv run ruff format` | `python-static` job (`--check` only) | CI checks without rewriting |
 | Strict static typing | Pyright, strict mode, pinned version | `languages/python/pyrightconfig.json` | `uv run pyright` | `python-static` job | strict across production and tests; zero suppressions at spec time — any future suppression is listed and justified here |
-| Import-cycle detection | import-linter layer contracts | `[tool.importlinter]` | `uv run lint-imports` | `python-static` job | covers all production source scopes; any cycle fails |
+| Import-cycle detection | import-linter generated forbidden contracts | `[tool.importlinter]` | `uv run lint-imports` | `python-static` job | covers all production source scopes; the permitted closure is acyclic, so any cycle necessarily crosses a forbidden edge and fails |
 | Dead code and unused exports | vulture + griffe public-API snapshot test | `[tool.vulture]`; `languages/python/tests/api_surface/` | `uv run vulture && uv run pytest -m api_surface` | `python-static` job | limitation recorded: Python tooling cannot prove an export unused; compensating check is the API-surface snapshot diff, making every public-surface change a reviewed diff |
 | Built-artifact and public-export health | `uv build` + twine check + wheel-content pytest | `languages/python/tests/artifact/` | `uv build && uv run twine check dist/* && uv run pytest -m artifact` | `python-static` job | wheels contain no tests/conformance modules, include `py.typed`, declare correct entry points |
 | Clean-install production smoke tests | uv-venv fixtures | `languages/python/tests/clean_install/` | `uv run pytest -m clean_install` | `python-static` job | exercises all three §8 selective topologies in clean environments; presence of any unselected artifact fails |
 | Supported language/runtime versions | CPython; `requires-python >= 3.12` | each distribution's `pyproject.toml` | (local dev on any supported minor) | CI matrix 3.12 / 3.13 / 3.14 | support current + two prior minors; drop on upstream EOL; floor raises are reviewed spec changes |
-| Dependency and supply-chain audit | committed `uv.lock` + `uv lock --check` + pip-audit | `languages/python/uv.lock` | `uv lock --check && uv run pip-audit` | `python-static` job | high-severity findings block; exceptions carry owner + expiry inline; lockfile drift fails |
+| Dependency and supply-chain audit | committed `uv.lock` + `uv lock --check` + pip-audit + scheduled `uv lock --upgrade` refresh | `languages/python/uv.lock` | `uv lock --check && uv run pip-audit` | `python-static` job on every PR, plus a monthly scheduled CI job opening a `uv lock --upgrade` refresh PR | high-severity findings block; exceptions carry owner + expiry inline; lockfile drift fails; freshness: the monthly upgrade PR is human-reviewed like any change and may not be merged red |
 | Compatibility Conformance Suite | pytest conformance runner + jsonschema envelope validation | `languages/python/tests/conformance/` | `uv run pytest -m compile_sweep` (Docker-free) and `uv run pytest -m conformance` (`pg-full`) | `python-static` (compile sweep) + `python-database` (run sweep) | selection = active slice ∩ capability tags; every envelope validates against `conformance-adapter.schema.json` |
-| API Conformance Suite and Usage Guide | pytest + guide generator | `languages/python/tests/api_conformance/`; `languages/python/docs/usage-guide.md` | `uv run pytest -m api_conformance && uv run gen-usage-guide --check` | `python-database` job | coverage partition exact (exercised ∪ reasoned-skips = slice; no stale IDs, no empty reasons); operation and descriptor no-drift guards green; guide drift fails |
+| API Conformance Suite and Usage Guide | pytest + guide generator | `languages/python/tests/api_conformance/`; `languages/python/docs/usage-guide.md` | `uv run pytest -m api_conformance && uv run gen-usage-guide --check` | `python-database` job | coverage partition exact (exercised ∪ reasoned-skips = slice; no stale IDs, no empty reasons); operation, descriptor, and unit-lane copy-to-row no-drift guards green; guide drift fails |
 | Database-backed verification | testcontainers Postgres profiles | §6 profile definitions | `uv run pytest -m "conformance or provider_contract or adapter_smoke"` | `python-database` job | required profiles `pg-full`, provider contract, adapter smoke; every skipped check is reported with a reason in the session summary; silent skips are forbidden and any CI skip fails |
 
 - **Aggregate static-verification command.** `just python-static` — one local
@@ -557,8 +747,8 @@ subsection of the template is deleted from this completed spec.
 - No conditional section's applicability condition is true, and none is
   present.
 - The §7 map covers all claimed modules, both prerequisites, and the support
-  scopes, and is mechanically enforceable via import-linter plus the DAG
-  drift check.
+  scopes, and is mechanically enforceable via the generated import-linter
+  forbidden-edge complement plus the DAG drift check.
 - The §8 map contains an independent common runtime, exactly the snapshot
   lifecycle extension, a separate Postgres adapter, and a development-only
   tooling artifact, with manifest and selective clean-install proofs.
