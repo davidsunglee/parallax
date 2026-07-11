@@ -1,0 +1,102 @@
+# A finite business-axis pinned view is WRITABLE (m-identity-map): mutating a view
+# pinned at a finite business-axis instant is the retroactive correction that lowers
+# to the m-bitemp-write RECTANGLE SPLIT. (Contrast a finite processing-axis pin,
+# which is read-only — m-identity-map-010.)
+#
+# Step 0 establishes a fresh managed bitemporal object, Position id 2, as ONE clean
+# current rectangle: value 100, business [2024-01-01, infinity), processing
+# [2024-01-01, infinity). (The shared position fixture's id 1 already carries a
+# multi-rectangle history, so this case constructs its own single-rectangle target
+# on a distinct primary key rather than adding rows to the shared fixture.) Step 1
+# pins id 2 at the finite business instant 2024-03-01 (processing latest) — a
+# WRITABLE business-past view. Step 2 mutates its value to 200 in memory over the
+# business window [2024-03-01, 2024-09-01): roundTrips 0, no DML. Step 3 flushes,
+# and the buffered correction lowers to the exact m-bitemp-write rectangle split —
+# inactivate the original (close its processing axis at the transaction instant
+# 2024-02-15, keyed by the current-on-processing predicate) then chain HEAD
+# [2024-01-01, 2024-03-01) value 100, MIDDLE [2024-03-01, 2024-09-01) value 200
+# (new), and TAIL [2024-09-01, infinity) value 100. Step 4 re-reads inside the
+# window and observes the corrected 200, so the value changed ONLY inside the
+# window. The object-reference identity of the held, corrected view is asserted by
+# the API Conformance Suite.
+model: models/position.yaml
+tags: [m-identity-map, m-bitemp-write, m-temporal-read, identity, bitemporal, temporal, rectangle-split, scenario, slice-managed-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - write: insert
+      roundTrips: 1
+      note: establish a fresh managed Position id 2 as one clean current rectangle (value 100, both axes current)
+      statements:
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [2, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
+    - targetEntity: Position
+      find:
+        asOf:
+          operand:
+            asOf:
+              operand:
+                eq:
+                  attr: Position.id
+                  value: 2
+              asOfAttr: Position.processingDate
+              date: now
+          asOfAttr: Position.businessDate
+          date: "2024-03-01T00:00:00+00:00"
+      roundTrips: 1
+      note: pin id 2 at the finite business instant 2024-03-01 (processing latest) — a WRITABLE business-past view (100)
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.val from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [2, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+      expectRows:
+        - { pos_id: 2, val: 100.00 }
+    - action: mutate
+      "on": 1
+      set:
+        value: 200.00
+      roundTrips: 0
+      note: buffer the retroactive correction to 200 over the business window [2024-03-01, 2024-09-01) — no DML yet
+    - action: flush
+      "on": 1
+      roundTrips: 4
+      note: the correction lowers to the m-bitemp-write rectangle split — inactivate the original, then chain head / middle / tail
+      statements:
+        - sql:
+            postgres: update position set out_z = ? where pos_id = ? and out_z = ?
+          binds: ["2024-02-15T00:00:00+00:00", 2, infinity]
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [2, A, 100.00, "2024-01-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-15T00:00:00+00:00", infinity]
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [2, A, 200.00, "2024-03-01T00:00:00+00:00", "2024-09-01T00:00:00+00:00", "2024-02-15T00:00:00+00:00", infinity]
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [2, A, 100.00, "2024-09-01T00:00:00+00:00", infinity, "2024-02-15T00:00:00+00:00", infinity]
+    - targetEntity: Position
+      find:
+        asOf:
+          operand:
+            asOf:
+              operand:
+                eq:
+                  attr: Position.id
+                  value: 2
+              asOfAttr: Position.processingDate
+              date: now
+          asOfAttr: Position.businessDate
+          date: "2024-04-01T00:00:00+00:00"
+      roundTrips: 1
+      note: re-read inside the corrected window (business 2024-04-01, processing latest) -> the MIDDLE's new value 200
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.val from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [2, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00", infinity]
+      expectRows:
+        - { pos_id: 2, val: 200.00 }
+then:
+  roundTrips: 7

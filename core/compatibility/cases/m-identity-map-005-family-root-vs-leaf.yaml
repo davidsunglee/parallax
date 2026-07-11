@@ -1,0 +1,50 @@
+# Family-normalized identity (m-identity-map): a row read through the abstract
+# family ROOT finder and through its concrete-subtype (LEAF) finder interns to the
+# SAME managed object. Identity is a property of the row's family position, never
+# of the query's declared type.
+#
+# Animal is a table-per-hierarchy family (models/animal.yaml); row id 1 (Rex) is a
+# Dog. Step 0 finds it through the abstract root Animal — the read projects the
+# whole concrete superset plus the raw `kind` tag. Step 1 finds the SAME row
+# through the concrete leaf Dog — the read injects the tag guard `kind = ?` and
+# projects Dog's own superset (no tag). The two finds carry DIFFERENT projections
+# but resolve one physical row, so the identity map interns them to one logical
+# object (`sameObjectAs` on the shared primary key). The object-reference identity
+# is asserted per-language by the API Conformance Suite.
+model: models/animal.yaml
+tags: [m-identity-map, m-inheritance, identity, table-per-hierarchy, scenario, slice-managed-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Animal
+      find:
+        eq:
+          attr: Animal.id
+          value: 1
+      roundTrips: 1
+      note: ROOT finder over the abstract family root — the concrete superset + raw tag
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length, t0.kind from animal t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, name: Rex, owner_id: 10, license_id: L-100, indoor: null, bark_volume: 7, tusk_length: null, kind: dog }
+    - targetEntity: Dog
+      find:
+        eq:
+          attr: Dog.id
+          value: 1
+      roundTrips: 1
+      sameObjectAs: 0
+      identityAttr: id
+      note: LEAF finder over the concrete subtype Dog — its own superset, tag-guarded; the SAME managed object as step 0
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.id = ? and t0.kind = ?
+          binds: [1, dog]
+      expectRows:
+        - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7 }
+then:
+  roundTrips: 2

@@ -1,0 +1,52 @@
+# Generated key interns on flush (m-identity-map): a created object whose primary
+# key is GENERATED has no key to intern under until it is allocated, so it interns
+# at key generation / flush — after which a subsequent find returns the original
+# object.
+#
+# Badge draws its primary key from a simulated sequence (models/pk-sequence.yaml,
+# badge_seq). Step 0 constructs a new Badge and buffers it: roundTrips 0, NO DML,
+# and — because the generated key does not exist yet — it is NOT yet interned by
+# key. Step 1 flushes the unit of work: the sequence is reserved (UPDATE
+# pk_sequence, base id 1) and the Badge is inserted with the freshly generated id 1,
+# so the object interns at key generation (m-identity-map interning timing). Unlike
+# the application-assigned case (m-identity-map-006), the flush therefore emits TWO
+# statements — the key-generation UPDATE plus the insert. Step 2 finds id 1 and
+# observes the now-interned row; the object-reference identity of the created and
+# re-found instance is asserted per-language by the API Conformance Suite.
+model: models/pk-sequence.yaml
+tags: [m-identity-map, m-pk-gen, m-unit-work, identity, interning, sequence, scenario, slice-managed-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - write: insert
+      roundTrips: 0
+      note: buffer the create of a Badge with a GENERATED primary key — no key yet, so NOT interned by key
+    - action: flush
+      "on": 0
+      roundTrips: 2
+      note: flush -> reserve the sequence block (base id 1), then insert; the object interns at key generation
+      statements:
+        - sql:
+            postgres: update pk_sequence set next_val = next_val + ? where name = ?
+          binds: [1, badge_seq]
+        - sql:
+            postgres: insert into badge(id, holder) values (?, ?)
+          binds: [1, Bo]
+    - targetEntity: Badge
+      find:
+        eq:
+          attr: Badge.id
+          value: 1
+      roundTrips: 1
+      identityAttr: id
+      note: a subsequent find returns the now-interned generated-key object
+      statements:
+        - sql:
+            postgres: select t0.id, t0.holder from badge t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, holder: Bo }
+then:
+  roundTrips: 3

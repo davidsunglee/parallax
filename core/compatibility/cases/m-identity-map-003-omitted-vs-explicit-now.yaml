@@ -1,0 +1,55 @@
+# Omitted coordinate vs explicit `now` (m-identity-map): an OMITTED temporal
+# coordinate and an EXPLICIT `asOf(now)` lower to the SAME coordinate, so both
+# resolve to the same managed object.
+#
+# The identity key's coordinate component is the LOWERED as-of coordinate: an
+# omitted axis and an explicit `asOf(..., now)` both lower to the infinity
+# sentinel — one canonical coordinate, not a wall-clock instant (m-identity-map).
+# Step 0 finds Balance id 1 with the coordinate OMITTED (the default-injected
+# current-row predicate, `out_z = ?` bind infinity -> the current 150.00). Step 1
+# finds the same primary key with an EXPLICIT `asOf(processingDate, now)`; it
+# lowers to the identical `out_z = ?` predicate, so it is the SAME lowered
+# coordinate and therefore the SAME managed view (`sameObjectAs`) — still costing a
+# round trip (no query-cache claim). The object-reference identity is asserted
+# per-language by the API Conformance Suite.
+model: models/balance.yaml
+tags: [m-identity-map, m-temporal-read, identity, as-of, temporal, audit-only, scenario, slice-managed-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Balance
+      find:
+        eq:
+          attr: Balance.id
+          value: 1
+      roundTrips: 1
+      note: OMITTED coordinate — the default-injected current-row predicate (lowers to out_z = infinity)
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+          binds: [1, infinity]
+      expectRows:
+        - { bal_id: 1, val: 150.00 }
+    - targetEntity: Balance
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Balance.id
+              value: 1
+          asOfAttr: Balance.processingDate
+          date: now
+      roundTrips: 1
+      sameObjectAs: 0
+      identityAttr: bal_id
+      note: EXPLICIT asOf(now) — lowers to the SAME out_z = infinity coordinate, the SAME managed view as step 0
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+          binds: [1, infinity]
+      expectRows:
+        - { bal_id: 1, val: 150.00 }
+then:
+  roundTrips: 2
