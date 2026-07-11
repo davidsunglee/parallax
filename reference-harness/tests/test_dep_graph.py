@@ -619,8 +619,21 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # lane; merge-back reinserts a deleted original (014) is a harness write-sequence.
         # slice-managed-1 rises by 8 (309 -> 317, its final count); slice-snapshot-1 and
         # slice-mvp-1 are unchanged.
+        #
+        # COR-30 Phase 5 adds the 12 snapshot cases (m-snapshot-read-003..014), all
+        # tagged slice-snapshot-1 only (never slice-managed-1 or slice-mvp-1) and
+        # m-snapshot-read + m-deep-fetch but NOT m-op-list: the six snapshot twins of the
+        # op-list materialization shapes (003 null-to-one, 004 empty-root, 005
+        # empty-intermediate, 006 shared-prefix, 007 one-to-one, 008 declared-child-
+        # ordering) — which resolve and remove the slices.md staging note — plus
+        # closed-world unloaded access (009, api-conformance), mutation-has-no-writeback
+        # (010, harness scenario), the back-reference cycle with then.identityChecks (011,
+        # api-conformance), the family projection-independent diamond (012), and the
+        # history / asOfRange edge-pinned then.graphs reads (013/014). slice-snapshot-1
+        # rises by 12 (272 -> 284, its final count); slice-managed-1 and slice-mvp-1 are
+        # unchanged. Final counts: 198 / 284 / 317.
         ("slice-mvp-1", 198),
-        ("slice-snapshot-1", 272),
+        ("slice-snapshot-1", 284),
         ("slice-managed-1", 317),
     ],
 )

@@ -1,0 +1,58 @@
+# Snapshot graph, DECLARED child ordering (m-snapshot-read): a materialized snapshot
+# preserves descending, multi-key, and nullable/nulls-last relationship ordering.
+#
+# The snapshot twin of the m-deep-fetch ordering shapes (no m-op-list tag), folded
+# into one graph off order 1 so all three declared-ordering dimensions ride one
+# materialization:
+#   - items            -> `id desc`               : [12, 11] (reversed vs insertion)
+#   - tags             -> `priority desc, label asc`: [fragile(5), gift(2), urgent(2)]
+#                         (the second key breaks the priority=2 tie)
+#   - itemsByShipDate  -> `shipped_on asc`, NULLs last: [12 (2024-02-15), 11 (null)]
+# The graph lists come back in each relationship's declared order; the harness
+# ordering oracle derives the expectation from the model, so a dropped/wrong ORDER BY
+# fails. 1 (root) + 3 (one per hop) = 4 round trips.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-deep-fetch, orderBy, ordering, multi-key, nullable, relationship, graph, slice-snapshot-1]
+shape: read
+when:
+  targetEntity: Order
+  operation:
+    deepFetch:
+      operand:
+        eq:
+          attr: Order.id
+          value: 1
+      paths:
+        - [{ rel: Order.items }]
+        - [{ rel: Order.tags }]
+        - [{ rel: Order.itemsByShipDate }]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+      binds: [1]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?) order by t0.id desc
+      binds: [1]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.label, t0.priority from order_tag t0 where t0.order_id in (?) order by t0.priority desc, t0.label asc
+      binds: [1]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.shipped_on asc
+      binds: [1]
+  referenceSql: select id, name from orders where id = 1
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        items:
+          - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+          - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+        tags:
+          - { id: 3, order_id: 1, label: fragile, priority: 5 }
+          - { id: 2, order_id: 1, label: gift, priority: 2 }
+          - { id: 1, order_id: 1, label: urgent, priority: 2 }
+        itemsByShipDate:
+          - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+          - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+  roundTrips: 4

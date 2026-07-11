@@ -20,7 +20,11 @@
         },
         "then": {
           "required": ["statements"],
-          "anyOf": [{ "required": ["rows"] }, { "required": ["graph"] }]
+          "anyOf": [
+            { "required": ["rows"] },
+            { "required": ["graph"] },
+            { "required": ["graphs"] }
+          ]
         }
       }
     },
@@ -681,12 +685,54 @@
           "items": { "type": "object" }
         },
         "graph": {
-          "description": "The assembled object graph a read must produce. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name — OR, for a NARROWED polymorphic hop (m-deep-fetch, m-inheritance), under the DERIVED narrowed view key `<rel>[<Concrete>,<Concrete>]` (the local relationship name, the effective concrete-subtype set in canonical alphabetical order by entity name, no spaces; equivalent authored narrowings collapse to the same key). A polymorphic view's child objects additionally carry `familyVariant` (the concrete subtype name, materialized from the tag map, never projected as SQL). For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class name, whose value is a list of root objects; a related set appears under its relationship name (or narrowed view key), and a value-object member under its declared name.",
+          "description": "The assembled object graph a read must produce. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name — OR, for a NARROWED polymorphic hop (m-deep-fetch, m-inheritance), under the DERIVED narrowed view key `<rel>[<Concrete>,<Concrete>]` (the local relationship name, the effective concrete-subtype set in canonical alphabetical order by entity name, no spaces; equivalent authored narrowings collapse to the same key). A polymorphic view's child objects additionally carry `familyVariant` (the concrete subtype name, materialized from the tag map, never projected as SQL). For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class name, whose value is a list of root objects; a related set appears under its relationship name (or narrowed view key), and a value-object member under its declared name. When a relationship reaches an ANCESTOR node already on the current path (a true BACK-REFERENCE cycle, m-snapshot-read), recursion stops and the cycle point carries a PK-ONLY stub — ONLY the referenced node's primary-key attribute(s), no other scalars, no relationships; a diamond-shared node at a NON-cyclic position keeps its full-value representation (the stub is scoped to true cycles). The stub proves nothing about sameness by itself — the cycle's same-node claim rides `then.identityChecks`.",
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
             "type": "array",
             "items": { "type": "object" }
+          }
+        },
+        "graphs": {
+          "description": "An ORDERED array of per-milestone snapshot graphs a `history` / `asOfRange` read materializes (m-snapshot-read, resolved Q5a), coexisting with the single-graph `then.graph` exactly as `then.rows` does: a single-instant read carries `graph`, a milestone-set read carries `graphs`. Each entry pairs a milestone `pin` — the EDGE coordinate this graph is pinned at, its OWN milestone's from-instant per as-of axis, NOT a shared root pin — with the assembled `graph` at that pin. So `history` returns one independently edge-pinned graph per milestone and `asOfRange` one per overlapping milestone (m-temporal-read edge-point reads). Each `graph` has the same root-class-keyed shape as `then.graph`.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pin", "graph"],
+            "properties": {
+              "pin": {
+                "description": "The milestone edge coordinate this graph is pinned at, keyed by the as-of ATTRIBUTE name (`processingDate` / `businessDate`) whose value is the milestone's own from-instant (ISO-8601 UTC). Each graph in the array carries its OWN pin — edge-pinning, so a milestone-set read yields independently-pinned graphs, one per milestone, never a shared root pin.",
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": { "type": "string", "minLength": 1 }
+              },
+              "graph": {
+                "description": "The assembled object graph at this milestone's pin — the same root-class-keyed shape as `then.graph`.",
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": "array",
+                  "items": { "type": "object" }
+                }
+              }
+            }
+          }
+        },
+        "identityChecks": {
+          "description": "Declared reference-identity expectations over graph node positions (m-snapshot-read, resolved Q5b), mirroring the m-conformance-adapter `identityCheck`. Each entry is `{left, right, same}`: `left` / `right` are JSON Pointers into the case (into `then.graph` / `then.graphs`) naming the two compared node positions, and `same` is the asserted reference verdict. Authored where the graph JSON cannot express identity by value — the BACK-REFERENCE cycle (m-snapshot-read-011), whose PK-only stub proves nothing about sameness by itself: the cycle's same-node claim (`items[0].order` is the SAME node as the root, not a lookalike copy) rides this observation, graded as REFERENCE identity by each language's API Conformance Suite while the wire harness proves the accompanying golden SQL / graph. An adapter-delegated observable — the wire harness validates it is well-formed and skips grading it.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["left", "right", "same"],
+            "properties": {
+              "left": { "$ref": "#/$defs/jsonPointer" },
+              "right": { "$ref": "#/$defs/jsonPointer" },
+              "same": { "type": "boolean" }
+            }
           }
         },
         "tableState": {
@@ -775,6 +821,11 @@
     }
   },
   "$defs": {
+    "jsonPointer": {
+      "description": "A JSON Pointer into the case (RFC 6901), naming a graph node position for a `then.identityChecks` entry. Mirrors the m-conformance-adapter `jsonPointer` def: the empty string (whole document) or a `/`-rooted path.",
+      "type": "string",
+      "pattern": "^($|/.*)$"
+    },
     "entityName": {
       "description": "A metamodel entity name (the queried/target entity a read starts from, m-case-format `targetEntity`). Matches the `Class` grammar the operation schema's attribute/relationship references use before the dot.",
       "type": "string",

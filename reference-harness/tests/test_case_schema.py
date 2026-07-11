@@ -422,6 +422,88 @@ def _action_boundary_no_on_case() -> dict[str, Any]:
     }
 
 
+def _graphs_read_case() -> dict[str, Any]:
+    """A read case carrying per-milestone `then.graphs` (m-snapshot-read, COR-30 Q5a).
+
+    A `history` snapshot read materializes one edge-pinned graph per milestone: the
+    `then.graphs` array pairs each milestone's `pin` (its own from-instant, keyed by
+    the as-of attribute) with the graph materialized at it, coexisting with the
+    single-graph `then.graph` exactly as `then.rows` does.
+    """
+    return {
+        "model": "models/invoice.yaml",
+        "tags": ["m-snapshot-read", "m-deep-fetch"],
+        "shape": "read",
+        "when": {
+            "targetEntity": "InvoiceLine",
+            "operation": {
+                "history": {
+                    "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+                    "asOfAttr": "InvoiceLine.processingDate",
+                }
+            },
+        },
+        "then": {
+            "statements": [
+                {
+                    "sql": {
+                        "postgres": "select t0.id, t0.in_z from invoice_line t0 where t0.id = ?"
+                    },
+                    "binds": [1000],
+                }
+            ],
+            "graphs": [
+                {
+                    "pin": {"processingDate": "2024-01-01T00:00:00+00:00"},
+                    "graph": {"InvoiceLine": [{"id": 1000, "amount": 50.00}]},
+                },
+                {
+                    "pin": {"processingDate": "2024-04-01T00:00:00+00:00"},
+                    "graph": {"InvoiceLine": [{"id": 1000, "amount": 75.00}]},
+                },
+            ],
+            "roundTrips": 1,
+        },
+    }
+
+
+def _identity_checks_read_case() -> dict[str, Any]:
+    """A read case carrying a `then.identityChecks` back-reference cycle (COR-30 Q5b).
+
+    A back-reference cycle (`[items, items.order]`) serializes the cycle point as a
+    PK-only stub; the same-node claim rides `then.identityChecks`, an array of
+    `{left, right, same}` entries with JSON-Pointer `left` / `right`.
+    """
+    return {
+        "model": "models/orders.yaml",
+        "tags": ["m-snapshot-read", "m-deep-fetch"],
+        "shape": "read",
+        "when": {
+            "targetEntity": "Order",
+            "operation": {
+                "deepFetch": {
+                    "operand": {"eq": {"attr": "Order.id", "value": 1}},
+                    "paths": [[{"rel": "Order.items"}, {"rel": "OrderItem.order"}]],
+                }
+            },
+        },
+        "then": {
+            "statements": [
+                {"sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"}, "binds": [1]}
+            ],
+            "graph": {"Order": [{"id": 1, "items": [{"id": 11, "order": {"id": 1}}]}]},
+            "identityChecks": [
+                {
+                    "left": "/then/graph/Order/0",
+                    "right": "/then/graph/Order/0/items/0/order",
+                    "same": True,
+                }
+            ],
+            "roundTrips": 1,
+        },
+    }
+
+
 VALID_CASES = {
     "read": _read_case,
     "writeSequence": _write_sequence_case,
@@ -435,6 +517,8 @@ VALID_CASES = {
     "error": _error_case,
     "concurrencySuccess": _concurrency_success_case,
     "boundary": _boundary_case,
+    "read-graphs": _graphs_read_case,
+    "read-identity-checks": _identity_checks_read_case,
     "rejected-operation": _rejected_operation_case,
     "rejected-write": _rejected_write_case,
 }
@@ -717,6 +801,42 @@ def _action_on_duplicate_index() -> dict[str, Any]:
     return doc
 
 
+def _graphs_entry_missing_pin() -> dict[str, Any]:
+    """A `then.graphs` entry missing `pin` (COR-30 Q5a) — the entry requires it.
+
+    Each per-milestone graph MUST declare the edge coordinate it is pinned at, so an
+    entry carrying only `graph` is rejected."""
+    doc = _graphs_read_case()
+    del doc["then"]["graphs"][0]["pin"]
+    return doc
+
+
+def _graphs_entry_stray_key() -> dict[str, Any]:
+    """A `then.graphs` entry with a stray key — the entry is `additionalProperties: false`."""
+    doc = _graphs_read_case()
+    doc["then"]["graphs"][0]["bogus"] = True
+    return doc
+
+
+def _identity_check_missing_same() -> dict[str, Any]:
+    """A `then.identityChecks` entry missing `same` (COR-30 Q5b) — the entry requires it.
+
+    An identity check without its reference verdict asserts nothing, so it is rejected."""
+    doc = _identity_checks_read_case()
+    del doc["then"]["identityChecks"][0]["same"]
+    return doc
+
+
+def _identity_check_stray_key() -> dict[str, Any]:
+    """A `then.identityChecks` entry with a stray key — the entry is `additionalProperties: false`.
+
+    The compatibility `identityCheck` carries only `{left, right, same}` — no optional
+    `identity` witness (that is the adapter-side observation), so a stray key is rejected."""
+    doc = _identity_checks_read_case()
+    doc["then"]["identityChecks"][0]["identity"] = {"pk": 1}
+    return doc
+
+
 REJECTED_CASES = {
     "legacy-layout": _legacy_layout,
     "mislabeled-shape": _mislabeled_shape,
@@ -742,6 +862,10 @@ REJECTED_CASES = {
     "action-set-on-non-mutate": _action_set_on_non_mutate,
     "action-object-verb-missing-on": _action_object_verb_missing_on,
     "action-on-duplicate-index": _action_on_duplicate_index,
+    "graphs-entry-missing-pin": _graphs_entry_missing_pin,
+    "graphs-entry-stray-key": _graphs_entry_stray_key,
+    "identity-check-missing-same": _identity_check_missing_same,
+    "identity-check-stray-key": _identity_check_stray_key,
 }
 
 

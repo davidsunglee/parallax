@@ -1,0 +1,39 @@
+# Snapshot graph over a ONE-TO-ONE relationship (m-snapshot-read): a one-to-one peer
+# materializes as one hard pointer, not a collection.
+#
+# The snapshot twin of the m-deep-fetch one-to-one shape (no m-op-list tag). Every
+# Person materializes with its single Passport peer:
+#   level 0 (root)     : all persons
+#   level 1 (passport) : passports keyed by the distinct person ids {1, 2, 3}
+# The 1:1 peer attaches as a SINGLE object (to-one), not a list — and person 3, who
+# has no passport, gets a null peer. Two statements, roundTrips = 2 (never one query
+# per person), so N+1 elimination holds for a 1:1 snapshot too.
+model: models/person.yaml
+tags: [m-snapshot-read, m-deep-fetch, one-to-one, relationship, nullable, graph, materialization, slice-snapshot-1]
+shape: read
+when:
+  targetEntity: Person
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [{ rel: Person.passport }]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from person t0
+    - sql:
+        postgres: select t0.id, t0.person_id, t0.number from passport t0 where t0.person_id in (?, ?, ?)
+      binds: [1, 2, 3]
+  referenceSql: select id, name from person
+  graph:
+    Person:
+      - id: 1
+        name: Alan
+        passport: { id: 101, person_id: 1, number: P-AAA }
+      - id: 2
+        name: Grace
+        passport: { id: 102, person_id: 2, number: P-BBB }
+      - { id: 3, name: Ada, passport: null }
+  roundTrips: 2

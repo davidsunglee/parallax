@@ -116,22 +116,62 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
      * @minItems 1
      */
     scenario?: [
-      (
-        | {
-            [k: string]: unknown;
-          }
-        | {
-            [k: string]: unknown;
-          }
-      ),
-      ...(
-        | {
-            [k: string]: unknown;
-          }
-        | {
-            [k: string]: unknown;
-          }
-      )[],
+      {
+        [k: string]: unknown;
+      } & {
+        [k: string]: unknown;
+      } & {
+        [k: string]: unknown;
+      } & (
+          | {
+              [k: string]: unknown;
+            }
+          | {
+              [k: string]: unknown;
+            }
+          | {
+              [k: string]: unknown;
+            }
+        ) &
+        (
+          | {
+              [k: string]: unknown;
+            }
+          | {
+              [k: string]: unknown;
+            }
+          | {
+              [k: string]: unknown;
+            }
+        ),
+      ...({
+        [k: string]: unknown;
+      } & {
+        [k: string]: unknown;
+      } & {
+        [k: string]: unknown;
+      } & (
+          | {
+              [k: string]: unknown;
+            }
+          | {
+              [k: string]: unknown;
+            }
+          | {
+              [k: string]: unknown;
+            }
+        ) &
+        (
+          | {
+              [k: string]: unknown;
+            }
+          | {
+              [k: string]: unknown;
+            }
+          | {
+              [k: string]: unknown;
+            }
+        ))[],
     ];
     /**
      * A coherence (cross-process cache coherence) case: an ordered list of steps run against ONE database over TWO connections modeling two application servers (node A, node B). Each step names the node it runs on, the operation it issues, and its golden SQL (`statements`); a write step (kind `write`) COMMITS on its node, a read step (kind `read`) is a query. The final step is node B's re-fetch after node A's committed write — it carries `observeRows`, the post-write rows node B MUST observe.
@@ -269,11 +309,63 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
      */
     rows?: {}[];
     /**
-     * The assembled object graph a read must produce. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name — OR, for a NARROWED polymorphic hop (m-deep-fetch, m-inheritance), under the DERIVED narrowed view key `<rel>[<Concrete>,<Concrete>]` (the local relationship name, the effective concrete-subtype set in canonical alphabetical order by entity name, no spaces; equivalent authored narrowings collapse to the same key). A polymorphic view's child objects additionally carry `familyVariant` (the concrete subtype name, materialized from the tag map, never projected as SQL). For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class name, whose value is a list of root objects; a related set appears under its relationship name (or narrowed view key), and a value-object member under its declared name.
+     * The assembled object graph a read must produce. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name — OR, for a NARROWED polymorphic hop (m-deep-fetch, m-inheritance), under the DERIVED narrowed view key `<rel>[<Concrete>,<Concrete>]` (the local relationship name, the effective concrete-subtype set in canonical alphabetical order by entity name, no spaces; equivalent authored narrowings collapse to the same key). A polymorphic view's child objects additionally carry `familyVariant` (the concrete subtype name, materialized from the tag map, never projected as SQL). For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class name, whose value is a list of root objects; a related set appears under its relationship name (or narrowed view key), and a value-object member under its declared name. When a relationship reaches an ANCESTOR node already on the current path (a true BACK-REFERENCE cycle, m-snapshot-read), recursion stops and the cycle point carries a PK-ONLY stub — ONLY the referenced node's primary-key attribute(s), no other scalars, no relationships; a diamond-shared node at a NON-cyclic position keeps its full-value representation (the stub is scoped to true cycles). The stub proves nothing about sameness by itself — the cycle's same-node claim rides `then.identityChecks`.
      */
     graph?: {
       [k: string]: {}[];
     };
+    /**
+     * An ORDERED array of per-milestone snapshot graphs a `history` / `asOfRange` read materializes (m-snapshot-read, resolved Q5a), coexisting with the single-graph `then.graph` exactly as `then.rows` does: a single-instant read carries `graph`, a milestone-set read carries `graphs`. Each entry pairs a milestone `pin` — the EDGE coordinate this graph is pinned at, its OWN milestone's from-instant per as-of axis, NOT a shared root pin — with the assembled `graph` at that pin. So `history` returns one independently edge-pinned graph per milestone and `asOfRange` one per overlapping milestone (m-temporal-read edge-point reads). Each `graph` has the same root-class-keyed shape as `then.graph`.
+     *
+     * @minItems 1
+     */
+    graphs?: [
+      {
+        /**
+         * The milestone edge coordinate this graph is pinned at, keyed by the as-of ATTRIBUTE name (`processingDate` / `businessDate`) whose value is the milestone's own from-instant (ISO-8601 UTC). Each graph in the array carries its OWN pin — edge-pinning, so a milestone-set read yields independently-pinned graphs, one per milestone, never a shared root pin.
+         */
+        pin: {
+          [k: string]: string;
+        };
+        /**
+         * The assembled object graph at this milestone's pin — the same root-class-keyed shape as `then.graph`.
+         */
+        graph: {
+          [k: string]: {}[];
+        };
+      },
+      ...{
+        /**
+         * The milestone edge coordinate this graph is pinned at, keyed by the as-of ATTRIBUTE name (`processingDate` / `businessDate`) whose value is the milestone's own from-instant (ISO-8601 UTC). Each graph in the array carries its OWN pin — edge-pinning, so a milestone-set read yields independently-pinned graphs, one per milestone, never a shared root pin.
+         */
+        pin: {
+          [k: string]: string;
+        };
+        /**
+         * The assembled object graph at this milestone's pin — the same root-class-keyed shape as `then.graph`.
+         */
+        graph: {
+          [k: string]: {}[];
+        };
+      }[],
+    ];
+    /**
+     * Declared reference-identity expectations over graph node positions (m-snapshot-read, resolved Q5b), mirroring the m-conformance-adapter `identityCheck`. Each entry is `{left, right, same}`: `left` / `right` are JSON Pointers into the case (into `then.graph` / `then.graphs`) naming the two compared node positions, and `same` is the asserted reference verdict. Authored where the graph JSON cannot express identity by value — the BACK-REFERENCE cycle (m-snapshot-read-011), whose PK-only stub proves nothing about sameness by itself: the cycle's same-node claim (`items[0].order` is the SAME node as the root, not a lookalike copy) rides this observation, graded as REFERENCE identity by each language's API Conformance Suite while the wire harness proves the accompanying golden SQL / graph. An adapter-delegated observable — the wire harness validates it is well-formed and skips grading it.
+     *
+     * @minItems 1
+     */
+    identityChecks?: [
+      {
+        left: JsonPointer;
+        right: JsonPointer;
+        same: boolean;
+      },
+      ...{
+        left: JsonPointer;
+        right: JsonPointer;
+        same: boolean;
+      }[],
+    ];
     /**
      * The resulting table state a writeSequence or conflict case asserts after applying its ordered DML golden SQL. Keyed by table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings at core microsecond precision, with the open-bound `infinity` as the literal string `infinity`.
      */
@@ -518,6 +610,10 @@ export type GoldenStatements2 = [
     sql?: {};
   })[],
 ];
+/**
+ * A JSON Pointer into the case (RFC 6901), naming a graph node position for a `then.identityChecks` entry. Mirrors the m-conformance-adapter `jsonPointer` def: the empty string (whole document) or a `/`-rooted path.
+ */
+export type JsonPointer = string;
 
 /**
  * One logical statement in the execution sequence: a closed `{sql, binds}` object. `sql` is a plain string at naive locations (`given.apply`) or a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`); `binds` is authored once per statement (dialect-agnostic) and defaults to `[]`. The `{sql, binds}` wrapper keeps dialect keys and entry-level keys in separate namespaces, so the schema needs no reserved-key carve-outs. Golden and naive locations narrow `sql` to the map / string form respectively via `goldenStatements` / `naiveStatements`.

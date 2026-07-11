@@ -57,9 +57,10 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   `equivalentEncodings`) describe the unit-of-work mode, transaction instant,
   observed version, and alternate surface encodings.
 - **`then`** — everything the case asserts: the golden `statements`, the naive
-  `referenceSql`, the observed data (`rows` / `graph` / `tableState`), the counts
-  and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the
-  portable boundary `outcome`, and the numeric-comparison `tolerance`.
+  `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
+  `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
+  `roundTrips`), the reference-identity `identityChecks`, the portable boundary
+  `outcome`, and the numeric-comparison `tolerance`.
 
 `model` / `tags` / `lane` stay top-level because they are routing/discovery fields
 read by the coverage gate and the language gate; grouping them buys no readability.
@@ -216,7 +217,9 @@ the open-bound `infinity` as the literal string `infinity`.
 | `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on a boundary case |
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
 | `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
-| `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` is REQUIRED for a read case) |
+| `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` / `then.graphs` is REQUIRED for a read case) |
+| `then.graphs` | `then` | read | an ORDERED array of per-milestone edge-pinned graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
+| `then.identityChecks` | `then` | read | declared reference-identity expectations over graph node positions — each `{left, right, same}` with JSON-Pointer `left` / `right` and a boolean `same` — the same-node claim a back-reference cycle's PK-only stub cannot carry by value (see *Back-reference cycles*, below) |
 | `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence (or conflict) case asserts, keyed by table name (REQUIRED for a write case) |
 | `then.affectedRows` | `then` | conflict | the number of rows the golden `UPDATE` must affect (`0` = stale-version conflict, `1` = success) |
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
@@ -280,6 +283,80 @@ key **different** views. A polymorphic narrowed view's child objects carry
 `familyVariant` just as a flat abstract read's rows do (a single-concrete narrowed
 view carries none). A `narrow` escaping the relationship target's effective set is a
 `rejected` case (`narrow-outside-relationship-target`).
+
+#### Milestone-set graphs (`then.graphs`)
+
+A single-instant read materializes **one** snapshot graph, asserted by
+`then.graph`. A **milestone-set** read — `history` (the full milestone set) or
+`asOfRange` (every milestone overlapping the window) — materializes **one graph
+per milestone**, asserted by **`then.graphs`**: an ordered array of `{pin, graph}`
+entries. `then.graphs` coexists with `then.graph` exactly as `then.rows` does — a
+single-instant read carries `graph`, a milestone-set read carries `graphs` — and a
+read case satisfies its `then` requirement with any one of `rows` / `graph` /
+`graphs`.
+
+Each entry's **`pin`** is the milestone's OWN edge coordinate — its from-instant
+per as-of axis, keyed by the as-of attribute name (`processingDate` /
+`businessDate`) — and its **`graph`** is the plain-value graph materialized at that
+pin, the same root-class-keyed shape as `then.graph`. The pins are **edge pins,
+not a shared root pin**: `history` returns each milestone edge-pinned to its own
+from-instant, and `asOfRange` returns every overlapping milestone independently
+edge-pinned to its own from-instant (never to the window bounds) — the
+`m-temporal-read` edge-point read, now observed as a graph per milestone. The
+single root query returns the whole milestone set in one round trip; the harness
+partitions those rows by edge pin (matching each pin's per-axis from-instant to the
+row's from-column) and asserts each partition equals its declared graph. The pins
+are **pairwise disjoint** — every milestone belongs to **exactly one** declared
+graph, so an overlapping or duplicated pin (two graphs claiming the same milestone)
+is a loud failure, as is a milestone matched by no pin. (A v1
+milestone-set graph carries **no** deep-fetch includes — history-with-includes
+(`snapshot-history-includes`) is staged and claimed by neither object-lifecycle
+slice — so each graph is rooted at the read's `targetEntity`.)
+
+#### Back-reference cycles and `then.identityChecks`
+
+A snapshot graph is a plain-value tree, but an included **back-reference** can
+reach a node already on the current path — `[items, items.order]` navigates
+`Order → items → order`, and `items[0].order` is the ROOT `Order`. This is a legal
+in-memory cycle (`m-snapshot-read`). To keep the graph JSON a finite value tree,
+recursion stops at a **true cycle** (a relationship reaching an **ancestor node on
+the current path**) and the cycle point carries a **PK-only stub** — ONLY the
+referenced node's primary-key attribute(s), no other scalars, no relationships:
+
+```yaml
+then:
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        items:
+          - { id: 11, order_id: 1, sku: A-100, order: { id: 1 } }   # PK-only stub — recursion stops
+```
+
+The stub is scoped to **true cycles only**. A **diamond-shared** node at a
+NON-cyclic position (two include paths reaching the same row that is not an
+ancestor, as in `m-snapshot-read-001`) keeps its full-value representation — it is
+not re-goldened to a stub.
+
+The PK-only stub proves nothing about sameness by itself (a lookalike copy carrying
+the same primary key would serialize identically). The cycle's real claim —
+`items[0].order` is the **same node** as the root, not a copy — rides
+**`then.identityChecks`**, an array of `{left, right, same}` entries mirroring the
+`m-conformance-adapter` `identityCheck`: `left` and `right` are JSON Pointers into
+the case naming the two node positions, and `same` is the asserted reference
+verdict:
+
+```yaml
+then:
+  identityChecks:
+    - { left: /then/graph/Order/0, right: /then/graph/Order/0/items/0/order, same: true }
+```
+
+Reference identity is not wire-observable, so `then.identityChecks` is an
+**adapter-delegated** observable: the harness validates it is well-formed and
+skips grading it, and each language's API Conformance Suite returns and verifies it
+against the `m-conformance-adapter` `identityChecks` observation — exactly as it
+grades a scenario step's `differentObjectFrom`.
 
 ### `then.statements`, `then.referenceSql`, `then.rows` (the oracle question)
 

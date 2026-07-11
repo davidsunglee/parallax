@@ -592,6 +592,17 @@ class Case:
         return self.then.get("graph")
 
     @property
+    def expected_graphs(self) -> list[dict[str, Any]] | None:
+        """The ordered per-milestone edge-pinned graphs of a `history` / `asOfRange`
+        snapshot read (``then.graphs``), or ``None`` (m-snapshot-read, Q5a).
+
+        Each entry is ``{"pin": {asOfAttr: from-instant}, "graph": {Class: [node, …]}}``:
+        the milestone's own edge coordinate paired with the graph materialized at it.
+        Coexists with :attr:`expected_graph` exactly as ``then.rows`` does.
+        """
+        return self.then.get("graphs")
+
+    @property
     def round_trips(self) -> int:
         return self.then.get("roundTrips", 1)
 
