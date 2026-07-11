@@ -74,8 +74,9 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
   resulting `then.tableState` (the temporal writes `m-audit-write` /
   `m-bitemp-write` / `m-business-only`, the set-based `m-batch-write`,
   `m-cascade-delete`, and `m-detach` merge-backs).
-- **`scenario`** — a `when.scenario` of ordered read *and* committed-write steps,
-  golden SQL per step (`m-unit-work`).
+- **`scenario`** — a `when.scenario` of ordered read, committed-write, *and*
+  lifecycle-**action** steps, golden SQL per step (`m-unit-work` and the
+  object-lifecycle modules — see *Lifecycle action steps*).
 - **`conflict`** — an optimistic-lock `UPDATE` asserted by `then.affectedRows` for
   a single attempt, or an ordered `when.attempts` retry sequence (`m-opt-lock`).
 - **`coherence`** — a `when.coherence` two-node sequence (`m-coherence`).
@@ -202,7 +203,7 @@ the open-bound `infinity` as the literal string `infinity`.
 | `when.operation` | `when` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
 | `when.targetEntity` | `when` | read | the entity the read TARGETS — the queried position `when.operation` starts from (see *Read targeting*, below); REQUIRED on every read case and every scenario / coherence read step |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (audit-only, business-only, **and full-bitemporal** — the plain, unbounded bitemporal writes are all first-class degenerate rectangle splits with no `until`: plain `insert` is a single fully-current `INSERT`, plain `update` is inactivate + `head` + new `tail`, plain `terminate` is inactivate + `head` only), `delete` (non-temporal delete / detached-delete merge-back), `cascadeDelete` (the minimal dependent-delete witness), plus the `insertUntil` / `updateUntil` / `terminateUntil` `*Until` trio for the bounded full-bitemporal rectangle split |
-| `when.scenario` | `when` | scenario | an ordered list of read / committed-write steps, each carrying its own per-step golden `statements` |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`), each carrying its own per-step golden `statements` |
 | `when.coherence` | `when` | coherence | a two-node (A / B) operation sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`) |
@@ -454,6 +455,82 @@ optimistic }`) declaring the unit-of-work strategy its golden SQL runs under
 executes the authored golden SQL either way — the block records which mode produced
 it, so an optimistic conflict case's gated `UPDATE` and a locking-mode case's
 ungated version-advancing `UPDATE` are self-describing. Its default is `locking`.
+
+#### Lifecycle action steps
+
+Beyond read and write steps, a scenario carries a third step kind — the **action
+step** — that names a managed-object lifecycle verb the client performs against
+an earlier step's result. This is the vocabulary the object-lifecycle modules
+(`m-identity-map`, `m-detach`, `m-deep-fetch`, `m-op-list`) need but the
+SQL-oriented read/write steps cannot express. An action step carries an
+**`action`** verb, an **`on`** source (the earlier step's index, or an array of
+indices when the verb spans sources at different lowered coordinates), its own
+per-step golden `statements` and `roundTrips`, and the same per-step observables
+as a read step. The **Targets** column below states whether the verb acts on a
+prior step's result (so `on` is REQUIRED) or on the unit of work as a whole (so
+`on` is inapplicable and MAY be omitted):
+
+| Verb | Meaning | Targets | Module |
+|---|---|---|---|
+| `mutate` | assign the attributes in `set` in memory (no SQL for a snapshot / detached object) | prior object (`on` required) | `m-snapshot-read` / `m-detach` |
+| `detachCopy` | take a detached deep copy of the target | prior object (`on` required) | `m-detach` |
+| `load` | explicitly trigger a deferred relationship load (the portable, mandatory load trigger) | prior object(s) (`on` required) | `m-deep-fetch` |
+| `access` | read an already-loaded relationship / operation-backed list (no SQL when already populated) | prior object (`on` required) | `m-op-list` |
+| `flush` | emit the unit of work's buffered DML | unit of work (`on` optional) | `m-unit-work` |
+| `mergeBack` | reconcile a detached copy with the store | prior object (`on` required) | `m-detach` |
+| `commit` / `abort` | end the unit of work, committing or discarding it | unit of work (`on` optional) | `m-unit-work` / `m-detach` |
+
+**`on` is REQUIRED for the object-targeting verbs** (`mutate`, `detachCopy`,
+`load`, `access`, `mergeBack`) — each acts on the object(s) a prior step
+resolved, so it MUST name that source, and the store enforces this per-verb in
+the schema (an object-targeting action missing `on` is rejected). The
+**boundary / unit-of-work verbs** (`flush`, `commit`, `abort`) operate on the
+whole unit of work rather than one specific prior object, so `on` is
+**inapplicable and MAY be omitted** (a `flush` MAY still carry `on` to document
+the buffered write it materializes). Every `on` index — single or in the array
+form — MUST name an **earlier** step, and the array form's indices MUST be
+**unique** (a source is referenced at most once); a forward / self / out-of-range
+or duplicated index is a loud harness failure.
+
+`set` is legal **only** on a `mutate` action; `path` (the navigated relationship,
+e.g. `items` or `items.statuses`) only on `load` / `access`. Because golden SQL
+still lives per step, a scenario with action steps carries no top-level
+`then.statements`, and the harness executes a load / access as a relationship
+query, a flush / mergeBack / commit as committed DML, and counts each step's round
+trips against its listed statements exactly as for read / write steps. A deferred
+`load` over several source objects emits **one child statement per non-empty level**
+(never one per object), and one statement **per lowered coordinate group** when the
+sources are pinned at different as-of coordinates — the deep-fetch batching contract,
+proven by the load step's golden SQL and binds.
+
+#### Per-step lifecycle observables
+
+Read and action steps carry lifecycle observables that grade what the wire golden
+SQL cannot see. Two — `sameObjectAs` (reference sameness) and `expectRows` — are
+graded by the harness. The rest are **adapter-delegated**: the harness validates
+they are well-formed and skips grading them, exactly as it skips a whole
+`api-conformance`-lane case; each language's API Conformance Suite returns and
+verifies them (`m-conformance-adapter`, `m-api-conformance`):
+
+- **`sameObjectAs`** / **`differentObjectFrom`** — a zero-based earlier-step index
+  this step's result denotes the **same** object as, or a **distinct** object from.
+  `differentObjectFrom` is the reference-inequality counterpart of `sameObjectAs`:
+  it proves two results are different objects even when their **row values are
+  identical** (two finite coordinates in one milestone, `m-identity-map`), which
+  value equality alone cannot distinguish. A single step declares at most one of the
+  two.
+- **`expectState`** — the lifecycle state the target object is in after the step,
+  from the `m-detach` five-state machine (`in-memory` / `persisted` / `deleted` /
+  `detached` / `detached-deleted`).
+- **`expectError`** — a neutral **application-lifecycle** error the step's verb
+  raises. It is a closed vocabulary, defined normatively where each error is
+  defined and **distinct from the `m-db-error` DB-error taxonomy** (which pairs
+  `errorClass` with a `nativeCode` an application error has no analogue for):
+  - `detached-relationship-load` — a deferred relationship load on a **detached**
+    object, which has no live unit of work to resolve through (`m-detach`).
+  - `processing-pin-read-only` — a mutation through a **finite processing-axis**
+    pinned view, which records what the system knew and is never rewritten
+    (`m-identity-map`).
 
 ### Coherence cases (`m-coherence`)
 

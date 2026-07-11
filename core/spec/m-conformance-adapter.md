@@ -293,8 +293,38 @@ assert different things:
 - read cases report `rows` or `graph`
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
-- scenario cases report `identityChecks` and `roundTrips`
+- scenario cases report `identityChecks` and `roundTrips`, plus `stateChecks` for
+  any step declaring `expectState` and `errors` for any step declaring `expectError`
 - coherence cases report the final observed `rows`, and `identityChecks` for any step that declares `sameObjectAs`
+
+### Lifecycle observations (`stateChecks`, `errors`)
+
+Two optional `observations` keys carry the object-lifecycle assertions a wire
+golden SQL cannot see, mirroring the explicit-verdict shape of `identityCheck`:
+
+- **`stateChecks`** — one entry per scenario step declaring `expectState`, each
+  `{ at, expected, observed, pass }`: `at` is a JSON Pointer into the case (the
+  step), `expected` the case's `expectState` (the `m-detach` five-state machine),
+  `observed` the state the implementation saw, and `pass` the verdict.
+- **`errors`** — one entry per scenario step declaring `expectError`, each
+  `{ at, errorClass, native? }`: `at` the step pointer, `errorClass` the neutral
+  application-lifecycle error the verb raised (`detached-relationship-load` /
+  `processing-pin-read-only` — `m-detach` / `m-identity-map`, **distinct** from the
+  `m-db-error` taxonomy), and an optional `native` witness carrying the raw
+  implementation error.
+
+Both are additive and optional: an adapter that observes no lifecycle state or
+raised error simply omits them, so an existing `run` output (`roundTrips` plus
+`rows` / `graph` / `identityChecks`) stays valid unchanged.
+
+An **`identityCheck`'s semantics are the claiming module's identity contract**, not
+a single fixed rule. For a **wire-level** scenario check (the PK-value one-object-
+per-PK rule the harness itself grades) `same` means **primary-key-value equality**.
+For a **managed-slice lifecycle** check (`differentObjectFrom`, and identity checks
+on managed objects generally) `same` means **reference identity** — value equality
+is insufficient, because two finite coordinates in one milestone have identical row
+values yet are distinct pinned views (`m-identity-map`). An adapter grading a
+managed-slice case therefore compares object references, not sorted PK values.
 
 An **abstract-target read** — an abstract `targetEntity`, or an abstract position
 `narrow`ed with `m-op-algebra`'s `narrow` node — materializes complete concrete

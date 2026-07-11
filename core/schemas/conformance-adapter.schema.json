@@ -173,6 +173,43 @@
         "identity": {}
       }
     },
+    "stateCheck": {
+      "description": "A lifecycle-state observation (m-conformance-adapter, COR-30): the object at case position `at` was observed in a given lifecycle state, and `pass` records whether that matched the case's `expectState`. `at` is a JSON Pointer into the case (a scenario step index). Mirrors `identityCheck`'s explicit-verdict shape so the runner grades an assertion the wire golden SQL cannot see.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "expected", "observed", "pass"],
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/jsonPointer"
+        },
+        "expected": {
+          "type": "string",
+          "enum": ["in-memory", "persisted", "deleted", "detached", "detached-deleted"]
+        },
+        "observed": {
+          "type": "string"
+        },
+        "pass": {
+          "type": "boolean"
+        }
+      }
+    },
+    "errorObservation": {
+      "description": "A raised-application-error observation (m-conformance-adapter, COR-30): the verb at case position `at` raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-detach / m-identity-map). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "errorClass"],
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/jsonPointer"
+        },
+        "errorClass": {
+          "type": "string",
+          "enum": ["detached-relationship-load", "processing-pin-read-only"]
+        },
+        "native": {}
+      }
+    },
     "observations": {
       "type": "object",
       "additionalProperties": false,
@@ -203,6 +240,16 @@
         "identityChecks": {
           "type": "array",
           "items": { "$ref": "#/$defs/identityCheck" }
+        },
+        "stateChecks": {
+          "description": "Lifecycle-state checks (m-detach five-state machine) an adapter reports for scenario steps declaring `expectState`. Optional and additive — an adapter that reports no lifecycle state omits it, and existing run outputs stay valid.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/stateCheck" }
+        },
+        "errors": {
+          "description": "Neutral application-lifecycle errors (m-detach / m-identity-map) an adapter reports for scenario steps declaring `expectError`. Optional and additive — an adapter that raises no such error omits it, and existing run outputs stay valid.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/errorObservation" }
         }
       }
     },

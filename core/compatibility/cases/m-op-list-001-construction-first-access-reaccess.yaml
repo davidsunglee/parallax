@@ -1,0 +1,40 @@
+# Operation-backed list laziness (m-op-list): constructing the list does no DB
+# work, the first access resolves it in exactly one query, and every later access
+# re-uses that resolved result with zero further SQL.
+#
+# Step 0 constructs `findMany(all Orders)` — an operation-backed view, roundTrips 0,
+# no SQL. Step 1 is the first access (iterate / size / index): it resolves the list
+# once, six orders in a single query. Step 2 accesses again and emits NO SQL,
+# returning the SAME resolved objects (sameObjectAs). The whole scenario costs one
+# round trip — the single first-access resolution.
+model: models/orders.yaml
+tags: [m-op-list, lazy, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Order
+      find:
+        all: {}
+      roundTrips: 0
+      note: construction -> an operation-backed list, no DB work
+    - action: access
+      "on": 0
+      roundTrips: 1
+      note: first access resolves the list once
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0
+      expectRows:
+        - { id: 1, name: Ada }
+        - { id: 2, name: Linus }
+        - { id: 3, name: ada }
+        - { id: 4, name: Margaret }
+        - { id: 5, name: Alan }
+        - { id: 42, name: Grace }
+    - action: access
+      "on": 0
+      roundTrips: 0
+      sameObjectAs: 1
+      note: re-access (iterate / index / size again) -> zero SQL, the same resolved objects
+then:
+  roundTrips: 1

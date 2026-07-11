@@ -379,6 +379,34 @@
               {
                 "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` the DML is applied and then ROLLED BACK. A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`.",
                 "required": ["write", "roundTrips"]
+              },
+              {
+                "description": "An ACTION step (m-case-format lifecycle vocabulary, COR-30): performs a managed-object lifecycle verb named by `action` against the result of an earlier step (`on`). It carries per-step golden SQL (`statements`) when the verb hits the database (a `load` / `access` relationship query, a `flush` / `mergeBack` / `commit` DML) exactly as a read / write step does, and per-step observables: `expectRows` (rows a `load` returns or a re-read observes), `expectState` (the object's lifecycle state after the verb), `expectError` (a neutral application-lifecycle error the verb raises), and `sameObjectAs` / `differentObjectFrom` reference-identity assertions. A cache-hit re-access lists no golden SQL and declares `roundTrips: 0`, exactly like a cache-hit read step. Golden SQL still lives PER STEP, so a scenario case with action steps carries no top-level `then.statements`.",
+                "required": ["action", "roundTrips"]
+              }
+            ],
+            "allOf": [
+              {
+                "description": "`set` is a MUTATE-only attribute-assignment map (the new attribute values a `mutate` action assigns). A step carrying `set` MUST be a `mutate` action step — `set` on a read / write step, or on a non-`mutate` action verb, is invalid.",
+                "if": { "required": ["set"] },
+                "then": {
+                  "required": ["action"],
+                  "properties": { "action": { "const": "mutate" } }
+                }
+              },
+              {
+                "description": "A single step declares AT MOST ONE of `sameObjectAs` / `differentObjectFrom`: a step's identity relationship to one anchor is either sameness OR difference, never both (in particular, they can never point at the SAME step). Distinct identity anchors are expressed by separate steps or by the adapter's per-position identity checks (m-conformance-adapter).",
+                "not": { "required": ["sameObjectAs", "differentObjectFrom"] }
+              },
+              {
+                "description": "An OBJECT-TARGETING action verb (`mutate` / `detachCopy` / `load` / `access` / `mergeBack`) acts on a PRIOR step's result, so it MUST name that source with `on`. The BOUNDARY / unit-of-work verbs (`flush` / `commit` / `abort`) operate on the unit of work as a whole rather than a specific prior object, so `on` is OPTIONAL for them (a `flush` MAY still carry `on` to document the buffered write it materializes). This is a per-verb conditional, NOT a blanket `on` requirement — a blanket rule would wrongly reject a legitimate boundary step.",
+                "if": {
+                  "required": ["action"],
+                  "properties": {
+                    "action": { "enum": ["mutate", "detachCopy", "load", "access", "mergeBack"] }
+                  }
+                },
+                "then": { "required": ["on"] }
               }
             ],
             "properties": {
@@ -414,9 +442,48 @@
                 "items": { "type": "object" }
               },
               "sameObjectAs": {
-                "description": "Zero-based index of an earlier scenario step whose result denotes the SAME logical object(s) as this step (the identity-cache contract: same primary key => same object).",
+                "description": "Zero-based index of an earlier scenario step whose result denotes the SAME logical object(s) as this step (the identity-cache contract: same primary key => same object). Legal on a read step or an action step (a `load` / `access` re-read denoting the same managed object as an earlier step).",
                 "type": "integer",
                 "minimum": 0
+              },
+              "differentObjectFrom": {
+                "description": "Zero-based index of an earlier scenario step whose result denotes a DISTINCT object from this step — the reference-INEQUALITY counterpart of `sameObjectAs` (m-identity-map: two finite coordinates in one milestone are distinct pinned views even when their row values are identical, so value equality cannot distinguish them). Graded as REFERENCE identity by each language's API Conformance Suite; the wire harness proves the accompanying SQL / rows and skips this observable.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "action": {
+                "description": "Marks an ACTION step and names the managed-object lifecycle verb it performs (m-case-format lifecycle vocabulary, COR-30). `mutate` — assign the attributes in `set` in memory (no SQL for a snapshot / detached object). `detachCopy` — take a detached deep copy of the target (m-detach). `load` — explicitly trigger a deferred relationship load (m-deep-fetch), the portable, mandatory load trigger. `access` — read an already-loaded relationship / operation-backed list (m-op-list; no SQL when already populated). `flush` — emit the unit of work's buffered DML. `mergeBack` — reconcile a detached copy with the store (m-detach). `commit` / `abort` — end the unit of work, committing or discarding it (m-unit-work / m-detach).",
+                "enum": ["mutate", "detachCopy", "load", "access", "flush", "mergeBack", "commit", "abort"]
+              },
+              "on": {
+                "description": "The earlier scenario step(s) whose result this action targets — the source object(s) the verb operates on. A single zero-based index, or an array of indices when the action spans sources at DIFFERENT lowered coordinates (a coordinate-grouped `load`, m-deep-fetch / m-identity-map). Every index MUST name an EARLIER step (the harness asserts `0 <= index < the current step's index`); the array form's indices MUST be UNIQUE (`uniqueItems`) — a source is referenced at most once. REQUIRED for object-targeting verbs and optional for boundary verbs (see the sibling `allOf`).",
+                "oneOf": [
+                  { "type": "integer", "minimum": 0 },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": { "type": "integer", "minimum": 0 }
+                  }
+                ]
+              },
+              "set": {
+                "description": "mutate action only (enforced by the sibling `allOf`). The attribute assignments a `mutate` applies, as an attribute-name-keyed map of new values.",
+                "type": "object",
+                "minProperties": 1
+              },
+              "path": {
+                "description": "load / access action only. The relationship (or dotted multi-hop relationship path) the verb navigates from the target object — e.g. `items` or `items.statuses`.",
+                "type": "string",
+                "minLength": 1
+              },
+              "expectState": {
+                "description": "The lifecycle state the target object is in after this step (m-detach five-state machine): `in-memory` (new, uninserted), `persisted` (DB-backed, interned), `deleted` (marked for delete), `detached` (deep copy / scope-ended), or `detached-deleted` (detached copy marked for delete). An adapter-delegated observable — graded by each language's API Conformance Suite via the m-conformance-adapter `stateChecks` observation, and skipped by the wire harness. Legal on a read step or an action step.",
+                "enum": ["in-memory", "persisted", "deleted", "detached", "detached-deleted"]
+              },
+              "expectError": {
+                "description": "A neutral application-lifecycle error this step's verb MUST raise, from a closed vocabulary defined where each error is defined: `detached-relationship-load` (a deferred relationship load on a detached object — m-detach) or `processing-pin-read-only` (a mutation through a finite processing-axis pinned view — m-identity-map). Distinct from the m-db-error DB-error taxonomy. An adapter-delegated observable — graded by each language's API Conformance Suite via the m-conformance-adapter `errors` observation, and skipped by the wire harness.",
+                "enum": ["detached-relationship-load", "processing-pin-read-only"]
               },
               "identityAttr": {
                 "description": "The result-column name carrying the primary-key identity, used to check `sameObjectAs`. Defaults to the queried entity's primary-key column.",
