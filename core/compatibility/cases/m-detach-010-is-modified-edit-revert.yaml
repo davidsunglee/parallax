@@ -1,0 +1,63 @@
+# isModifiedSinceDetachment goes false -> true -> false across edit and revert
+# (m-detach): a detached copy compares its current attribute values to the snapshot
+# taken AT detachment; editing it makes the predicate true, reverting the edit makes
+# it false again — which is what lets a merge-back skip a no-op write.
+#
+# This is an api-conformance-lane case: its defining observable is the copy's
+# in-memory value trajectory (which determines isModifiedSinceDetachment) and its
+# `detached` lifecycle state — neither of which the single-connection wire harness
+# can grade. The per-step `expectRows` pin the copy's CURRENT values against the
+# detachment snapshot, so the false -> true -> false predicate is machine-checkable
+# (a schema key), not narrated: step 1 detaches with snapshot 100.00 (current ==
+# snapshot => isModified FALSE); step 2 edits to 175.00 (current != snapshot =>
+# isModified TRUE); step 3 reverts to 100.00 (current == snapshot again => isModified
+# FALSE). Each language's API Conformance Suite grades the `stateChecks`/identity
+# observations and derives isModified from the pinned values.
+model: models/account.yaml
+lane: api-conformance
+tags: [m-detach, detached, is-modified, scenario, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 1
+      roundTrips: 1
+      expectState: persisted
+      note: find account 1 (Ada, 100.00) — a persisted managed object
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+    - action: detachCopy
+      "on": 0
+      roundTrips: 0
+      expectState: detached
+      differentObjectFrom: 0
+      note: detach — snapshot 100.00 taken; current == snapshot => isModifiedSinceDetachment FALSE
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+    - action: mutate
+      "on": 1
+      set:
+        balance: 175.00
+      roundTrips: 0
+      expectState: detached
+      note: edit to 175.00 — current != snapshot => isModifiedSinceDetachment TRUE
+      expectRows:
+        - { id: 1, owner: Ada, balance: 175.00, version: 1 }
+    - action: mutate
+      "on": 1
+      set:
+        balance: 100.00
+      roundTrips: 0
+      expectState: detached
+      note: revert to 100.00 — current == snapshot again => isModifiedSinceDetachment FALSE (a merge-back would be a no-op)
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+then:
+  roundTrips: 1

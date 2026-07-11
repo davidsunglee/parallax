@@ -1,0 +1,81 @@
+# A detached copy DEEP-copies the relationship graph (m-detach): taking a detached
+# copy of an object whose relationship is loaded copies the related objects too, so
+# a nested mutation on the copy's graph leaves the original graph untouched.
+#
+# This is an api-conformance-lane case: its defining observable is reference
+# identity across the relationship graph — the copy's line items are DISTINCT
+# objects from the original's line items (the "deep" in deep copy) — which value
+# equality cannot establish. Each language's API Conformance Suite grades the
+# `identityChecks` observation as REFERENCE identity (m-conformance-adapter); the
+# wire harness skips it.
+#
+# Step 0 finds order 1 (a persisted managed object). Step 1 loads its `items`
+# (order 1 has line items 12 and 11). Step 2 takes a detached deep copy of order 1
+# (`differentObjectFrom: 0`) — the loaded graph is copied. Step 3 accesses the
+# COPY's items with NO SQL (already deep-copied) and asserts they are DISTINCT
+# objects from the original's items (`differentObjectFrom: 1`) — nested objects are
+# copied, not shared. Step 4 mutates a line item ON THE COPY (sku -> COPY-ONLY) in
+# memory. Step 5 re-accesses the ORIGINAL's items (cache hit, `sameObjectAs: 1`):
+# they are unchanged (sku still B-200 / A-100) — the nested mutation did not cross.
+model: models/orders.yaml
+lane: api-conformance
+tags: [m-detach, m-deep-fetch, detached, deep-copy, relationship, scenario, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Order
+      find:
+        eq:
+          attr: Order.id
+          value: 1
+      roundTrips: 1
+      expectState: persisted
+      note: find order 1 — a persisted managed object
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, name: Ada }
+    - action: load
+      "on": 0
+      path: items
+      roundTrips: 1
+      note: load order 1's line items into the managed graph (id desc)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?) order by t0.id desc
+          binds: [1]
+      expectRows:
+        - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+        - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+    - action: detachCopy
+      "on": 0
+      roundTrips: 0
+      expectState: detached
+      differentObjectFrom: 0
+      note: detached deep copy of order 1 — the loaded items graph is copied along with it
+    - action: access
+      "on": 2
+      path: items
+      roundTrips: 0
+      differentObjectFrom: 1
+      note: the COPY's items — accessible with NO SQL (deep-copied) and DISTINCT objects from the original's items
+    - action: mutate
+      "on": 3
+      set:
+        sku: COPY-ONLY
+      roundTrips: 0
+      expectState: detached
+      note: mutate a line item on the copy's graph in memory — no DML
+    - action: access
+      "on": 0
+      path: items
+      roundTrips: 0
+      sameObjectAs: 1
+      note: the ORIGINAL's items are the SAME objects and UNCHANGED — the copy's nested mutation did not cross
+      expectRows:
+        - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+        - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+then:
+  roundTrips: 2

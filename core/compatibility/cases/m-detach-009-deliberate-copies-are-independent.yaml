@@ -1,0 +1,71 @@
+# Deliberate detached copies are INDEPENDENT objects (m-detach): two detached
+# copies of the same persisted row are distinct objects, mutating one crosses to
+# neither the other copy nor the live original, and the original stays `persisted`.
+#
+# This is an api-conformance-lane case: its defining observable is reference
+# identity (two copies that are NOT the same object, and NOT the same object as the
+# original), which value equality cannot establish — each language's API
+# Conformance Suite grades the `identityChecks` observation as REFERENCE identity
+# (m-conformance-adapter), and the wire harness skips it.
+#
+# Step 0 finds account 1 (Ada, 100.00) — a `persisted`, interned managed object.
+# Step 1 takes a detached deep copy (copy A): a NEW object in the `detached` state,
+# decoupled from the cache, so it is a DIFFERENT object from the original
+# (`differentObjectFrom: 0`). Step 2 takes a SECOND detached copy (copy B) of the
+# same row: two detached copies of one row are independent, so copy B is a DIFFERENT
+# object from copy A (`differentObjectFrom: 1`). Step 3 mutates copy A (balance ->
+# 500.00) — in memory only, no DML. Step 4 re-finds account 1: it is a cache HIT
+# returning the SAME persisted original (`sameObjectAs: 0`), still `persisted` and
+# still 100.00 — copy A's mutation did NOT cross to the live object.
+model: models/account.yaml
+lane: api-conformance
+tags: [m-detach, detached, deep-copy, identity, scenario, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 1
+      roundTrips: 1
+      expectState: persisted
+      note: find account 1 (Ada, 100.00) — a persisted, interned managed object
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+    - action: detachCopy
+      "on": 0
+      roundTrips: 0
+      expectState: detached
+      differentObjectFrom: 0
+      note: copy A — a detached deep copy, a NEW object decoupled from the cache (distinct from the original)
+    - action: detachCopy
+      "on": 0
+      roundTrips: 0
+      expectState: detached
+      differentObjectFrom: 1
+      note: copy B — a SECOND detached copy of the same row, independent of copy A (distinct object)
+    - action: mutate
+      "on": 1
+      set:
+        balance: 500.00
+      roundTrips: 0
+      expectState: detached
+      note: mutate copy A in memory (balance 500.00) — no DML; crosses to neither copy B nor the original
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 1
+      roundTrips: 0
+      sameObjectAs: 0
+      expectState: persisted
+      note: cache HIT — the live original is the SAME object, still persisted and still 100.00 (uncrossed)
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+then:
+  roundTrips: 1

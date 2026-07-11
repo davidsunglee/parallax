@@ -609,9 +609,19 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # error (010, the first new api-conformance-lane case), and the business-past
         # rectangle split (011). slice-managed-1 rises by 9 (300 -> 309); slice-snapshot-1
         # and slice-mvp-1 are unchanged.
+        #
+        # COR-30 Phase 4 adds the 8 managed-only detach cases (m-detach-007..014),
+        # completing the five-state detach lifecycle and tagged slice-managed-1 only
+        # (never slice-snapshot-1 or slice-mvp-1): auto-detach on commit / abort-reverts
+        # (007/008), deliberate-copy independence (009), isModified edit/revert (010),
+        # deep-copy relationship independence (011), loaded-relationship readable after
+        # detach (012), and the deferred-load-on-detached error (013) are api-conformance
+        # lane; merge-back reinserts a deleted original (014) is a harness write-sequence.
+        # slice-managed-1 rises by 8 (309 -> 317, its final count); slice-snapshot-1 and
+        # slice-mvp-1 are unchanged.
         ("slice-mvp-1", 198),
         ("slice-snapshot-1", 272),
-        ("slice-managed-1", 309),
+        ("slice-managed-1", 317),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:
