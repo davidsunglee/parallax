@@ -3,7 +3,7 @@
 # key or a secondary unique index (the DDL emits `unique (name)`; Task 5).
 # distinct PK, duplicate name -> unique-index violation
 model: models/error-cases.yaml
-tags: [m-db-error, uniqueViolation]
+tags: [m-db-error, uniqueViolation, slice-snapshot-1, slice-managed-1]
 shape: error
 then:
   statements:

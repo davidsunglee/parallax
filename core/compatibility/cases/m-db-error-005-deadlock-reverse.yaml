@@ -2,7 +2,7 @@
 # row 1 then waits for row 2. Proves classification does not depend on which
 # transaction the DB picks as victim.
 model: models/error-cases.yaml
-tags: [m-db-error, deadlock]
+tags: [m-db-error, deadlock, slice-snapshot-1, slice-managed-1]
 shape: error
 given:
   fixtures: true

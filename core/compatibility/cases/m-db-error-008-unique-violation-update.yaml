@@ -4,7 +4,7 @@
 # on tag_name_uq.
 # collides with tag 1's name
 model: models/error-cases.yaml
-tags: [m-db-error, uniqueViolation]
+tags: [m-db-error, uniqueViolation, slice-snapshot-1, slice-managed-1]
 shape: error
 then:
   statements:

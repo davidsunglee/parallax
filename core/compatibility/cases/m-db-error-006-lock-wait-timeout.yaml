@@ -3,7 +3,7 @@
 # lowered lock-wait budget (lock_timeout / innodb_lock_wait_timeout) -- raises a
 # timeout. Neutral category lockWaitTimeout; native PG 55P03 / MariaDB 1205.
 model: models/error-cases.yaml
-tags: [m-db-error, lockWaitTimeout]
+tags: [m-db-error, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
 shape: error
 given:
   fixtures: true

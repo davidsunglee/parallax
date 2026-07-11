@@ -585,9 +585,16 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # table-per-concrete-subtype), and the two bitemporal terminateUntils (-096
         # table-per-hierarchy, -097 table-per-concrete-subtype). Both counts rise by 8 and
         # slice-mvp-1 is unchanged.
+        #
+        # COR-30 Phase 1 retags the nine PostgreSQL-capable m-db-error cases
+        # (m-db-error-001..009) with slice-snapshot-1 + slice-managed-1 (never
+        # slice-mvp-1); both slices already claim m-db-error. The excluded cases stay
+        # untagged (m-temporal-read-018..021 business-only / MariaDB-fallback,
+        # m-read-lock-009 MariaDB-specific). Both counts rise by 9 (272 / 292) and
+        # slice-mvp-1 is unchanged.
         ("slice-mvp-1", 198),
-        ("slice-snapshot-1", 263),
-        ("slice-managed-1", 283),
+        ("slice-snapshot-1", 272),
+        ("slice-managed-1", 292),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:
