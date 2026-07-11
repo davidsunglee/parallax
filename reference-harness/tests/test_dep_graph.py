@@ -598,9 +598,20 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # tagged slice-managed-1 only (never slice-snapshot-1 or slice-mvp-1). This
         # also gives m-op-list its first owned case family. slice-managed-1 rises by 8
         # (292 -> 300); slice-snapshot-1 and slice-mvp-1 are unchanged.
+        #
+        # COR-30 Phase 3 adds the 9 managed-only identity-map cases
+        # (m-identity-map-003..011), all scenario-shape and tagged slice-managed-1 only
+        # (never slice-snapshot-1 or slice-mvp-1): the omitted-vs-explicit-now and
+        # different-pins-same-milestone coordinate views (003/004, the first
+        # differentObjectFrom user), family root-vs-leaf interning (005), assigned- and
+        # generated-key interning timing (006/007), audit-write held-view refresh (008),
+        # bitemporal history edge-pinned views (009), the processing-past read-only
+        # error (010, the first new api-conformance-lane case), and the business-past
+        # rectangle split (011). slice-managed-1 rises by 9 (300 -> 309); slice-snapshot-1
+        # and slice-mvp-1 are unchanged.
         ("slice-mvp-1", 198),
         ("slice-snapshot-1", 272),
-        ("slice-managed-1", 300),
+        ("slice-managed-1", 309),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

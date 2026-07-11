@@ -1,0 +1,60 @@
+# Different finite pins in ONE milestone are DISTINCT views (m-identity-map): two
+# distinct finite processing-axis coordinates that resolve to the SAME milestone
+# row are distinct pinned views even though their row values are IDENTICAL — so
+# value equality cannot distinguish them and the assertion is genuine reference
+# INEQUALITY (`differentObjectFrom`).
+#
+# Balance id 2 has a SINGLE open milestone: value 200.00 known [2024-02-01,
+# infinity). Step 0 pins it at 2024-04-01 and step 1 at 2024-05-01 — two DISTINCT
+# lowered coordinates, both inside that one milestone, so both containment reads
+# return the byte-identical row { bal_id: 2, val: 200.00 }. Per the identity key,
+# distinct lowered coordinates denote distinct pinned views (each drives its own
+# relationship dereferencing), so the two results MUST be DIFFERENT objects. The
+# wire harness proves the SQL / binds / rows against the oracle and skips the
+# reference check; each language's API Conformance Suite grades the reference
+# inequality (value equality alone is insufficient — the two rows are identical).
+model: models/balance.yaml
+tags: [m-identity-map, m-temporal-read, identity, as-of, temporal, audit-only, scenario, slice-managed-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Balance
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Balance.id
+              value: 2
+          asOfAttr: Balance.processingDate
+          date: "2024-04-01T00:00:00+00:00"
+      roundTrips: 1
+      note: finite pin at 2024-04-01 — inside the single open milestone [2024-02-01, infinity)
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
+          binds: [2, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+      expectRows:
+        - { bal_id: 2, val: 200.00 }
+    - targetEntity: Balance
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Balance.id
+              value: 2
+          asOfAttr: Balance.processingDate
+          date: "2024-05-01T00:00:00+00:00"
+      roundTrips: 1
+      differentObjectFrom: 0
+      identityAttr: bal_id
+      note: a DISTINCT finite pin at 2024-05-01 — same milestone, IDENTICAL row, but a DIFFERENT pinned view
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
+          binds: [2, "2024-05-01T00:00:00+00:00", "2024-05-01T00:00:00+00:00"]
+      expectRows:
+        - { bal_id: 2, val: 200.00 }
+then:
+  roundTrips: 2

@@ -1,0 +1,49 @@
+# A finite processing-axis pinned view is READ-ONLY (m-identity-map): mutating a
+# view pinned at a finite processing-axis instant raises the neutral
+# `processing-pin-read-only` error and emits NO DML — the processing past records
+# what the system knew and is never rewritten.
+#
+# This is an api-conformance-lane case: its defining observable is a raised
+# application-lifecycle error, which the single-connection wire harness cannot grade,
+# so the harness schema-validates it and each language's API Conformance Suite
+# returns and verifies the error observation. Step 0 pins Balance id 1 at the finite
+# processing instant 2024-03-01 — the superseded milestone value 100.00, a
+# read-only processing-past view. Step 1 attempts to mutate it (`set` value 999.00);
+# because the pin is on the finite processing axis, the mutation is rejected with
+# `expectError: processing-pin-read-only` and buffers zero DML (roundTrips 0). The
+# error is distinct from the m-db-error database taxonomy. (Contrast a finite
+# BUSINESS-axis pin, which is writable — m-identity-map-011.)
+model: models/balance.yaml
+lane: api-conformance
+tags: [m-identity-map, m-temporal-read, identity, as-of, temporal, audit-only, read-only, scenario, slice-managed-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Balance
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Balance.id
+              value: 1
+          asOfAttr: Balance.processingDate
+          date: "2024-03-01T00:00:00+00:00"
+      roundTrips: 1
+      note: pin id 1 at the finite processing instant 2024-03-01 — a READ-ONLY processing-past view (100.00)
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
+          binds: [1, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00"]
+      expectRows:
+        - { bal_id: 1, val: 100.00 }
+    - action: mutate
+      "on": 0
+      set:
+        value: 999.00
+      roundTrips: 0
+      expectError: processing-pin-read-only
+      note: mutating a finite processing-axis view raises processing-pin-read-only and emits NO DML
+then:
+  roundTrips: 1
