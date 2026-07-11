@@ -1,0 +1,46 @@
+# Back-reference cycle in a snapshot graph (m-snapshot-read): an included
+# back-reference points to the ORIGINAL node, a legal in-memory cycle.
+#
+# Order 1 is materialized with `[items, items.order]`: each OrderItem's `order`
+# back-reference reaches the ROOT order — an ancestor already on the current path, a
+# true cycle. Recursion stops at the cycle point, which carries a PK-only stub
+# (`order: { id: 1 }` — only the primary key, no other scalars, no relationships), so
+# the graph JSON stays a finite value tree in 1 (root) + 1 (items) = 2 round trips;
+# the cycle emits no third query. The stub proves nothing about sameness by itself —
+# the same-node claim (`items[*].order` IS the root node, not a lookalike copy) rides
+# `then.identityChecks`, graded as reference identity by each language's API
+# Conformance Suite (api-conformance lane).
+model: models/orders.yaml
+tags: [m-snapshot-read, m-deep-fetch, back-reference, cycle, relationship, graph, slice-snapshot-1]
+shape: read
+lane: api-conformance
+when:
+  targetEntity: Order
+  operation:
+    deepFetch:
+      operand:
+        eq:
+          attr: Order.id
+          value: 1
+      paths:
+        - [{ rel: Order.items }, { rel: OrderItem.order }]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+      binds: [1]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?) order by t0.id desc
+      binds: [1]
+  referenceSql: select id, name from orders where id = 1
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        items:
+          - { id: 12, order_id: 1, sku: B-200, quantity: 1, order: { id: 1 } }
+          - { id: 11, order_id: 1, sku: A-100, quantity: 2, order: { id: 1 } }
+  identityChecks:
+    - { left: /then/graph/Order/0, right: /then/graph/Order/0/items/0/order, same: true }
+    - { left: /then/graph/Order/0, right: /then/graph/Order/0/items/1/order, same: true }
+  roundTrips: 2

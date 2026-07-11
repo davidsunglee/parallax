@@ -1,0 +1,41 @@
+# asOfRange returns an independently edge-pinned snapshot graph per OVERLAPPING
+# milestone (m-snapshot-read, resolved Q5a): each graph is pinned to its own
+# milestone's from-instant, never to the window bounds.
+#
+# InvoiceLine 1000 has two processing milestones: 50.00 [2024-01-01, 2024-04-01) and
+# 75.00 [2024-04-01, infinity) (models/invoice.yaml). The window [2024-02-01,
+# 2024-05-01) OVERLAPS both (overlap predicate `in_z < to and out_z > from`), so the
+# range returns both — but each materializes as a SEPARATE graph edge-pinned to its
+# OWN from-instant (2024-01-01 and 2024-04-01), NOT to the shared window bounds,
+# asserted from `then.graphs`. One round trip; the harness partitions the milestone
+# rows by edge pin and grades each independently pinned graph.
+model: models/invoice.yaml
+tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, temporal, as-of-range, edge-pinned, graph, audit-only, slice-snapshot-1]
+shape: read
+when:
+  targetEntity: InvoiceLine
+  operation:
+    asOfRange:
+      operand:
+        eq:
+          attr: InvoiceLine.id
+          value: 1000
+      asOfAttr: InvoiceLine.processingDate
+      from: "2024-02-01T00:00:00+00:00"
+      to: "2024-05-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.id = ? and t0.in_z < ? and t0.out_z > ?
+      binds: [1000, "2024-05-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+  referenceSql: select id, invoice_id, amount, in_z, out_z from invoice_line where id = 1000 and in_z < '2024-05-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz
+  graphs:
+    - pin: { processingDate: "2024-01-01T00:00:00+00:00" }
+      graph:
+        InvoiceLine:
+          - { id: 1000, invoice_id: 100, amount: 50.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
+    - pin: { processingDate: "2024-04-01T00:00:00+00:00" }
+      graph:
+        InvoiceLine:
+          - { id: 1000, invoice_id: 100, amount: 75.00, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+  roundTrips: 1

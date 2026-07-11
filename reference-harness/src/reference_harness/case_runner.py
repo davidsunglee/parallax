@@ -1597,6 +1597,132 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
             )
 
 
+def _graphs_root_entity(case: Case) -> Entity:
+    """The entity a `history` / `asOfRange` graph read is rooted at.
+
+    A milestone-set graph read (`then.graphs`) is a flat temporal read (no deep-fetch
+    includes — history-with-includes is out of scope for both v1 slices), so the root
+    is the read's `when.targetEntity`.
+    """
+    return case.model.entity(case.when["targetEntity"])
+
+
+def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
+    """Execute a `history` / `asOfRange` snapshot read and assert its per-milestone
+    edge-pinned graphs (m-snapshot-read, Q5a).
+
+    The single root `history` / `asOfRange` statement returns the FULL milestone set
+    in one query. Each ``then.graphs`` entry declares a milestone ``pin`` — its OWN
+    edge coordinate (the milestone's from-instant per as-of axis), never a shared root
+    pin — and the graph materialized at it. The harness partitions the root rows by
+    edge pin (matching each pin's per-axis from-instant to the row's from-column) and
+    asserts each partition equals its declared graph, so ``history`` yields one
+    independently edge-pinned graph per milestone and ``asOfRange`` one per overlapping
+    milestone. The declared graphs PARTITION the milestone set: every root row MUST
+    belong to exactly one declared graph and every declared pin MUST match at least one
+    row (a stray row, an unmatched pin, OR a row claimed by two graphs — overlapping /
+    duplicate pins — is a loud failure), and ``referenceSql`` independently cross-checks
+    the whole milestone set.
+
+    (History with deep-fetch includes is out of scope for both v1 slices, so a graph
+    carries no child levels — there is no per-level child SQL to reuse the deep-fetch
+    per-level assertions on. A graph node authored with a nested relationship key would
+    fail the value comparison, since the root-only assembly carries only the root
+    projection.)
+    """
+    dialect = db.dialect
+    statements = case.golden_statements(dialect)
+    graph_specs = case.expected_graphs or []
+    root_entity = _graphs_root_entity(case)
+
+    # Level 0: the single history / asOfRange query — every milestone in one round trip.
+    root_rows = _query_rows(db, statements[0], case.statement_binds(0, dialect))
+
+    # referenceSql (an independent naive statement) cross-checks the whole milestone set.
+    reference_sql = case.reference_sql_for(dialect)
+    if reference_sql is not None:
+        reference_rows = [_project_like(r, root_rows) for r in db.query(reference_sql)]
+        if not _rows_equal(reference_rows, root_rows, case.tolerance):
+            raise CaseFailure(
+                f"{case.path.name}: referenceSql rows != then.statements milestone rows.\n"
+                f"  reference: {reference_rows!r}\n"
+                f"  golden:    {root_rows!r}"
+            )
+
+    # An as-of attribute's from-column is the edge coordinate a pin keys on (per axis,
+    # keyed by the ATTRIBUTE name the pin uses — `processingDate` / `businessDate`).
+    from_column_by_attr = {
+        attr["name"]: attr["fromColumn"] for attr in root_entity.as_of_attributes
+    }
+
+    # The declared graphs PARTITION the milestone set: every root row belongs to
+    # EXACTLY ONE graph, so the pins must be pairwise disjoint. `owner` records which
+    # graph index claimed each root-row index; a second claim on any row is a loud
+    # overlap failure (this is the fundamental partition guarantee — it catches both a
+    # literally-duplicate pin dict and two distinct pins that happen to match the same
+    # rows). `seen_pins` additionally rejects an identical pin dict up front for a
+    # sharper diagnostic than the row-overlap message.
+    owner: dict[int, int] = {}
+    seen_pins: dict[tuple[tuple[str, str], ...], int] = {}
+    for gi, spec in enumerate(graph_specs):
+        pin = spec["pin"]
+        expected = spec["graph"]
+        for attr_name in pin:
+            if attr_name not in from_column_by_attr:
+                raise CaseFailure(
+                    f"{case.path.name}: then.graphs[{gi}].pin names as-of attribute "
+                    f"{attr_name!r}, which {root_entity.name} does not declare "
+                    f"(declared: {sorted(from_column_by_attr)})."
+                )
+        pin_key = tuple(sorted(pin.items()))
+        if pin_key in seen_pins:
+            raise CaseFailure(
+                f"{case.path.name}: then.graphs[{gi}] repeats the pin declared by "
+                f"then.graphs[{seen_pins[pin_key]}] ({pin!r}); each milestone MUST be "
+                f"edge-pinned by exactly one graph — the pins MUST be pairwise disjoint."
+            )
+        seen_pins[pin_key] = gi
+        group = [
+            index
+            for index, row in enumerate(root_rows)
+            if all(str(row.get(from_column_by_attr[name])) == date for name, date in pin.items())
+        ]
+        if not group:
+            raise CaseFailure(
+                f"{case.path.name}: then.graphs[{gi}] pin {pin!r} matched no milestone "
+                f"row; each declared graph MUST be edge-pinned to a real milestone's "
+                f"from-instant."
+            )
+        overlap = [i for i in group if i in owner]
+        if overlap:
+            shared = [_normalize_row(root_rows[i]) for i in overlap]
+            raise CaseFailure(
+                f"{case.path.name}: then.graphs[{gi}] (pin {pin!r}) claims milestone "
+                f"row(s) already claimed by then.graphs[{owner[overlap[0]]}] — the "
+                f"declared graphs MUST partition the milestone set, so every row belongs "
+                f"to EXACTLY ONE graph (no overlapping pins).\n"
+                f"  shared: {shared!r}"
+            )
+        for index in group:
+            owner[index] = gi
+        assembled = {root_entity.name: [_normalize_row(root_rows[i]) for i in group]}
+        if not _graphs_equal(assembled, expected):
+            raise CaseFailure(
+                f"{case.path.name}: then.graphs[{gi}] (pin {pin!r}) assembled graph "
+                f"!= expected.\n"
+                f"  assembled: {assembled!r}\n"
+                f"  expected:  {expected!r}"
+            )
+
+    if len(owner) != len(root_rows):
+        stray = [row for index, row in enumerate(root_rows) if index not in owner]
+        raise CaseFailure(
+            f"{case.path.name}: {len(stray)} milestone row(s) matched no then.graphs "
+            f"pin — every milestone MUST be edge-pinned into exactly one graph.\n"
+            f"  unmatched: {stray!r}"
+        )
+
+
 def _project_like(row: dict[str, Any], template_rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Keep only the columns the golden root projection carries (oracle compare)."""
     if not template_rows:
@@ -4366,6 +4492,11 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     _provision(case, db)
     if _is_deep_fetch(case):
         _assert_deep_fetch(case, db)  # layer 2 + 5 (graph)
+    elif case.expected_graphs is not None:
+        # A milestone-set snapshot read (m-snapshot-read, Q5a): a `history` /
+        # `asOfRange` read materializes one independently edge-pinned graph per
+        # milestone, asserted from `then.graphs`.
+        _assert_graphs(case, db)  # layer 2 + 5 (per-milestone graphs)
     elif case.expected_graph is not None:
         # A value-object materialization read (m-value-object): the single owner
         # statement carries the document column; nested values are decoded from it

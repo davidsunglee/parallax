@@ -1,0 +1,39 @@
+# Snapshot graph, EMPTY intermediate level (m-snapshot-read): a multi-hop snapshot
+# stops when an intermediate level yields no keys.
+#
+# The snapshot twin of the m-deep-fetch empty-intermediate shape (no m-op-list tag).
+# The root pins order 4, which has no line items, so the `items` level executes and
+# returns ZERO rows, and the grandchild `OrderItem.statuses` query is SUPPRESSED
+# (its parent-key set is empty):
+#   level 0 (root)    : order 4                   (1 statement)
+#   level 1 (items)   : keyed by {4} -> 0 items   (1 statement)
+#   level 2 (statuses): no item keys -> NO statement
+# So roundTrips = 2 and the graph carries an empty `items` list.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-deep-fetch, empty-intermediate, relationship, graph, materialization, slice-snapshot-1]
+shape: read
+when:
+  targetEntity: Order
+  operation:
+    deepFetch:
+      operand:
+        eq:
+          attr: Order.id
+          value: 4
+      paths:
+        - [{ rel: Order.items }, { rel: OrderItem.statuses }]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+      binds: [4]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?) order by t0.id desc
+      binds: [4]
+  referenceSql: select id, name from orders where id = 4
+  graph:
+    Order:
+      - id: 4
+        name: Margaret
+        items: []
+  roundTrips: 2

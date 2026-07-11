@@ -14,11 +14,12 @@ from typing import Any
 
 import pytest
 
-from reference_harness.case import load_case, load_model
+from reference_harness.case import Case, load_case, load_model
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_child_ordering,
     _assert_deep_fetch,
+    _assert_graphs,
     _expected_asof_suffix,
     _FetchStep,
     _graphs_equal,
@@ -429,3 +430,154 @@ def test_existing_non_temporal_deep_fetch_still_passes():
             ]
 
     _assert_deep_fetch(case, _OrdersDb())  # no raise
+
+
+# --- milestone-set graphs partition (m-snapshot-read, Q5a) -------------------
+#
+# A `history` / `asOfRange` read materializes one edge-pinned graph per milestone.
+# The declared graphs MUST PARTITION the milestone set: every root row belongs to
+# EXACTLY ONE graph, so the pins are pairwise disjoint. The old check accumulated
+# matched root-row indices into a deduping `set` and only asserted TOTAL coverage at
+# the end, so two `then.graphs` entries pinned to the SAME milestone both "passed"
+# and coverage still held — a silent partition violation. These tests guard that
+# overlap is now a loud failure.
+
+# InvoiceLine 1000's two processing milestones (models/invoice.yaml): the superseded
+# 50.00 row [2024-01-01, 2024-04-01) and the current 75.00 row [2024-04-01, infinity).
+_EARLY_PIN = "2024-01-01T00:00:00+00:00"
+_LATE_PIN = "2024-04-01T00:00:00+00:00"
+_EARLY_GRAPH = {
+    "pin": {"processingDate": _EARLY_PIN},
+    "graph": {
+        "InvoiceLine": [
+            {"id": 1000, "invoice_id": 100, "amount": 50.00, "in_z": _EARLY_PIN, "out_z": _LATE_PIN}
+        ]
+    },
+}
+_LATE_GRAPH = {
+    "pin": {"processingDate": _LATE_PIN},
+    "graph": {
+        "InvoiceLine": [
+            {"id": 1000, "invoice_id": 100, "amount": 75.00, "in_z": _LATE_PIN, "out_z": "infinity"}
+        ]
+    },
+}
+
+
+class _InvoiceMilestonesDb:
+    """Returns InvoiceLine 1000's two processing milestones for every query — the
+    single `history` statement AND the `referenceSql` cross-check both see the whole
+    milestone set (one round trip)."""
+
+    dialect = "postgres"
+
+    def query(self, sql, binds=None):
+        return [
+            {
+                "id": 1000,
+                "invoice_id": 100,
+                "amount": Decimal("50.00"),
+                "in_z": _EARLY_PIN,
+                "out_z": _LATE_PIN,
+            },
+            {
+                "id": 1000,
+                "invoice_id": 100,
+                "amount": Decimal("75.00"),
+                "in_z": _LATE_PIN,
+                "out_z": "infinity",
+            },
+        ]
+
+
+def _invoice_graphs_case(graphs: list[dict[str, Any]]) -> Case:
+    """A synthetic `history` read over InvoiceLine 1000 carrying *graphs* as
+    ``then.graphs`` (bypasses schema validation to exercise ``_assert_graphs`` directly)."""
+    raw = {
+        "model": "models/invoice.yaml",
+        "tags": ["m-snapshot-read"],
+        "shape": "read",
+        "when": {
+            "targetEntity": "InvoiceLine",
+            "operation": {
+                "history": {
+                    "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+                    "asOfAttr": "InvoiceLine.processingDate",
+                }
+            },
+        },
+        # SQL text is inert here: _InvoiceMilestonesDb returns the milestone set for
+        # any query, so the golden statement and referenceSql are minimal placeholders.
+        "then": {
+            "statements": [
+                {"sql": {"postgres": "select * from invoice_line where id = ?"}, "binds": [1000]}
+            ],
+            "referenceSql": "select * from invoice_line where id = 1000",
+            "graphs": graphs,
+            "roundTrips": 1,
+        },
+    }
+    return Case(
+        path=Path("synthetic-invoice-graphs.yaml"),
+        raw=raw,
+        model=load_model(COMPATIBILITY_ROOT, "models/invoice.yaml"),
+    )
+
+
+def test_assert_graphs_accepts_disjoint_milestone_partition():
+    # Control: the two non-overlapping edge pins partition the milestone set cleanly,
+    # exactly as m-snapshot-read-013/-014 author it.
+    case = _invoice_graphs_case([_EARLY_GRAPH, _LATE_GRAPH])
+    _assert_graphs(case, _InvoiceMilestonesDb())  # no raise
+
+
+def test_assert_graphs_rejects_duplicate_pin_even_when_coverage_holds():
+    # The exact defect: a THIRD graph re-declares the EARLY pin. The early milestone
+    # is claimed twice and the late once, so EVERY row is covered — the old deduping
+    # total-coverage check passed silently. The partition guard must reject the
+    # double-pinned milestone.
+    case = _invoice_graphs_case([_EARLY_GRAPH, _LATE_GRAPH, _EARLY_GRAPH])
+    with pytest.raises(CaseFailure):
+        _assert_graphs(case, _InvoiceMilestonesDb())
+
+
+def test_assert_graphs_rejects_overlapping_distinct_pins():
+    # The row-overlap guard independent of pin-equality: a catch-all pin (`{}` matches
+    # EVERY milestone) overlaps the specific EARLY edge pin. The two pin dicts are NOT
+    # identical, so only the per-row ownership check (not pin-uniqueness) catches it —
+    # and without the fix the deduping coverage check still passes.
+    catch_all = {
+        "pin": {},
+        "graph": {
+            "InvoiceLine": [
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": 50.00,
+                    "in_z": _EARLY_PIN,
+                    "out_z": _LATE_PIN,
+                },
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": 75.00,
+                    "in_z": _LATE_PIN,
+                    "out_z": "infinity",
+                },
+            ]
+        },
+    }
+    case = _invoice_graphs_case([catch_all, _EARLY_GRAPH])
+    with pytest.raises(CaseFailure):
+        _assert_graphs(case, _InvoiceMilestonesDb())
+
+
+def test_assert_graphs_rejects_incomplete_partition_unclaimed_milestone():
+    # The coverage guard: a PROPER SUBSET of the pins. Only the EARLY graph is
+    # declared, so the current 75.00 milestone row is claimed by NO graph. Each
+    # declared pin still matches a real milestone and no row is double-claimed —
+    # the overlap and duplicate-pin guards see nothing — but the partition is
+    # INCOMPLETE, so the total-coverage check MUST reject the unclaimed row.
+    case = _invoice_graphs_case([_EARLY_GRAPH])
+    with pytest.raises(CaseFailure):
+        _assert_graphs(case, _InvoiceMilestonesDb())
