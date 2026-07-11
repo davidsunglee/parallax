@@ -1,0 +1,57 @@
+# Automatic detach at owning-scope end on ABORT reverts to as-materialized values
+# (m-detach): when the owning unit of work aborts, the managed object's visible
+# state FIRST reverts to its as-materialized values, THEN it transitions to
+# `detached` in place — so an escaped object never shows the discarded writes.
+#
+# This is an api-conformance-lane case: its defining observables are the reverted
+# in-memory values and the `detached` lifecycle state, which the single-connection
+# wire harness cannot grade — each language's API Conformance Suite returns and
+# verifies the `stateChecks` observation plus the reverted values.
+#
+# The step ORDER pins the m-detach.md contract "the object's visible state first
+# reverts to its as-materialized values ... so an escaped object never shows
+# discarded writes": step 0 finds account 1 as-materialized (Ada, 100.00); step 1
+# buffers a mutation (balance -> 999.00) that is NOT yet flushed — the object is
+# still `persisted`; step 2 aborts. The abort's observable on the SAME object
+# (`on: 0`) is BOTH the reverted value (`expectRows` balance 100.00, NOT the
+# discarded 999.00) AND `expectState: detached`: the escaped object shows the
+# as-materialized values, proving the revert happened before/with the detached
+# transition, never the discarded write.
+model: models/account.yaml
+lane: api-conformance
+tags: [m-detach, m-unit-work, detached, lifecycle, scenario, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 1
+      roundTrips: 1
+      expectState: persisted
+      note: find account 1 as-materialized (Ada, 100.00) — a persisted managed object
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+    - action: mutate
+      "on": 0
+      set:
+        balance: 999.00
+      roundTrips: 0
+      expectState: persisted
+      note: buffer a mutation (999.00) into the unit of work — NOT yet flushed; a to-be-discarded write
+      expectRows:
+        - { id: 1, owner: Ada, balance: 999.00, version: 1 }
+    - action: abort
+      "on": 0
+      roundTrips: 0
+      expectState: detached
+      note: abort FIRST reverts to the as-materialized 100.00 (never the discarded 999.00), THEN detaches in place
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+then:
+  roundTrips: 1

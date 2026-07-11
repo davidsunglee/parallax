@@ -1,0 +1,52 @@
+# A deferred relationship load on a DETACHED object raises the neutral
+# `detached-relationship-load` error and opens NO transaction (m-detach): a detached
+# object has no live unit of work to resolve through, so an explicit load of a
+# not-yet-loaded relationship fails loudly rather than silently opening a
+# transaction — only already-loaded state is readable.
+#
+# This is an api-conformance-lane case: its defining observable is a raised
+# application-lifecycle error, which the single-connection wire harness cannot grade
+# — each language's API Conformance Suite returns and verifies the `errors`
+# observation (m-conformance-adapter). The error is distinct from the m-db-error
+# database taxonomy. This is the error counterpart of m-detach-012 (an
+# already-loaded relationship remains readable after detach).
+#
+# Step 0 finds order 1 (persisted) WITHOUT loading its items. Step 1 commits the
+# owning unit of work — order 1 auto-detaches in place (`expectState: detached`),
+# its items never loaded. Step 2 attempts a deferred `load` of `items` on the
+# detached object: it raises `expectError: detached-relationship-load` and opens NO
+# transaction (roundTrips 0, no SQL) — the load MUST NOT resolve through a live
+# unit of work because none exists.
+model: models/orders.yaml
+lane: api-conformance
+tags: [m-detach, m-deep-fetch, detached, deferred-load, scenario, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Order
+      find:
+        eq:
+          attr: Order.id
+          value: 1
+      roundTrips: 1
+      expectState: persisted
+      note: find order 1 — a persisted managed object; its items are NOT loaded
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, name: Ada }
+    - action: commit
+      "on": 0
+      roundTrips: 0
+      expectState: detached
+      note: committing the owning unit of work auto-detaches order 1 in place, items still unloaded
+    - action: load
+      "on": 0
+      path: items
+      roundTrips: 0
+      expectError: detached-relationship-load
+      note: a deferred load on the detached object raises detached-relationship-load and opens NO transaction (0 SQL)
+then:
+  roundTrips: 1

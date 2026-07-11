@@ -4344,6 +4344,14 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_write_step_count(case, dialect)  # layer 5 (count)
         _assert_write_input_columns(case, dialect)  # layer 5c (① ↔ ② column/value)
         _provision_empty(case, db)
+        # An out-of-band `given.apply` runs AFTER the fixtures load and BEFORE the
+        # golden write sequence — the write-sequence analogue of a conflict case's
+        # concurrent-mutation setup. The m-detach merge-back-reinserts case uses it to
+        # DELETE the original persisted row (a concurrent transaction removed it), so
+        # the merge-back finds no original and INSERTs the copy as a new row. It is a
+        # no-op for the milestone-chaining / batched-write cases that carry none.
+        for entry in case.apply:
+            db.execute(entry["sql"], list(entry.get("binds", [])))
         _assert_write_sequence(case, db)  # apply DML, assert table state
         _assert_pk_allocation(case, db)  # layer 5b: PK-generation oracle (sequence)
         return
