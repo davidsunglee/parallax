@@ -1,0 +1,60 @@
+model: models/position.yaml
+tags: [m-bitemp-write, m-opt-lock, m-sql, m-unit-work, bitemporal, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Position
+      find:
+        and:
+          operands:
+            - { eq: { attr: Position.id, value: 1 } }
+            - { eq: { attr: Position.value, value: 200.00 } }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.val = ? and t0.thru_z = ? and t0.out_z = ?
+          binds: [1, 200.00, infinity, infinity]
+      referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 1 and val = 200.00 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+      expectRows:
+        - { pos_id: 1, acct_num: A, val: 200.00, from_z: "2024-06-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+    - write:
+        mutation: terminateUntil
+        target:
+          entity: Position
+          predicate:
+            and:
+              operands:
+                - { eq: { attr: Position.id, value: 1 } }
+                - { eq: { attr: Position.value, value: 200.00 } }
+        at: "2024-10-01T00:00:00+00:00"
+        businessFrom: "2024-07-01T00:00:00+00:00"
+        until: "2024-09-01T00:00:00+00:00"
+      roundTrips: 3
+      statements:
+        - sql:
+            postgres: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [1, A, 200.00, "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", "2024-10-01T00:00:00+00:00", infinity]
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [1, A, 200.00, "2024-09-01T00:00:00+00:00", infinity, "2024-10-01T00:00:00+00:00", infinity]
+    - targetEntity: Position
+      find:
+        asOf:
+          operand:
+            eq: { attr: Position.id, value: 1 }
+          asOfAttr: Position.businessDate
+          date: "2024-08-01T00:00:00+00:00"
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [1, "2024-08-01T00:00:00+00:00", "2024-08-01T00:00:00+00:00", infinity]
+      referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 1 and from_z <= '2024-08-01T00:00:00+00:00'::timestamptz and thru_z > '2024-08-01T00:00:00+00:00'::timestamptz and out_z = 'infinity'::timestamptz
+      expectRows: []
+then:
+  roundTrips: 5

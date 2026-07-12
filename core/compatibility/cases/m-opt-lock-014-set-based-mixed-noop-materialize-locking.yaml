@@ -1,0 +1,46 @@
+model: models/account.yaml
+tags: [m-opt-lock, m-sql, m-unit-work, locking-mode, materialize, predicate-write, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - targetEntity: Account
+      find:
+        lessThan: { attr: Account.balance, value: 200.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0
+          binds: [200.00]
+      referenceSql: select id, owner, balance, version from account where balance < 200.00 for share of account
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+    - write:
+        mutation: update
+        target:
+          entity: Account
+          predicate:
+            lessThan: { attr: Account.balance, value: 200.00 }
+        assignments:
+          - { attr: Account.balance, value: 100.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ?
+          binds: [100.00, 2, 3]
+    - targetEntity: Account
+      find:
+        lessThan: { attr: Account.balance, value: 200.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0
+          binds: [200.00]
+      referenceSql: select id, owner, balance, version from account where balance < 200.00 for share of account
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+        - { id: 3, owner: Grace, balance: 100.00, version: 2 }
+then:
+  roundTrips: 3

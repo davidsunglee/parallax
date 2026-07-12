@@ -27,8 +27,10 @@ import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 
-from .inheritance import Family, validate_family_defs
+from .case import Entity
+from .inheritance import Family, resolve_effective_definition, validate_family_defs
 from .paths import schemas_dir
+from .predicate_write_validate import PredicateWriteValidationError, validate_predicate_write
 from .value_object_resolve import RejectionError
 
 _SCHEMA_FILES = (
@@ -236,6 +238,77 @@ def _check_target_entity(
         )
 
 
+def _scenario_reference_sql_dialect_keys(
+    step: dict[str, Any], label: str, errors: list[str]
+) -> None:
+    """Ensure a scenario read's dialect map covers its golden statement maps.
+
+    This is the scenario-local counterpart to the runner's top-level
+    ``then.referenceSql`` key check.  A plain string is dialect-neutral.  A map
+    must cover exactly the dialects this read step can execute, otherwise one
+    dialect would silently lose its independent oracle.
+    """
+    reference_sql = step.get("referenceSql")
+    if not isinstance(reference_sql, dict):
+        return
+    statements = step.get("statements")
+    if not isinstance(statements, list) or not statements:
+        return
+    dialect_sets = [
+        set(entry["sql"])
+        for entry in statements
+        if isinstance(entry, dict) and isinstance(entry.get("sql"), dict)
+    ]
+    if not dialect_sets:
+        return
+    golden_dialects = set.intersection(*dialect_sets)
+    if set(reference_sql) != golden_dialects:
+        errors.append(
+            f"{label}: referenceSql map keys {sorted(reference_sql)} != scenario golden sql "
+            f"map keys {sorted(golden_dialects)}"
+        )
+
+
+def _validate_predicate_write(
+    write: Any,
+    entity_defs: list[dict[str, Any]],
+    operation_schema: dict[str, Any],
+    label: str,
+    errors: list[str],
+) -> None:
+    """Validate the operation and model-dependent parts of one write instruction."""
+    if not isinstance(write, dict):
+        return  # legacy string writes remain valid and need no predicate walk
+    target = write.get("target")
+    if not isinstance(target, dict):
+        return  # the case schema owns missing/malformed target errors
+    predicate = target.get("predicate")
+    if predicate is not None:
+        _validate(predicate, operation_schema, f"{label} target.predicate", errors)
+    target_name = target.get("entity")
+    if not isinstance(target_name, str):
+        return
+    try:
+        entity = Entity(definition=resolve_effective_definition(entity_defs, target_name))
+    except (KeyError, RejectionError) as exc:
+        errors.append(f"{label}: target entity {target_name!r} is not declared: {exc}")
+        return
+    try:
+        validate_predicate_write(entity, entity_defs, write)
+    except PredicateWriteValidationError as exc:
+        errors.append(f"{label}: {exc}")
+
+
+def _validate_scenario_reference_sql(
+    step: dict[str, Any], case_schema: dict[str, Any], label: str, errors: list[str]
+) -> None:
+    if "referenceSql" not in step:
+        return
+    reference_schema = case_schema["$defs"]["referenceSql"]
+    _validate(step["referenceSql"], reference_schema, f"{label} referenceSql", errors)
+    _scenario_reference_sql_dialect_keys(step, label, errors)
+
+
 def validate_tree(compatibility_root: Path) -> list[str]:
     """Validate every schema and every fixture; return a list of error strings."""
     compatibility_root = compatibility_root.resolve()
@@ -260,11 +333,13 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     #    resolver per model backs the family-aware targetEntity cross-check below.
     models_dir = compatibility_root / "models"
     families: dict[str, Family] = {}
+    model_entities: dict[str, list[dict[str, Any]]] = {}
     for model_path in sorted(models_dir.glob("**/*.y*ml")):
         descriptor = _load_yaml(model_path)
         _validate(descriptor, metamodel_schema, f"model {model_path.name}", errors)
         entity_defs = _descriptor_entity_defs(descriptor)
         families[model_path.name] = Family(entity_defs)
+        model_entities[model_path.name] = entity_defs
         try:
             validate_family_defs(entity_defs)
         except RejectionError as exc:
@@ -311,11 +386,25 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         f"case {case_path.name} scenario[{index}].find",
                         errors,
                     )
+                    _validate_scenario_reference_sql(
+                        step,
+                        case_schema,
+                        f"case {case_path.name} scenario[{index}]",
+                        errors,
+                    )
                     _check_target_entity(
                         step["find"],
                         step.get("targetEntity"),
                         family,
                         f"case {case_path.name} scenario[{index}].find",
+                        errors,
+                    )
+                if isinstance(step, dict) and isinstance(step.get("write"), dict):
+                    _validate_predicate_write(
+                        step["write"],
+                        model_entities.get(model_name or "", []),
+                        operation_schema,
+                        f"case {case_path.name} scenario[{index}]",
                         errors,
                     )
         # A coherence case (Phase 11) likewise carries read-step operations under

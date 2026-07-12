@@ -1,0 +1,46 @@
+model: models/account.yaml
+tags: [m-opt-lock, m-sql, m-unit-work, materialize, predicate-write, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Account
+      find:
+        lessThan: { attr: Account.balance, value: 200.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+          binds: [200.00]
+      referenceSql: select id, owner, balance, version from account where balance < 200.00
+      expectRows:
+        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+    - write:
+        mutation: delete
+        target:
+          entity: Account
+          predicate:
+            lessThan: { attr: Account.balance, value: 200.00 }
+      roundTrips: 2
+      statements:
+        - sql:
+            postgres: delete from account where id = ? and version = ?
+          binds: [1, 1]
+        - sql:
+            postgres: delete from account where id = ? and version = ?
+          binds: [3, 1]
+    - targetEntity: Account
+      find:
+        all: {}
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0
+          binds: []
+      referenceSql: select id, owner, balance, version from account
+      expectRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+then:
+  roundTrips: 4

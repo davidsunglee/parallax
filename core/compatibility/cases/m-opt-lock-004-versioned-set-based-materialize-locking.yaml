@@ -43,10 +43,18 @@ when:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0
           binds: [200.00]
+      referenceSql: select id, owner, balance, version from account where balance < 200.00 for share of account
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
         - { id: 3, owner: Grace, balance: 10.00, version: 1 }
-    - write: update
+    - write:
+        mutation: update
+        target:
+          entity: Account
+          predicate:
+            lessThan: { attr: Account.balance, value: 200.00 }
+        assignments:
+          - { attr: Account.balance, value: 0.00 }
       roundTrips: 2
       note: one per-object version-advancing UPDATE per materialized row (no gate, locking mode)
       statements:
@@ -67,6 +75,7 @@ when:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0
           binds: [200.00]
+      referenceSql: select id, owner, balance, version from account where balance < 200.00 for share of account
       expectRows:
         - { id: 1, owner: Ada, balance: 0.00, version: 2 }
         - { id: 3, owner: Grace, balance: 0.00, version: 2 }

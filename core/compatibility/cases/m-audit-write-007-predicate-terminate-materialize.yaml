@@ -1,0 +1,46 @@
+model: models/balance.yaml
+tags: [m-audit-write, m-opt-lock, m-sql, m-unit-work, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - targetEntity: Balance
+      find:
+        lessThan: { attr: Balance.value, value: 250.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.val < ? and t0.out_z = ? for share of t0
+          binds: [250.00, infinity]
+      referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where val < 250.00 and out_z = 'infinity'::timestamptz for share of balance
+      expectRows:
+        - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+        - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
+    - write:
+        mutation: terminate
+        target:
+          entity: Balance
+          predicate:
+            lessThan: { attr: Balance.value, value: 250.00 }
+        at: "2024-10-01T00:00:00+00:00"
+      roundTrips: 2
+      statements:
+        - sql:
+            postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, infinity]
+        - sql:
+            postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 2, infinity]
+    - targetEntity: Balance
+      find:
+        lessThan: { attr: Balance.value, value: 250.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.val < ? and t0.out_z = ? for share of t0
+          binds: [250.00, infinity]
+      referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where val < 250.00 and out_z = 'infinity'::timestamptz for share of balance
+      expectRows: []
+then:
+  roundTrips: 4

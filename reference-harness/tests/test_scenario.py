@@ -19,6 +19,8 @@ from reference_harness.case_runner import (
     CaseFailure,
     _assert_action_on,
     _assert_scenario_count_consistency,
+    _assert_scenario_reference_sql,
+    _assert_scenario_sql_bookkeeping,
     _reuse_prior_rows,
 )
 
@@ -170,6 +172,56 @@ def test_scenario_total_mismatch_is_rejected() -> None:
     case.then["roundTrips"] += 1
     with pytest.raises(CaseFailure):
         _assert_scenario_count_consistency(case, "postgres")
+
+
+# --- per-scenario read reference SQL -----------------------------------------
+
+
+class _ReferenceDb:
+    dialect = "postgres"
+
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+        self.calls: list[tuple[str, list[object]]] = []
+
+    def query(self, statement: str, binds: list[object]) -> list[dict[str, object]]:
+        self.calls.append((statement, binds))
+        return self.rows
+
+
+def test_scenario_read_reference_sql_is_a_bind_free_naive_oracle() -> None:
+    case = _scenario_by_id("m-opt-lock-003")
+    step = case.scenario[0]
+    step["referenceSql"] = "select id from account where balance < 200.00"
+    expected = [{"id": 1}, {"id": 3}]
+    db = _ReferenceDb(expected)
+
+    _assert_scenario_reference_sql(case, db, 0, step, expected)  # type: ignore[arg-type]
+
+    assert db.calls == [("select id from account where balance < 200.00", [])]
+
+
+def test_scenario_read_reference_sql_mismatch_fails_loudly() -> None:
+    case = _scenario_by_id("m-opt-lock-003")
+    step = case.scenario[0]
+    step["referenceSql"] = "select id from account where balance < 200.00"
+
+    with pytest.raises(CaseFailure, match="referenceSql rows != golden rows"):
+        _assert_scenario_reference_sql(
+            case,
+            _ReferenceDb([]),  # type: ignore[arg-type]
+            0,
+            step,
+            [{"id": 1}],
+        )
+
+
+def test_scenario_reference_sql_map_must_cover_its_golden_dialects() -> None:
+    case = _scenario_by_id("m-opt-lock-003")
+    case.scenario[0]["referenceSql"] = {"mariadb": "select id from account"}
+
+    with pytest.raises(CaseFailure, match="referenceSql map keys"):
+        _assert_scenario_sql_bookkeeping(case)
 
 
 # --- zero-round-trip reuse: loud failure vs the ONE legitimate empty case -------

@@ -526,6 +526,54 @@ statements as round trips exactly as a committed write does. The harness asserts
 per-step round-trip / golden-SQL count consistency, executes each step, and checks
 `sameObjectAs` identity assertions; it never compiles an operation to SQL.
 
+#### Predicate-selected write instruction
+
+A scenario write MAY retain the legacy string label, or use the canonical object
+form below. This object is the language-neutral requested operation consumed by
+`compile`, `run`, and API no-drift checks; golden SQL remains the independent
+expected lowering, never the source from which an adapter deduces the write.
+
+```yaml
+- write:
+    mutation: update                    # update | delete | terminate | updateUntil | terminateUntil
+    target:
+      entity: Account
+      predicate:
+        lessThan: { attr: Account.balance, value: 200.00 }
+    assignments:
+      - { attr: Account.balance, value: 100.00 }
+  roundTrips: 1
+```
+
+The canonical case pointer for this input is **`/scenario/<n>/write`**. Its fields
+are deliberately small and structural:
+
+| Field | Required | Rule |
+|---|---|---|
+| `mutation` | yes | one of `update`, `delete`, `terminate`, `updateUntil`, `terminateUntil` |
+| `target.entity` | yes | exact concrete descriptor entity where the operation starts |
+| `target.predicate` | yes | one schema-valid `m-op-algebra` operation; it is a bare write predicate, never a result modifier |
+| `assignments` | only `update` / `updateUntil` | ordered `{attr, value}` data; nonempty, unique, assignable qualified attributes only |
+| `at` | processing-temporal target | transaction instant for temporal close/chain behavior |
+| `businessFrom` | business-temporal target | lower bound for the plain or bounded temporal operation |
+| `until` | `updateUntil` / `terminateUntil` | bounded operation's exclusive upper bound |
+
+Delete and terminate mutations carry **no** assignments. Assignment list order is
+not SQL order: descriptor declared column order determines the emitted `set`
+columns and assignment binds. The model-aware validator validates the predicate
+against `operation.schema.json`, checks entity scope and bare-predicate rules,
+rejects duplicate or framework-owned/unassignable assignments, and requires only
+the temporal coordinates the target profile uses. It rejects a predicate-selected
+inheritance-family write before SQL, as `m-inheritance` requires.
+
+Materializing cases make the observation explicit: a preceding scenario read
+resolves the same target predicate and exposes the matched rows or observed
+versions; the following write instruction independently states what the caller
+requested. The read is not inferred from its SQL and the write is not inferred
+from the read. A non-trivial scenario read MAY carry `referenceSql`, with the same
+string-or-dialect-map shape as `then.referenceSql`; it is self-contained (rather
+than reusing golden binds) and must agree with its golden rows as the third oracle.
+
 A case MAY carry a **`when.uow`** block (`{ concurrency: locking |
 optimistic }`) declaring the unit-of-work strategy its golden SQL runs under
 (`m-unit-work` strategy selection). The block is **descriptive**: the harness

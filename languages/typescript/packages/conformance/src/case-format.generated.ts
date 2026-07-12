@@ -122,6 +122,8 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
         [k: string]: unknown;
       } & {
         [k: string]: unknown;
+      } & {
+        [k: string]: unknown;
       } & (
           | {
               [k: string]: unknown;
@@ -145,6 +147,8 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
             }
         ),
       ...({
+        [k: string]: unknown;
+      } & {
         [k: string]: unknown;
       } & {
         [k: string]: unknown;
@@ -296,14 +300,7 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
    */
   then?: {
     statements?: GoldenStatements2;
-    /**
-     * Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases. Authored dialect-neutrally as a plain string wherever one naive spelling runs verbatim on every dialect; a dialect-keyed map (`postgres` / `mariadb`) when the naive spelling itself is dialect-specific (e.g. the structured-document extraction, where Postgres `->>` takes a bare key and MariaDB `->>` takes a `'$.path'`). When a map, its keys MUST equal the golden `sql` map's keys (harness-asserted, exactly as for a `binds` map) so no executed dialect runs without its oracle. The harness runs the entry matching the executing dialect; a map omitting a declared dialect is a loud failure, never a silently skipped oracle.
-     */
-    referenceSql?:
-      | string
-      | {
-          [k: string]: string;
-        };
+    referenceSql?: ReferenceSql;
     /**
      * The rows the query must return against the fixture data (single-statement / flat-result cases). An ABSTRACT-target inheritance read (m-inheritance, resolved Q6) additionally carries a `familyVariant` key per row — the CONCRETE subtype name of that row, materialized from the tag metadata map (`tagValue` -> subtype name), NOT projected as SQL — alongside the full concrete-superset columns (non-applicable subtype columns are null). Row objects stay open, so `familyVariant` needs no separate schema property.
      */
@@ -610,6 +607,14 @@ export type GoldenStatements2 = [
     sql?: {};
   })[],
 ];
+/**
+ * Independent naive SQL oracle. Required for non-trivial reads and optional for trivial single-table predicates. A string is dialect-neutral; a dialect-keyed map MUST cover the exact golden SQL dialect set, which the harness verifies.
+ */
+export type ReferenceSql =
+  | string
+  | {
+      [k: string]: string;
+    };
 /**
  * A JSON Pointer into the case (RFC 6901), naming a graph node position for a `then.identityChecks` entry. Mirrors the m-conformance-adapter `jsonPointer` def: the empty string (whole document) or a `/`-rooted path.
  */
