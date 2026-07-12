@@ -411,6 +411,11 @@
                   }
                 },
                 "then": { "required": ["on"] }
+              },
+              {
+                "description": "A scenario-step `referenceSql` is a naive oracle for a read (`find`) only; writes and lifecycle actions do not produce rows to compare.",
+                "if": { "required": ["referenceSql"] },
+                "then": { "required": ["find"] }
               }
             ],
             "properties": {
@@ -423,9 +428,11 @@
                 "$ref": "#/$defs/entityName"
               },
               "write": {
-                "description": "Marks a WRITE step and labels the mutation it applies (e.g. `insert` / `update`). The step's golden DML is applied on the unit of work's connection and, by default, COMMITTED.",
-                "type": "string",
-                "minLength": 1
+                "description": "Marks a WRITE step. Existing cases retain their legacy string label; predicate-selected writes carry the neutral `$defs/predicateWrite` instruction that compile/run and API no-drift checks consume independently of golden SQL.",
+                "oneOf": [
+                  { "type": "string", "minLength": 1 },
+                  { "$ref": "#/$defs/predicateWrite" }
+                ]
               },
               "rollback": {
                 "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the m-unit-work abort contract. The rolled-back DML still executes, so the step's roundTrips count its statements exactly as a committed write does.",
@@ -444,6 +451,10 @@
                 "description": "The rows this step's find must return against the fixture data. A cache-hit step that reuses an earlier step's result MAY restate the same expected rows.",
                 "type": "array",
                 "items": { "type": "object" }
+              },
+              "referenceSql": {
+                "description": "A read step's independent naive SQL oracle. It has the same string-or-dialect-map shape as `then.referenceSql` and, like that oracle, is self-contained rather than reusing golden binds.",
+                "$ref": "#/$defs/referenceSql"
               },
               "sameObjectAs": {
                 "description": "Zero-based index of an earlier scenario step whose result denotes the SAME logical object(s) as this step (the identity-cache contract: same primary key => same object). Legal on a read step or an action step (a `load` / `access` re-read denoting the same managed object as an earlier step).",
@@ -668,16 +679,7 @@
           "$ref": "#/$defs/goldenStatements"
         },
         "referenceSql": {
-          "description": "Independent naive oracle. Required for non-trivial cases, optional for trivial single-table predicate cases. Authored dialect-neutrally as a plain string wherever one naive spelling runs verbatim on every dialect; a dialect-keyed map (`postgres` / `mariadb`) when the naive spelling itself is dialect-specific (e.g. the structured-document extraction, where Postgres `->>` takes a bare key and MariaDB `->>` takes a `'$.path'`). When a map, its keys MUST equal the golden `sql` map's keys (harness-asserted, exactly as for a `binds` map) so no executed dialect runs without its oracle. The harness runs the entry matching the executing dialect; a map omitting a declared dialect is a loud failure, never a silently skipped oracle.",
-          "oneOf": [
-            { "type": "string", "minLength": 1 },
-            {
-              "type": "object",
-              "propertyNames": { "enum": ["postgres", "mariadb"] },
-              "additionalProperties": { "type": "string", "minLength": 1 },
-              "minProperties": 1
-            }
-          ]
+          "$ref": "#/$defs/referenceSql"
         },
         "rows": {
           "description": "The rows the query must return against the fixture data (single-statement / flat-result cases). An ABSTRACT-target inheritance read (m-inheritance, resolved Q6) additionally carries a `familyVariant` key per row — the CONCRETE subtype name of that row, materialized from the tag metadata map (`tagValue` -> subtype name), NOT projected as SQL — alongside the full concrete-superset columns (non-applicable subtype columns are null). Row objects stay open, so `familyVariant` needs no separate schema property.",
@@ -830,6 +832,71 @@
       "description": "A metamodel entity name (the queried/target entity a read starts from, m-case-format `targetEntity`). Matches the `Class` grammar the operation schema's attribute/relationship references use before the dot.",
       "type": "string",
       "pattern": "^[A-Za-z][A-Za-z0-9]*$"
+    },
+    "referenceSql": {
+      "description": "Independent naive SQL oracle. Required for non-trivial reads and optional for trivial single-table predicates. A string is dialect-neutral; a dialect-keyed map MUST cover the exact golden SQL dialect set, which the harness verifies.",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "propertyNames": { "enum": ["postgres", "mariadb"] },
+          "additionalProperties": { "type": "string", "minLength": 1 },
+          "minProperties": 1
+        }
+      ]
+    },
+    "predicateWrite": {
+      "description": "A predicate-selected set-based write. The instruction, rather than a language method name or golden SQL, is the canonical compile/run input. Assignment list order is data only: descriptor column order determines emitted SET and bind order.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mutation", "target"],
+      "properties": {
+        "mutation": { "enum": ["update", "delete", "terminate", "updateUntil", "terminateUntil"] },
+        "target": { "$ref": "#/$defs/writeTarget" },
+        "assignments": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/writeAssignment" }
+        },
+        "at": { "type": "string", "minLength": 1 },
+        "businessFrom": { "type": "string", "minLength": 1 },
+        "until": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mutation": { "enum": ["update", "updateUntil"] } } },
+          "then": { "required": ["assignments"] },
+          "else": { "not": { "required": ["assignments"] } }
+        },
+        {
+          "if": { "properties": { "mutation": { "enum": ["updateUntil", "terminateUntil"] } } },
+          "then": { "required": ["until"] },
+          "else": { "not": { "required": ["until"] } }
+        }
+      ]
+    },
+    "writeTarget": {
+      "description": "The exact entity a predicate-selected write begins from plus its bare m-op-algebra predicate. The harness validates the operation schema and descriptor-dependent scope/modifier rules separately.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entity", "predicate"],
+      "properties": {
+        "entity": { "$ref": "#/$defs/entityName" },
+        "predicate": { "type": "object" }
+      }
+    },
+    "writeAssignment": {
+      "description": "One ordered predicate-write assignment. `attr` is a qualified descriptor attribute reference and `value` is a neutral scalar literal; duplicate and unassignable attributes are rejected by model-aware validation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attr", "value"],
+      "properties": {
+        "attr": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+        },
+        "value": { "type": ["string", "number", "boolean", "null"] }
+      }
     },
     "statementEntry": {
       "description": "One logical statement in the execution sequence: a closed `{sql, binds}` object. `sql` is a plain string at naive locations (`given.apply`) or a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`); `binds` is authored once per statement (dialect-agnostic) and defaults to `[]`. The `{sql, binds}` wrapper keeps dialect keys and entry-level keys in separate namespaces, so the schema needs no reserved-key carve-outs. Golden and naive locations narrow `sql` to the map / string form respectively via `goldenStatements` / `naiveStatements`.",

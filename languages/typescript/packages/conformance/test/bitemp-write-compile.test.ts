@@ -1,8 +1,8 @@
 /**
- * Full-bitemporal write **compile lane** over the whole `m-bitemp-write` slice,
+ * Full-bitemporal write **compile lane** over TypeScript's `slice-mvp-1` claim,
  * Docker-free (COR-26).
  *
- * Drives the adapter's `runCompile` over all nine `m-bitemp-write` cases and asserts
+ * Drives the adapter's `runCompile` over its nine claimed `m-bitemp-write` cases and asserts
  * the emitted SQL + binds equal the golden BY TEXT — the DB-free proof that the
  * TypeScript rectangle-split write generation is correct without a database read-back:
  *
@@ -34,11 +34,18 @@ import { discoverCasePaths, type LoadedCase, loadCase } from "../src/discover.js
 import { runCompile, TYPESCRIPT_ADAPTER } from "../src/index.js";
 import { buildWriteSequencePlan } from "../src/write-sequence.js";
 
-/** The nine full-bitemporal write cases, discovered off the corpus. */
+/** The nine full-bitemporal write cases claimed by TypeScript's MVP slice. */
 function bitempWriteCases(): readonly { id: string; path: string }[] {
   return discoverCasePaths()
-    .map((path) => ({ id: path.replace(/^.*\/(m-[a-z0-9-]+-\d{3})-.*$/, "$1"), path }))
-    .filter(({ id }) => id.startsWith("m-bitemp-write-"))
+    .map((path) => ({
+      id: path.replace(/^.*\/(m-[a-z0-9-]+-\d{3})-.*$/, "$1"),
+      path,
+      loaded: loadCase(path),
+    }))
+    .filter(
+      ({ id, loaded }) => id.startsWith("m-bitemp-write-") && loaded.tags.includes("slice-mvp-1"),
+    )
+    .map(({ id, path }) => ({ id, path }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
@@ -49,8 +56,8 @@ function golden(loaded: ReturnType<typeof loadCase>): readonly DialectStatement[
   return dialectStatements(goldenEntries(loaded.raw), "postgres");
 }
 
-describe("m-bitemp-write compile lane — emitted === golden over all nine cases", () => {
-  it("discovers exactly the nine m-bitemp-write cases", () => {
+describe("m-bitemp-write compile lane — emitted === golden over the MVP's nine cases", () => {
+  it("discovers exactly the nine MVP-tagged m-bitemp-write cases", () => {
     expect(CASES.map(({ id }) => id)).toEqual([
       "m-bitemp-write-001",
       "m-bitemp-write-002",

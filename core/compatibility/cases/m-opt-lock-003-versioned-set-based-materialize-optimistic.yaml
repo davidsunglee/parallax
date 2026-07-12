@@ -42,10 +42,18 @@ when:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
           binds: [200.00]
+      referenceSql: select id, owner, balance, version from account where balance < 200.00
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
         - { id: 3, owner: Grace, balance: 10.00, version: 1 }
-    - write: update
+    - write:
+        mutation: update
+        target:
+          entity: Account
+          predicate:
+            lessThan: { attr: Account.balance, value: 200.00 }
+        assignments:
+          - { attr: Account.balance, value: 0.00 }
       roundTrips: 2
       note: one per-object GATED UPDATE per materialized row (`and version = ?` binds the observed version 1)
       statements:
@@ -66,6 +74,7 @@ when:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
           binds: [200.00]
+      referenceSql: select id, owner, balance, version from account where balance < 200.00
       expectRows:
         - { id: 1, owner: Ada, balance: 0.00, version: 2 }
         - { id: 3, owner: Grace, balance: 0.00, version: 2 }

@@ -303,6 +303,7 @@ def _assert_schema(case: Case) -> None:
         raise CaseFailure(f"{case.path.name}: model has no class name")
     _assert_binds_dialect_keys(case)
     _assert_reference_sql_dialect_keys(case)
+    _assert_scenario_sql_bookkeeping(case)
 
 
 def _assert_binds_dialect_keys(case: Case) -> None:
@@ -351,6 +352,49 @@ def _assert_reference_sql_dialect_keys(case: Case) -> None:
             f"map MUST cover exactly the dialects its golden sql declares, so no "
             f"executed dialect runs without its independent oracle."
         )
+
+
+def _assert_scenario_sql_bookkeeping(case: Case) -> None:
+    """Validate scenario-local binds and independent read-oracle maps.
+
+    Scenario SQL is stored below each step rather than at ``then``.  The same
+    per-dialect coverage rules therefore apply independently at that location,
+    and a read oracle must correspond to exactly one golden read statement.
+    """
+    if not case.is_scenario:
+        return
+    for index, step in enumerate(case.scenario):
+        entries = step.get("statements", [])
+        if not isinstance(entries, list):
+            continue
+        for statement_index, entry in enumerate(entries):
+            if not isinstance(entry, dict) or not isinstance(entry.get("binds"), dict):
+                continue
+            sql = entry.get("sql")
+            sql_keys = set(sql) if isinstance(sql, dict) else set()
+            if set(entry["binds"]) != sql_keys:
+                raise CaseFailure(
+                    f"{case.path.name}: when.scenario[{index}].statements[{statement_index}] "
+                    f"binds map keys {sorted(entry['binds'])} != sql map keys "
+                    f"{sorted(sql_keys)}"
+                )
+        reference_sql = step.get("referenceSql")
+        if reference_sql is None:
+            continue
+        if len(entries) != 1:
+            raise CaseFailure(
+                f"{case.path.name}: when.scenario[{index}] referenceSql needs exactly one "
+                "golden read statement"
+            )
+        if not isinstance(reference_sql, dict):
+            continue
+        sql = entries[0].get("sql") if isinstance(entries[0], dict) else None
+        sql_keys = set(sql) if isinstance(sql, dict) else set()
+        if set(reference_sql) != sql_keys:
+            raise CaseFailure(
+                f"{case.path.name}: when.scenario[{index}].referenceSql map keys "
+                f"{sorted(reference_sql)} != golden sql map keys {sorted(sql_keys)}"
+            )
 
 
 def _assert_normalization(case: Case, dialect: str) -> None:
@@ -3312,6 +3356,40 @@ def _scenario_has_golden(case: Case, dialect: str) -> bool:
     return any(_step_statements(step, dialect) for step in case.scenario)
 
 
+def _scenario_reference_sql_for(step: dict[str, Any], dialect: str) -> str | None:
+    """Resolve one scenario read's naive SQL oracle for *dialect*."""
+    raw = step.get("referenceSql")
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        if dialect not in raw:
+            raise KeyError(
+                f"scenario referenceSql map has no key {dialect!r} (keys: {sorted(raw)})"
+            )
+        return raw[dialect]
+    return raw
+
+
+def _assert_scenario_reference_sql(
+    case: Case,
+    db: DatabaseProvider,
+    index: int,
+    step: dict[str, Any],
+    golden_rows: list[dict[str, Any]],
+) -> None:
+    """Run a scenario find's independent, bind-free naive SQL oracle."""
+    reference_sql = _scenario_reference_sql_for(step, db.dialect)
+    if reference_sql is None:
+        return
+    reference_rows = _query_rows(db, reference_sql, [])
+    if not _rows_equal(reference_rows, golden_rows, case.tolerance):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] referenceSql rows != golden rows.\n"
+            f"  reference: {reference_rows!r}\n"
+            f"  golden:    {golden_rows!r}"
+        )
+
+
 def _assert_scenario_normalization(case: Case, dialect: str) -> None:
     for index, step in enumerate(case.scenario):
         for sql in _step_statements(step, dialect):
@@ -3607,6 +3685,8 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             # count is one; execute it and capture the rows.
             statement, stmt_binds = pairs[0]
             rows = _query_rows(db, statement, stmt_binds)
+            if "find" in step:
+                _assert_scenario_reference_sql(case, db, index, step, rows)
         else:
             # A cache hit (or an m-op-list construction that has not resolved yet): no
             # statement executes. Reuse the SAME interned objects as the step it hits.

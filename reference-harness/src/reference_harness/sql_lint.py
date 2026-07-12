@@ -105,6 +105,14 @@ def lint_tree(compatibility_root: Path) -> list[str]:
                             name,
                             errors,
                         )
+                        if step_key == "scenario":
+                            _lint_reference_sql(
+                                step.get("referenceSql"),
+                                step.get("statements"),
+                                f"when.scenario[{index}].referenceSql",
+                                name,
+                                errors,
+                            )
 
         # An error case (m-db-error) or read-lock case may carry its golden SQL inside
         # a two-connection `concurrency` choreography; lint each node step's.
@@ -123,27 +131,9 @@ def lint_tree(compatibility_root: Path) -> list[str]:
                             errors,
                         )
 
-        reference = then.get("referenceSql")
-        if isinstance(reference, str):
-            # A plain-string referenceSql is dialect-neutral naive SQL; parse with
-            # the first declared golden dialect (or postgres) just to confirm it is
-            # valid.
-            dialect = _first_golden_dialect(then.get("statements"))
-            try:
-                sqlglot.parse_one(reference, read=sqlglot_dialect(dialect))
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"case {name}: referenceSql does not parse: {exc}")
-        elif isinstance(reference, dict):
-            # A dialect-keyed referenceSql (the structured-document extraction, whose
-            # naive spelling itself diverges) — parse EACH dialect's text under its
-            # own dialect.
-            for dialect, text in reference.items():
-                if not isinstance(text, str):
-                    continue
-                try:
-                    sqlglot.parse_one(text, read=sqlglot_dialect(dialect))
-                except Exception as exc:  # noqa: BLE001
-                    errors.append(f"case {name}: referenceSql.{dialect} does not parse: {exc}")
+        _lint_reference_sql(
+            then.get("referenceSql"), then.get("statements"), "referenceSql", name, errors
+        )
 
     return errors
 
@@ -156,6 +146,31 @@ def _first_golden_dialect(entries: Any) -> str:
             if isinstance(sql, dict) and sql:
                 return next(iter(sql))
     return "postgres"
+
+
+def _lint_reference_sql(
+    reference: Any, entries: Any, where: str, name: str, errors: list[str]
+) -> None:
+    """Parse one top-level or scenario-read naive SQL oracle."""
+    if isinstance(reference, str):
+        # A plain-string referenceSql is dialect-neutral naive SQL; parse with the
+        # first declared golden dialect (or postgres) just to confirm it is valid.
+        dialect = _first_golden_dialect(entries)
+        try:
+            sqlglot.parse_one(reference, read=sqlglot_dialect(dialect))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"case {name}: {where} does not parse: {exc}")
+    elif isinstance(reference, dict):
+        # A dialect-keyed referenceSql (the structured-document extraction, whose
+        # naive spelling itself diverges) — parse EACH dialect's text under its own
+        # dialect.
+        for dialect, text in reference.items():
+            if not isinstance(text, str):
+                continue
+            try:
+                sqlglot.parse_one(text, read=sqlglot_dialect(dialect))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"case {name}: {where}.{dialect} does not parse: {exc}")
 
 
 def _lint_golden(entries: Any, where: str, name: str, errors: list[str]) -> None:

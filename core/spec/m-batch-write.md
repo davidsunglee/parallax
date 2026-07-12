@@ -1,9 +1,15 @@
-# m-batch-write — Set-Based / Batched Writes
+# m-batch-write — Buffered Batching / Readless Predicate Writes
 
-`m-batch-write` specifies **set-based flushing of buffered writes**: at the
-unit-of-work boundary, multiple pending writes of one entity collapse into
-**set-based SQL** rather than one statement per row. It depends on `m-unit-work`
-(the boundary that buffers and flushes the writes). The canonical golden SQL is
+`m-batch-write` distinguishes two related but non-interchangeable write families:
+
+1. **buffered tracked-row batching** at an `m-unit-work` boundary, where the unit
+   of work already holds an enumerated set of objects; and
+2. **predicate-selected writes** over a bare `m-op-algebra` predicate, whose
+   canonical instruction is supplied by `m-case-format`.
+
+It owns only the set-based/readless vocabulary for the second family. Versioning,
+locking, conflict abort, and temporal chaining belong respectively to `m-opt-lock`,
+`m-read-lock`, `m-audit-write`, and `m-bitemp-write`. The canonical golden SQL is
 fixed by `m-sql`.
 
 ## Set-based flush
@@ -44,28 +50,50 @@ DML and asserting the resulting table state — the write-sequence machinery
 per-key delete). So "buffered writes flush as set-based SQL" is verified by the
 rows it leaves behind, not merely asserted.
 
-A **versioned** entity has no set-based `UPDATE` template — a per-row observed
-version cannot ride one statement — so a set-based update of a versioned entity
-**materializes** to per-object keyed updates instead (`m-opt-lock`). A set-based
-**delete** of a versioned entity materializes the **same** way: it **cannot**
-collapse into an `IN` list, because each row's delete must **gate on that row's
-observed version** (`delete from t where id = ? and version = ?`, one statement per
-key), and a per-key `≠1`-row outcome is the `updatedRows != 1` conflict — mirroring
-the versioned `UPDATE` exactly (`m-opt-lock`, ADR 0014). Reladomo gates deletes
-per row and never collapses a versioned delete; Parallax follows.
+A **versioned** entity has no readless predicate-write template — a per-row
+observed version cannot ride one statement — so predicate update and delete
+materialize to keyed writes (`m-opt-lock`). Processing-temporal predicate writes
+likewise materialize so each observed milestone can close/chain (`m-audit-write` /
+`m-bitemp-write`). Those are not buffered-batch collapse rules.
 
-## Beyond current scope
+## Predicate-selected readless forms
 
-Broader **predicate-driven** bulk mutation — `setAttribute` over a list,
-`deleteAll` / `deleteAllInBatches`, `insertAll` / `bulkInsertAll`, dated
-`terminateAll` / `purgeAll` — is out of scope for this revision. It is named here
-so the module boundary is clear; its golden-SQL forms and fixtures land with the
-bulk fast-follow.
+For an **unversioned, non-temporal** target, a predicate-selected write is
+readless and emits exactly one statement. `update` is:
 
-This deferred family is the mutation of an **unbounded set resolved by a
-predicate** — distinct from the **in-unit-of-work set-based flush** above, which
-collapses the *buffered writes of already-tracked objects* the unit of work holds.
-The DELETE collapse and the versioned per-key delete are part of that in-UoW
-flush (a bounded, enumerated set of tracked deletes) and are therefore **in
-scope**; `deleteAll` / `deleteAllInBatches` (a `DELETE … WHERE <predicate>` over
-rows the unit of work never loaded) stay deferred. The two do not overlap.
+```text
+update <table> set <column> = ?, … where <predicate>
+```
+
+There is no materialization and no equality-elimination pass: rows already equal
+to an assigned value are still matched by ordinary SQL set semantics. The emitted
+`set` columns and their assignment-value binds follow descriptor declared column
+order, regardless of the instruction's ordered assignment list; predicate binds
+come after those assignment binds. `delete` is exactly:
+
+```text
+delete from <table> where <predicate>
+```
+
+`m-batch-write-005` pins readless predicate delete and
+`m-batch-write-006` pins the update's descriptor-order SQL and bind determinism.
+Reladomo's transaction behavior remains prior art for the materializing branch:
+it reads under a lock or gates on an observed optimistic version, not a Java bulk
+API template. Parallax applies that runtime rule through the owning modules above.
+
+## What the suite pins down
+
+The existing `m-batch-write-001`–`-004` cases prove only **buffered tracked-row
+batching**: multi-row insert, uniform-key update, non-versioned `IN` delete, and
+versioned per-key delete. The predicate-write witnesses prove a distinct target:
+
+| Case | Target | Predicate-write witness |
+|---|---|---|
+| `m-batch-write-005` | non-versioned `Wallet` delete | one readless `delete … where <predicate>` |
+| `m-batch-write-006` | non-versioned `Wallet` update | one readless update; reversed authored assignments still emit descriptor column order and assignment-before-predicate binds |
+| `m-opt-lock-015` | versioned `Account` delete | materialize plus one optimistic per-row delete for each match |
+
+The two families share SQL terminology but not an observation contract: an `IN`
+list can collapse an already tracked set, whereas a predicate write starts from an
+operation and either remains readless or materializes because its target requires
+per-row observation.

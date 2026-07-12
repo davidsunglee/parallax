@@ -65,28 +65,50 @@ an update whose `set` changes **no** attribute **MUST** issue **no DML** at all
 the concurrent editor that races it advances the version itself, so nothing slips
 through.
 
-### Set-based updates materialize
+### Predicate-selected writes materialize when observations are needed
 
-A keyed `UPDATE` of one versioned row gates on (optimistic) and advances (both
-modes) the version the unit of work observed for that row. A **set-based** update
-— one that selects rows by a predicate rather than a single primary key — has
-**no** set-based versioned template: the gate binds a *per-row* observed version,
-so a single `where <predicate>` statement cannot carry it. Such an update
-**MUST** therefore **materialize** (ADR 0014): the implementation
+A **predicate-selected write** starts from one concrete entity and one **bare**
+`m-op-algebra` predicate. It is not a language method name and it is not inferred
+from golden SQL. Result modifiers (`orderBy`, `limit`, `distinct`, `deepFetch`,
+`asOf`, `asOfRange`, `history`, `groupBy`, and `narrow`) are not write targets.
+The canonical instruction and its assignment rules are `m-case-format`.
 
-1. **resolves the predicate to rows** through a read — a real round trip that
-   records each matched row's observed version into the identity cache (and, in
-   `locking` mode, takes the `m-read-lock` shared read lock on them); then
-2. issues **one keyed per-object `UPDATE` per resolved row** — the gated
-   optimistic form or the ungated locking form above, each binding *that row's*
-   observed version and advancing it.
+A keyed write of one versioned row gates on (optimistic) and advances (both modes)
+the version the unit of work observed for that row. A predicate-selected write to a
+versioned entity has **no** single-statement versioned template: the gate binds a
+*per-row* observed version. It **MUST** therefore **materialize** (ADR 0014):
 
-Round-trip accounting is therefore **`1` read + `N` per-object updates**. A
-per-object gate that matches zero rows is the same `updatedRows != 1` conflict
-and **MUST** surface (a mid-batch conflict aborts the unit of work like any
-other). This makes read-before-write **universal** for versioned entities. For a
-**non-versioned** entity the readless batched forms stand (`m-sql`, ADR 0014) —
-materialization applies only where a framework-owned version must ride each write.
+1. resolve the predicate through a read, recording each matched row's observed
+   version; in `locking` mode this read takes the `m-read-lock` shared lock; then
+2. issue one keyed per-object write for every row that the verb writes — gated in
+   optimistic mode and ungated-but-version-advancing in locking mode.
+
+For assignment-bearing mutations, no-op elimination is **per resolved row**: when
+all assignments already equal that row's values, it issues no DML, advances no
+version, and contributes no round trip. `delete` and temporal `terminate` process
+**every** resolved row: they have no assignment equality to eliminate. The exact
+cost is therefore **`1 + N`**, where `N` is the number of rows actually written,
+not necessarily the number resolved. A per-object gate or temporal close that
+matches zero rows is the `updatedRows != 1` conflict signal and **MUST** abort the
+whole unit of work; a later row is never silently continued after that conflict.
+
+This materialization rule also applies to processing-temporal entities. Their
+observed processing-from (`in_z`) is the per-row optimistic version analogue; the
+temporal modules own close/chain and rectangle-split SQL, while this module owns
+the conflict and abort rule. Reladomo is the prior art: transaction mode either
+reads under a lock or gates on the observed optimistic version and treats
+`updatedRows != 1` as a conflict; its temporal director closes `IN_Z` milestones
+and splits rectangles. Parallax adopts those runtime semantics, not Reladomo's
+Java API or implementation structure.
+
+The one exception is an **unversioned, non-temporal** target. It remains readless:
+`update` emits exactly one `update <table> set <column> = ?, … where <predicate>`
+and `delete` exactly one `delete from <table> where <predicate>`. The readless
+update has no equality-elimination pass. Its `set` columns follow descriptor
+declared column order, never authored assignment order; binds are assignment values
+in that emitted order followed by predicate binds. `m-batch-write` owns this
+readless vocabulary and witness; this module owns every observed-version or
+processing-temporal materialization rule.
 
 ### Temporal entities derive the version from the processing axis
 
@@ -201,15 +223,22 @@ entries that simulate a concurrent transaction mutating the row — and a
 
 A companion **scenario** case pins the no-op rule: a versioned update whose `set`
 changes no attribute declares `roundTrips: 0` and lists no golden DML (no
-statement issued). A pair of **scenario** cases pins the set-based materialize (one
-per mode): a `find` step (the materialize read, `roundTrips: 1`), a `write` step
-listing the ordered **per-object** `UPDATE`s (`roundTrips: N`, its golden a list of
-statement entries each carrying its own `binds` — the gated form in optimistic
-mode, the ungated version-advancing form in locking mode), and a verify `find`
-re-resolving the mutated rows — the declared `roundTrips` (`1 + N + 1`) is the
-honest materialize cost. Optimistic corpus cases carry a
-`when.uow: { concurrency: optimistic }` block so their gated goldens are
-self-describing; the locking-mode cases carry
+statement issued). Predicate-selected witnesses use a materializing `find`, the
+structured `write` instruction, and a verification `find`; non-trivial finds carry
+their own naive `referenceSql` oracle.
+
+| Witness | Target / mode | Observable rule |
+|---|---|---|
+| `m-opt-lock-003`, `-004` | `Account` update, optimistic / locking | materialize then per-object update; optimistic reads/gates are lock-free, locking reads carry `for share of t0` and writes omit the gate |
+| `m-opt-lock-014` | `Account` update, locking | mixed equal/changed rows gives `1 + 1`, proving per-row no-op elimination and no spurious version bump |
+| `m-opt-lock-015` | `Account` delete, optimistic | every matched row is deleted through a version-gated per-row write; the final find proves only the unmatched account remains |
+| `m-audit-write-007` | processing-temporal `Balance` terminate, locking | every current matched milestone is closed; no equality-elimination applies |
+| `m-bitemp-write-010`–`-013` | `Position` plain / bounded correction or termination | the materialized observed rectangle is closed and the required head/middle/tail chain is emitted |
+
+Each scenario's write step lists its ordered per-object golden statements
+(`roundTrips: N`); the declared total is the honest `1 + N` materialize cost plus
+any explicit verification read. Optimistic corpus cases carry
+`when.uow: { concurrency: optimistic }`; locking cases carry
 `when.uow: { concurrency: locking }`.
 
 The harness loads the model's fixtures (the row exists with its current

@@ -197,6 +197,10 @@ SQL.
 The command is valid for any case shape whose behavior can be represented as
 SQL emissions. Cache-hit scenario steps that perform no database work simply
 produce no emission for that step and still contribute `0` round trips.
+For a predicate-selected scenario write, the adapter consumes the structured
+`/scenario/<n>/write` instruction as the requested operation; it MUST NOT treat
+authored DML text as its only write input or reverse-engineer the operation from
+golden SQL.
 
 Example:
 
@@ -229,6 +233,7 @@ Example:
 - `/operation`
 - `/writeSequence/0`
 - `/scenario/0/find`
+- `/scenario/1/write`
 - `/coherence/1/find`
 
 For deep-fetch and write-sequence cases, `emissions` contains one item per
@@ -238,6 +243,10 @@ statement in execution order.
 
 `run` executes a compatibility case through the language implementation and
 returns the observations required to compare against the case.
+
+It consumes the same structured predicate-write instruction as `compile`, then
+compares emitted SQL and binds to the authored golden unchanged. The instruction
+adds neutral operation input; it does not relax SQL comparison.
 
 The adapter is responsible for using a clean database according to its declared
 provisioning mode, applying schema and fixtures, executing the implementation's

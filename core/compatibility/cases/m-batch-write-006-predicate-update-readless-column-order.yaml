@@ -1,0 +1,33 @@
+model: models/wallet.yaml
+tags: [m-batch-write, m-sql, m-unit-work, predicate-write, readless, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: update
+        target:
+          entity: Wallet
+          predicate:
+            lessThan: { attr: Wallet.balance, value: 200.00 }
+        assignments:
+          - { attr: Wallet.balance, value: 150.00 }
+          - { attr: Wallet.owner, value: Updated }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: update wallet set owner = ?, balance = ? where balance < ?
+          binds: [Updated, 150.00, 200.00]
+    - targetEntity: Wallet
+      find:
+        eq: { attr: Wallet.owner, value: Updated }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.owner = ?
+          binds: [Updated]
+      referenceSql: select id, owner, balance from wallet where owner = 'Updated'
+      expectRows:
+        - { id: 1, owner: Updated, balance: 150.00 }
+        - { id: 3, owner: Updated, balance: 150.00 }
+then:
+  roundTrips: 2

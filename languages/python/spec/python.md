@@ -707,17 +707,19 @@ never something an application developer hand-writes.
   family is **rejected before SQL** with the corpus's
   `subtype-write-set-based-unsupported` classification (`m-inheritance-089`).
   Corpus coverage is annotated per flavor, honestly: versioned non-temporal
-  `update_where` is corpus-covered (`m-opt-lock-003` / `-004`, both
-  participation modes); every other flavor — `delete_where` (the corpus's
-  versioned-delete case `m-batch-write-004` is row-shaped, not
-  predicate-shaped), the audit-only and bitemporal `terminate_where`, the
-  bitemporal plain `update_where` and both `*_until_where` forms, and the
-  single-statement unversioned lowering — has **no predicate-shaped case in
-  the claimed slice**. Those flavors ship anyway for API consistency: they
-  are specified here, proven by language unit tests, documented in the Usage
-  Guide, sit outside the API-suite coverage partition (which spans exactly
-  the slice's cases), and are recorded as candidates for future core corpus
-  additions rather than silent extensions.
+  `update_where` is covered in both modes (`m-opt-lock-003` / `-004`) and its
+  mixed equal/changed-row elimination in `m-opt-lock-014`; versioned
+  `delete_where` is predicate-shaped in `m-opt-lock-015`; readless
+  non-versioned `delete_where` / `update_where` (including descriptor-column
+  order) are `m-batch-write-005` / `-006`; audit-only `terminate_where` is
+  `m-audit-write-007`; and the bitemporal plain update/terminate plus both
+  bounded forms are `m-bitemp-write-010`–`-013`. All of those cases are
+  deliberately `slice-snapshot-1` only: they are the snapshot claim's
+  executable oracle, not a managed API partition expansion. The API still has
+  broader surface area than any finite corpus sample — arbitrary valid bare
+  predicates, multiple assignable fields, and every valid temporal bound are
+  validated and documented by the implementation/API suite — but no covered
+  mutation flavor is a language-local semantic extension.
 
 ## 6. Database support and compatibility proof
 

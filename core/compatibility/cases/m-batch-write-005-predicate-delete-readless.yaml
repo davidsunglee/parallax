@@ -1,0 +1,28 @@
+model: models/wallet.yaml
+tags: [m-batch-write, m-sql, m-unit-work, predicate-write, readless, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: delete
+        target:
+          entity: Wallet
+          predicate:
+            lessThan: { attr: Wallet.balance, value: 200.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: delete from wallet where balance < ?
+          binds: [200.00]
+    - targetEntity: Wallet
+      find:
+        lessThan: { attr: Wallet.balance, value: 200.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ?
+          binds: [200.00]
+      referenceSql: select id, owner, balance from wallet where balance < 200.00
+      expectRows: []
+then:
+  roundTrips: 2
