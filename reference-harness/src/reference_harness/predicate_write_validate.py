@@ -14,6 +14,7 @@ from typing import Any
 from .case import Entity
 from .inheritance import inheritance_of
 from .op_validate import validate_operation
+from .serde import canonical
 from .value_object_resolve import RejectionError, literal_matches_type
 
 
@@ -110,6 +111,102 @@ def validate_predicate_write(
     _assert_temporal_shape(entity, mutation, instruction)
     if mutation in ("update", "updateUntil"):
         _assert_assignments(entity, instruction.get("assignments"))
+
+
+def validate_predicate_write_materialization(
+    entity: Entity,
+    preceding_steps: list[dict[str, Any]],
+    instruction: dict[str, Any],
+) -> None:
+    """Require an observable prior resolution when a predicate write needs one.
+
+    Versioned and temporal predicate writes lower to per-row work, so their
+    scenario data must expose the exact earlier resolution from which that work
+    is planned.  The readless exception is deliberately narrow: only an
+    unversioned, non-temporal ``update`` or ``delete`` reaches this helper and
+    returns without a read.  Structural shape and descriptor validity are owned
+    by :func:`validate_predicate_write`; this function only links an already
+    validated scenario write to its earlier read result.
+    """
+    if not _requires_materialization(entity):
+        return
+
+    target = instruction.get("target")
+    if not isinstance(target, dict):  # pragma: no cover - structural schema guard
+        return
+    predicate = target.get("predicate")
+    if not isinstance(predicate, dict):  # pragma: no cover - structural schema guard
+        return
+
+    target_finds = [
+        (index, step)
+        for index, step in enumerate(preceding_steps)
+        if step.get("targetEntity") == entity.name and isinstance(step.get("find"), dict)
+    ]
+    matching_finds = [
+        (index, step)
+        for index, step in target_finds
+        if canonical(step["find"]) == canonical(predicate)
+    ]
+    if not matching_finds:
+        if target_finds:
+            raise PredicateWriteValidationError(
+                f"predicate write to {entity.name!r} requires a preceding materializing find "
+                "with a matching canonical predicate; earlier finds for that target resolve "
+                "different predicates"
+            )
+        raise PredicateWriteValidationError(
+            f"predicate write to {entity.name!r} requires a preceding materializing find "
+            "for the same concrete target and canonical predicate"
+        )
+
+    for index, step in matching_finds:
+        rows = step.get("expectRows")
+        if not isinstance(rows, list):
+            continue
+        _assert_materialization_rows(entity, index, rows)
+        return
+    indexes = ", ".join(f"scenario[{index}]" for index, _ in matching_finds)
+    raise PredicateWriteValidationError(
+        f"matching materializing find at {indexes} must declare expectRows to expose "
+        "the resolved rows and per-row observations"
+    )
+
+
+def _requires_materialization(entity: Entity) -> bool:
+    return entity.is_temporal or any(
+        attribute.get("optimisticLocking") for attribute in entity.attributes
+    )
+
+
+def _assert_materialization_rows(entity: Entity, index: int, rows: list[Any]) -> None:
+    """Ensure an observable read exposes the identity/version coordinates it needs.
+
+    An empty expected result is itself an observable materialization: no per-row
+    write will follow.  For every resolved row, derive the identity and observed
+    version/milestone columns from the descriptor rather than its authored SQL.
+    """
+    required_columns = {
+        attribute["column"]
+        for attribute in entity.attributes
+        if attribute.get("primaryKey") or attribute.get("optimisticLocking")
+    }
+    if entity.is_temporal:
+        required_columns.update(
+            column
+            for axis in entity.as_of_attributes
+            for column in (axis.get("fromColumn"), axis.get("toColumn"))
+            if isinstance(column, str)
+        )
+    for row_index, row in enumerate(rows):
+        if not isinstance(row, dict):  # pragma: no cover - case schema guard
+            continue
+        missing = sorted(required_columns - row.keys())
+        if missing:
+            raise PredicateWriteValidationError(
+                f"materializing find at scenario[{index}] expectRows[{row_index}] omits "
+                f"required identity/observation column(s) {missing} for {entity.name!r}"
+            )
 
 
 def _assert_bare_predicate(node: Any) -> None:

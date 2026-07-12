@@ -30,7 +30,11 @@ from jsonschema.exceptions import best_match
 from .case import Entity
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
 from .paths import schemas_dir
-from .predicate_write_validate import PredicateWriteValidationError, validate_predicate_write
+from .predicate_write_validate import (
+    PredicateWriteValidationError,
+    validate_predicate_write,
+    validate_predicate_write_materialization,
+)
 from .value_object_resolve import RejectionError
 
 _SCHEMA_FILES = (
@@ -275,28 +279,29 @@ def _validate_predicate_write(
     operation_schema: dict[str, Any],
     label: str,
     errors: list[str],
-) -> None:
+) -> Entity | None:
     """Validate the operation and model-dependent parts of one write instruction."""
     if not isinstance(write, dict):
-        return  # legacy string writes remain valid and need no predicate walk
+        return None  # legacy string writes remain valid and need no predicate walk
     target = write.get("target")
     if not isinstance(target, dict):
-        return  # the case schema owns missing/malformed target errors
+        return None  # the case schema owns missing/malformed target errors
     predicate = target.get("predicate")
     if predicate is not None:
         _validate(predicate, operation_schema, f"{label} target.predicate", errors)
     target_name = target.get("entity")
     if not isinstance(target_name, str):
-        return
+        return None
     try:
         entity = Entity(definition=resolve_effective_definition(entity_defs, target_name))
     except (KeyError, RejectionError) as exc:
         errors.append(f"{label}: target entity {target_name!r} is not declared: {exc}")
-        return
+        return None
     try:
         validate_predicate_write(entity, entity_defs, write)
     except PredicateWriteValidationError as exc:
         errors.append(f"{label}: {exc}")
+    return entity
 
 
 def _validate_scenario_reference_sql(
@@ -400,13 +405,20 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         errors,
                     )
                 if isinstance(step, dict) and isinstance(step.get("write"), dict):
-                    _validate_predicate_write(
+                    entity = _validate_predicate_write(
                         step["write"],
                         model_entities.get(model_name or "", []),
                         operation_schema,
                         f"case {case_path.name} scenario[{index}]",
                         errors,
                     )
+                    if entity is not None:
+                        try:
+                            validate_predicate_write_materialization(
+                                entity, when["scenario"][:index], step["write"]
+                            )
+                        except PredicateWriteValidationError as exc:
+                            errors.append(f"case {case_path.name} scenario[{index}]: {exc}")
         # A coherence case (Phase 11) likewise carries read-step operations under
         # `when.coherence[].find`; each must validate against the operation algebra schema.
         if isinstance(when.get("coherence"), list):

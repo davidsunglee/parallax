@@ -569,10 +569,15 @@ inheritance-family write before SQL, as `m-inheritance` requires.
 Materializing cases make the observation explicit: a preceding scenario read
 resolves the same target predicate and exposes the matched rows or observed
 versions; the following write instruction independently states what the caller
-requested. The read is not inferred from its SQL and the write is not inferred
-from the read. A non-trivial scenario read MAY carry `referenceSql`, with the same
-string-or-dialect-map shape as `then.referenceSql`; it is self-contained (rather
-than reusing golden binds) and must agree with its golden rows as the third oracle.
+requested. For every versioned or temporal target, model-aware validation MUST
+require that prior find to use the same concrete `targetEntity` and canonical
+operation, and to expose `expectRows` with each resolved row's descriptor-derived
+identity and observed version/milestone coordinates. An unversioned,
+non-temporal `update` or `delete` is the sole readless exception. The read is not
+inferred from its SQL and the write is not inferred from the read. A non-trivial
+scenario read MAY carry `referenceSql`, with the same string-or-dialect-map shape
+as `then.referenceSql`; it is self-contained (rather than reusing golden binds)
+and must agree with its golden rows as the third oracle.
 
 A case MAY carry a **`when.uow`** block (`{ concurrency: locking |
 optimistic }`) declaring the unit-of-work strategy its golden SQL runs under
