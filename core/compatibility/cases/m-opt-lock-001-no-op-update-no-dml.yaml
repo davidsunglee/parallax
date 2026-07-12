@@ -15,7 +15,11 @@
 #   step 0 find  : cache MISS — read account 2 (Linus, 250.00, version 1), 1 round trip
 #   step 1 write : a versioned update whose set changes nothing ⇒ NO DML, 0 round trips
 #   step 2 find  : cache HIT (0 round trips) — the SAME row, unchanged
-# roundTrips = 1 (the single find; the no-op write and the hit cost nothing).
+# The unit of work runs in the DEFAULT `locking` mode, so the step-0 object find
+# carries the m-read-lock shared-row-lock suffix (`for share of t0`); the step-2
+# cache HIT stays lock-correct because step 0's shared lock is held for the
+# transaction's duration. roundTrips = 1 (the single find; the no-op write and the
+# hit cost nothing).
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, no-op, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -30,7 +34,7 @@ when:
       note: cache MISS — read account 2 (balance 250.00, version 1)
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: 250.00, version: 1 }

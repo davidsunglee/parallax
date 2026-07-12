@@ -19,7 +19,9 @@
 #                  signal (m-opt-lock-005 / updatedRows != 1).
 #   step 2 find  : the SAME `balance < 200` re-resolves (cache MISS after the write)
 #                  and MUST observe both accounts at balance 0.00, version 2.
-# The only difference from m-opt-lock-004 is the per-object gate (`and version = ?`) and its
+# m-opt-lock-004 (locking mode) differs on BOTH sides: its reads carry the m-read-lock
+# shared-row-lock suffix (`for share of t0`) where these take no lock, and its
+# per-object UPDATEs drop the gate where these carry `and version = ?` with its
 # extra observed-version bind — the version is framework-owned (ADR 0013), never a
 # caller number. roundTrips = 4 (materialize read + two per-object updates + verify read).
 model: models/account.yaml

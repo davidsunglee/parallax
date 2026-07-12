@@ -16,8 +16,9 @@
 #                  at 5.00 (the insert landed), and NOT account 3, which qualified at
 #                  10.00 before the flush but is gone (the delete landed). Account 2
 #                  (250.00) is excluded by the predicate.
-# The single find witnesses all three flushed ops at once. roundTrips = 4 (the three
-# flushed writes + the dependent find).
+# The single find witnesses all three flushed ops at once and, in the DEFAULT
+# `locking` mode, carries the m-read-lock shared-row-lock suffix (`for share of t0`).
+# roundTrips = 4 (the three flushed writes + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, m-sql, mixed-op-flush, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -47,7 +48,7 @@ when:
       note: the combined net state — account 1 (20.00) + account 9 (5.00); account 3 was deleted, account 2 excluded
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0
           binds: [50.00]
       expectRows:
         - { id: 1, owner: Ada, balance: 20.00, version: 2 }

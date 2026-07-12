@@ -10,16 +10,20 @@
 # The scenario makes that cost observable, step by step:
 #   step 0 find  : the materialize read — `balance < 200` matches accounts 1 (Ada,
 #                  100.00) and 3 (Grace, 10.00), both at version 1 (account 2 at
-#                  250.00 is excluded), 1 round trip.
+#                  250.00 is excluded), 1 round trip, under the m-read-lock shared
+#                  row lock (`for share of t0`).
 #   step 1 write : set `balance = 0.00` on the matched rows — TWO per-object
 #                  version-advancing UPDATEs (locking mode: NO `and version = ?`
 #                  gate), one keyed on id 1, one on id 3, each advancing the
 #                  version 1 -> 2, 2 round trips.
 #   step 2 find  : the SAME `balance < 200` re-resolves (cache MISS after the write)
 #                  and MUST observe both accounts at balance 0.00, version 2.
-# Under the DEFAULT `locking` strategy the read took a shared lock, so the per-
-# object writes need no version check — the ungated version-advancing form (m-opt-lock-002
-# shape) per row. Optimistic mode (m-opt-lock-003) adds the `and version = ?` gate per row.
+# Under the DEFAULT `locking` strategy EVERY in-transaction object find carries the
+# shared-row-lock suffix (m-read-lock-002's rule) — the materialize read AND the
+# step-2 verify read — so the per-object writes need no version check: the ungated
+# version-advancing form (m-opt-lock-002 shape) per row. Optimistic mode
+# (m-opt-lock-003) differs on BOTH sides: its reads take no lock and each per-object
+# UPDATE adds the `and version = ?` gate.
 # roundTrips = 4 (one materialize read + two per-object updates + one verify read).
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, m-unit-work, locking-mode, materialize, set-based, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
@@ -37,7 +41,7 @@ when:
       note: the materialize read — resolve `balance < 200` to rows (ids 1 and 3, version 1)
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0
           binds: [200.00]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
@@ -61,7 +65,7 @@ when:
       note: the SAME find re-resolves (cache MISS) and MUST observe both rows at balance 0.00, version 2
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0
           binds: [200.00]
       expectRows:
         - { id: 1, owner: Ada, balance: 0.00, version: 2 }

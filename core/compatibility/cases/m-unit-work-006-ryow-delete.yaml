@@ -7,9 +7,11 @@
 # the ABSENCE of the row (zero rows), not the stale fixture. The scenario:
 #   step 0 write : COMMIT a DELETE of account 3 (Grace)
 #   step 1 find  : query account 3 — it MUST observe NO rows (the delete is visible).
-# The find is a cache MISS that costs one round trip (the forced flush precedes it);
-# asserting an empty result proves read-your-own-writes for a deletion against real
-# committed data. roundTrips = 2 (the committed delete + the dependent find).
+# The find is a cache MISS that costs one round trip (the forced flush precedes it)
+# and, in the DEFAULT `locking` mode, carries the m-read-lock shared-row-lock suffix
+# (`for share of t0` — locking zero rows is valid SQL); asserting an empty result
+# proves read-your-own-writes for a deletion against real committed data.
+# roundTrips = 2 (the committed delete + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -31,7 +33,7 @@ when:
       note: a dependent find MUST observe the deletion (read-your-own-writes) — zero rows
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [3]
       expectRows: []
 then:

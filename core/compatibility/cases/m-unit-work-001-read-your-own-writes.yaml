@@ -9,7 +9,9 @@
 # The find is a cache MISS that costs one round trip (the forced flush precedes
 # it). If the unit of work did not flush before the dependent read, the find would
 # return nothing; asserting the written row proves read-your-own-writes against
-# real committed data. roundTrips = 2 (the committed insert + the dependent find).
+# real committed data. The unit of work runs in the DEFAULT `locking` mode, so the
+# in-transaction object find carries the m-read-lock shared-row-lock suffix
+# (`for share of t0`). roundTrips = 2 (the committed insert + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -31,7 +33,7 @@ when:
       note: a dependent find MUST observe the flushed write (read-your-own-writes)
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [7]
       expectRows:
         - { id: 7, owner: Newton, balance: 5.00, version: 1 }

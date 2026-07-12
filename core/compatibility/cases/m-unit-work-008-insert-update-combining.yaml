@@ -12,7 +12,9 @@
 #   step 1 find  : query account 8 — it observes the combined INSERT's final state.
 # The single INSERT in step 0's golden (balance 99.00, no UPDATE statement) IS the
 # observable proof of combining; the dependent find confirms read-your-own-writes on
-# the combined row. roundTrips = 2 (the one combined insert + the find).
+# the combined row and, in the DEFAULT `locking` mode, carries the m-read-lock
+# shared-row-lock suffix (`for share of t0`). roundTrips = 2 (the one combined
+# insert + the find).
 model: models/account.yaml
 tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -34,7 +36,7 @@ when:
       note: a dependent find observes the combined insert's final values (read-your-own-writes)
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [8]
       expectRows:
         - { id: 8, owner: Turing, balance: 99.00, version: 1 }
