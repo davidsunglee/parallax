@@ -23,8 +23,9 @@ default:
 # Repo-wide: the top-level gates and reports that span every module.
 # ===========================================================================
 
-# Full merge gate: repo lint + core gates + primary TS lanes + the harness suite (Docker).
-verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-typecheck-tests ts-lint ts-package-check ts-conformance-compile ts-db oracle-test
+# Full merge gate: repo lint + core gates + primary TS lanes + Python lanes + the harness suite (Docker).
+# `python-verify` subsumes `python-static`, so only the aggregate is listed here.
+verify: lint oracle-typecheck core-dep-graph ts-typecheck ts-typecheck-tests ts-lint ts-package-check ts-conformance-compile ts-db python-verify oracle-test
 
 # Every static check that needs no database: harness ruff, markdown, core schema/SQL,
 # and the language-contract diagnostic tools.
@@ -152,3 +153,39 @@ ts-db: ts-db-fast
 ts-db-all: ts-db
     PARALLAX_DATABASES=mariadb pnpm exec vitest run --root languages/typescript packages/typescript/test/api-conformance
     pnpm exec vitest run --root languages/typescript packages/typescript/test/mariadb-run.test.ts
+
+# ===========================================================================
+# Language: Python. The uv workspace lives under languages/python/packages/*;
+# these fan out into it via uv. Recipe names (`python-static`, `python-verify`)
+# are pinned by languages/python/spec/python.md §10.
+# ===========================================================================
+
+python := "languages/python"
+
+# Every database-free §10 row: ruff (lint + format check), Pyright strict, the
+# generated import-linter forbidden-edge complement (DAG-sync check) +
+# lint-imports, unit tests + branch coverage + diff-cover, the built-artifact /
+# clean-install / api-surface proofs, dead-code scan, and the supply-chain
+# audit. The Docker-free compile-sweep row joins here in COR-3 Phase 5.
+python-static:
+    cd {{python}} && uv run ruff format --check .
+    cd {{python}} && uv run ruff check .
+    cd {{python}} && uv run pyright
+    cd {{python}} && uv run python tools/check_dag_sync.py
+    cd {{python}} && uv run lint-imports
+    cd {{python}} && uv run pytest -m unit --cov --cov-branch --cov-report=xml --cov-report=term-missing --cov-fail-under=90
+    cd {{python}} && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100
+    cd {{python}} && uv run pytest -m "artifact or clean_install or api_surface"
+    cd {{python}} && uv run vulture
+    cd {{python}} && uv build --all-packages -o dist
+    cd {{python}} && uv run twine check dist/*
+    cd {{python}} && uv lock --check
+    cd {{python}} && uv run pip-audit
+
+# Static plus every database-backed §10 row (Docker): the pg-full run sweep,
+# provider contract, adapter smoke, and API conformance. Those lanes come
+# online in COR-3 Phase 5+ (with the skip-reporting summary block that forbids
+# silent database-backed skips); until then the markers collect nothing and
+# pytest's no-tests exit code (5) is tolerated.
+python-verify: python-static
+    cd {{python}} && uv run pytest -m "conformance or provider_contract or adapter_smoke or api_conformance" || [ "$?" -eq 5 ]

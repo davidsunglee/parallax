@@ -1,0 +1,12 @@
+# Python build / test artifacts (uv, hatchling, pytest-cov, pyright).
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+coverage.xml
+.coverage
+.coverage.*
+.pytest_cache/
+.ruff_cache/

@@ -1,0 +1,39 @@
+name: python-deps-refresh
+
+# §10 supply-chain freshness: a monthly `uv lock --upgrade` refresh PR for the
+# Parallax Python workspace. The PR is human-reviewed like any change and must
+# not be merged red (the python-static / python-database lanes still gate it).
+on:
+  schedule:
+    - cron: "0 6 1 * *" # 06:00 UTC on the 1st of each month
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - name: uv lock --upgrade
+        working-directory: languages/python
+        run: uv lock --upgrade
+      - name: Open refresh PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/python-deps-refresh
+          base: main
+          add-paths: languages/python/uv.lock
+          commit-message: "chore(python): refresh uv.lock via uv lock --upgrade"
+          title: "chore(python): monthly uv lock --upgrade refresh"
+          body: |
+            Automated monthly `uv lock --upgrade` refresh for the Parallax Python
+            workspace (`languages/python`).
+
+            Reviewed like any change; do not merge red — the `python-static` and
+            `python-database` lanes still gate it.

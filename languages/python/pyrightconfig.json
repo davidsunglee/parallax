@@ -1,0 +1,21 @@
+{
+  "typeCheckingMode": "strict",
+  "pythonVersion": "3.12",
+  "include": [
+    "packages/parallax-core/src",
+    "packages/parallax-snapshot/src",
+    "packages/parallax-postgres/src",
+    "packages/parallax-conformance/src",
+    "tools",
+    "tests"
+  ],
+  "extraPaths": ["tools", "tests"],
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv",
+    "**/node_modules",
+    "dist",
+    "build"
+  ],
+  "reportMissingTypeStubs": "error"
+}

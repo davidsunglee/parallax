@@ -1,0 +1,24 @@
+[project]
+name = "parallax-core"
+version = "0.1.0"
+description = "Parallax common runtime: the class-free engine spine (metamodel hub, op-algebra, SQL lowering, unit of work, abstract database port)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Parallax" }]
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# PEP 420 namespace package: the wheel ships `parallax.core.*` only, with no
+# `parallax/__init__.py` at the shared namespace root.
+[tool.hatch.build.targets.wheel]
+packages = ["src/parallax"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/parallax", "README.md"]

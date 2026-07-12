@@ -179,3 +179,54 @@ jobs:
         env:
           PARALLAX_DATABASES: ${{ matrix.database }}
         run: just oracle-test
+
+  # The Docker-free Python static lane across the supported CPython matrix: ruff
+  # (lint + format check), Pyright strict, the generated import-linter
+  # forbidden-edge complement (DAG-sync check) + lint-imports, unit tests +
+  # branch coverage + diff-cover, the built-artifact / clean-install /
+  # api-surface proofs, dead-code scan, and the supply-chain audit. No Docker.
+  python-static:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    env:
+      UV_FROZEN: "1"
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # diff-cover compares changed lines against origin/main.
+          fetch-depth: 0
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: just python-static
+        run: just python-static
+
+  # The Docker-backed Python run lane: provisions Testcontainers Postgres and
+  # runs the pg-full run sweep, provider contract, adapter smoke, and API
+  # conformance. Those lanes come online in COR-3 Phase 5+, together with the
+  # session summary that fails on any silently skipped database-backed check;
+  # until then the markers collect nothing (pytest's no-tests exit code 5 is
+  # tolerated). Docker is available on GitHub-hosted ubuntu runners.
+  python-database:
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: Python database lanes (Testcontainers Postgres)
+        working-directory: languages/python
+        run: uv run pytest -m "conformance or provider_contract or adapter_smoke or api_conformance" || [ "$?" -eq 5 ]
