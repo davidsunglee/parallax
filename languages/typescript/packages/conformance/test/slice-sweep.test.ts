@@ -5,7 +5,7 @@
  * contract boundary (the runner's `runCompile`, the same path the CLI drives):
  *
  *  - **Full compile sweep.** `test.each` over every harness-lane `slice-mvp-1`
- *    tagged case (111): each compiles to an `ok` envelope, and for a `read`-shaped
+ *    tagged case (109): each compiles to an `ok` envelope, and for a `read`-shaped
  *    case (whose golden is a single string) the emitted SQL + binds equal the
  *    golden by construction. Write / scenario / conflict goldens are multi-string
  *    / per-step and graded structurally in the run lane; here they must compile
@@ -61,9 +61,8 @@ function compileMatrixStatus(envelope: Envelope, loaded: LoadedCase): MatrixStat
  * The full `slice-mvp-1` tagged slice the HARNESS executes, in discovery order.
  * `api-conformance`-lane cases (boundary retry cases + the read-lock matrix reads)
  * are excluded: they have no harness-executable golden — their observable is proven
- * by the API Conformance Suite — so this sweep covers the 111 harness-lane cases
+ * by the API Conformance Suite — so this sweep covers the 109 harness-lane cases
  * (101 pre-Phase-4 cases + the harness-lane auto-retry case `m-opt-lock-009` + the
- * two Phase-5 versioned set-based materialize scenarios `m-opt-lock-003`/`-004` + the
  * four Phase-6 optimistic × temporal close cases `m-temporal-read-009`–`-012` + the
  * COR-12 behavioral read-lock cases `m-read-lock-006` (blocks-writer),
  * `m-read-lock-007` (shared-compatible), and `m-read-lock-008`
@@ -86,7 +85,7 @@ function readGolden(loaded: LoadedCase): { sql: string; binds: readonly unknown[
 }
 
 group("full-slice compile sweep (Docker-free)", () => {
-  it("discovers the harness-lane slice-mvp-1 slice (186 cases)", () => {
+  it("discovers the harness-lane slice-mvp-1 slice (184 cases)", () => {
     // The slice is include-driven; the exact count guards against a discovery
     // regression that silently drops (or over-collects) a tagged case. This is the
     // harness-executable subset (api-conformance-lane cases are filtered out). It
@@ -100,7 +99,7 @@ group("full-slice compile sweep (Docker-free)", () => {
     // plain-bitemporal-insert witness m-bitemp-write-009 (COR-9 Phase 1 extension:
     // the third member of the plain insert / update / terminate family; Postgres-only
     // golden, so it does NOT join the curated MariaDB profile).
-    expect(CASES.length).toBe(186);
+    expect(CASES.length).toBe(184);
   });
 
   it.each(CASES)("$id compiles ok (in-claim ⇒ never unsupported)", ({ loaded }) => {
@@ -196,8 +195,8 @@ group("case-matrix report — the slice is green at a glance", () => {
     // The rendered report is the human-facing artifact; surface it on failure so
     // a regression names the exact residual case IDs.
     expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-    expect(report.total).toBe(186);
-    // 175 non-rejected cases compile `ok` (143 + the 8 m-bitemp-write cases, COR-26,
+    expect(report.total).toBe(184);
+    // 173 non-rejected cases compile `ok` (143 + the 8 m-bitemp-write cases, COR-26,
     // + the 7 audit-chaining / unit-work RYOW cases, COR-26 Phase 2, + the 5
     // batch-DELETE / opt-lock-edge / mixed-op cases, COR-26 Phase 3, + the 11
     // type-fidelity / value-object-write / pk-gen `ok` cases, COR-26 Phase 5:
@@ -205,7 +204,7 @@ group("case-matrix report — the slice is green at a glance", () => {
     // plain-bitemporal-insert writeSequence m-bitemp-write-009, COR-9 Phase 1
     // extension); the 11 `rejected` cases are graded `pass` (a correct pre-SQL refusal
     // naming the rule — the 10 value-object negatives plus the Phase-5 m-value-object-044).
-    expect(report.counts.ok).toBe(175);
+    expect(report.counts.ok).toBe(173);
     expect(report.counts.pass).toBe(11);
     expect(report.residuals).toEqual([]);
   });

@@ -210,7 +210,7 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "versioned per-key version-gated materialize): the collapsed / materialized DML is proven end-to-end by the " +
       "reference harness AND the conformance runner's run lane (slice-run drives @parallax/conformance's " +
       "write-sequence plan, grading the resulting tableState). The batched-write developer idiom is already " +
-      "exercised by m-batch-write-001/-002 (and the versioned materialize by m-opt-lock-003/-004) in " +
+      "exercised by m-batch-write-001/-002 in " +
       "transactions.api-conformance.test.ts — these are the DELETE-form variants whose specific goldens the run lane grades.",
   })),
   ...["m-opt-lock-012", "m-opt-lock-013"].map((id) => ({

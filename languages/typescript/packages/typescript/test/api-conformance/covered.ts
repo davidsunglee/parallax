@@ -137,10 +137,7 @@ export const TRANSACTIONS: readonly string[] = [
 
 /**
  * Locking: the automatic in-transaction read lock (`m-read-lock-001`), the no-op versioned
- * update (`m-opt-lock-001`), the locking-mode version-advancing update (`m-opt-lock-002`), the
- * versioned set-based materialize scenarios (`m-opt-lock-003`/`m-opt-lock-004` — a set-based update on
- * a versioned entity resolves the predicate, then updates per object, gated in
- * optimistic mode / ungated version-advancing in locking mode), the read-lock
+ * update (`m-opt-lock-001`), the locking-mode version-advancing update (`m-opt-lock-002`), the read-lock
  * matrix (`m-read-lock-002`-`m-read-lock-005`, `api-conformance` lane — object find locks, projection
  * omits, deep fetch locks every level, optimistic omits), optimistic-mode
  * version-column locking (07xx), and the optimistic × temporal close cases
@@ -152,8 +149,6 @@ export const LOCKING: readonly string[] = [
   "m-read-lock-001-shared-suffix",
   "m-opt-lock-001-no-op-update-no-dml",
   "m-opt-lock-002-versioned-update-locking-mode",
-  "m-opt-lock-003-versioned-set-based-materialize-optimistic",
-  "m-opt-lock-004-versioned-set-based-materialize-locking",
   "m-read-lock-002-locking-txn-object-find-locks",
   "m-read-lock-003-locking-txn-projection-omits-lock",
   "m-read-lock-004-locking-txn-deep-fetch-locks-every-level",

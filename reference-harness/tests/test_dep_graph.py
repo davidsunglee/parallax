@@ -633,12 +633,15 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # rises by 12 (272 -> 284); slice-managed-1 and slice-mvp-1 are unchanged.
         # Counts at that stage: 198 / 284 / 317.
         #
-        # COR-35 adds nine predicate-selected write cases tagged slice-snapshot-1 only
+        # COR-35 removes the deprecated slice-mvp-1 tag from the two upgraded legacy
+        # materialized Account updates m-opt-lock-003/-004 (they retain snapshot +
+        # managed), so MVP falls 198 -> 196. It also adds nine predicate-selected write
+        # cases tagged slice-snapshot-1 only
         # (never slice-managed-1 or slice-mvp-1): versioned materialized update/delete,
         # non-versioned readless update/delete, audit terminate, and four bitemporal
         # materialized write flavors. snapshot rises 284 -> 293; the deliberate tag
-        # omission leaves the other two claims unchanged. Final counts: 198 / 293 / 317.
-        ("slice-mvp-1", 198),
+        # omission leaves managed unchanged. Final counts: 196 / 293 / 317.
+        ("slice-mvp-1", 196),
         ("slice-snapshot-1", 293),
         ("slice-managed-1", 317),
     ],

@@ -16,9 +16,8 @@
  *    distinct key, or the ungated version-advancing `UPDATE` — each keyed by its
  *    `/writeSequence/<step>` pointer;
  *  - **scenario** (`m-unit-work-001`, read-your-own-writes; `m-unit-work-002`,
- *    rollback/abort; `m-opt-lock-001`, no-op-update-no-DML; `m-opt-lock-003`/`-004`,
- *    versioned set-based materialize — whose write step lists SEVERAL per-object
- *    `UPDATE`s): a scenario is NOT compiled to SQL, but the adapter surfaces the
+ *    rollback/abort; `m-opt-lock-001`, no-op-update-no-DML): a scenario is NOT
+ *    compiled to SQL, but the adapter surfaces the
  *    per-step golden so the gate classifies it in-claim, `roundTrips` the declared
  *    case total;
  *  - **conflict** (`m-opt-lock-005`/`-006`/`-007`, optimistic locking;
@@ -87,8 +86,7 @@ function txnCases(): readonly { id: string; path: string }[] {
  * `m-read-lock-001`, batched writes `m-batch-write-001`/`m-unit-work-003`/
  * `m-batch-write-002`, read-your-own-writes `m-unit-work-001`, rollback/abort
  * `m-unit-work-002`, no-op update `m-opt-lock-001`, locking-mode versioned update
- * `m-opt-lock-002`, the versioned set-based materialize scenarios `m-opt-lock-003`/
- * `-004`, the optimistic-lock conflict/retry `m-opt-lock-005`/`-006`/`-007`, the
+ * `m-opt-lock-002`, the optimistic-lock conflict/retry `m-opt-lock-005`/`-006`/`-007`, the
  * harness-lane auto-retry `m-opt-lock-009`, the read-lock-blocks-writer concurrency
  * case `m-read-lock-006`, the read-lock-shared-compatible `m-read-lock-007` and
  * projection-omits-lock-admits-writer `m-read-lock-008` concurrency-success cases,
@@ -106,8 +104,6 @@ const EXPECTED_IDS: readonly string[] = [
   "m-opt-lock-002",
   "m-unit-work-003",
   "m-batch-write-002",
-  "m-opt-lock-003",
-  "m-opt-lock-004",
   "m-opt-lock-005",
   "m-opt-lock-006",
   "m-opt-lock-007",
@@ -191,9 +187,7 @@ function expectedStatements(loaded: ReturnType<typeof loadCase>): readonly Diale
     );
   }
   if (isScenario(loaded)) {
-    // A step may list SEVERAL golden statements (a versioned set-based materialize
-    // write, `m-opt-lock-003`/`m-opt-lock-004`) — flatten them so each per-object
-    // `UPDATE` is one entry.
+    // A step may list several golden statements; flatten them in authored order.
     const steps = (raw.when?.scenario ?? []) as readonly StepWithStatements[];
     return steps.flatMap((step) => dialectStatements(step.statements ?? [], "postgres"));
   }

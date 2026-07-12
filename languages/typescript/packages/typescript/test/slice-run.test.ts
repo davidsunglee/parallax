@@ -4,7 +4,7 @@
  * database?" sweep.
  *
  * One container serves every case (the provider resets the schema per case). For
- * each of the 111 harness-lane tagged cases the sweep runs the adapter's `runRun` (the same
+ * each of the 109 harness-lane tagged cases the sweep runs the adapter's `runRun` (the same
  * orchestration the CLI drives) with the concrete composition-root provider
  * injected, and grades the observation the case SHAPE asserts, reusing the m-case-format
  * comparison rules (exact decimal, boolean never `== 1`, µs timestamps,
@@ -53,9 +53,8 @@ import { casesForProfile, POSTGRES_FULL_PROFILE } from "./conformance-profiles.j
  * The full `slice-mvp-1` tagged slice the HARNESS runs, in discovery order.
  * `api-conformance`-lane cases (boundary retry cases + the read-lock matrix reads)
  * are excluded — they have no harness-executable golden (the API Conformance Suite
- * proves them) — so the run sweep covers the 111 harness-lane cases (101 pre-Phase-4
- * cases + the harness-lane auto-retry case `m-opt-lock-009` + the two Phase-5 versioned
- * set-based materialize scenarios `m-opt-lock-003`/`m-opt-lock-004` + the four Phase-6 optimistic ×
+ * proves them) — so the run sweep covers the 109 harness-lane cases (101 pre-Phase-4
+ * cases + the harness-lane auto-retry case `m-opt-lock-009` + the four Phase-6 optimistic ×
  * temporal close cases `m-temporal-read-009`-`m-temporal-read-012` + the COR-12 behavioral read-lock cases `m-read-lock-006`
  * (blocks-writer), `m-read-lock-007` (shared-compatible), and `m-read-lock-008` (projection-omits-lock-
  * admits-writer)).
@@ -80,8 +79,8 @@ const CASES = casesForProfile(POSTGRES_FULL_PROFILE);
 // cases (COR-26 Phase 3), then by the 12 type-fidelity / value-object-write /
 // pk-gen cases (COR-26 Phase 5), then by the standalone plain-bitemporal-insert
 // witness m-bitemp-write-009 (COR-9 Phase 1 extension) — all harness-lane.
-it("discovers the harness-lane slice-mvp-1 slice (186 cases)", () => {
-  expect(CASES.length).toBe(186);
+it("discovers the harness-lane slice-mvp-1 slice (184 cases)", () => {
+  expect(CASES.length).toBe(184);
 });
 
 group.skipIf(!HAS_DOCKER)(
@@ -140,7 +139,7 @@ group.skipIf(!HAS_DOCKER)(
     it("the case-matrix report is GREEN with no residuals", () => {
       const report = matrix.report();
       expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-      expect(report.total).toBe(186);
+      expect(report.total).toBe(184);
       expect(report.residuals).toEqual([]);
     });
   },

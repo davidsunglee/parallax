@@ -1,10 +1,8 @@
 /**
  * API Conformance Suite — **locking** family (Phase 10c): the automatic in-
  * transaction read lock (`m-read-lock-001`), the no-op versioned update (`m-opt-lock-001`), the
- * locking-mode version-advancing update (`m-opt-lock-002`), the versioned set-based
- * materialize scenarios (`m-opt-lock-003` / `m-opt-lock-004` — a set-based update on a versioned entity
- * resolves the predicate, then updates per object), and optimistic-mode version-
- * column locking (`m-opt-lock-005` / `m-opt-lock-006` / `m-opt-lock-007`), written as a developer would and run
+ * locking-mode version-advancing update (`m-opt-lock-002`), and optimistic-mode
+ * version-column locking (`m-opt-lock-005` / `m-opt-lock-006` / `m-opt-lock-007`), written as a developer would and run
  * against each selected shipped `@parallax/db-*` adapter.
  *
  * **Strategy is a per-unit-of-work mode (m-unit-work / m-opt-lock).** `px.transaction(body, {
@@ -57,9 +55,6 @@ it("the locking suite covers exactly the LOCKING family", () => {
     "m-read-lock-001-shared-suffix",
     "m-opt-lock-001-no-op-update-no-dml",
     "m-opt-lock-002-versioned-update-locking-mode",
-    // the versioned set-based materialize scenarios (m-opt-lock-003/m-opt-lock-004)
-    "m-opt-lock-003-versioned-set-based-materialize-optimistic",
-    "m-opt-lock-004-versioned-set-based-materialize-locking",
     // the read-lock matrix (m-read-lock-002–m-read-lock-005, api-conformance lane)
     "m-read-lock-002-locking-txn-object-find-locks",
     "m-read-lock-003-locking-txn-projection-omits-lock",
@@ -225,59 +220,6 @@ group.skipIf(!HAS_DOCKER).each(selectedProviders())("locking suite ($label)", (d
       });
       expect(result.affectedRows).toBe(1);
       await assertTableState(f);
-    },
-    BOOT_TIMEOUT,
-  );
-
-  writeCase(
-    "m-opt-lock-004: a versioned set-based update materializes into per-object version-advancing updates",
-    async () => {
-      const f = await provisionCase(
-        provider,
-        "m-opt-lock-004-versioned-set-based-materialize-locking",
-      );
-      // A set-based update on a VERSIONED entity with NO explicit prior find: the
-      // update MATERIALIZES — it resolves `balance < 200` to rows (recording their
-      // versions + taking the locking lock), then updates per object (ungated).
-      const observed = await f.px.transaction(
-        async (tx) => {
-          const accounts = tx.entity("Account");
-          const result = await accounts.update(Account.balance.lt(200), {
-            set: [Account.balance.set(dec("0.00"))],
-          });
-          // Both matched rows (ids 1 and 3) were updated, one per-object UPDATE each.
-          expect(result.affectedRows).toBe(2);
-          // Verify by re-reading: the two accounts now carry balance 0.00, version 2.
-          return accounts.find(Account.balance.lt(200)).toArray();
-        },
-        { concurrency: "locking" },
-      );
-      assertRows(observed, f.loaded, "Account", f.metamodel);
-    },
-    BOOT_TIMEOUT,
-  );
-
-  writeCase(
-    "m-opt-lock-003: a versioned set-based update materializes into per-object GATED updates",
-    async () => {
-      const f = await provisionCase(
-        provider,
-        "m-opt-lock-003-versioned-set-based-materialize-optimistic",
-      );
-      // The optimistic companion: the materialize read takes no lock, and each
-      // per-object UPDATE gates on that row's observed version (framework-owned).
-      const observed = await f.px.transaction(
-        async (tx) => {
-          const accounts = tx.entity("Account");
-          const result = await accounts.update(Account.balance.lt(200), {
-            set: [Account.balance.set(dec("0.00"))],
-          });
-          expect(result.affectedRows).toBe(2);
-          return accounts.find(Account.balance.lt(200)).toArray();
-        },
-        { concurrency: "optimistic" },
-      );
-      assertRows(observed, f.loaded, "Account", f.metamodel);
     },
     BOOT_TIMEOUT,
   );

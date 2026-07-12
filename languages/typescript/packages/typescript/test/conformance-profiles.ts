@@ -70,8 +70,6 @@ export const POSTGRES_TXN_PROFILE_IDS: readonly string[] = [
   "m-opt-lock-002",
   "m-unit-work-003",
   "m-batch-write-002",
-  "m-opt-lock-003",
-  "m-opt-lock-004",
   "m-opt-lock-005",
   "m-opt-lock-006",
   "m-opt-lock-007",
