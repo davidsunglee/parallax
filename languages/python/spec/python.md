@@ -619,9 +619,11 @@ never something an application developer hand-writes.
   predicate rather than key — are the one path where the framework itself
   materializes observations: one real read resolves the predicate to rows,
   recording each matched row's observed version (locked in `locking` mode),
-  then one keyed per-object statement per resolved row that survives the
-  per-row no-op elimination below (`1 + N` round trips, a mid-batch zero-row
-  gate aborting like any conflict). A statement becomes
+  then one keyed per-object statement per written row — for the
+  assignment-bearing verbs (`update_where` / `update_until_where`), each
+  resolved row that survives the per-row no-op elimination below; for the
+  delete and terminate verbs, every resolved row (`1 + N` round trips, a
+  mid-batch zero-row gate aborting like any conflict). A statement becomes
   a write target only as a **bare statement** — one carrying nothing but a
   predicate (its `where(...)` arguments); `order_by`, `limit`, `include`,
   `as_of`, `history` / `as_of_range`, and `narrow` are all rejected on any
@@ -652,13 +654,18 @@ never something an application developer hand-writes.
   tx.terminate_until_where(op, business_from=b, until=u)
   ```
 
-  Assignments are the typed `.set(value)` spelling on attribute expressions,
+  Assignments belong to the **assignment-bearing** verbs alone —
+  `update_where` and `update_until_where`; `delete_where`, `terminate_where`,
+  and `terminate_until_where` take no assignments, and passing any raises at
+  build — a delete or terminate names nothing to assign. Assignments are the
+  typed `.set(value)` spelling on attribute expressions,
   validated at statement build as one rule family shared with `model_copy`'s
   `update=` validation (§3) — the assignability and scalar-input rules are
   stated once there and referenced here, never duplicated, so the two lists
   cannot drift: only mapped scalar attributes and value-object members are
   assignable, never relationship fields. Three list-level rules complete the
-  family: the assignment list must be non-empty (zero assignments raises),
+  family, scoped to the assignment-bearing verbs: the assignment list must
+  be non-empty (zero assignments raises),
   each field may be assigned at most once (a duplicate raises), and every
   assigned attribute or value-object member must be declared by the exact
   target entity — set-based writes already reject inheritance-family targets
@@ -669,20 +676,30 @@ never something an application developer hand-writes.
   follows the observation rule above, with **per-path no-op semantics**.
   Versioned and temporal targets **materialize** — the resolving read records
   per-row observations, then one keyed per-row statement (gated in optimistic
-  mode), `1 + N` round trips where `N` counts **written** rows: per-row no-op
-  elimination applies, so a resolved row whose assignments all equal its
+  mode), `1 + N` round trips where `N` counts **written** rows. Which rows
+  are written is per-verb. For the assignment-bearing verbs, per-row no-op
+  elimination applies: a resolved row whose assignments all equal its
   current values (structural equality, the same rules as the change-record
   effective-set test) is skipped — no DML, no version advance, no chained
   milestone, and no round trip — mirroring the keyed no-op rule (Reladomo's
-  equal-value setters likewise refuse to enroll). An unversioned non-temporal
+  equal-value setters likewise refuse to enroll). The delete and terminate
+  verbs write **every** resolved row: with no assignments there is no value
+  equality to test — a delete or terminate changes a row's existence or
+  currency, never its values — so no resolved row is ever skipped, and `N`
+  equals the resolved-row count. An unversioned non-temporal
   target lowers to a single set-based statement with **no** no-op elimination
   — plain SQL set semantics, so already-equal rows are matched and affected
   like any SQL `UPDATE` — because the readless path observes nothing to
   compare against, and inventing a null-safe difference filter would add SQL
   shape no golden pins. That readless lowering is itself pinned so nothing is
   left to invent: `update_where` emits exactly one
-  `update <table> set <col> = ?, … where <predicate>` whose binds are the
-  assignment values in authored order followed by the predicate binds (the
+  `update <table> set <col> = ?, … where <predicate>` whose `set` columns
+  follow the model's declared attribute order — the descriptor `columnOrder`
+  convention that canonical row-write lowering and fixture loading already
+  follow — never the authored assignment order, so equivalent calls with
+  reordered assignments emit identical SQL (deterministic emission,
+  authoring-order-insensitive goldens); the binds are the assignment values
+  in the emitted column order followed by the predicate binds (the
   corpus statement-entry bind convention), and `delete_where` emits
   `delete from <table> where <predicate>`; both shapes are extension-defined
   — no corpus golden exists — and normative for this implementation. A
