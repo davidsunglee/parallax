@@ -1,3 +1,21 @@
+# Predicate-selected PLAIN bitemporal UPDATE materializes per resolved row to a
+# processing close + a business-timeline split (m-bitemp-write + m-opt-lock, ADR 0014).
+#
+# Position is bitemporal: a business interval [from_z, thru_z) nested under a processing
+# interval [in_z, out_z). A predicate write cannot collapse — each row's rectangle split
+# depends on its own observed coordinates — so it materializes. For the one resolved row
+# (pos 1, value 200, currently open on both axes) a PLAIN update (no `until`) sets
+# value = 300 from businessFrom = 2024-07-01 to business infinity, processed at
+# at = 2024-10-01, in three statements:
+#   1. close the current processing row (set out_z = at), gated on key + open out_z +
+#      the observed from_z/in_z — the optimistic coordinate gate (concurrency: optimistic);
+#   2. re-insert the OLD payload (value 200) for the pre-split slice [2024-06-01,
+#      2024-07-01) with in_z = at — history preserved before the change;
+#   3. insert the NEW payload (value 300) for [2024-07-01, infinity) with in_z = at.
+#
+# The trailing find reads the open current value = 300 and sees the new [2024-07-01, inf)
+# business segment (in_z = 2024-10-01), proving the split landed. Total roundTrips 5 =
+# materialize read (1) + three write statements (3) + verify read (1).
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, m-unit-work, bitemporal, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario
