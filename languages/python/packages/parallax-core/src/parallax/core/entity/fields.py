@@ -60,9 +60,12 @@ def _pk_strategy(value: object) -> PkStrategy:
 
 
 def _pk_str(mapping: Mapping[str, object], key: str) -> str | None:
-    value = mapping.get(key)
-    if value is None:
+    # An omitted optional key stays unset; a present key must carry the typed
+    # value (schema types it `string`, no `null`), so a present `None` is a
+    # malformed declaration that fails the isinstance check, not a silent drop.
+    if key not in mapping:
         return None
+    value = mapping[key]
     if not isinstance(value, str):
         raise EntityDefinitionError(
             f"pk generator: `{key}` must be a string, got {type(value).__name__}"
@@ -71,9 +74,12 @@ def _pk_str(mapping: Mapping[str, object], key: str) -> str | None:
 
 
 def _pk_int(mapping: Mapping[str, object], key: str) -> int | None:
-    value = mapping.get(key)
-    if value is None:
+    # An omitted optional key stays unset; a present key must carry the typed
+    # value (schema types it `integer`, no `null`), so a present `None` is a
+    # malformed declaration that fails the isinstance check, not a silent drop.
+    if key not in mapping:
         return None
+    value = mapping[key]
     if not isinstance(value, int) or isinstance(value, bool):
         raise EntityDefinitionError(
             f"pk generator: `{key}` must be an integer, got {type(value).__name__}"

@@ -249,6 +249,50 @@ def test_wrong_typed_pk_generator_mapping_is_rejected_at_definition() -> None:
         _define_wrong_typed_pk_generator()
 
 
+def _define_explicit_none_pk_generator() -> type:
+    class Bad(Entity, frozen=True):
+        __parallax__ = EntityConfig(table="bad", mutability="transactional")
+
+        id: Attr[int] = Field(
+            primary_key=True,
+            type="int64",
+            pk_generator={"strategy": "sequence", "batchSize": None},
+        )
+
+    return Bad
+
+
+def test_explicit_none_pk_generator_field_is_rejected_at_definition() -> None:
+    # A present optional key carrying `None` (distinct from an omitted key) is a
+    # malformed declaration rejected when the class body is evaluated, naming the
+    # offending NoneType — never silently normalized to a bare sequence strategy.
+    with pytest.raises(EntityDefinitionError, match=r"`batchSize`.*NoneType"):
+        _define_explicit_none_pk_generator()
+
+
+def _define_omitted_optional_pk_generator() -> type:
+    class Seq(Entity, frozen=True):
+        __parallax__ = EntityConfig(table="seq_bare", mutability="transactional")
+
+        id: Attr[int] = Field(
+            primary_key=True,
+            type="int64",
+            pk_generator={"strategy": "sequence"},
+        )
+
+    return Seq
+
+
+def test_omitted_optional_pk_generator_field_defines_and_exports() -> None:
+    # Omitting every optional key (absent != None) is valid and collapses to the
+    # bare sequence strategy, confirming the present-None rejection does not leak
+    # into the legitimately-partial object form.
+    seq = _define_omitted_optional_pk_generator()
+    exported = cast("dict[str, object]", meta(seq).descriptor()["entity"])
+    attributes = cast("list[dict[str, object]]", exported["attributes"])
+    assert attributes[0]["pkGenerator"] == "sequence"
+
+
 def test_object_form_pk_generator_defines_and_exports() -> None:
     class Seq(Entity, frozen=True):
         __parallax__ = EntityConfig(table="seq", mutability="transactional")

@@ -76,6 +76,35 @@ def test_field_rejects_wrong_typed_pk_generator_fields(mapping: dict[str, object
         Field(pk_generator=mapping)
 
 
+@pytest.mark.parametrize(
+    ("mapping", "field_name"),
+    [
+        ({"strategy": "sequence", "batchSize": None}, "batchSize"),
+        ({"strategy": "sequence", "initialValue": None}, "initialValue"),
+        ({"strategy": "sequence", "incrementSize": None}, "incrementSize"),
+        ({"strategy": "sequence", "sequenceName": None}, "sequenceName"),
+    ],
+)
+def test_field_rejects_explicit_none_pk_generator_fields(
+    mapping: dict[str, object], field_name: str
+) -> None:
+    # A present key carrying `None` is a malformed declaration (the schema types
+    # every optional field and admits no `null`); it must raise, not be silently
+    # dropped as if the key were omitted.
+    with pytest.raises(EntityDefinitionError, match=rf"`{field_name}`.*NoneType"):
+        Field(pk_generator=mapping)
+
+
+def test_field_pk_generator_omitted_optional_key_is_not_none_rejected() -> None:
+    # Absence is legitimate: an omitted optional key leaves the field unset
+    # rather than triggering the present-but-None rejection.
+    spec = Field(pk_generator={"strategy": "sequence"})
+    pk = spec.pk_generator
+    assert pk is not None
+    assert (pk.strategy, pk.sequence_name, pk.batch_size) == ("sequence", None, None)
+    assert (pk.initial_value, pk.increment_size) == (None, None)
+
+
 def test_field_rejects_unknown_pk_generator_fields() -> None:
     # The pkGenerator object is closed (`additionalProperties: false`).
     with pytest.raises(EntityDefinitionError, match="unknown field"):
