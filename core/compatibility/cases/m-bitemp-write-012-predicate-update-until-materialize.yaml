@@ -1,3 +1,22 @@
+# Predicate-selected UPDATE-UNTIL applies the new value only within a BOUNDED business
+# window, materializing to a processing close + three re-inserts (m-bitemp-write +
+# m-opt-lock, ADR 0014).
+#
+# Unlike the plain update (m-bitemp-write-010), which runs the new value to business
+# infinity, `updateUntil` bounds it to [businessFrom, until) = [2024-07-01, 2024-09-01)
+# and RESTORES the old value on either side. The resolved row (pos 1, value 200)
+# materializes to four statements:
+#   1. close the current processing row (set out_z = at, gated on the observed
+#      coordinates — optimistic);
+#   2. head: re-insert old value 200 for [2024-06-01, 2024-07-01);
+#   3. middle: insert NEW value 300 for [2024-07-01, 2024-09-01) — the bounded window;
+#   4. tail: re-insert old value 200 for [2024-09-01, infinity) — the restored future.
+# All three inserts carry in_z = at (2024-10-01).
+#
+# The trailing find reads as-of businessDate 2024-08-01 (INSIDE the window) and expects
+# value = 300 on the [2024-07-01, 2024-09-01) segment, proving the new value is visible
+# only within the window. Total roundTrips 6 = read (1) + four writes (4) +
+# verify read (1).
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, m-unit-work, bitemporal, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario

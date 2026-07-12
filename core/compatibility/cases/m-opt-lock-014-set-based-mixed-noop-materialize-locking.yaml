@@ -1,3 +1,21 @@
+# Set-based versioned UPDATE in LOCKING mode: no-op rows are eliminated, and the
+# per-row write gates on the held lock, not the version (m-opt-lock, ADR 0014).
+#
+# Two behaviors intersect here. (1) The unit of work runs concurrency: locking, so the
+# materializing read takes `for share` row locks (`for share of t0`); because those
+# locks — not a version predicate — guard the rows, each per-key UPDATE gates on the key
+# ALONE (`where id = ?`) while still ADVANCING the framework-owned version
+# (version = observed + 1). Contrast the optimistic set writes (m-opt-lock-015 /
+# m-bitemp-write-*), which gate on `... and version = ?`. (2) NO-OP ELIMINATION: the
+# predicate `balance < 200` resolves two rows — account 1 (already balance 100) and
+# account 3 (balance 10). Assigning balance = 100 is a NO-OP for account 1, so it emits
+# NO statement at all; only account 3 materializes to one UPDATE (10 -> 100,
+# version 1 -> 2). This is the 1 + N shape with N shrunk by no-op removal: one
+# materialize read plus only the rows that actually change.
+#
+# The trailing read (again `for share`) shows account 1 STILL at version 1 (never
+# written — the no-op was truly skipped) and account 3 at balance 100 / version 2. Total
+# roundTrips 3 = materialize read (1) + one real UPDATE (1) + verify read (1).
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, m-unit-work, locking-mode, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario

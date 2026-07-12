@@ -1,3 +1,19 @@
+# Set-based versioned DELETE in OPTIMISTIC mode materializes to one version-gated
+# delete per resolved row (m-opt-lock, ADR 0014).
+#
+# The optimistic-concurrency counterpart of the locking-mode no-op update
+# (m-opt-lock-014) and the write-shape twin of m-batch-write-004. A set delete over a
+# VERSIONED entity cannot collapse to `id in (...)`: each row must be removed under its
+# own observed version so a concurrent writer would be detected. The predicate
+# `balance < 200` resolves two rows (accounts 1 and 3, both observed at version 1), which
+# MATERIALIZE to two keyed, version-gated statements
+# `delete from account where id = ? and version = ?` (binds [1, 1] then [3, 1]). Unlike
+# an update there is no no-op to eliminate — every resolved row is deleted — so N stays 2.
+# With no concurrent writer each gate matches exactly its one row.
+#
+# The trailing `find all` reads the whole table and expects only account 2 (balance 250,
+# never in the predicate set) to survive, proving both matches were removed. Total
+# roundTrips 4 = materialize read (1) + two deletes (2) + verify read (1).
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, m-unit-work, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario

@@ -1,3 +1,17 @@
+# Predicate-selected DELETE over an UNVERSIONED, non-temporal entity is READLESS
+# (m-batch-write, ADR 0014).
+#
+# Wallet is Account minus the optimistic-lock `version` column and carries no temporal
+# axis, so a set delete has nothing to gate per row: no version to check, no milestone
+# chain to build. It therefore lowers DIRECTLY to one predicate-shaped
+# `delete from wallet where balance < ?` — no materializing read, no per-key collapse —
+# the readless counterpart of the versioned set delete (m-opt-lock-015 /
+# m-batch-write-004), which must resolve to keys and gate on version first.
+#
+# The scenario has no `given.fixtures`; it authors the single DELETE (roundTrips 1) and
+# then reads the same predicate back, expecting NO rows. That trailing find is the ONLY
+# read in the scenario and proves every matching row was removed by the one set-shaped
+# statement. Total roundTrips 2 = write (1) + verify read (1).
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, m-unit-work, predicate-write, readless, scenario, slice-snapshot-1]
 shape: scenario
