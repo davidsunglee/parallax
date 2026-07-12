@@ -156,6 +156,38 @@ def _valid_run(observations: dict) -> dict:
     }
 
 
+# --- milestone-set graph observations ----------------------------------------
+
+
+def test_run_accepts_ordered_milestone_set_graph_observations() -> None:
+    observations = {
+        "roundTrips": 1,
+        "graphs": [
+            {
+                "pin": {"processingDate": "2024-01-01T00:00:00+00:00"},
+                "graph": {"InvoiceLine": [{"id": 1000, "amount": 50.0}]},
+            },
+            {
+                "pin": {"processingDate": "2024-04-01T00:00:00+00:00"},
+                "graph": {"InvoiceLine": [{"id": 1000, "amount": 75.0}]},
+            },
+        ],
+    }
+
+    assert list(_validator().iter_errors(_valid_run(observations))) == []
+
+
+def test_run_rejects_milestone_set_graph_entry_without_graph() -> None:
+    observations = {
+        "roundTrips": 1,
+        "graphs": [
+            {"pin": {"processingDate": "2024-01-01T00:00:00+00:00"}},
+        ],
+    }
+
+    assert list(_validator().iter_errors(_valid_run(observations)))
+
+
 # --- lifecycle observations: stateChecks + errors (COR-30) --------------------
 
 

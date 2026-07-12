@@ -76,7 +76,7 @@ satisfies each is language-local.
    like a harness-lane case.
 4. **Expected results match the corpus oracles.** For every exercised case the
    suite MUST assert the developer surface produces the corpus's expected results
-   (`then.rows`, `then.graph`, `then.tableState`, `then.affectedRows`,
+   (`then.rows`, `then.graph`, `then.graphs`, `then.tableState`, `then.affectedRows`,
    round-trip counts, and identity/cache expectations as applicable), using the
    same comparison rules the conformance grade uses. For a case carrying the
    per-step **lifecycle observables** (`sameObjectAs` / `differentObjectFrom`,

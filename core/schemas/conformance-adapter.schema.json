@@ -210,6 +210,27 @@
         "native": {}
       }
     },
+    "milestoneGraphObservation": {
+      "description": "One edge-pinned graph in the ordered observation for a milestone-set snapshot read. The pin is the milestone's own from-instant per as-of axis, keyed by as-of attribute name; graph has the same root-class-keyed shape as a single graph observation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pin", "graph"],
+      "properties": {
+        "pin": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "graph": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        }
+      }
+    },
     "observations": {
       "type": "object",
       "additionalProperties": false,
@@ -221,6 +242,12 @@
         "graph": {
           "type": ["object", "null"],
           "additionalProperties": true
+        },
+        "graphs": {
+          "description": "The ordered per-milestone snapshot graphs produced by a history or asOfRange read, compared entry-for-entry with the case's then.graphs oracle.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/milestoneGraphObservation" }
         },
         "tableState": {
           "type": ["object", "null"],

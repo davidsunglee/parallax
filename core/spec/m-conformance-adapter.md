@@ -242,7 +242,7 @@ returns the observations required to compare against the case.
 The adapter is responsible for using a clean database according to its declared
 provisioning mode, applying schema and fixtures, executing the implementation's
 public behavior, and reporting observations. A runner may compare those
-observations to `then.rows`, `then.graph`, `then.tableState`,
+observations to `then.rows`, `then.graph`, `then.graphs`, `then.tableState`,
 `then.affectedRows`, cache/identity expectations, and `then.roundTrips`.
 
 When a language implementation routes case execution through its `m-db-port`
@@ -290,7 +290,8 @@ Example:
 The observations object is intentionally shape-flexible because case shapes
 assert different things:
 
-- read cases report `rows` or `graph`
+- read cases report `rows`, `graph`, or `graphs`; `graphs` is the ordered
+  per-milestone `{pin, graph}` observation for a milestone-set snapshot read
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`, plus `stateChecks` for
@@ -406,6 +407,8 @@ same rules as `m-case-format`:
 - binds compare in authored order (each statement entry's own `binds`)
 - rows compare using the case's row comparison rules
 - deep-fetch graphs compare to `then.graph`
+- milestone-set snapshot graphs compare in authored order to `then.graphs`, with
+  each observation's `pin` and `graph` compared to the corresponding oracle entry
 - write table state compares to `then.tableState`
 - conflict affected rows compare to `then.affectedRows`
 - round trips compare to the case's declared `then.roundTrips` or scenario step
