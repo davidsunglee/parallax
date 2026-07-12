@@ -139,7 +139,7 @@ def test_schema_enforces_predicate_write_verb_shape(
 
 def test_model_validator_accepts_a_scoped_assignable_predicate_write() -> None:
     entity = _account_entity()
-    validate_predicate_write(entity, [entity.definition], _update_instruction())
+    validate_predicate_write(entity, _update_instruction())
 
 
 def test_materialization_validator_accepts_a_matching_versioned_find() -> None:
@@ -500,7 +500,48 @@ def test_model_validator_accepts_related_entity_predicate_scope(operator: str) -
         "assignments": [{"attr": "Order.name", "value": "Renamed"}],
     }
 
-    validate_predicate_write(model.root_entity, model.entity_defs, instruction)
+    validate_predicate_write(model.root_entity, instruction)
+
+
+@pytest.mark.parametrize("operator", ["nestedExists", "nestedNotExists"])
+def test_model_validator_scopes_nested_exists_by_its_value_object_path(operator: str) -> None:
+    """A ``nestedExists`` / ``nestedNotExists`` predicate contributes the class named
+    by its required value-object ``path`` (``Class.valueObject``) to the scope check.
+
+    So the same-class form (here carrying an element-scoped ``where`` whose
+    element-relative refs name no class) stays in scope, while a path naming a
+    DIFFERENT class is rejected as inconsistent. This pins that these where-bearing
+    tags are NOT silently skipped by the shared reference-class walk.
+    """
+    entity = _customer_entity()
+
+    validate_predicate_write(
+        entity,
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": "Customer",
+                "predicate": {
+                    operator: {
+                        "path": "Customer.address.phones",
+                        "where": {"nestedEq": {"path": "type", "value": "home"}},
+                    }
+                },
+            },
+        },
+    )
+
+    with pytest.raises(PredicateWriteValidationError, match="inconsistent"):
+        validate_predicate_write(
+            entity,
+            {
+                "mutation": "delete",
+                "target": {
+                    "entity": "Customer",
+                    "predicate": {operator: {"path": "Wallet.address"}},
+                },
+            },
+        )
 
 
 def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> None:
@@ -511,7 +552,7 @@ def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> N
         "assignments": [{"attr": "Customer.address", "value": {"street": "Main", "city": "Oslo"}}],
     }
 
-    validate_predicate_write(entity, [entity.definition], instruction)
+    validate_predicate_write(entity, instruction)
 
 
 def test_model_validator_accepts_array_for_many_value_object_assignment() -> None:
@@ -530,7 +571,7 @@ def test_model_validator_accepts_array_for_many_value_object_assignment() -> Non
         ],
     }
 
-    validate_predicate_write(many_entity, [definition], instruction)
+    validate_predicate_write(many_entity, instruction)
 
 
 def test_model_validator_rejects_non_document_value_object_assignment() -> None:
@@ -542,7 +583,7 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
     }
 
     with pytest.raises(PredicateWriteValidationError, match="value object"):
-        validate_predicate_write(entity, [entity.definition], instruction)
+        validate_predicate_write(entity, instruction)
 
 
 @pytest.mark.parametrize(
@@ -604,4 +645,4 @@ def test_model_validator_rejects_invalid_predicate_write(
 ) -> None:
     entity = _account_entity()
     with pytest.raises(PredicateWriteValidationError, match=message):
-        validate_predicate_write(entity, [entity.definition], instruction)
+        validate_predicate_write(entity, instruction)
