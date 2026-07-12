@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from parallax.conformance import case_format
+from parallax.conformance import models as corpus_models
 from parallax.core.descriptor import (
     AsOfAttribute,
     Attribute,
     DescriptorError,
     Entity,
+    Inheritance,
     Metamodel,
     PkGenerator,
     Relationship,
@@ -17,6 +20,10 @@ from parallax.core.descriptor import (
 )
 
 pytestmark = pytest.mark.unit
+
+_MODELS = corpus_models.load_models(
+    case_format.find_repo_root() / "core" / "compatibility" / "models"
+)
 
 
 def _attr(**overrides: object) -> Attribute:
@@ -66,6 +73,51 @@ def test_empty_table_is_rejected() -> None:
 def test_no_attributes_is_rejected() -> None:
     with pytest.raises(DescriptorError, match="declares no attributes"):
         validate_entity(_entity(attributes=()))
+
+
+def _root_and_subtype() -> Metamodel:
+    root = Entity(
+        name="Reading",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(_attr(),),
+    )
+    subtype = Entity(
+        name="MeterReading",
+        table="reading",
+        inheritance=Inheritance(role="concrete-subtype", parent="Reading", tag_value="meter"),
+    )
+    return Metamodel(entities=(root, subtype))
+
+
+def test_inheritance_participant_may_omit_own_attributes() -> None:
+    # A concrete subtype whose members are wholly inherited declares no attributes
+    # of its own; the family — not the local block — supplies its chain.
+    family = _root_and_subtype()
+    validate_metamodel(family)  # no raise
+    validate_entity(family.entity("MeterReading"))  # no raise (schema per-entity rule)
+
+
+def test_family_with_no_attributes_anywhere_is_rejected() -> None:
+    root = Entity(
+        name="R", inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype")
+    )
+    subtype = Entity(
+        name="S", table="s", inheritance=Inheritance(role="concrete-subtype", parent="R")
+    )
+    with pytest.raises(DescriptorError, match="declares no attributes, directly or inherited"):
+        validate_metamodel(Metamodel(entities=(root, subtype)))
+
+
+def test_reading_corpus_model_with_wholly_inherited_subtype_validates() -> None:
+    # reading.yaml's MeterReading concrete subtype inherits every member from the
+    # abstract Reading root — validate_metamodel must accept it (the finding).
+    validate_metamodel(_MODELS["reading"])  # no raise
+
+
+def test_every_corpus_model_validates() -> None:
+    assert _MODELS  # non-empty
+    for metamodel in _MODELS.values():
+        validate_metamodel(metamodel)  # no raise across the whole corpus
 
 
 def test_temporal_entity_with_optimistic_locking_attr_is_rejected() -> None:

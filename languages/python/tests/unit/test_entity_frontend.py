@@ -229,6 +229,53 @@ def test_out_of_range_max_length_is_rejected_at_definition() -> None:
         _define_out_of_range_max_length()
 
 
+def _define_wrong_typed_pk_generator() -> type:
+    class Bad(Entity, frozen=True):
+        __parallax__ = EntityConfig(table="bad", mutability="transactional")
+
+        id: Attr[int] = Field(
+            primary_key=True,
+            type="int64",
+            pk_generator={"strategy": "sequence", "batchSize": "not-an-int"},
+        )
+
+    return Bad
+
+
+def test_wrong_typed_pk_generator_mapping_is_rejected_at_definition() -> None:
+    # The malformed batchSize used to be coerced to None and the class defined
+    # successfully, exporting a bare `pkGenerator: sequence`; now it is rejected.
+    with pytest.raises(EntityDefinitionError, match="pk generator: `batchSize`"):
+        _define_wrong_typed_pk_generator()
+
+
+def test_object_form_pk_generator_defines_and_exports() -> None:
+    class Seq(Entity, frozen=True):
+        __parallax__ = EntityConfig(table="seq", mutability="transactional")
+
+        id: Attr[int] = Field(
+            primary_key=True,
+            type="int64",
+            pk_generator={
+                "strategy": "sequence",
+                "sequenceName": "seq_ids",
+                "batchSize": 5,
+                "initialValue": 100,
+                "incrementSize": 10,
+            },
+        )
+
+    exported = cast("dict[str, object]", meta(Seq).descriptor()["entity"])
+    attributes = cast("list[dict[str, object]]", exported["attributes"])
+    assert attributes[0]["pkGenerator"] == {
+        "strategy": "sequence",
+        "sequenceName": "seq_ids",
+        "batchSize": 5,
+        "initialValue": 100,
+        "incrementSize": 10,
+    }
+
+
 def test_meta_of_ingested_descriptor_matches_class_derived_view() -> None:
     ingested = deserialize(_raw_model("account"))
     yaml_view = meta_of(ingested, "Account")

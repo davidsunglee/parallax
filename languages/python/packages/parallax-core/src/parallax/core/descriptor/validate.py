@@ -14,6 +14,7 @@ never be exported — the database never sees an invalid value (python.md §2).
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
 from parallax.core.descriptor.errors import DescriptorError
 from parallax.core.descriptor.records import (
@@ -36,9 +37,22 @@ _INTEGRAL: frozenset[str] = frozenset({"int32", "int64"})
 
 
 def validate_metamodel(metamodel: Metamodel) -> None:
-    """Validate every entity of ``metamodel`` (raises :class:`DescriptorError`)."""
+    """Validate every entity of ``metamodel`` (raises :class:`DescriptorError`).
+
+    An inheritance participant MAY omit its own ``attributes`` when its members are
+    wholly inherited (``metamodel.schema.json`` entity conditional; m-inheritance
+    "Inherited members"). Its members come from the family, so — rather than the
+    per-entity local block — validation derives the full inherited attribute chain
+    (root → … → self) and rejects a participant that has none directly or inherited.
+    """
+    by_name = metamodel.by_name
     for entity in metamodel.entities:
         validate_entity(entity)
+    for entity in metamodel.entities:
+        if entity.inheritance is not None and not _effective_attributes(entity, by_name):
+            raise DescriptorError(
+                f"entity {entity.name!r}: declares no attributes, directly or inherited"
+            )
 
 
 def validate_entity(entity: Entity) -> None:
@@ -47,7 +61,11 @@ def validate_entity(entity: Entity) -> None:
         raise DescriptorError("entity name must be non-empty")
     if entity.table is not None and not entity.table:
         raise DescriptorError(f"entity {entity.name!r}: table must be non-empty")
-    if not entity.attributes:
+    # A non-inheritance entity MUST declare its own attributes; an inheritance
+    # participant MAY omit them (its chain is inherited — the schema entity
+    # conditional). The family-wide non-empty check lives in `validate_metamodel`,
+    # which alone has the sibling records to derive the inherited chain.
+    if entity.inheritance is None and not entity.attributes:
         raise DescriptorError(f"entity {entity.name!r}: declares no attributes")
     if entity.as_of_attributes and any(attr.optimistic_locking for attr in entity.attributes):
         raise DescriptorError(
@@ -85,6 +103,29 @@ def _validate_pk_generator(where: str, pk: PkGenerator) -> None:
         raise DescriptorError(
             f"{where}: pk-generator incrementSize must be >= 1, got {pk.increment_size}"
         )
+
+
+def _effective_attributes(entity: Entity, by_name: Mapping[str, Entity]) -> tuple[Attribute, ...]:
+    """The entity's own attributes plus every ancestor's (root → … → self).
+
+    Walks the inheritance ``parent`` chain within the descriptor, accumulating each
+    node's declared attributes — the same inherited chain reads and DDL derive
+    (m-inheritance "Inherited members"). A pure descriptor traversal: the
+    m-descriptor scope must not depend on m-inheritance (§7 dependency graph). The
+    ``seen`` guard keeps a malformed (cyclic) family resolving to what it can reach
+    rather than looping; an unresolved parent simply ends the walk.
+    """
+    collected: list[Attribute] = []
+    current: Entity | None = entity
+    seen: set[str] = set()
+    while current is not None and current.name not in seen:
+        seen.add(current.name)
+        collected.extend(current.attributes)
+        inheritance = current.inheritance
+        current = None
+        if inheritance is not None and inheritance.parent is not None:
+            current = by_name.get(inheritance.parent)
+    return tuple(collected)
 
 
 def _validate_relationship(entity_name: str, rel: Relationship) -> None:
