@@ -14,7 +14,7 @@ from typing import Any
 from .case import Entity
 from .inheritance import inheritance_of
 from .op_validate import validate_operation
-from .operation_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
+from .operation_references import collect_reference_classes
 from .serde import canonical
 from .value_object_resolve import RejectionError, literal_matches_type
 
@@ -38,9 +38,7 @@ _READ_MODIFIERS = frozenset(
 )
 
 
-def validate_predicate_write(
-    entity: Entity, entity_defs: list[dict[str, Any]], instruction: dict[str, Any]
-) -> None:
+def validate_predicate_write(entity: Entity, instruction: dict[str, Any]) -> None:
     """Validate one predicate-selected write instruction against *entity*.
 
     The caller has already validated the instruction and predicate against their
@@ -301,45 +299,17 @@ def _assert_bare_predicate(node: Any) -> None:
 
 def _assert_predicate_scope(node: Any, target_name: str) -> None:
     classes: set[str] = set()
-    _collect_reference_classes(node, classes)
+    # A predicate write is a BARE predicate (asserted just above), so the walk
+    # stays in the predicate core and does not expect result modifiers.  A
+    # navigation's inner operation and a nestedExists `where` resolve in a
+    # different scope and are not descended (see collect_reference_classes).
+    collect_reference_classes(node, classes, descend_result_modifiers=False)
     mismatched = sorted(cls for cls in classes if cls != target_name)
     if mismatched:
         raise PredicateWriteValidationError(
             f"predicate write target {target_name!r} is inconsistent with reference "
             f"class(es) {mismatched}"
         )
-
-
-def _collect_reference_classes(node: Any, classes: set[str]) -> None:
-    if not isinstance(node, dict) or len(node) != 1:
-        return
-    tag, body = next(iter(node.items()))
-    if not isinstance(body, dict):
-        return
-    if tag in ATTRIBUTE_REFERENCE_TAGS:
-        _add_reference_class(body.get("attr"), classes)
-    elif tag in PATH_REFERENCE_TAGS:
-        _add_reference_class(body.get("path"), classes)
-    elif tag in ("navigate", "exists", "notExists"):
-        _add_reference_class(body.get("rel"), classes)
-        # The inner operation resolves in the RELATED entity's scope.  Its
-        # references are therefore not evidence that this write target began
-        # from a different root entity (the same boundary as read validation).
-    elif tag in ("and", "or"):
-        for operand in body.get("operands", []):
-            _collect_reference_classes(operand, classes)
-    elif tag in ("not", "group"):
-        _collect_reference_classes(body.get("operand"), classes)
-    elif tag == "orderBy":
-        _collect_reference_classes(body.get("operand"), classes)
-        for key in body.get("keys", []):
-            if isinstance(key, dict):
-                _add_reference_class(key.get("attr"), classes)
-
-
-def _add_reference_class(reference: Any, classes: set[str]) -> None:
-    if isinstance(reference, str) and "." in reference:
-        classes.add(reference.split(".", 1)[0])
 
 
 def _assert_assignments(entity: Entity, assignments: Any) -> None:

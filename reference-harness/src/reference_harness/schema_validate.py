@@ -29,7 +29,7 @@ from jsonschema.exceptions import best_match
 
 from .case import Entity
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
-from .operation_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
+from .operation_references import collect_reference_classes
 from .paths import schemas_dir
 from .predicate_write_validate import (
     PredicateWriteValidationError,
@@ -106,82 +106,6 @@ def _descriptor_entity_defs(descriptor: Any) -> list[dict[str, Any]]:
 # intentionally not descended into.
 
 
-def _class_of(ref: Any) -> str | None:
-    if not isinstance(ref, str) or "." not in ref:
-        return None
-    return ref.split(".", 1)[0]
-
-
-def _collect_queried_classes(node: Any, acc: set[str]) -> None:
-    """Collect the class part of every QUERIED-ENTITY reference in *node*.
-
-    Descends through the same-entity boolean combinators, the result / temporal
-    directive wrappers, and (for a deep fetch) the operand plus each path's FIRST
-    hop — but NOT a navigation's inner operation, which resolves against the
-    related entity.
-    """
-    if not isinstance(node, dict) or len(node) != 1:
-        return
-    tag, body = next(iter(node.items()))
-    if tag == "deepFetch":
-        if isinstance(body, dict):
-            _collect_queried_classes(body.get("operand"), acc)
-            for path in body.get("paths", []) or []:
-                if path:
-                    segment = path[0]
-                    rel = segment.get("rel") if isinstance(segment, dict) else segment
-                    cls = _class_of(rel)
-                    if cls:
-                        acc.add(cls)
-        return
-    if not isinstance(body, dict):
-        return
-    if tag in ATTRIBUTE_REFERENCE_TAGS:
-        cls = _class_of(body.get("attr"))
-        if cls:
-            acc.add(cls)
-    elif tag in PATH_REFERENCE_TAGS:
-        cls = _class_of(body.get("path"))
-        if cls:
-            acc.add(cls)
-    elif tag in ("navigate", "exists", "notExists"):
-        cls = _class_of(body.get("rel"))
-        if cls:
-            acc.add(cls)
-    elif tag in ("and", "or"):
-        for operand in body.get("operands", []) or []:
-            _collect_queried_classes(operand, acc)
-    elif tag in ("not", "group", "distinct", "asOf", "asOfRange", "history", "limit"):
-        _collect_queried_classes(body.get("operand"), acc)
-    elif tag == "narrow":
-        # A narrow evaluates its operand over the SAME polymorphic position (its
-        # `entity`, which equals the read's targetEntity at top level), so the
-        # operand's queried-entity references are cross-checked against the target;
-        # the narrow's subset validity is asserted separately (op-algebra narrow rule).
-        _collect_queried_classes(body.get("operand"), acc)
-    elif tag == "orderBy":
-        _collect_queried_classes(body.get("operand"), acc)
-        for key in body.get("keys", []) or []:
-            if isinstance(key, dict):
-                cls = _class_of(key.get("attr"))
-                if cls:
-                    acc.add(cls)
-    elif tag == "groupBy":
-        _collect_queried_classes(body.get("operand"), acc)
-        for key in body.get("keys", []) or []:
-            cls = _class_of(key)
-            if cls:
-                acc.add(cls)
-        for aggregate in body.get("aggregates", []) or []:
-            if isinstance(aggregate, dict) and len(aggregate) == 1:
-                inner = next(iter(aggregate.values()))
-                if isinstance(inner, dict):
-                    cls = _class_of(inner.get("attr"))
-                    if cls:
-                        acc.add(cls)
-    # all / none carry no queried-entity reference.
-
-
 def _check_target_entity(
     operation: Any,
     target_entity: Any,
@@ -193,7 +117,7 @@ def _check_target_entity(
     if not isinstance(target_entity, str):
         return  # a missing / malformed targetEntity is already a schema error
     classes: set[str] = set()
-    _collect_queried_classes(operation, classes)
+    collect_reference_classes(operation, classes, descend_result_modifiers=True)
 
     def effective(name: str) -> set[str]:
         return set(family.effective_concrete_set(name)) if family is not None else {name}
@@ -263,7 +187,7 @@ def _validate_predicate_write(
         errors.append(f"{label}: target entity {target_name!r} is not declared: {exc}")
         return None
     try:
-        validate_predicate_write(entity, entity_defs, write)
+        validate_predicate_write(entity, write)
     except PredicateWriteValidationError as exc:
         errors.append(f"{label}: {exc}")
     return entity
