@@ -157,7 +157,9 @@ def _collect_reference_classes(node: Any, classes: set[str]) -> None:
         _add_reference_class(body.get("path"), classes)
     elif tag in ("navigate", "exists", "notExists"):
         _add_reference_class(body.get("rel"), classes)
-        _collect_reference_classes(body.get("op"), classes)
+        # The inner operation resolves in the RELATED entity's scope.  Its
+        # references are therefore not evidence that this write target began
+        # from a different root entity (the same boundary as read validation).
     elif tag in ("and", "or"):
         for operand in body.get("operands", []):
             _collect_reference_classes(operand, classes)
@@ -201,10 +203,16 @@ def _assert_assignments(entity: Entity, assignments: Any) -> None:
         seen.add(ref)
         try:
             attribute = entity.attribute_by_name(attribute_name)
-        except KeyError as exc:
-            raise PredicateWriteValidationError(
-                f"assignment {ref!r} names no assignable attribute on {entity.name!r}"
-            ) from exc
+        except KeyError:
+            try:
+                value_object = entity.value_object_by_name(attribute_name)
+            except KeyError as exc:
+                raise PredicateWriteValidationError(
+                    f"assignment {ref!r} names no assignable attribute or value object "
+                    f"on {entity.name!r}"
+                ) from exc
+            _assert_value_object_assignment(ref, value_object, assignment.get("value"))
+            continue
         if (
             attribute.get("primaryKey")
             or attribute.get("optimisticLocking")
@@ -217,6 +225,59 @@ def _assert_assignments(entity: Entity, assignments: Any) -> None:
             raise PredicateWriteValidationError(
                 f"assignment {ref!r} value does not match declared type {attribute.get('type')!r}"
             )
+
+
+def _assert_value_object_assignment(ref: str, value_object: dict[str, Any], value: Any) -> None:
+    """Validate an atomic top-level value-object assignment literal.
+
+    A value object names one structured-document column, so predicate writes may
+    replace that whole document but may not address its nested members.  Its
+    declared cardinality determines whether the neutral literal is an object or
+    an array; recursive required-member and scalar-type checks keep the literal
+    assignable to the declared value object.
+    """
+    if value is None:
+        if not value_object.get("nullable", False):
+            raise PredicateWriteValidationError(
+                f"value object assignment {ref!r} is null for a non-nullable value object"
+            )
+        return
+    cardinality = value_object.get("cardinality", "one")
+    if cardinality == "many":
+        if not isinstance(value, list):
+            raise PredicateWriteValidationError(
+                f"value object assignment {ref!r} must use an array for cardinality many"
+            )
+        for index, document in enumerate(value):
+            _assert_value_object_document(f"{ref}[{index}]", value_object, document)
+        return
+    _assert_value_object_document(ref, value_object, value)
+
+
+def _assert_value_object_document(ref: str, value_object: dict[str, Any], document: Any) -> None:
+    """Validate one complete document against a declared value-object member."""
+    if not isinstance(document, dict):
+        raise PredicateWriteValidationError(
+            f"value object assignment {ref!r} must use an object for cardinality one"
+        )
+    for attribute in value_object.get("attributes", []):
+        name = attribute["name"]
+        value = document.get(name)
+        if value is None:
+            if not attribute.get("nullable", False):
+                raise PredicateWriteValidationError(
+                    f"value object assignment {ref!r} omits required attribute {name!r}"
+                )
+            continue
+        if not literal_matches_type(value, attribute.get("type")):
+            raise PredicateWriteValidationError(
+                f"value object assignment {ref!r} attribute {name!r} does not match "
+                f"declared type {attribute.get('type')!r}"
+            )
+    for nested in value_object.get("valueObjects", []):
+        _assert_value_object_assignment(
+            f"{ref}.{nested['name']}", nested, document.get(nested["name"])
+        )
 
 
 def _assert_temporal_shape(entity: Entity, mutation: Any, instruction: dict[str, Any]) -> None:

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
 
-from reference_harness.case import load_model
+from reference_harness.case import Entity, load_model
 from reference_harness.predicate_write_validate import (
     PredicateWriteValidationError,
     validate_predicate_write,
@@ -61,8 +62,30 @@ def _account_entity():
     return load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
 
 
+def _orders_model():
+    return load_model(_COMPATIBILITY_ROOT, "models/orders.yaml")
+
+
+def _customer_entity():
+    return load_model(_COMPATIBILITY_ROOT, "models/customer.yaml").root_entity
+
+
 def test_schema_accepts_structured_predicate_update() -> None:
     assert next(_schema().iter_errors(_scenario_case(_update_instruction())), None) is None
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        {"street": "Main", "city": "Oslo"},
+        [{"street": "Main", "city": "Oslo"}],
+    ],
+)
+def test_schema_accepts_object_and_array_predicate_write_literals(literal: object) -> None:
+    instruction = _update_instruction()
+    instruction["assignments"] = [{"attr": "Customer.address", "value": literal}]
+
+    assert next(_schema().iter_errors(_scenario_case(instruction)), None) is None
 
 
 @pytest.mark.parametrize(
@@ -88,6 +111,68 @@ def test_schema_enforces_predicate_write_verb_shape(
 def test_model_validator_accepts_a_scoped_assignable_predicate_write() -> None:
     entity = _account_entity()
     validate_predicate_write(entity, [entity.definition], _update_instruction())
+
+
+@pytest.mark.parametrize("operator", ["navigate", "exists", "notExists"])
+def test_model_validator_accepts_related_entity_predicate_scope(operator: str) -> None:
+    model = _orders_model()
+    instruction = {
+        "mutation": "update",
+        "target": {
+            "entity": "Order",
+            "predicate": {
+                operator: {
+                    "rel": "Order.items",
+                    "op": {"eq": {"attr": "OrderItem.sku", "value": "A-1"}},
+                }
+            },
+        },
+        "assignments": [{"attr": "Order.name", "value": "Renamed"}],
+    }
+
+    validate_predicate_write(model.root_entity, model.entity_defs, instruction)
+
+
+def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> None:
+    entity = _customer_entity()
+    instruction = {
+        "mutation": "update",
+        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "assignments": [{"attr": "Customer.address", "value": {"street": "Main", "city": "Oslo"}}],
+    }
+
+    validate_predicate_write(entity, [entity.definition], instruction)
+
+
+def test_model_validator_accepts_array_for_many_value_object_assignment() -> None:
+    entity = _customer_entity()
+    definition = deepcopy(entity.definition)
+    definition["valueObjects"][0]["cardinality"] = "many"
+    many_entity = Entity(definition=definition)
+    instruction = {
+        "mutation": "update",
+        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "assignments": [
+            {
+                "attr": "Customer.address",
+                "value": [{"street": "Main", "city": "Oslo"}],
+            }
+        ],
+    }
+
+    validate_predicate_write(many_entity, [definition], instruction)
+
+
+def test_model_validator_rejects_non_document_value_object_assignment() -> None:
+    entity = _customer_entity()
+    instruction = {
+        "mutation": "update",
+        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "assignments": [{"attr": "Customer.address", "value": ["not a document"]}],
+    }
+
+    with pytest.raises(PredicateWriteValidationError, match="value object"):
+        validate_predicate_write(entity, [entity.definition], instruction)
 
 
 @pytest.mark.parametrize(

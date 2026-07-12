@@ -701,8 +701,9 @@ never something an application developer hand-writes.
   authoring-order-insensitive goldens); the binds are the assignment values
   in the emitted column order followed by the predicate binds (the
   corpus statement-entry bind convention), and `delete_where` emits
-  `delete from <table> where <predicate>`; both shapes are extension-defined
-  — no corpus golden exists — and normative for this implementation. A
+  `delete from <table> where <predicate>`; both shapes are core-contract
+  behavior with canonical corpus goldens (`m-batch-write-005` / `-006`), not
+  language-local extensions. A
   set-based write whose target entity belongs to an inheritance
   family is **rejected before SQL** with the corpus's
   `subtype-write-set-based-unsupported` classification (`m-inheritance-089`).

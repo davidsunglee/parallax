@@ -630,10 +630,16 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # (010, harness scenario), the back-reference cycle with then.identityChecks (011,
         # api-conformance), the family projection-independent diamond (012), and the
         # history / asOfRange edge-pinned then.graphs reads (013/014). slice-snapshot-1
-        # rises by 12 (272 -> 284, its final count); slice-managed-1 and slice-mvp-1 are
-        # unchanged. Final counts: 198 / 284 / 317.
+        # rises by 12 (272 -> 284); slice-managed-1 and slice-mvp-1 are unchanged.
+        # Counts at that stage: 198 / 284 / 317.
+        #
+        # COR-35 adds nine predicate-selected write cases tagged slice-snapshot-1 only
+        # (never slice-managed-1 or slice-mvp-1): versioned materialized update/delete,
+        # non-versioned readless update/delete, audit terminate, and four bitemporal
+        # materialized write flavors. snapshot rises 284 -> 293; the deliberate tag
+        # omission leaves the other two claims unchanged. Final counts: 198 / 293 / 317.
         ("slice-mvp-1", 198),
-        ("slice-snapshot-1", 284),
+        ("slice-snapshot-1", 293),
         ("slice-managed-1", 317),
     ],
 )
