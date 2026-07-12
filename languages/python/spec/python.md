@@ -358,15 +358,23 @@ never something an application developer hand-writes.
   per the core rule that a scan is not a pin), and `parallax.core.pin_of(node)`
   reports each node's own coordinates. `parallax.core.edge_of(node) -> Edge`
   reports a temporal node's **milestone edge** as a distinct frozen `Edge`
-  value: one field per axis (`processing: datetime | None`,
-  `business: datetime | None`), an axis non-`None` exactly when the entity
-  declares it, and every present value the **finite** from-instant of the
-  node's milestone on that axis (core's edge pin) — defined for every temporal
-  node regardless of how the read was pinned; calling it on a non-temporal
-  node raises. `Edge` is deliberately not a `Pin`: a `Pin` carries an entry
-  only per actually-pinned axis and may carry the `LATEST` sentinel, while an
-  `Edge` always carries every declared axis and is always finite — never
-  `LATEST`, never absent-because-scanned. The `snapshot-history-includes` feature
+  value exposing one strict-typed accessor pair per axis — the established
+  arity-accessor house pattern (§2's `result()` / `result_or_none()`) applied
+  to axis access: `edge.processing -> datetime` raises `UndeclaredAxisError`
+  when the entity does not declare the axis,
+  `edge.processing_or_none -> datetime | None` returns `None` instead, and
+  `edge.business` / `edge.business_or_none` behave identically for the
+  business axis. Every value a declared axis yields is the **finite**
+  from-instant of the node's milestone on that axis (core's edge pin) —
+  defined for every temporal node regardless of how the read was pinned;
+  calling `edge_of` on a non-temporal node raises. `Edge` is deliberately not
+  a `Pin`: a `Pin` carries an entry only per actually-pinned axis and may
+  carry the `LATEST` sentinel, while an `Edge` answers every declared axis
+  and is always finite — never `LATEST`, never absent-because-scanned. The
+  strict accessors keep replay code narrowing-free: a caller replaying an
+  entity's declared axes reads `edge.processing` as a plain `datetime` and
+  passes it straight to `as_of(...)` (the stale-web-edit recipe below). The
+  `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
   raises `UnsupportedFeatureError` naming the deferral, distinct from
   validation errors.
@@ -421,13 +429,15 @@ never something an application developer hand-writes.
   instances for the other verbs (§5). The **stale-web-edit** recipe
   transports the displayed milestone's **edge on every declared axis**: at
   render time the service reads the row and captures `edge_of(node)` — the
-  `Edge` already carries each declared axis's from-instant (`.processing` is
-  the displayed milestone's own `in_z`) — and sends the whole edge with the
-  form. On submit, the service re-fetches with **every declared axis** pinned
-  at the transported edge — `as_of(processing=edge.processing)` for an
-  audit-only entity,
+  `Edge` answers each declared axis's from-instant as a plain `datetime`
+  (`edge.processing` is the displayed milestone's own `in_z`) — and sends the
+  whole edge with the form. On submit, the service re-fetches with **every
+  declared axis** pinned at the transported edge —
+  `as_of(processing=edge.processing)` for an audit-only entity,
   `as_of(processing=edge.processing, business=edge.business)` for a
-  bitemporal one — inside an optimistic transaction, applies the payload
+  bitemporal one; a replay passes exactly its entity's declared axes, so
+  every `as_of` argument is strictly `datetime`-typed with no narrowing —
+  inside an optimistic transaction, applies the payload
   fields to a copy, and updates. A milestone's from-instant lies inside its
   own `[from, to)` interval on each axis by construction, so the re-fetch
   selects exactly the **displayed** rectangle — never a different business
@@ -609,8 +619,14 @@ never something an application developer hand-writes.
   predicate rather than key — are the one path where the framework itself
   materializes observations: one real read resolves the predicate to rows,
   recording each matched row's observed version (locked in `locking` mode),
-  then one keyed per-object statement per resolved row (`1 + N` round trips,
-  a mid-batch zero-row gate aborting like any conflict). Version values are
+  then one keyed per-object statement per resolved row that survives the
+  per-row no-op elimination below (`1 + N` round trips, a mid-batch zero-row
+  gate aborting like any conflict). A statement becomes
+  a write target only as a **bare statement** — one carrying nothing but a
+  predicate (its `where(...)` arguments); `order_by`, `limit`, `include`,
+  `as_of`, `history` / `as_of_range`, and `narrow` are all rejected on any
+  write target. This is the single definition; the set-based verbs below
+  reference it rather than restating fragments. Version values are
   framework-owned end
   to end: the version field on a node, an edited copy, or any caller input
   never feeds the gate or the advance. The developer-experience consequence
@@ -637,16 +653,40 @@ never something an application developer hand-writes.
   ```
 
   Assignments are the typed `.set(value)` spelling on attribute expressions,
-  restricted to mapped scalar attributes and value-object members — the same
-  assignability rules as `model_copy`, never relationship fields. The target
-  statement must be bare (the same rejection rules as every write target);
+  validated at statement build as one rule family shared with `model_copy`'s
+  `update=` validation (§3) — the assignability and scalar-input rules are
+  stated once there and referenced here, never duplicated, so the two lists
+  cannot drift: only mapped scalar attributes and value-object members are
+  assignable, never relationship fields. Three list-level rules complete the
+  family: the assignment list must be non-empty (zero assignments raises),
+  each field may be assigned at most once (a duplicate raises), and every
+  assigned attribute or value-object member must be declared by the exact
+  target entity — set-based writes already reject inheritance-family targets
+  (below), so ancestry resolution never arises. The target statement must be
+  a **bare statement** (the single definition above);
   resolution happens inside the transaction and participates in its mode
   (shared-locked under `locking`, lock-free under `optimistic`). Lowering
-  follows the observation rule above: versioned and temporal targets
-  **materialize** — the resolving read records per-row observations, then one
-  keyed per-row statement (gated in optimistic mode), `1 + N` round trips —
-  while an unversioned non-temporal target lowers to a single set-based
-  statement. A set-based write whose target entity belongs to an inheritance
+  follows the observation rule above, with **per-path no-op semantics**.
+  Versioned and temporal targets **materialize** — the resolving read records
+  per-row observations, then one keyed per-row statement (gated in optimistic
+  mode), `1 + N` round trips where `N` counts **written** rows: per-row no-op
+  elimination applies, so a resolved row whose assignments all equal its
+  current values (structural equality, the same rules as the change-record
+  effective-set test) is skipped — no DML, no version advance, no chained
+  milestone, and no round trip — mirroring the keyed no-op rule (Reladomo's
+  equal-value setters likewise refuse to enroll). An unversioned non-temporal
+  target lowers to a single set-based statement with **no** no-op elimination
+  — plain SQL set semantics, so already-equal rows are matched and affected
+  like any SQL `UPDATE` — because the readless path observes nothing to
+  compare against, and inventing a null-safe difference filter would add SQL
+  shape no golden pins. That readless lowering is itself pinned so nothing is
+  left to invent: `update_where` emits exactly one
+  `update <table> set <col> = ?, … where <predicate>` whose binds are the
+  assignment values in authored order followed by the predicate binds (the
+  corpus statement-entry bind convention), and `delete_where` emits
+  `delete from <table> where <predicate>`; both shapes are extension-defined
+  — no corpus golden exists — and normative for this implementation. A
+  set-based write whose target entity belongs to an inheritance
   family is **rejected before SQL** with the corpus's
   `subtype-write-set-based-unsupported` classification (`m-inheritance-089`).
   Corpus coverage is annotated per flavor, honestly: versioned non-temporal

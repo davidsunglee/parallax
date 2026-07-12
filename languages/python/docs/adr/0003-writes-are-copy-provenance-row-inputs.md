@@ -26,7 +26,14 @@ sweep. That retraction over-reached: scenario-shaped cases
 so the typed-assignments surface returned as the distinct `_where` verb
 family (`update_where`, `delete_where`, `terminate_where`, and the temporal
 forms — spec §5), provided in full for API consistency with per-flavor
-corpus-coverage annotations. The two surfaces coexist with distinct roles:
+corpus-coverage annotations. Shipping the full family rather than only the
+corpus-covered forms was a deliberate decision, made by a human reviewer with
+the speculative-breadth trade-off on the table: API consistency won over a
+minimal covered-forms-only surface, and the honesty mechanism for that
+breadth is the per-flavor corpus-coverage annotation plus each uncovered
+flavor's extension-status note (unit-proven, outside the coverage partition,
+a recorded candidate for future corpus additions) — not a narrowed API. The
+two surfaces coexist with distinct roles:
 copy-provenance for keyed single-object writes, `_where` verbs for
 predicate-selected sets, which materialize per-row observations for
 versioned and temporal targets.
@@ -42,9 +49,9 @@ managed-pole merge-back semantics and is deliberately not pulled into this
 slice. The stale-web-edit workflow needs no such gate — provided the
 observation coordinate is transported, not reconstructed: the service
 captures the displayed milestone's edge on every declared axis
-(`edge_of(node)`, whose `.processing` field is the milestone's `in_z`) at
-render time, then re-fetches with each declared axis pinned at the
-transported edge
+(`edge_of(node)`, whose strict `.processing` accessor yields the milestone's
+`in_z` as a plain `datetime`) at render time, then re-fetches with each
+declared axis pinned at the transported edge
 (`as_of(processing=edge.processing, business=edge.business)` for a
 bitemporal entity) inside an optimistic transaction, where the observed
 `in_z` gate — joined by the business discriminator when the key's current
