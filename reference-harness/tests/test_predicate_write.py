@@ -78,10 +78,25 @@ def _position_entity():
     return load_model(_COMPATIBILITY_ROOT, "models/position.yaml").root_entity
 
 
+def _balance_entity():
+    return load_model(_COMPATIBILITY_ROOT, "models/balance.yaml").root_entity
+
+
 def _materializing_find(
     entity: Entity, predicate: dict[str, object], rows: list[dict[str, object]]
 ) -> dict[str, object]:
-    return {"targetEntity": entity.name, "find": predicate, "expectRows": rows}
+    return {
+        "targetEntity": entity.name,
+        "find": predicate,
+        "roundTrips": 1,
+        "statements": [
+            {
+                "sql": {"postgres": "select t0.id from account t0"},
+                "binds": [],
+            }
+        ],
+        "expectRows": rows,
+    }
 
 
 def test_schema_accepts_structured_predicate_update() -> None:
@@ -139,7 +154,7 @@ def test_materialization_validator_accepts_a_matching_versioned_find() -> None:
             _materializing_find(
                 entity,
                 {"lessThan": {"value": 200.00, "attr": "Account.balance"}},
-                [{"id": 1, "version": 1}],
+                [{"id": 1, "balance": 100.00, "version": 1}],
             )
         ],
         instruction,
@@ -167,10 +182,57 @@ def test_materialization_validator_rejects_unobservable_matching_find() -> None:
     predicate = instruction["target"]["predicate"]
     assert isinstance(predicate, dict)
 
-    with pytest.raises(PredicateWriteValidationError, match="must declare expectRows"):
+    with pytest.raises(PredicateWriteValidationError, match="real resolving read"):
         validate_predicate_write_materialization(
             entity,
             [{"targetEntity": "Account", "find": predicate}],
+            instruction,
+        )
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        ({"roundTrips": 0}, "roundTrips: 1"),
+        ({"roundTrips": 2}, "roundTrips: 1"),
+        ({"statements": []}, "authored golden read statement"),
+    ],
+)
+def test_materialization_validator_rejects_a_cache_hit_or_non_resolving_find(
+    edit: dict[str, object], message: str
+) -> None:
+    entity = _account_entity()
+    instruction = _update_instruction()
+    predicate = instruction["target"]["predicate"]
+    assert isinstance(predicate, dict)
+    find = _materializing_find(entity, predicate, [{"id": 1, "balance": 100.00, "version": 1}])
+    find.update(edit)
+
+    with pytest.raises(PredicateWriteValidationError, match=message):
+        validate_predicate_write_materialization(entity, [find], instruction)
+
+
+def test_materialization_validator_accepts_a_real_zero_match_resolution() -> None:
+    entity = _account_entity()
+    instruction = _update_instruction()
+    predicate = instruction["target"]["predicate"]
+    assert isinstance(predicate, dict)
+
+    validate_predicate_write_materialization(
+        entity, [_materializing_find(entity, predicate, [])], instruction
+    )
+
+
+def test_materialization_validator_rejects_missing_current_scalar_assignment_value() -> None:
+    entity = _account_entity()
+    instruction = _update_instruction()
+    predicate = instruction["target"]["predicate"]
+    assert isinstance(predicate, dict)
+
+    with pytest.raises(PredicateWriteValidationError, match="balance"):
+        validate_predicate_write_materialization(
+            entity,
+            [_materializing_find(entity, predicate, [{"id": 1, "version": 1}])],
             instruction,
         )
 
@@ -198,10 +260,143 @@ def test_materialization_validator_accepts_temporal_milestone_observations() -> 
                 [
                     {
                         "pos_id": 1,
+                        "acct_num": "A",
+                        "val": 200.00,
                         "from_z": "2024-06-01T00:00:00+00:00",
                         "thru_z": "infinity",
                         "in_z": "2024-04-01T00:00:00+00:00",
                         "out_z": "infinity",
+                    }
+                ],
+            )
+        ],
+        instruction,
+    )
+
+
+def test_materialization_validator_rejects_missing_temporal_carried_payload() -> None:
+    entity = _position_entity()
+    instruction = {
+        "mutation": "terminate",
+        "target": {
+            "entity": "Position",
+            "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+        },
+        "at": "2024-10-01T00:00:00+00:00",
+        "businessFrom": "2024-07-01T00:00:00+00:00",
+    }
+    predicate = instruction["target"]["predicate"]
+    assert isinstance(predicate, dict)
+    row = {
+        "pos_id": 1,
+        "val": 200.00,
+        "from_z": "2024-06-01T00:00:00+00:00",
+        "thru_z": "infinity",
+        "in_z": "2024-04-01T00:00:00+00:00",
+        "out_z": "infinity",
+    }
+
+    with pytest.raises(PredicateWriteValidationError, match="acct_num"):
+        validate_predicate_write_materialization(
+            entity, [_materializing_find(entity, predicate, [row])], instruction
+        )
+
+
+def test_materialization_validator_requires_processing_temporal_update_payload() -> None:
+    entity = _balance_entity()
+    instruction = {
+        "mutation": "update",
+        "target": {
+            "entity": "Balance",
+            "predicate": {"eq": {"attr": "Balance.id", "value": 1}},
+        },
+        "assignments": [{"attr": "Balance.value", "value": 300.00}],
+        "at": "2024-10-01T00:00:00+00:00",
+    }
+    predicate = instruction["target"]["predicate"]
+    assert isinstance(predicate, dict)
+    row = {
+        "bal_id": 1,
+        "val": 200.00,
+        "in_z": "2024-04-01T00:00:00+00:00",
+        "out_z": "infinity",
+    }
+
+    with pytest.raises(PredicateWriteValidationError, match="acct_num"):
+        validate_predicate_write_materialization(
+            entity, [_materializing_find(entity, predicate, [row])], instruction
+        )
+
+
+def test_materialization_validator_does_not_require_processing_terminate_payload() -> None:
+    entity = _balance_entity()
+    instruction = {
+        "mutation": "terminate",
+        "target": {
+            "entity": "Balance",
+            "predicate": {"eq": {"attr": "Balance.id", "value": 1}},
+        },
+        "at": "2024-10-01T00:00:00+00:00",
+    }
+    predicate = instruction["target"]["predicate"]
+    assert isinstance(predicate, dict)
+
+    validate_predicate_write_materialization(
+        entity,
+        [
+            _materializing_find(
+                entity,
+                predicate,
+                [
+                    {
+                        "bal_id": 1,
+                        "in_z": "2024-04-01T00:00:00+00:00",
+                        "out_z": "infinity",
+                    }
+                ],
+            )
+        ],
+        instruction,
+    )
+
+
+def test_materialization_validator_requires_a_whole_value_object_for_noop_planning() -> None:
+    definition = deepcopy(_customer_entity().definition)
+    definition["attributes"].append(
+        {
+            "name": "version",
+            "type": "int32",
+            "column": "version",
+            "optimisticLocking": True,
+        }
+    )
+    entity = Entity(definition=definition)
+    instruction = {
+        "mutation": "update",
+        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "assignments": [{"attr": "Customer.address", "value": {"street": "Main", "city": "Oslo"}}],
+    }
+    predicate = instruction["target"]["predicate"]
+    assert isinstance(predicate, dict)
+
+    with pytest.raises(PredicateWriteValidationError, match="address"):
+        validate_predicate_write_materialization(
+            entity,
+            [_materializing_find(entity, predicate, [{"id": 1, "version": 1}])],
+            instruction,
+        )
+
+    validate_predicate_write_materialization(
+        entity,
+        [
+            _materializing_find(
+                entity,
+                predicate,
+                [
+                    {
+                        "id": 1,
+                        "version": 1,
+                        "address": {"street": "Main", "city": "Oslo"},
                     }
                 ],
             )
@@ -266,6 +461,26 @@ def test_schema_validation_rejects_a_readless_versioned_predicate_write(tmp_path
         "m-opt-lock-014" in error and "requires a preceding materializing find" in error
         for error in errors
     )
+
+
+def test_schema_validation_rejects_a_cache_hit_as_predicate_materialization(tmp_path: Path) -> None:
+    core = tmp_path / "core"
+    shutil.copytree(_REPO_ROOT / "core", core)
+    case_path = (
+        core
+        / "compatibility"
+        / "cases"
+        / ("m-opt-lock-014-set-based-mixed-noop-materialize-locking.yaml")
+    )
+    case = yaml.safe_load(case_path.read_text(encoding="utf-8"))
+    materialize = case["when"]["scenario"][0]
+    materialize["roundTrips"] = 0
+    materialize.pop("statements")
+    case_path.write_text(yaml.safe_dump(case, sort_keys=False), encoding="utf-8")
+
+    errors = validate_tree(core / "compatibility")
+
+    assert any("m-opt-lock-014" in error and "real resolving read" in error for error in errors)
 
 
 @pytest.mark.parametrize("operator", ["navigate", "exists", "notExists"])

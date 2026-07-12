@@ -161,15 +161,16 @@ def validate_predicate_write_materialization(
         )
 
     for index, step in matching_finds:
-        rows = step.get("expectRows")
-        if not isinstance(rows, list):
+        rows = _resolving_materialization_rows(step)
+        if rows is None:
             continue
-        _assert_materialization_rows(entity, index, rows)
+        _assert_materialization_rows(entity, index, rows, instruction)
         return
     indexes = ", ".join(f"scenario[{index}]" for index, _ in matching_finds)
     raise PredicateWriteValidationError(
-        f"matching materializing find at {indexes} must declare expectRows to expose "
-        "the resolved rows and per-row observations"
+        f"matching materializing find at {indexes} must be a real resolving read: "
+        "roundTrips: 1, exactly one authored golden read statement, and expectRows "
+        "exposing the resolved rows (or a genuine zero-match result)"
     )
 
 
@@ -179,25 +180,39 @@ def _requires_materialization(entity: Entity) -> bool:
     )
 
 
-def _assert_materialization_rows(entity: Entity, index: int, rows: list[Any]) -> None:
-    """Ensure an observable read exposes the identity/version coordinates it needs.
+def _resolving_materialization_rows(step: dict[str, Any]) -> list[Any] | None:
+    """Return rows only for one real materializing database read.
 
-    An empty expected result is itself an observable materialization: no per-row
-    write will follow.  For every resolved row, derive the identity and observed
-    version/milestone columns from the descriptor rather than its authored SQL.
+    A versioned or temporal predicate write cannot plan from a cache hit.  The
+    scenario therefore records the one resolving read explicitly: one round trip,
+    one authored golden SQL entry, and ``expectRows`` for either the observed rows
+    or a genuine zero-match result.  The case schema and generic scenario
+    bookkeeping validate the entry's full SQL shape; this descriptor-aware check
+    owns the link from that read to a predicate write.
     """
-    required_columns = {
-        attribute["column"]
-        for attribute in entity.attributes
-        if attribute.get("primaryKey") or attribute.get("optimisticLocking")
-    }
-    if entity.is_temporal:
-        required_columns.update(
-            column
-            for axis in entity.as_of_attributes
-            for column in (axis.get("fromColumn"), axis.get("toColumn"))
-            if isinstance(column, str)
-        )
+    if step.get("roundTrips") != 1:
+        return None
+    statements = step.get("statements")
+    if not isinstance(statements, list) or len(statements) != 1:
+        return None
+    rows = step.get("expectRows")
+    if not isinstance(rows, list):
+        return None
+    return rows
+
+
+def _assert_materialization_rows(
+    entity: Entity, index: int, rows: list[Any], instruction: dict[str, Any]
+) -> None:
+    """Ensure a real read exposes every current value needed to plan the write.
+
+    Derive the projection from the descriptor and requested write rather than
+    authored SQL: identities, observed versions, and current temporal coordinates
+    are always needed; assignment-bearing updates additionally need the current
+    assigned values for per-row no-op elimination; temporal chains need every
+    current payload column they copy into their head/middle/tail rows.
+    """
+    required_columns = _materialization_columns(entity, instruction)
     for row_index, row in enumerate(rows):
         if not isinstance(row, dict):  # pragma: no cover - case schema guard
             continue
@@ -205,8 +220,95 @@ def _assert_materialization_rows(entity: Entity, index: int, rows: list[Any]) ->
         if missing:
             raise PredicateWriteValidationError(
                 f"materializing find at scenario[{index}] expectRows[{row_index}] omits "
-                f"required identity/observation column(s) {missing} for {entity.name!r}"
+                f"required current materialization column(s) {missing} for {entity.name!r}"
             )
+
+
+def _materialization_columns(entity: Entity, instruction: dict[str, Any]) -> set[str]:
+    """Return descriptor columns a predicate-write materialization must observe.
+
+    This is intentionally column-based because ``expectRows`` represents the SQL
+    projection.  The descriptor identifies observed state; output values generated
+    by a write (a bumped version, fresh processing instants, open bounds, or an
+    inheritance discriminator) are not requested from the materialization.
+    """
+    temporal_columns = _temporal_columns(entity)
+    required_columns = {
+        attribute["column"]
+        for attribute in entity.attributes
+        if attribute.get("primaryKey") or attribute.get("optimisticLocking")
+    }
+    if entity.is_temporal:
+        required_columns.update(temporal_columns)
+
+    mutation = instruction.get("mutation")
+    if mutation in ("update", "updateUntil"):
+        required_columns.update(_assigned_columns(entity, instruction.get("assignments")))
+
+    if _temporal_write_carries_payload(entity, mutation):
+        required_columns.update(_temporal_payload_columns(entity, temporal_columns))
+    return required_columns
+
+
+def _temporal_columns(entity: Entity) -> set[str]:
+    return {
+        column
+        for axis in entity.as_of_attributes
+        for column in (axis.get("fromColumn"), axis.get("toColumn"))
+        if isinstance(column, str)
+    }
+
+
+def _assigned_columns(entity: Entity, assignments: Any) -> set[str]:
+    """Resolve scalar and whole-document assignment observations from the descriptor."""
+    if not isinstance(assignments, list):  # pragma: no cover - structural schema guard
+        return set()
+    columns: set[str] = set()
+    for assignment in assignments:
+        if not isinstance(assignment, dict):  # pragma: no cover - structural schema guard
+            continue
+        reference = assignment.get("attr")
+        if not isinstance(reference, str) or "." not in reference:
+            continue
+        _, name = reference.split(".", 1)
+        try:
+            columns.add(entity.attribute_by_name(name)["column"])
+        except KeyError:
+            try:
+                columns.add(entity.value_object_by_name(name)["column"])
+            except KeyError:
+                # Assignment validity is checked earlier by _assert_assignments.
+                continue
+    return columns
+
+
+def _temporal_write_carries_payload(entity: Entity, mutation: Any) -> bool:
+    """Whether this temporal verb chains a row containing the old payload.
+
+    An update always opens a successor, and a business-axis terminate preserves
+    the head and/or tail around the removed interval.  A processing-only terminate
+    merely closes its row, so its payload is not an input to planning that close.
+    """
+    if not entity.is_temporal:
+        return False
+    if mutation in ("update", "updateUntil"):
+        return True
+    return any(axis.get("axis") == "business" for axis in entity.as_of_attributes)
+
+
+def _temporal_payload_columns(entity: Entity, temporal_columns: set[str]) -> set[str]:
+    """Return current domain columns copied into a temporal successor row."""
+    scalar_columns = {
+        attribute["column"]
+        for attribute in entity.attributes
+        if attribute["column"] not in temporal_columns and not attribute.get("optimisticLocking")
+    }
+    value_object_columns = {
+        value_object["column"]
+        for value_object in entity.value_objects
+        if isinstance(value_object.get("column"), str)
+    }
+    return scalar_columns | value_object_columns
 
 
 def _assert_bare_predicate(node: Any) -> None:
@@ -278,12 +380,7 @@ def _assert_assignments(entity: Entity, assignments: Any) -> None:
     if not isinstance(assignments, list):  # pragma: no cover - structural schema guard
         raise PredicateWriteValidationError("assignment-bearing predicate write needs assignments")
     seen: set[str] = set()
-    temporal_columns = {
-        column
-        for axis in entity.as_of_attributes
-        for column in (axis.get("fromColumn"), axis.get("toColumn"))
-        if isinstance(column, str)
-    }
+    temporal_columns = _temporal_columns(entity)
     for assignment in assignments:
         if not isinstance(assignment, dict):  # pragma: no cover - structural schema guard
             raise PredicateWriteValidationError("predicate write assignment must be an object")
