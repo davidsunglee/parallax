@@ -49,6 +49,7 @@ from __future__ import annotations
 from typing import Any
 
 from .case import Entity
+from .operation_references import ATTRIBUTE_REFERENCE_TAGS
 from .value_object_resolve import (
     DEEP_FETCH_VALUE_OBJECT_SEGMENT,
     FIND_ROOT_VALUE_OBJECT,
@@ -65,28 +66,6 @@ from .value_object_resolve import (
 # The flat nested comparison family (single-key nodes wrapping a {path, value} body).
 _NESTED_COMPARISON_TAGS = frozenset(
     {"nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"}
-)
-# The scalar single-entity predicate nodes that carry an `attr` reference — the
-# site a find() rooted at a value object surfaces (the class segment naming a VO).
-_ATTR_TAGS = frozenset(
-    {
-        "eq",
-        "notEq",
-        "greaterThan",
-        "greaterThanEquals",
-        "lessThan",
-        "lessThanEquals",
-        "isNull",
-        "isNotNull",
-        "like",
-        "notLike",
-        "startsWith",
-        "endsWith",
-        "contains",
-        "in",
-        "notIn",
-        "between",
-    }
 )
 
 
@@ -124,7 +103,7 @@ def _walk(entity: Entity, node: Any) -> None:
     elif tag == "deepFetch":
         _check_deep_fetch(entity, body)
         _walk(entity, body.get("operand"))
-    elif tag in _ATTR_TAGS:
+    elif tag in ATTRIBUTE_REFERENCE_TAGS:
         _check_find_root(entity, body.get("attr"))
     elif tag in ("and", "or"):
         for operand in body.get("operands", []):
