@@ -22,12 +22,24 @@ from parallax.core import (
     ReservedNameError,
     meta,
 )
-from parallax.core.descriptor import canonicalize
+from parallax.core.descriptor import (
+    Attribute as AttributeRecord,
+)
+from parallax.core.descriptor import (
+    Entity as EntityRecord,
+)
+from parallax.core.descriptor import (
+    Inheritance,
+    Metamodel,
+    canonicalize,
+    deserialize,
+)
 from parallax.core.entity import (
     AttributeRef,
     RelationshipRef,
     camel_to_snake,
     descriptor_document,
+    meta_of,
     metamodel,
     snake_to_camel,
 )
@@ -146,6 +158,175 @@ class WithStringRel(Entity, frozen=True):
 def test_string_annotation_relationship_is_unwrapped() -> None:
     view = meta(WithStringRel)
     assert view.relationships[0].related_entity == "Peer"
+
+
+class FutureInferred(Entity, frozen=True):
+    """Neutral-type inference under ``from __future__ import annotations`` (no ``type=``).
+
+    This module stringizes annotations, so ``Attr[int]`` reaches the metaclass as
+    the string ``"Attr[int]"``; inference must still resolve the inner type.
+    """
+
+    __parallax__ = EntityConfig(table="future_inferred", mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True)
+    name: Attr[str]
+    active: Attr[bool] = Field(default=False)
+    amount: Attr[Decimal] = Field(type="decimal(9,2)")
+
+
+def test_future_annotations_infer_neutral_types_without_explicit_type() -> None:
+    by_name = {attr.name: attr for attr in meta(FutureInferred).attributes}
+    assert by_name["id"].type == "int64"
+    assert by_name["name"].type == "string"
+    assert by_name["active"].type == "boolean"
+    assert by_name["amount"].type == "decimal(9,2)"
+
+
+def test_future_annotation_explicit_type_survives_unresolvable_inner() -> None:
+    # A name visible only in function scope is absent from the module globals the
+    # resolver evaluates against, so the inner type stays a string; an explicit
+    # `type=` means inference is never consulted and the class still compiles —
+    # the fallback path that keeps forward references from breaking definitions.
+    class LocalOnly:
+        pass
+
+    class Widget(Entity, frozen=True):
+        __parallax__ = EntityConfig(table="widget", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, type="int64")
+        payload: Attr[LocalOnly] = Field(type="int64")
+
+    assert {attr.name for attr in meta(Widget).attributes} == {"id", "payload"}
+
+
+def _define_invalid_neutral_type() -> type:
+    class Bad(Entity, frozen=True):
+        __parallax__ = EntityConfig(table="bad", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, type="widget")
+
+    return Bad
+
+
+def test_invalid_neutral_type_is_rejected_at_definition() -> None:
+    with pytest.raises(EntityDefinitionError, match="not a neutral type"):
+        _define_invalid_neutral_type()
+
+
+def _define_out_of_range_max_length() -> type:
+    class Bad(Entity, frozen=True):
+        __parallax__ = EntityConfig(table="bad", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, type="int64")
+        label: Attr[str] = Field(type="string", max_length=0)
+
+    return Bad
+
+
+def test_out_of_range_max_length_is_rejected_at_definition() -> None:
+    with pytest.raises(EntityDefinitionError, match="maxLength"):
+        _define_out_of_range_max_length()
+
+
+def test_meta_of_ingested_descriptor_matches_class_derived_view() -> None:
+    ingested = deserialize(_raw_model("account"))
+    yaml_view = meta_of(ingested, "Account")
+    class_view = meta(mm.Account)
+    assert yaml_view.name == class_view.name
+    assert yaml_view.table == class_view.table
+    assert yaml_view.namespace == class_view.namespace
+    assert yaml_view.temporal == class_view.temporal
+    assert tuple((a.name, a.type) for a in yaml_view.attributes) == tuple(
+        (a.name, a.type) for a in class_view.attributes
+    )
+    assert tuple(a.name for a in yaml_view.primary_key) == tuple(
+        a.name for a in class_view.primary_key
+    )
+    assert yaml_view.family == class_view.family  # both None (non-inheritance)
+    # Same canonical descriptor (physical indices aside — the frontend does not
+    # express them), proving the ingested view is the same shape as the class one.
+    assert mm.drop_indices(yaml_view.descriptor()) == class_view.descriptor()
+
+
+def test_meta_of_ingested_descriptor_rejects_unknown_name() -> None:
+    with pytest.raises(KeyError):
+        meta_of(deserialize(_raw_model("account")), "NoSuchEntity")
+
+
+def _animal_family() -> Metamodel:
+    pk = AttributeRecord(name="id", type="int64", column="id", primary_key=True)
+    return Metamodel(
+        entities=(
+            EntityRecord(
+                name="Animal",
+                inheritance=Inheritance(
+                    role="root", strategy="table-per-hierarchy", tag_column="animal_type"
+                ),
+            ),
+            EntityRecord(
+                name="Dog",
+                table="animal",
+                attributes=(pk,),
+                inheritance=Inheritance(role="concrete-subtype", parent="Animal", tag_value="dog"),
+            ),
+            EntityRecord(
+                name="Cat",
+                table="animal",
+                attributes=(pk,),
+                inheritance=Inheritance(role="concrete-subtype", parent="Animal", tag_value="cat"),
+            ),
+        )
+    )
+
+
+def test_family_view_resolves_root_strategy_and_subtypes_from_ingested_descriptor() -> None:
+    family = _animal_family()
+    cat = meta_of(family, "Cat").family
+    assert cat is not None
+    assert cat.role == "concrete-subtype"
+    assert cat.root == "Animal"
+    assert cat.strategy == "table-per-hierarchy"
+    assert cat.tag_column == "animal_type"  # resolved from the root, not the local block
+    assert cat.tag_value == "cat"
+    assert cat.subtypes == ("Cat",)  # a concrete subtype resolves to itself
+
+    root = meta_of(family, "Animal").family
+    assert root is not None
+    assert root.root == "Animal"
+    assert root.strategy == "table-per-hierarchy"
+    # The abstract position resolves to its effective concrete-subtype set.
+    assert root.subtypes == ("Cat", "Dog")
+
+
+def test_family_view_tolerates_unresolved_root() -> None:
+    # A malformed ingested family (a parent that names a non-participant, or one
+    # absent from the descriptor) resolves to no root rather than raising.
+    pk = AttributeRecord(name="id", type="int64", column="id", primary_key=True)
+    plain = EntityRecord(name="Plain", table="plain", attributes=(pk,))
+    broken = EntityRecord(
+        name="Broken",
+        table="broken",
+        attributes=(pk,),
+        inheritance=Inheritance(role="concrete-subtype", parent="Plain", tag_value="b"),
+    )
+    orphan = EntityRecord(
+        name="Orphan",
+        table="orphan",
+        attributes=(pk,),
+        inheritance=Inheritance(role="concrete-subtype", parent="Ghost", tag_value="o"),
+    )
+    descriptor = Metamodel(entities=(plain, broken, orphan))
+
+    broken_family = meta_of(descriptor, "Broken").family  # parent is a non-participant
+    assert broken_family is not None
+    assert broken_family.root is None
+    assert broken_family.strategy is None
+    assert broken_family.tag_column is None
+
+    orphan_family = meta_of(descriptor, "Orphan").family  # parent absent from the descriptor
+    assert orphan_family is not None
+    assert orphan_family.root is None
 
 
 def _define_string_plain_field() -> type:

@@ -16,6 +16,7 @@ from parallax.core.descriptor.records import (
     Entity,
     Index,
     Inheritance,
+    InheritanceRole,
     Metamodel,
     NestedValueObject,
     OrderByTerm,
@@ -28,6 +29,7 @@ from parallax.core.descriptor.records import (
     column_order,
 )
 from parallax.core.descriptor.serde import canonicalize, deserialize, serialize
+from parallax.core.descriptor.validate import validate_entity, validate_metamodel
 
 __all__ = [
     "UNSET",
@@ -37,6 +39,7 @@ __all__ = [
     "Entity",
     "Index",
     "Inheritance",
+    "InheritanceRole",
     "Metamodel",
     "NestedValueObject",
     "OrderByTerm",
@@ -50,4 +53,6 @@ __all__ = [
     "column_order",
     "deserialize",
     "serialize",
+    "validate_entity",
+    "validate_metamodel",
 ]

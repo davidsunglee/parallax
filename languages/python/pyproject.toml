@@ -129,8 +129,7 @@ name = "parallax.core.audit_write may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.audit_write"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -155,8 +154,7 @@ name = "parallax.core.auto_retry may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.auto_retry"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -180,8 +178,7 @@ name = "parallax.core.base may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.base"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -213,8 +210,7 @@ name = "parallax.core.batch_write may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.batch_write"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.bitemp_write",
@@ -240,8 +236,7 @@ name = "parallax.core.bitemp_write may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.bitemp_write"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.db_error",
@@ -265,8 +260,7 @@ name = "parallax.core.db_error may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.db_error"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -295,8 +289,7 @@ name = "parallax.core.db_port may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.db_port"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -327,8 +320,7 @@ name = "parallax.core.deep_fetch may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.deep_fetch"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -351,8 +343,7 @@ name = "parallax.core.descriptor may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.descriptor"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -383,8 +374,7 @@ name = "parallax.core.dialect may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.dialect"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -415,8 +405,7 @@ name = "parallax.core.entity may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.entity"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -443,8 +432,7 @@ name = "parallax.core.inheritance may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.inheritance"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -474,8 +462,7 @@ name = "parallax.core.navigate may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.navigate"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -499,8 +486,7 @@ name = "parallax.core.op_algebra may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.op_algebra"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -529,8 +515,7 @@ name = "parallax.core.op_list may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.op_list"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -556,8 +541,7 @@ name = "parallax.core.opt_lock may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.opt_lock"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -582,8 +566,7 @@ name = "parallax.core.pk_gen may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.pk_gen"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -613,8 +596,7 @@ name = "parallax.core.read_lock may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.read_lock"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -639,8 +621,7 @@ name = "parallax.core.sql_gen may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.sql_gen"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -667,8 +648,7 @@ name = "parallax.core.temporal_read may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.temporal_read"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -696,8 +676,7 @@ name = "parallax.core.unit_work may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.unit_work"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -724,8 +703,7 @@ name = "parallax.core.value_object may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.value_object"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -755,8 +733,7 @@ name = "parallax.postgres may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.postgres"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
@@ -784,8 +761,7 @@ name = "parallax.snapshot.handle may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.snapshot.handle"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.value_object",
     "parallax.postgres",
 ]
@@ -795,8 +771,7 @@ name = "parallax.snapshot.materialize may import only its permitted dependencies
 type = "forbidden"
 source_modules = ["parallax.snapshot.materialize"]
 forbidden_modules = [
-    "parallax.conformance.case_format",
-    "parallax.conformance.cli",
+    "parallax.conformance",
     "parallax.core.audit_write",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",

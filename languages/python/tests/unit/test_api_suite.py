@@ -6,10 +6,21 @@ from pathlib import Path
 
 import pytest
 
-from parallax.conformance import api_suite, usage_guide
+from parallax.conformance import api_suite, case_format, usage_guide
 from parallax.conformance.api_suite import Example, Skip
 
 pytestmark = pytest.mark.unit
+
+
+def _case(case_id: str, module: str) -> case_format.Case:
+    return case_format.Case(
+        path=Path(f"{case_id}.yaml"),
+        case_id=case_id,
+        shape="read",
+        tags=(module, "slice-snapshot-1"),
+        model="",
+        document={},
+    )
 
 
 def test_active_slice_is_non_empty_and_all_snapshot_tagged() -> None:
@@ -33,6 +44,57 @@ def test_partition_report_is_a_clean_full_partition() -> None:
     assert report.ok, report.errors
     assert report.exercised == frozenset()  # no examples registered yet
     assert report.exercised | report.skipped == report.active
+
+
+def test_build_skips_uses_the_reviewed_registry_reason() -> None:
+    active = [_case("m-op-algebra-900", "m-op-algebra")]
+    skips = api_suite.build_skips(active, [], {"m-op-algebra": "reviewed reason"})
+    assert skips == [Skip("m-op-algebra-900", "reviewed reason")]
+
+
+def test_unclassified_active_case_is_not_silently_skipped() -> None:
+    # A case whose module is absent from the registry gets no skip, so the
+    # partition flags it as covered-by-neither — forcing a human to classify it
+    # rather than minting a generic reason.
+    active = [_case("m-ghost-900", "m-ghost")]
+    skips = api_suite.build_skips(active, [], {"m-op-algebra": "r"})
+    assert skips == []
+    report = api_suite.compute_partition(frozenset({"m-ghost-900"}), [], skips)
+    assert not report.ok
+    assert any("covered by neither" in error for error in report.errors)
+
+
+def test_stale_registry_entry_absent_from_slice_is_flagged() -> None:
+    active = [_case("m-op-algebra-900", "m-op-algebra")]
+    stale = api_suite.stale_skip_reasons(active, [], {"m-op-algebra": "r", "m-gone": "r2"})
+    assert any("m-gone" in error for error in stale)
+    assert not any("m-op-algebra" in error for error in stale)
+
+
+def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
+    active = [_case("m-op-algebra-900", "m-op-algebra")]
+    examples = [Example("m-op-algebra-900", "t", "s")]
+    stale = api_suite.stale_skip_reasons(active, examples, {"m-op-algebra": "r"})
+    assert any("m-op-algebra" in error for error in stale)
+
+
+def test_registry_classifies_every_active_module_without_stale_entries() -> None:
+    # The committed registry is reconciled against the live corpus: it covers
+    # every module in the active slice and carries no entry that names none.
+    active = api_suite.active_slice()
+    modules = {case.primary_module for case in active}
+    assert modules <= set(api_suite.SKIP_REASONS)
+    assert api_suite.stale_skip_reasons(active, api_suite.EXAMPLES) == []
+
+
+def test_partition_report_surfaces_stale_registry_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tampered = {**api_suite.SKIP_REASONS, "m-not-in-slice": "bogus reason"}
+    monkeypatch.setattr(api_suite, "SKIP_REASONS", tampered)
+    report = api_suite.partition_report()
+    assert not report.ok
+    assert any("m-not-in-slice" in error for error in report.errors)
 
 
 def test_compute_partition_happy_path() -> None:

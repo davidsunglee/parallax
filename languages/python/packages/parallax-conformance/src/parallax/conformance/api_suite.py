@@ -3,14 +3,20 @@
 The coverage-partition computation and the Usage Guide model shared by the
 ``tests/api_conformance`` suite and the ``gen-usage-guide`` generator. The
 partition asserts the union of exercised and reasoned-skipped cases equals the
-active slice, with no stale case IDs and no empty skip reasons; the Usage Guide
-renders the exercised idiomatic examples. At this phase there are no examples
-yet — every active-slice case is reasoned-skipped with a per-case reason (no
-silent gaps).
+active slice, with no stale case IDs and no empty skip reasons.
+
+Reasoned skips are drawn from an **explicit, reviewed** registry
+(:data:`SKIP_REASONS`, keyed by module) rather than auto-derived from the active
+set. An active case whose module is absent from the registry is covered by
+neither exercised nor skipped, so the partition fails — forcing a human to
+classify a newly reachable capability rather than letting it inherit a generic
+reason. A registry entry that names no unexercised active case is reported as
+stale. Entries are removed as each module's idiomatic examples land.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -19,6 +25,7 @@ from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 
 __all__ = [
     "EXAMPLES",
+    "SKIP_REASONS",
     "Example",
     "Partition",
     "Skip",
@@ -27,6 +34,7 @@ __all__ = [
     "compute_partition",
     "partition_report",
     "render_usage_guide",
+    "stale_skip_reasons",
 ]
 
 
@@ -65,6 +73,46 @@ class Partition:
 # an Example per newly reachable case as its capability comes online.
 EXAMPLES: Final[list[Example]] = []
 
+# The reviewed skip registry: primary module -> the reason its active cases carry
+# no idiomatic API example yet. Keyed by module (a reason bucket), and NOT derived
+# from the active slice, so a corpus case whose module is absent here fails the
+# partition (see module docstring). Each reason names the COR-3 phase that brings
+# the module's developer surface online; the entry is dropped when that lands.
+SKIP_REASONS: Final[dict[str, str]] = {
+    "m-core": (
+        "m-core neutral-type behaviour has no standalone developer surface; it is "
+        "exercised through the first read path (COR-3 Phase 5)"
+    ),
+    "m-descriptor": (
+        "descriptor introspection is proven by the descriptor no-drift guard; a "
+        "reachable statement/compile example lands with the read path (COR-3 Phase 5)"
+    ),
+    "m-op-algebra": (
+        "predicate/grouping statement-building lands with the read path (COR-3 Phase 5)"
+    ),
+    "m-temporal-read": (
+        "as-of / history / as-of-range spellings land with the temporal backbone (COR-3 Phase 6)"
+    ),
+    "m-unit-work": "transaction demarcation lands with the transactions backbone (COR-3 Phase 6)",
+    "m-db-error": "error-category classification lands at the port boundary (COR-3 Phase 6)",
+    "m-pk-gen": "pk-generator inserts land with keyed writes (COR-3 Phase 6)",
+    "m-auto-retry": "bounded automatic retry lands with the transactions backbone (COR-3 Phase 6)",
+    "m-read-lock": "shared-read-lock reads land with the transactions backbone (COR-3 Phase 6)",
+    "m-navigate": "relationship navigation lands with the snapshot branch (COR-3 Phase 7)",
+    "m-deep-fetch": "deep-fetch includes land with the snapshot branch (COR-3 Phase 7)",
+    "m-snapshot-read": "snapshot materialization lands with the snapshot branch (COR-3 Phase 7)",
+    "m-value-object": (
+        "value-object predicates and materialization land with the snapshot branch (COR-3 Phase 7)"
+    ),
+    "m-inheritance": (
+        "polymorphic reads and narrowing land with the snapshot branch (COR-3 Phase 7)"
+    ),
+    "m-opt-lock": "optimistic-lock writes land with the write family (COR-3 Phase 8)",
+    "m-audit-write": "audit (close-and-chain) writes land with the write family (COR-3 Phase 8)",
+    "m-bitemp-write": "bitemporal writes land with the write family (COR-3 Phase 8)",
+    "m-batch-write": "batched and set-based writes land with the write family (COR-3 Phase 8)",
+}
+
 
 def _selection_filter(claim: Claim) -> case_format.SelectionFilter:
     return case_format.SelectionFilter(
@@ -84,20 +132,43 @@ def active_slice(
     return case_format.select(corpus, _selection_filter(claim))
 
 
-def _default_reason(case: case_format.Case) -> str:
-    return (
-        f"no idiomatic API example yet — added when {case.primary_module} comes "
-        "online in a later COR-3 phase"
-    )
+def build_skips(
+    active: list[case_format.Case],
+    examples: list[Example],
+    reasons: Mapping[str, str] = SKIP_REASONS,
+) -> list[Skip]:
+    """Reasoned skips for un-exercised active cases whose module the registry covers.
 
-
-def build_skips(active: list[case_format.Case], examples: list[Example]) -> list[Skip]:
-    """Reasoned skips covering every active case without an idiomatic example."""
+    A case whose ``primary_module`` is absent from ``reasons`` is deliberately
+    left uncovered — the partition then flags it as covered by neither, forcing a
+    human to classify the newly reachable module rather than minting a generic
+    reason for it.
+    """
     exercised = {example.case_id for example in examples}
     return [
-        Skip(case.case_id, _default_reason(case))
+        Skip(case.case_id, reasons[case.primary_module])
         for case in active
-        if case.case_id not in exercised
+        if case.case_id not in exercised and case.primary_module in reasons
+    ]
+
+
+def stale_skip_reasons(
+    active: list[case_format.Case],
+    examples: list[Example],
+    reasons: Mapping[str, str] = SKIP_REASONS,
+) -> list[str]:
+    """Error strings for registry entries that name no un-exercised active case.
+
+    An entry is stale when its module is absent from the active slice or every
+    case it would cover is already exercised — either way it produces no skip and
+    is dead weight that must be pruned.
+    """
+    exercised = {example.case_id for example in examples}
+    covered = {case.primary_module for case in active if case.case_id not in exercised}
+    return [
+        f"stale skip-registry entry {module!r}: names no un-exercised active case"
+        for module in sorted(reasons)
+        if module not in covered
     ]
 
 
@@ -134,12 +205,21 @@ def partition_report(
     cases: list[case_format.Case] | None = None,
     examples: list[Example] | None = None,
 ) -> Partition:
-    """Load the active slice and compute its partition against the registry."""
+    """Load the active slice and compute its partition against the skip registry."""
     active = active_slice(claim, cases)
     registered = examples if examples is not None else EXAMPLES
-    skips = build_skips(active, registered)
+    skips = build_skips(active, registered, SKIP_REASONS)
     active_ids = frozenset(case.case_id for case in active)
-    return compute_partition(active_ids, registered, skips)
+    partition = compute_partition(active_ids, registered, skips)
+    stale = stale_skip_reasons(active, registered, SKIP_REASONS)
+    if not stale:
+        return partition
+    return Partition(
+        partition.active,
+        partition.exercised,
+        partition.skipped,
+        (*partition.errors, *stale),
+    )
 
 
 _GUIDE_HEADER: Final[str] = (

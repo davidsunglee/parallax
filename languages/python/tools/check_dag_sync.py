@@ -108,9 +108,19 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     ),
 }
 
+# The conformance-family enforcement scopes that carry a module tag and thus
+# appear as nodes in the DAG (m-case-format, m-conformance-adapter). They are
+# exempt on the *importing* side: no forbidden contract is sourced from them.
 CONFORMANCE_SCOPES: frozenset[str] = frozenset(
     {"parallax.conformance.case_format", "parallax.conformance.cli"}
 )
+
+# Every production scope is forbidden from importing *any* conformance scope
+# (python.md §7). Rather than enumerate the conformance subtree — which silently
+# leaves a newly added conformance module (`.adapter`, `.claim`, `.api_suite`, …)
+# importable — the whole package is forbidden as one edge; import-linter treats a
+# package forbidden module as covering all its descendants (`as_packages`).
+CONFORMANCE_ROOT: str = "parallax.conformance"
 
 ROOT_PACKAGES: tuple[str, ...] = (
     "parallax.conformance",
@@ -138,12 +148,33 @@ def parse_dependency_graph(text: str) -> list[tuple[str, str]]:
 
 
 def build_adjacency(edges: Iterable[tuple[str, str]]) -> dict[str, frozenset[str]]:
-    """Map every scope to the set of scopes it may *directly* depend on."""
+    """Map every scope to the set of scopes it may *directly* depend on.
+
+    Fails loudly rather than silently dropping a dependency: if a mapped module
+    (one in ``MODULE_SCOPE``) depends on a core-DAG module that ``MODULE_SCOPE``
+    does not model, the §7 enforcement map is stale and generation aborts. Edges
+    whose *importer* is unmapped (a deferred / out-of-slice module the Python
+    target does not enforce) are skipped. Support-scope dependency targets are
+    likewise checked against the known scope set.
+    """
     nodes = set(MODULE_SCOPE.values()) | set(SUPPORT_SCOPE_DEPS)
+    for scope, deps in SUPPORT_SCOPE_DEPS.items():
+        unknown = deps - nodes
+        if unknown:
+            raise ValueError(
+                f"support scope {scope!r} depends on scopes absent from the §7 "
+                f"enforcement map: {sorted(unknown)}"
+            )
     direct: dict[str, set[str]] = {node: set() for node in nodes}
     for importer, imported in edges:
-        if importer in MODULE_SCOPE and imported in MODULE_SCOPE:
-            direct[MODULE_SCOPE[importer]].add(MODULE_SCOPE[imported])
+        if importer not in MODULE_SCOPE:
+            continue
+        if imported not in MODULE_SCOPE:
+            raise ValueError(
+                f"mapped module {importer!r} depends on {imported!r}, which "
+                "MODULE_SCOPE does not model — the §7 enforcement map is stale"
+            )
+        direct[MODULE_SCOPE[importer]].add(MODULE_SCOPE[imported])
     for scope, deps in SUPPORT_SCOPE_DEPS.items():
         direct[scope].update(deps)
     return {node: frozenset(deps) for node, deps in direct.items()}
@@ -163,13 +194,20 @@ def transitive_closure(adjacency: Mapping[str, frozenset[str]], start: str) -> f
 
 
 def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list[str]]:
-    """For each production source scope, the sorted scopes it may not import."""
-    all_nodes = set(adjacency) | CONFORMANCE_SCOPES
+    """For each production source scope, the sorted scopes it may not import.
+
+    Targets are every *production* scope the scope's transitive closure does not
+    reach, plus the whole ``parallax.conformance`` subtree as a single package
+    edge — so every production scope is forbidden from importing any conformance
+    scope, modelled or not.
+    """
     production_sources = sorted(node for node in adjacency if node not in CONFORMANCE_SCOPES)
+    production_targets = set(adjacency) - CONFORMANCE_SCOPES
+    all_targets = production_targets | {CONFORMANCE_ROOT}
     forbidden: dict[str, list[str]] = {}
     for scope in production_sources:
         allowed = transitive_closure(adjacency, scope)
-        blocked = all_nodes - allowed - {scope}
+        blocked = all_targets - allowed - {scope}
         forbidden[scope] = sorted(blocked)
     return forbidden
 

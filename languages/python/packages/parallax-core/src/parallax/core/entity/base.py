@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as _dt
 import decimal as _decimal
 import re
+import sys
 import uuid as _uuid
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast, get_args, get_origin
@@ -20,7 +21,7 @@ from typing import Any, ClassVar, cast, get_args, get_origin
 from pydantic import BaseModel, ConfigDict
 from pydantic._internal._model_construction import ModelMetaclass
 
-from parallax.core.descriptor import UNSET
+from parallax.core.descriptor import UNSET, DescriptorError, validate_entity
 from parallax.core.descriptor import Attribute as AttributeRecord
 from parallax.core.descriptor import Entity as EntityRecord
 from parallax.core.descriptor import Relationship as RelationshipRecord
@@ -38,6 +39,7 @@ __all__ = [
     "EntityMeta",
     "camel_to_snake",
     "entity_record_of",
+    "entity_records",
     "entity_registry",
     "snake_to_camel",
 ]
@@ -106,17 +108,54 @@ def entity_record_of(cls: type) -> EntityRecord | None:
     return _ENTITY_BY_CLASS.get(cls)
 
 
-def _unwrap(annotation: object) -> tuple[str | None, object]:
+def entity_records() -> dict[str, EntityRecord]:
+    """Every compiled metamodel record keyed by canonical entity name."""
+    return {
+        name: _ENTITY_BY_CLASS[cls] for name, cls in _REGISTRY.items() if cls in _ENTITY_BY_CLASS
+    }
+
+
+def _module_globalns(namespace: dict[str, Any]) -> dict[str, Any]:
+    """The declaring module's global namespace, for resolving stringized types."""
+    module_name = namespace.get("__module__")
+    module = sys.modules.get(module_name) if isinstance(module_name, str) else None
+    return dict(getattr(module, "__dict__", {}))
+
+
+def _resolve_annotation_type(inner: object, globalns: dict[str, Any]) -> object:
+    """Resolve a stringized inner **attribute** type to a real object.
+
+    Under ``from __future__ import annotations`` (or any explicit stringized
+    annotation) an ``Attr[T]`` inner type arrives as a string; evaluate it against
+    the declaring module's namespace so neutral-type inference sees the concrete
+    ``T``. Relationship inner types are never passed here, so a forward
+    relationship reference such as ``Rel["Other"]`` is left unresolved until it is
+    actually needed. A name that cannot be resolved is returned unchanged, so a
+    genuinely un-inferable annotation still raises the ordinary "cannot infer"
+    error when no explicit ``type=`` is supplied.
+    """
+    if not isinstance(inner, str):
+        return inner
+    try:
+        # Trusted input: the developer's own annotation source, already executed
+        # as a class body. Mirrors typing.get_type_hints' resolution step.
+        return eval(inner, globalns)
+    except (NameError, AttributeError, SyntaxError, TypeError):
+        return inner
+
+
+def _unwrap(annotation: object, globalns: dict[str, Any]) -> tuple[str | None, object]:
     """Classify an annotation as ``attr`` / ``rel`` / plain and return its inner type."""
     if isinstance(annotation, str):
-        if (match := _ATTR_STR.match(annotation.strip())) is not None:
-            return "attr", match.group("inner")
-        if (match := _REL_STR.match(annotation.strip())) is not None:
+        text = annotation.strip()
+        if (match := _ATTR_STR.match(text)) is not None:
+            return "attr", _resolve_annotation_type(match.group("inner"), globalns)
+        if (match := _REL_STR.match(text)) is not None:
             return "rel", match.group("inner")
         return None, annotation
     origin = get_origin(annotation)
     if origin is Attr:
-        return "attr", get_args(annotation)[0]
+        return "attr", _resolve_annotation_type(get_args(annotation)[0], globalns)
     if origin is Rel:
         return "rel", get_args(annotation)[0]
     return None, annotation
@@ -211,13 +250,14 @@ class EntityMeta(ModelMetaclass):
         config = config if isinstance(config, EntityConfig) else EntityConfig()
 
         annotations: dict[str, Any] = dict(namespace.get("__annotations__", {}))
+        globalns = _module_globalns(namespace)
         attr_decls: list[_AttrDecl] = []
         rel_decls: list[_RelDecl] = []
 
         for py_name, annotation in list(annotations.items()):
             if get_origin(annotation) is ClassVar:
                 continue
-            kind, inner = _unwrap(annotation)
+            kind, inner = _unwrap(annotation, globalns)
             _reject_reserved(py_name)
             value = namespace.get(py_name)
             if kind == "attr":
@@ -259,6 +299,13 @@ class EntityMeta(ModelMetaclass):
             attributes=attributes,
             relationships=relationships,
         )
+        # Reject an invalid compiled record (bad neutral type, out-of-range
+        # maxLength, optimistic-lock composition, PK-generator bounds, …) at
+        # definition time, before the class is registered or ever exported.
+        try:
+            validate_entity(entity)
+        except DescriptorError as exc:
+            raise EntityDefinitionError(str(exc)) from exc
 
         cls = super().__new__(mcs, cls_name, bases, namespace, **kwargs)
         for py_name, _inner, spec in attr_decls:

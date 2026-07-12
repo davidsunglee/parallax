@@ -69,8 +69,38 @@ def test_production_scopes_never_import_conformance() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     for scope, blocked in forbidden.items():
-        assert "parallax.conformance.case_format" in blocked, scope
-        assert "parallax.conformance.cli" in blocked, scope
+        # The whole conformance subtree is forbidden as one package edge, which
+        # import-linter expands to every parallax.conformance.* scope — so a new
+        # conformance module (`.adapter`, `.claim`, `.api_suite`, …) can never
+        # slip in as importable from production. Individual conformance scopes
+        # are therefore subsumed, not separately enumerated.
+        assert dag.CONFORMANCE_ROOT in blocked, scope
+        assert "parallax.conformance.case_format" not in blocked, scope
+        assert "parallax.conformance.cli" not in blocked, scope
+
+
+def test_build_adjacency_fails_on_mapped_importer_with_unmapped_target() -> None:
+    # A mapped importer that gains a dependency MODULE_SCOPE does not model must
+    # abort generation, not silently drop the edge (leaving the §7 map stale).
+    with pytest.raises(ValueError, match="MODULE_SCOPE does not model"):
+        dag.build_adjacency([("m-descriptor", "m-ghost-999")])
+
+
+def test_build_adjacency_skips_unmapped_importer() -> None:
+    # A deferred / out-of-slice importer the Python target does not enforce is
+    # skipped, not treated as a stale-map error.
+    adjacency = dag.build_adjacency([("m-agg", "m-op-algebra")])
+    assert adjacency["parallax.core.op_algebra"] == frozenset()
+
+
+def test_build_adjacency_fails_on_unknown_support_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tampered = dict(dag.SUPPORT_SCOPE_DEPS)
+    tampered["parallax.core.entity"] = frozenset({"parallax.core.does_not_exist"})
+    monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
+    with pytest.raises(ValueError, match="absent from the §7 enforcement map"):
+        dag.build_adjacency([])
 
 
 def test_conformance_scopes_are_exempt_importers() -> None:
@@ -141,3 +171,27 @@ def test_lint_imports_is_green_without_the_canary() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_production_import_of_unmodeled_conformance_scope_fails_lint_imports() -> None:
+    # A production scope importing an *unmodeled* conformance scope (`.adapter`,
+    # not `.case_format`/`.cli`) must still be caught — the whole subtree is
+    # forbidden, so a new conformance module can never become importable.
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    canary = PY_ROOT / "packages/parallax-core/src/parallax/core/base/_canary_conformance_import.py"
+    canary.write_text("import parallax.conformance.adapter  # deliberate boundary violation\n")
+    try:
+        result = subprocess.run(
+            [lint_imports],
+            cwd=PY_ROOT,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        canary.unlink()
+
+    assert result.returncode != 0, result.stdout
+    assert "parallax.core.base" in result.stdout
+    assert "parallax.conformance" in result.stdout

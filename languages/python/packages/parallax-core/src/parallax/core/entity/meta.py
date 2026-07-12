@@ -1,31 +1,41 @@
 """Runtime metamodel introspection (``meta`` / ``EntityMetaView``).
 
-``meta(Order)`` (or ``meta("Order")``) returns a frozen view over an entity's
-canonical metamodel record, with ``descriptor()`` re-exporting the canonical
-dict form. The same view type serves a class-authored entity and one ingested
-from canonical YAML — both are :class:`~parallax.core.descriptor.Entity`
-records under the hood.
+``meta(Order)`` (or ``meta("Order")``) returns a frozen ``EntityMetaView`` over
+an entity's canonical metamodel record, with ``descriptor()`` re-exporting the
+canonical dict form. ``meta_of(metamodel, "Order")`` produces the identical view
+shape from a descriptor ingested from canonical YAML (the conformance adapter's
+path), so the same view is available whether the metamodel came from classes or
+ingested YAML (python.md §2). ``family`` resolves the entity's inheritance root,
+strategy, and effective concrete-subtype set from its sibling records rather than
+echoing the entity's own local inheritance block.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from parallax.core.descriptor import (
     AsOfAttribute,
     Attribute,
     Entity,
-    Inheritance,
+    InheritanceRole,
     Metamodel,
     Relationship,
     Temporal,
     ValueObject,
     serialize,
 )
-from parallax.core.entity.base import entity_record_of, entity_registry
+from parallax.core.entity.base import entity_record_of, entity_records, entity_registry
 
-__all__ = ["EntityMetaView", "descriptor_document", "meta", "metamodel"]
+__all__ = [
+    "EntityMetaView",
+    "FamilyView",
+    "descriptor_document",
+    "meta",
+    "meta_of",
+    "metamodel",
+]
 
 
 def _entity_of(target: type | str) -> Entity:
@@ -41,10 +51,78 @@ def _entity_of(target: type | str) -> Entity:
 
 
 @dataclass(frozen=True, slots=True)
+class FamilyView:
+    """Resolved inheritance-family metadata for one entity's position.
+
+    ``root``/``strategy``/``tag_column`` come from the family's abstract root;
+    ``parent``/``tag_value`` are this entity's own; ``subtypes`` is the effective
+    concrete-subtype set of this position (a concrete subtype resolves to itself;
+    an abstract position to its concrete descendants), alphabetically ordered.
+    """
+
+    role: InheritanceRole
+    root: str | None
+    strategy: str | None
+    parent: str | None
+    tag_column: str | None
+    tag_value: str | None
+    subtypes: tuple[str, ...]
+
+
+def _root_of(entity: Entity, by_name: Mapping[str, Entity]) -> Entity | None:
+    """Walk the parent chain to the family's abstract root (``None`` if unresolved)."""
+    current = entity
+    guard: set[str] = set()
+    while True:
+        inheritance = current.inheritance
+        if inheritance is None:
+            return None
+        if inheritance.role == "root":
+            return current
+        parent = inheritance.parent
+        if parent is None or current.name in guard or parent not in by_name:
+            return None
+        guard.add(current.name)
+        current = by_name[parent]
+
+
+def _concrete_subtypes(position: str, by_name: Mapping[str, Entity]) -> tuple[str, ...]:
+    """Every concrete-subtype name at or under ``position``, alphabetically ordered."""
+    children: dict[str, list[str]] = {}
+    for entity in by_name.values():
+        inheritance = entity.inheritance
+        if inheritance is not None and inheritance.parent is not None:
+            children.setdefault(inheritance.parent, []).append(entity.name)
+    result: set[str] = set()
+    seen: set[str] = set()
+    stack = [position]
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        entity = by_name.get(name)
+        if (
+            entity is not None
+            and entity.inheritance is not None
+            and entity.inheritance.role == "concrete-subtype"
+        ):
+            result.add(name)
+        stack.extend(children.get(name, []))
+    return tuple(sorted(result))
+
+
+@dataclass(frozen=True, slots=True)
 class EntityMetaView:
-    """A frozen introspection view over one entity's metamodel record."""
+    """A frozen introspection view over one entity's metamodel record.
+
+    ``_context`` carries the sibling entities the entity was resolved within (its
+    class registry, or an ingested metamodel), so ``family`` can resolve
+    cross-entity metadata; it never affects the single-entity projections.
+    """
 
     _entity: Entity
+    _context: tuple[Entity, ...] = ()
 
     @property
     def name(self) -> str:
@@ -83,8 +161,24 @@ class EntityMetaView:
         return self._entity.value_objects
 
     @property
-    def family(self) -> Inheritance | None:
-        return self._entity.inheritance
+    def family(self) -> FamilyView | None:
+        """The resolved inheritance-family view, or ``None`` outside a family."""
+        inheritance = self._entity.inheritance
+        if inheritance is None:
+            return None
+        by_name = {entity.name: entity for entity in self._context}
+        by_name.setdefault(self._entity.name, self._entity)
+        root = _root_of(self._entity, by_name)
+        root_inheritance = root.inheritance if root is not None else None
+        return FamilyView(
+            role=inheritance.role,
+            root=root.name if root is not None else None,
+            strategy=root_inheritance.strategy if root_inheritance is not None else None,
+            parent=inheritance.parent,
+            tag_column=root_inheritance.tag_column if root_inheritance is not None else None,
+            tag_value=inheritance.tag_value,
+            subtypes=_concrete_subtypes(self._entity.name, by_name),
+        )
 
     def descriptor(self) -> dict[str, object]:
         """The canonical single-entity descriptor document for this entity."""
@@ -93,7 +187,17 @@ class EntityMetaView:
 
 def meta(target: type | str) -> EntityMetaView:
     """The introspection view for an entity class or a registered entity name."""
-    return EntityMetaView(_entity_of(target))
+    return EntityMetaView(_entity_of(target), tuple(entity_records().values()))
+
+
+def meta_of(descriptor: Metamodel, name: str) -> EntityMetaView:
+    """The introspection view for ``name`` within an ingested descriptor.
+
+    Produces the same ``EntityMetaView`` shape ``meta`` returns for a
+    class-authored entity, so a metamodel ingested from canonical YAML (the
+    conformance adapter's path) yields an equivalent view for a shared model.
+    """
+    return EntityMetaView(descriptor.entity(name), descriptor.entities)
 
 
 def metamodel(classes: Sequence[type]) -> Metamodel:

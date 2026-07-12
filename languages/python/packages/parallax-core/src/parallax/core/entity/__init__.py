@@ -16,6 +16,7 @@ from parallax.core.entity.base import (
     EntityConfig,
     EntityMeta,
     camel_to_snake,
+    entity_records,
     entity_registry,
     snake_to_camel,
 )
@@ -28,8 +29,10 @@ from parallax.core.entity.expressions import Attr, AttributeRef, Rel, Relationsh
 from parallax.core.entity.fields import Field, FieldSpec, Relationship, RelationshipSpec
 from parallax.core.entity.meta import (
     EntityMetaView,
+    FamilyView,
     descriptor_document,
     meta,
+    meta_of,
     metamodel,
 )
 
@@ -41,6 +44,7 @@ __all__ = [
     "EntityDefinitionError",
     "EntityMeta",
     "EntityMetaView",
+    "FamilyView",
     "Field",
     "FieldSpec",
     "NameCollisionError",
@@ -52,8 +56,10 @@ __all__ = [
     "ReservedNameError",
     "camel_to_snake",
     "descriptor_document",
+    "entity_records",
     "entity_registry",
     "meta",
+    "meta_of",
     "metamodel",
     "snake_to_camel",
 ]

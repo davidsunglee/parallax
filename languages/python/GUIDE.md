@@ -75,13 +75,25 @@ database-backed check, and CI fails on any silent skip.
 
 ## Current status
 
-- **Phase 1 complete.** The uv workspace, the four distributions (skeleton
-  packages over the PEP 420 namespace), the generated import-linter enforcement,
-  the full §10 toolchain, `just python-static` / `just python-verify`, and the
+- **Phases 1–3 complete.** The uv workspace, the four distributions over the
+  PEP 420 namespace, the generated import-linter enforcement, the full §10
+  toolchain, `just python-static` / `just python-verify`, and the
   `python-static` / `python-database` CI lanes are stood up and green
-  database-free. No runtime behaviour is implemented yet; every enforcement
-  scope is a documented skeleton.
-- Phases 2–9: not started.
+  database-free.
+- **Phase 2 (conformance spine):** `m-core` neutral types, `m-case-format`
+  corpus loading with the §1 case-selection expression, the in-process adapter
+  core, and the CLI — `describe` runs end-to-end from argv to schema-validated
+  JSON and exit code. The API Conformance Suite framework, coverage partition,
+  and generated Usage Guide run from day one (every active-slice case
+  reasoned-skipped until its capability lands).
+- **Phase 3 (metamodel hub + class frontend):** the `m-descriptor` records and
+  serde, `m-pk-gen`, `m-inheritance`, and `m-value-object` models, plus the
+  Pydantic class frontend (`Attr`/`Rel` typed descriptors, `Field` /
+  `Relationship`, definition-time validation, `meta` introspection). The
+  descriptor no-drift guard is live.
+- **Phase 4 next:** the core amendment bundle (compile-eligibility declaration,
+  write-instruction schema, same-transaction coalescing). Phases 5–9 not
+  started; no read/write runtime path exists yet.
 
 ## Blockers
 
