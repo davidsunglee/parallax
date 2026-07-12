@@ -18,6 +18,7 @@
 - Use compatibility corpus cases as the primary behavioral verification. Add language unit tests for internal seams, diagnostics, and failure modes.
 - Expose implementation conformance through `core/spec/m-conformance-adapter.md`; do not invent a different language-specific conformance surface.
 - The reference harness's internals are non-normative and MUST NOT be used as design input for a language implementation; the binding inputs are the spec modules, `core/schemas/`, the compatibility corpus, and the conformance-adapter contract.
+- Other Parallax language implementations are non-normative and MUST NOT be used as prior art or design input for a new language target. Do not inspect, copy, translate, or infer behavior or architecture from their runtime code, tests, adapters, or operational documentation. Derive the implementation from the target language spec, core specs, schemas, compatibility corpus, and conformance-adapter contract; resolve any gaps in those artifacts rather than consulting another implementation.
 - For implementation changes, run the smallest relevant active-claim and capability-tag intersection plus feasible root verification. Report any skipped database-backed checks.
 
 ## Prior Art: Reladomo
