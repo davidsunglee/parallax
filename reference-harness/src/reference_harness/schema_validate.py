@@ -29,6 +29,7 @@ from jsonschema.exceptions import best_match
 
 from .case import Entity
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
+from .operation_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
 from .paths import schemas_dir
 from .predicate_write_validate import (
     PredicateWriteValidationError,
@@ -104,42 +105,6 @@ def _descriptor_entity_defs(descriptor: Any) -> list[dict[str, Any]]:
 # navigation's INNER operation resolves against the RELATED entity, so it is
 # intentionally not descended into.
 
-_ATTR_REF_TAGS = frozenset(
-    {
-        "eq",
-        "notEq",
-        "greaterThan",
-        "greaterThanEquals",
-        "lessThan",
-        "lessThanEquals",
-        "between",
-        "isNull",
-        "isNotNull",
-        "like",
-        "notLike",
-        "startsWith",
-        "endsWith",
-        "contains",
-        "in",
-        "notIn",
-    }
-)
-_PATH_REF_TAGS = frozenset(
-    {
-        "nestedEq",
-        "nestedNotEq",
-        "nestedGt",
-        "nestedGte",
-        "nestedLt",
-        "nestedLte",
-        "nestedIn",
-        "nestedIsNull",
-        "nestedIsNotNull",
-        "nestedExists",
-        "nestedNotExists",
-    }
-)
-
 
 def _class_of(ref: Any) -> str | None:
     if not isinstance(ref, str) or "." not in ref:
@@ -171,11 +136,11 @@ def _collect_queried_classes(node: Any, acc: set[str]) -> None:
         return
     if not isinstance(body, dict):
         return
-    if tag in _ATTR_REF_TAGS:
+    if tag in ATTRIBUTE_REFERENCE_TAGS:
         cls = _class_of(body.get("attr"))
         if cls:
             acc.add(cls)
-    elif tag in _PATH_REF_TAGS:
+    elif tag in PATH_REFERENCE_TAGS:
         cls = _class_of(body.get("path"))
         if cls:
             acc.add(cls)

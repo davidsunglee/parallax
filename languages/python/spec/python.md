@@ -714,9 +714,13 @@ never something an application developer hand-writes.
   non-versioned `delete_where` / `update_where` (including descriptor-column
   order) are `m-batch-write-005` / `-006`; audit-only `terminate_where` is
   `m-audit-write-007`; and the bitemporal plain update/terminate plus both
-  bounded forms are `m-bitemp-write-010`–`-013`. All of those cases are
-  deliberately `slice-snapshot-1` only: they are the snapshot claim's
-  executable oracle, not a managed API partition expansion. The API still has
+  bounded forms are `m-bitemp-write-010`–`-013`. The nine newly authored cases
+  (`m-opt-lock-014` / `-015`, `m-batch-write-005` / `-006`,
+  `m-audit-write-007`, and `m-bitemp-write-010`–`-013`) are deliberately
+  `slice-snapshot-1` only: they are the snapshot claim's executable oracle,
+  not a managed API partition expansion. The upgraded legacy
+  `m-opt-lock-003` / `-004` retain their existing `slice-managed-1` tags while
+  no longer carrying the deprecated `slice-mvp-1` tag. The API still has
   broader surface area than any finite corpus sample — arbitrary valid bare
   predicates, multiple assignable fields, and every valid temporal bound are
   validated and documented by the implementation/API suite — but no covered

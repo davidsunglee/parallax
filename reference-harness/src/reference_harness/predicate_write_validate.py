@@ -14,6 +14,7 @@ from typing import Any
 from .case import Entity
 from .inheritance import inheritance_of
 from .op_validate import validate_operation
+from .operation_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
 from .serde import canonical
 from .value_object_resolve import RejectionError, literal_matches_type
 
@@ -22,41 +23,6 @@ class PredicateWriteValidationError(ValueError):
     """Raised when a structurally-valid predicate write is model-invalid."""
 
 
-_ATTRIBUTE_REFERENCE_TAGS = frozenset(
-    {
-        "eq",
-        "notEq",
-        "greaterThan",
-        "greaterThanEquals",
-        "lessThan",
-        "lessThanEquals",
-        "between",
-        "isNull",
-        "isNotNull",
-        "like",
-        "notLike",
-        "startsWith",
-        "endsWith",
-        "contains",
-        "in",
-        "notIn",
-    }
-)
-_PATH_REFERENCE_TAGS = frozenset(
-    {
-        "nestedEq",
-        "nestedNotEq",
-        "nestedGt",
-        "nestedGte",
-        "nestedLt",
-        "nestedLte",
-        "nestedIn",
-        "nestedIsNull",
-        "nestedIsNotNull",
-        "nestedExists",
-        "nestedNotExists",
-    }
-)
 _READ_MODIFIERS = frozenset(
     {
         "orderBy",
@@ -350,9 +316,9 @@ def _collect_reference_classes(node: Any, classes: set[str]) -> None:
     tag, body = next(iter(node.items()))
     if not isinstance(body, dict):
         return
-    if tag in _ATTRIBUTE_REFERENCE_TAGS:
+    if tag in ATTRIBUTE_REFERENCE_TAGS:
         _add_reference_class(body.get("attr"), classes)
-    elif tag in _PATH_REFERENCE_TAGS:
+    elif tag in PATH_REFERENCE_TAGS:
         _add_reference_class(body.get("path"), classes)
     elif tag in ("navigate", "exists", "notExists"):
         _add_reference_class(body.get("rel"), classes)

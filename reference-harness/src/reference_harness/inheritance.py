@@ -30,6 +30,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
+from .operation_references import ATTRIBUTE_REFERENCE_TAGS
 from .value_object_resolve import RejectionError
 
 if TYPE_CHECKING:
@@ -121,30 +122,6 @@ WRITE_REJECTED_RULES: frozenset[str] = frozenset(
         SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
     }
 )
-
-# Attribute-bearing single-entity predicate tags (they all carry an `attr` ref) —
-# the sites a concrete-subtype-attribute reference surfaces in a narrow walk.
-_ATTR_BEARING_TAGS = frozenset(
-    {
-        "eq",
-        "notEq",
-        "greaterThan",
-        "greaterThanEquals",
-        "lessThan",
-        "lessThanEquals",
-        "between",
-        "isNull",
-        "isNotNull",
-        "like",
-        "notLike",
-        "startsWith",
-        "endsWith",
-        "contains",
-        "in",
-        "notIn",
-    }
-)
-
 
 # --- per-definition accessors ----------------------------------------------
 
@@ -856,7 +833,7 @@ def _walk_narrow(
                     to_list = segment["narrow"].get("to")
                     resolve_hop_effective_set(family, rel, to_list)
         _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
-    elif tag in _ATTR_BEARING_TAGS:
+    elif tag in ATTRIBUTE_REFERENCE_TAGS:
         _check_subtype_attr(family, current_set, body.get("attr"))
     # nested* / all / none carry no queried-position subtype-attribute reference here.
 
