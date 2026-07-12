@@ -886,7 +886,7 @@
       }
     },
     "writeAssignment": {
-      "description": "One ordered predicate-write assignment. `attr` is a qualified descriptor attribute reference and `value` is a neutral scalar literal; duplicate and unassignable attributes are rejected by model-aware validation.",
+      "description": "One ordered predicate-write assignment. `attr` is a qualified descriptor attribute or top-level value-object reference and `value` is a neutral literal: a scalar/null for an attribute or the complete object/array document for a value object. Duplicate and unassignable references are rejected by model-aware validation.",
       "type": "object",
       "additionalProperties": false,
       "required": ["attr", "value"],
@@ -895,7 +895,7 @@
           "type": "string",
           "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
         },
-        "value": { "type": ["string", "number", "boolean", "null"] }
+        "value": { "type": ["string", "number", "boolean", "null", "object", "array"] }
       }
     },
     "statementEntry": {

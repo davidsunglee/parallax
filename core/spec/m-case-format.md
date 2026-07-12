@@ -553,7 +553,7 @@ are deliberately small and structural:
 | `mutation` | yes | one of `update`, `delete`, `terminate`, `updateUntil`, `terminateUntil` |
 | `target.entity` | yes | exact concrete descriptor entity where the operation starts |
 | `target.predicate` | yes | one schema-valid `m-op-algebra` operation; it is a bare write predicate, never a result modifier |
-| `assignments` | only `update` / `updateUntil` | ordered `{attr, value}` data; nonempty, unique, assignable qualified attributes only |
+| `assignments` | only `update` / `updateUntil` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared cardinality/nullability. |
 | `at` | processing-temporal target | transaction instant for temporal close/chain behavior |
 | `businessFrom` | business-temporal target | lower bound for the plain or bounded temporal operation |
 | `until` | `updateUntil` / `terminateUntil` | bounded operation's exclusive upper bound |

@@ -10,6 +10,7 @@ is exercised end-to-end against real Postgres by the compatibility suite.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from reference_harness.case_runner import (
     CaseFailure,
     _assert_action_on,
     _assert_scenario_count_consistency,
+    _assert_scenario_normalization,
     _assert_scenario_reference_sql,
     _assert_scenario_sql_bookkeeping,
     _reuse_prior_rows,
@@ -184,8 +186,8 @@ class _ReferenceDb:
         self.rows = rows
         self.calls: list[tuple[str, list[object]]] = []
 
-    def query(self, statement: str, binds: list[object]) -> list[dict[str, object]]:
-        self.calls.append((statement, binds))
+    def query(self, statement: str, binds: Sequence[object] = ()) -> list[dict[str, object]]:
+        self.calls.append((statement, list(binds)))
         return self.rows
 
 
@@ -222,6 +224,14 @@ def test_scenario_reference_sql_map_must_cover_its_golden_dialects() -> None:
 
     with pytest.raises(CaseFailure, match="referenceSql map keys"):
         _assert_scenario_sql_bookkeeping(case)
+
+
+def test_scenario_read_golden_sql_must_be_canonical() -> None:
+    case = _scenario_by_id("m-opt-lock-003")
+    case.scenario[0]["statements"][0]["sql"]["postgres"] = "SELECT t0.id FROM account t0"
+
+    with pytest.raises(CaseFailure, match="not canonical"):
+        _assert_scenario_normalization(case, "postgres")
 
 
 # --- zero-round-trip reuse: loud failure vs the ONE legitimate empty case -------
