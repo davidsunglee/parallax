@@ -1,0 +1,181 @@
+"""``parallax.conformance.api_suite`` — API Conformance Suite machinery.
+
+The coverage-partition computation and the Usage Guide model shared by the
+``tests/api_conformance`` suite and the ``gen-usage-guide`` generator. The
+partition asserts the union of exercised and reasoned-skipped cases equals the
+active slice, with no stale case IDs and no empty skip reasons; the Usage Guide
+renders the exercised idiomatic examples. At this phase there are no examples
+yet — every active-slice case is reasoned-skipped with a per-case reason (no
+silent gaps).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Final
+
+from parallax.conformance import case_format
+from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
+
+__all__ = [
+    "EXAMPLES",
+    "Example",
+    "Partition",
+    "Skip",
+    "active_slice",
+    "build_skips",
+    "compute_partition",
+    "partition_report",
+    "render_usage_guide",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class Example:
+    """A documented idiomatic public-API example exercising one corpus case."""
+
+    case_id: str
+    title: str
+    snippet: str
+
+
+@dataclass(frozen=True, slots=True)
+class Skip:
+    """A reasoned skip: a corpus case with no idiomatic example yet, plus why."""
+
+    case_id: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class Partition:
+    """The coverage-partition result over the active slice."""
+
+    active: frozenset[str]
+    exercised: frozenset[str]
+    skipped: frozenset[str]
+    errors: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+
+# The registered idiomatic examples. Empty at COR-3 Phase 2; later phases append
+# an Example per newly reachable case as its capability comes online.
+EXAMPLES: Final[list[Example]] = []
+
+
+def _selection_filter(claim: Claim) -> case_format.SelectionFilter:
+    return case_format.SelectionFilter(
+        modules=frozenset(claim.modules),
+        case_shapes=frozenset(claim.case_shapes),
+        include=frozenset(claim.include),
+        exclude=frozenset(claim.exclude),
+    )
+
+
+def active_slice(
+    claim: Claim = SNAPSHOT_CLAIM,
+    cases: list[case_format.Case] | None = None,
+) -> list[case_format.Case]:
+    """The corpus cases the claim's selection expression admits."""
+    corpus = cases if cases is not None else case_format.load_cases()
+    return case_format.select(corpus, _selection_filter(claim))
+
+
+def _default_reason(case: case_format.Case) -> str:
+    return (
+        f"no idiomatic API example yet — added when {case.primary_module} comes "
+        "online in a later COR-3 phase"
+    )
+
+
+def build_skips(active: list[case_format.Case], examples: list[Example]) -> list[Skip]:
+    """Reasoned skips covering every active case without an idiomatic example."""
+    exercised = {example.case_id for example in examples}
+    return [
+        Skip(case.case_id, _default_reason(case))
+        for case in active
+        if case.case_id not in exercised
+    ]
+
+
+def compute_partition(
+    active_ids: frozenset[str],
+    exercised: list[Example],
+    skips: list[Skip],
+) -> Partition:
+    """Compute and validate the coverage partition of the active slice.
+
+    Records an error for any stale ID (exercised/skipped outside the slice), any
+    empty skip reason, any case both exercised and skipped, and any active case
+    covered by neither.
+    """
+    exercised_ids = frozenset(example.case_id for example in exercised)
+    skipped_ids = frozenset(skip.case_id for skip in skips)
+    errors: list[str] = []
+    for case_id in sorted(exercised_ids - active_ids):
+        errors.append(f"stale exercised id (not in active slice): {case_id}")
+    for case_id in sorted(skipped_ids - active_ids):
+        errors.append(f"stale skipped id (not in active slice): {case_id}")
+    for skip in skips:
+        if not skip.reason.strip():
+            errors.append(f"empty skip reason: {skip.case_id}")
+    for case_id in sorted(exercised_ids & skipped_ids):
+        errors.append(f"case both exercised and skipped: {case_id}")
+    for case_id in sorted(active_ids - (exercised_ids | skipped_ids)):
+        errors.append(f"active case covered by neither exercised nor skipped: {case_id}")
+    return Partition(active_ids, exercised_ids, skipped_ids, tuple(errors))
+
+
+def partition_report(
+    claim: Claim = SNAPSHOT_CLAIM,
+    cases: list[case_format.Case] | None = None,
+    examples: list[Example] | None = None,
+) -> Partition:
+    """Load the active slice and compute its partition against the registry."""
+    active = active_slice(claim, cases)
+    registered = examples if examples is not None else EXAMPLES
+    skips = build_skips(active, registered)
+    active_ids = frozenset(case.case_id for case in active)
+    return compute_partition(active_ids, registered, skips)
+
+
+_GUIDE_HEADER: Final[str] = (
+    "<!-- GENERATED by `gen-usage-guide` from the API Conformance Suite. "
+    "Do not edit by hand; run `just python-verify` / `uv run gen-usage-guide`. -->"
+)
+
+
+def render_usage_guide(examples: list[Example]) -> str:
+    """Render the Usage Guide markdown from the registered examples."""
+    lines: list[str] = [
+        _GUIDE_HEADER,
+        "",
+        "# Parallax Python — Usage Guide",
+        "",
+        "Idiomatic public-API usage, generated from the API Conformance Suite's",
+        "examples. Each example mirrors a compatibility-corpus case, so the guide",
+        "cannot drift from graded behavior.",
+        "",
+    ]
+    if not examples:
+        lines.append(
+            "_No idiomatic examples yet — they are added as each COR-3 phase brings "
+            "its capability online._"
+        )
+        lines.append("")
+    else:
+        for example in sorted(examples, key=lambda item: item.case_id):
+            lines.append(f"## {example.title}")
+            lines.append("")
+            lines.append(f"Corpus case: `{example.case_id}`")
+            lines.append("")
+            lines.append("```python")
+            lines.append(example.snippet)
+            lines.append("```")
+            lines.append("")
+    # Collapse the trailing separator blank(s) into a single terminating newline
+    # so the generated Markdown satisfies markdownlint MD012 (no multiple blanks).
+    return "\n".join(lines).rstrip("\n") + "\n"

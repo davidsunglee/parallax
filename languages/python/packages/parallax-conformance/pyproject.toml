@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 parallax-conformance = "parallax.conformance.cli:main"
+gen-usage-guide = "parallax.conformance.usage_guide:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -51,7 +51,7 @@ def test_every_scope_submodule_imports() -> None:
     assert "parallax.conformance.cli" in imported
 
 
-def test_conformance_cli_entrypoint_is_a_usage_stub() -> None:
-    # The console-script entry point exists; the wire surface lands in Phase 2,
-    # so it reports a CLI usage error (exit code 2) for now.
-    assert cli.main() == 2
+def test_conformance_cli_describe_exits_ok(capsys: pytest.CaptureFixture[str]) -> None:
+    # The wire surface landed in Phase 2: `describe` emits its claim envelope.
+    assert cli.main(["describe"]) == 0
+    assert '"command": "describe"' in capsys.readouterr().out
