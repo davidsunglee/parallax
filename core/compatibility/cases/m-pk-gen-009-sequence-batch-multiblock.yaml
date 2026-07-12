@@ -6,6 +6,10 @@
 model: models/pk-sequence.yaml
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "sequence-strategy PK allocation - the following INSERT binds registry-read-derived id values, so emissions depend on a query result"
 given:
   fixtures: true
 when:

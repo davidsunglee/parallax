@@ -46,12 +46,14 @@ Human-readable logs MAY be written to stderr.
 | --- | --- |
 | `0` | Command completed and stdout contains `status: "ok"` |
 | `10` | Requested capability is intentionally unsupported and stdout contains `status: "unsupported"` |
+| `11` | `compile` targets a claimed but compile-ineligible (run-only) case and stdout contains `status: "run-only"` |
 | `1` | Command failed and stdout contains `status: "error"` |
 | `2` | CLI usage error, such as a missing flag or unreadable file |
 
 The `unsupported` result is only valid when the adapter has not claimed the
 requested command, dialect, case shape, module tags, or case-tag selection in
-`describe`.
+`describe`. The `run-only` result is only valid for a `compile` command on a
+**claimed** case the corpus declares run-only (`compileEligibility`, `m-case-format`).
 
 ## Common Output Envelope
 
@@ -74,6 +76,9 @@ Every JSON output document has these common fields:
 
 - `ok`: the command completed and command-specific fields are present.
 - `unsupported`: the request is outside the adapter's claimed capability set.
+- `run-only`: a `compile`-only status — the requested case is claimed but the
+  corpus declares it run-only (`compileEligibility`), so it can only be graded by
+  `run` (see [`compile`](#compile) below).
 - `error`: the adapter attempted the request and failed.
 
 `unsupported` and `error` outputs MUST include at least one diagnostic:
@@ -164,9 +169,10 @@ evaluated after the broad module/dialect/shape filters. If `caseTags` is omitted
 then the module, dialect, and shape claims are all-or-nothing for matching cases.
 
 For a claimed case command, returning `unsupported` is invalid: the adapter MUST
-return `ok` or `error`. For an unclaimed case command, returning `unsupported`
-is valid and SHOULD include a diagnostic naming the first failed filter, such as
-`unsupported-case-tag` or `unsupported-case-shape`.
+return `ok` or `error` — or, for a `compile` on a case the corpus declares run-only,
+the defined `run-only` answer (see [`compile`](#compile)). For an unclaimed case
+command, returning `unsupported` is valid and SHOULD include a diagnostic naming the
+first failed filter, such as `unsupported-case-tag` or `unsupported-case-shape`.
 
 `provisioning` is one of:
 
@@ -201,6 +207,39 @@ For a predicate-selected scenario write, the adapter consumes the structured
 `/scenario/<n>/write` instruction as the requested operation; it MUST NOT treat
 authored DML text as its only write input or reverse-engineer the operation from
 golden SQL.
+
+### Compile eligibility
+
+`compile` applies only to a **compile-eligible** case. A case the corpus declares
+**run-only** (`compileEligibility`, `m-case-format`) — because its emissions intend a
+single-connection concurrency/locking interaction or depend on a query result — cannot
+be compiled: the adapter neither derives its SQL (that would require executing a query)
+nor returns `unsupported` (invalid for a claimed case command). Instead it returns the
+defined **`status: "run-only"`** answer, exit code `11`, echoing the `case`, `dialect`,
+and `caseShape` and carrying at least one diagnostic whose `code` is
+**`compile-run-only`**:
+
+```json
+{
+  "schemaVersion": "1",
+  "command": "compile",
+  "status": "run-only",
+  "adapter": { "language": "python", "name": "parallax-conformance", "version": "0.1.0" },
+  "case": "core/compatibility/cases/m-opt-lock-005-conflict.yaml",
+  "dialect": "postgres",
+  "caseShape": "conflict",
+  "diagnostics": [
+    { "code": "compile-run-only", "message": "single-connection conflict case is run-only" }
+  ]
+}
+```
+
+Only `run` grades a run-only case. An adapter's static compile lane wires its database
+port to **refuse** any row-returning read; a `compile` on a case declared eligible that
+nonetheless requests a row proves the case was mis-declared, so the refusing port
+structurally enforces the `query-result-dependent` criterion the authored declaration
+cannot. `describe` does not enumerate run-only cases — eligibility is a per-case
+property the runner reads from each case, not a capability claim.
 
 Example:
 

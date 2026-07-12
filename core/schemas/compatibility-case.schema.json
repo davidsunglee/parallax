@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedInZ` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `at` / `observedInZ` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt optimistic-lock UPDATE asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags", "shape"],
@@ -219,6 +219,27 @@
         "rejected"
       ]
     },
+    "compileEligibility": {
+      "description": "The compile-eligibility declaration (m-case-format / m-conformance-adapter). ABSENT by default: a case is compile-eligible, so an adapter's `compile` command emits its SQL statically. PRESENT only to declare a case RUN-ONLY — its emissions cannot be derived without executing SQL, so `compile` on it returns `status: run-only` with a `compile-run-only` diagnostic instead of `ok`, and only `run` grades it. Eligibility is an AUTHORED, REVIEWED intent declaration (intent is a human judgment); the harness mechanically backstops the detectable single-connection cases and each language's refusing compile port structurally enforces query-result dependence at runtime.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "reason"],
+      "properties": {
+        "mode": {
+          "description": "The only declared mode is `run-only`: the field's presence declares the case ineligible for the compile sweep. A compile-eligible case simply omits `compileEligibility`.",
+          "const": "run-only"
+        },
+        "reason": {
+          "description": "Which run-only criterion applies. `single-connection` — the case intends to exercise database concurrency or locking behavior (a `conflict` / `concurrencySuccess` / `boundary` shape, a `when.concurrency` choreography, or a `given.apply` / `given.fault`), so it is run-only regardless of whether its emissions happen to be statically derivable; the harness backstop requires this declaration on every such detectable case. `query-result-dependent` — the emissions are not a pure function of `when` + `given` (deep-fetch fan-out binds, materialized predicate writes, `sequence`-strategy PK allocations, framework-owned observed-version / `in_z` binds), so compiling would require executing a query; this criterion is a human judgment the harness cannot detect and each language's refusing compile port enforces structurally.",
+          "enum": ["single-connection", "query-result-dependent"]
+        },
+        "note": {
+          "description": "Optional human-readable justification for the reviewer.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "given": {
       "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, and any injected fault. Optional — a case that starts from the model's default fixtures and injects nothing omits `given` entirely.",
       "type": "object",
@@ -347,17 +368,17 @@
                 "items": { "$ref": "#/$defs/writeRow" }
               },
               "at": {
-                "description": "The transaction / processing instant a TEMPORAL (audit-only) write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it (open `in_z = at`, `out_z = infinity`; close `out_z = at`). Present on a processing-axis temporal step; absent on a non-temporal batched write (and replaced by `businessAt` on a business-only step). Required for a `*Until` step and for a `terminate` close.",
+                "description": "The transaction / processing instant a TEMPORAL (audit-only) write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it (open `in_z = at`, `out_z = infinity`; close `out_z = at`). Present on a processing-axis temporal step; absent on a non-temporal batched write (and replaced by `businessAt` on a business-only step). Required for a `*Until` step and for a `terminate` close. AUTHORING ALIAS (m-unit-work `write-instruction.schema.json`): `at` is the corpus's OVERLOADED spelling — on an audit-only step it names the Clock-supplied PROCESSING instant (not an instruction field in the canonical schema), and on a bitemporal `*Until` step it names the canonical `businessFrom`. The corpus-wide re-authoring to the unambiguous canonical spellings is deferred.",
                 "type": "string",
                 "minLength": 1
               },
               "until": {
-                "description": "The bitemporal valid-time end bound a `*Until` write closes the business window at (consumed by the full-bitemporal rectangle-split cases) — the business analogue of `at`. Absent on an audit-only step.",
+                "description": "The bitemporal valid-time end bound a `*Until` write closes the business window at (consumed by the full-bitemporal rectangle-split cases) — the business analogue of `at`. Absent on an audit-only step. AUTHORING ALIAS of the canonical `businessTo` (m-unit-work `write-instruction.schema.json`).",
                 "type": "string",
                 "minLength": 1
               },
               "businessAt": {
-                "description": "The BUSINESS-axis instant a business-temporal milestone-chaining write records — the milestone's `from_z` (and, on a close, the prior row's `thru_z`). Present on a business-only temporal step; a processing (audit-only) step carries `at` instead. Required for a business-only `terminate` close.",
+                "description": "The BUSINESS-axis instant a business-temporal milestone-chaining write records — the milestone's `from_z` (and, on a close, the prior row's `thru_z`). Present on a business-only temporal step; a processing (audit-only) step carries `at` instead. Required for a business-only `terminate` close. AUTHORING ALIAS of the canonical `businessFrom` (m-unit-work `write-instruction.schema.json`).",
                 "type": "string",
                 "minLength": 1
               },
@@ -858,9 +879,21 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/writeAssignment" }
         },
-        "at": { "type": "string", "minLength": 1 },
-        "businessFrom": { "type": "string", "minLength": 1 },
-        "until": { "type": "string", "minLength": 1 }
+        "at": {
+          "description": "The transaction / processing instant a temporal predicate write records. AUTHORING ALIAS of the Clock-supplied processing context in the canonical `write-instruction.schema.json` (which carries no processing-instant field).",
+          "type": "string",
+          "minLength": 1
+        },
+        "businessFrom": {
+          "description": "The business-axis lower bound of the plain or bounded temporal operation. Already the canonical spelling in `write-instruction.schema.json`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "until": {
+          "description": "The bounded (`*Until`) operation's exclusive upper business bound. AUTHORING ALIAS of the canonical `businessTo` (m-unit-work `write-instruction.schema.json`).",
+          "type": "string",
+          "minLength": 1
+        }
       },
       "allOf": [
         {

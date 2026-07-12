@@ -641,8 +641,14 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # non-versioned readless update/delete, audit terminate, and four bitemporal
         # materialized write flavors. snapshot rises 284 -> 293; the deliberate tag
         # omission leaves managed unchanged. Final counts: 196 / 293 / 317.
+        #
+        # COR-3 Phase 4 (core amendment) adds the 3 same-transaction coalescing witnesses
+        # tagged slice-snapshot-1 only (never slice-managed-1 or slice-mvp-1): audit-only
+        # (m-audit-write-008) and bitemporal (m-bitemp-write-014) insert-then-update
+        # coalescing, and non-temporal insert-then-delete cancellation (m-unit-work-010).
+        # snapshot rises 293 -> 296; managed and mvp unchanged. Final counts: 196 / 296 / 317.
         ("slice-mvp-1", 196),
-        ("slice-snapshot-1", 293),
+        ("slice-snapshot-1", 296),
         ("slice-managed-1", 317),
     ],
 )

@@ -14,6 +14,10 @@
 model: models/balance.yaml
 tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
 given:
   apply:
     - sql: update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'

@@ -1,0 +1,49 @@
+# Same-transaction coalescing on the AUDIT axis (m-audit-write + m-unit-work): a row
+# inserted and then updated in the SAME unit of work coalesces IN PLACE to a single
+# INSERT carrying the final value — NO closed milestone is fabricated for a state that
+# was never durably observable (Reladomo GenericBiTemporalDirector same-transaction
+# handling). Contrast m-audit-write-002, whose insert-then-update spans TWO
+# transactions and therefore close-and-chains (a superseded 100 milestone + a current
+# 150 milestone). The same-transaction coalescing rule is m-unit-work.
+#
+# The scenario runs against the loaded Balance fixtures (accounts 1/2/3); account 9 is
+# the NEW object the unit of work creates. Optimistic mode, so the observing find takes
+# no read lock, keeping its golden a plain temporal read:
+#   step 0 write : buffer INSERT Balance 9 (value 100), then buffer an UPDATE of its
+#                  value to 150 — COALESCED into ONE current-milestone INSERT
+#                  [in_z = 2024-06-01, out_z = infinity] carrying the FINAL value 150.
+#                  No close UPDATE, no superseded 100 row for account 9.  (1 round trip)
+#   step 1 find  : as-of now over account 9 observes ONE current row at value 150 — the
+#                  audit trail has a single milestone, not two.
+# The single INSERT (value 150, no close) IS the observable proof of coalescing.
+# roundTrips = 2 (the one coalesced insert + the find).
+model: models/balance.yaml
+tags: [m-audit-write, m-unit-work, m-temporal-read, same-transaction-coalescing, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - write: insert
+      roundTrips: 1
+      note: a buffered insert (value 100) + a buffered update (value 150) of the SAME new account 9 coalesce to ONE current-row INSERT carrying the final value 150 — no close, no superseded milestone
+      statements:
+        - sql:
+            postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+          binds: [9, D, 150.00, "2024-06-01T00:00:00+00:00", infinity]
+    - targetEntity: Balance
+      find:
+        eq:
+          attr: Balance.id
+          value: 9
+      roundTrips: 1
+      note: as-of now over account 9 observes ONE current milestone at the coalesced value 150 (a single row, not a superseded 100 + current 150)
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+          binds: [9, infinity]
+      referenceSql: select bal_id, val from balance where bal_id = 9 and out_z = 'infinity'::timestamptz
+      expectRows:
+        - { bal_id: 9, val: 150.00 }
+then:
+  roundTrips: 2

@@ -87,6 +87,71 @@ wherever possible:
 - Operations are **ordered** so that a parent row is inserted before a child
   that references it (and deleted after), honoring foreign-key constraints.
 
+## Write instruction vocabulary
+
+Every write a unit of work buffers — from any frontend, keyed or predicate-selected
+— is a neutral **write instruction**, the write-side analogue of the operation
+algebra. The canonical, language-neutral shapes are hosted in
+[`write-instruction.schema.json`](../schemas/write-instruction.schema.json), mirroring
+how `m-op-algebra` hosts `operation.schema.json`; `m-case-format` and
+`m-conformance-adapter` reference that shape rather than redefining it. There are two:
+
+- a **keyed** instruction — a `mutation` on one `entity` carrying the flat
+  attribute-named neutral write input (`rows`);
+- a **predicate-selected** instruction — a `mutation` on every row of a `target`
+  (`entity` plus a bare `m-op-algebra` predicate) matching that predicate, with
+  `assignments` on the update forms.
+
+The embedded predicate is a canonical `m-op-algebra` node, legal vocabulary here
+because `m-unit-work` already depends on `m-op-algebra` (the dependency-graph edge);
+the write instruction is the sole place the write side reaches the algebra. Two
+structural rules keep the instruction framework-honest:
+
+- **The instant surface is axis-explicit.** A temporal write's authored **business
+  bounds** are named uniformly `businessFrom` / `businessTo`. The **processing
+  instant** is *not* an instruction field — it is supplied at flush from the Clock
+  Strategy (ADR 0010), so no caller-facing shape can smuggle one in. (The corpus's
+  `at` / `businessAt` / `until` spellings are authoring aliases of these canonical
+  names; the corpus-wide re-authoring is deferred.)
+- **The transaction observation is not an instruction field.** The framework-owned
+  optimistic version / observed `in_z` a gated write binds (`m-opt-lock`) is attached
+  **per materialized row at flush**, never carried on the durable instruction — the
+  structural guarantee that versions stay framework-owned (ADR 0013).
+
+A conforming implementation **MUST** round-trip every instruction through the
+canonical form losslessly (`serialize(deserialize(x)) == x`), the write-side of the
+`m-op-algebra` serde contract.
+
+## Same-transaction write coalescing
+
+Buffered writes of the **same object within one unit of work** combine before flush —
+they annihilate or merge rather than each producing durable SQL, because a state a
+transaction never durably exposed to any other reader is never separately recorded.
+This follows Reladomo's transaction write queue (`TxOperations` /
+`GenericBiTemporalDirector` same-transaction handling): a same-transaction
+insert-then-update writes the final value in place, and a delete cancels a matching
+pending insert.
+
+- **Insert-then-update coalesces in place.** A row inserted and then updated in the
+  same unit of work flushes as a **single** write carrying the **final** value; no
+  intermediate milestone is fabricated. A **non-temporal** insert-then-update emits
+  one `INSERT` with the post-update values (never `INSERT` + `UPDATE`); an
+  **audit-only** insert-then-update opens a single current milestone with the final
+  value — no close-and-chain, in contrast to the cross-transaction chaining of
+  `m-audit-write`; a **bitemporal** insert-then-update opens a single fully-current
+  rectangle with the final value — no inactivation / head-tail split, in contrast to
+  the cross-transaction rectangle split of `m-bitemp-write`.
+- **Insert-then-delete cancels.** A row inserted and then deleted in the same unit of
+  work **cancels**: the two buffered writes annihilate and the flush emits **no** DML
+  for that object — the net-zero effective-change-set elision, extended across two
+  verbs.
+
+Coalescing is a property of **one** unit of work; across two committed transactions
+the milestone modules chain and split as usual. The rule is centralized here because
+it is a buffering decision, not a per-verb one — the milestone modules
+(`m-audit-write`, `m-bitemp-write`) describe the durable cross-transaction shapes and
+defer the same-transaction combination to this scope.
+
 ## Strategy selection — the per-unit-of-work participation mode
 
 A unit of work selects, per transaction, **how** its read-then-writes are made
@@ -115,6 +180,8 @@ operation steps, each with a declared round-trip count — and plain write cases
 | read-your-own-writes scenario | a buffered write is flushed before a dependent find observes it |
 | rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
 | fk-ordering / flush cases | buffered writes flush ordered by foreign-key dependency |
+| insert-then-update coalescing (`m-unit-work-008`, `m-audit-write-008`, `m-bitemp-write-014`) | a same-transaction insert-then-update flushes as one write with the final value — no intermediate milestone (non-temporal / audit-only / bitemporal) |
+| insert-then-delete cancellation (`m-unit-work-010`) | a same-transaction insert-then-delete cancels — the flush emits no DML for that object |
 
 A scenario's declared round-trip counts **MUST** be internally consistent with
 the golden SQL it lists: each step's `roundTrips` equals the number of golden SQL

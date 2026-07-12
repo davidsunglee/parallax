@@ -43,6 +43,7 @@ _SCHEMA_FILES = (
     "operation.schema.json",
     "compatibility-case.schema.json",
     "conformance-adapter.schema.json",
+    "write-instruction.schema.json",
 )
 
 
@@ -193,6 +194,68 @@ def _validate_predicate_write(
     return entity
 
 
+# --- compile-eligibility backstop (m-case-format / m-conformance-adapter) -----
+#
+# A case is compile-eligible by default; it is declared RUN-ONLY (a top-level
+# `compileEligibility` block) only when its emissions cannot be derived without
+# executing SQL. Eligibility is an AUTHORED, reviewed intent declaration, but the
+# harness mechanically backstops the DETECTABLE single-connection minority: any case
+# that intends database concurrency or locking behavior — a `conflict` /
+# `concurrencySuccess` / `boundary` shape, a `when.concurrency` choreography, or a
+# `given.apply` / `given.fault` — is run-only regardless of whether its emissions
+# happen to be statically derivable, so it MUST carry the declaration. (The
+# query-result-dependence criterion is a human judgment the harness cannot detect;
+# each language's refusing compile port enforces it structurally at runtime.)
+
+_SINGLE_CONNECTION_SHAPES = frozenset({"conflict", "concurrencySuccess", "boundary"})
+
+
+def _single_connection_markers(case: dict[str, Any]) -> list[str]:
+    """Return the detectable single-connection markers a case carries (empty == none)."""
+    markers: list[str] = []
+    given = case.get("given")
+    if isinstance(given, dict):
+        if "apply" in given:
+            markers.append("given.apply")
+        if "fault" in given:
+            markers.append("given.fault")
+    when = case.get("when")
+    if isinstance(when, dict) and "concurrency" in when:
+        markers.append("when.concurrency")
+    shape = case.get("shape")
+    if shape in _SINGLE_CONNECTION_SHAPES:
+        markers.append(f"shape:{shape}")
+    return markers
+
+
+def _check_compile_eligibility(case: Any, label: str, errors: list[str]) -> None:
+    """Backstop the DETECTABLE compile-eligibility declarations.
+
+    A case carrying a detectable single-connection marker MUST be declared compile
+    run-only with reason ``single-connection``; leaving it compile-eligible (or
+    mis-reasoning it) is a loud failure.
+    """
+    if not isinstance(case, dict):
+        return
+    markers = _single_connection_markers(case)
+    if not markers:
+        return
+    declaration = case.get("compileEligibility")
+    if not (isinstance(declaration, dict) and declaration.get("mode") == "run-only"):
+        errors.append(
+            f"{label}: carries single-connection compile marker(s) {markers} but is not "
+            f"declared compile run-only (add `compileEligibility: {{mode: run-only, "
+            f"reason: single-connection}}`)"
+        )
+        return
+    if declaration.get("reason") != "single-connection":
+        errors.append(
+            f"{label}: single-connection marker(s) {markers} require "
+            f"`compileEligibility.reason: single-connection`, not "
+            f"{declaration.get('reason')!r}"
+        )
+
+
 def _validate_scenario_reference_sql(
     step: dict[str, Any], case_schema: dict[str, Any], label: str, errors: list[str]
 ) -> None:
@@ -247,6 +310,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         model_name = Path(model_rel).name if isinstance(model_rel, str) else None
         family = families.get(model_name) if model_name is not None else None
         _validate(case, case_schema, f"case {case_path.name}", errors)
+        _check_compile_eligibility(case, f"case {case_path.name}", errors)
         # The action under test lives under `when`; a read case's operation and a
         # scenario/coherence step's `find` are canonical m-op-algebra nodes that
         # must also validate against the operation algebra schema.

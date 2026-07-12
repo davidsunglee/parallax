@@ -20,7 +20,7 @@ never something an application developer hand-writes.
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 23 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. `m-op-list` — reached via `m-navigate` and `m-deep-fetch`; supplied by the internal, unexported `parallax.core.op_list` scope; the snapshot surface never exposes an operation-backed lazy list. |
 | Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; `m-business-only`; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; statement `where`-refinement chaining and `as_of` re-pinning. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
-| Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every claimed case) and `uv run pytest -m conformance` (the `pg-full` run profile), aggregated by `just python-static` and `just python-verify`. |
+| Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest -m conformance` (the `pg-full` run profile, every claimed case), aggregated by `just python-static` and `just python-verify`. |
 
 ```json
 {
@@ -770,10 +770,14 @@ never something an application developer hand-writes.
   `query`, `exec`, `execRolledBack`, and `peer` against the container.
 - **Matrix profiles.** Two named profiles, both **full**: `pg-full` (every
   claimed case, `run`, postgres, expected count derived from the corpus at
-  runtime — never hard-coded) and `compile-sweep` (every claimed case,
-  `compile`, Docker-free, emissions and binds vs golden plus normalization).
-  No partial profiles exist; MariaDB is a §1 deferral, not a profile
-  exclusion.
+  runtime — never hard-coded) and `compile-sweep` (every **compile-eligible**
+  claimed case, `compile`, Docker-free, emissions and binds vs golden plus
+  normalization). A claimed case the corpus declares run-only
+  (`compileEligibility`, `m-case-format`) is graded by `pg-full` only; the
+  compile lane's refusing port makes it emit the `compile-run-only` diagnostic
+  (`m-conformance-adapter`) rather than a golden comparison, so the sweep stays
+  honest without hard-coding which cases are excluded. No partial profiles
+  exist; MariaDB is a §1 deferral, not a profile exclusion.
 - **Commands and skip reporting.** Markers: `unit`, `dialect`,
   `compile_sweep`, `adapter_smoke`, `provider_contract`, `conformance`,
   `api_conformance`, `artifact`, `clean_install`, `api_surface`; run via `uv`

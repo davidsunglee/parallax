@@ -19,6 +19,10 @@
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, m-unit-work, locking-mode, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "predicate write materializes per-row from a resolving read - per-row binds (observed version / in_z / matched keys) depend on the query result"
 when:
   uow:
     concurrency: locking

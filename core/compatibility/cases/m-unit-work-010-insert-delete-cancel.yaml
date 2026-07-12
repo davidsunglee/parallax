@@ -1,0 +1,41 @@
+# Same-transaction INSERT-then-DELETE cancellation (m-unit-work + m-batch-write): a new
+# object inserted and then deleted in the SAME unit of work CANCELS — the two buffered
+# writes annihilate, so the flush emits NO DML at all (Reladomo TxOperations.addDelete
+# cancels a matching same-transaction insert). This is the two-verb companion of the
+# insert-then-update coalescing witness m-unit-work-008.
+#
+# The scenario (fixtures loaded, so accounts 1/2/3 exist and account 9 is the NEW,
+# cancelled object; default `locking` mode, so the observing find carries the
+# m-read-lock shared-row-lock suffix `for share of t0`):
+#   step 0 write : buffer INSERT account 9 (Noether, 5.00), then buffer a DELETE of the
+#                  same new account 9 — the two CANCEL, so the flush emits NOTHING. A
+#                  no-op boundary: roundTrips 0, no golden SQL (the net-zero
+#                  effective-change-set elision, extended across two verbs).  (0 round trips)
+#   step 1 find  : account 9 is looked up and is ABSENT — it was never persisted.
+# The 0-round-trip flush IS the observable proof of cancellation: an implementation that
+# executed the INSERT then the DELETE would cost 2 round trips, not 0.
+# roundTrips = 1 (0 for the cancelled flush + 1 for the find).
+model: models/account.yaml
+tags: [m-unit-work, m-batch-write, same-transaction-coalescing, insert-delete-cancel, scenario, slice-snapshot-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - write: flush
+      roundTrips: 0
+      note: a buffered insert of new account 9 + a buffered delete of the same new object CANCEL — the flush emits no DML at all (Reladomo addDelete)
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 9
+      roundTrips: 1
+      note: account 9 is absent — the cancelled insert never persisted
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          binds: [9]
+      expectRows: []
+then:
+  roundTrips: 1

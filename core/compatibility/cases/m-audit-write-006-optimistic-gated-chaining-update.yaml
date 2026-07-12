@@ -21,6 +21,10 @@
 model: models/balance.yaml
 tags: [m-audit-write, m-opt-lock, m-sql, temporal, conflict, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (shape:conflict)"
 when:
   uow:
     concurrency: optimistic

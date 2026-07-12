@@ -4,6 +4,10 @@
 model: models/error-cases.yaml
 tags: [m-db-error, deadlock, slice-snapshot-1, slice-managed-1]
 shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (when.concurrency)"
 given:
   fixtures: true
 when:

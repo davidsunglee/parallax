@@ -123,10 +123,12 @@ in table / tag routing. The corpus pins both strategies
 
 The remaining dated mutations Reladomo defines —
 `insertWithIncrement` / `incrementUntil` (additive increment chaining),
-`purge` (physically delete a milestone chain), and `inactivateForArchiving` —
-are RFC-2119 **MAY**: an implementation **MAY** provide them, and the suite
-**MAY** carry optional fixtures for them, but they are **not** part of the
-required parity surface, and they are excluded from the coverage gate.
+`insertForRecovery` (writing a milestone with **verbatim** processing/business
+bounds rather than the transaction instant, to rebuild or backfill history without
+the normal close-and-chain), `purge` (physically delete a milestone chain), and
+`inactivateForArchiving` — are RFC-2119 **MAY**: an implementation **MAY** provide
+them, and the suite **MAY** carry optional fixtures for them, but they are **not**
+part of the required parity surface, and they are excluded from the coverage gate.
 
 ## How the harness verifies (`m-case-format`)
 

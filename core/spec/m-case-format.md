@@ -533,6 +533,16 @@ form below. This object is the language-neutral requested operation consumed by
 `compile`, `run`, and API no-drift checks; golden SQL remains the independent
 expected lowering, never the source from which an adapter deduces the write.
 
+The canonical write-instruction vocabulary — this predicate-selected shape and the
+keyed `writeSequence` shape — is **hosted in
+[`write-instruction.schema.json`](../schemas/write-instruction.schema.json)**
+(`m-unit-work`, the write-side analogue of `operation.schema.json`); this document
+references that canonical shape rather than redefining it. The case format carries
+the same shapes with `at` / `businessAt` / `until` kept as **authoring aliases** of
+the axis-explicit canonical spellings (`businessFrom` / `businessTo`; the processing
+instant is harness / Clock-supplied context, never an instruction field). The
+corpus-wide re-authoring to the canonical spellings is deferred.
+
 ```yaml
 - write:
     mutation: update                    # update | delete | terminate | updateUntil | terminateUntil
@@ -910,6 +920,41 @@ satisfies it:
   `boundary`-shape case is `api-conformance`; the read-lock matrix reads (object
   find locks, projection omits the lock, deep fetch locks every level, optimistic
   reads omit the lock) are `read`-shape `api-conformance` cases.
+
+## Compile eligibility
+
+Beyond the `lane` routing above, a case declares whether an adapter's **`compile`**
+command can derive its emissions statically. By default a case is
+**compile-eligible**: `compile` emits its SQL without executing anything. A case is
+declared **run-only** — via a top-level **`compileEligibility`** block
+(`{ mode: run-only, reason, note? }`) — when its emissions cannot be a pure function
+of `when` + `given`, so only `run` grades it. Two criteria make a case run-only:
+
+- **`single-connection`** — the case intends to exercise database **concurrency or
+  locking** behavior: a `conflict` / `concurrencySuccess` / `boundary` shape, a
+  `when.concurrency` choreography, or a `given.apply` / `given.fault`. Such a case is
+  run-only **regardless** of whether its emissions happen to be statically derivable,
+  because its point is a runtime interaction a single `compile` cannot represent.
+- **`query-result-dependent`** — the emissions depend on a **query result**:
+  deep-fetch fan-out binds, materialized predicate writes, `sequence`-strategy PK
+  allocations (whose following `INSERT` binds registry-read values — a `max`-strategy
+  insert folds the computation into its own SQL and stays eligible), or
+  framework-owned observed-version / `in_z` binds. `given` fixtures are legitimate
+  inputs; `then` expectations are never fed back.
+
+Eligibility is an **authored, reviewed** declaration — intent is a human judgment.
+The harness **mechanically backstops** the detectable `single-connection` cases: a
+case carrying a `given.apply` / `given.fault`, a `when.concurrency`, or a `conflict`
+/ `concurrencySuccess` / `boundary` shape **MUST** carry the run-only declaration with
+reason `single-connection`, and leaving it eligible (or mis-reasoning it) is a loud
+failure. The `query-result-dependent` criterion is **not** mechanically detectable;
+each language's **refusing compile port** enforces it structurally at runtime — a
+`compile` that requests a row proves the case was mis-declared eligible
+(`m-conformance-adapter`).
+
+The adapter's answer for a claimed-but-run-only case under `compile` is a defined
+`status: run-only` with a `compile-run-only` diagnostic, **not** `unsupported`
+(which is invalid for a claimed case command); see `m-conformance-adapter`.
 
 ## Provisioning ↔ runner seam (DQ15)
 

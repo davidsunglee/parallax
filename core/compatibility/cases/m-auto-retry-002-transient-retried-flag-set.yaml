@@ -15,6 +15,10 @@ model: models/account.yaml
 tags: [m-auto-retry, m-opt-lock, m-api-conformance, transient, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
 shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
 given:
   fault: serialization-failure
 when:

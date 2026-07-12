@@ -18,6 +18,10 @@
 model: models/account.yaml
 tags: [m-detach, m-sql, detached-insert, write-sequence, slice-managed-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply)"
 given:
   fixtures: true
   apply:

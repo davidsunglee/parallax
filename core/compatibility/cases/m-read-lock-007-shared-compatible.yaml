@@ -13,6 +13,10 @@
 model: models/account.yaml
 tags: [m-read-lock, m-dialect, concurrency, shared-lock-compatible, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: concurrencySuccess
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (when.concurrency, shape:concurrencySuccess)"
 given:
   fixtures: true
 when:

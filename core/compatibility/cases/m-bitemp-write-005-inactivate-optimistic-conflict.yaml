@@ -18,6 +18,10 @@
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
 given:
   apply:
     - sql: update position set out_z = ? where pos_id = ? and out_z = ? and from_z = ? and in_z = ?

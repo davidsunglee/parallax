@@ -16,6 +16,10 @@
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (shape:conflict)"
 when:
   uow:
     concurrency: optimistic

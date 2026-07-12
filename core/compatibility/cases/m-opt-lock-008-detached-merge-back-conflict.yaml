@@ -17,6 +17,10 @@
 model: models/account.yaml
 tags: [m-opt-lock, m-detach, m-sql, conflict, merge-back, slice-managed-1]
 shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
 given:
   apply:
     - sql: update account set balance = 888.00, version = 2 where id = 1

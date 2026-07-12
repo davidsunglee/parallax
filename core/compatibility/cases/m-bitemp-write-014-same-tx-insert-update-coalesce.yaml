@@ -1,0 +1,59 @@
+# Same-transaction coalescing on a BITEMPORAL entity (m-bitemp-write + m-unit-work): a
+# plain insert followed by an update of the SAME new object in ONE unit of work
+# coalesces IN PLACE to a single fully-current-rectangle INSERT carrying the final
+# value — NO inactivation and NO head/tail rectangle split is fabricated for a state
+# that was never durably observable (Reladomo GenericBiTemporalDirector same-transaction
+# handling). Contrast m-bitemp-write-006 (plain update), whose update spans a prior
+# COMMITTED rectangle and therefore inactivates + chains head/tail. The
+# same-transaction coalescing rule is m-unit-work.
+#
+# The scenario runs against the loaded Position fixtures (id 1); position 9 is the NEW
+# object the unit of work creates. Optimistic mode, so the observing find takes no read
+# lock:
+#   step 0 write : buffer a plain INSERT of Position 9 (value 100, business
+#                  [2024-01-01, infinity), processing [2024-01-01, infinity)), then
+#                  buffer an UPDATE of its value to 150 — COALESCED into ONE
+#                  fully-current rectangle INSERT (thru_z = out_z = infinity) carrying
+#                  the FINAL value 150. No inactivation UPDATE, no head/tail split.
+#                  (1 round trip)
+#   step 1 find  : bitemporal as-of now on BOTH axes over position 9 observes ONE
+#                  fully-current rectangle at value 150.
+# roundTrips = 2 (the one coalesced insert + the find).
+model: models/position.yaml
+tags: [m-bitemp-write, m-unit-work, m-temporal-read, bitemporal, same-transaction-coalescing, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - write: insert
+      roundTrips: 1
+      note: a buffered plain insert (value 100) + a buffered update (value 150) of the SAME new position 9 coalesce to ONE fully-current rectangle INSERT carrying the final value 150 — no inactivation, no head/tail split
+      statements:
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [9, D, 150.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
+    - targetEntity: Position
+      find:
+        asOf:
+          operand:
+            asOf:
+              operand:
+                eq:
+                  attr: Position.id
+                  value: 9
+              asOfAttr: Position.processingDate
+              date: now
+          asOfAttr: Position.businessDate
+          date: now
+      roundTrips: 1
+      note: bitemporal as-of now on both axes over position 9 observes ONE fully-current rectangle at the coalesced value 150
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.val from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.out_z = ?
+          binds: [9, infinity, infinity]
+      referenceSql: select pos_id, val from position where pos_id = 9 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+      expectRows:
+        - { pos_id: 9, val: 150.00 }
+then:
+  roundTrips: 2

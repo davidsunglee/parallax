@@ -6,6 +6,7 @@
   "oneOf": [
     { "$ref": "#/$defs/describeOk" },
     { "$ref": "#/$defs/compileOk" },
+    { "$ref": "#/$defs/compileRunOnly" },
     { "$ref": "#/$defs/runOk" },
     { "$ref": "#/$defs/benchmarkOk" },
     { "$ref": "#/$defs/nonOk" }
@@ -462,6 +463,43 @@
         "roundTrips": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "compileRunOnly": {
+      "description": "The defined `compile` answer for a CLAIMED case the corpus declares RUN-ONLY (`compileEligibility`, m-case-format). Its emissions cannot be derived without executing SQL, so the adapter neither compiles it (that would require running a query) nor returns `unsupported` (invalid for a claimed case command). Instead it returns `status: run-only` with at least one `compile-run-only` diagnostic; only the `run` command grades the case. Exit code 11.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "command",
+        "status",
+        "adapter",
+        "case",
+        "dialect",
+        "caseShape",
+        "diagnostics"
+      ],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "command": { "const": "compile" },
+        "status": { "const": "run-only" },
+        "adapter": { "$ref": "#/$defs/adapter" },
+        "case": { "$ref": "#/$defs/casePath" },
+        "dialect": { "$ref": "#/$defs/dialect" },
+        "caseShape": { "$ref": "#/$defs/caseShape" },
+        "diagnostics": {
+          "allOf": [
+            { "$ref": "#/$defs/diagnostics" },
+            {
+              "description": "At least one diagnostic MUST carry the reserved code `compile-run-only` naming the run-only reason.",
+              "contains": {
+                "type": "object",
+                "required": ["code"],
+                "properties": { "code": { "const": "compile-run-only" } }
+              }
+            }
+          ]
         }
       }
     },
