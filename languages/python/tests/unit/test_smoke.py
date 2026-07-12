@@ -24,9 +24,10 @@ _TOP_PACKAGE_NAMES: tuple[str, ...] = (
 )
 
 
-def test_top_packages_expose_empty_public_surface() -> None:
-    # Phase 1 is a skeleton: no distribution exports anything yet.
-    assert parallax.core.__all__ == []
+def test_top_package_public_surfaces() -> None:
+    # Phase 3 publishes the model-definition surface on parallax.core; the
+    # lifecycle, adapter, and conformance distributions stay skeletons for now.
+    assert {"Entity", "Field", "Relationship", "Attr", "Rel", "meta"} <= set(parallax.core.__all__)
     assert parallax.snapshot.__all__ == []
     assert parallax.postgres.__all__ == []
     assert parallax.conformance.__all__ == []

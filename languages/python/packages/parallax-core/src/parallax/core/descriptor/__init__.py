@@ -1,4 +1,53 @@
 """``parallax.core.descriptor`` enforcement scope (m-descriptor).
 
-Skeleton stood up in COR-3 Phase 1; behaviour lands in a later phase.
+The metamodel hub: frozen record types for a parsed model descriptor, hand-rolled
+snake-to-camel serde round-tripping the ``metamodel.schema.json`` shape, and the
+derived facts (``temporal``, ``column_order``) the behavioural scopes and the
+entity frontend build on. ``m-descriptor`` depends only on ``m-core``.
 """
+
+from __future__ import annotations
+
+from parallax.core.descriptor.errors import DescriptorError
+from parallax.core.descriptor.records import (
+    UNSET,
+    AsOfAttribute,
+    Attribute,
+    Entity,
+    Index,
+    Inheritance,
+    Metamodel,
+    NestedValueObject,
+    OrderByTerm,
+    PkGenerator,
+    PkStrategy,
+    Relationship,
+    Temporal,
+    ValueObject,
+    ValueObjectAttribute,
+    column_order,
+)
+from parallax.core.descriptor.serde import canonicalize, deserialize, serialize
+
+__all__ = [
+    "UNSET",
+    "AsOfAttribute",
+    "Attribute",
+    "DescriptorError",
+    "Entity",
+    "Index",
+    "Inheritance",
+    "Metamodel",
+    "NestedValueObject",
+    "OrderByTerm",
+    "PkGenerator",
+    "PkStrategy",
+    "Relationship",
+    "Temporal",
+    "ValueObject",
+    "ValueObjectAttribute",
+    "canonicalize",
+    "column_order",
+    "deserialize",
+    "serialize",
+]

@@ -1,5 +1,17 @@
 {
-  "parallax.core": [],
+  "parallax.core": [
+    "Attr",
+    "Entity",
+    "EntityConfig",
+    "EntityDefinitionError",
+    "Field",
+    "NameCollisionError",
+    "OrderByTerm",
+    "Rel",
+    "Relationship",
+    "ReservedNameError",
+    "meta"
+  ],
   "parallax.postgres": [],
   "parallax.snapshot": []
 }
