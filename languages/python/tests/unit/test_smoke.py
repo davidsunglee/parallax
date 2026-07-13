@@ -25,11 +25,11 @@ _TOP_PACKAGE_NAMES: tuple[str, ...] = (
 
 
 def test_top_package_public_surfaces() -> None:
-    # Phase 3 publishes the model-definition surface on parallax.core; the
-    # lifecycle, adapter, and conformance distributions stay skeletons for now.
+    # Phase 3 publishes the model-definition surface on parallax.core; Phase 5 adds
+    # the concrete Postgres adapter surface. The snapshot lifecycle stays a skeleton.
     assert {"Entity", "Field", "Relationship", "Attr", "Rel", "meta"} <= set(parallax.core.__all__)
     assert parallax.snapshot.__all__ == []
-    assert parallax.postgres.__all__ == []
+    assert set(parallax.postgres.__all__) == {"Json", "Jsonb", "PostgresAdapter"}
     assert parallax.conformance.__all__ == []
 
 

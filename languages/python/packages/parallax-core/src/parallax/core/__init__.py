@@ -14,28 +14,34 @@ from __future__ import annotations
 
 from parallax.core.entity import (
     Attr,
+    AttributeExpr,
     Entity,
     EntityConfig,
     EntityDefinitionError,
     Field,
     NameCollisionError,
     OrderByTerm,
+    Predicate,
     Rel,
     Relationship,
     ReservedNameError,
+    Statement,
     meta,
 )
 
 __all__ = [
     "Attr",
+    "AttributeExpr",
     "Entity",
     "EntityConfig",
     "EntityDefinitionError",
     "Field",
     "NameCollisionError",
     "OrderByTerm",
+    "Predicate",
     "Rel",
     "Relationship",
     "ReservedNameError",
+    "Statement",
     "meta",
 ]

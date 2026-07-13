@@ -42,7 +42,8 @@ def test_build_skips_covers_cases_without_examples() -> None:
 def test_partition_report_is_a_clean_full_partition() -> None:
     report = api_suite.partition_report()
     assert report.ok, report.errors
-    assert report.exercised == frozenset()  # no examples registered yet
+    # Phase 5 registers the first idiomatic examples (the op-algebra read spellings).
+    assert {e.case_id for e in api_suite.EXAMPLES} <= report.exercised
     assert report.exercised | report.skipped == report.active
 
 

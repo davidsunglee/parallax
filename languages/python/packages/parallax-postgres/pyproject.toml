@@ -8,7 +8,9 @@ license = "Apache-2.0"
 authors = [{ name = "Parallax" }]
 dependencies = [
     "parallax-core",
-    "psycopg>=3.2",
+    # The binary extra bundles libpq so the adapter installs self-contained (no
+    # system libpq required); parallax-postgres remains the sole psycopg declarer.
+    "psycopg[binary]>=3.2",
 ]
 
 [build-system]

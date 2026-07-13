@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from parallax.conformance import case_format
+from parallax.conformance import case_format, engine
 from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
+from parallax.core.db_port import DbPort
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -26,15 +27,13 @@ __all__ = [
     "describe",
     "error",
     "run_case",
+    "unsupported",
     "unsupported_command",
 ]
 
 SCHEMA_VERSION: Final[str] = "1"
 
 Envelope = dict[str, Any]
-
-# Exit codes are owned by the CLI; the adapter reports status only.
-_STUB_MESSAGE: Final[str] = "compile/run is not implemented until COR-3 Phase 5+"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,19 +111,26 @@ def error(command: str, diagnostic: Diagnostic, adapter: Adapter = ADAPTER) -> E
     return _non_ok(command, "error", diagnostic, adapter)
 
 
-def _classified(
-    command: str,
-    case_path: str | Path,
-    dialect: str,
-    claim: Claim,
-    adapter: Adapter,
-) -> Envelope:
-    case = case_format.load_case(Path(case_path))
-    diagnostic = classify(command, dialect, case, claim)
-    if diagnostic is not None:
-        return _non_ok(command, "unsupported", diagnostic, adapter)
-    # Claimed case command: the compile/run lanes are not wired yet.
-    return _non_ok(command, "error", Diagnostic("not-implemented", _STUB_MESSAGE), adapter)
+def unsupported(command: str, diagnostic: Diagnostic, adapter: Adapter = ADAPTER) -> Envelope:
+    """An ``unsupported`` envelope carrying the first-failed-filter ``diagnostic``."""
+    return _non_ok(command, "unsupported", diagnostic, adapter)
+
+
+def _case_ref(path: Path) -> str:
+    """The case path relative to the repo root (the `case` envelope field)."""
+    root = case_format.find_repo_root()
+    try:
+        return str(path.resolve().relative_to(root))
+    except ValueError:  # pragma: no cover - case outside the repo tree
+        return str(path)
+
+
+def _echo(envelope: Envelope, case: case_format.Case, dialect: str) -> Envelope:
+    """Echo the routing fields every compile/run envelope carries."""
+    envelope["case"] = _case_ref(case.path)
+    envelope["dialect"] = dialect
+    envelope["caseShape"] = case.shape
+    return envelope
 
 
 def compile_case(
@@ -133,15 +139,54 @@ def compile_case(
     claim: Claim = SNAPSHOT_CLAIM,
     adapter: Adapter = ADAPTER,
 ) -> Envelope:
-    """Classify then (for a claimed case) stub the ``compile`` command."""
-    return _classified("compile", case_path, dialect, claim, adapter)
+    """Compile one case: classify, honor compile-eligibility, then emit statements.
+
+    A run-only case (`compileEligibility`, `m-case-format`) returns the defined
+    ``run-only`` status with a ``compile-run-only`` diagnostic; a compile-eligible
+    claimed read case returns ``ok`` with its ordered ``emissions`` and round
+    trips. Compilation touches no database — the refusing port never sees a row
+    request from a well-declared read.
+    """
+    case = case_format.load_case(Path(case_path))
+    diagnostic = classify("compile", dialect, case, claim)
+    if diagnostic is not None:
+        return _non_ok("compile", "unsupported", diagnostic, adapter)
+    run_only = engine.eligibility(case)
+    if run_only is not None:
+        envelope = _non_ok(
+            "compile",
+            "run-only",
+            Diagnostic("compile-run-only", run_only.reason),
+            adapter,
+        )
+        return _echo(envelope, case, dialect)
+    try:
+        emissions, round_trips = engine.compile_read_case(case, dialect)
+    except engine.EngineError as exc:
+        return _non_ok("compile", "error", Diagnostic("compile-failed", str(exc)), adapter)
+    envelope = _common("compile", "ok", adapter)
+    envelope["emissions"] = [e.to_json() for e in emissions]
+    envelope["roundTrips"] = round_trips
+    return _echo(envelope, case, dialect)
 
 
 def run_case(
     case_path: str | Path,
     dialect: str,
+    port: DbPort,
     claim: Claim = SNAPSHOT_CLAIM,
     adapter: Adapter = ADAPTER,
 ) -> Envelope:
-    """Classify then (for a claimed case) stub the ``run`` command."""
-    return _classified("run", case_path, dialect, claim, adapter)
+    """Run one read case through ``port`` and report its emissions and observations."""
+    case = case_format.load_case(Path(case_path))
+    diagnostic = classify("run", dialect, case, claim)
+    if diagnostic is not None:
+        return _non_ok("run", "unsupported", diagnostic, adapter)
+    try:
+        emissions, rows, round_trips = engine.run_read_case(case, dialect, port)
+    except engine.EngineError as exc:
+        return _non_ok("run", "error", Diagnostic("run-failed", str(exc)), adapter)
+    envelope = _common("run", "ok", adapter)
+    envelope["emissions"] = [e.to_json() for e in emissions]
+    envelope["observations"] = {"rows": rows, "roundTrips": round_trips}
+    return _echo(envelope, case, dialect)

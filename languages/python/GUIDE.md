@@ -68,34 +68,45 @@ Pytest markers (§6): `unit`, `dialect`, `compile_sweep`, `adapter_smoke`,
 
 Database-backed lanes (`conformance`/`pg-full`, `provider_contract`,
 `adapter_smoke`) use testcontainers-python with a `self-managed` Postgres
-container. **Docker must be running.** One container per test session; per-case
-isolation is `DROP SCHEMA … CASCADE` → descriptor-derived DDL → fixtures. These
-lanes come online in COR-3 Phase 5; a session summary will report every skipped
-database-backed check, and CI fails on any silent skip.
+container pinned to an exact version **and** sha256 digest in
+`parallax.conformance.constants`. **Docker must be running.** One container per
+test session; per-case isolation is `DROP SCHEMA … CASCADE` → descriptor-derived
+DDL → fixtures in descriptor column order. A session summary reports every
+skipped database-backed check (never silently); set `PARALLAX_REQUIRE_DB=1` to
+turn any such skip into a failure (the CI database lane does this). The
+production `parallax-postgres` declares `psycopg[binary]`, so the adapter installs
+self-contained without a system `libpq`.
 
 ## Current status
 
-- **Phases 1–3 complete.** The uv workspace, the four distributions over the
-  PEP 420 namespace, the generated import-linter enforcement, the full §10
-  toolchain, `just python-static` / `just python-verify`, and the
-  `python-static` / `python-database` CI lanes are stood up and green
-  database-free.
-- **Phase 2 (conformance spine):** `m-core` neutral types, `m-case-format`
-  corpus loading with the §1 case-selection expression, the in-process adapter
-  core, and the CLI — `describe` runs end-to-end from argv to schema-validated
-  JSON and exit code. The API Conformance Suite framework, coverage partition,
-  and generated Usage Guide run from day one (every active-slice case
-  reasoned-skipped until its capability lands).
-- **Phase 3 (metamodel hub + class frontend):** the `m-descriptor` records and
-  serde, `m-pk-gen`, `m-inheritance`, and `m-value-object` models, plus the
-  Pydantic class frontend (`Attr`/`Rel` typed descriptors, `Field` /
-  `Relationship`, definition-time validation, `meta` introspection). The
-  descriptor no-drift guard is live.
-- **Phase 4 next:** the core amendment bundle (compile-eligibility declaration,
-  write-instruction schema, same-transaction coalescing). Phases 5–9 not
-  started; no read/write runtime path exists yet.
+- **Phases 1–5 complete.** The uv workspace, the four distributions, the
+  conformance spine + `describe`, the metamodel hub + Pydantic class frontend,
+  the Phase-4 core amendment bundle, and the Phase-5 read path are landed and
+  green: `just python-static` (unit coverage 99.89%, diff-cover 100%) and the
+  Docker database lanes both pass.
+- **Phase 5 (SQL walking skeleton — read path):** `m-op-algebra` nodes + serde,
+  the pure `m-dialect` Postgres strategy, the abstract `m-db-port`, the `m-sql`
+  three-stage read compiler (`compile_read` = canonicalize → lower → normalize),
+  the statement half (`Entity.where`, comparison/string/null/membership
+  operators, `&`/`|`/`~` + canonical grouping, value-object nested access,
+  `order_by`/`limit`/`distinct`), the concrete psycopg adapter, and the
+  conformance `compile`/`run` commands with self-managed Testcontainers
+  provisioning. The compile sweep and `pg-full` run lane exercise the reachable
+  read intersection; the operation no-drift guard is live.
+- **Reachable intersection this phase:** 124 corpus cases (77 read, 18
+  writeSequence, 29 rejected). 15 reads are compiled **and** run end-to-end
+  against real Postgres (13 value-object nested-predicate reads, `m-descriptor-001`
+  quoted identifier, `m-core-001` scalar round-trip); the remaining reachable
+  cases are reasoned-skipped in the sweep (no silent gaps) per ledger D-11 (the
+  stale-orders read projection) and D-12 (inheritance reads, to-many value-object
+  array traversal, and pre-SQL rejected-operation validation — all deferred to
+  later phases). The operation no-drift guard exercises 10 idiomatic op-algebra
+  read spellings.
+- **Phase 6 next:** transactions and the temporal backbone (`db.transact`, the
+  write-instruction IR + keyed writes, temporal reads, SQLSTATE classification).
 
 ## Blockers
 
-- None. Docker is required to run the database-backed lanes (Phase 5+); the
-  database-free lane (`just python-static`) needs no Docker.
+- None. Docker is required for the database-backed lanes (`just python-verify` /
+  the `python-database` CI job); the database-free lane (`just python-static`,
+  which now includes `-m dialect` and `-m compile_sweep`) needs no Docker.

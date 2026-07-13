@@ -175,6 +175,8 @@ python-static:
     cd {{python}} && uv run lint-imports
     cd {{python}} && uv run pytest -m unit --cov --cov-branch --cov-report=xml --cov-report=term-missing --cov-fail-under=90
     cd {{python}} && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100
+    cd {{python}} && uv run pytest -m dialect
+    cd {{python}} && uv run pytest -m compile_sweep
     cd {{python}} && uv run pytest -m "artifact or clean_install or api_surface"
     cd {{python}} && uv run vulture
     cd {{python}} && uv build --all-packages -o dist

@@ -6,4 +6,82 @@ Idiomatic public-API usage, generated from the API Conformance Suite's
 examples. Each example mirrors a compatibility-corpus case, so the guide
 cannot drift from graded behavior.
 
-_No idiomatic examples yet — they are added as each COR-3 phase brings its capability online._
+## Equality on the primary key
+
+Corpus case: `m-op-algebra-002`
+
+```python
+op = Order.where(Order.id == 42)
+```
+
+## Is-null predicate
+
+Corpus case: `m-op-algebra-009`
+
+```python
+op = Order.where(Order.sku.is_null())
+```
+
+## SQL-pattern LIKE
+
+Corpus case: `m-op-algebra-011`
+
+```python
+op = Order.where(Order.sku.like("A-%"))
+```
+
+## Literal starts-with (wildcards escaped)
+
+Corpus case: `m-op-algebra-013`
+
+```python
+op = Order.where(Order.sku.starts_with("A-"))
+```
+
+## Membership (IN)
+
+Corpus case: `m-op-algebra-018`
+
+```python
+op = Order.where(Order.id.in_([1, 2, 42]))
+```
+
+## Conjoined filters (big-AND)
+
+Corpus case: `m-op-algebra-020`
+
+```python
+op = Order.where(Order.active.is_(True), Order.qty > 10)
+```
+
+## Disjunction with parentheses
+
+Corpus case: `m-op-algebra-021`
+
+```python
+op = Order.where((Order.qty < 10) | (Order.qty > 25))
+```
+
+## Grouped precedence — an OR under an AND
+
+Corpus case: `m-op-algebra-024`
+
+```python
+op = Order.where((Order.qty >= 25) | (Order.qty <= 5), Order.active.is_(True))
+```
+
+## Natural precedence — an AND under an OR (no group)
+
+Corpus case: `m-op-algebra-025`
+
+```python
+op = Order.where((Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True)))
+```
+
+## Ordering and limiting
+
+Corpus case: `m-op-algebra-032`
+
+```python
+op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)
+```

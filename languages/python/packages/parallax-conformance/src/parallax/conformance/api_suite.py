@@ -69,9 +69,61 @@ class Partition:
         return not self.errors
 
 
-# The registered idiomatic examples. Empty at COR-3 Phase 2; later phases append
-# an Example per newly reachable case as its capability comes online.
-EXAMPLES: Final[list[Example]] = []
+# The registered idiomatic examples. Each mirrors a corpus case and is proven by
+# the operation no-drift guard (its statement serializes to the case's operation).
+# Later phases append an Example per newly reachable case as its capability lands.
+EXAMPLES: Final[list[Example]] = [
+    Example(
+        "m-op-algebra-002",
+        "Equality on the primary key",
+        "op = Order.where(Order.id == 42)",
+    ),
+    Example(
+        "m-op-algebra-009",
+        "Is-null predicate",
+        "op = Order.where(Order.sku.is_null())",
+    ),
+    Example(
+        "m-op-algebra-011",
+        "SQL-pattern LIKE",
+        'op = Order.where(Order.sku.like("A-%"))',
+    ),
+    Example(
+        "m-op-algebra-013",
+        "Literal starts-with (wildcards escaped)",
+        'op = Order.where(Order.sku.starts_with("A-"))',
+    ),
+    Example(
+        "m-op-algebra-018",
+        "Membership (IN)",
+        "op = Order.where(Order.id.in_([1, 2, 42]))",
+    ),
+    Example(
+        "m-op-algebra-020",
+        "Conjoined filters (big-AND)",
+        "op = Order.where(Order.active.is_(True), Order.qty > 10)",
+    ),
+    Example(
+        "m-op-algebra-021",
+        "Disjunction with parentheses",
+        "op = Order.where((Order.qty < 10) | (Order.qty > 25))",
+    ),
+    Example(
+        "m-op-algebra-024",
+        "Grouped precedence — an OR under an AND",
+        "op = Order.where((Order.qty >= 25) | (Order.qty <= 5), Order.active.is_(True))",
+    ),
+    Example(
+        "m-op-algebra-025",
+        "Natural precedence — an AND under an OR (no group)",
+        "op = Order.where((Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True)))",
+    ),
+    Example(
+        "m-op-algebra-032",
+        "Ordering and limiting",
+        "op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)",
+    ),
+]
 
 # The reviewed skip registry: primary module -> the reason its active cases carry
 # no idiomatic API example yet. Keyed by module (a reason bucket), and NOT derived
@@ -84,11 +136,13 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "exercised through the first read path (COR-3 Phase 5)"
     ),
     "m-descriptor": (
-        "descriptor introspection is proven by the descriptor no-drift guard; a "
-        "reachable statement/compile example lands with the read path (COR-3 Phase 5)"
+        "descriptor introspection is proven by the descriptor no-drift guard; the read "
+        "path compiles/runs its descriptor cases (COR-3 Phase 5)"
     ),
     "m-op-algebra": (
-        "predicate/grouping statement-building lands with the read path (COR-3 Phase 5)"
+        "representative predicate/grouping/ordering spellings are exercised as idiomatic "
+        "examples (COR-3 Phase 5); the remaining op-algebra cases are graded through the "
+        "compile/run lanes and land as examples incrementally"
     ),
     "m-temporal-read": (
         "as-of / history / as-of-range spellings land with the temporal backbone (COR-3 Phase 6)"

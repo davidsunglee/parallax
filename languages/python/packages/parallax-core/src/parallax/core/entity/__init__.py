@@ -25,7 +25,14 @@ from parallax.core.entity.errors import (
     NameCollisionError,
     ReservedNameError,
 )
-from parallax.core.entity.expressions import Attr, AttributeRef, Rel, RelationshipRef
+from parallax.core.entity.expressions import (
+    Attr,
+    AttributeExpr,
+    AttributeRef,
+    Predicate,
+    Rel,
+    RelationshipRef,
+)
 from parallax.core.entity.fields import Field, FieldSpec, Relationship, RelationshipSpec
 from parallax.core.entity.meta import (
     EntityMetaView,
@@ -35,9 +42,11 @@ from parallax.core.entity.meta import (
     meta_of,
     metamodel,
 )
+from parallax.core.entity.statement import Statement
 
 __all__ = [
     "Attr",
+    "AttributeExpr",
     "AttributeRef",
     "Entity",
     "EntityConfig",
@@ -49,11 +58,13 @@ __all__ = [
     "FieldSpec",
     "NameCollisionError",
     "OrderByTerm",
+    "Predicate",
     "Rel",
     "Relationship",
     "RelationshipRef",
     "RelationshipSpec",
     "ReservedNameError",
+    "Statement",
     "camel_to_snake",
     "descriptor_document",
     "entity_records",

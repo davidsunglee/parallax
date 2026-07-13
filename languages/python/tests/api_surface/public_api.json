@@ -1,17 +1,24 @@
 {
   "parallax.core": [
     "Attr",
+    "AttributeExpr",
     "Entity",
     "EntityConfig",
     "EntityDefinitionError",
     "Field",
     "NameCollisionError",
     "OrderByTerm",
+    "Predicate",
     "Rel",
     "Relationship",
     "ReservedNameError",
+    "Statement",
     "meta"
   ],
-  "parallax.postgres": [],
+  "parallax.postgres": [
+    "Json",
+    "Jsonb",
+    "PostgresAdapter"
+  ],
   "parallax.snapshot": []
 }

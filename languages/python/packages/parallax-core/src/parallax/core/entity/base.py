@@ -30,8 +30,9 @@ from parallax.core.entity.errors import (
     NameCollisionError,
     ReservedNameError,
 )
-from parallax.core.entity.expressions import Attr, AttributeRef, Rel, RelationshipRef
+from parallax.core.entity.expressions import Attr, AttributeRef, Predicate, Rel, RelationshipRef
 from parallax.core.entity.fields import FieldSpec, RelationshipSpec
+from parallax.core.entity.statement import Statement, build_statement
 
 __all__ = [
     "Entity",
@@ -323,3 +324,8 @@ class Entity(BaseModel, metaclass=EntityMeta):
     """The frozen base every Parallax entity extends."""
 
     model_config = ConfigDict(frozen=True)
+
+    @classmethod
+    def where(cls, *predicates: Predicate) -> Statement:
+        """Build a side-effect-free statement conjoining ``predicates`` (empty is find-all)."""
+        return build_statement(cls.__name__, predicates)

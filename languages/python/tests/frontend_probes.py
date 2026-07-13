@@ -42,12 +42,17 @@ def define_unmapped_attribute() -> type:
 
 
 def define_reserved_name() -> type:
-    """A field reusing a reserved query-root name — rejected."""
+    """A field reusing a reserved query-root name — rejected.
+
+    Uses ``as_of`` (a reserved temporal-read spelling that is not yet a base-class
+    method) so the probe stays a pure reserved-name rejection rather than a static
+    method-override clash with the ``where`` classmethod.
+    """
 
     class Bad(Entity, frozen=True):
         __parallax__ = _CFG
 
-        where: Attr[int] = Field(primary_key=True)
+        as_of: Attr[int] = Field(primary_key=True)
 
     return Bad
 

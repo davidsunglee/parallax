@@ -120,7 +120,9 @@ def test_metamodel_assembles_related_classes() -> None:
 def test_attribute_descriptor_get_on_class_and_instance() -> None:
     account = mm.Account(id=1, owner="alice", balance=Decimal("9.99"), version=1)
     descriptor = mm.Account.__dict__["owner"]
-    assert descriptor.__get__(None, mm.Account) == AttributeRef("Account", "owner")
+    # Class access yields the expression object (the seed of a predicate); its
+    # underlying reference identifies the attribute.
+    assert descriptor.__get__(None, mm.Account).ref == AttributeRef("Account", "owner")
     assert descriptor.__get__(account, mm.Account) == "alice"
     # Normal instance access returns the stored value (non-data descriptor).
     assert account.owner == "alice"

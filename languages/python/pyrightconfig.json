@@ -10,6 +10,7 @@
     "tests"
   ],
   "extraPaths": ["tools", "tests"],
+  "stubPath": "typings",
   "exclude": [
     "**/__pycache__",
     "**/.venv",

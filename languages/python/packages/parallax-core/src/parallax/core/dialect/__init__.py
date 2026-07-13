@@ -1,4 +1,191 @@
 """``parallax.core.dialect`` enforcement scope (m-dialect).
 
-Skeleton stood up in COR-3 Phase 1; behaviour lands in a later phase.
+The pure, driver-free dialect strategy — the single home of every
+dialect-specific decision (`m-dialect`): identifier quoting, NULL ordering,
+row-limit rendering, shared-read-lock application, the neutral-type → column-type
+mapping, the structured-document extraction / typed-cast forms, the bytes
+projection shape, the canonical `?` → driver placeholder translation, the
+infinity representation, and the SQLSTATE → neutral-category table (`m-db-error`).
+It performs no I/O and imports no driver. ``m-dialect`` depends only on ``m-core``.
 """
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Final, Literal
+
+__all__ = [
+    "INFINITY",
+    "POSTGRES",
+    "Dialect",
+    "LockMode",
+    "dialect_for",
+]
+
+LockMode = Literal["locking", "optimistic"]
+
+# A "simple" identifier needs no quoting: lowercase, starts with a letter.
+_SIMPLE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# The neutral infinity sentinel (the open upper bound of a temporal interval,
+# m-core); Postgres binds it as native `'infinity'::timestamptz` at the adapter.
+INFINITY: Final[str] = "infinity"
+
+
+@dataclass(frozen=True, slots=True)
+class Dialect:
+    """One database's pure SQL strings and parse rules (m-dialect)."""
+
+    name: str
+    # Names that are reserved words for this dialect and must be quoted even
+    # though they are otherwise "simple". The concrete list is per-dialect
+    # (m-dialect); a shared normative artifact is a deferred follow-on.
+    reserved: frozenset[str]
+    quote_char: str
+    # SQLSTATE / native code -> neutral m-db-error category.
+    error_codes: dict[str, str]
+
+    # -- identifiers ------------------------------------------------------- #
+    def quote(self, identifier: str) -> str:
+        """Quote ``identifier`` iff it is reserved or non-simple for this dialect."""
+        if _SIMPLE.match(identifier) and identifier not in self.reserved:
+            return identifier
+        q = self.quote_char
+        return f"{q}{identifier}{q}"
+
+    def qualified(self, alias: str, column: str) -> str:
+        """An alias-qualified column reference (`t0.col` / `t0."order"`)."""
+        return f"{alias}.{self.quote(column)}"
+
+    # -- projections ------------------------------------------------------- #
+    def project(self, alias: str, column: str, neutral_type: str) -> tuple[str, list[object]]:
+        """The select-list expression (and any projection-introduced binds) for a column.
+
+        A `bytes` column projects the hex-encoded text so the wire value is stable
+        (`encode(t0.col, ?) col_hex`, bind `hex`); every other column projects the
+        plain alias-qualified reference with no bind.
+        """
+        if neutral_type == "bytes":
+            return f"encode({self.qualified(alias, column)}, ?) {column}_hex", ["hex"]
+        return self.qualified(alias, column), []
+
+    # -- result shaping ---------------------------------------------------- #
+    def limit_clause(self) -> str:
+        """The row-limit clause (the count rides as a `?` bind)."""
+        return "limit ?"
+
+    def null_order(self, column_sql: str, direction: Literal["asc", "desc"]) -> str:
+        """A relationship-ordering term with this dialect's NULLs-last placement.
+
+        Used by the descriptor-`orderBy` relationship ordering (`m-deep-fetch`),
+        where the canonical rule sorts NULLs last on every key. A user-authored
+        `orderBy` directive renders plain (`m-sql`); it does not go through here.
+        """
+        if direction == "asc":
+            return f"{column_sql} asc"
+        return f"{column_sql} desc nulls last"
+
+    # -- read lock --------------------------------------------------------- #
+    def read_lock_suffix(self, root_alias: str) -> str:
+        """The shared-row-lock suffix for an in-transaction object find."""
+        return f"for share of {root_alias}"
+
+    # -- structured documents (m-value-object) ----------------------------- #
+    def nested_extract(
+        self, alias: str, column: str, segments: tuple[str, ...]
+    ) -> tuple[str, list[object]]:
+        """The document text-extraction expression and its per-segment path binds."""
+        holes = ", ".join(["?"] * len(segments))
+        return (
+            f"jsonb_extract_path_text({self.qualified(alias, column)}, {holes})",
+            list(segments),
+        )
+
+    def nested_cast(self, extraction: str, neutral_type: str) -> str:
+        """Cast a text extraction to a non-text declared type before comparing."""
+        base = _base_type(neutral_type)
+        if base == "decimal":
+            inner = neutral_type[len("decimal") :].strip("() ")
+            p, s = (part.strip() for part in inner.split(","))
+            return f"cast({extraction} as decimal({p}, {s}))"
+        target = _CAST_TARGETS.get(base)
+        if target is None:
+            return extraction  # string / text — compare directly
+        return f"cast({extraction} as {target})"
+
+    # -- placeholders ------------------------------------------------------ #
+    def to_driver_sql(self, canonical_sql: str) -> str:
+        """Translate the canonical `?` placeholders to this driver's form (`%s`)."""
+        return canonical_sql.replace("?", "%s")
+
+    # -- DDL type mapping -------------------------------------------------- #
+    def column_type(self, neutral_type: str, max_length: int | None) -> str:
+        """The concrete column type for a neutral type (used by DDL derivation)."""
+        base = _base_type(neutral_type)
+        if base == "string":
+            return f"varchar({max_length})" if max_length is not None else "text"
+        if base == "decimal":
+            inner = neutral_type[len("decimal") :].strip("() ")
+            p, s = (part.strip() for part in inner.split(","))
+            return f"numeric({p}, {s})"
+        mapped = _DDL_TYPES.get(base)
+        if mapped is None:
+            raise ValueError(f"no {self.name} column type for neutral type {neutral_type!r}")
+        return mapped
+
+    # -- errors ------------------------------------------------------------ #
+    def classify(self, code: str) -> str | None:
+        """The neutral m-db-error category for a native code, or ``None``."""
+        return self.error_codes.get(code)
+
+
+def _base_type(neutral_type: str) -> str:
+    return neutral_type.split("(", 1)[0]
+
+
+_CAST_TARGETS: Final[dict[str, str]] = {
+    "int32": "bigint",
+    "int64": "bigint",
+    "float32": "double precision",
+    "float64": "double precision",
+}
+
+_DDL_TYPES: Final[dict[str, str]] = {
+    "boolean": "boolean",
+    "int32": "integer",
+    "int64": "bigint",
+    "float32": "real",
+    "float64": "double precision",
+    "bytes": "bytea",
+    "date": "date",
+    "time": "time",
+    "timestamp": "timestamptz",
+    "uuid": "uuid",
+    "json": "jsonb",
+}
+
+# Postgres reserved words that appear as declared columns in the corpus and so
+# must be quoted (m-descriptor-001 witnesses the shared-reserved `order`).
+_PG_RESERVED: Final[frozenset[str]] = frozenset(
+    {"order", "user", "select", "from", "where", "table", "group", "default", "primary"}
+)
+
+POSTGRES: Final[Dialect] = Dialect(
+    name="postgres",
+    reserved=_PG_RESERVED,
+    quote_char='"',
+    error_codes={
+        "23505": "uniqueViolation",
+        "40P01": "deadlock",
+        "40001": "deadlock",
+        "55P03": "lockWaitTimeout",
+    },
+)
+
+
+def dialect_for(name: str) -> Dialect:
+    """The pure dialect strategy for ``name`` (postgres is the only concrete one)."""
+    if name == "postgres":
+        return POSTGRES
+    raise ValueError(f"unsupported dialect {name!r}")

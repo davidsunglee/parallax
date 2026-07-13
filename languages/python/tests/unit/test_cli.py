@@ -34,16 +34,20 @@ def test_describe_in_process(capsys: pytest.CaptureFixture[str]) -> None:
     assert envelope["adapter"]["language"] == "python"
 
 
-def test_compile_claimed_case_errors_exit_1(capsys: pytest.CaptureFixture[str]) -> None:
+def test_compile_claimed_case_emits_exit_0(capsys: pytest.CaptureFixture[str]) -> None:
     code, envelope = _run(capsys, ["compile", "--case", _READ_CASE, "--dialect", "postgres"])
-    assert code == 1
-    assert envelope["status"] == "error"
+    assert code == 0
+    assert envelope["status"] == "ok"
+    assert envelope["command"] == "compile"
 
 
-def test_run_claimed_case_errors_exit_1(capsys: pytest.CaptureFixture[str]) -> None:
-    code, envelope = _run(capsys, ["run", "--case", _READ_CASE, "--dialect", "postgres"])
-    assert code == 1
-    assert envelope["status"] == "error"
+def test_run_unsupported_dialect_exit_10(capsys: pytest.CaptureFixture[str]) -> None:
+    # The `run` dialect filter is Docker-free: an out-of-claim dialect is rejected
+    # before any container is provisioned.
+    code, envelope = _run(capsys, ["run", "--case", _READ_CASE, "--dialect", "mariadb"])
+    assert code == 10
+    assert envelope["status"] == "unsupported"
+    assert envelope["diagnostics"][0]["code"] == "unsupported-dialect"
 
 
 def test_compile_unsupported_dialect_exit_10(capsys: pytest.CaptureFixture[str]) -> None:
