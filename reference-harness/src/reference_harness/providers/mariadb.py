@@ -31,6 +31,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 import pymysql
+from pymysql.constants import FIELD_TYPE
 from testcontainers.mysql import MySqlContainer
 
 from .. import errors
@@ -91,9 +92,28 @@ def _parse_iso_instant(text: str) -> _dt.datetime | None:
     return parsed
 
 
-def _from_db_value(value: Any) -> Any:
+def _is_boolean_field(type_code: Any, column_length: Any) -> bool:
+    """True for a MariaDB ``tinyint(1)`` result column — the ``boolean`` mapping.
+
+    ``boolean`` is the ONLY neutral type that maps to ``tinyint(1)`` (ddl_builder),
+    which pymysql reports as ``FIELD_TYPE.TINY`` with a display length of ``1`` and
+    reads back as int ``0`` / ``1``. Every other integer column is a wider type code
+    (``int32`` -> ``int`` / ``FIELD_TYPE.LONG``, ``int64`` -> ``bigint`` /
+    ``FIELD_TYPE.LONGLONG``), so this never coerces a non-boolean integer.
+    """
+    return type_code == FIELD_TYPE.TINY and column_length == 1
+
+
+def _from_db_value(value: Any, *, is_boolean: bool = False) -> Any:
     """Adapt a MariaDB-read value back to the suite's canonical form.
 
+    * a ``tinyint(1)`` (``boolean``) column -> a real ``bool``: MariaDB has no
+      native boolean, so pymysql reads the column back as int ``0`` / ``1``. The
+      row comparator keeps ``bool`` OUT of numeric space (m-case-format layer 2:
+      ``true`` is never ``1``), so an int would never match the fixture's boolean;
+      the caller passes ``is_boolean`` from the column's ``tinyint(1)`` field
+      metadata (:func:`_is_boolean_field`) so the value compares correctly. A NULL
+      boolean column stays ``None``;
     * the max-sentinel ``DATETIME`` -> the literal ``"infinity"`` (m-dialect), so a
       current-row open bound compares to the fixture's ``infinity``;
     * a finite ``datetime`` -> a stable ISO-8601 UTC string with ``+00:00`` (the
@@ -105,6 +125,8 @@ def _from_db_value(value: Any) -> Any:
       compares equal across dialects; a ``bytes`` JSON payload is left to the
       caller (we never read JSON columns back for comparison in this phase).
     """
+    if is_boolean and isinstance(value, int) and not isinstance(value, bool):
+        return bool(value)
     if isinstance(value, _dt.datetime):
         if value == _INFINITY_SENTINEL:
             return _INFINITY_LITERAL
@@ -180,9 +202,12 @@ class MariaDbProvider:
                 )
             else:
                 cur.execute(_to_pymysql(sql))
-            column_names = [desc[0] for desc in cur.description]
+            columns = [(desc[0], _is_boolean_field(desc[1], desc[3])) for desc in cur.description]
             return [
-                {name: _from_db_value(value) for name, value in zip(column_names, row, strict=True)}
+                {
+                    name: _from_db_value(value, is_boolean=is_boolean)
+                    for (name, is_boolean), value in zip(columns, row, strict=True)
+                }
                 for row in cur.fetchall()
             ]
 
@@ -305,9 +330,12 @@ class _MariaTxSession:
                 )
             else:
                 cur.execute(_to_pymysql(sql))
-            column_names = [desc[0] for desc in cur.description]
+            columns = [(desc[0], _is_boolean_field(desc[1], desc[3])) for desc in cur.description]
             return [
-                {name: _from_db_value(value) for name, value in zip(column_names, row, strict=True)}
+                {
+                    name: _from_db_value(value, is_boolean=is_boolean)
+                    for (name, is_boolean), value in zip(columns, row, strict=True)
+                }
                 for row in cur.fetchall()
             ]
 

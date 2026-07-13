@@ -13,11 +13,14 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+from pymysql.constants import FIELD_TYPE
+
 from reference_harness.case import load_model
 from reference_harness.ddl_builder import _column_type, ddl_for, quote_identifier
 from reference_harness.providers.mariadb import (
     _INFINITY_SENTINEL,
     _from_db_value,
+    _is_boolean_field,
     _to_db_bind,
     _to_pymysql,
 )
@@ -157,6 +160,27 @@ def test_non_temporal_scalars_pass_through() -> None:
     assert _to_db_bind(42) == 42
     assert _to_db_bind("A-100") == "A-100"
     assert _from_db_value(250) == 250
+
+
+def test_tinyint_one_field_is_boolean() -> None:
+    # `boolean` is the only neutral type mapped to `tinyint(1)`; pymysql reports it
+    # as FIELD_TYPE.TINY with display length 1. A wider integer (int32 -> `int` /
+    # FIELD_TYPE.LONG) or a non-(1) tinyint is not a boolean column.
+    assert _is_boolean_field(FIELD_TYPE.TINY, 1) is True
+    assert _is_boolean_field(FIELD_TYPE.LONG, 11) is False
+    assert _is_boolean_field(FIELD_TYPE.TINY, 4) is False
+
+
+def test_tinyint_one_reads_back_as_bool() -> None:
+    # MariaDB has no native boolean; a `tinyint(1)` column reads back as int 0/1.
+    # The type-aware coercion returns a real bool so it compares to the fixture's
+    # boolean — the row comparator keeps bool out of numeric space (`true` != `1`).
+    assert _from_db_value(1, is_boolean=True) is True
+    assert _from_db_value(0, is_boolean=True) is False
+    # A NULL boolean column stays None; a non-boolean int is untouched even when the
+    # flag is off (the default), so ordinary integer columns pass through unchanged.
+    assert _from_db_value(None, is_boolean=True) is None
+    assert _from_db_value(250, is_boolean=False) == 250
 
 
 def test_placeholder_translation_escapes_percent() -> None:
