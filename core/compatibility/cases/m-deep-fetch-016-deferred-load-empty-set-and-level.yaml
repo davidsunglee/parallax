@@ -22,7 +22,7 @@ when:
       note: an empty source set (no such order)
       statements:
         - sql:
-            postgres: select t0.id, t0.name from orders t0 where t0.id in (?)
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
           binds: [999]
       expectRows: []
     - action: load
@@ -40,10 +40,10 @@ when:
       note: order 3 exists but has no line items
       statements:
         - sql:
-            postgres: select t0.id, t0.name from orders t0 where t0.id in (?)
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
           binds: [3]
       expectRows:
-        - { id: 3, name: ada }
+        - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15 }
     - action: load
       "on": 2
       path: items.statuses
@@ -51,7 +51,7 @@ when:
       note: empty intermediate (order 3 has no items) -> the statuses query is suppressed
       statements:
         - sql:
-            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?) order by t0.id desc
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
           binds: [3]
       expectRows: []
 then:

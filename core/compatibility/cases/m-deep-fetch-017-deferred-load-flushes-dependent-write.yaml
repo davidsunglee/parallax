@@ -21,10 +21,10 @@ when:
       note: the source order
       statements:
         - sql:
-            postgres: select t0.id, t0.name from orders t0 where t0.id in (?)
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
           binds: [1]
       expectRows:
-        - { id: 1, name: Ada }
+        - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
     - action: flush
       "on": 0
       roundTrips: 1
@@ -40,11 +40,11 @@ when:
       note: the relationship query runs after the flush -> it observes the new item 13
       statements:
         - sql:
-            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?) order by t0.id desc
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
           binds: [1]
       expectRows:
-        - { id: 13, order_id: 1, sku: Z-999, quantity: 7 }
-        - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
-        - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
+        - { id: 13, order_id: 1, sku: Z-999, quantity: 7, shipped_on: null }
+        - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+        - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
 then:
   roundTrips: 3

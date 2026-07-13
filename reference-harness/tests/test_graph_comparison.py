@@ -8,6 +8,7 @@ coercion and then compared serialized strings, which could make distinct
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -98,9 +99,15 @@ def test_empty_root_deep_fetch_executes_no_child_sql() -> None:
 
     _assert_deep_fetch(case, db)
 
+    # Projections follow the m-sql base read-projection rule (Order's full scalar
+    # set), re-goldened in COR-3 Phase 5b; this pin mirrors m-deep-fetch-006.
     assert db.queries == [
-        ("select t0.id, t0.name from orders t0 where t0.id = ?", [999]),
-        ("select id, name from orders where id = 999", []),
+        (
+            "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on "
+            "from orders t0 where t0.id = ?",
+            [999],
+        ),
+        ("select id, name, sku, qty, price, active, ordered_on from orders where id = 999", []),
     ]
 
 
@@ -408,25 +415,100 @@ def test_existing_non_temporal_deep_fetch_still_passes():
         COMPATIBILITY_ROOT / "cases" / "m-deep-fetch-002-to-many.yaml",
     )
 
+    # Rows carry the full m-sql base read projection (Order's 7 scalars,
+    # OrderItem's `shipped_on`), re-goldened into m-deep-fetch-002 in COR-3
+    # Phase 5b; the fake DB mirrors that projected column set.
     class _OrdersDb:
         dialect = "postgres"
 
         def query(self, sql, binds=None):
             if "order_item" in sql:
                 return [
-                    {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1},
-                    {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2},
-                    {"id": 21, "order_id": 2, "sku": "A-300", "quantity": 4},
-                    {"id": 422, "order_id": 42, "sku": "B-200", "quantity": 5},
-                    {"id": 421, "order_id": 42, "sku": "A-999", "quantity": 3},
+                    {
+                        "id": 12,
+                        "order_id": 1,
+                        "sku": "B-200",
+                        "quantity": 1,
+                        "shipped_on": date(2024, 2, 15),
+                    },
+                    {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+                    {
+                        "id": 21,
+                        "order_id": 2,
+                        "sku": "A-300",
+                        "quantity": 4,
+                        "shipped_on": date(2024, 2, 20),
+                    },
+                    {
+                        "id": 422,
+                        "order_id": 42,
+                        "sku": "B-200",
+                        "quantity": 5,
+                        "shipped_on": date(2024, 2, 5),
+                    },
+                    {
+                        "id": 421,
+                        "order_id": 42,
+                        "sku": "A-999",
+                        "quantity": 3,
+                        "shipped_on": date(2024, 3, 10),
+                    },
                 ]
             return [
-                {"id": 1, "name": "Ada", "price": Decimal("10.50")},
-                {"id": 2, "name": "Linus", "price": Decimal("20.00")},
-                {"id": 3, "name": "ada", "price": Decimal("30.25")},
-                {"id": 4, "name": "Margaret", "price": Decimal("40.00")},
-                {"id": 5, "name": "Alan", "price": Decimal("50.75")},
-                {"id": 42, "name": "Grace", "price": Decimal("99.99")},
+                {
+                    "id": 1,
+                    "name": "Ada",
+                    "sku": "A-100",
+                    "qty": 5,
+                    "price": Decimal("10.50"),
+                    "active": True,
+                    "ordered_on": date(2024, 1, 5),
+                },
+                {
+                    "id": 2,
+                    "name": "Linus",
+                    "sku": "B-200",
+                    "qty": 10,
+                    "price": Decimal("20.00"),
+                    "active": True,
+                    "ordered_on": date(2024, 2, 10),
+                },
+                {
+                    "id": 3,
+                    "name": "ada",
+                    "sku": "A-300",
+                    "qty": 15,
+                    "price": Decimal("30.25"),
+                    "active": False,
+                    "ordered_on": date(2024, 3, 15),
+                },
+                {
+                    "id": 4,
+                    "name": "Margaret",
+                    "sku": None,
+                    "qty": 20,
+                    "price": Decimal("40.00"),
+                    "active": True,
+                    "ordered_on": date(2024, 4, 20),
+                },
+                {
+                    "id": 5,
+                    "name": "Alan",
+                    "sku": "C_50%",
+                    "qty": 25,
+                    "price": Decimal("50.75"),
+                    "active": False,
+                    "ordered_on": date(2024, 5, 25),
+                },
+                {
+                    "id": 42,
+                    "name": "Grace",
+                    "sku": "A-999",
+                    "qty": 30,
+                    "price": Decimal("99.99"),
+                    "active": True,
+                    "ordered_on": date(2024, 6, 30),
+                },
             ]
 
     _assert_deep_fetch(case, _OrdersDb())  # no raise

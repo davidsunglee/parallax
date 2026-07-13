@@ -14,10 +14,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where exists (select 1 from orders t1 where t1.id = t0.order_id and t1.name = ?)
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where exists (select 1 from orders t1 where t1.id = t0.order_id and t1.name = ?)
       binds: [Ada]
-  referenceSql: select id, order_id, sku, quantity from order_item where order_id in (select id from orders where name = 'Ada')
+  referenceSql: select id, order_id, sku, quantity, shipped_on from order_item where order_id in (select id from orders where name = 'Ada')
   rows:
-    - { id: 11, order_id: 1, sku: A-100, quantity: 2 }
-    - { id: 12, order_id: 1, sku: B-200, quantity: 1 }
+    - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+    - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
   roundTrips: 1

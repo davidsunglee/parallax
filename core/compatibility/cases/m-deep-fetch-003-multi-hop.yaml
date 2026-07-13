@@ -26,45 +26,59 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?)
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?)
       binds: [1, 42]
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
       binds: [1, 42]
     - sql:
-        postgres: select t0.id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?) order by t0.code asc
+        postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?) order by t0.code asc
       binds: [11, 12, 421, 422]
-  referenceSql: select id, name from orders where id in (1, 42)
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 42)
   graph:
     Order:
       - id: 1
         name: Ada
+        sku: A-100
+        qty: 5
+        price: 10.50
+        active: true
+        ordered_on: 2024-01-05
         items:
           - id: 12
             order_id: 1
             sku: B-200
             quantity: 1
+            shipped_on: 2024-02-15
             statuses:
-              - { id: 203, order_item_id: 12, code: PICKED }
+              - { id: 203, order_id: 1, order_item_id: 12, code: PICKED }
           - id: 11
             order_id: 1
             sku: A-100
             quantity: 2
+            shipped_on: null
             statuses:
-              - { id: 202, order_item_id: 11, code: PACKED }
-              - { id: 201, order_item_id: 11, code: PICKED }
+              - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
+              - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
       - id: 42
         name: Grace
+        sku: A-999
+        qty: 30
+        price: 99.99
+        active: true
+        ordered_on: 2024-06-30
         items:
           - id: 422
             order_id: 42
             sku: B-200
             quantity: 5
+            shipped_on: 2024-02-05
             statuses: []
           - id: 421
             order_id: 42
             sku: A-999
             quantity: 3
+            shipped_on: 2024-03-10
             statuses:
-              - { id: 204, order_item_id: 421, code: PICKED }
+              - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }
   roundTrips: 3

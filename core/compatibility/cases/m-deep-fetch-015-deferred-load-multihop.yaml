@@ -20,11 +20,11 @@ when:
       note: the two source orders (root level)
       statements:
         - sql:
-            postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?)
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?)
           binds: [1, 42]
       expectRows:
-        - { id: 1, name: Ada }
-        - { id: 42, name: Grace }
+        - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+        - { id: 42, name: Grace, sku: A-999, qty: 30, price: 99.99, active: true, ordered_on: 2024-06-30 }
     - action: load
       "on": 0
       path: items.statuses
@@ -32,10 +32,10 @@ when:
       note: two-hop load -> one statement per non-empty level (items keyed by order id, statuses by item id)
       statements:
         - sql:
-            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
           binds: [1, 42]
         - sql:
-            postgres: select t0.id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?) order by t0.code asc
+            postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_item_id in (?, ?, ?, ?) order by t0.code asc
           binds: [11, 12, 421, 422]
 then:
   roundTrips: 3

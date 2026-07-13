@@ -21,10 +21,10 @@ when:
       note: list A resolves order 2 by id (its own query)
       statements:
         - sql:
-            postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
           binds: [2]
       expectRows:
-        - { id: 2, name: Linus }
+        - { id: 2, name: Linus, sku: B-200, qty: 10, price: 20.00, active: true, ordered_on: 2024-02-10 }
     - targetEntity: Order
       find:
         eq:
@@ -35,9 +35,9 @@ when:
       note: list B resolves the SAME row by name -> a second query, but the same coalesced object
       statements:
         - sql:
-            postgres: select t0.id, t0.name from orders t0 where t0.name = ?
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.name = ?
           binds: [Linus]
       expectRows:
-        - { id: 2, name: Linus }
+        - { id: 2, name: Linus, sku: B-200, qty: 10, price: 20.00, active: true, ordered_on: 2024-02-10 }
 then:
   roundTrips: 2

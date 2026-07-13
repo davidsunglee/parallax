@@ -21,16 +21,21 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where t0.id = ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
       binds: [1]
     - sql:
         postgres: select t0.id, t0.order_id, t0.label, t0.priority from order_tag t0 where t0.order_id in (?) order by t0.priority desc, t0.label asc
       binds: [1]
-  referenceSql: select id, name from orders where id = 1
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id = 1
   graph:
     Order:
       - id: 1
         name: Ada
+        sku: A-100
+        qty: 5
+        price: 10.50
+        active: true
+        ordered_on: 2024-01-05
         tags:
           - { id: 3, order_id: 1, label: fragile, priority: 5 }
           - { id: 2, order_id: 1, label: gift, priority: 2 }
