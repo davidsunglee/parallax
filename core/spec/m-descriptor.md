@@ -200,6 +200,14 @@ each dimension's `fromColumn` (many milestone rows share one business key); the
 DDL an implementation derives **MUST** reflect this so the milestone chain is
 admissible.
 
+**Declaration order (authoring guidance).** An entity **SHOULD** declare its
+`asOfAttribute` interval attributes **after** its business (non-temporal) attributes,
+and — for a bitemporal entity — the **business** axis before the **processing** axis.
+The derived `columnOrder` then places the interval columns at the tail of the entity's
+own attributes in `from_z, thru_z, in_z, out_z` order, which is exactly the order the
+base read projection emits them (`m-sql`, *Read projection*, slot 1); following this
+convention keeps every temporal read's projection stable by construction.
+
 ## Metamodel serde (protocol seam)
 
 The metamodel is **serializable and deserializable** through the same

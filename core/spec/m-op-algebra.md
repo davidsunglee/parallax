@@ -304,6 +304,14 @@ Directives wrap an inner operation rather than filtering:
 | `limit` | `{ "limit": { "operand", "count" } }` | cap the row count |
 | `distinct` | `{ "distinct": { "operand" } }` | deduplicate rows |
 
+These directives shape the **result set** — its order, its cardinality, its
+deduplication — but **none of them changes the projected column list**. The algebra
+carries **no projection node** at all: a read's `select` list is a pure function of
+its target and result form, supplied by `m-sql` (its *Read projection* section),
+never chosen by the operation. A column-subset result is therefore expressible only
+through the aggregation algebra (`m-agg`, deferred); and because the primary key is
+always projected, `distinct` over an entity read is structurally row-preserving.
+
 ### Temporal read wrappers
 
 Temporal read wrappers are operation nodes. `m-temporal-read` defines the interval

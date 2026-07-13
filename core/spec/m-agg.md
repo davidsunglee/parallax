@@ -16,3 +16,7 @@ constructs.
   `m-agg-001`–`m-agg-018` pin their golden SQL and result rows (including the
   two-column read for `stdDev*` / `variance*` and the `having` bind order). That
   floor stays green; the full algebra specification is deferred beyond it.
+- **Read-lock suppression.** An aggregation read never carries the shared read-lock
+  suffix (`m-read-lock` / `m-sql`): a grouped / aggregate result has no identifiable
+  base row to lock. The in-transaction witnesses for this land with this module's
+  implementation.

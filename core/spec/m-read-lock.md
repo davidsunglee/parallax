@@ -34,7 +34,7 @@ otherwise-ordinary read (`m-sql`), as a `then.statements` entry:
 
 ```yaml
 - sql:
-    postgres: select t0.id, t0.balance from account t0 where t0.id = ? for share of t0
+    postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
   binds: [<pk>]
 ```
 

@@ -117,6 +117,88 @@ invariant while each dialect emits its own optimized SQL:
   same operation: Postgres `… for share of t0`, MariaDB `… lock in share mode`.
   Both are normalizer fixed points for their dialect; both return the same rows.
 
+## Read projection
+
+The predicate fragments in this module fix a read's **`where` clause**; this section
+fixes its **`select` list**. A read's projected column list is a **pure function of
+the model and the read's target (`when.targetEntity`, `m-case-format`) plus its result
+form — never of the predicate**. The operation algebra deliberately carries **no
+projection node** (`m-op-algebra`): no read may project a proper subset of the derived
+list, and a column-subset result is expressible **only** through the aggregation
+algebra (`m-agg`, deferred). The directives `distinct`, `orderBy`, and `limit` never
+change the list.
+
+The list is **one deterministic ordered union, duplicates removed**, drawn from four
+sources in this fixed order:
+
+1. **Effective scalar columns.** Every declared attribute's column of the read's
+   **effective position**, in `columnOrder` (declaration order). This **includes** the
+   `optimisticLocking` **version** attribute and **each as-of axis's
+   `fromColumn` / `toColumn` interval columns** (`m-descriptor`) — all of them are
+   ordinary declared attributes, so excluding either would need a carve-out this rule
+   does not make. For a **bitemporal** entity the axes read **business first, then
+   processing** — `from_z, thru_z, in_z, out_z` — matching every bitemporal model's
+   declaration order and the business-axis-first bind order the temporal predicates
+   and write sequences use (below). The effective position is inheritance-aware: a
+   **concrete** target contributes its flattened ancestry-chain-plus-own
+   `columnOrder`; an **abstract** target contributes the concrete-subtype superset of
+   the abstract-read lowering (*Metamodel-extension lowering*, below) — inherited
+   columns in ancestry order, then each effective concrete's own block in alphabetical
+   subtype order. Per-type rendering seams — the `bytes` `encode(t0.payload, ?)
+   payload_hex` form, reserved-word quoting `t0."order"` — are `m-dialect` renderings
+   of a column **at its position**, not changes to the list.
+2. **Table-per-hierarchy tag column.** Appended after the scalars **iff the read's
+   `targetEntity` is abstract** (the queried position is polymorphic), regardless of
+   whether a `narrow` reduces the effective set to a single concrete. A **concrete**
+   `targetEntity` never projects the tag.
+3. **Table-per-concrete-subtype `familyVariant` literal.** Likewise per branch for an
+   abstract-target read — the subtype-name string literal of the `union all` lowering
+   (below). The per-branch `cast(null as <type>)` placeholders remain `m-dialect`
+   lowering details, not logical columns.
+4. **Value-object document columns.** For an **instance-form** read only (below): every
+   declared top-level value object's backing column, **last among all projected
+   columns**, in declared value-object order. A **row-form** read omits them.
+
+Slot order is 1 → 2/3 → 4: the data scalars, then the framework discriminator, then
+the verbose documents. The four sources are disjoint in every current model, so the
+duplicate removal is a formal safeguard that keeps the union well-formed. Because the
+primary key is always in slot 1, `distinct` over an entity read is structurally
+**row-preserving**; its one remaining operative semantic is **read-lock suppression**
+— a `distinct` / grouped / aggregate result takes no shared read lock (`m-read-lock`;
+*Read-lock suffix*, below).
+
+### Result form — row-form vs instance-form
+
+A read is consumed in one of two lanes, and the projection differs **only in slot 4**:
+
+- **Instance-form** (the **object lane**) — the result materializes into instances: a
+  snapshot-graph read, a `deepFetch` (its root and every child level), or any find
+  whose rows become objects. It projects slot 4, so a value-object-bearing entity's
+  whole document rides the owner's single statement (the one-round-trip
+  materialization contract, `m-value-object`). Deep-fetch and snapshot **child levels
+  are instance-form** — each level projects the child entity's own instance-form list
+  (its scalars, plus any value-object document columns it declares).
+- **Row-form** (the **values lane**) — the result is consumed as flat values, with no
+  instance constructed. It omits slot 4. The corpus's predicate `read` cases
+  (`then.rows`) and the internal materialized-predicate-write read — which resolves a
+  set-based write to each row's pk and gate values (ADR 0014) — are the values lane; a
+  future aggregation result (`m-agg`) lands here too.
+
+Row-form is **not a developer surface**: the idiomatic find API always materializes,
+so the developer path is instance-form; row-form is the internal / conformance
+consumption lane. `m-case-format` fixes the selector — a read case's result form is
+declared by **which result member it asserts** (`then.rows` = row-form;
+`then.graph` / `then.graphs` = instance-form).
+
+Everything already specified composes with this rule unchanged: the **versioned-read
+projection** (below) is the slot-1 corollary for the framework-owned `version` column;
+the **table-per-hierarchy abstract-read superset + tag** is slots 1 + 2; the
+**table-per-concrete-subtype stable superset + variant** is slots 1 + 3; the
+deep-fetch "child level MUST include the join keys" is **subsumed** (foreign keys are
+declared attributes, always in slot 1); and the whole-value-object projection
+`t0.address` is slot 4 on an instance-form read. A `history` read's interval columns
+are in slot 1, so they are projected automatically.
+
 ## Per-operator SQL emission
 
 The table below fixes the **canonical Postgres golden SQL** each `m-op-algebra`
@@ -195,11 +277,11 @@ related entity (alias `t1`):
 
 ```text
 navigate(Order.items, eq(OrderItem.sku, 'A-100'))
-  → select t0.id, t0.name from orders t0
+  → select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0
     where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)
 
 notExists(Order.items)
-  → select t0.id, t0.name from orders t0
+  → select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0
     where not exists (select 1 from order_item t1 where t1.order_id = t0.id)
 ```
 
@@ -254,18 +336,19 @@ never one query per parent (N+1 elimination):
 
 ```text
 deepFetch(all(Order), paths = [ [Order.items], [Order.items, OrderItem.statuses] ])
-  level 0 (root)  : select t0.id, t0.name from orders t0
-  level 1 (items) : select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0
+  level 0 (root)  : select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0
+  level 1 (items) : select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0
                     where t0.order_id in (?, ?)          -- distinct Order.id values
   level 2 (statuses):
-                    select t0.id, t0.order_item_id, t0.code from order_status t0
+                    select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0
                     where t0.order_item_id in (?, ?, ?)  -- distinct OrderItem.id values
 ```
 
 This is the **1 → N → N** shape that resolves in exactly **3 statements**, not
-`1 + N + N`. Each child level's projection **MUST** include the join key columns
-the harness needs to fan results back to their parents (the FK that correlates to
-the parent, and the child's own key if it is itself a parent of a deeper level).
+`1 + N + N`. Each child level is **instance-form** (*Read projection*), so it projects
+the child entity's full scalar set; this **subsumes** the join key columns the harness
+needs to fan results back to their parents (the FK that correlates to the parent, and
+the child's own key when it is itself a parent of a deeper level).
 The temp-table variant for very large parent key sets is a **fast-follow**
 (`m-deep-fetch`); round 1 uses the simplified `IN` form only.
 
@@ -310,8 +393,9 @@ and is appended **after** it (binds read user-first, then the as-of bind):
 
 `history(operand, asOfAttr)` injects **no** as-of predicate — it returns every
 milestone — so its golden SQL is just the operand's predicate; its projection
-**SHOULD** include the interval columns so the caller sees each milestone's
-bounds (the current row's `out_z` reads back as `infinity`).
+**includes** the interval columns automatically — they are declared attributes in
+slot 1 of the base *Read projection* — so the caller sees each milestone's bounds
+(the current row's `out_z` reads back as `infinity`).
 
 `asOfRange(operand, asOfAttr, from, to)` reads the dimension as **edge points**
 rather than a single pin: it returns every milestone whose `[in_z, out_z)`
@@ -474,7 +558,7 @@ statement, after any `where`):
 
 ```yaml
 - sql:
-    postgres: select t0.id, t0.balance from account t0 where t0.id = ? for share of t0
+    postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
   binds: [<pk>]
 ```
 
@@ -491,7 +575,7 @@ sqlglot's MySQL generator (which would rewrite it to `for share`):
 
 ```yaml
 - sql:
-    mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? lock in share mode
+    mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
   binds: [<pk>]
 ```
 
@@ -588,9 +672,10 @@ version must ride each write.
 ### Versioned-read projection
 
 A read of a versioned entity **projects the version column** alongside the row's
-other columns, so the reader observes the current version (the value a later
-optimistic gate binds). The canonical read golden lists the version column in its
-projection like any other:
+other columns — the slot-1 corollary of the base *Read projection* rule, since the
+`optimisticLocking` version is a declared attribute — so the reader observes the
+current version (the value a later optimistic gate binds). The canonical read golden
+lists the version column in its projection like any other:
 
 ```text
 select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
@@ -916,8 +1001,9 @@ per-branch `familyVariant` literal; a column not applicable to a branch is the
 ### valueObject — structured-column read and filter
 
 A `valueObject` is stored in **one structured-document column** (`m-core` /
-`m-value-object`), not column-flattened. Reading the whole value object projects
-that backing column directly (`t0.address`). Reading or filtering an **inner
+`m-value-object`), not column-flattened. Reading the whole value object — an
+**instance-form** read (slot 4 of the base *Read projection*) — projects that backing
+column directly (`t0.address`). Reading or filtering an **inner
 attribute** uses the `m-op-algebra` nested-attribute access form and lowers through
 the `m-dialect` **nested-extraction** seam to a per-dialect extraction. The JSON
 path is always carried as `?` bind(s) (rule 4 — never inlined, which keeps the
@@ -927,7 +1013,6 @@ differ per dialect (`m-dialect`):
 | Operation | Postgres canonical fragment | MariaDB canonical fragment |
 |---|---|---|
 | project the whole object | `t0.address` (in the `select` list) | `t0.address` (identical) |
-| project an inner field | `jsonb_extract_path_text(t0.address, ?) <as>` | `json_value(t0.address, ?) <as>` |
 | `nestedEq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` | `json_value(t0.address, ?) = ?` |
 | `nestedNotEq(Class.vo.field, v)` | `not jsonb_extract_path_text(t0.address, ?) = ?` | `not json_value(t0.address, ?) = ?` |
 | nested deeper (`vo.a.b`) | `jsonb_extract_path_text(t0.address, ?, ?) = ?` | `json_value(t0.address, ?) = ?` |

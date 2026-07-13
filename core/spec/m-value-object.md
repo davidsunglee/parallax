@@ -173,7 +173,12 @@ rather than left true by omission:
    statement projects the whole structured-document column, and every nested
    to-one and to-many value is decoded from that one column. Invoking a getter
    MUST NOT take a lock, populate an identity cache, or emit **any** statement —
-   there is no per-value-object fetch, and `m-deep-fetch` never applies.
+   there is no per-value-object fetch, and `m-deep-fetch` never applies. This
+   whole-document projection is **slot 4** of the base read projection (`m-sql`,
+   *Read projection*): it is added **only on an instance-form read** — one that
+   materializes instances (`then.graph` / `then.graphs`) — and a plain row-form value
+   read (`then.rows`) omits it. Because materialization requires the document, an
+   instance-form read of a value-object-bearing entity always projects it.
 3. **No reverse getters.** A value object has no identity and holds no reference
    back to its owner; a reverse (value-object → owner) getter MUST NOT exist.
 4. **Not a navigation or deep-fetch target.** A `deepFetch` path and a

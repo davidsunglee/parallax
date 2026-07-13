@@ -118,8 +118,8 @@ once (bind order is identical across dialects), defaulting to `[]`:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)
-        mariadb: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)   # optional
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?)
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?)   # optional
       binds: [1, 2, 42]
 ```
 
@@ -169,9 +169,9 @@ deep-fetch level or write-sequence DML step; each entry carries only its own
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity from order_item t0
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where t0.id in (?, ?, ?)
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?)
       binds: [1, 2, 42]
 ```
 
@@ -283,6 +283,25 @@ key **different** views. A polymorphic narrowed view's child objects carry
 `familyVariant` just as a flat abstract read's rows do (a single-concrete narrowed
 view carries none). A `narrow` escaping the relationship target's effective set is a
 `rejected` case (`narrow-outside-relationship-target`).
+
+#### Read result form (row-form vs instance-form)
+
+A read case's **result form** is declared by **which result member it asserts**, and
+that choice fixes the read's projection (`m-sql`, *Read projection*, slot 4):
+
+- **`then.rows`** — the **row-form** / **values lane**: a flat value observation of
+  the scalar columns only. It omits every value-object document column.
+- **`then.graph`** / **`then.graphs`** — the **instance-form** / **object lane**: the
+  result materializes into instances (a snapshot graph, per-milestone graphs, or a
+  deep-fetch tree), so the projection additionally carries every declared value-object
+  document column (`m-value-object`).
+
+Row-form is **not a developer surface** — the idiomatic find API is instance-form
+(results always materialize). Row-form is the internal / conformance consumption lane
+(predicate `read` cases, the materialized predicate-write read, and future aggregation
+results — `m-agg`). The result member is **structural intent** an adapter's `compile`
+MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and no case
+edit.
 
 #### Milestone-set graphs (`then.graphs`)
 
