@@ -203,6 +203,20 @@ def _ref(
     return value
 
 
+def _temporal(body: Mapping[str, object], key: str, tag: str) -> str:
+    """Read a temporal pin string and enforce the schema ``temporalDate`` constraint.
+
+    operation.schema.json ``$defs.temporalDate`` is a ``string`` with
+    ``minLength: 1`` (no ``pattern`` / ``format``), so an empty string is
+    rejected loudly before the node is built -- consistent with the closed-shape
+    and reference-pattern validation applied to the other node families.
+    """
+    value = _str(body, key, tag)
+    if not value:
+        raise OperationError(f"{tag}: `{key}` must be a non-empty temporal value")
+    return value
+
+
 def _case_insensitive(body: Mapping[str, object], tag: str) -> bool | None:
     """Read the optional ``caseInsensitive`` flag, distinguishing OMITTED (``None``)
     from an explicit boolean so serialize round-trips an authored ``false``."""
@@ -445,14 +459,14 @@ def _deserialize(doc: object, *, element_scope: bool) -> Operation:
         return AsOf(
             operand=_operand(body, element_scope=element_scope),
             as_of_attr=_ref(body, "asOfAttr", tag, _MEMBER_REF, "as-of-attribute reference"),
-            date=_str(body, "date", tag),
+            date=_temporal(body, "date", tag),
         )
     if tag == "asOfRange":
         return AsOfRange(
             operand=_operand(body, element_scope=element_scope),
             as_of_attr=_ref(body, "asOfAttr", tag, _MEMBER_REF, "as-of-attribute reference"),
-            from_=_str(body, "from", tag),
-            to=_str(body, "to", tag),
+            from_=_temporal(body, "from", tag),
+            to=_temporal(body, "to", tag),
         )
     if tag == "history":
         return History(

@@ -223,6 +223,34 @@ def test_order_key_defaulted_direction_round_trips() -> None:
                 {"asOf": {"operand": {"all": {}}, "asOfAttr": "BadAxis", "date": "now"}},
                 "not a valid as-of-attribute reference",
             ),
+            # temporalDate ($defs) is `minLength: 1`: an empty pin string is
+            # rejected before the node is built (asOf.date / asOfRange.from/to).
+            (
+                {"asOf": {"operand": {"all": {}}, "asOfAttr": "Order.processingDate", "date": ""}},
+                "`date` must be a non-empty temporal value",
+            ),
+            (
+                {
+                    "asOfRange": {
+                        "operand": {"all": {}},
+                        "asOfAttr": "Order.processingDate",
+                        "from": "",
+                        "to": "2020-01-01T00:00:00Z",
+                    }
+                },
+                "`from` must be a non-empty temporal value",
+            ),
+            (
+                {
+                    "asOfRange": {
+                        "operand": {"all": {}},
+                        "asOfAttr": "Order.processingDate",
+                        "from": "2020-01-01T00:00:00Z",
+                        "to": "",
+                    }
+                },
+                "`to` must be a non-empty temporal value",
+            ),
             (
                 {
                     "deepFetch": {
@@ -278,3 +306,30 @@ def test_deserialize_rejects_malformed(doc: object, message: str) -> None:
 def test_deserialize_rejects_non_scalar_value() -> None:
     with pytest.raises(OperationError, match="scalar literal"):
         op_algebra.deserialize({"eq": {"attr": "Order.id", "value": {"nested": 1}}})
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        {"asOf": {"operand": {"all": {}}, "asOfAttr": "Order.processingDate", "date": "now"}},
+        {
+            "asOf": {
+                "operand": {"all": {}},
+                "asOfAttr": "Order.processingDate",
+                "date": "2020-01-01T00:00:00Z",
+            }
+        },
+        {
+            "asOfRange": {
+                "operand": {"all": {}},
+                "asOfAttr": "Order.processingDate",
+                "from": "2020-01-01T00:00:00Z",
+                "to": "2021-01-01T00:00:00Z",
+            }
+        },
+    ],
+)
+def test_temporal_pin_round_trips(doc: dict[str, Any]) -> None:
+    # A non-empty temporal pin (the schema's `temporalDate`) round-trips unchanged.
+    node = op_algebra.deserialize(doc)
+    assert op_algebra.serialize(node) == doc
