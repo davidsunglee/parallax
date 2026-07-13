@@ -106,12 +106,20 @@ class NullCheck:
 
 @dataclass(frozen=True, slots=True)
 class StringMatch:
-    """A string predicate; affix forms escape wildcards, ``like`` passes through."""
+    """A string predicate; affix forms escape wildcards, ``like`` passes through.
+
+    ``case_insensitive`` is ``None`` when the authored node omitted the optional
+    ``caseInsensitive`` flag (the schema default is ``false``). Serde round-trips
+    that absence faithfully — an omitted flag serializes back omitted, an explicit
+    ``false``/``true`` serializes back verbatim — while SQL lowering treats an
+    absent flag as the ``false`` default (``if case_insensitive`` is falsy for
+    ``None``).
+    """
 
     op: StringOp
     attr: str
     value: str
-    case_insensitive: bool = False
+    case_insensitive: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

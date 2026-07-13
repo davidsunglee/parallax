@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.conformance import case_format, models
+from parallax.core.base import normalize_instant
 from parallax.core.db_port import DbPort, Row
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import dialect_for
@@ -146,15 +147,22 @@ def wire_value(value: object) -> object:
     """Render one managed scalar to its canonical wire form (m-db-port / m-core).
 
     JSON-native scalars pass through; a ``Decimal`` renders as its exact decimal
-    string, a ``date`` / ``time`` / ``datetime`` as ISO-8601, a ``UUID`` as its
-    canonical string, and a byte buffer as lowercase hex. Anything already wire
-    (or an unrecognized carrier) is returned unchanged.
+    string. A ``datetime`` is a ``timestamp`` INSTANT: it is normalized through the
+    m-core boundary form (aware → UTC/µs, a naive value rejected loudly) BEFORE
+    ISO-rendering, so a non-UTC offset is canonicalized rather than graded as-is. A
+    ``date`` / ``time`` is not an instant and renders ISO-8601 as-is; a ``UUID``
+    renders as its canonical string, and a byte buffer as lowercase hex. Anything
+    already wire (or an unrecognized carrier) is returned unchanged.
     """
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, decimal.Decimal):
         return str(value)
-    if isinstance(value, (dt.datetime, dt.date, dt.time)):
+    if isinstance(value, dt.datetime):
+        # `datetime` subclasses `date`, so this instant branch MUST precede the
+        # `date`/`time` branch below.
+        return normalize_instant(value).isoformat()
+    if isinstance(value, (dt.date, dt.time)):
         return value.isoformat()
     if isinstance(value, uuid.UUID):
         return str(value)

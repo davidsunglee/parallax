@@ -1,17 +1,23 @@
 """Operation serde (m-op-algebra canonical single-key tagged encoding).
 
 ``serialize`` emits the canonical single-key tagged object for each node exactly
-as ``operation.schema.json`` fixes it (defaulted keys — ``direction: asc``,
-``caseInsensitive: false`` — omitted); ``deserialize`` reads that form back into
-frozen nodes. The pair round-trips (``serialize(deserialize(x)) == x``) for every
-node in the read algebra, in both JSON and YAML (the format is irrelevant — the
-document is plain dict/list/scalar). ``deserialize`` is structural and
-type-checked; metamodel binding (attribute→column, nested-path and narrow
-resolution) is applied by ``m-sql`` at lowering time, which holds the metamodel.
+as ``operation.schema.json`` fixes it (an OMITTED optional key — ``direction``,
+``caseInsensitive`` — stays omitted; an explicitly authored one round-trips
+verbatim); ``deserialize`` reads that form back into frozen nodes. The pair
+round-trips (``serialize(deserialize(x)) == x``) for every node in the read
+algebra, in both JSON and YAML (the format is irrelevant — the document is plain
+dict/list/scalar). ``deserialize`` is structural and type-checked: it validates
+each node's closed shape, enforces every reference string against the schema
+pattern for its position (attribute / relationship / entity / nested / value-
+object / element-relative), and constrains a nested ``where`` to exactly the
+element-predicate operations the schema admits there. Metamodel binding
+(attribute→column, nested-path and narrow resolution) is applied by ``m-sql`` at
+lowering time, which holds the metamodel.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Literal, cast
 
@@ -67,6 +73,29 @@ _NESTED_CMP: frozenset[str] = frozenset(
     {"nestedEq", "nestedNotEq", "nestedGt", "nestedGte", "nestedLt", "nestedLte"}
 )
 _NESTED_NULL: frozenset[str] = frozenset({"nestedIsNull", "nestedIsNotNull"})
+
+# Reference-string patterns (operation.schema.json $defs). An attribute,
+# relationship, and as-of-attribute reference share the `Class.member` grammar; an
+# entity name is a bare `Class`; a nested reference descends >=1 dotted member into
+# a value object (`Class.valueObject.field`); a value-object reference terminates
+# AT a value object (>=1 member, `Class.valueObject`); an element-relative
+# reference (inside a scoped `where`) drops the `Class.` prefix (`type`,
+# `geo.country`). The serde enforces the matching pattern wherever a reference of
+# that kind appears, so a malformed reference is rejected rather than accepted.
+_MEMBER_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$")
+_ENTITY_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
+_NESTED_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*(\.[a-z][A-Za-z0-9]*)+$")
+_VALUE_OBJECT_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*(\.[a-z][A-Za-z0-9]*)+$")
+_ELEMENT_REF = re.compile(r"^[a-z][A-Za-z0-9]*(\.[a-z][A-Za-z0-9]*)*$")
+
+# The operation kinds `operation.schema.json` admits inside a nestedExists /
+# nestedNotExists `where` (its `elementPredicate` oneOf): the scoped nested*
+# family over element-relative paths, composed with the boolean combinators. Every
+# other kind — a result directive, a top-level predicate, navigation, a temporal
+# wrapper, `all`/`none` — is illegal there and rejected before construction.
+_ELEMENT_TAGS: frozenset[str] = (
+    _NESTED_CMP | _NESTED_NULL | frozenset({"nestedIn", "and", "or", "not", "group"})
+)
 
 
 class OperationError(ValueError):
@@ -164,6 +193,27 @@ def _str(body: Mapping[str, object], key: str, tag: str) -> str:
     return value
 
 
+def _ref(
+    body: Mapping[str, object], key: str, tag: str, pattern: re.Pattern[str], kind: str
+) -> str:
+    """Read a reference string and enforce the schema pattern for its position."""
+    value = _str(body, key, tag)
+    if pattern.match(value) is None:
+        raise OperationError(f"{tag}: `{key}` {value!r} is not a valid {kind}")
+    return value
+
+
+def _case_insensitive(body: Mapping[str, object], tag: str) -> bool | None:
+    """Read the optional ``caseInsensitive`` flag, distinguishing OMITTED (``None``)
+    from an explicit boolean so serialize round-trips an authored ``false``."""
+    if "caseInsensitive" not in body:
+        return None
+    raw = body["caseInsensitive"]
+    if not isinstance(raw, bool):
+        raise OperationError(f"{tag}: `caseInsensitive` must be a boolean")
+    return raw
+
+
 def _scalar(value: object, tag: str) -> Scalar:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -177,20 +227,24 @@ def _values(body: Mapping[str, object], tag: str) -> tuple[Scalar, ...]:
     return tuple(_scalar(item, tag) for item in cast("list[object]", raw))
 
 
-def _operand(body: Mapping[str, object]) -> Operation:
+def _operand(body: Mapping[str, object], *, element_scope: bool) -> Operation:
     # `operand` presence is guaranteed by the closed-shape check (every
-    # operand-bearing tag lists it as required), so this only recurses.
-    return deserialize(body["operand"])
+    # operand-bearing tag lists it as required), so this only recurses. The scope
+    # threads through the boolean combinators: a `not`/`group` under a scoped
+    # `where` keeps its inner operand in element-predicate scope.
+    return _deserialize(body["operand"], element_scope=element_scope)
 
 
-def _operands(body: Mapping[str, object], tag: str) -> tuple[Operation, ...]:
+def _operands(
+    body: Mapping[str, object], tag: str, *, element_scope: bool
+) -> tuple[Operation, ...]:
     raw = body.get("operands")
     if not isinstance(raw, list):
         raise OperationError(f"{tag}: `operands` must have at least two entries")
     items = cast("list[object]", raw)
     if len(items) < 2:
         raise OperationError(f"{tag}: `operands` must have at least two entries")
-    return tuple(deserialize(item) for item in items)
+    return tuple(_deserialize(item, element_scope=element_scope) for item in items)
 
 
 def _order_keys(body: Mapping[str, object]) -> tuple[OrderKey, ...]:
@@ -213,7 +267,8 @@ def _order_keys(body: Mapping[str, object]) -> tuple[OrderKey, ...]:
             if raw_direction not in ("asc", "desc"):
                 raise OperationError("orderBy: `direction` must be 'asc' or 'desc'")
             direction = raw_direction
-        keys.append(OrderKey(attr=_str(key, "attr", "orderBy"), direction=direction))
+        attr = _ref(key, "attr", "orderBy", _MEMBER_REF, "attribute reference")
+        keys.append(OrderKey(attr=attr, direction=direction))
     return tuple(keys)
 
 
@@ -222,10 +277,14 @@ def _to_list(body: Mapping[str, object], tag: str) -> tuple[str, ...]:
     if not isinstance(raw, list) or not raw:
         raise OperationError(f"{tag}: `to` must be a non-empty list")
     items = cast("list[object]", raw)
+    out: list[str] = []
     for item in items:
         if not isinstance(item, str):
             raise OperationError(f"{tag}: `to` entries must be strings")
-    return tuple(cast("list[str]", items))
+        if _ENTITY_NAME.match(item) is None:
+            raise OperationError(f"{tag}: `to` entry {item!r} is not a valid entity name")
+        out.append(item)
+    return tuple(out)
 
 
 def _paths(body: Mapping[str, object]) -> tuple[tuple[PathSegment, ...], ...]:
@@ -250,23 +309,42 @@ def _paths(body: Mapping[str, object]) -> tuple[tuple[PathSegment, ...], ...]:
                 narrow_body = cast("Mapping[str, object]", narrow_raw)
                 _closed(narrow_body, frozenset({"to"}), "deepFetch path narrow")
                 narrow = _to_list(narrow_body, "deepFetch.narrow")
-            segments.append(PathSegment(rel=_str(segment, "rel", "deepFetch"), narrow=narrow))
+            rel = _ref(segment, "rel", "deepFetch", _MEMBER_REF, "relationship reference")
+            segments.append(PathSegment(rel=rel, narrow=narrow))
         paths.append(tuple(segments))
     return tuple(paths)
 
 
 def _nested_where(body: Mapping[str, object]) -> Operation | None:
+    # A nestedExists/nestedNotExists `where` is an `elementPredicate` (schema):
+    # the scoped nested* family over element-relative paths plus boolean
+    # combinators. Recursing in element scope both restricts the legal tags and
+    # switches nested paths to the element-relative pattern.
     if "where" not in body:
         return None
-    return deserialize(body["where"])
+    return _deserialize(body["where"], element_scope=True)
 
 
 def deserialize(doc: object) -> Operation:
     """Parse a canonical operation document into a frozen node tree."""
+    return _deserialize(doc, element_scope=False)
+
+
+def _deserialize(doc: object, *, element_scope: bool) -> Operation:
+    """Parse one node; ``element_scope`` restricts it to the ``elementPredicate``
+    grammar (nested* family + boolean combinators, element-relative paths) the
+    schema fixes inside a nestedExists/nestedNotExists ``where``."""
     tag, body = _single_key(doc)
+    if element_scope and tag not in _ELEMENT_TAGS:
+        raise OperationError(f"{tag}: not a legal element predicate inside a nestedExists `where`")
     shape = _SHAPES.get(tag)
     if shape is not None:
         _check_shape(tag, shape, body)
+    # A nested*-family path is a value-object inner reference at top level
+    # (`Class.valueObject.field`), but an element-relative reference inside a
+    # scoped `where` (`type`, `geo.country`) — the schema swaps the pattern.
+    nested_ref = _ELEMENT_REF if element_scope else _NESTED_REF
+    nested_kind = "element-relative path" if element_scope else "nested reference"
     if tag == "all":
         return All()
     if tag == "none":
@@ -274,96 +352,122 @@ def deserialize(doc: object) -> Operation:
     if tag in _COMPARISONS:
         return Comparison(
             op=cast("ComparisonOp", tag),
-            attr=_str(body, "attr", tag),
+            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
             value=_scalar(body.get("value"), tag),
         )
     if tag == "between":
         return Between(
-            attr=_str(body, "attr", tag),
+            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
             lower=_scalar(body.get("lower"), tag),
             upper=_scalar(body.get("upper"), tag),
         )
     if tag in _NULLS:
-        return NullCheck(op=cast("NullOp", tag), attr=_str(body, "attr", tag))
+        return NullCheck(
+            op=cast("NullOp", tag),
+            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
+        )
     if tag in _STRINGS:
-        ci = body.get("caseInsensitive", False)
-        if not isinstance(ci, bool):
-            raise OperationError(f"{tag}: `caseInsensitive` must be a boolean")
         return StringMatch(
             op=cast("StringOp", tag),
-            attr=_str(body, "attr", tag),
+            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
             value=_str(body, "value", tag),
-            case_insensitive=ci,
+            case_insensitive=_case_insensitive(body, tag),
         )
     if tag in _MEMBERSHIPS:
         return Membership(
-            op=cast("MembershipOp", tag), attr=_str(body, "attr", tag), values=_values(body, tag)
+            op=cast("MembershipOp", tag),
+            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
+            values=_values(body, tag),
         )
     if tag == "and":
-        return And(operands=_operands(body, tag))
+        return And(operands=_operands(body, tag, element_scope=element_scope))
     if tag == "or":
-        return Or(operands=_operands(body, tag))
+        return Or(operands=_operands(body, tag, element_scope=element_scope))
     if tag == "not":
-        return Not(operand=_operand(body))
+        return Not(operand=_operand(body, element_scope=element_scope))
     if tag == "group":
-        return Group(operand=_operand(body))
+        return Group(operand=_operand(body, element_scope=element_scope))
     if tag == "orderBy":
-        return OrderBy(operand=_operand(body), keys=_order_keys(body))
+        return OrderBy(operand=_operand(body, element_scope=element_scope), keys=_order_keys(body))
     if tag == "limit":
         count = body.get("count")
         if not isinstance(count, int) or isinstance(count, bool) or count < 1:
             raise OperationError("limit: `count` must be a positive integer")
-        return Limit(operand=_operand(body), count=count)
+        return Limit(operand=_operand(body, element_scope=element_scope), count=count)
     if tag == "distinct":
-        return Distinct(operand=_operand(body))
+        return Distinct(operand=_operand(body, element_scope=element_scope))
     if tag == "narrow":
         return Narrow(
-            entity=_str(body, "entity", tag), to=_to_list(body, tag), operand=_operand(body)
+            entity=_ref(body, "entity", tag, _ENTITY_NAME, "entity name"),
+            to=_to_list(body, tag),
+            operand=_operand(body, element_scope=element_scope),
         )
     if tag in _NESTED_CMP:
         return NestedComparison(
             op=cast("NestedComparisonOp", tag),
-            path=_str(body, "path", tag),
+            path=_ref(body, "path", tag, nested_ref, nested_kind),
             value=_scalar(body.get("value"), tag),
         )
     if tag == "nestedIn":
-        return NestedMembership(path=_str(body, "path", tag), values=_values(body, tag))
+        return NestedMembership(
+            path=_ref(body, "path", tag, nested_ref, nested_kind), values=_values(body, tag)
+        )
     if tag in _NESTED_NULL:
-        return NestedNullCheck(op=cast("NestedNullOp", tag), path=_str(body, "path", tag))
+        return NestedNullCheck(
+            op=cast("NestedNullOp", tag),
+            path=_ref(body, "path", tag, nested_ref, nested_kind),
+        )
     if tag == "nestedExists":
-        return NestedExists(path=_str(body, "path", tag), where=_nested_where(body))
+        return NestedExists(
+            path=_ref(body, "path", tag, _VALUE_OBJECT_REF, "value-object reference"),
+            where=_nested_where(body),
+        )
     if tag == "nestedNotExists":
-        return NestedNotExists(path=_str(body, "path", tag), where=_nested_where(body))
+        return NestedNotExists(
+            path=_ref(body, "path", tag, _VALUE_OBJECT_REF, "value-object reference"),
+            where=_nested_where(body),
+        )
     if tag == "navigate":
-        return Navigate(rel=_str(body, "rel", tag), op=_nav_op(body))
+        return Navigate(
+            rel=_ref(body, "rel", tag, _MEMBER_REF, "relationship reference"), op=_nav_op(body)
+        )
     if tag == "exists":
-        return Exists(rel=_str(body, "rel", tag), op=_nav_op(body))
+        return Exists(
+            rel=_ref(body, "rel", tag, _MEMBER_REF, "relationship reference"), op=_nav_op(body)
+        )
     if tag == "notExists":
-        return NotExists(rel=_str(body, "rel", tag), op=_nav_op(body))
+        return NotExists(
+            rel=_ref(body, "rel", tag, _MEMBER_REF, "relationship reference"), op=_nav_op(body)
+        )
     if tag == "deepFetch":
-        return DeepFetch(operand=_operand(body), paths=_paths(body))
+        return DeepFetch(operand=_operand(body, element_scope=element_scope), paths=_paths(body))
     if tag == "asOf":
         return AsOf(
-            operand=_operand(body),
-            as_of_attr=_str(body, "asOfAttr", tag),
+            operand=_operand(body, element_scope=element_scope),
+            as_of_attr=_ref(body, "asOfAttr", tag, _MEMBER_REF, "as-of-attribute reference"),
             date=_str(body, "date", tag),
         )
     if tag == "asOfRange":
         return AsOfRange(
-            operand=_operand(body),
-            as_of_attr=_str(body, "asOfAttr", tag),
+            operand=_operand(body, element_scope=element_scope),
+            as_of_attr=_ref(body, "asOfAttr", tag, _MEMBER_REF, "as-of-attribute reference"),
             from_=_str(body, "from", tag),
             to=_str(body, "to", tag),
         )
     if tag == "history":
-        return History(operand=_operand(body), as_of_attr=_str(body, "asOfAttr", tag))
+        return History(
+            operand=_operand(body, element_scope=element_scope),
+            as_of_attr=_ref(body, "asOfAttr", tag, _MEMBER_REF, "as-of-attribute reference"),
+        )
     raise OperationError(f"unknown operation node {tag!r}")
 
 
 def _nav_op(body: Mapping[str, object]) -> Operation | None:
+    # A navigation `op` references the FULL operation grammar (schema), so it is
+    # always deserialized in top-level (non-element) scope.
     if "op" not in body:
         return None
-    return deserialize(body["op"])
+    return _deserialize(body["op"], element_scope=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -394,9 +498,11 @@ def serialize(op: Operation) -> dict[str, object]:
         case NullCheck(op=tag, attr=attr):
             return {tag: {"attr": attr}}
         case StringMatch(op=tag, attr=attr, value=value, case_insensitive=ci):
+            # Omit an omitted flag (None); round-trip an explicit `false`/`true`
+            # verbatim (m-op-algebra: serialize(deserialize(op)) == op).
             body: dict[str, object] = {"attr": attr, "value": value}
-            if ci:
-                body["caseInsensitive"] = True
+            if ci is not None:
+                body["caseInsensitive"] = ci
             return {tag: body}
         case Membership(op=tag, attr=attr, values=values):
             return {tag: {"attr": attr, "values": list(values)}}

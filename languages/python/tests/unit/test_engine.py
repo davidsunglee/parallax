@@ -17,6 +17,7 @@ from collections.abc import Callable, Sequence
 import pytest
 
 from parallax.conformance import case_format, engine, sweep
+from parallax.core.base import InstantError
 from parallax.core.db_port import DbPort, Row
 
 pytestmark = pytest.mark.unit
@@ -82,11 +83,31 @@ def test_wire_value_covers_the_managed_type_set() -> None:
     assert engine.wire_value(None) is None
     assert engine.wire_value(True) is True
     assert engine.wire_value(decimal.Decimal("12.34")) == "12.34"
-    assert engine.wire_value(dt.datetime(2024, 1, 2, 3, 4, 5)) == "2024-01-02T03:04:05"
+    # A `datetime` is an instant: an aware UTC value renders with the `+00:00`
+    # offset (canonical UTC), a `date`/`time` (not an instant) renders as-is.
+    assert engine.wire_value(dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.UTC)) == (
+        "2024-01-02T03:04:05+00:00"
+    )
     assert engine.wire_value(dt.date(2024, 1, 2)) == "2024-01-02"
+    assert engine.wire_value(dt.time(3, 4, 5)) == "03:04:05"
     assert engine.wire_value(memoryview(b"\x01\x02")) == "0102"
     sentinel = object()  # an unrecognized value passes through unchanged
     assert engine.wire_value(sentinel) is sentinel
+
+
+def test_wire_value_normalizes_an_aware_non_utc_datetime_to_utc() -> None:
+    # A `timestamp` observation is normalized through the m-core UTC-instant path
+    # BEFORE ISO-rendering, so a non-UTC offset is canonicalized to UTC rather than
+    # graded verbatim (2024-01-02T03:04:05+05:00 -> 2024-01-01T22:04:05+00:00).
+    aware = dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.timezone(dt.timedelta(hours=5)))
+    assert engine.wire_value(aware) == "2024-01-01T22:04:05+00:00"
+
+
+def test_wire_value_rejects_a_naive_datetime() -> None:
+    # A naive `datetime` carries no offset and cannot be an instant: the m-core
+    # boundary rejects it loudly rather than silently rendering an ambiguous form.
+    with pytest.raises(InstantError):
+        engine.wire_value(dt.datetime(2024, 1, 2, 3, 4, 5))
 
 
 def test_eligibility_reads_the_case_declaration() -> None:

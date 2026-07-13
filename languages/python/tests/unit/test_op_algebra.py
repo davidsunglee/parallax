@@ -77,6 +77,48 @@ def test_string_match_case_insensitive_default_omitted() -> None:
     assert like_body["caseInsensitive"] is True
 
 
+def test_string_match_explicit_case_insensitive_round_trips() -> None:
+    # An explicitly authored `caseInsensitive` (either `false` or `true`) round-
+    # trips verbatim; an explicit `false` is NOT dropped as if omitted (same class
+    # as the orderBy direction fix — m-op-algebra serialize(deserialize(op)) == op).
+    for flag in (False, True):
+        doc: dict[str, Any] = {
+            "like": {"attr": "Order.name", "value": "ada", "caseInsensitive": flag}
+        }
+        node = op_algebra.deserialize(doc)
+        assert cast("op_algebra.StringMatch", node).case_insensitive is flag
+        assert op_algebra.serialize(node) == doc
+
+
+def test_string_match_omitted_case_insensitive_round_trips_omitted() -> None:
+    # A key that OMITS `caseInsensitive` deserializes to `None` and serializes
+    # back omitted (the schema-defaulted minimal form), never gaining `false`.
+    doc: dict[str, Any] = {"like": {"attr": "Order.name", "value": "ada"}}
+    node = op_algebra.deserialize(doc)
+    assert cast("op_algebra.StringMatch", node).case_insensitive is None
+    assert op_algebra.serialize(node) == doc
+
+
+def test_scoped_where_element_predicate_round_trips() -> None:
+    # A nestedExists `where` is an element predicate: the nested* family over
+    # ELEMENT-relative paths (`type`, `number` — no `Class.valueObject` prefix)
+    # composed with boolean combinators. It round-trips through the serde.
+    doc: dict[str, Any] = {
+        "nestedExists": {
+            "path": "Customer.address.phones",
+            "where": {
+                "and": {
+                    "operands": [
+                        {"nestedEq": {"path": "type", "value": "home"}},
+                        {"nestedEq": {"path": "number", "value": "555-9999"}},
+                    ]
+                }
+            },
+        }
+    }
+    assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+
+
 def test_order_key_authored_direction_round_trips() -> None:
     # An explicitly authored `direction` (either `asc` or `desc`) serializes back
     # verbatim (the corpus authors it explicitly on every operation orderBy key).
@@ -150,6 +192,80 @@ def test_order_key_defaulted_direction_round_trips() -> None:
                     }
                 },
                 r"deepFetch path narrow: unexpected key\(s\) \['x'\]",
+            ),
+            # Reference-pattern enforcement (operation.schema.json $defs): each
+            # reference string must match the schema pattern for its position.
+            (
+                {"eq": {"attr": "not a ref", "value": 1}},
+                "not a valid attribute reference",
+            ),
+            (
+                {"navigate": {"rel": "BadRel"}},
+                "not a valid relationship reference",
+            ),
+            (
+                {"narrow": {"entity": "bad name", "to": ["Dog"], "operand": {"all": {}}}},
+                "not a valid entity name",
+            ),
+            (
+                {"narrow": {"entity": "Animal", "to": ["dog!"], "operand": {"all": {}}}},
+                "not a valid entity name",
+            ),
+            (
+                {"nestedEq": {"path": "notdotted", "value": 1}},
+                "not a valid nested reference",
+            ),
+            (
+                {"nestedExists": {"path": "Customer"}},
+                "not a valid value-object reference",
+            ),
+            (
+                {"asOf": {"operand": {"all": {}}, "asOfAttr": "BadAxis", "date": "now"}},
+                "not a valid as-of-attribute reference",
+            ),
+            (
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [[{"rel": "bad rel"}]],
+                    }
+                },
+                "not a valid relationship reference",
+            ),
+            (
+                {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "bad attr"}]}},
+                "not a valid attribute reference",
+            ),
+            # Nested `where` is the schema's `elementPredicate`: a directive, a
+            # top-level predicate, or any non-element node is illegal there.
+            (
+                {
+                    "nestedExists": {
+                        "path": "Customer.address.phones",
+                        "where": {"limit": {"operand": {"all": {}}, "count": 1}},
+                    }
+                },
+                "not a legal element predicate inside a nestedExists `where`",
+            ),
+            (
+                {
+                    "nestedExists": {
+                        "path": "Customer.address.phones",
+                        "where": {"eq": {"attr": "Order.id", "value": 1}},
+                    }
+                },
+                "not a legal element predicate inside a nestedExists `where`",
+            ),
+            # An element-scoped nested path is element-relative (no `Class.` prefix);
+            # a top-level `Class.valueObject.field` reference is illegal inside `where`.
+            (
+                {
+                    "nestedExists": {
+                        "path": "Customer.address.phones",
+                        "where": {"nestedEq": {"path": "Customer.address.type", "value": "home"}},
+                    }
+                },
+                "not a valid element-relative path",
             ),
         ],
     ),

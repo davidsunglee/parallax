@@ -200,8 +200,17 @@ class AttributeExpr:
         return Predicate(NullCheck(op="isNotNull", attr=str(self.ref)))
 
     def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate:
+        # The fluent surface authors the canonical minimal form: an unset flag
+        # omits `caseInsensitive` (None), a set flag emits `true`. It never
+        # authors an explicit `false` — that only arises from deserializing a
+        # document that spelled it out (round-trip fidelity lives in the serde).
         return Predicate(
-            StringMatch(op=op, attr=str(self.ref), value=value, case_insensitive=case_insensitive)
+            StringMatch(
+                op=op,
+                attr=str(self.ref),
+                value=value,
+                case_insensitive=True if case_insensitive else None,
+            )
         )
 
     def like(self, value: str, *, case_insensitive: bool = False) -> Predicate:
