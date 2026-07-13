@@ -36,6 +36,16 @@ def test_none_lowers_to_unsatisfiable() -> None:
     assert statement.sql.endswith("where 1 = 0")
 
 
+def test_instance_form_projects_value_object_document_last() -> None:
+    # Instance-form (the object lane, m-sql *Read projection* slot 4): the value
+    # object's document column rides the owner's SELECT, last among all columns.
+    instance = compile_read(oa.All(), CUSTOMER, POSTGRES, "Customer", result_form="instance")
+    assert instance.sql == "select t0.id, t0.name, t0.address from customer t0"
+    # Row-form (the default values lane) omits slot 4 — the scalars alone.
+    row = compile_read(oa.All(), CUSTOMER, POSTGRES, "Customer")
+    assert row.sql == "select t0.id, t0.name from customer t0"
+
+
 def test_nested_null_check_and_membership() -> None:
     is_null = compile_read(
         oa.NestedNullCheck(op="nestedIsNull", path="Customer.address.city"),

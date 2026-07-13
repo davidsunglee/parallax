@@ -25,7 +25,7 @@ from parallax.core.db_port import DbPort, Row
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import dialect_for
 from parallax.core.op_algebra import OperationError, deserialize
-from parallax.core.sql_gen import SqlGenError, Statement, compile_read
+from parallax.core.sql_gen import ResultForm, SqlGenError, Statement, compile_read
 
 __all__ = [
     "Emission",
@@ -98,6 +98,21 @@ def _read_target_and_operation(case: case_format.Case) -> tuple[str, object]:
     return target, body["operation"]
 
 
+def _result_form(case: case_format.Case) -> ResultForm:
+    """The read's result form from its asserted result member (m-case-format / m-sql).
+
+    A top-level read case declares its consumption lane by which result member it
+    asserts: ``then.graph`` / ``then.graphs`` materialize instances (instance-form,
+    the object lane), so the read projects the value-object document columns (slot
+    4); every other read (``then.rows``) is row-form (the values lane) and omits
+    them.
+    """
+    then = case.document.get("then")
+    if isinstance(then, Mapping) and ("graph" in then or "graphs" in then):
+        return "instance"
+    return "row"
+
+
 def _compile_statement(case: case_format.Case, dialect_name: str) -> tuple[str, Statement]:
     if case.shape != "read":
         raise EngineError(
@@ -108,7 +123,9 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> tuple[str, 
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     try:
-        statement = compile_read(deserialize(operation_doc), meta, dialect, target)
+        statement = compile_read(
+            deserialize(operation_doc), meta, dialect, target, result_form=_result_form(case)
+        )
     except (OperationError, SqlGenError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return target, statement

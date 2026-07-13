@@ -9,6 +9,6 @@ over the node union; dialect variation enters only through the injected
 
 from __future__ import annotations
 
-from parallax.core.sql_gen.compile import SqlGenError, Statement, compile_read
+from parallax.core.sql_gen.compile import ResultForm, SqlGenError, Statement, compile_read
 
-__all__ = ["SqlGenError", "Statement", "compile_read"]
+__all__ = ["ResultForm", "SqlGenError", "Statement", "compile_read"]

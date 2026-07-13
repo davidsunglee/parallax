@@ -82,7 +82,7 @@ self-contained without a system `libpq`.
 - **Phases 1–5 complete.** The uv workspace, the four distributions, the
   conformance spine + `describe`, the metamodel hub + Pydantic class frontend,
   the Phase-4 core amendment bundle, and the Phase-5 read path are landed and
-  green: `just python-static` (unit coverage 99.89%, diff-cover 100%) and the
+  green: `just python-static` (unit coverage 99.97%, diff-cover 100%) and the
   Docker database lanes both pass.
 - **Phase 5 (SQL walking skeleton — read path):** `m-op-algebra` nodes + serde,
   the pure `m-dialect` Postgres strategy, the abstract `m-db-port`, the `m-sql`
@@ -93,15 +93,20 @@ self-contained without a system `libpq`.
   conformance `compile`/`run` commands with self-managed Testcontainers
   provisioning. The compile sweep and `pg-full` run lane exercise the reachable
   read intersection; the operation no-drift guard is live.
-- **Reachable intersection this phase:** 124 corpus cases (77 read, 18
-  writeSequence, 29 rejected). 15 reads are compiled **and** run end-to-end
-  against real Postgres (13 value-object nested-predicate reads, `m-descriptor-001`
-  quoted identifier, `m-core-001` scalar round-trip); the remaining reachable
-  cases are reasoned-skipped in the sweep (no silent gaps) per ledger D-11 (the
-  stale-orders read projection) and D-12 (inheritance reads, to-many value-object
-  array traversal, and pre-SQL rejected-operation validation — all deferred to
-  later phases). The operation no-drift guard exercises 10 idiomatic op-algebra
-  read spellings.
+- **Reachable intersection this phase:** 122 corpus cases (75 read, 18
+  writeSequence, 29 rejected). After the Phase-5b read-projection amendment closed
+  ledger D-11, **50 reads compile-match** the corpus and **48 run end-to-end**
+  against real Postgres: the 33 orders `m-op-algebra` reads (incl. the tracer
+  `m-op-algebra-002-eq`), the 13 value-object nested-predicate reads,
+  `m-descriptor-001` (quoted identifier), and `m-core-001` (scalar round-trip); the
+  2 value-object materialization reads (`m-value-object-023/024`) compile-match via
+  the instance-form slot-4 document projection but are run-deferred to the snapshot
+  branch (their graph observation lands with materialization, Phase 7). The
+  remaining reachable cases are reasoned-skipped in the sweep (no silent gaps, zero
+  D-11) with forward reasons — ledger D-12 (17 inheritance-family reads, 8 to-many
+  value-object array-traversal reads, and pre-SQL rejected-operation validation) and
+  the write-path shapes (Phase 6/8). The operation no-drift guard exercises 10
+  idiomatic op-algebra read spellings.
 - **Phase 6 next:** transactions and the temporal backbone (`db.transact`, the
   write-instruction IR + keyed writes, temporal reads, SQLSTATE classification).
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import assert_never
+from typing import Literal, assert_never
 
 from parallax.core.descriptor import (
     Attribute,
@@ -60,7 +60,13 @@ from parallax.core.op_algebra import (
     StringMatch,
 )
 
-__all__ = ["SqlGenError", "Statement", "compile_read"]
+__all__ = ["ResultForm", "SqlGenError", "Statement", "compile_read"]
+
+# The read's consumption lane (m-sql *Read projection*, *Result form*): a
+# ``row``-form read (the values lane) projects scalars only; an ``instance``-form
+# read (the object lane — a find / snapshot / deep-fetch whose rows materialize
+# into instances) additionally projects the value-object document columns (slot 4).
+ResultForm = Literal["row", "instance"]
 
 _COMPARATORS: dict[str, str] = {
     "eq": "=",
@@ -124,13 +130,24 @@ class _Ctx:
 # --------------------------------------------------------------------------- #
 # Projection.                                                                  #
 # --------------------------------------------------------------------------- #
-def _projection(entity: Entity, dialect: Dialect, alias: str) -> tuple[str, list[object]]:
-    """The default find projection: every declared scalar attribute in column order.
+def _projection(
+    entity: Entity, dialect: Dialect, alias: str, result_form: ResultForm
+) -> tuple[str, list[object]]:
+    """The base read projection (m-sql *Read projection*), a function of the model.
 
-    The dialect maps each attribute to its select-list expression (a `bytes`
-    column projects `encode(col, ?)`; every other column its plain reference).
-    Value objects and the framework-owned inheritance tag are not scalar
-    attributes and are not part of the default scalar projection.
+    Slot 1 — every declared scalar attribute's column in ``column_order`` — is the
+    whole list for a **row-form** read (the values lane). The dialect maps each
+    scalar to its select-list expression (a `bytes` column projects `encode(col,
+    ?)`; every other column its plain reference). The framework-owned inheritance
+    tag / familyVariant (slots 2/3) are not reached here — inheritance-family reads
+    are refused in this phase (:func:`compile_read`).
+
+    An **instance-form** read (the object lane) additionally projects slot 4: each
+    declared top-level value object's backing document column, **last among all
+    columns**, in declared value-object order — a json document is always a plain
+    alias-qualified reference — so a value-object-bearing entity's whole document
+    rides the owner's single statement (the one-round-trip materialization
+    contract, m-value-object). A row-form read omits them.
     """
     by_column = {attr.column: attr for attr in entity.attributes}
     exprs: list[str] = []
@@ -143,24 +160,42 @@ def _projection(entity: Entity, dialect: Dialect, alias: str) -> tuple[str, list
         expr, extra = dialect.project(alias, column, attribute.type)
         exprs.append(expr)
         binds.extend(extra)
+    if result_form == "instance":
+        exprs.extend(dialect.qualified(alias, vo.column) for vo in entity.value_objects)
     return ", ".join(exprs), binds
 
 
 # --------------------------------------------------------------------------- #
 # compile_read = canonicalize -> lower -> normalize.                          #
 # --------------------------------------------------------------------------- #
-def compile_read(op: Operation, meta: Metamodel, dialect: Dialect, target: str) -> Statement:
-    """Compile a read operation to one canonical ``Statement`` for ``dialect``."""
+def compile_read(
+    op: Operation,
+    meta: Metamodel,
+    dialect: Dialect,
+    target: str,
+    *,
+    result_form: ResultForm = "row",
+) -> Statement:
+    """Compile a read operation to one canonical ``Statement`` for ``dialect``.
+
+    ``result_form`` selects the projection lane (m-sql *Read projection*): a
+    **row-form** read (the values lane — the corpus predicate `read` cases and the
+    internal materialized-write resolving read) projects scalars only; an
+    **instance-form** read (the object lane — a find / snapshot / deep-fetch whose
+    rows materialize into instances) additionally projects the value-object document
+    columns. The conformance engine derives it from the case's asserted result
+    member (`then.rows` = row-form; `then.graph` / `then.graphs` = instance-form).
+    """
     entity = meta.entity(target)
     if entity.inheritance is not None:
         raise SqlGenError(
-            f"{target}: inheritance-family read lowering is not yet implemented "
-            "(COR-3 Phase 5 scope)"
+            f"{target}: inheritance-family read lowering is deferred past the Phase-5 "
+            "read path to the snapshot branch (COR-3 Phase 7; ledger D-12)"
         )
     predicate, distinct, order_keys, limit = _peel_directives(op)
     ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
 
-    proj_sql, proj_binds = _projection(entity, dialect, ctx.alias)
+    proj_sql, proj_binds = _projection(entity, dialect, ctx.alias, result_form)
     ctx.binds.extend(proj_binds)
     select = f"select {'distinct ' if distinct else ''}{proj_sql}"
     parts = [select, f"from {entity.table} {ctx.alias}"]
@@ -262,7 +297,8 @@ def _lower_predicate(op: Operation, ctx: _Ctx) -> str:
         case NestedExists() | NestedNotExists():
             raise SqlGenError(
                 "to-many value-object array traversal (nestedExists/nestedNotExists) "
-                "is not yet lowered (COR-3 Phase 5 scope)"
+                "is deferred past the Phase-5 read path to the snapshot branch's "
+                "value-object materialization (COR-3 Phase 7; ledger D-12)"
             )
         case Narrow() | Navigate() | Exists() | NotExists() | DeepFetch():
             raise SqlGenError(
@@ -352,7 +388,8 @@ def _nested_extraction(path: str, ctx: _Ctx) -> tuple[str, str]:
     if _crosses_many(vo, tuple(segments)):
         raise SqlGenError(
             f"nested path {path!r} crosses a `many` member (any-element array traversal "
-            "is not yet lowered — COR-3 Phase 5 scope)"
+            "is deferred past the Phase-5 read path to the snapshot branch — "
+            "COR-3 Phase 7; ledger D-12)"
         )
     leaf = _resolve_leaf(vo, tuple(segments))
     extraction, path_binds = ctx.dialect.nested_extract(ctx.alias, vo.column, tuple(segments))

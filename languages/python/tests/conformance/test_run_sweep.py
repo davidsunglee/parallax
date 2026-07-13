@@ -10,7 +10,8 @@ reset database. Docker-gated; a skip is reported, never silent (spec §6).
 
 from __future__ import annotations
 
-from typing import Any
+from decimal import Decimal, InvalidOperation
+from typing import Any, Final
 
 import jsonschema
 import pytest
@@ -21,8 +22,17 @@ from parallax.conformance import adapter, case_format, engine
 
 pytestmark = pytest.mark.conformance
 
-# The reachable read cases whose fixtures + rows this phase runs end-to-end.
-RUN_EXERCISED = frozenset(COMPILE_EXERCISED)
+# The instance-form value-object graph reads are compile-exercised (their slot-4
+# document projection matches golden), but a *run* verifies the case's asserted
+# observation, and an instance-form read asserts a materialized `then.graph`. Graph
+# assembly lands with the snapshot branch (COR-3 Phase 7), so these are run-deferred:
+# executing only their SQL would yield a row-form observation for an instance-form
+# case, verifying nothing the compile sweep does not already pin.
+_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
+    {"m-value-object-023", "m-value-object-024"}
+)
+# The reachable read cases whose fixtures + `then.rows` this phase runs end-to-end.
+RUN_EXERCISED = frozenset(COMPILE_EXERCISED) - _INSTANCE_FORM_GRAPH_READS
 
 
 def _reachable_run_cases() -> list[case_format.Case]:
@@ -35,14 +45,66 @@ _CASES = _reachable_run_cases()
 _SCHEMA = adapter_schema()
 
 
-def _row_key(row: dict[str, Any]) -> tuple[tuple[str, object], ...]:
+def _wire_row(row: dict[str, Any]) -> dict[str, Any]:
     # Observed rows arrive already wire-rendered; the authored `then.rows` are
-    # normalized through the same canonical wire form so comparison is exact.
-    return tuple(sorted((k, engine.wire_value(v)) for k, v in row.items()))
+    # normalized through the same m-db-port boundary so dates / uuids / bytes are
+    # compared in one canonical form.
+    return {key: engine.wire_value(value) for key, value in row.items()}
+
+
+def _to_decimal(value: object) -> object:
+    """Coerce a numeric (or a wire-rendered numeric string) to an exact ``Decimal``.
+
+    The corpus grades numerics as exact Decimals (m-case-format), so a ``decimal``
+    money column matches to the cent regardless of scale. A wire-rendered decimal
+    arrives as a numeric *string* — its canonical wire form is the exact string, not
+    a float — so a numeric-looking string is parsed too; a non-numeric string / date
+    / uuid raises and passes through for exact ``==``.
+    """
+    if isinstance(value, (int, float, str)):
+        try:
+            return Decimal(str(value))
+        except InvalidOperation:
+            return value
+    return value
+
+
+def _scalar_equal(observed: object, expected: object) -> bool:
+    """Exact wire equality, with an exact-Decimal fallback for numerics.
+
+    Exact ``==`` decides every string / date / uuid / bytes / bool value (so this
+    never loosens a comparison that already holds); only a residual numeric
+    difference — the wire-rendered ``decimal`` string ``"99.99"`` against the
+    authored number ``99.99`` — reconciles in Decimal space. ``bool`` is never
+    numeric (``True`` never equals ``1``).
+    """
+    if observed == expected:
+        return True
+    if isinstance(observed, bool) or isinstance(expected, bool):
+        return False
+    left, right = _to_decimal(observed), _to_decimal(expected)
+    return isinstance(left, Decimal) and isinstance(right, Decimal) and left == right
+
+
+def _row_equal(observed: dict[str, Any], expected: dict[str, Any]) -> bool:
+    return observed.keys() == expected.keys() and all(
+        _scalar_equal(observed[key], expected[key]) for key in observed
+    )
 
 
 def _compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
-    assert sorted(_row_key(r) for r in observed) == sorted(_row_key(r) for r in expected)
+    """Order-insensitive multiset comparison (greedy — result sets are tiny)."""
+    obs = [_wire_row(row) for row in observed]
+    remaining = [_wire_row(row) for row in expected]
+    assert len(obs) == len(remaining), f"row count: observed {obs!r} != expected {remaining!r}"
+    for row in obs:
+        for index, candidate in enumerate(remaining):
+            if _row_equal(row, candidate):
+                del remaining[index]
+                break
+        else:
+            raise AssertionError(f"observed row unmatched: {row!r}\n  expected pool: {remaining!r}")
+    assert not remaining, f"expected rows unmatched: {remaining!r}"
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])

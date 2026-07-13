@@ -26,26 +26,34 @@ from parallax.conformance import adapter, case_format, engine, sweep
 pytestmark = [pytest.mark.unit, pytest.mark.compile_sweep]
 
 # The reviewed set of reachable read cases whose golden read projection equals the
-# descriptor-derived default (every declared scalar attribute in column order) and
-# whose predicate this phase lowers. New cases join deliberately as lowering grows.
-COMPILE_EXERCISED: Final[frozenset[str]] = frozenset(
-    {
-        "m-core-001",
-        "m-descriptor-001",
-        "m-value-object-001",
-        "m-value-object-002",
-        "m-value-object-004",
-        "m-value-object-005",
-        "m-value-object-006",
-        "m-value-object-007",
-        "m-value-object-008",
-        "m-value-object-009",
-        "m-value-object-010",
-        "m-value-object-011",
-        "m-value-object-012",
-        "m-value-object-013",
-        "m-value-object-014",
-    }
+# base m-sql *Read projection* the compiler emits and whose predicate this phase
+# lowers. New cases join deliberately as lowering grows.
+#
+# Scalar round-trip + quoted-reserved-identifier reads.
+_SCALAR_READS: Final[frozenset[str]] = frozenset({"m-core-001", "m-descriptor-001"})
+# Value-object nested-predicate reads (row-form — the values lane; slot 4 omitted).
+_VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
+    f"m-value-object-{n:03d}" for n in (1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+)
+# Orders op-algebra reads. The read-projection amendment (Phase 5b) re-goldened these
+# to the full declared scalar projection the default find projection already emits, so
+# they now compile-match with no code change — closing ledger D-11. Includes the named
+# tracer m-op-algebra-002, run end-to-end below; 028 was removed by the amendment.
+_ORDERS_OP_ALGEBRA_READS: Final[frozenset[str]] = frozenset(
+    f"m-op-algebra-{n:03d}" for n in (*range(1, 28), 29, 30, 31, 32, 33, 34)
+)
+# Value-object instance-form materialization reads (the object lane): the slot-4
+# document splice projects the `address` column (m-sql *Read projection*). Their graph
+# *observation* — a materialized run — lands with the snapshot branch (Phase 7), so
+# they are compile-exercised here but run-deferred (see the run sweep).
+_VALUE_OBJECT_MATERIALIZATION_READS: Final[frozenset[str]] = frozenset(
+    {"m-value-object-023", "m-value-object-024"}
+)
+COMPILE_EXERCISED: Final[frozenset[str]] = (
+    _SCALAR_READS
+    | _VALUE_OBJECT_PREDICATE_READS
+    | _ORDERS_OP_ALGEBRA_READS
+    | _VALUE_OBJECT_MATERIALIZATION_READS
 )
 
 _REACHABLE = sweep.reachable_cases()
@@ -66,16 +74,21 @@ def golden(case: case_format.Case) -> tuple[str, list[object]]:
 
 
 def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
+    """The forward-looking reason a reachable case is not in the exercised set.
+
+    The read-projection amendment (Phase 5b, ledger D-11) re-goldened every stale
+    read to the projection the compiler emits, so every reachable *ok*-status read is
+    now exercised (asserted by ``test_every_unexercised_reachable_read_is_refused``).
+    What remains reasoned-skipped is (1) the non-read shapes, whose compile lands with
+    the write path (Phase 6/8), and (2) the reads the Phase-5 compiler refuses with a
+    loud ``SqlGenError`` — inheritance-family reads and to-many value-object array
+    traversal — deferred past the single-entity read path to the snapshot branch
+    (ledger D-12).
+    """
     if case.shape != "read":
         return f"compile of {case.shape}-shape cases lands with the write path (COR-3 Phase 6/8)"
-    status = envelope.get("status")
-    if status == "error":
-        message = envelope.get("diagnostics", [{}])[0].get("message", "")
-        return f"read lowering not yet online: {message}"
-    return (
-        "golden read projection is underspecified by the operation algebra "
-        "(bespoke/materialization/stale-descriptor projection); deferred ledger D-11"
-    )
+    message = envelope.get("diagnostics", [{}])[0].get("message", "")
+    return f"read lowering deferred past the Phase-5 read path (ledger D-12): {message}"
 
 
 @pytest.mark.parametrize("case", _REACHABLE, ids=[c.case_id for c in _REACHABLE])
@@ -101,6 +114,18 @@ def test_exercised_set_is_a_subset_of_the_reachable_reads() -> None:
     reachable_reads = {c.case_id for c in _REACHABLE if c.shape == "read"}
     stale = COMPILE_EXERCISED - reachable_reads
     assert not stale, f"exercised ids outside the reachable read intersection: {sorted(stale)}"
+
+
+def test_every_unexercised_reachable_read_is_refused() -> None:
+    """After the read-projection amendment closed D-11, the only reads left out of
+    the exercised set are the ones the Phase-5 compiler refuses with an ``error``
+    envelope (D-12: inheritance-family reads, to-many value-object array traversal) —
+    never an ``ok``-status read whose projection silently mismatches the golden."""
+    for case in _REACHABLE:
+        if case.shape != "read" or case.case_id in COMPILE_EXERCISED:
+            continue
+        envelope = adapter.compile_case(case.path, "postgres")
+        assert envelope["status"] == "error", (case.case_id, envelope)
 
 
 def test_run_only_cases_are_never_compiled() -> None:
