@@ -157,13 +157,15 @@ defer the same-transaction combination to this scope.
 
 A coalescing witness encodes **both** buffered mutations explicitly by authoring
 the write step as an ordered **buffer-and-flush** scenario: `/scenario/<n>/write`
-carries the ordered buffer of write instructions (the keyed `insert` of the new
-object, then the keyed `update` / `delete` of that same object), and the step's
-golden SQL is the independent expected lowering of the coalesced flush — one
-final-value write, or no DML at all. The buffered form and its authoring surface are
-the case format's (`m-case-format`); the instructions themselves are the canonical
-`write-instruction.schema.json` shapes, so an adapter exercises coalescing from the
-requested operations, never from the golden SQL.
+carries the ordered **pair of keyed write instructions** (the keyed `insert` of the
+new object, then the keyed `update` / `delete` of **that same object** — the same
+entity and primary-key identity), and the step's golden SQL is the independent
+expected lowering of the coalesced flush — one final-value write, or no DML at all.
+The form is scoped to that pair; a general ordered buffer and predicate-selected
+buffered writes are deferred, not this shape. The buffered form and its authoring
+surface are the case format's (`m-case-format`); the instructions themselves are the
+canonical `write-instruction.schema.json` shapes, so an adapter exercises coalescing
+from the requested operations, never from the golden SQL.
 
 ## Strategy selection — the per-unit-of-work participation mode
 

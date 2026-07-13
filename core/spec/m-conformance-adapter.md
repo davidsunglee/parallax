@@ -208,6 +208,17 @@ For a predicate-selected scenario write, the adapter consumes the structured
 authored DML text as its only write input or reverse-engineer the operation from
 golden SQL.
 
+For a **buffered** scenario write — the ordered keyed coalescing pair under
+`/scenario/<n>/write` (`m-case-format`), a keyed `insert` of a new object then the
+keyed `update` / `delete` of that same object — the adapter buffers **both** keyed
+instructions in one unit of work and applies the `m-unit-work` same-transaction
+coalescing rule at flush. The flush emits the **coalesced** DML: a **single**
+final-value write for insert-then-update, or **no** DML at all for
+insert-then-delete. The adapter consumes the ordered instructions as the requested
+operations exactly as for the single-instruction forms — it MUST NOT treat the
+authored golden SQL as its write input — and under `compile` the buffer follows the
+same compile-eligibility rules as any other write.
+
 ### Compile eligibility
 
 `compile` applies only to a **compile-eligible** case. A case the corpus declares
@@ -286,6 +297,11 @@ returns the observations required to compare against the case.
 It consumes the same structured predicate-write instruction as `compile`, then
 compares emitted SQL and binds to the authored golden unchanged. The instruction
 adds neutral operation input; it does not relax SQL comparison.
+
+It likewise consumes the same buffered keyed coalescing pair as `compile`,
+buffering both instructions in one unit of work and coalescing at flush; the DML
+that flush emits — one final-value write, or none — is compared to the authored
+golden unchanged, exactly as for any other write.
 
 The adapter is responsible for using a clean database according to its declared
 provisioning mode, applying schema and fixtures, executing the implementation's

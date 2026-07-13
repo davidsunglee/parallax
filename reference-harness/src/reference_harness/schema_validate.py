@@ -218,6 +218,55 @@ def _keyed_member_names(entity_defs: list[dict[str, Any]], entity_name: str) -> 
     return names
 
 
+def _primary_key_names(entity_defs: list[dict[str, Any]], entity_name: str) -> list[str] | None:
+    """The primary-key attribute name(s) of *entity_name* (`primaryKey: true`).
+
+    Returns ``None`` when the entity is undeclared (the caller reports that). The
+    order follows the descriptor's attribute order, so the identity tuple a buffered
+    coalescing pair compares is stable.
+    """
+    try:
+        definition = resolve_effective_definition(entity_defs, entity_name)
+    except (KeyError, RejectionError):
+        return None
+    return [
+        attribute["name"]
+        for attribute in definition.get("attributes", [])
+        if isinstance(attribute, dict)
+        and attribute.get("primaryKey") is True
+        and isinstance(attribute.get("name"), str)
+    ]
+
+
+def _hashable(value: Any) -> Any:
+    """A hashable stand-in for a primary-key value (scalars pass through)."""
+    try:
+        hash(value)
+    except TypeError:
+        return repr(value)
+    return value
+
+
+def _pk_identities(
+    instruction: dict[str, Any], pk_names: list[str]
+) -> tuple[frozenset[tuple[Any, ...]], bool]:
+    """The set of primary-key identity tuples the keyed instruction's rows name.
+
+    The second element is ``False`` when a row omits a primary-key attribute (so no
+    identity can be established — the caller reports it and skips the equality check).
+    """
+    identities: set[tuple[Any, ...]] = set()
+    complete = True
+    for row in instruction.get("rows", []):
+        if not isinstance(row, dict):
+            continue
+        if any(name not in row for name in pk_names):
+            complete = False
+            continue
+        identities.add(tuple(_hashable(row[name]) for name in pk_names))
+    return frozenset(identities), complete
+
+
 def _validate_buffered_write(
     instructions: list[Any],
     entity_defs: list[dict[str, Any]],
@@ -225,14 +274,23 @@ def _validate_buffered_write(
     label: str,
     errors: list[str],
 ) -> None:
-    """Validate each instruction in a buffered scenario write (m-unit-work coalescing).
+    """Validate a buffered scenario write — the m-unit-work coalescing PAIR.
 
-    The schema already pins the buffered SHAPE (an ordered list of keyed / predicate
-    instructions); this adds the model-aware honesty check the wire harness would
-    otherwise skip (it executes the coalesced golden SQL, never the buffered
-    instructions): a predicate entry reuses the predicate-write validator, and a keyed
-    entry's row keys MUST name declared attributes / value objects of its entity, so a
-    buffered write cannot silently name a non-member.
+    The schema pins the STRUCTURAL shape (exactly two KEYED instructions: entry 0 a
+    keyed ``insert``, entry 1 a keyed ``update`` / ``delete``); this adds the two
+    model-aware checks JSON Schema cannot express and the wire harness would otherwise
+    skip (it executes the coalesced golden SQL, never the buffered instructions):
+
+    * **member honesty** — each keyed row's keys MUST name declared attributes / value
+      objects of its entity, so a buffered write cannot silently name a non-member.
+    * **same-object coalescing** — the two entries MUST target the SAME entity and the
+      SAME primary-key identity (the object inserted is the object then updated /
+      deleted). A pair over two different entities, or two different keys, is NOT a
+      coalescing pair and is rejected here.
+
+    A predicate entry is no longer part of the buffered shape (the schema forbids it);
+    should a schema-invalid case still carry one, the predicate-write validator reports
+    it rather than the keyed member check.
     """
     for position, instruction in enumerate(instructions):
         entry_label = f"{label} buffered write[{position}]"
@@ -259,6 +317,57 @@ def _validate_buffered_write(
                     f"{entry_label}: keyed write row names {unknown} which are not "
                     f"attributes or value objects of {entity_name}"
                 )
+
+    _validate_buffered_coalescing_pair(instructions, entity_defs, label, errors)
+
+
+def _validate_buffered_coalescing_pair(
+    instructions: list[Any],
+    entity_defs: list[dict[str, Any]],
+    label: str,
+    errors: list[str],
+) -> None:
+    """Enforce the same-entity / same-primary-key equalities JSON Schema cannot express.
+
+    Runs only when the buffer is a well-formed KEYED pair (exactly two keyed, declared
+    entries); the schema owns every other structural rejection (wrong length, a
+    predicate entry, a non-``insert`` / non-``update``-``delete`` verb), so a malformed
+    buffer is left to it rather than double-reported here.
+    """
+    if len(instructions) != 2:
+        return
+    first, second = instructions
+    if not (isinstance(first, dict) and isinstance(second, dict)):
+        return
+    if "target" in first or "target" in second:
+        return  # a predicate entry is a schema rejection, not a coalescing pair
+    first_entity, second_entity = first.get("entity"), second.get("entity")
+    if not (isinstance(first_entity, str) and isinstance(second_entity, str)):
+        return
+    if first_entity != second_entity:
+        errors.append(
+            f"{label}: buffered coalescing pair must target the SAME entity — the "
+            f"inserted object is the one then updated / deleted — but names "
+            f"{first_entity!r} then {second_entity!r}"
+        )
+        return
+    pk_names = _primary_key_names(entity_defs, first_entity)
+    if not pk_names:
+        return  # undeclared entity / no primary key — reported by the member check
+    first_ids, first_complete = _pk_identities(first, pk_names)
+    second_ids, second_complete = _pk_identities(second, pk_names)
+    if not (first_complete and second_complete):
+        errors.append(
+            f"{label}: buffered coalescing pair must name its primary key "
+            f"{pk_names} in every entry so its object identity is explicit"
+        )
+        return
+    if first_ids != second_ids:
+        errors.append(
+            f"{label}: buffered coalescing pair must target the SAME primary-key "
+            f"identity — the inserted object is the one then updated / deleted — but "
+            f"names {sorted(first_ids)} then {sorted(second_ids)}"
+        )
 
 
 # --- compile-eligibility backstop (m-case-format / m-conformance-adapter) -----

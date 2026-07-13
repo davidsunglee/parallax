@@ -604,24 +604,31 @@ and must agree with its golden rows as the third oracle.
 
 ##### Buffered write instructions (same-transaction coalescing)
 
-A scenario write step MAY carry an **ordered buffer** of write instructions in
-place of a single one: `/scenario/<n>/write` is then a list of two or more
-instructions a single unit of work buffers before a **coalescing flush**
-(`m-unit-work` same-transaction coalescing). Each entry is a **keyed** instruction
-(`mutation` + `entity` + `rows`, the case-format analogue of
-`write-instruction.schema.json`'s `keyedWriteInstruction`) or a **predicate**
-instruction (the `predicateWrite` above); both **reference** the canonical
-write-instruction `$defs` rather than redefining them, layering only the
-`at` / `businessFrom` / `until` authoring surface. The buffer is applied **in
-order** — canonically a keyed `insert` of a new object, then the keyed `update` /
-`delete` of that same object — and the step's golden SQL (`statements`) is the
-**independent expected lowering of the coalesced flush**: one final-value write
-for insert-then-update (`roundTrips: 1`), or **no** DML for insert-then-delete
-(`roundTrips: 0`, no `statements`). The step therefore encodes **both** requested
-mutations explicitly, so an adapter exercises the coalescing rule from the
-instructions themselves, never from the golden SQL or a prose note. Business
-bounds are the axis-explicit canonical `businessFrom` / `businessTo`; the
+A scenario write step MAY carry the **coalescing pair** in place of a single
+instruction: `/scenario/<n>/write` is then an ordered list of **exactly two
+keyed** instructions a single unit of work buffers before a **coalescing flush**
+(`m-unit-work` same-transaction coalescing). **Entry 0** is a keyed `insert` of a
+new object; **entry 1** is the keyed `update` or `delete` of **that same object** —
+the same entity and the same primary-key identity. Each entry is a **keyed**
+instruction (`mutation` + `entity` + `rows`, the case-format analogue of
+`write-instruction.schema.json`'s `keyedWriteInstruction`), **referencing** the
+canonical write-instruction `$defs` rather than redefining them and layering only
+the `at` / `businessFrom` / `until` authoring surface. The step's golden SQL
+(`statements`) is the **independent expected lowering of the coalesced flush**: one
+final-value write for insert-then-update (`roundTrips: 1`), or **no** DML for
+insert-then-delete (`roundTrips: 0`, no `statements`). The step therefore encodes
+**both** requested mutations explicitly, so an adapter exercises the coalescing
+rule from the instructions themselves, never from the golden SQL or a prose note.
+Business bounds are the axis-explicit canonical `businessFrom` / `businessTo`; the
 processing instant rides as the Clock-context `at`, never an instruction field.
+
+The form is **scoped** to that pair — it is **not** a general N-instruction ordered
+buffer, and a **predicate**-selected instruction is **not** admitted (both
+generalities belong to the deferred string-label→structured write migration, kept
+separate). The JSON Schema pins the structural shape (exactly two keyed entries,
+entry 0 `insert`, entry 1 `update` / `delete`); the same-entity and
+same-primary-key equalities it cannot express are enforced by the harness
+validator.
 
 ```yaml
 - write:                                    # an ordered buffer, coalesced at flush

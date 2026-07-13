@@ -449,7 +449,7 @@
                 "$ref": "#/$defs/entityName"
               },
               "write": {
-                "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — deferred migration). A single predicate-selected `$defs/predicateWrite` instruction. Or an ORDERED `$defs/bufferedWriteSequence` — two or more write instructions a single unit of work BUFFERS before a coalescing flush (m-unit-work same-transaction coalescing), so the step encodes BOTH the buffered mutations (e.g. a keyed INSERT of a new object then the keyed UPDATE / DELETE of that same object) explicitly rather than in prose. Every structured form is the neutral requested operation compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
+                "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — deferred migration). A single predicate-selected `$defs/predicateWrite` instruction. Or a `$defs/bufferedWriteSequence` — the ORDERED coalescing PAIR (exactly two KEYED instructions: a keyed INSERT of a new object then the keyed UPDATE / DELETE of that SAME object) a single unit of work BUFFERS before a same-transaction coalescing flush (m-unit-work), so the step encodes BOTH buffered mutations explicitly rather than in prose. The buffered form is SCOPED to that coalescing pair — NOT a general N-instruction ordered buffer (that generality is the deferred string-label→structured migration). Every structured form is the neutral requested operation compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
                 "oneOf": [
                   { "type": "string", "minLength": 1 },
                   { "$ref": "#/$defs/predicateWrite" },
@@ -954,15 +954,26 @@
       ]
     },
     "bufferedWriteSequence": {
-      "description": "An ORDERED buffer of two or more write instructions a single unit of work accumulates before a coalescing flush (m-unit-work same-transaction coalescing). The instructions are buffered IN ORDER — canonically a keyed INSERT of a new object, then the keyed UPDATE / DELETE of that SAME object — and the flush emits the COALESCED result: one final-value write (insert-then-update writes the final value in place; no intermediate milestone) or NO DML at all (insert-then-delete cancels). The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of that coalesced flush, so a scenario encodes BOTH requested mutations here explicitly rather than in a prose note. Each entry is a keyed (`keyedWrite`) or predicate (`predicateWrite`) instruction.",
+      "description": "The ORDERED coalescing PAIR a single unit of work buffers before a same-transaction coalescing flush (m-unit-work same-transaction coalescing) — EXACTLY two KEYED write instructions, NOT a general N-instruction ordered buffer (the general string-label→structured migration is a deferred, separate contract). Entry 0 is a keyed INSERT of a new object; entry 1 is the keyed UPDATE or DELETE of that SAME object (both entries name the same entity and the same primary-key identity — the cross-entry equalities JSON Schema cannot express, enforced by the harness validator). The flush emits the COALESCED result: one final-value write (insert-then-update writes the final value in place; no intermediate milestone) or NO DML at all (insert-then-delete cancels). The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of that coalesced flush, so a scenario encodes BOTH requested mutations here explicitly rather than in a prose note. Only these three witnesses use the form (`m-audit-write-008`, `m-bitemp-write-014`, `m-unit-work-010`); predicate-selected instructions are deliberately EXCLUDED (a predicate-selected buffer is the speculative generality).",
       "type": "array",
       "minItems": 2,
-      "items": {
-        "oneOf": [
-          { "$ref": "#/$defs/keyedWrite" },
-          { "$ref": "#/$defs/predicateWrite" }
-        ]
-      }
+      "prefixItems": [
+        {
+          "description": "Entry 0: a keyed INSERT of the new object the pair coalesces.",
+          "allOf": [
+            { "$ref": "#/$defs/keyedWrite" },
+            { "required": ["mutation"], "properties": { "mutation": { "const": "insert" } } }
+          ]
+        },
+        {
+          "description": "Entry 1: the keyed UPDATE or DELETE of that same new object.",
+          "allOf": [
+            { "$ref": "#/$defs/keyedWrite" },
+            { "required": ["mutation"], "properties": { "mutation": { "enum": ["update", "delete"] } } }
+          ]
+        }
+      ],
+      "items": false
     },
     "statementEntry": {
       "description": "One logical statement in the execution sequence: a closed `{sql, binds}` object. `sql` is a plain string at naive locations (`given.apply`) or a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`); `binds` is authored once per statement (dialect-agnostic) and defaults to `[]`. The `{sql, binds}` wrapper keeps dialect keys and entry-level keys in separate namespaces, so the schema needs no reserved-key carve-outs. Golden and naive locations narrow `sql` to the map / string form respectively via `goldenStatements` / `naiveStatements`.",
