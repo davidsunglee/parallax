@@ -286,22 +286,47 @@ view carries none). A `narrow` escaping the relationship target's effective set 
 
 #### Read result form (row-form vs instance-form)
 
-A read case's **result form** is declared by **which result member it asserts**, and
-that choice fixes the read's projection (`m-sql`, *Read projection*, slot 4):
+**Every** read a case asserts carries a **result form** — the **object lane**
+(**instance-form**) or the **values lane** (**row-form**) of `m-sql`'s *Read result form*
+— and that form fixes the read's projection (`m-sql`, *Read projection*, slot 4:
+instance-form projects every declared value-object document column; row-form omits them).
+The form follows the read's **nature**, and a case expresses that nature in one of two
+ways, keyed on **where** the read is asserted — never on a bare member name alone:
 
-- **`then.rows`** — the **row-form** / **values lane**: a flat value observation of
-  the scalar columns only. It omits every value-object document column.
-- **`then.graph`** / **`then.graphs`** — the **instance-form** / **object lane**: the
-  result materializes into instances (a snapshot graph, per-milestone graphs, or a
-  deep-fetch tree), so the projection additionally carries every declared value-object
-  document column (`m-value-object`).
+- **A top-level read case** expresses the form through **which result member it asserts**
+  (the member names the nature):
+  - **`then.rows`** — the **row-form** / **values lane**: a flat value observation of the
+    scalar columns only. It omits every value-object document column.
+  - **`then.graph`** / **`then.graphs`** — the **instance-form** / **object lane**: the
+    result materializes into instances (a snapshot graph, per-milestone graphs, or a
+    deep-fetch tree), so the projection additionally carries every declared value-object
+    document column (`m-value-object`).
+- **A scenario / coherence / concurrency step** asserts its read with a step-level
+  **`expectRows`** / **`observeRows`** — a uniform observation channel that does *not*
+  name the form — so the form follows the **step's read semantics** (`m-sql`: "any find
+  whose rows become objects"):
+  - A **managed-object find or refresh step** — a developer-facing find whose rows become
+    managed instances: an identity-map coordinate / refresh read, a coherence re-fetch, or
+    a scenario observation find — is **instance-form** (object lane), exactly like a
+    `then.graph` read. A value-object-bearing target therefore projects its whole document
+    (slot 4) at that step even though the channel is `expectRows`.
+  - The **internal materialized-predicate-write resolving read** — the "materializing
+    find" a set-based versioned / temporal predicate write consumes to plan its per-row
+    DML, resolving each matched row to its pk and gate values with **no instance
+    constructed** (`m-sql`, ADR 0014) — is **row-form** (values lane); it omits slot 4 (a
+    reassigned value-object document comes from the write instruction, not the read).
 
 Row-form is **not a developer surface** — the idiomatic find API is instance-form
 (results always materialize). Row-form is the internal / conformance consumption lane
 (predicate `read` cases, the materialized predicate-write read, and future aggregation
-results — `m-agg`). The result member is **structural intent** an adapter's `compile`
-MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and no case
-edit.
+results — `m-agg`; a `distinct` / grouped concurrency-witness read is likewise a
+projection over the values lane, `m-sql`). The form is **structural intent** an adapter's
+`compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
+no case edit. No value-object-bearing model is read at a scenario / coherence /
+concurrency step today (`balance`, `position`, `account`, and every other entity read at
+a step, declare no value object), so instance-form and row-form project the same columns
+at these locations: the classification changes no existing golden and fixes the answer for
+the first value-object-bearing step read.
 
 #### Milestone-set graphs (`then.graphs`)
 

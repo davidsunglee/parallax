@@ -186,9 +186,12 @@ A read is consumed in one of two lanes, and the projection differs **only in slo
 
 Row-form is **not a developer surface**: the idiomatic find API always materializes,
 so the developer path is instance-form; row-form is the internal / conformance
-consumption lane. `m-case-format` fixes the selector — a read case's result form is
-declared by **which result member it asserts** (`then.rows` = row-form;
-`then.graph` / `then.graphs` = instance-form).
+consumption lane. `m-case-format` fixes the selector — a **top-level** read case's result
+form is declared by **which result member it asserts** (`then.rows` = row-form;
+`then.graph` / `then.graphs` = instance-form), and a scenario / coherence / concurrency
+**step** read (asserted with `expectRows` / `observeRows`) is fixed by the step's read
+semantics (a managed-object find or refresh is instance-form; the internal
+materialized-predicate-write resolving read is row-form).
 
 Everything already specified composes with this rule unchanged: the **versioned-read
 projection** (below) is the slot-1 corollary for the framework-owned `version` column;

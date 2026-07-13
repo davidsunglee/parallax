@@ -91,6 +91,13 @@ def validate_predicate_write_materialization(
     returns without a read.  Structural shape and descriptor validity are owned
     by :func:`validate_predicate_write`; this function only links an already
     validated scenario write to its earlier read result.
+
+    That resolving "materializing find" is the internal materialized-predicate-write
+    read — the values-lane / ROW-FORM read of m-case-format's *Read result form* (m-sql
+    *Read projection*): it observes each matched row's pk and gate/current-scalar values
+    to plan per-row DML without constructing an instance, so it omits slot 4's value-object
+    document columns (a reassigned document comes from the write instruction, not the read).
+    A managed-object find/refresh step is instead instance-form (the object lane).
     """
     if not _requires_materialization(entity):
         return

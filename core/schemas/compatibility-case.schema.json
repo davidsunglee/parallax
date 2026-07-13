@@ -470,7 +470,7 @@
                 "$ref": "#/$defs/goldenStatements"
               },
               "expectRows": {
-                "description": "The rows this step's find must return against the fixture data. A cache-hit step that reuses an earlier step's result MAY restate the same expected rows.",
+                "description": "The rows this step's find must return against the fixture data. A cache-hit step that reuses an earlier step's result MAY restate the same expected rows. `expectRows` is the observation channel for BOTH read lanes (m-case-format *Read result form*, m-sql *Read projection*, slot 4): the form is fixed by the step's read semantics, not by this member — a managed-object find / refresh step is INSTANCE-FORM (the object lane, projecting every value-object document column), while the internal materialized-predicate-write resolving find is ROW-FORM (the values lane, no instance constructed, omitting the document columns). Both project the same columns for a value-object-free target, so the lane adds no bind and changes no projection.",
                 "type": "array",
                 "items": { "type": "object" }
               },
@@ -574,7 +574,7 @@
                 "$ref": "#/$defs/goldenStatements"
               },
               "observeRows": {
-                "description": "The rows this step MUST observe. On the final node-B re-fetch this is the POST-WRITE state (proving the cache converged on node A's committed write); on a seed read it is the pre-write state.",
+                "description": "The rows this step MUST observe. On the final node-B re-fetch this is the POST-WRITE state (proving the cache converged on node A's committed write); on a seed read it is the pre-write state. A coherence re-fetch materializes / refreshes a managed object, so `observeRows` carries an INSTANCE-FORM read (the object lane; m-case-format *Read result form*, m-sql *Read projection*, slot 4) — a value-object-bearing target would project its document columns here, though every coherence-read entity is value-object-free today.",
                 "type": "array",
                 "items": { "type": "object" }
               },
@@ -1059,7 +1059,7 @@
           "enum": ["read", "write"]
         },
         "expectRows": {
-          "description": "concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error.",
+          "description": "concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error. Its result form follows the read's nature (m-case-format *Read result form*, m-sql *Read projection*): a full-scalar shared read observes the object, a `distinct` / grouped witness is a projection over the values lane — immaterial here, since every concurrency-success case reads the value-object-free `account`.",
           "type": "array",
           "items": { "type": "object" }
         }

@@ -140,6 +140,27 @@ def _from_db_value(value: Any, *, is_boolean: bool = False) -> Any:
     return value
 
 
+def _decode_rows(
+    description: Sequence[Any],
+    rows: Sequence[Sequence[Any]],
+) -> list[dict[str, Any]]:
+    """Decode a MariaDB cursor's fetched rows to the suite's canonical dicts.
+
+    Reads each result column's ``tinyint(1)`` (``boolean``) flag from the cursor
+    ``description`` once, then adapts every value through :func:`_from_db_value`.
+    Shared verbatim by :meth:`MariaDbProvider.query` and :meth:`_MariaTxSession.query`
+    so a future canonicalization change updates one decoding path.
+    """
+    columns = [(desc[0], _is_boolean_field(desc[1], desc[3])) for desc in description]
+    return [
+        {
+            name: _from_db_value(value, is_boolean=is_boolean)
+            for (name, is_boolean), value in zip(columns, row, strict=True)
+        }
+        for row in rows
+    ]
+
+
 class MariaDbProvider:
     """A clean, migrated, isolated MariaDB database for one suite run."""
 
@@ -202,14 +223,7 @@ class MariaDbProvider:
                 )
             else:
                 cur.execute(_to_pymysql(sql))
-            columns = [(desc[0], _is_boolean_field(desc[1], desc[3])) for desc in cur.description]
-            return [
-                {
-                    name: _from_db_value(value, is_boolean=is_boolean)
-                    for (name, is_boolean), value in zip(columns, row, strict=True)
-                }
-                for row in cur.fetchall()
-            ]
+            return _decode_rows(cur.description, cur.fetchall())
 
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
         with self._conn.cursor() as cur:
@@ -330,14 +344,7 @@ class _MariaTxSession:
                 )
             else:
                 cur.execute(_to_pymysql(sql))
-            columns = [(desc[0], _is_boolean_field(desc[1], desc[3])) for desc in cur.description]
-            return [
-                {
-                    name: _from_db_value(value, is_boolean=is_boolean)
-                    for (name, is_boolean), value in zip(columns, row, strict=True)
-                }
-                for row in cur.fetchall()
-            ]
+            return _decode_rows(cur.description, cur.fetchall())
 
     def commit(self) -> None:
         self._conn.commit()

@@ -571,7 +571,7 @@ export type ConcurrencyStep = {
    */
   kind?: "read" | "write";
   /**
-   * concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error.
+   * concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error. Its result form follows the read's nature (m-case-format *Read result form*, m-sql *Read projection*): a full-scalar shared read observes the object, a `distinct` / grouped witness is a projection over the values lane — immaterial here, since every concurrency-success case reads the value-object-free `account`.
    */
   expectRows?: {}[];
 } & {
@@ -581,7 +581,7 @@ export type ConcurrencyStep = {
    */
   kind?: "read" | "write";
   /**
-   * concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error.
+   * concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error. Its result form follows the read's nature (m-case-format *Read result form*, m-sql *Read projection*): a full-scalar shared read observes the object, a `distinct` / grouped witness is a projection over the values lane — immaterial here, since every concurrency-success case reads the value-object-free `account`.
    */
   expectRows?: {}[];
 };
