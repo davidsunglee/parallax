@@ -4,9 +4,11 @@
 # single-table read of the `invoice` table with NO union and NO tag predicate — the
 # subtype is selected by WHICH table is queried (contrast table-per-hierarchy, which
 # shares one table and injects a tag). The projection carries the full inherited
-# chain — id + title (from the abstract root Document) and currency (from the
-# abstract subtype FinancialDocument) — plus the subtype's own amount_due, derived
-# from the ancestry chain; the concrete table physically holds them all. There is
+# chain — id + title + folder_id (from the abstract root Document) and currency (from
+# the abstract subtype FinancialDocument) — plus the subtype's own amount_due, derived
+# from the ancestry chain; the concrete table physically holds them all. `folder_id`
+# sits where the root declares it (right after title, before currency), exactly as the
+# sibling abstract-target superset reads project it (m-inheritance-050/-051). There is
 # NO familyVariant: the caller queried a known concrete variant.
 #
 # Trivial single-table read => referenceSql supplied as the independent oracle.
@@ -20,9 +22,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.title, t0.currency, t0.amount_due from invoice t0
-  referenceSql: select id, title, currency, amount_due from invoice
+        postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0
+  referenceSql: select id, title, folder_id, currency, amount_due from invoice
   rows:
-    - { id: 1, title: Invoice-A, currency: USD, amount_due: 120.00 }
-    - { id: 2, title: Invoice-B, currency: EUR, amount_due: 80.00 }
+    - { id: 1, title: Invoice-A, folder_id: 100, currency: USD, amount_due: 120.00 }
+    - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: 80.00 }
   roundTrips: 1

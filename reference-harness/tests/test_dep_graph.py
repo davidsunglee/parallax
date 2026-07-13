@@ -654,10 +654,19 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # deduplicates nothing; its one prod-shaped semantic (read-lock suppression) is already
         # witnessed by m-read-lock-003/-008. The deleted case was tagged slice-mvp-1 +
         # slice-snapshot-1 + slice-managed-1, so every slice count falls by 1:
-        # 196 -> 195, 296 -> 295, 317 -> 316. Final counts: 195 / 295 / 316.
-        ("slice-mvp-1", 195),
-        ("slice-snapshot-1", 295),
-        ("slice-managed-1", 316),
+        # 196 -> 195, 296 -> 295, 317 -> 316. Counts at that stage: 195 / 295 / 316.
+        #
+        # COR-3 Phase 5b (inheritance + value-object facet re-golden) also deletes
+        # m-value-object-003-project-nested-field: it projected an aliased inner
+        # value-object field (`jsonb_extract_path_text(t0.address, ?) city`) as an output
+        # column from `all {}`, which no operation-algebra node can request — payload
+        # reshaping, not the pruning of a declared branch, so the base read-projection rule
+        # (m-sql) leaves it underivable and it is removed. The deleted case was tagged
+        # slice-mvp-1 + slice-snapshot-1 + slice-managed-1, so every slice count falls by 1
+        # again: 195 -> 194, 295 -> 294, 316 -> 315. Final counts: 194 / 294 / 315.
+        ("slice-mvp-1", 194),
+        ("slice-snapshot-1", 294),
+        ("slice-managed-1", 315),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

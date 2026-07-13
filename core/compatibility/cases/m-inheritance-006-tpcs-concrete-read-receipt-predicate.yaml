@@ -2,10 +2,12 @@
 #
 # Read the Receipt concrete subtype's own table for paidAmount >= 120. No union and
 # no tag are injected (the subtype is selected by its table); the user predicate is
-# the only WHERE clause. The projection carries the full inherited chain — title
-# (from the abstract root Document) and currency (from the abstract subtype
-# FinancialDocument) — alongside the subtype's own paid_amount. The single authored
-# receipt (paidAmount 120.00) qualifies.
+# the only WHERE clause. The projection carries the full inherited chain — title +
+# folder_id (from the abstract root Document) and currency (from the abstract subtype
+# FinancialDocument) — alongside the subtype's own paid_amount. `folder_id` sits where
+# the root declares it (right after title, before currency), matching the sibling
+# abstract-target superset reads (m-inheritance-050/-051). The single authored receipt
+# (paidAmount 120.00) qualifies.
 model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -16,9 +18,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.title, t0.currency, t0.paid_amount from receipt t0 where t0.paid_amount >= ?
+        postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.paid_amount from receipt t0 where t0.paid_amount >= ?
       binds: [120.00]
-  referenceSql: select id, title, currency, paid_amount from receipt where paid_amount >= 120.00
+  referenceSql: select id, title, folder_id, currency, paid_amount from receipt where paid_amount >= 120.00
   rows:
-    - { id: 1, title: Receipt-A, currency: USD, paid_amount: 120.00 }
+    - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, paid_amount: 120.00 }
   roundTrips: 1
