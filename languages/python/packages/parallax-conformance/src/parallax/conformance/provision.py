@@ -13,32 +13,24 @@ provider / conformance lanes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import yaml
 
 from parallax.conformance import case_format
-from parallax.core.descriptor import Entity, Metamodel
+from parallax.core.db_port import DbPort, JsonDocument
+from parallax.core.descriptor import Entity, Metamodel, column_order
 from parallax.core.dialect import POSTGRES, Dialect
 
 __all__ = [
-    "JsonDocument",
     "Provisioner",
     "fixture_statements",
     "load_fixtures",
     "reset_statements",
     "schema_statements",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class JsonDocument:
-    """A value-object document bind, wrapped so the adapter binds it as ``jsonb``."""
-
-    value: object
 
 
 def reset_statements() -> list[str]:
@@ -82,26 +74,41 @@ def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]
 def fixture_statements(
     meta: Metamodel, fixtures: Mapping[str, object], dialect: Dialect = POSTGRES
 ) -> list[tuple[str, list[object]]]:
-    """``insert`` statements for the model's fixtures, in descriptor column order."""
+    """``insert`` statements for the model's fixtures, in descriptor column order.
+
+    Columns and binds follow the descriptor ``column_order`` derivation (the same
+    canonical physical order DDL and row-write lowering use), never the fixture
+    mapping's key order — so re-spelling a fixture row with permuted keys emits
+    byte-identical SQL (python.md §6 ``loadFixtures``). A physical column with no
+    member in the row (an omitted nullable, or the inheritance tag column) is
+    skipped, so only authored members bind.
+    """
     statements: list[tuple[str, list[object]]] = []
     for entity, table in _tables(meta):
         rows = fixtures.get(entity.name)
         if not isinstance(rows, list):
             continue
-        attr_columns = {attr.name: attr.column for attr in entity.attributes}
-        vo_columns = {vo.name: vo.column for vo in entity.value_objects}
+        # column -> (member name, is-value-object) for the row-order resolution.
+        member_by_column: dict[str, tuple[str, bool]] = {
+            attr.column: (attr.name, False) for attr in entity.attributes
+        }
+        member_by_column.update((vo.column, (vo.name, True)) for vo in entity.value_objects)
         for row in cast("list[object]", rows):
             if not isinstance(row, Mapping):
                 continue
+            member_row = cast("Mapping[str, object]", row)
             columns: list[str] = []
             binds: list[object] = []
-            for key, value in cast("Mapping[str, object]", row).items():
-                if key in attr_columns:
-                    columns.append(dialect.quote(attr_columns[key]))
-                    binds.append(value)
-                elif key in vo_columns:
-                    columns.append(dialect.quote(vo_columns[key]))
-                    binds.append(JsonDocument(value))
+            for column in column_order(entity):
+                member = member_by_column.get(column)
+                if member is None:  # pragma: no cover - inheritance provisioning is COR-3 Phase 6+
+                    continue  # a table-per-hierarchy tag column has no fixture member
+                name, is_value_object = member
+                if name not in member_row:
+                    continue  # fixture omits this (nullable) column
+                columns.append(dialect.quote(column))
+                value = member_row[name]
+                binds.append(JsonDocument(value) if is_value_object else value)
             placeholders = ", ".join("?" for _ in columns)
             column_list = ", ".join(columns)
             sql = f"insert into {dialect.quote(table)} ({column_list}) values ({placeholders})"
@@ -139,25 +146,24 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self._adapter = PostgresAdapter.connect(conninfo, autocommit=True)
 
     @property
-    def port(self) -> Any:
+    def port(self) -> DbPort:
         """The concrete ``m-db-port`` over the container."""
         return self._adapter
 
     def reset(self, meta: Metamodel, fixtures: Mapping[str, object]) -> None:
-        """Reset the schema, apply the descriptor DDL, and load the fixtures."""
+        """Reset the schema, apply the descriptor DDL, and load the fixtures.
+
+        Fixture binds carry the neutral :class:`JsonDocument` carrier for value
+        objects; the adapter recognizes it at its boundary and binds the driver's
+        native structured-document type, so no psycopg bind mechanics leak here.
+        """
         for statement in reset_statements():
             self._adapter.execute_write(statement, [])
         for statement in schema_statements(meta):
             self._adapter.execute_write(statement, [])
         for sql, binds in fixture_statements(meta, fixtures):
-            self._adapter.execute_write(POSTGRES.to_driver_sql(sql), _driver_binds(binds))
+            self._adapter.execute_write(POSTGRES.to_driver_sql(sql), binds)
 
     def close(self) -> None:
         self._adapter.close()
         self._container.stop()
-
-
-def _driver_binds(binds: Sequence[object]) -> list[object]:  # pragma: no cover - Docker lane
-    from parallax.postgres import Jsonb
-
-    return [Jsonb(bind.value) if isinstance(bind, JsonDocument) else bind for bind in binds]

@@ -14,14 +14,30 @@ rows come back as managed values, never raw driver representations.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-__all__ = ["Bind", "DbPort", "Row"]
+__all__ = ["Bind", "DbPort", "JsonDocument", "Row"]
 
 # A neutral bind value (m-core scalars) or the language's managed carriers.
 Bind = object
 # A managed result row: attribute/column name -> managed value.
 Row = dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class JsonDocument:
+    """A neutral managed carrier for a ``json`` (value-object document) bind.
+
+    Above-seam code (fixture provisioning, the write path) wraps a
+    structured-document value in this carrier rather than a driver-specific bind
+    type; the concrete adapter recognizes it at its boundary and hands the driver
+    its native structured-document bind (psycopg ``Jsonb``, …). Keeping the carrier
+    neutral is what lets a concrete adapter own its driver's bind mechanics without
+    leaking them into the developer surface (m-db-port: managed carriers only).
+    """
+
+    value: object
 
 
 @runtime_checkable

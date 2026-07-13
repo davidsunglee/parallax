@@ -12,6 +12,9 @@ the case; the run-only minority is never compiled.
 
 from __future__ import annotations
 
+import datetime as dt
+import decimal
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -31,6 +34,8 @@ __all__ = [
     "eligibility",
     "load_case_metamodel",
     "run_read_case",
+    "wire_row",
+    "wire_value",
 ]
 
 
@@ -118,13 +123,46 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
 def run_read_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], list[Row], int]:
-    """Execute a read case through ``port`` and record its emissions and observed rows."""
+    """Execute a read case through ``port`` and record its emissions and observed rows.
+
+    The adapter returns **managed** Python values (``Decimal``, ``datetime``,
+    ``UUID``, ``bytes``, …); the conformance harness grades in **wire space**, so
+    each observed row is rendered to canonical wire form here — the grader-side
+    serialization the ``m-db-port`` boundary fixes, keeping the adapter free of any
+    wire/grading logic and the observation envelope JSON-serializable.
+    """
     _target, statement = _compile_statement(case, dialect_name)
     dialect = dialect_for(dialect_name)
-    rows = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
+    managed = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
     emission = Emission("/operation", statement.sql, statement.binds)
-    return [emission], rows, 1
+    return [emission], [wire_row(row) for row in managed], 1
 
 
 def _driver_binds(binds: Sequence[object]) -> list[object]:
     return list(binds)
+
+
+def wire_value(value: object) -> object:
+    """Render one managed scalar to its canonical wire form (m-db-port / m-core).
+
+    JSON-native scalars pass through; a ``Decimal`` renders as its exact decimal
+    string, a ``date`` / ``time`` / ``datetime`` as ISO-8601, a ``UUID`` as its
+    canonical string, and a byte buffer as lowercase hex. Anything already wire
+    (or an unrecognized carrier) is returned unchanged.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, decimal.Decimal):
+        return str(value)
+    if isinstance(value, (dt.datetime, dt.date, dt.time)):
+        return value.isoformat()
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return value.hex()
+    return value
+
+
+def wire_row(row: Row) -> Row:
+    """Render every managed value of one observed row to canonical wire form."""
+    return {key: wire_value(value) for key, value in row.items()}

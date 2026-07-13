@@ -13,7 +13,7 @@ resolution) is applied by ``m-sql`` at lowering time, which holds the metamodel.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import Literal, cast
 
 from parallax.core.op_algebra.nodes import (
     All,
@@ -74,6 +74,74 @@ class OperationError(ValueError):
 
 
 # --------------------------------------------------------------------------- #
+# Closed-shape table (derived from operation.schema.json).                     #
+#                                                                              #
+# Each node body is a CLOSED object (`additionalProperties: false`) with a     #
+# fixed `required` set; the schema fixes both. `deserialize` validates the     #
+# body against this table BEFORE constructing a node, so an unexpected key, a  #
+# missing required key, or a mistyped field is rejected loudly rather than     #
+# silently dropped / defaulted (m-op-algebra: serde MUST validate and          #
+# round-trip every node unchanged). Bodies with recursive members (`operand`,  #
+# `operands`, `keys`, `paths`, `to`, `where`) get their element-level closed   #
+# checks in the helpers below.                                                 #
+# --------------------------------------------------------------------------- #
+_Shape = tuple[frozenset[str], frozenset[str]]  # (required, optional)
+
+
+def _shape(required: tuple[str, ...], optional: tuple[str, ...] = ()) -> _Shape:
+    return frozenset(required), frozenset(optional)
+
+
+_SHAPES: dict[str, _Shape] = {
+    "all": _shape(()),
+    "none": _shape(()),
+    "between": _shape(("attr", "lower", "upper")),
+    "and": _shape(("operands",)),
+    "or": _shape(("operands",)),
+    "not": _shape(("operand",)),
+    "group": _shape(("operand",)),
+    "distinct": _shape(("operand",)),
+    "orderBy": _shape(("operand", "keys")),
+    "limit": _shape(("operand", "count")),
+    "narrow": _shape(("entity", "to", "operand")),
+    "nestedIn": _shape(("path", "values")),
+    "nestedExists": _shape(("path",), ("where",)),
+    "nestedNotExists": _shape(("path",), ("where",)),
+    "navigate": _shape(("rel",), ("op",)),
+    "exists": _shape(("rel",), ("op",)),
+    "notExists": _shape(("rel",), ("op",)),
+    "deepFetch": _shape(("operand", "paths")),
+    "asOf": _shape(("operand", "asOfAttr", "date")),
+    "asOfRange": _shape(("operand", "asOfAttr", "from", "to")),
+    "history": _shape(("operand", "asOfAttr")),
+}
+_SHAPES.update({tag: _shape(("attr", "value")) for tag in _COMPARISONS})
+_SHAPES.update({tag: _shape(("attr",)) for tag in _NULLS})
+_SHAPES.update({tag: _shape(("attr", "value"), ("caseInsensitive",)) for tag in _STRINGS})
+_SHAPES.update({tag: _shape(("attr", "values")) for tag in _MEMBERSHIPS})
+_SHAPES.update({tag: _shape(("path", "value")) for tag in _NESTED_CMP})
+_SHAPES.update({tag: _shape(("path",)) for tag in _NESTED_NULL})
+
+
+def _check_shape(tag: str, shape: _Shape, body: Mapping[str, object]) -> None:
+    """Reject a body carrying unexpected keys or missing a required key."""
+    required, optional = shape
+    extra = sorted(set(body) - required - optional)
+    if extra:
+        raise OperationError(f"{tag}: unexpected key(s) {extra}")
+    missing = sorted(required - body.keys())
+    if missing:
+        raise OperationError(f"{tag}: missing required key(s) {missing}")
+
+
+def _closed(node: Mapping[str, object], allowed: frozenset[str], where: str) -> None:
+    """Reject a nested sub-object (order key / path segment / narrow) with extra keys."""
+    extra = sorted(set(node) - allowed)
+    if extra:
+        raise OperationError(f"{where}: unexpected key(s) {extra}")
+
+
+# --------------------------------------------------------------------------- #
 # Deserialize.                                                                 #
 # --------------------------------------------------------------------------- #
 def _single_key(doc: object) -> tuple[str, Mapping[str, object]]:
@@ -109,9 +177,9 @@ def _values(body: Mapping[str, object], tag: str) -> tuple[Scalar, ...]:
     return tuple(_scalar(item, tag) for item in cast("list[object]", raw))
 
 
-def _operand(body: Mapping[str, object], tag: str) -> Operation:
-    if "operand" not in body:
-        raise OperationError(f"{tag}: missing `operand`")
+def _operand(body: Mapping[str, object]) -> Operation:
+    # `operand` presence is guaranteed by the closed-shape check (every
+    # operand-bearing tag lists it as required), so this only recurses.
     return deserialize(body["operand"])
 
 
@@ -134,9 +202,17 @@ def _order_keys(body: Mapping[str, object]) -> tuple[OrderKey, ...]:
         if not isinstance(item, Mapping):
             raise OperationError("orderBy: each key must be a mapping")
         key = cast("Mapping[str, object]", item)
-        direction = key.get("direction", "asc")
-        if direction not in ("asc", "desc"):
-            raise OperationError("orderBy: `direction` must be 'asc' or 'desc'")
+        _closed(key, frozenset({"attr", "direction"}), "orderBy key")
+        if "attr" not in key:
+            raise OperationError("orderBy: key missing required key `attr`")
+        # `direction` is optional (schema default `asc`); a key that omits it
+        # deserializes to `None` so serialization can omit it back (round-trip).
+        direction: Literal["asc", "desc"] | None = None
+        if "direction" in key:
+            raw_direction = key["direction"]
+            if raw_direction not in ("asc", "desc"):
+                raise OperationError("orderBy: `direction` must be 'asc' or 'desc'")
+            direction = raw_direction
         keys.append(OrderKey(attr=_str(key, "attr", "orderBy"), direction=direction))
     return tuple(keys)
 
@@ -145,7 +221,11 @@ def _to_list(body: Mapping[str, object], tag: str) -> tuple[str, ...]:
     raw = body.get("to")
     if not isinstance(raw, list) or not raw:
         raise OperationError(f"{tag}: `to` must be a non-empty list")
-    return tuple(str(item) for item in cast("list[object]", raw))
+    items = cast("list[object]", raw)
+    for item in items:
+        if not isinstance(item, str):
+            raise OperationError(f"{tag}: `to` entries must be strings")
+    return tuple(cast("list[str]", items))
 
 
 def _paths(body: Mapping[str, object]) -> tuple[tuple[PathSegment, ...], ...]:
@@ -161,10 +241,15 @@ def _paths(body: Mapping[str, object]) -> tuple[tuple[PathSegment, ...], ...]:
             if not isinstance(seg, Mapping):
                 raise OperationError("deepFetch: each path segment must be a mapping")
             segment = cast("Mapping[str, object]", seg)
-            narrow_raw = segment.get("narrow")
+            _closed(segment, frozenset({"rel", "narrow"}), "deepFetch path segment")
             narrow: tuple[str, ...] = ()
-            if isinstance(narrow_raw, Mapping):
-                narrow = _to_list(cast("Mapping[str, object]", narrow_raw), "deepFetch.narrow")
+            if "narrow" in segment:
+                narrow_raw = segment["narrow"]
+                if not isinstance(narrow_raw, Mapping):
+                    raise OperationError("deepFetch: path segment `narrow` must be a mapping")
+                narrow_body = cast("Mapping[str, object]", narrow_raw)
+                _closed(narrow_body, frozenset({"to"}), "deepFetch path narrow")
+                narrow = _to_list(narrow_body, "deepFetch.narrow")
             segments.append(PathSegment(rel=_str(segment, "rel", "deepFetch"), narrow=narrow))
         paths.append(tuple(segments))
     return tuple(paths)
@@ -179,6 +264,9 @@ def _nested_where(body: Mapping[str, object]) -> Operation | None:
 def deserialize(doc: object) -> Operation:
     """Parse a canonical operation document into a frozen node tree."""
     tag, body = _single_key(doc)
+    shape = _SHAPES.get(tag)
+    if shape is not None:
+        _check_shape(tag, shape, body)
     if tag == "all":
         return All()
     if tag == "none":
@@ -216,21 +304,21 @@ def deserialize(doc: object) -> Operation:
     if tag == "or":
         return Or(operands=_operands(body, tag))
     if tag == "not":
-        return Not(operand=_operand(body, tag))
+        return Not(operand=_operand(body))
     if tag == "group":
-        return Group(operand=_operand(body, tag))
+        return Group(operand=_operand(body))
     if tag == "orderBy":
-        return OrderBy(operand=_operand(body, tag), keys=_order_keys(body))
+        return OrderBy(operand=_operand(body), keys=_order_keys(body))
     if tag == "limit":
         count = body.get("count")
         if not isinstance(count, int) or isinstance(count, bool) or count < 1:
             raise OperationError("limit: `count` must be a positive integer")
-        return Limit(operand=_operand(body, tag), count=count)
+        return Limit(operand=_operand(body), count=count)
     if tag == "distinct":
-        return Distinct(operand=_operand(body, tag))
+        return Distinct(operand=_operand(body))
     if tag == "narrow":
         return Narrow(
-            entity=_str(body, "entity", tag), to=_to_list(body, tag), operand=_operand(body, tag)
+            entity=_str(body, "entity", tag), to=_to_list(body, tag), operand=_operand(body)
         )
     if tag in _NESTED_CMP:
         return NestedComparison(
@@ -253,22 +341,22 @@ def deserialize(doc: object) -> Operation:
     if tag == "notExists":
         return NotExists(rel=_str(body, "rel", tag), op=_nav_op(body))
     if tag == "deepFetch":
-        return DeepFetch(operand=_operand(body, tag), paths=_paths(body))
+        return DeepFetch(operand=_operand(body), paths=_paths(body))
     if tag == "asOf":
         return AsOf(
-            operand=_operand(body, tag),
+            operand=_operand(body),
             as_of_attr=_str(body, "asOfAttr", tag),
             date=_str(body, "date", tag),
         )
     if tag == "asOfRange":
         return AsOfRange(
-            operand=_operand(body, tag),
+            operand=_operand(body),
             as_of_attr=_str(body, "asOfAttr", tag),
             from_=_str(body, "from", tag),
             to=_str(body, "to", tag),
         )
     if tag == "history":
-        return History(operand=_operand(body, tag), as_of_attr=_str(body, "asOfAttr", tag))
+        return History(operand=_operand(body), as_of_attr=_str(body, "asOfAttr", tag))
     raise OperationError(f"unknown operation node {tag!r}")
 
 
@@ -366,10 +454,14 @@ def serialize(op: Operation) -> dict[str, object]:
 
 
 def _order_key(key: OrderKey) -> dict[str, object]:
-    # The corpus authors `direction` explicitly on every operation orderBy key
-    # (both `asc` and `desc`), so serialization emits it verbatim to satisfy the
-    # `serialize(deserialize(op)) == op` round-trip contract.
-    return {"attr": key.attr, "direction": key.direction}
+    # `direction` is optional in the schema (default `asc`); it is emitted only
+    # when it was authored, so a key that omitted it round-trips omitted and a
+    # key that authored it (both `asc` and `desc`) round-trips verbatim —
+    # satisfying `serialize(deserialize(op)) == op` for either authored form.
+    entry: dict[str, object] = {"attr": key.attr}
+    if key.direction is not None:
+        entry["direction"] = key.direction
+    return entry
 
 
 def _path(path: tuple[PathSegment, ...]) -> list[dict[str, object]]:

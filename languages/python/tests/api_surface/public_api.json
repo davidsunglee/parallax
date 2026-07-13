@@ -16,8 +16,6 @@
     "meta"
   ],
   "parallax.postgres": [
-    "Json",
-    "Jsonb",
     "PostgresAdapter"
   ],
   "parallax.snapshot": []

@@ -29,7 +29,9 @@ def test_top_package_public_surfaces() -> None:
     # the concrete Postgres adapter surface. The snapshot lifecycle stays a skeleton.
     assert {"Entity", "Field", "Relationship", "Attr", "Rel", "meta"} <= set(parallax.core.__all__)
     assert parallax.snapshot.__all__ == []
-    assert set(parallax.postgres.__all__) == {"Json", "Jsonb", "PostgresAdapter"}
+    # §8 topology fixes the adapter's public export as PostgresAdapter alone;
+    # psycopg bind mechanics (Jsonb) stay internal to the adapter.
+    assert set(parallax.postgres.__all__) == {"PostgresAdapter"}
     assert parallax.conformance.__all__ == []
 
 

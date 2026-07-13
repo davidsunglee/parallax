@@ -112,6 +112,30 @@ def test_directive_nested_in_predicate_is_refused() -> None:
         compile_read(op, ORDERS, POSTGRES, "Order")
 
 
+def test_stacked_duplicate_directive_is_refused() -> None:
+    # limit(limit(all, 10), 5): the outer cap of 5 must not be silently overwritten
+    # by peeling the inner cap of 10. Stacked same-kind directives have no defined
+    # composition, so lowering refuses loudly.
+    op = oa.Limit(operand=oa.Limit(operand=oa.All(), count=10), count=5)
+    with pytest.raises(SqlGenError, match=r"stacked `limit` directives"):
+        compile_read(op, ORDERS, POSTGRES, "Order")
+
+
+def test_single_of_each_directive_still_composes() -> None:
+    # One of each directive (distinct/orderBy/limit) is the canonical stack and
+    # lowers to the ordered clauses, unaffected by the duplicate-directive guard.
+    op = oa.Limit(
+        operand=oa.OrderBy(
+            operand=oa.Distinct(operand=oa.All()),
+            keys=(oa.OrderKey(attr="Order.id", direction="asc"),),
+        ),
+        count=5,
+    )
+    statement = compile_read(op, ORDERS, POSTGRES, "Order")
+    assert statement.sql.endswith("order by t0.id asc limit ?")
+    assert "select distinct" in statement.sql
+
+
 def test_nested_path_continuing_past_a_scalar_is_refused() -> None:
     with pytest.raises(SqlGenError, match="continues past scalar"):
         compile_read(

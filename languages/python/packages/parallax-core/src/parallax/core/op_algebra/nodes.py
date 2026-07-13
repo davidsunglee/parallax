@@ -153,10 +153,16 @@ class Group:
 
 @dataclass(frozen=True, slots=True)
 class OrderKey:
-    """One ordering term of an ``orderBy`` directive."""
+    """One ordering term of an ``orderBy`` directive.
+
+    ``direction`` is ``None`` when the authored key omitted it (the schema's
+    optional ``direction`` defaults to ``asc``). Serde round-trips that absence
+    faithfully — an omitted ``direction`` serializes back omitted — while SQL
+    lowering treats the absent direction as the ``asc`` default.
+    """
 
     attr: str
-    direction: Literal["asc", "desc"] = "asc"
+    direction: Literal["asc", "desc"] | None = None
 
 
 @dataclass(frozen=True, slots=True)

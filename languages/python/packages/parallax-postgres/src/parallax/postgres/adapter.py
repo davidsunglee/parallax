@@ -17,11 +17,25 @@ from collections.abc import Callable, Sequence
 
 import psycopg
 from psycopg.rows import TupleRow, dict_row
-from psycopg.types.json import Json, Jsonb
+from psycopg.types.json import Jsonb
 
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DbPort, JsonDocument, Row
 
-__all__ = ["Json", "Jsonb", "PostgresAdapter"]
+__all__ = ["PostgresAdapter"]
+
+
+def adapt_binds(binds: Sequence[object]) -> list[object]:
+    """Adapt neutral binds to psycopg's driver bind types at the adapter boundary.
+
+    Module-internal seam (not part of the ``parallax.postgres`` public export,
+    which is ``PostgresAdapter`` alone — §8).
+
+    A :class:`~parallax.core.db_port.JsonDocument` (the neutral ``json`` /
+    value-object carrier) becomes a psycopg ``Jsonb``; every other bind passes
+    through unchanged. This keeps the psycopg bind mechanics internal to the
+    adapter — no driver type is exported to the developer surface (m-db-port).
+    """
+    return [Jsonb(bind.value) if isinstance(bind, JsonDocument) else bind for bind in binds]
 
 
 class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/provider lanes
@@ -42,14 +56,14 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
 
     def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
         with self._connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute(sql.encode(), list(binds))
+            cursor.execute(sql.encode(), adapt_binds(binds))
             if cursor.description is None:
                 return []
             return [dict(row) for row in cursor.fetchall()]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         with self._connection.cursor() as cursor:
-            cursor.execute(sql.encode(), list(binds))
+            cursor.execute(sql.encode(), adapt_binds(binds))
             return cursor.rowcount
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:

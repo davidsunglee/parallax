@@ -77,12 +77,27 @@ def test_string_match_case_insensitive_default_omitted() -> None:
     assert like_body["caseInsensitive"] is True
 
 
-def test_order_key_direction_is_always_emitted() -> None:
-    # The corpus authors `direction` explicitly, so serialization emits it back.
-    doc: dict[str, Any] = {
-        "orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.id", "direction": "asc"}]}
-    }
-    assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+def test_order_key_authored_direction_round_trips() -> None:
+    # An explicitly authored `direction` (either `asc` or `desc`) serializes back
+    # verbatim (the corpus authors it explicitly on every operation orderBy key).
+    for direction in ("asc", "desc"):
+        doc: dict[str, Any] = {
+            "orderBy": {
+                "operand": {"all": {}},
+                "keys": [{"attr": "Order.id", "direction": direction}],
+            }
+        }
+        assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+
+
+def test_order_key_defaulted_direction_round_trips() -> None:
+    # The schema-defaulted form (a key OMITTING the optional `direction`) must
+    # round-trip omitted, not gain a `direction: asc` on the way back out.
+    doc: dict[str, Any] = {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.id"}]}}
+    node = op_algebra.deserialize(doc)
+    key = cast("op_algebra.OrderBy", node).keys[0]
+    assert key.direction is None
+    assert op_algebra.serialize(node) == doc
 
 
 @pytest.mark.parametrize(
@@ -100,7 +115,42 @@ def test_order_key_direction_is_always_emitted() -> None:
             ({"limit": {"operand": {"all": {}}, "count": 0}}, "positive integer"),
             ({"orderBy": {"operand": {"all": {}}, "keys": []}}, "non-empty list"),
             ({"narrow": {"entity": "Animal", "to": [], "operand": {"all": {}}}}, "non-empty list"),
-            ({"not": {}}, "missing `operand`"),
+            ({"not": {}}, "missing required key"),
+            # Closed-shape / required-property / type enforcement (m-op-algebra
+            # serde MUST validate every node in operation.schema.json unchanged).
+            ({"all": {"junk": 1}}, r"all: unexpected key\(s\) \['junk'\]"),
+            ({"eq": {"attr": "Order.id"}}, r"eq: missing required key\(s\) \['value'\]"),
+            ({"eq": {"attr": "Order.id", "value": 1, "x": 2}}, r"eq: unexpected key\(s\) \['x'\]"),
+            (
+                {"like": {"attr": "Order.name", "value": "ada", "caseInsensitive": "yes"}},
+                "`caseInsensitive` must be a boolean",
+            ),
+            (
+                {"narrow": {"entity": "Animal", "to": [1, 2], "operand": {"all": {}}}},
+                "`to` entries must be strings",
+            ),
+            (
+                {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.id", "x": 1}]}},
+                r"orderBy key: unexpected key\(s\) \['x'\]",
+            ),
+            (
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [[{"rel": "Order.items", "x": 1}]],
+                    }
+                },
+                r"deepFetch path segment: unexpected key\(s\) \['x'\]",
+            ),
+            (
+                {
+                    "deepFetch": {
+                        "operand": {"all": {}},
+                        "paths": [[{"rel": "Order.items", "narrow": {"to": ["Dog"], "x": 1}}]],
+                    }
+                },
+                r"deepFetch path narrow: unexpected key\(s\) \['x'\]",
+            ),
         ],
     ),
 )

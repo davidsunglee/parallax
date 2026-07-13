@@ -759,8 +759,10 @@ never something an application developer hand-writes.
   typed bind normalization, precision-sensitive value parsing, and native
   error-code classification predicates. Runs in `uv run pytest -m dialect`
   with no Docker and no driver I/O.
-- **Adapter smoke and provider contract suites.** The psycopg adapter smoke
-  suite covers construction from documented connection configuration, a
+- **Adapter smoke and provider contract suites.** The psycopg adapter — the
+  production `parallax-postgres` artifact declaring `psycopg[binary]`, whose
+  bundled `libpq` makes it self-contained (§8) — is proven by a smoke suite
+  covering construction from documented connection configuration, a
   managed scalar read returning adapter-boundary values (e.g. `Decimal`),
   a transaction callback that commits and returns its value, a bytes write
   round trip through the dialect bind seam, affected-row semantics for matched
@@ -920,7 +922,7 @@ hatchling.
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy, internal `op_list`) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `Pin`, `Edge`, `meta`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
-| `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
+| `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
 - **Common runtime manifest proof.** `parallax-core`'s manifest declares only
@@ -931,8 +933,15 @@ hatchling.
 - **Lifecycle extension manifest proof.** `parallax-snapshot` depends only on
   `parallax-core`; the clean-install check proves no sibling lifecycle
   artifact exists in the graph and no concrete driver is present.
-- **Adapter manifest proof.** `parallax-postgres` alone declares `psycopg`;
-  the driver-free dialect strategy ships inside `parallax-core`
+- **Adapter manifest proof.** `parallax-postgres` alone declares the driver,
+  and it declares `psycopg[binary]`: the `binary` extra bundles a self-contained
+  `libpq` in the wheel, so the adapter — and the clean-install topology proof
+  below — installs and imports with **no system `libpq`** present. The accepted
+  trade-off is the pre-built binary build over compiling `psycopg[c]`/pure
+  `psycopg` against a system `libpq` (the binary build is discouraged only for
+  large-scale production connection tuning, out of scope for this slice), so the
+  self-contained deployment the topology proof relies on is the deliberate
+  default. The driver-free dialect strategy ships inside `parallax-core`
   (explicitly permitted by core), keeping `compile` Docker- and driver-free.
 - **Composition root.** Application/test code constructs the adapter and calls
   `parallax.snapshot.connect(adapter=...)`; neither dependency leaks into

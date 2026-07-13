@@ -9,6 +9,9 @@ reading and the engine's failure modes are pinned too.
 
 from __future__ import annotations
 
+import datetime as dt
+import decimal
+import uuid
 from collections.abc import Callable, Sequence
 
 import pytest
@@ -64,6 +67,26 @@ def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
     driver_sql, driver_binds = port.executed[0]
     assert "%s" in driver_sql and "?" not in driver_sql
     assert driver_binds == ["city", "Oslo"]
+
+
+def test_run_read_case_wire_renders_managed_row_values() -> None:
+    # The port returns managed values; run_read_case records canonical wire form.
+    port = FakeDbPort([{"id": 1, "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000")}])
+    _emissions, rows, _round_trips = engine.run_read_case(
+        _case("m-value-object-001"), "postgres", port
+    )
+    assert rows == [{"id": 1, "external_id": "123e4567-e89b-12d3-a456-426614174000"}]
+
+
+def test_wire_value_covers_the_managed_type_set() -> None:
+    assert engine.wire_value(None) is None
+    assert engine.wire_value(True) is True
+    assert engine.wire_value(decimal.Decimal("12.34")) == "12.34"
+    assert engine.wire_value(dt.datetime(2024, 1, 2, 3, 4, 5)) == "2024-01-02T03:04:05"
+    assert engine.wire_value(dt.date(2024, 1, 2)) == "2024-01-02"
+    assert engine.wire_value(memoryview(b"\x01\x02")) == "0102"
+    sentinel = object()  # an unrecognized value passes through unchanged
+    assert engine.wire_value(sentinel) is sentinel
 
 
 def test_eligibility_reads_the_case_declaration() -> None:

@@ -10,9 +10,6 @@ reset database. Docker-gated; a skip is reported, never silent (spec §6).
 
 from __future__ import annotations
 
-import datetime as dt
-import decimal
-import uuid
 from typing import Any
 
 import jsonschema
@@ -38,22 +35,10 @@ _CASES = _reachable_run_cases()
 _SCHEMA = adapter_schema()
 
 
-def _wire(value: object) -> object:
-    if isinstance(value, decimal.Decimal):
-        return str(value)  # decimal space, exact
-    if value is None or isinstance(value, (bool, int, str, float)):
-        return value
-    if isinstance(value, (dt.datetime, dt.date, dt.time)):
-        return value.isoformat()
-    if isinstance(value, uuid.UUID):
-        return str(value)
-    if isinstance(value, (bytes, bytearray)):
-        return bytes(value).hex()
-    return value
-
-
 def _row_key(row: dict[str, Any]) -> tuple[tuple[str, object], ...]:
-    return tuple(sorted((k, _wire(v)) for k, v in row.items()))
+    # Observed rows arrive already wire-rendered; the authored `then.rows` are
+    # normalized through the same canonical wire form so comparison is exact.
+    return tuple(sorted((k, engine.wire_value(v)) for k, v in row.items()))
 
 
 def _compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:

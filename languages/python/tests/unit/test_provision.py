@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from parallax.conformance import models, provision
+from parallax.core.db_port import JsonDocument
 
 pytestmark = pytest.mark.unit
 
@@ -55,11 +56,33 @@ def test_fixture_statements_map_names_to_columns() -> None:
     assert binds == [1, 1, "low"]
 
 
+def test_fixture_statements_follow_descriptor_column_order_not_mapping_order() -> None:
+    # Re-spelling a fixture row with permuted keys must emit byte-identical SQL:
+    # columns and binds follow the descriptor `column_order`, never `row.items()`.
+    canonical = {"Grade": [{"id": 1, "ordinal": 1, "label": "low"}]}
+    permuted = {"Grade": [{"label": "low", "id": 1, "ordinal": 1}]}
+    assert provision.fixture_statements(
+        _MODELS["grade"], canonical
+    ) == provision.fixture_statements(_MODELS["grade"], permuted)
+    (sql, binds) = provision.fixture_statements(_MODELS["grade"], permuted)[0]
+    assert sql == 'insert into grade (id, "order", label) values (?, ?, ?)'
+    assert binds == [1, 1, "low"]
+
+
+def test_fixture_statements_skip_a_column_the_row_omits() -> None:
+    # A fixture row omitting a (nullable) member emits only the present columns,
+    # still in descriptor column order — the omitted `label` is skipped.
+    fixtures = {"Grade": [{"ordinal": 2, "id": 5}]}
+    (sql, binds) = provision.fixture_statements(_MODELS["grade"], fixtures)[0]
+    assert sql == 'insert into grade (id, "order") values (?, ?)'
+    assert binds == [5, 2]
+
+
 def test_fixture_statements_wrap_value_objects() -> None:
     fixtures = provision.load_fixtures("models/customer.yaml")
     statements = provision.fixture_statements(_MODELS["customer"], fixtures)
     _sql, binds = statements[0]
-    assert any(isinstance(bind, provision.JsonDocument) for bind in binds)
+    assert any(isinstance(bind, JsonDocument) for bind in binds)
 
 
 def test_load_fixtures_missing_model_is_empty() -> None:

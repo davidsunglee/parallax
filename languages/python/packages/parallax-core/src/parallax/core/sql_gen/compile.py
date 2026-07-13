@@ -169,7 +169,9 @@ def compile_read(op: Operation, meta: Metamodel, dialect: Dialect, target: str) 
     if where_sql:
         parts.append(f"where {where_sql}")
     if order_keys:
-        terms = [f"{ctx.column_of(key.attr)} {key.direction}" for key in order_keys]
+        # An authored key that omitted `direction` (serde `None`) lowers to the
+        # schema default `asc`.
+        terms = [f"{ctx.column_of(key.attr)} {key.direction or 'asc'}" for key in order_keys]
         parts.append("order by " + ", ".join(terms))
     if limit is not None:
         parts.append(dialect.limit_clause())
@@ -179,24 +181,44 @@ def compile_read(op: Operation, meta: Metamodel, dialect: Dialect, target: str) 
 
 
 def _peel_directives(op: Operation) -> tuple[Operation, bool, tuple[OrderKey, ...], int | None]:
-    """Strip result-shaping directives (any nesting) into canonical clause data."""
+    """Strip result-shaping directives (any nesting) into canonical clause data.
+
+    A read carries at most one of each directive. A directive kind stacked twice
+    (`limit(limit(…))`) has no defined composition in `m-op-algebra` — the spec
+    fixes only that a directive wraps one inner operation — so a repeated kind is
+    refused loudly here rather than silently overwriting the outer clause.
+    """
     distinct = False
     order_keys: tuple[OrderKey, ...] = ()
     limit: int | None = None
+    seen: set[str] = set()
     current = op
     while True:
         match current:
             case Limit(operand=operand, count=count):
+                _reject_stacked("limit", seen)
                 limit = count
                 current = operand
             case OrderBy(operand=operand, keys=keys):
+                _reject_stacked("orderBy", seen)
                 order_keys = keys
                 current = operand
             case Distinct(operand=operand):
+                _reject_stacked("distinct", seen)
                 distinct = True
                 current = operand
             case _:
                 return current, distinct, order_keys, limit
+
+
+def _reject_stacked(kind: str, seen: set[str]) -> None:
+    if kind in seen:
+        raise SqlGenError(
+            f"stacked `{kind}` directives have no defined composition semantics "
+            "(m-op-algebra directives wrap one inner operation); refusing rather than "
+            "silently overwriting the outer clause"
+        )
+    seen.add(kind)
 
 
 # --------------------------------------------------------------------------- #

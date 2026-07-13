@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import decimal
+import json
+import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -18,6 +22,7 @@ pytestmark = pytest.mark.unit
 _SCHEMA = adapter_schema()
 _READ_CASE = case_format.default_cases_dir() / "m-op-algebra-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"
+_SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-roundtrip.yaml"
 _RUN_ONLY_CASE = (
     case_format.default_cases_dir() / "m-audit-write-006-optimistic-gated-chaining-update.yaml"
 )
@@ -147,6 +152,50 @@ def test_run_case_ok_through_a_fake_port() -> None:
     assert envelope["status"] == "ok"
     assert envelope["observations"]["rows"] == [{"id": 1, "name": "Ada"}]
     assert envelope["observations"]["roundTrips"] == 1
+
+
+class _ManagedPort:
+    """A port returning the managed values psycopg decodes for the m-core-001 row."""
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        return [
+            {
+                "id": 1,
+                "f32": 1.5,
+                "amount": decimal.Decimal("12.34"),
+                "local_time": dt.time(12, 34, 56),
+                "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
+                "payload": b"\x01\x02\x03\x04",
+                "ordered_on": dt.date(2024, 1, 2),
+            }
+        ]
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+
+def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
+    # The adapter returns MANAGED values (Decimal / time / UUID / date / bytes);
+    # the conformance boundary renders them to canonical wire form so the run
+    # envelope is JSON-serializable (m-core-001 previously broke `json.dumps`).
+    envelope = adapter.run_case(_SCALAR_READ_CASE, "postgres", _ManagedPort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    (row,) = envelope["observations"]["rows"]
+    assert row == {
+        "id": 1,
+        "f32": 1.5,
+        "amount": "12.34",
+        "local_time": "12:34:56",
+        "external_id": "123e4567-e89b-12d3-a456-426614174000",
+        "payload": "01020304",
+        "ordered_on": "2024-01-02",
+    }
+    # The whole envelope now round-trips through the wire (json.dumps).
+    assert json.loads(json.dumps(envelope)) == envelope
 
 
 def test_run_case_error_on_an_engine_gap() -> None:
