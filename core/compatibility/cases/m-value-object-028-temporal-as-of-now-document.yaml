@@ -31,14 +31,16 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.sup_id, t0.name, t0.address from supplier t0 where t0.out_z = ?
-        mariadb: select t0.sup_id, t0.name, t0.address from supplier t0 where t0.out_z = ?
+        postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.out_z = ?
+        mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.out_z = ?
       binds: [infinity]
-  referenceSql: select sup_id, name from supplier where out_z > '9000-01-01'
+  referenceSql: select sup_id, name, in_z, out_z from supplier where out_z > '9000-01-01'
   graph:
     Supplier:
       - sup_id: 1
         name: Nordic Foods
+        in_z: "2024-06-01T00:00:00+00:00"
+        out_z: infinity
         address:
           street: 2 New Avenue
           city: Bergen
@@ -48,6 +50,8 @@ then:
             - { type: work, number: '555-0200' }
       - sup_id: 2
         name: Baltic Traders
+        in_z: "2024-02-01T00:00:00+00:00"
+        out_z: infinity
         address:
           street: 5 Port Road
           city: Riga

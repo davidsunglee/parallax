@@ -21,10 +21,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.bal_id, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ?
+        postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ?
       binds: [1]
-  referenceSql: select bal_id, val, in_z, out_z from balance where bal_id = 1
+  referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where bal_id = 1
   rows:
-    - { bal_id: 1, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
-    - { bal_id: 1, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+    - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+    - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
   roundTrips: 1

@@ -19,9 +19,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.res_id, t0.guest from reservation t0 where t0.thru_z = ?
+        postgres: select t0.res_id, t0.room, t0.guest, t0.from_z, t0.thru_z from reservation t0 where t0.thru_z = ?
       binds: [infinity]
-  referenceSql: select res_id, guest from reservation where thru_z = 'infinity'::timestamptz
+  referenceSql: select res_id, room, guest, from_z, thru_z from reservation where thru_z = 'infinity'::timestamptz
   rows:
-    - { res_id: 1, guest: Bob }
+    - { res_id: 1, room: "101", guest: Bob, from_z: "2024-03-01T00:00:00+00:00", thru_z: infinity }
   roundTrips: 1

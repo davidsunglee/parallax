@@ -35,16 +35,20 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.br_id, t0.name, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
-        mariadb: select t0.br_id, t0.name, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+        postgres: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+        mariadb: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
       binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
   referenceSql:
-    postgres: select br_id, name from branch where from_z <= '2024-03-01T00:00:00+00:00'::timestamptz and thru_z > '2024-03-01T00:00:00+00:00'::timestamptz and in_z <= '2024-02-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz
-    mariadb: select br_id, name from branch where from_z <= '2024-03-01 00:00:00' and thru_z > '2024-03-01 00:00:00' and in_z <= '2024-02-01 00:00:00' and out_z > '2024-02-01 00:00:00'
+    postgres: select br_id, name, from_z, thru_z, in_z, out_z from branch where from_z <= '2024-03-01T00:00:00+00:00'::timestamptz and thru_z > '2024-03-01T00:00:00+00:00'::timestamptz and in_z <= '2024-02-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz
+    mariadb: select br_id, name, from_z, thru_z, in_z, out_z from branch where from_z <= '2024-03-01 00:00:00' and thru_z > '2024-03-01 00:00:00' and in_z <= '2024-02-01 00:00:00' and out_z > '2024-02-01 00:00:00'
   graph:
     Branch:
       - br_id: 1
         name: Central Branch
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-04-01T00:00:00+00:00"
         address:
           street: 10 Old Road
           city: Helsinki

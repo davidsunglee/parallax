@@ -33,14 +33,18 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.br_id, t0.name, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
-        mariadb: select t0.br_id, t0.name, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
+        postgres: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
+        mariadb: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
       binds: [infinity, infinity]
-  referenceSql: select br_id, name from branch where thru_z > '9000-01-01' and out_z > '9000-01-01'
+  referenceSql: select br_id, name, from_z, thru_z, in_z, out_z from branch where thru_z > '9000-01-01' and out_z > '9000-01-01'
   graph:
     Branch:
       - br_id: 1
         name: Central Branch
+        from_z: "2024-06-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: infinity
         address:
           street: 30 New Road
           city: Tampere

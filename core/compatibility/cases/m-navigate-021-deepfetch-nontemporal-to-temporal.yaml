@@ -17,7 +17,7 @@ then:
     - sql:
         postgres: select t0.id, t0.name from tenant t0
     - sql:
-        postgres: select t0.id, t0.tenant_id, t0.term from lease t0 where t0.tenant_id in (?) and t0.out_z = ?
+        postgres: select t0.id, t0.tenant_id, t0.term, t0.in_z, t0.out_z from lease t0 where t0.tenant_id in (?) and t0.out_z = ?
       binds: [1, infinity]
   referenceSql: select id, name from tenant
   graph:
@@ -25,5 +25,5 @@ then:
       - id: 1
         name: Acme
         leases:
-          - { id: 10, tenant_id: 1, term: "24mo" }
+          - { id: 10, tenant_id: 1, term: "24mo", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
   roundTrips: 2

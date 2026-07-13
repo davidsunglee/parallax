@@ -24,19 +24,27 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from policy t0 where t0.thru_z = ? and t0.out_z = ?
+        postgres: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.thru_z = ? and t0.out_z = ?
       binds: [infinity, infinity]
     - sql:
-        postgres: select t0.id, t0.policy_id, t0.amount from coverage t0 where t0.policy_id in (?, ?) and t0.thru_z = ? and t0.out_z = ?
+        postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id in (?, ?) and t0.thru_z = ? and t0.out_z = ?
       binds: [1, 2, infinity, infinity]
   graph:
     Policy:
       - id: 1
         name: Auto
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: infinity
         coverages:
-          - { id: 10, policy_id: 1, amount: 700.00 }
+          - { id: 10, policy_id: 1, amount: 700.00, from_z: "2024-06-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
       - id: 2
         name: Home
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: infinity
         coverages:
-          - { id: 20, policy_id: 2, amount: 300.00 }
+          - { id: 20, policy_id: 2, amount: 300.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
   roundTrips: 2

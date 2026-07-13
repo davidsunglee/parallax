@@ -20,7 +20,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.tenant_id, t0.term from lease t0 where t0.out_z = ?
+        postgres: select t0.id, t0.tenant_id, t0.term, t0.in_z, t0.out_z from lease t0 where t0.out_z = ?
       binds: [infinity]
     - sql:
         postgres: select t0.id, t0.lease_id, t0.note_text from lease_note t0 where t0.lease_id in (?)
@@ -30,6 +30,8 @@ then:
       - id: 10
         tenant_id: 1
         term: "24mo"
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: infinity
         notes:
           - { id: 100, lease_id: 10, note_text: signed }
           - { id: 101, lease_id: 10, note_text: renewed }

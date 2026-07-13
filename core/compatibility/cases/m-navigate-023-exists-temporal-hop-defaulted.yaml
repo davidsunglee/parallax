@@ -26,9 +26,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from policy t0 where exists (select 1 from coverage t1 where t1.policy_id = t0.id and t1.amount >= ? and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?
+        postgres: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where exists (select 1 from coverage t1 where t1.policy_id = t0.id and t1.amount >= ? and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?
       binds: [600.00, infinity, infinity, infinity, infinity]
-  referenceSql: select id, name from policy where id in (select policy_id from coverage where amount >= 600.00 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz) and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+  referenceSql: select id, name, from_z, thru_z, in_z, out_z from policy where id in (select policy_id from coverage where amount >= 600.00 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz) and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
   rows:
-    - { id: 1, name: Auto }
+    - { id: 1, name: Auto, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
   roundTrips: 1
