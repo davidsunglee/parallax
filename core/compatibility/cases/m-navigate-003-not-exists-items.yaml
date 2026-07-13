@@ -12,10 +12,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where not exists (select 1 from order_item t1 where t1.order_id = t0.id)
-  referenceSql: select id, name from orders where id not in (select order_id from order_item)
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where not exists (select 1 from order_item t1 where t1.order_id = t0.id)
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id not in (select order_id from order_item)
   rows:
-    - { id: 3, name: ada }
-    - { id: 4, name: Margaret }
-    - { id: 5, name: Alan }
+    - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15 }
+    - { id: 4, name: Margaret, sku: null, qty: 20, price: 40.00, active: true, ordered_on: 2024-04-20 }
+    - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: 50.75, active: false, ordered_on: 2024-05-25 }
   roundTrips: 1

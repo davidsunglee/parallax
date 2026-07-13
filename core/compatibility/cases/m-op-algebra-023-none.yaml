@@ -12,7 +12,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where 1 = 0
-  referenceSql: select id, name from orders where false
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where 1 = 0
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where false
   rows: []
   roundTrips: 1

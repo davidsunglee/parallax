@@ -21,11 +21,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)
-        mariadb: select t0.id, t0.name from orders t0 where lower(t0.name) like lower(?)
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where lower(t0.name) like lower(?)
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where lower(t0.name) like lower(?)
       binds: ["ada"]
-  referenceSql: select id, name from orders where lower(name) like lower('ada')
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where lower(name) like lower('ada')
   rows:
-    - { id: 1, name: Ada }
-    - { id: 3, name: ada }
+    - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+    - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15 }
   roundTrips: 1

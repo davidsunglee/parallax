@@ -12,10 +12,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where t0.qty < ? or t0.qty > ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.qty < ? or t0.qty > ?
       binds: [10, 25]
-  referenceSql: select id, name from orders where qty < 10 or qty > 25
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where qty < 10 or qty > 25
   rows:
-    - { id: 1, name: Ada }
-    - { id: 42, name: Grace }
+    - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+    - { id: 42, name: Grace, sku: A-999, qty: 30, price: 99.99, active: true, ordered_on: 2024-06-30 }
   roundTrips: 1

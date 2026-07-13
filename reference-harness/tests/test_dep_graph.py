@@ -647,9 +647,17 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # (m-audit-write-008) and bitemporal (m-bitemp-write-014) insert-then-update
         # coalescing, and non-temporal insert-then-delete cancellation (m-unit-work-010).
         # snapshot rises 293 -> 296; managed and mvp unchanged. Final counts: 196 / 296 / 317.
-        ("slice-mvp-1", 196),
-        ("slice-snapshot-1", 296),
-        ("slice-managed-1", 317),
+        #
+        # COR-3 Phase 5b (read-projection core amendment) deletes m-op-algebra-028-distinct:
+        # under the base read-projection rule (m-sql) the full scalar set — including the PK —
+        # is always projected, so `distinct` over an entity read is row-preserving and 028
+        # deduplicates nothing; its one prod-shaped semantic (read-lock suppression) is already
+        # witnessed by m-read-lock-003/-008. The deleted case was tagged slice-mvp-1 +
+        # slice-snapshot-1 + slice-managed-1, so every slice count falls by 1:
+        # 196 -> 195, 296 -> 295, 317 -> 316. Final counts: 195 / 295 / 316.
+        ("slice-mvp-1", 195),
+        ("slice-snapshot-1", 295),
+        ("slice-managed-1", 316),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

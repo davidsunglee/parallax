@@ -10,8 +10,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where t0.sku is null
-  referenceSql: select id, name from orders where sku is null
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.sku is null
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where sku is null
   rows:
-    - { id: 4, name: Margaret }
+    - { id: 4, name: Margaret, sku: null, qty: 20, price: 40.00, active: true, ordered_on: 2024-04-20 }
   roundTrips: 1

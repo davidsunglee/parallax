@@ -18,9 +18,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where t0.sku like ? escape ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.sku like ? escape ?
       binds: ["%50\\%%", "\\"]
-  referenceSql: select id, name from orders where position('50%' in sku) > 0
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where position('50%' in sku) > 0
   rows:
-    - { id: 5, name: Alan }
+    - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: 50.75, active: false, ordered_on: 2024-05-25 }
   roundTrips: 1

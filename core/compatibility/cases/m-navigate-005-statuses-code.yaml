@@ -15,9 +15,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 where exists (select 1 from order_status t1 where t1.order_id = t0.id and t1.code = ?)
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where exists (select 1 from order_status t1 where t1.order_id = t0.id and t1.code = ?)
       binds: [SHIPPED]
-  referenceSql: select id, name from orders where id in (select order_id from order_status where code = 'SHIPPED')
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (select order_id from order_status where code = 'SHIPPED')
   rows:
-    - { id: 2, name: Linus }
+    - { id: 2, name: Linus, sku: B-200, qty: 10, price: 20.00, active: true, ordered_on: 2024-02-10 }
   roundTrips: 1

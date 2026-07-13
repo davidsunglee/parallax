@@ -24,10 +24,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from orders t0 order by t0.active desc, t0.qty asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 order by t0.active desc, t0.qty asc limit ?
       binds: [2]
-  referenceSql: select id, name from orders order by active desc, qty asc limit 2
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders order by active desc, qty asc limit 2
   rows:
-    - { id: 1, name: Ada }
-    - { id: 2, name: Linus }
+    - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+    - { id: 2, name: Linus, sku: B-200, qty: 10, price: 20.00, active: true, ordered_on: 2024-02-10 }
   roundTrips: 1
