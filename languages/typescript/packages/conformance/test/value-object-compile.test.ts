@@ -59,9 +59,12 @@ function entityOf(loaded: LoadedCase) {
 }
 
 describe("m-value-object compile-golden lane — emitted === golden, both dialects", () => {
-  it("discovers the frozen value-object case set (28 reads, 11 rejected)", () => {
+  it("discovers the frozen value-object case set (27 reads, 11 rejected)", () => {
     // Exact counts guard against a discovery regression silently dropping a case.
-    expect(READ_CASES.length).toBe(28); // 001–024 + temporal reads 028–031
+    // 001–024 + temporal reads 028–031, MINUS the deleted `m-value-object-003`
+    // (inner-field projection — no algebra node can request a column subset, removed
+    // with the base read-projection rule): 28 → 27.
+    expect(READ_CASES.length).toBe(27);
     expect(REJECTED_CASES.length).toBe(11); // 034–043 + the top-level-required-VO 044
   });
 

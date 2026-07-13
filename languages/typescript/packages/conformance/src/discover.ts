@@ -103,6 +103,18 @@ export function detectShape(raw: CaseDocument): CaseShape {
 
 let cachedCaseValidate: ValidateFunction | undefined;
 
+/**
+ * Register the sibling schemas `compatibility-case.schema.json` `$ref`s so Ajv can
+ * resolve them by `$id`. The case schema references
+ * `write-instruction.schema.json#/$defs/*` (m-unit-work's canonical write-instruction
+ * vocabulary); it resolves relative to the case schema's `$id`, so the referenced
+ * schema must be added to the same Ajv instance before compiling.
+ */
+export function addCaseSchemaRefs(ajv: Ajv2020): void {
+  const writeInstructionPath = resolve(repoRoot(), "core/schemas/write-instruction.schema.json");
+  ajv.addSchema(JSON.parse(readFileSync(writeInstructionPath, "utf8")) as object);
+}
+
 /** Compile (once) the canonical compatibility-case schema validator (Ajv2020). */
 function caseValidator(): ValidateFunction {
   if (cachedCaseValidate) {
@@ -112,6 +124,7 @@ function caseValidator(): ValidateFunction {
   const schema = JSON.parse(readFileSync(schemaPath, "utf8")) as object;
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   addFormats(ajv);
+  addCaseSchemaRefs(ajv);
   cachedCaseValidate = ajv.compile(schema);
   return cachedCaseValidate;
 }

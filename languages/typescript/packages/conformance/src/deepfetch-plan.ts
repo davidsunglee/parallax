@@ -211,7 +211,7 @@ function materialize(
   const correlation = schema.correlation(builder.relRef);
   const childEntity = correlation.relatedEntity.name;
   const childAttr = childAttrName(correlation.relatedEntity, correlation.childColumn);
-  const projection = childProjection(loaded, builder, correlation.relatedEntity, dialect);
+  const projection = childProjection(correlation.relatedEntity, dialect);
   const toOne =
     correlation.relationship.cardinality === "many-to-one" ||
     correlation.relationship.cardinality === "one-to-one";

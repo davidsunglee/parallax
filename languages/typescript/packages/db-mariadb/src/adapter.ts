@@ -129,6 +129,16 @@ interface TypeCastField {
  * self-inflicted collision.
  */
 function typeCast(field: TypeCastField, next: () => unknown): unknown {
+  // A MariaDB `boolean` is `tinyint(1)` — the ONLY neutral type the dialect maps to
+  // a `TINY` column (`MARIADB_BASE_TYPES`) — which mysql2's default cast returns as
+  // the raw tinyint number (0/1). Read it as a managed JS boolean so the m-core
+  // scalar contract holds (a boolean is never the integer 1, matching Postgres's
+  // native `boolean`); every re-goldened orders read now projects the `active`
+  // column, so this must compare equal to the fixture's `true`/`false`.
+  if (field.type === "TINY" && field.length === 1) {
+    const raw = field.string();
+    return raw === null ? null : Number(raw) !== 0;
+  }
   const key = MARIADB_FIELD_TYPES[field.type];
   if (key === undefined) {
     return next();

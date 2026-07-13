@@ -60,16 +60,6 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "m-op-algebra-025 is exercised.",
   },
   {
-    id: "m-op-algebra-028",
-    reason:
-      "distinct on a single PROJECTED column (`select distinct t0.active`): its result " +
-      "(2 rows) is a projection-specific witness. The V1 developer `find` returns whole managed " +
-      "objects, so `distinct` applies to the full row set — a different operation with a " +
-      "different result (6 distinct orders). Projecting one column needs the out-of-V1 " +
-      "aggregation/projection surface (m-agg). Its DSL/operation fidelity is still proven by " +
-      "dsl.test.ts (m-op-algebra-028-distinct); only the projected-result assertion is out of the V1 surface.",
-  },
-  {
     id: "m-read-lock-006",
     reason:
       "read-lock-blocks-writer: a HARNESS-lane two-connection concurrency case (a held `for " +
@@ -98,16 +88,21 @@ export const SKIP_MANIFEST: readonly SkippedCase[] = [
       "harness and the conformance runner's two-session runRun (slice-run/mariadb-run), not the " +
       "developer surface. The projection-omits-lock EMISSION is exercised by m-read-lock-003.",
   },
-  // --- value objects: the non-developer-query slice (m-value-object) ---------
+  // --- deep fetch × value object: the composition witness (m-deep-fetch) ------
   {
-    id: "m-value-object-003",
+    id: "m-deep-fetch-018",
     reason:
-      "project-nested-field: a projection of one nested field (`select … jsonb_extract_path_text(t0.address, 'city') city …`) " +
-      "whose witness rows name a PROJECTED column. The V1 developer `find` returns whole managed " +
-      "objects (with the value-object composite), so a projected-column result needs the out-of-V1 " +
-      "aggregation/projection surface (m-agg, deferred by §2.8) — exactly as m-op-algebra-028 is skipped. " +
-      "The nested-extraction developer surface itself is exercised by m-value-object-001/023.",
+      "value-object-child-materialization: a deep fetch whose ROOT (Customer) and CHILD " +
+      "(Location) both declare a value object, proving the instance-form read projection " +
+      "materializes the structured-document column at EVERY graph level. It composes two " +
+      "developer surfaces the suite already exercises independently — deep-fetch graph assembly " +
+      "(m-deep-fetch-001..012) and value-object materialization (m-value-object-023/024) — and is " +
+      "authored compileEligibility run-only (query-result-dependent: the child IN-list binds are " +
+      "the distinct parent keys from the root result). Its child-level materialization observable " +
+      "is proven end-to-end by the harness run lane (slice-run), exactly as the temporal × " +
+      "value-object composition witnesses m-value-object-028-031 are.",
   },
+  // --- value objects: the non-developer-query slice (m-value-object) ---------
   {
     id: "m-value-object-026",
     reason:

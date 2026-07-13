@@ -1056,7 +1056,11 @@ partition below.
 
 Cases are reason-skipped because what they prove is
 serde/harness machinery a developer never authors, not a developer-facing
-surface — the five below, the eleven value-object `rejected` negatives
+surface — the four below; the deep-fetch × value-object composition witness
+(`m-deep-fetch-018`, a run-only case whose root and child both materialize a
+value-object document at every graph level — a composition of the already-exercised
+deep-fetch and value-object-materialization surfaces, proven end-to-end by the
+harness run lane); the eleven value-object `rejected` negatives
 (`m-value-object-034`-`m-value-object-044`), whose whole assertion is a **pre-SQL
 refusal**: the invalid input (a value-object root, an unknown nested path, a
 `deepFetch`/navigation targeting a value object, a type-mismatched literal, a
@@ -1074,17 +1078,13 @@ multi-row batched insert, `m-value-object-046` under an optimistic gate), and th
 primary-key allocations (`m-pk-gen-001`/`-002` `max`, `m-pk-gen-004`/`-006`/`-014`
 simulated-`sequence`) — each proven end-to-end by the reference harness (both
 dialects; the pk-allocation oracle) and the conformance run lane, not a
-developer-authored serde/allocation surface. The five serde-canonicalization /
+developer-authored serde/allocation surface. The four serde-canonicalization /
 concurrency-choreography skips are:
 
 - **`m-op-algebra-024`** — an `equivalentEncodings` serde-canonicalization check (two surface
   spellings collapse to one canonical operation). Its query semantics are
   exercised through the developer surface elsewhere; its ungrouped sibling `m-op-algebra-025`
   runs in `reads.api-conformance.test.ts`.
-- **`m-op-algebra-028`** — `distinct` on a single *projected* column, whose witness result is
-  projection-specific. V1 `find` returns whole managed objects, so a
-  projected-column result needs the out-of-V1 aggregation/projection surface
-  (deferred by §2.8).
 - **`m-read-lock-006`** — read-lock-blocks-writer, a HARNESS-lane two-connection concurrency
   case (a held `for share` read excludes a concurrent writer → `lockWaitTimeout`).
   Its behavioral proof is discharged by the reference harness and the TypeScript

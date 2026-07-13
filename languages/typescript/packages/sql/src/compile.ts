@@ -229,15 +229,6 @@ export interface ProjectionColumn {
    * physical column; a verbatim column's output name is the column itself.
    */
   readonly outputName?: string;
-  /**
-   * A value-object inner-field projection: the document path within `column` to
-   * extract (m-value-object structured-column read — case `m-value-object-003`).
-   * When present, the column is projected through the dialect's nested-extraction
-   * form (`jsonb_extract_path_text(t0.address, ?) city` / `json_value(…)`) aliased
-   * to `outputName` (defaulting to the leaf segment), with the path carried as a
-   * `?` bind spliced in projection order.
-   */
-  readonly nested?: readonly string[];
 }
 
 /**
@@ -448,17 +439,6 @@ function renderProjectionColumn(
   dialect: Dialect,
 ): string {
   const qualified = `${alias}.${column.column}`;
-  if (column.nested !== undefined) {
-    // A value-object inner-field projection lowers through the dialect's
-    // nested-extraction form (per-dialect bind shape), aliased to the output name.
-    // The extraction bind lands here in projection order (before any `where` binds).
-    const extraction = dialect.nestedExtraction(qualified, column.nested);
-    for (const bind of extraction.binds) {
-      ctx.binds.push(bind as Bind);
-    }
-    const output = column.outputName ?? (column.nested[column.nested.length - 1] as string);
-    return `${extraction.sql} ${output}`;
-  }
   if (column.type === "bytes") {
     // A byte column has no stable text rendering across drivers/dialects, so the
     // projection is lowered to the dialect's hex form (Postgres `encode(t0.payload,

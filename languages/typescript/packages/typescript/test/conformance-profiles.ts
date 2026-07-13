@@ -32,7 +32,11 @@ export const POSTGRES_READ_PROFILE_IDS: readonly string[] = [
   "m-op-algebra-001",
   "m-op-algebra-002",
   "m-descriptor-001",
-  ...Array.from({ length: 32 }, (_, i) => `m-op-algebra-${String(3 + i).padStart(3, "0")}`),
+  // The `m-op-algebra-003`–`-034` family MINUS the deleted `m-op-algebra-028`
+  // (`distinct` on a projected column, removed with the base read-projection rule).
+  ...Array.from({ length: 32 }, (_, i) => `m-op-algebra-${String(3 + i).padStart(3, "0")}`).filter(
+    (id) => id !== "m-op-algebra-028",
+  ),
 ];
 
 export const POSTGRES_GRAPH_PROFILE_IDS: readonly string[] = [

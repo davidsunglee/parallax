@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
+import { addCaseSchemaRefs } from "../src/discover.js";
 import type { StatementEntry } from "../src/index.js";
 import { concurrencySuccessStepProblems } from "../src/runner.js";
 
@@ -112,7 +113,9 @@ function caseValidator(): ValidateFunction {
   const schema = JSON.parse(
     readFileSync(`${repoRoot}core/schemas/compatibility-case.schema.json`, "utf8"),
   ) as object;
-  return new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  addCaseSchemaRefs(ajv);
+  return ajv.compile(schema);
 }
 
 const CONCURRENCY_TAGS = ["m-read-lock", "m-dialect", "concurrency", "slice-mvp-1"];

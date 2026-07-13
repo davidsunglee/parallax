@@ -146,7 +146,11 @@ const CASES: readonly Row[] = [
     operation: () => buildFindOperation(all(), { orderBy: [Order.qty.desc()], limit: 2 }),
   },
   {
-    case: "m-op-algebra-028-distinct",
+    // `distinct` directive fidelity. The old op-algebra witness `m-op-algebra-028`
+    // (`distinct` on a projected subset) was removed with the base read-projection
+    // rule; the surviving `distinct { operand: all }` witness is the read-lock
+    // projection read, whose operation is identical.
+    case: "m-read-lock-003-locking-txn-projection-omits-lock",
     operation: () => buildFindOperation(all(), { distinct: true }),
   },
   // --- navigation ---

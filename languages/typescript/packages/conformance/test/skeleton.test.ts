@@ -97,8 +97,11 @@ group("compile lane (Docker-free)", () => {
     // The read-operation emission points at the case's `operation` key, per the
     // conformance contract's `compile` example (not the empty whole-case pointer).
     expect(emissions[0]?.casePointer).toBe("/operation");
-    // The golden SQL the corpus pins for Postgres, by construction.
-    expect(emissions[0]?.sql).toBe("select t0.id, t0.name from orders t0 where t0.id = ?");
+    // The golden SQL the corpus pins for Postgres, by construction — the full
+    // declared scalar projection in columnOrder (m-sql "Read projection").
+    expect(emissions[0]?.sql).toBe(
+      "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?",
+    );
     // The int64 bind 42 is carried as the JSON number the corpus authors (it is
     // float-safe and matches `binds: [42]` byte-for-byte; see the wire-form note).
     expect(emissions[0]?.binds).toEqual([42]);

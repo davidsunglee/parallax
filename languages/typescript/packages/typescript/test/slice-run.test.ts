@@ -78,9 +78,12 @@ const CASES = casesForProfile(POSTGRES_FULL_PROFILE);
 // cases (COR-26 Phase 2), then by the 5 batch-DELETE / opt-lock-edge / mixed-op
 // cases (COR-26 Phase 3), then by the 12 type-fidelity / value-object-write /
 // pk-gen cases (COR-26 Phase 5), then by the standalone plain-bitemporal-insert
-// witness m-bitemp-write-009 (COR-9 Phase 1 extension) — all harness-lane.
-it("discovers the harness-lane slice-mvp-1 slice (184 cases)", () => {
-  expect(CASES.length).toBe(184);
+// witness m-bitemp-write-009 (COR-9 Phase 1 extension) — all harness-lane. The
+// read-projection amendment then removed the two underivable reads
+// `m-op-algebra-028` and `m-value-object-003` and added the deep-fetch × value-object
+// witness `m-deep-fetch-018` (net -1): 184 → 183.
+it("discovers the harness-lane slice-mvp-1 slice (183 cases)", () => {
+  expect(CASES.length).toBe(183);
 });
 
 group.skipIf(!HAS_DOCKER)(
@@ -139,7 +142,7 @@ group.skipIf(!HAS_DOCKER)(
     it("the case-matrix report is GREEN with no residuals", () => {
       const report = matrix.report();
       expect(report.green, `\n${renderMatrixReport(report)}`).toBe(true);
-      expect(report.total).toBe(184);
+      expect(report.total).toBe(183);
       expect(report.residuals).toEqual([]);
     });
   },

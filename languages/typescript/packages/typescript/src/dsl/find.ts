@@ -71,7 +71,7 @@ export interface FindOptions {
   readonly orderBy?: readonly OrderKeyExpression[];
   /** Row cap, bound as `?` (`m-op-algebra-026`). */
   readonly limit?: number;
-  /** Emit a `select distinct` (`m-op-algebra-028`). */
+  /** Emit a `select distinct` (row-preserving over the full read projection; `m-read-lock-003`). */
   readonly distinct?: boolean;
   /** Temporal read axes (spec §2.9); serialized outermost. */
   readonly temporal?: TemporalReadOptions;

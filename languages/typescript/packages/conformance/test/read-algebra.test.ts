@@ -63,18 +63,24 @@ const CASES = readAlgebraCases();
 
 /**
  * The exact in-scope ID set Phase 4 contracts: `m-op-algebra-001`/`-002` and the
- * `m-descriptor-001` identifier read, plus the full `m-op-algebra-003`–`-034`
- * predicate-algebra family (32 cases) = 35. `m-core-001` is excluded
- * (`OUT_OF_PHASE`, scalar bytes projection); `m-core-002`/`-003` are
- * `writeSequence` and naturally filtered by shape. Asserting the EXACT set — not a
- * `>= N` lower bound — makes a discovery regression that silently drops an algebra
- * case fail loudly instead of passing vacuously.
+ * `m-descriptor-001` identifier read, plus the `m-op-algebra-003`–`-034`
+ * predicate-algebra family MINUS the deleted `m-op-algebra-028` (31 cases) = 34.
+ * `m-op-algebra-028` (`distinct` on a projected column) was removed with the base
+ * read-projection rule — no algebra node can request a column-subset projection, so
+ * `distinct` is row-preserving and its production witness is now the read-lock
+ * distinct reads. `m-core-001` is excluded (`OUT_OF_PHASE`, scalar bytes
+ * projection); `m-core-002`/`-003` are `writeSequence` and naturally filtered by
+ * shape. Asserting the EXACT set — not a `>= N` lower bound — makes a discovery
+ * regression that silently drops an algebra case fail loudly instead of passing
+ * vacuously.
  */
 const EXPECTED_IDS: readonly string[] = [
   "m-op-algebra-001",
   "m-op-algebra-002",
   "m-descriptor-001",
-  ...Array.from({ length: 32 }, (_, i) => `m-op-algebra-${String(3 + i).padStart(3, "0")}`),
+  ...Array.from({ length: 32 }, (_, i) => `m-op-algebra-${String(3 + i).padStart(3, "0")}`).filter(
+    (id) => id !== "m-op-algebra-028",
+  ),
 ];
 
 describe("read-algebra compile lane — emitted === golden over the corpus", () => {

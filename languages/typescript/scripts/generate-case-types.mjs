@@ -39,6 +39,10 @@ const banner = [
 ].join("\n");
 
 const body = await compile(schema, "CaseDocument", {
+  // The case schema `$ref`s sibling schemas by relative path (e.g.
+  // `write-instruction.schema.json#/$defs/*`, m-unit-work's write-instruction
+  // vocabulary); resolve them from `core/schemas/`, not the process CWD.
+  cwd: `${repoRoot}core/schemas/`,
   bannerComment: "",
   additionalProperties: false,
   declareExternallyReferenced: true,

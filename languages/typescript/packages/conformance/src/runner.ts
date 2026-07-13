@@ -823,13 +823,61 @@ async function runDeepFetch(
 
   const result = await deepFetch(rootRows as readonly GraphRow[], plan.tree, exec);
 
+  // Decode value-object documents at EVERY graph level (m-value-object
+  // materialization at depth — `m-deep-fetch-018`): the deep-fetch assembler is
+  // metamodel-free and carries raw structured-document columns, so decode each
+  // level's rows to the declared value-object shape here, recursing along the
+  // fetched relationship names. A non-value-object level passes through unchanged.
+  const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
+  const decoded = decodeGraphRows(result.rows as readonly Row[], plan.rootEntity, metamodel);
+
   const graph: Record<string, readonly Row[]> = {
-    [plan.rootEntity]: result.rows as readonly Row[],
+    [plan.rootEntity]: decoded,
   };
   return {
     emissions,
     observations: { roundTrips: result.roundTrips, graph },
   };
+}
+
+/**
+ * Decode value-object document columns at every level of an assembled deep-fetch
+ * graph (m-value-object materialization at depth). Each node's own declared
+ * top-level value-object columns are decoded + projected to the declared shape
+ * (`materializeOwnerNode`, exactly as an owner read does); each fetched
+ * relationship then recurses into its related entity, so a value-object-bearing
+ * child (`m-deep-fetch-018`'s `Location.address`) materializes just like the root.
+ * An entity with no value objects passes through as a shallow structural copy.
+ */
+function decodeGraphRows(
+  rows: readonly Row[],
+  entityName: string,
+  metamodel: Metamodel,
+): readonly Row[] {
+  const entity = metamodel.entity(entityName);
+  return rows.map((row) => {
+    const node = materializeOwnerNode(entity, row) as Record<string, unknown>;
+    for (const relationship of entity.relationships()) {
+      if (!(relationship.name in node)) {
+        continue;
+      }
+      const related = node[relationship.name];
+      if (Array.isArray(related)) {
+        node[relationship.name] = decodeGraphRows(
+          related as readonly Row[],
+          relationship.relatedEntity,
+          metamodel,
+        );
+      } else if (related !== null && typeof related === "object") {
+        node[relationship.name] = decodeGraphRows(
+          [related as Row],
+          relationship.relatedEntity,
+          metamodel,
+        )[0];
+      }
+    }
+    return node as Row;
+  });
 }
 
 /**

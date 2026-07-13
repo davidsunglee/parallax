@@ -1,6 +1,6 @@
 /**
  * The `SchemaResolver` the m-sql compiler needs, implemented over the m-descriptor metamodel
- * reader, plus the case-driven projection rules.
+ * reader, plus the base read-projection rule (m-sql "Read projection").
  *
  * `@parallax/sql` stays metamodel-free by accepting an injected `SchemaResolver`;
  * this module is the conformance-side implementation. It resolves `Class.attr`
@@ -9,14 +9,18 @@
  * its correlated-EXISTS join columns, and supplies the root entity's table + the
  * ordered read projection the SELECT projects.
  *
- * Projections are **case-driven** so the emitted SQL matches the golden by
- * construction: a flat read takes its output columns from `then.rows`; a
- * deep-fetch root takes them from the `then.graph` root object (minus the
- * top-level relationship names); a deep-fetch child level takes them from the
- * `then.graph` child object (minus that node's own relationship names). When a
- * level carries no `then.graph` witness (an empty intermediate), the projection
- * falls back to the child entity's non-nullable columns plus any nullable
- * `orderBy` key — the documented `m-deep-fetch-008` path.
+ * Projections are **rule-driven** from the model, mirroring the normative base
+ * read-projection rule (`m-sql`, "Read projection") the corpus goldens now derive
+ * from — a pure function of the target entity and result form, never of the
+ * predicate (the `then.rows` / `then.graph` witness is NOT consulted). Slot 1 is the
+ * effective scalar columns in `columnOrder` (declaration order — including the
+ * `optimisticLocking` version column and each as-of axis's interval columns); slot 4
+ * is the value-object document columns, LAST, on an instance-form read only.
+ * Slice-mvp-1 targets only concrete, non-polymorphic entities, so the
+ * table-per-hierarchy tag (slot 2) and table-per-concrete-subtype variant (slot 3)
+ * never appear. Instance-form vs row-form is the `m-case-format` result-form
+ * selector: a case asserting `then.graph` / `then.graphs` is instance-form (the
+ * object lane); one asserting `then.rows` is row-form (the values lane).
  */
 import {
   type AsOfPredicate,
@@ -246,108 +250,66 @@ export class MetamodelSchema implements SchemaResolver {
 }
 
 /**
- * Resolve a flat read case's projection — the ordered output columns the SELECT
- * projects — **from the case**, matching the golden by construction (the Phase-3
- * `[pk, firstNonPk]` heuristic could not express `m-op-algebra-028`'s `distinct active` nor a
- * wider `orders` read).
- *
- * The case's `then.rows` keys ARE the SQL output column names the golden
- * projects and the harness compares against. Each key resolves back to its
- * physical attribute so the compiler can lower a `bytes` column to the
- * `encode(t0.<col>, ?) <col>_hex` hex form (m-core scalar-serde projection —
- * `m-core-001`): a direct column match projects verbatim; an output ending `_hex`
- * whose stripped name is a `bytes` attribute projects through `encode(...)`. A key
- * that names no attribute (a computed output) projects verbatim as a plain quoted
- * column, as before. When `then.rows` is empty (e.g. `m-op-algebra-023-none`),
- * the case provides no
- * key witness, so we fall back to the metamodel default — the primary key plus
- * the first non-key attribute.
+ * The base **read projection** (m-sql "Read projection") for an entity: slot 1 —
+ * every declared attribute's column in `columnOrder` (declaration order), which
+ * already INCLUDES the `optimisticLocking` version column and each as-of axis's
+ * `fromColumn` / `toColumn` interval columns (all ordinary declared attributes,
+ * `m-descriptor`) — followed on an **instance-form** read by slot 4: every declared
+ * top-level value object's backing column, LAST. Slots 2/3 (the table-per-hierarchy
+ * tag column, the table-per-concrete-subtype `familyVariant` literal) apply only to
+ * an abstract-target read; slice-mvp-1 carries no inheritance, so they never appear.
+ * A `bytes` column keeps its m-core `type` so the compiler lowers it to the
+ * `encode(t0.<col>, ?) <col>_hex` hex form at its slot-1 position (`m-core-001`).
+ */
+function instanceFormProjection(
+  entity: EntityMetadata,
+  dialect: Dialect,
+): readonly ProjectionColumn[] {
+  return [...scalarProjection(entity, dialect), ...valueObjectProjection(entity, dialect)];
+}
+
+/** Slot 1 — the effective scalar columns in `columnOrder`. */
+function scalarProjection(entity: EntityMetadata, dialect: Dialect): readonly ProjectionColumn[] {
+  return entity.attributes().map((attr) => attributeProjection(attr, dialect));
+}
+
+/** Slot 4 — the value-object backing columns (instance-form only), in declared order. */
+function valueObjectProjection(
+  entity: EntityMetadata,
+  dialect: Dialect,
+): readonly ProjectionColumn[] {
+  return entity.valueObjects().map((vo) => ({ column: dialect.quoteIdentifier(vo.column) }));
+}
+
+/**
+ * A read's result form (`m-case-format` selector): a case is **instance-form** (the
+ * object lane — projects slot 4) when it asserts `then.graph` / `then.graphs`, and
+ * **row-form** (the values lane — omits slot 4) when it asserts `then.rows`. The
+ * form is declared by which result member the case asserts, never by the predicate.
+ */
+function isInstanceForm(loaded: LoadedCase): boolean {
+  const then = loaded.raw.then as { graph?: unknown; graphs?: unknown } | undefined;
+  return then?.graph !== undefined || then?.graphs !== undefined;
+}
+
+/**
+ * Resolve a flat read case's projection from the model per the base **read
+ * projection** rule (m-sql) — a pure function of the target entity and result form,
+ * NEVER of the predicate. An instance-form read (a value-object materialization
+ * graph) projects the full instance-form list (scalars, then the value-object
+ * documents last); a row-form read (`then.rows`) projects slot 1 only. Because the
+ * list is predicate-independent, an empty `none` read or an empty-result read
+ * projects the SAME full column list as any other read of the same entity — the
+ * case's `then.rows` / `then.graph` witness is no longer consulted to derive it.
  */
 export function readProjection(
   loaded: LoadedCase,
   rootEntity: EntityMetadata,
   dialect: Dialect,
 ): readonly ProjectionColumn[] {
-  const rows = loaded.raw.then?.rows as readonly Record<string, unknown>[] | undefined;
-  const firstRow = rows?.[0];
-  if (firstRow && Object.keys(firstRow).length > 0) {
-    return Object.keys(firstRow).map((output) => projectionForOutput(output, rootEntity, dialect));
-  }
-  // A value-object materialization / temporal graph read (m-value-object) carries
-  // no `then.rows`; the projection is the graph root object's keys, so the whole
-  // structured-document column projects verbatim with the owner (`t0.address`) —
-  // the getter surface decodes the nested composite from that one column.
-  const graphWitness = firstGraphRow(loaded);
-  if (graphWitness && Object.keys(graphWitness).length > 0) {
-    return Object.keys(graphWitness).map((output) =>
-      projectionForOutput(output, rootEntity, dialect),
-    );
-  }
-  return defaultEntityProjection(rootEntity).map((attr) => attributeProjection(attr, dialect));
-}
-
-/** The first root-object witness of a case's `then.graph`, or `undefined` when absent. */
-function firstGraphRow(loaded: LoadedCase): Record<string, unknown> | undefined {
-  const graph = loaded.raw.then?.graph as
-    | Record<string, readonly Record<string, unknown>[]>
-    | undefined;
-  if (graph === undefined) {
-    return undefined;
-  }
-  const rootKey = Object.keys(graph)[0];
-  const rootRows = rootKey ? graph[rootKey] : undefined;
-  const witness = rootRows?.[0];
-  return witness && typeof witness === "object" ? witness : undefined;
-}
-
-/**
- * Resolve one `then.rows` output column name to its projection descriptor,
- * against the root entity's attributes. Order of resolution:
- *  1. an attribute whose physical `column` equals the output → project verbatim
- *     (with its m-core type, so a `bytes` column authored WITHOUT the `_hex` output
- *     alias would still lower — belt-and-braces, though the corpus always uses the
- *     `_hex` form);
- *  2. an output ending `_hex` whose stripped name is a `bytes` attribute's column
- *     → project through `encode(t0.<col>, ?) <output>` (the `m-core-001` hex form);
- *  3. otherwise a plain quoted column named by the output (a computed/derived
- *     output the model does not declare — the pre-m-core-001 behavior).
- */
-function projectionForOutput(
-  output: string,
-  entity: EntityMetadata,
-  dialect: Dialect,
-): ProjectionColumn {
-  const direct = entity.attributes().find((attr) => attr.column === output);
-  if (direct) {
-    return attributeProjection(direct, dialect);
-  }
-  if (output.endsWith("_hex")) {
-    const physical = output.slice(0, -"_hex".length);
-    const bytesAttr = entity
-      .attributes()
-      .find((attr) => attr.column === physical && attr.type === "bytes");
-    if (bytesAttr) {
-      return {
-        column: dialect.quoteIdentifier(bytesAttr.column),
-        type: "bytes",
-        outputName: output,
-      };
-    }
-  }
-  // A value-object inner field projected by name (m-value-object structured-column
-  // read — `m-value-object-003` projects `city`): a depth-1 attribute of a declared
-  // top-level value object lowers through the dialect's nested-extraction form
-  // (`jsonb_extract_path_text(t0.address, ?) city`) rather than a bare column.
-  for (const valueObject of entity.valueObjects()) {
-    if (valueObject.attributes.some((attr) => attr.name === output)) {
-      return {
-        column: dialect.quoteIdentifier(valueObject.column),
-        nested: [output],
-        outputName: output,
-      };
-    }
-  }
-  return { column: dialect.quoteIdentifier(output) };
+  return isInstanceForm(loaded)
+    ? instanceFormProjection(rootEntity, dialect)
+    : scalarProjection(rootEntity, dialect);
 }
 
 /** A verbatim projection descriptor for an attribute (quoted column + m-core type). */
@@ -356,38 +318,23 @@ function attributeProjection(attr: NormalizedAttribute, dialect: Dialect): Proje
 }
 
 /**
- * Resolve a deep-fetch **root** projection from the case's `then.graph` root
- * object: its keys minus the top-level relationship names (the relationships are
- * attached in memory, not projected). When the root resolves to no rows (e.g.
- * `m-deep-fetch-006`, an empty-root deep fetch whose `then.graph` is `{ Order: [] }`),
- * there is no witness, so we fall back to the metamodel default projection for the
- * root entity — the primary key plus the first non-key attribute, which
- * reproduces the golden root `select id, name from orders …`. An empty projection
- * would emit a malformed `select  from …`.
+ * The deep-fetch **root** projection: a deep fetch is instance-form (the object
+ * lane, m-sql "Read projection"), so its root level projects the root entity's full
+ * instance-form list — scalars in `columnOrder`, then the value-object documents
+ * last (`m-deep-fetch-018`'s `Customer` root projects `id, name, address`). The root
+ * class is the first hop's class (`OrderItem` in `[OrderItem.order]`); a pathless
+ * deep fetch (none in the corpus) falls back to the graph root key, then the
+ * model's first entity.
  */
 export function rootDeepFetchProjection(
   loaded: LoadedCase,
   paths: readonly (readonly PathSegment[])[],
   dialect: Dialect,
 ): readonly ProjectionColumn[] {
-  const graph = caseGraph(loaded);
-  const rootEntityName = Object.keys(graph)[0];
-  const rootRows = rootEntityName ? (graph[rootEntityName] ?? []) : [];
-  const witness = rootRows[0];
-  const topLevelRels = new Set(paths.map((path) => relName(path[0]?.rel ?? "")));
   const metamodel = Metamodel.fromDescriptor(loaded.descriptor);
-  const rootClass = classOf(paths[0]?.[0]?.rel) ?? rootEntityName;
+  const rootClass = classOf(paths[0]?.[0]?.rel) ?? Object.keys(caseGraph(loaded))[0];
   const rootEntity = rootClass ? metamodel.entity(rootClass) : metamodel.entities()[0];
-  if (witness && typeof witness === "object") {
-    return objectColumns(witness as Record<string, unknown>, topLevelRels, rootEntity, dialect);
-  }
-  // No witness (empty root): fall back to the metamodel default for the root
-  // entity, named by the first hop of the first path (`Order` in `[Order.items,
-  // …]`), or the graph root key, or the model's first entity as a last resort.
-  if (!rootEntity) {
-    return [];
-  }
-  return defaultEntityProjection(rootEntity).map((attr) => attributeProjection(attr, dialect));
+  return rootEntity ? instanceFormProjection(rootEntity, dialect) : [];
 }
 
 /** The class part of a `Class.rel` reference, or `undefined` when absent. */
@@ -400,116 +347,18 @@ function classOf(ref: string | undefined): string | undefined {
 }
 
 /**
- * Resolve a deep-fetch **child-level** projection from the `then.graph` child
- * object found under this node's relationship name: its keys minus this node's
- * own child-relationship names. When no witness exists anywhere (an empty
- * intermediate — `m-deep-fetch-008`), fall back to the child entity's non-nullable columns
- * plus any nullable `orderBy` key (so a nullable ordering column stays projected).
+ * The deep-fetch **child-level** projection: every deep-fetch / snapshot child
+ * level is instance-form (m-sql "Read projection"), so it projects the child
+ * entity's own instance-form list — its scalars in `columnOrder` (the correlating
+ * foreign key is a declared scalar, always in slot 1), then any value-object
+ * document columns it declares, last (`m-deep-fetch-018`: a value-object-bearing
+ * child materializes its `address` document at depth).
  */
 export function childProjection(
-  loaded: LoadedCase,
-  node: { relRef: string; children: readonly { relRef: string }[] },
   childEntity: EntityMetadata,
   dialect: Dialect,
 ): readonly ProjectionColumn[] {
-  const witness = findChildWitness(caseGraph(loaded), node);
-  const childRelNames = new Set(node.children.map((child) => relName(child.relRef)));
-  if (witness) {
-    return objectColumns(witness, childRelNames, childEntity, dialect);
-  }
-  return fallbackChildProjection(childEntity, node, dialect);
-}
-
-/**
- * The fallback child projection when no `then.graph` witness exists: the
- * entity's non-nullable columns, plus any nullable column named by a declared
- * `orderBy` key (the order key MUST be projected for the ordering oracle). Quoted
- * for SQL. Exercised only by the empty-intermediate case (`m-deep-fetch-008`).
- */
-function fallbackChildProjection(
-  childEntity: EntityMetadata,
-  node: { relRef: string },
-  dialect: Dialect,
-): readonly ProjectionColumn[] {
-  // The relationship name lives on the PARENT entity; the child entity does not
-  // declare it, so the orderBy is unavailable here. The non-temporal corpus only
-  // reaches this path for `Order.items` (no nullable orderBy key), so projecting
-  // the non-nullable columns is exact. Keep nullable orderBy handling explicit
-  // for clarity even though it is not exercised here.
-  void node;
-  return childEntity
-    .attributes()
-    .filter((attr) => !attr.nullable)
-    .map((attr) => attributeProjection(attr, dialect));
-}
-
-/**
- * The keys of an `then.graph` object as projection descriptors, minus
- * relationship names. Each key resolves back to its physical attribute (so a
- * `bytes` column would lower, matching the flat-read rule) — but the deep-fetch
- * corpus projects only plain scalar columns, so this is verbatim in practice.
- * An `entity` is passed so the type + `_hex` resolution matches `readProjection`.
- */
-function objectColumns(
-  object: Record<string, unknown>,
-  excluded: ReadonlySet<string>,
-  entity: EntityMetadata | undefined,
-  dialect: Dialect,
-): readonly ProjectionColumn[] {
-  return Object.keys(object)
-    .filter((key) => !excluded.has(key))
-    .map((key) =>
-      entity ? projectionForOutput(key, entity, dialect) : { column: dialect.quoteIdentifier(key) },
-    );
-}
-
-/**
- * Find the first non-null child object under `node`'s relationship name anywhere
- * in the graph, by walking the graph following each node's relationship name.
- * Returns `undefined` when the level is empty everywhere (no witness).
- */
-function findChildWitness(
-  graph: Record<string, readonly Record<string, unknown>[]>,
-  node: { relRef: string },
-): Record<string, unknown> | undefined {
-  const name = relName(node.relRef);
-  // Breadth-first over every object reachable in the graph; the first value found
-  // under `name` that is a non-empty object (or the first element of a non-empty
-  // array) is a witness for this level's projection.
-  const queue: unknown[] = Object.values(graph).flat();
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (current === null || typeof current !== "object") {
-      continue;
-    }
-    const record = current as Record<string, unknown>;
-    const related = record[name];
-    const found = firstObject(related);
-    if (found) {
-      return found;
-    }
-    // Recurse into nested related objects/arrays to reach deeper levels.
-    for (const value of Object.values(record)) {
-      if (Array.isArray(value)) {
-        queue.push(...value);
-      } else if (value && typeof value === "object") {
-        queue.push(value);
-      }
-    }
-  }
-  return undefined;
-}
-
-/** The first object witness from a related value (a single object or an array). */
-function firstObject(value: unknown): Record<string, unknown> | undefined {
-  if (Array.isArray(value)) {
-    const head = value.find((item) => item && typeof item === "object");
-    return head as Record<string, unknown> | undefined;
-  }
-  if (value && typeof value === "object") {
-    return value as Record<string, unknown>;
-  }
-  return undefined;
+  return instanceFormProjection(childEntity, dialect);
 }
 
 /** The `then.graph` of a case, or an empty graph when absent. */
@@ -517,22 +366,6 @@ function caseGraph(loaded: LoadedCase): Record<string, readonly Record<string, u
   return (
     (loaded.raw.then?.graph as Record<string, readonly Record<string, unknown>[]> | undefined) ?? {}
   );
-}
-
-/**
- * The metamodel default projection for an entity: the primary-key attribute(s)
- * followed by the first non-primary-key attribute (yielding `id, name` for the
- * `orders` root). Used only as the fallback when a case carries no witness.
- */
-function defaultEntityProjection(entity: EntityMetadata): readonly NormalizedAttribute[] {
-  const attributes = entity.attributes();
-  const primaryKey = attributes.filter((attr) => attr.primaryKey);
-  const firstNonPk = attributes.find((attr) => !attr.primaryKey);
-  const projection = [...primaryKey];
-  if (firstNonPk && !projection.includes(firstNonPk)) {
-    projection.push(firstNonPk);
-  }
-  return projection;
 }
 
 /** Build a `MetamodelSchema` rooted at the entity the operation references. */
@@ -628,12 +461,6 @@ function splitRef(ref: string): [string, string] {
     throw new Error(`malformed reference '${ref}' (expected 'Class.member')`);
   }
   return [ref.slice(0, dot), ref.slice(dot + 1)];
-}
-
-/** The relationship name (the part after the dot) of a `Class.relationship` ref. */
-function relName(ref: string): string {
-  const dot = ref.indexOf(".");
-  return dot === -1 ? ref : ref.slice(dot + 1);
 }
 
 /**

@@ -186,10 +186,11 @@ export const BOUNDARY: readonly string[] = [
  * membership / null tests at shallow-to-three-level depth, to-many
  * exists/any-element/same-element (scoped `where`), the materialization graph
  * (the nested composite arriving with the owner in one round trip), and the
- * atomic document insert. The projection case (`m-value-object-003`), the
- * whole-document UPDATE / null-out / temporal-chaining writes, the temporal
- * value-object reads, and the `rejected` negatives are reason-skipped (see
- * `skip-manifest.ts`).
+ * atomic document insert. The whole-document UPDATE / null-out /
+ * temporal-chaining writes, the temporal value-object reads, and the `rejected`
+ * negatives are reason-skipped (see `skip-manifest.ts`); the deep-fetch ×
+ * value-object composition witness (`m-deep-fetch-018`) is likewise reason-skipped,
+ * proven by the harness run lane.
  */
 export const VALUE_OBJECTS: readonly string[] = [
   "m-value-object-001-nested-eq",
