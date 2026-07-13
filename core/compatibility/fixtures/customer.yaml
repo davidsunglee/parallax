@@ -185,3 +185,62 @@ Customer:
       phones:
         type: home
         number: '555-9999'
+
+# Location rows (models/customer.yaml `Location`, the many side of the to-many
+# `Customer.locations`). Each `address` is the SAME recursive composite as a
+# Customer address, loaded into Location's own single structured-document column,
+# so the deep-fetch child level materializes a document AT DEPTH exactly as the
+# owner read does (m-value-object). The rows are tied to specific Customer parents
+# to exercise the fan-out shapes the witness pins:
+#
+#   id 100  customer 1 (Ada)   label HQ     address present (an undeclared `zip`
+#                                            inside geo is DROPPED by the declared
+#                                            projection, like the Customer rows)
+#   id 101  customer 1 (Ada)   label Depot  address NULL — the null-DOCUMENT child:
+#                                            the whole value object materializes
+#                                            null, the absence collapse pinned at
+#                                            DEPTH (the analogue of Customer id 4)
+#   id 102  customer 2 (Linus) label Home   address present, empty phones array
+#
+# Customer 1 owns TWO locations (100, 101 — ordered by id asc per the relationship
+# orderBy), one of them the null-document child; Customer 2 owns one; Customers
+# 3-10 own none, so they appear in the graph with an empty `locations` list
+# (the fan-out attaches by key, never dropping childless parents).
+Location:
+  - id: 100
+    customerId: 1
+    label: HQ
+    address:
+      street: 1 Harbour Way
+      city: Oslo
+      geo:
+        country: NO
+        zip: "0150"
+        elevation: 12.0
+        point:
+          lat: 59.91
+          lon: 10.75
+      phones:
+        - { type: work, number: '555-0100' }
+  # id 101: the null-DOCUMENT child — Location.address is SQL NULL, so the whole
+  # value object materializes null in the child graph node (the depth analogue of
+  # Customer id 4 / Mary). This is the row the witness exists to pin: an
+  # implementation that materializes documents at the root but forgets them at
+  # child levels, or that mis-handles a null child document, fails here.
+  - id: 101
+    customerId: 1
+    label: Depot
+    address: null
+  - id: 102
+    customerId: 2
+    label: Home
+    address:
+      street: 5 Karl Johans Gate
+      city: Oslo
+      geo:
+        country: NO
+        elevation: 8.0
+        point:
+          lat: 59.92
+          lon: 10.74
+      phones: []

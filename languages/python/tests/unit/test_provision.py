@@ -34,7 +34,11 @@ def test_schema_statements_quote_reserved_and_order_columns() -> None:
 
 
 def test_schema_statements_map_value_objects_to_jsonb() -> None:
-    (ddl,) = provision.schema_statements(_MODELS["customer"])
+    (ddl,) = [
+        stmt
+        for stmt in provision.schema_statements(_MODELS["customer"])
+        if stmt.startswith("create table customer ")
+    ]
     assert "address jsonb" in ddl
     assert "primary key (id)" in ddl
 

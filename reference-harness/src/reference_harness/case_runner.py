@@ -1842,7 +1842,14 @@ def _assemble_graph(
         pk_col = _column_of(entity, pk_attr(entity))
         key = (view, entity.name, _coerce_identity_key(raw_row[pk_col]))
         if key not in registry:
-            registry[key] = _normalize_row(raw_row)
+            # Instance-form graph node: decode + project each top-level value-object
+            # document column into its declared composite, at EVERY level (root AND
+            # child), so a VO-bearing deep-fetch child materializes its document with
+            # the owner exactly as a root value-object read does (m-value-object /
+            # m-sql "Read projection", slot 4). A VO-free entity (every orders-model
+            # entity) has no value objects, so this is byte-identical to the prior
+            # `_normalize_row` — no existing deep-fetch graph changes.
+            registry[key] = _materialize_owner_node(entity, raw_row)
         return registry[key]
 
     root_nodes = [node_for("", root_entity, r) for r in rows_by_entity[root_entity.name]]

@@ -19,65 +19,171 @@
 # value is a nested mapping loaded into the structured-document column. Nested
 # members not yet present in every fixture row are `nullable: true` so the current
 # fixtures stay valid; fixtures/cases are enriched in later phases.
-entity:
-  name: Customer
-  namespace: parallax.compatibility
-  table: customer
-  mutability: transactional
-  temporal: non-temporal
-  attributes:
-    - name: id
-      type: int64
-      column: id
-      primaryKey: true
-      pkGenerator: none
-    - name: name
-      type: string
-      column: name
-      maxLength: 64
-  valueObjects:
-    - name: address
-      column: address
-      mapping: json
-      cardinality: one
-      nullable: true
-      attributes:
-        - name: street
-          type: string
-        - name: city
-          type: string
-      valueObjects:
-        - name: geo
-          cardinality: one
-          nullable: true
-          attributes:
-            - name: country
-              type: string
-            - name: elevation
-              type: float64
-              nullable: true
-          valueObjects:
-            - name: point
-              cardinality: one
-              nullable: true
-              attributes:
-                - name: lat
-                  type: float64
-                  nullable: true
-                - name: lon
-                  type: float64
-                  nullable: true
-        - name: phones
-          cardinality: many
-          nullable: true
-          attributes:
-            - name: type
-              type: string
-              nullable: true
-            - name: number
-              type: string
-              nullable: true
-  indices:
-    - name: customer_pk
-      attributes: [id]
-      unique: true
+#
+# COR-3 Phase 5b (read-projection amendment) adds a SECOND, VO-bearing child
+# entity `Location` and the to-many `Customer.locations` relationship, so the
+# corpus can witness the deep-fetch × value-object composition (design note 14 §3,
+# round 4): a `deepFetch(all(Customer), paths=[[Customer.locations]])` read whose
+# root level projects Customer's instance-form list (`id, name, address`) and whose
+# child level projects Location's own instance-form list (`id, customer_id, label,
+# address`: the FK via slot 1, the document last via slot 4). `Location` reuses
+# Customer's `address` composite verbatim — same declared members, same
+# absence-state vocabulary — so a null-document child materializes null exactly as
+# a null-address Customer does, pinning the absence collapse AT DEPTH. Adding a
+# sibling entity + relationship leaves Customer's own attributes/valueObjects and
+# their derived `columnOrder` untouched, so the existing customer reads (the 21
+# filter reads and the -023/-024 materialization graphs) do not ripple.
+entities:
+  - name: Customer
+    namespace: parallax.compatibility
+    table: customer
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: name
+        type: string
+        column: name
+        maxLength: 64
+    valueObjects:
+      - name: address
+        column: address
+        mapping: json
+        cardinality: one
+        nullable: true
+        attributes:
+          - name: street
+            type: string
+          - name: city
+            type: string
+        valueObjects:
+          - name: geo
+            cardinality: one
+            nullable: true
+            attributes:
+              - name: country
+                type: string
+              - name: elevation
+                type: float64
+                nullable: true
+            valueObjects:
+              - name: point
+                cardinality: one
+                nullable: true
+                attributes:
+                  - name: lat
+                    type: float64
+                    nullable: true
+                  - name: lon
+                    type: float64
+                    nullable: true
+          - name: phones
+            cardinality: many
+            nullable: true
+            attributes:
+              - name: type
+                type: string
+                nullable: true
+              - name: number
+                type: string
+                nullable: true
+    relationships:
+      - name: locations
+        relatedEntity: Location
+        cardinality: one-to-many
+        join: this.id = Location.customerId
+        reverseName: customer
+        dependent: true
+        foreignKey: customer_id
+        orderBy:
+          - { attr: id, direction: asc }
+    indices:
+      - name: customer_pk
+        attributes: [id]
+        unique: true
+  # Location: a VO-bearing CHILD of Customer (the many side of the to-many
+  # `Customer.locations`). It carries its own scalars — `id`, the `customer_id`
+  # foreign key, and `label` — plus its OWN `address` value object, the same
+  # recursive composite Customer declares (reused verbatim, m-value-object). It is
+  # the first relationship-target entity in the corpus to declare a value object,
+  # so a deep-fetch child level materializes a document at DEPTH: the child's
+  # instance-form projection is `id, customer_id, label, address` (scalars in
+  # columnOrder, then the single structured-document column last).
+  - name: Location
+    namespace: parallax.compatibility
+    table: location
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: customerId
+        type: int64
+        column: customer_id
+      - name: label
+        type: string
+        column: label
+        maxLength: 64
+    valueObjects:
+      - name: address
+        column: address
+        mapping: json
+        cardinality: one
+        nullable: true
+        attributes:
+          - name: street
+            type: string
+          - name: city
+            type: string
+        valueObjects:
+          - name: geo
+            cardinality: one
+            nullable: true
+            attributes:
+              - name: country
+                type: string
+              - name: elevation
+                type: float64
+                nullable: true
+            valueObjects:
+              - name: point
+                cardinality: one
+                nullable: true
+                attributes:
+                  - name: lat
+                    type: float64
+                    nullable: true
+                  - name: lon
+                    type: float64
+                    nullable: true
+          - name: phones
+            cardinality: many
+            nullable: true
+            attributes:
+              - name: type
+                type: string
+                nullable: true
+              - name: number
+                type: string
+                nullable: true
+    relationships:
+      - name: customer
+        relatedEntity: Customer
+        cardinality: many-to-one
+        join: this.customerId = Customer.id
+        reverseName: locations
+        foreignKey: customer_id
+    indices:
+      - name: location_pk
+        attributes: [id]
+        unique: true
+      - name: location_customer_id
+        attributes: [customerId]
+        unique: false

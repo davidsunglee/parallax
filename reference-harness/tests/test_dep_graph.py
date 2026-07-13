@@ -663,10 +663,22 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # reshaping, not the pruning of a declared branch, so the base read-projection rule
         # (m-sql) leaves it underivable and it is removed. The deleted case was tagged
         # slice-mvp-1 + slice-snapshot-1 + slice-managed-1, so every slice count falls by 1
-        # again: 195 -> 194, 295 -> 294, 316 -> 315. Final counts: 194 / 294 / 315.
-        ("slice-mvp-1", 194),
-        ("slice-snapshot-1", 294),
-        ("slice-managed-1", 315),
+        # again: 195 -> 194, 295 -> 294, 316 -> 315. Counts at that stage: 194 / 294 / 315.
+        #
+        # COR-3 Phase 5b (deep-fetch x value-object composition witness) authors one NEW
+        # read case, m-deep-fetch-018-value-object-child-materialization: a
+        # `deepFetch(all(Customer), paths=[[Customer.locations]])` graph read whose root
+        # (Customer) and child (Location) BOTH declare a value object, pinning that the
+        # instance-form read projection materializes the structured-document column at
+        # EVERY graph level (m-sql "Read projection", slot 4) — including a null-document
+        # child collapsing at depth. It is tagged m-deep-fetch + m-value-object with all
+        # three slice tags (mirroring the value-object materialization graphs
+        # m-value-object-023/-024, and entering the TypeScript claim's slice-mvp-1 so its
+        # conformance lane exercises the witness), so every slice count rises by 1:
+        # 194 -> 195, 294 -> 295, 315 -> 316. Final counts: 195 / 295 / 316.
+        ("slice-mvp-1", 195),
+        ("slice-snapshot-1", 295),
+        ("slice-managed-1", 316),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

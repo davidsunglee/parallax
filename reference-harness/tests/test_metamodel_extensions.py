@@ -189,7 +189,9 @@ def test_value_object_model_validates_and_maps_to_dialect_json() -> None:
     # then the ONE structured-document column per top-level value object.
     assert list(column_order(model.root_entity)) == ["id", "name", "address"]
     assert value_object["column"] in column_order(model.root_entity)
-    (create,) = ddl_for(model, "postgres")
+    # customer.yaml gained a VO-bearing sibling `Location` table in COR-3 Phase 5b, so
+    # `ddl_for` now returns one CREATE per table; select the root Customer's.
+    (create,) = [c for c in ddl_for(model, "postgres") if "create table customer (" in c]
     assert f"{value_object['column']} jsonb" in create
 
 
@@ -233,7 +235,9 @@ def test_value_object_ddl_emits_one_document_column_and_no_nested_columns() -> N
     dialect. The two-loop ddl_builder shape never walks the nested structure."""
     model = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
     for dialect, document_type in {"postgres": "jsonb", "mariadb": "json"}.items():
-        (create,) = ddl_for(model, dialect)
+        # customer.yaml gained a VO-bearing sibling `Location` table in COR-3 Phase 5b;
+        # this per-table invariant is asserted on the root Customer's CREATE.
+        (create,) = [c for c in ddl_for(model, dialect) if "create table customer (" in c]
         emitted = _emitted_columns(create)
         # Exactly the scalar attributes plus the one document column, in order.
         assert emitted == ["id", "name", "address"]

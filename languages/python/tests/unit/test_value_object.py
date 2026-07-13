@@ -17,7 +17,7 @@ _MODELS = corpus_models.load_models(
 
 
 def _address() -> ValueObject:
-    (customer,) = _MODELS["customer"].entities
+    customer = _MODELS["customer"].entity("Customer")
     (address,) = customer.value_objects
     return address
 

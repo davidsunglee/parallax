@@ -1,0 +1,191 @@
+# Deep fetch x value object: the composition witness (design note 14 §3, round 4).
+#
+# `deepFetch(all(Customer), paths=[[Customer.locations]])` — every Customer with
+# its `locations` eager-fetched via the one-to-many relationship — where BOTH the
+# root (Customer) and the child (Location) declare a value object. This pins that
+# the instance-form read projection (m-sql "Read projection", slot 4) materializes
+# the structured-document column at EVERY level of a graph, not just the root:
+#
+#   level 0 (root)  : all customers, projecting Customer's instance-form list
+#                     `id, name, address` (scalars in columnOrder, then the single
+#                     `address` document column LAST).
+#   level 1 (child) : location rows whose customer_id is in the DISTINCT customer
+#                     ids {1..10}, projecting Location's OWN instance-form list
+#                     `id, customer_id, label, address` (the FK `customer_id` is a
+#                     declared scalar in slot 1; the `address` document is slot 4,
+#                     last). roundTrips = 2 (root + one IN-keyed child level), NOT
+#                     1 + N.
+#
+# The child level's `address` decodes to the SAME declared projection as the
+# owner read (m-value-object materialization): only declared members appear (the
+# undeclared `zip` inside Location 100's geo is dropped), and the absence collapse
+# is pinned AT DEPTH — Location 101 carries a NULL document, so its whole value
+# object materializes null, exactly as a null-address Customer (id 4) does at the
+# root. This is the witness against an implementation that materializes documents
+# at the root but forgets them at child levels (or mishandles a null child
+# document). Customers with no locations (3-10) still appear with an empty
+# `locations` list (the fan-out attaches by key, never dropping childless parents).
+#
+# The golden SQL is identical on Postgres and MariaDB (bare column projections, no
+# JSON extraction in the SELECT/WHERE); MariaDB returns each `json` column as text
+# and Postgres the `jsonb` parsed, but both decode to the same composite. The
+# `phones` arrays are authored readably, but to-many value-object element order is
+# UNSPECIFIED (m-value-object), so `then.graph` array comparison is a multiset.
+#
+# compileEligibility is run-only / query-result-dependent: the child level's
+# IN-list binds are the distinct parent keys gathered from the root query result,
+# so the emissions are not a pure function of `when` + `given` (the exact criterion
+# the schema's reason text names for deep-fetch fan-out binds).
+model: models/customer.yaml
+tags: [m-deep-fetch, m-value-object, relationship, to-many, graph, materialization, json, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Customer.locations IN-list binds are the distinct parent keys gathered from the root query result, so the child emissions depend on a query result"
+when:
+  targetEntity: Customer
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - [{ rel: Customer.locations }]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.address from customer t0
+        mariadb: select t0.id, t0.name, t0.address from customer t0
+    - sql:
+        postgres: select t0.id, t0.customer_id, t0.label, t0.address from location t0 where t0.customer_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id asc
+        mariadb: select t0.id, t0.customer_id, t0.label, t0.address from location t0 where t0.customer_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id asc
+      binds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  referenceSql: select id, name, address from customer
+  graph:
+    Customer:
+      - id: 1
+        name: Ada
+        address:
+          street: 1 Park Ave
+          city: Oslo
+          geo:
+            country: NO
+            elevation: 10.5
+            point: { lat: 59.9, lon: 10.7 }
+          phones:
+            - { type: home, number: '555-1234' }
+            - { type: work, number: '555-9999' }
+        locations:
+          - id: 100
+            customer_id: 1
+            label: HQ
+            address:
+              street: 1 Harbour Way
+              city: Oslo
+              geo:
+                country: NO
+                elevation: 12.0
+                point: { lat: 59.91, lon: 10.75 }
+              phones:
+                - { type: work, number: '555-0100' }
+          # Location 101: null document child -> address materializes null (the
+          # absence collapse pinned AT DEPTH, the analogue of Customer id 4).
+          - id: 101
+            customer_id: 1
+            label: Depot
+            address: null
+      - id: 2
+        name: Linus
+        address:
+          street: 2 Main St
+          city: Oslo
+          geo:
+            country: NO
+            elevation: 20.0
+            point: { lat: 59.9, lon: 10.8 }
+          phones:
+            - { type: home, number: '555-9999' }
+        locations:
+          - id: 102
+            customer_id: 2
+            label: Home
+            address:
+              street: 5 Karl Johans Gate
+              city: Oslo
+              geo:
+                country: NO
+                elevation: 8.0
+                point: { lat: 59.92, lon: 10.74 }
+              phones: []
+      - id: 3
+        name: Grace
+        address:
+          street: 9 Beacon St
+          city: Boston
+          geo:
+            country: US
+            elevation: 5.0
+            point: { lat: 42.3, lon: -71.0 }
+          phones: []
+        locations: []
+      # id 4: SQL-NULL address column -> the whole value object materializes null.
+      - id: 4
+        name: Mary
+        address: null
+        locations: []
+      - id: 5
+        name: Kavi
+        address:
+          street: 5 Harbour Rd
+          city: null
+          geo:
+            country: null
+            elevation: null
+            point: null
+          phones: []
+        locations: []
+      - id: 6
+        name: Rin
+        address:
+          street: 6 Kastanien Allee
+          city: Berlin
+          geo: null
+          phones: []
+        locations: []
+      - id: 7
+        name: Nils
+        address:
+          street: 7 Fjord Vei
+          city: null
+          geo:
+            country: null
+            elevation: null
+            point: { lat: null, lon: null }
+          phones:
+            - { type: work, number: '555-0000' }
+        locations: []
+      - id: 8
+        name: Iris
+        address:
+          street: 8 Null Way
+          city: null
+          geo: null
+          phones: []
+        locations: []
+      - id: 9
+        name: Omar
+        address:
+          street: 9 Scalar Rd
+          city: null
+          geo: null
+          phones: []
+        locations: []
+      - id: 10
+        name: Priya
+        address:
+          street: 10 Object Ct
+          city: null
+          geo: null
+          phones: []
+        locations: []
+  roundTrips: 2
