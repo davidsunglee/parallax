@@ -31,10 +31,10 @@ when:
       note: hold the LATEST view of id 2 (the current milestone, 200.00)
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
           binds: [2, infinity]
       expectRows:
-        - { bal_id: 2, val: 200.00 }
+        - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
     - targetEntity: Balance
       find:
         asOf:
@@ -48,10 +48,10 @@ when:
       note: hold a PAST view pinned at 2024-04-01 (the same milestone right now, 200.00)
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
           binds: [2, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
       expectRows:
-        - { bal_id: 2, val: 200.00 }
+        - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
     - write: update
       roundTrips: 2
       note: audit-only update at 2024-07-01 — close the current row, then chain a new current milestone (250.00)
@@ -73,10 +73,10 @@ when:
       note: the held LATEST view ADVANCED to the newly chained milestone (250.00) — the SAME object as step 0
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
           binds: [2, infinity]
       expectRows:
-        - { bal_id: 2, val: 250.00 }
+        - { bal_id: 2, acct_num: B, val: 250.00, in_z: "2024-07-01T00:00:00+00:00", out_z: infinity }
     - targetEntity: Balance
       find:
         asOf:
@@ -92,9 +92,9 @@ when:
       note: the held PAST view still reflects its own pin (200.00, now the closed [2024-02-01, 2024-07-01) milestone) — the SAME object as step 1
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
           binds: [2, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
       expectRows:
-        - { bal_id: 2, val: 200.00 }
+        - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: "2024-07-01T00:00:00+00:00" }
 then:
   roundTrips: 6

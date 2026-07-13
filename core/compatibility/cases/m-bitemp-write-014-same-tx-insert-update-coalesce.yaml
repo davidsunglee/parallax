@@ -66,10 +66,10 @@ when:
       note: bitemporal as-of now on both axes over position 9 observes ONE fully-current rectangle at the coalesced value 150
       statements:
         - sql:
-            postgres: select t0.pos_id, t0.val from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.out_z = ?
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.out_z = ?
           binds: [9, infinity, infinity]
-      referenceSql: select pos_id, val from position where pos_id = 9 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
+      referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 9 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
       expectRows:
-        - { pos_id: 9, val: 150.00 }
+        - { pos_id: 9, acct_num: D, val: 150.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
 then:
   roundTrips: 2

@@ -47,7 +47,8 @@ def test_plain_read_is_identical_canonical_form_on_both_dialects() -> None:
 
 def test_temporal_read_and_insert_are_canonical_on_mariadb() -> None:
     for sql in (
-        "select t0.bal_id, t0.val from balance t0 where t0.out_z = ?",
+        "select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z "
+        "from balance t0 where t0.out_z = ?",
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
     ):
         assert is_canonical(sql, "mariadb"), sql

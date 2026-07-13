@@ -33,10 +33,10 @@ when:
       note: finite pin at 2024-04-01 — inside the single open milestone [2024-02-01, infinity)
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
           binds: [2, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
       expectRows:
-        - { bal_id: 2, val: 200.00 }
+        - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
     - targetEntity: Balance
       find:
         asOf:
@@ -52,9 +52,9 @@ when:
       note: a DISTINCT finite pin at 2024-05-01 — same milestone, IDENTICAL row, but a DIFFERENT pinned view
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ?
           binds: [2, "2024-05-01T00:00:00+00:00", "2024-05-01T00:00:00+00:00"]
       expectRows:
-        - { bal_id: 2, val: 200.00 }
+        - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
 then:
   roundTrips: 2

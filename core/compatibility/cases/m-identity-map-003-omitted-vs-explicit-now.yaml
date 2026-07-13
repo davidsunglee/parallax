@@ -28,10 +28,10 @@ when:
       note: OMITTED coordinate — the default-injected current-row predicate (lowers to out_z = infinity)
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
           binds: [1, infinity]
       expectRows:
-        - { bal_id: 1, val: 150.00 }
+        - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
     - targetEntity: Balance
       find:
         asOf:
@@ -47,9 +47,9 @@ when:
       note: EXPLICIT asOf(now) — lowers to the SAME out_z = infinity coordinate, the SAME managed view as step 0
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
           binds: [1, infinity]
       expectRows:
-        - { bal_id: 1, val: 150.00 }
+        - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
 then:
   roundTrips: 2

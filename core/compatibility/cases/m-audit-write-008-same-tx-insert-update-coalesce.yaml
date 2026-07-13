@@ -54,10 +54,10 @@ when:
       note: as-of now over account 9 observes ONE current milestone at the coalesced value 150 (a single row, not a superseded 100 + current 150)
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.val from balance t0 where t0.bal_id = ? and t0.out_z = ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
           binds: [9, infinity]
-      referenceSql: select bal_id, val from balance where bal_id = 9 and out_z = 'infinity'::timestamptz
+      referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where bal_id = 9 and out_z = 'infinity'::timestamptz
       expectRows:
-        - { bal_id: 9, val: 150.00 }
+        - { bal_id: 9, acct_num: D, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
 then:
   roundTrips: 2
