@@ -115,8 +115,11 @@ structural rules keep the instruction framework-honest:
   names; the corpus-wide re-authoring is deferred.)
 - **The transaction observation is not an instruction field.** The framework-owned
   optimistic version / observed `in_z` a gated write binds (`m-opt-lock`) is attached
-  **per materialized row at flush**, never carried on the durable instruction — the
-  structural guarantee that versions stay framework-owned (ADR 0013).
+  **per materialized row at flush**, never carried on the durable instruction: the
+  reserved `observedVersion` / `observedInZ` control keys are explicitly **forbidden**
+  on a `write-instruction.schema.json` write row, so an observation cannot round-trip
+  as instruction state — the structural guarantee that versions stay framework-owned
+  (ADR 0013). They are flush-time context on the case format's materialization row.
 
 A conforming implementation **MUST** round-trip every instruction through the
 canonical form losslessly (`serialize(deserialize(x)) == x`), the write-side of the
@@ -151,6 +154,16 @@ the milestone modules chain and split as usual. The rule is centralized here bec
 it is a buffering decision, not a per-verb one — the milestone modules
 (`m-audit-write`, `m-bitemp-write`) describe the durable cross-transaction shapes and
 defer the same-transaction combination to this scope.
+
+A coalescing witness encodes **both** buffered mutations explicitly by authoring
+the write step as an ordered **buffer-and-flush** scenario: `/scenario/<n>/write`
+carries the ordered buffer of write instructions (the keyed `insert` of the new
+object, then the keyed `update` / `delete` of that same object), and the step's
+golden SQL is the independent expected lowering of the coalesced flush — one
+final-value write, or no DML at all. The buffered form and its authoring surface are
+the case format's (`m-case-format`); the instructions themselves are the canonical
+`write-instruction.schema.json` shapes, so an adapter exercises coalescing from the
+requested operations, never from the golden SQL.
 
 ## Strategy selection — the per-unit-of-work participation mode
 

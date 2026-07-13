@@ -18,14 +18,18 @@ from reference_harness.predicate_write_validate import (
     validate_predicate_write_materialization,
 )
 from reference_harness.schema_validate import validate_tree
+from reference_harness.schemas import build_registry, load_schemas
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 _CASE_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema.json"
+_REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
 
 
 def _schema() -> Draft202012Validator:
-    return Draft202012Validator(json.loads(_CASE_SCHEMA_PATH.read_text(encoding="utf-8")))
+    return Draft202012Validator(
+        json.loads(_CASE_SCHEMA_PATH.read_text(encoding="utf-8")), registry=_REGISTRY
+    )
 
 
 def _update_instruction() -> dict[str, object]:

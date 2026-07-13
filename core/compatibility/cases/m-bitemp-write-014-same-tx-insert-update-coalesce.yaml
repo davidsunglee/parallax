@@ -26,9 +26,25 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - write: insert
+    - write:
+        # Buffer the plain keyed INSERT of the new position 9 (value 100, business
+        # [2024-01-01, infinity)), then buffer the keyed UPDATE to value 150.
+        # `businessFrom` is the canonical business-axis lower bound (from_z); a plain
+        # insert omits `businessTo`, so the window runs to infinity. `at` is the
+        # Clock-supplied processing instant (in_z), never an instruction field.
+        - mutation: insert
+          entity: Position
+          rows:
+            - { id: 9, acctNum: D, value: 100.00 }
+          businessFrom: "2024-01-01T00:00:00+00:00"
+          at: "2024-01-01T00:00:00+00:00"
+        - mutation: update
+          entity: Position
+          rows:
+            - { id: 9, value: 150.00 }
+          at: "2024-01-01T00:00:00+00:00"
       roundTrips: 1
-      note: a buffered plain insert (value 100) + a buffered update (value 150) of the SAME new position 9 coalesce to ONE fully-current rectangle INSERT carrying the final value 150 — no inactivation, no head/tail split
+      note: the buffered plain INSERT (value 100) then the buffered UPDATE (value 150) of the SAME new position 9 coalesce IN PLACE to ONE fully-current rectangle INSERT carrying the final value 150 — no inactivation, no head/tail split
       statements:
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)

@@ -24,9 +24,23 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - write: insert
+    - write:
+        # Buffer the keyed INSERT of the new account 9 (value 100), then buffer the
+        # keyed UPDATE of that SAME object to value 150. `at` is the Clock-supplied
+        # processing instant the flush records (in_z); it is NOT an instruction field
+        # in the canonical write-instruction schema.
+        - mutation: insert
+          entity: Balance
+          rows:
+            - { id: 9, acctNum: D, value: 100.00 }
+          at: "2024-06-01T00:00:00+00:00"
+        - mutation: update
+          entity: Balance
+          rows:
+            - { id: 9, value: 150.00 }
+          at: "2024-06-01T00:00:00+00:00"
       roundTrips: 1
-      note: a buffered insert (value 100) + a buffered update (value 150) of the SAME new account 9 coalesce to ONE current-row INSERT carrying the final value 150 — no close, no superseded milestone
+      note: the buffered INSERT (value 100) then the buffered UPDATE (value 150) of the SAME new account 9 coalesce IN PLACE to ONE current-milestone INSERT carrying the final value 150 — no close, no superseded milestone
       statements:
         - sql:
             postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)

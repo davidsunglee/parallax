@@ -368,7 +368,7 @@
                 "items": { "$ref": "#/$defs/writeRow" }
               },
               "at": {
-                "description": "The transaction / processing instant a TEMPORAL (audit-only) write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it (open `in_z = at`, `out_z = infinity`; close `out_z = at`). Present on a processing-axis temporal step; absent on a non-temporal batched write (and replaced by `businessAt` on a business-only step). Required for a `*Until` step and for a `terminate` close. AUTHORING ALIAS (m-unit-work `write-instruction.schema.json`): `at` is the corpus's OVERLOADED spelling — on an audit-only step it names the Clock-supplied PROCESSING instant (not an instruction field in the canonical schema), and on a bitemporal `*Until` step it names the canonical `businessFrom`. The corpus-wide re-authoring to the unambiguous canonical spellings is deferred.",
+                "description": "The transaction / PROCESSING instant a TEMPORAL write records — the milestone's `in_z`. A GENERATING adapter DERIVES the bookkeeping from it (open `in_z = at`, `out_z = infinity`; close `out_z = at`). Present on a processing-axis temporal step; absent on a non-temporal batched write (and replaced by `businessAt` on a business-only step). Required for a `*Until` step and for a processing-axis `terminate` close. AUTHORING ALIAS (m-unit-work `write-instruction.schema.json`): `at` ALWAYS names the Clock-supplied PROCESSING instant — it is NOT an instruction field in the canonical schema, on an audit-only step OR a bitemporal `*Until` step. `at` NEVER aliases `businessFrom`: a bitemporal `*Until` step carries its business-axis lower bound separately as the row's `businessFrom` (already the canonical spelling), distinct from this processing instant (e.g. `m-bitemp-write-001`: row `businessFrom` 2024-03-01, `at` 2024-02-15). The corpus-wide re-authoring to the unambiguous canonical spellings is deferred.",
                 "type": "string",
                 "minLength": 1
               },
@@ -449,10 +449,11 @@
                 "$ref": "#/$defs/entityName"
               },
               "write": {
-                "description": "Marks a WRITE step. Existing cases retain their legacy string label; predicate-selected writes carry the neutral `$defs/predicateWrite` instruction that compile/run and API no-drift checks consume independently of golden SQL.",
+                "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — deferred migration). A single predicate-selected `$defs/predicateWrite` instruction. Or an ORDERED `$defs/bufferedWriteSequence` — two or more write instructions a single unit of work BUFFERS before a coalescing flush (m-unit-work same-transaction coalescing), so the step encodes BOTH the buffered mutations (e.g. a keyed INSERT of a new object then the keyed UPDATE / DELETE of that same object) explicitly rather than in prose. Every structured form is the neutral requested operation compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
                 "oneOf": [
                   { "type": "string", "minLength": 1 },
-                  { "$ref": "#/$defs/predicateWrite" }
+                  { "$ref": "#/$defs/predicateWrite" },
+                  { "$ref": "#/$defs/bufferedWriteSequence" }
                 ]
               },
               "rollback": {
@@ -867,30 +868,30 @@
       ]
     },
     "predicateWrite": {
-      "description": "A predicate-selected set-based write. The instruction, rather than a language method name or golden SQL, is the canonical compile/run input. Assignment list order is data only: descriptor column order determines emitted SET and bind order.",
+      "description": "A predicate-selected set-based write (m-unit-work): the CASE-FORMAT wrapper over `write-instruction.schema.json`'s `predicateWriteInstruction`. The instruction, rather than a language method name or golden SQL, is the canonical compile/run input; assignment list order is data only (descriptor column order determines emitted SET and bind order). The shared vocabulary — the `predicateMutation` enum, the `writeTarget`, and each `writeAssignment` — is REFERENCED from the canonical schema rather than redefined; this wrapper layers only the corpus's `at` / `businessFrom` / `until` authoring aliases (the axis-explicit canonical spellings are `businessFrom` / `businessTo`; the processing instant is Clock context, never an instruction field).",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "target"],
       "properties": {
-        "mutation": { "enum": ["update", "delete", "terminate", "updateUntil", "terminateUntil"] },
-        "target": { "$ref": "#/$defs/writeTarget" },
+        "mutation": { "$ref": "write-instruction.schema.json#/$defs/predicateMutation" },
+        "target": { "$ref": "write-instruction.schema.json#/$defs/writeTarget" },
         "assignments": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/writeAssignment" }
+          "items": { "$ref": "write-instruction.schema.json#/$defs/writeAssignment" }
         },
         "at": {
-          "description": "The transaction / processing instant a temporal predicate write records. AUTHORING ALIAS of the Clock-supplied processing context in the canonical `write-instruction.schema.json` (which carries no processing-instant field).",
+          "description": "The transaction / processing instant a temporal predicate write records. AUTHORING ALIAS of the Clock-supplied processing context in the canonical `write-instruction.schema.json` (which carries no processing-instant field, on any axis).",
           "type": "string",
           "minLength": 1
         },
         "businessFrom": {
-          "description": "The business-axis lower bound of the plain or bounded temporal operation. Already the canonical spelling in `write-instruction.schema.json`.",
+          "description": "The business-axis lower bound of the plain or bounded temporal operation. Already the canonical spelling in `write-instruction.schema.json`; REQUIRED on a bounded `*Until` write (whose window is `[businessFrom, until)`).",
           "type": "string",
           "minLength": 1
         },
         "until": {
-          "description": "The bounded (`*Until`) operation's exclusive upper business bound. AUTHORING ALIAS of the canonical `businessTo` (m-unit-work `write-instruction.schema.json`).",
+          "description": "The bounded (`*Until`) operation's exclusive upper business bound (`thru_z`). AUTHORING ALIAS of the canonical `businessTo` (m-unit-work `write-instruction.schema.json`); always paired with `businessFrom`.",
           "type": "string",
           "minLength": 1
         }
@@ -902,33 +903,65 @@
           "else": { "not": { "required": ["assignments"] } }
         },
         {
+          "description": "A bounded `*Until` predicate write is over `[businessFrom, until)` (m-bitemp-write), so it MUST carry BOTH business bounds (`businessFrom` plus the `until` alias of `businessTo`); the unbounded forms MUST NOT carry `until`.",
           "if": { "properties": { "mutation": { "enum": ["updateUntil", "terminateUntil"] } } },
-          "then": { "required": ["until"] },
+          "then": { "required": ["businessFrom", "until"] },
           "else": { "not": { "required": ["until"] } }
         }
       ]
     },
-    "writeTarget": {
-      "description": "The exact entity a predicate-selected write begins from plus its bare m-op-algebra predicate. The harness validates the operation schema and descriptor-dependent scope/modifier rules separately.",
+    "keyedWrite": {
+      "description": "A keyed write instruction inside a buffered scenario write (m-unit-work same-transaction coalescing) — the CASE-FORMAT analogue of `write-instruction.schema.json`'s `keyedWriteInstruction`: a `mutation` on one `entity` carrying the flat attribute-named neutral write input (`rows`). The shared vocabulary — the `keyedMutation` enum, the `entityName`, and each durable `writeRow` (which FORBIDS the framework-owned `observedVersion` / `observedInZ` observation, since a buffered instruction is durable, not a flush-time gated write) — is REFERENCED from the canonical schema. Business bounds are the axis-explicit canonical `businessFrom` / `businessTo`; `at` is the corpus authoring alias of the Clock-supplied PROCESSING instant (never an instruction field). A bounded `*Until` write is over `[businessFrom, businessTo)`, so it carries both.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["entity", "predicate"],
+      "required": ["mutation", "entity", "rows"],
       "properties": {
-        "entity": { "$ref": "#/$defs/entityName" },
-        "predicate": { "type": "object" }
-      }
-    },
-    "writeAssignment": {
-      "description": "One ordered predicate-write assignment. `attr` is a qualified descriptor attribute or top-level value-object reference and `value` is a neutral literal: a scalar/null for an attribute or the complete object/array document for a value object. Duplicate and unassignable references are rejected by model-aware validation.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["attr", "value"],
-      "properties": {
-        "attr": {
-          "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"
+        "mutation": { "$ref": "write-instruction.schema.json#/$defs/keyedMutation" },
+        "entity": { "$ref": "write-instruction.schema.json#/$defs/entityName" },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "write-instruction.schema.json#/$defs/writeRow" }
         },
-        "value": { "type": ["string", "number", "boolean", "null", "object", "array"] }
+        "businessFrom": {
+          "description": "The business-axis lower bound of a temporal keyed write (`from_z`); REQUIRED on a bounded `*Until` write.",
+          "type": "string",
+          "minLength": 1
+        },
+        "businessTo": {
+          "description": "The business-axis exclusive upper bound of a bounded (`*Until`) keyed write (`thru_z`); present ONLY on `insertUntil` / `updateUntil` / `terminateUntil`, always paired with `businessFrom`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "description": "The Clock-supplied PROCESSING instant this buffered write flushes at (`in_z`). AUTHORING ALIAS of the processing context in the canonical schema (which carries no processing-instant field); never an instruction field.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "description": "A bounded `*Until` keyed write is over `[businessFrom, businessTo)` (m-bitemp-write), so it MUST carry BOTH business bounds; a plain (unbounded) write MUST NOT carry `businessTo`.",
+          "if": {
+            "required": ["mutation"],
+            "properties": {
+              "mutation": { "enum": ["insertUntil", "updateUntil", "terminateUntil"] }
+            }
+          },
+          "then": { "required": ["businessFrom", "businessTo"] },
+          "else": { "not": { "required": ["businessTo"] } }
+        }
+      ]
+    },
+    "bufferedWriteSequence": {
+      "description": "An ORDERED buffer of two or more write instructions a single unit of work accumulates before a coalescing flush (m-unit-work same-transaction coalescing). The instructions are buffered IN ORDER — canonically a keyed INSERT of a new object, then the keyed UPDATE / DELETE of that SAME object — and the flush emits the COALESCED result: one final-value write (insert-then-update writes the final value in place; no intermediate milestone) or NO DML at all (insert-then-delete cancels). The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of that coalesced flush, so a scenario encodes BOTH requested mutations here explicitly rather than in a prose note. Each entry is a keyed (`keyedWrite`) or predicate (`predicateWrite`) instruction.",
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/keyedWrite" },
+          { "$ref": "#/$defs/predicateWrite" }
+        ]
       }
     },
     "statementEntry": {
@@ -988,43 +1021,17 @@
         ]
       }
     },
-    "writeComputedMarker": {
-      "description": "A one-key DB-COMPUTED marker in a neutral write row (①): the attribute's value is derived by the database rather than authored as a literal bind, so the adapter emits the strategy's SQL fragment and the harness cross-check skips the literal bind at this position. This interpretation applies ONLY to a SCALAR ATTRIBUTE column (m-value-object): a value-object column's value is ALWAYS the literal document even when it is marker-SHAPED, so a marker vs a value-object document is disambiguated by the field's declared metamodel role (resolved from `columnOrder(entity)`), NOT by the value's shape.",
-      "type": "object",
-      "additionalProperties": false,
-      "minProperties": 1,
-      "maxProperties": 1,
-      "properties": {
-        "computed": {
-          "description": "The pk-gen `max` strategy: the column is emitted as `coalesce(max(col), ?) + ?` (its binds are the strategy's coalesce base + increment, NOT an ① literal).",
-          "enum": ["maxPlusOne"]
-        },
-        "increment": {
-          "description": "A self-referential advance emitted as `col = col + ?` (e.g. a sequence registry's `next_val`); the integer is the amount added.",
-          "type": "integer"
-        }
-      }
-    },
     "writeRow": {
-      "description": "A flat attribute-named write row — the neutral write input (①), same vocabulary as a fixture row. Reserved control keys are named as explicit `properties`; every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`). A SCALAR ATTRIBUTE's value is a scalar literal, an explicit `null`, OR a one-key DB-COMPUTED marker object — `{ computed: \"maxPlusOne\" }` or `{ increment: <n> }`; a VALUE-OBJECT field's value is the WHOLE embedded composite document (a JSON object, or a JSON array of objects for a `many` value object), or `null` (m-value-object). The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order — binding a value object atomically as one document in its columnOrder position. A DB-computed marker vs a value-object document is therefore disambiguated by MODEL ROLE, not by the value's SHAPE: only a scalar-attribute column's value is ever read as a marker, while a value-object column's value is ALWAYS the literal document even when it is marker-SHAPED. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`.",
+      "description": "A flat attribute-named write row at a FLUSH / MATERIALIZATION location (an m-opt-lock conflict / retry gated write, a writeSequence step) — the neutral write input (①), same vocabulary as a fixture row, PLUS the reserved framework-owned `observedVersion` control key. It is the canonical durable instruction row (`write-instruction.schema.json#/$defs/writeRow`) with ONE difference: `observedVersion` is legitimate FLUSH-TIME context here (the version a versioned write gates on / advances), whereas the canonical durable instruction FORBIDS it. Every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`), and its value is the shared canonical `writeRowValue` — a scalar literal / explicit `null`, a one-key DB-COMPUTED marker (`{ computed: \"maxPlusOne\" }` / `{ increment: <n> }`), or the WHOLE embedded value-object document — REFERENCED from `write-instruction.schema.json` rather than redefined. The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from `columnOrder(entity)` — never from JSON/YAML key order — so a marker-SHAPED value is a DB-computed marker vs a value-object document by MODEL ROLE, not by the value's SHAPE. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`.",
       "type": "object",
       "properties": {
         "observedVersion": {
-          "description": "The optimistic-lock version the unit of work read (m-opt-lock). A reserved control key, NOT an attribute/column: it is the gate/advance token (the advance `observedVersion + 1` and the `and version = ?` gate are DERIVED, never authored). Present on a versioned update; absent on a versioned insert and on a non-versioned write.",
+          "description": "The optimistic-lock version the unit of work read (m-opt-lock). A reserved control key, NOT an attribute/column: it is the gate/advance token (the advance `observedVersion + 1` and the `and version = ?` gate are DERIVED, never authored). Present on a versioned update; absent on a versioned insert and on a non-versioned write. This is FLUSH-TIME / materialization context — the durable instruction row (`write-instruction.schema.json#/$defs/writeRow`) forbids it, since the observation is never carried on the durable instruction (ADR 0013).",
           "type": "integer",
           "minimum": 0
         }
       },
-      "additionalProperties": {
-        "anyOf": [
-          { "type": ["string", "number", "boolean", "null"] },
-          { "$ref": "#/$defs/writeComputedMarker" },
-          {
-            "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite ATOMICALLY as one document value in its columnOrder position — a JSON object for a `one` value object, or a JSON array of objects for a `many` one — never decomposed into path-level binds. (A null nullable value object uses the scalar `null` branch above and binds SQL NULL.) Whether a marker-SHAPED value (`{computed: …}` / `{increment: n}`) is a DB-computed marker or a value-object document is a MODEL-ROLE decision — resolved from `columnOrder(entity)`, NOT from the value's shape — that this model-agnostic schema cannot make, so the value branches are NON-exclusive (`anyOf`, no mutual-exclusion guard): a value-object column's value is ALWAYS literal document content, and a marker-shaped value-object document therefore validates via BOTH this branch and the computed-marker branch.",
-            "type": ["object", "array"]
-          }
-        ]
-      }
+      "additionalProperties": { "$ref": "write-instruction.schema.json#/$defs/writeRowValue" }
     },
     "concurrencyStep": {
       "description": "One node's step within a `when.concurrency` round. Carries its golden SQL as `statements` ({sql, binds} entries, dialect-keyed map form). On the concurrency-SUCCESS shape it additionally declares an explicit `kind`: a `read` step is fetched on its HELD session and its `expectRows` graded; a `write` step is executed and asserts only that it did not block/raise. `kind` is optional in this base def so the error/concurrency shape — whose only assertion is the classified error — carries no `kind`; the concurrency-success root branch requires it on every present step.",

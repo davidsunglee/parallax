@@ -20,9 +20,11 @@ from jsonschema import Draft202012Validator
 
 from reference_harness.case import Case, Model
 from reference_harness.case_runner import CaseFailure, _assert_schema
+from reference_harness.schemas import build_registry, load_schemas
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema.json"
+_REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
 
 _SHARED_READ = {
     "postgres": (
@@ -47,7 +49,7 @@ def _entry(sql: dict[str, str], binds: list[Any]) -> dict[str, Any]:
 
 
 def _case_validator() -> Draft202012Validator:
-    return Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()))
+    return Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()), registry=_REGISTRY)
 
 
 def _concurrency_case(raw: dict) -> Case:

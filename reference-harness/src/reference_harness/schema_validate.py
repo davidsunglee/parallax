@@ -18,7 +18,6 @@ It performs m-case-format layer 1 statically (no database needed):
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -26,25 +25,18 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
+from referencing import Registry
 
 from .case import Entity
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
 from .operation_references import collect_reference_classes
-from .paths import schemas_dir
 from .predicate_write_validate import (
     PredicateWriteValidationError,
     validate_predicate_write,
     validate_predicate_write_materialization,
 )
+from .schemas import build_registry, load_schemas
 from .value_object_resolve import RejectionError
-
-_SCHEMA_FILES = (
-    "metamodel.schema.json",
-    "operation.schema.json",
-    "compatibility-case.schema.json",
-    "conformance-adapter.schema.json",
-    "write-instruction.schema.json",
-)
 
 
 class ValidationFailure(Exception):
@@ -56,18 +48,20 @@ def _load_yaml(path: Path) -> Any:
         return yaml.safe_load(handle)
 
 
-def _load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+def validation_error(
+    instance: Any, schema: dict[str, Any], registry: Registry | None = None
+) -> str | None:
+    """Return the most relevant JSON Schema failure, or ``None`` when valid.
 
-
-def _load_schemas(schemas: Path) -> dict[str, dict[str, Any]]:
-    return {name: _load_json(schemas / name) for name in _SCHEMA_FILES}
-
-
-def validation_error(instance: Any, schema: dict[str, Any]) -> str | None:
-    """Return the most relevant JSON Schema failure, or ``None`` when valid."""
-    validator = Draft202012Validator(schema)
+    *registry* resolves cross-file ``$ref``s (the case schema references the
+    canonical write-instruction ``$defs``); a bare validator cannot reach another
+    file, so callers validating the case schema MUST pass it.
+    """
+    validator = (
+        Draft202012Validator(schema, registry=registry)
+        if registry is not None
+        else Draft202012Validator(schema)
+    )
     found = sorted(validator.iter_errors(instance), key=lambda e: e.path)
     if not found:
         return None
@@ -76,8 +70,14 @@ def validation_error(instance: Any, schema: dict[str, Any]) -> str | None:
     return f"at {location}: {match.message}"
 
 
-def _validate(instance: Any, schema: dict[str, Any], label: str, errors: list[str]) -> None:
-    problem = validation_error(instance, schema)
+def _validate(
+    instance: Any,
+    schema: dict[str, Any],
+    label: str,
+    errors: list[str],
+    registry: Registry | None = None,
+) -> None:
+    problem = validation_error(instance, schema, registry)
     if problem is not None:
         errors.append(f"{label}: {problem}")
 
@@ -194,6 +194,73 @@ def _validate_predicate_write(
     return entity
 
 
+def _keyed_member_names(entity_defs: list[dict[str, Any]], entity_name: str) -> set[str] | None:
+    """The attribute + value-object names a keyed write row of *entity_name* may name.
+
+    Returns ``None`` when the entity is undeclared (the caller reports that). The
+    framework-owned observation is already forbidden on the durable row by the
+    canonical schema, so it is not a member name here.
+    """
+    try:
+        definition = resolve_effective_definition(entity_defs, entity_name)
+    except (KeyError, RejectionError):
+        return None
+    names = {
+        attribute["name"]
+        for attribute in definition.get("attributes", [])
+        if isinstance(attribute, dict) and isinstance(attribute.get("name"), str)
+    }
+    names |= {
+        value_object["name"]
+        for value_object in definition.get("valueObjects", [])
+        if isinstance(value_object, dict) and isinstance(value_object.get("name"), str)
+    }
+    return names
+
+
+def _validate_buffered_write(
+    instructions: list[Any],
+    entity_defs: list[dict[str, Any]],
+    operation_schema: dict[str, Any],
+    label: str,
+    errors: list[str],
+) -> None:
+    """Validate each instruction in a buffered scenario write (m-unit-work coalescing).
+
+    The schema already pins the buffered SHAPE (an ordered list of keyed / predicate
+    instructions); this adds the model-aware honesty check the wire harness would
+    otherwise skip (it executes the coalesced golden SQL, never the buffered
+    instructions): a predicate entry reuses the predicate-write validator, and a keyed
+    entry's row keys MUST name declared attributes / value objects of its entity, so a
+    buffered write cannot silently name a non-member.
+    """
+    for position, instruction in enumerate(instructions):
+        entry_label = f"{label} buffered write[{position}]"
+        if not isinstance(instruction, dict):
+            continue  # the case schema owns non-object entries
+        if "target" in instruction:
+            _validate_predicate_write(
+                instruction, entity_defs, operation_schema, entry_label, errors
+            )
+            continue
+        entity_name = instruction.get("entity")
+        if not isinstance(entity_name, str):
+            continue  # the case schema owns the missing/malformed entity error
+        members = _keyed_member_names(entity_defs, entity_name)
+        if members is None:
+            errors.append(f"{entry_label}: keyed write entity {entity_name!r} is not declared")
+            continue
+        for row in instruction.get("rows", []):
+            if not isinstance(row, dict):
+                continue
+            unknown = sorted(key for key in row if key not in members)
+            if unknown:
+                errors.append(
+                    f"{entry_label}: keyed write row names {unknown} which are not "
+                    f"attributes or value objects of {entity_name}"
+                )
+
+
 # --- compile-eligibility backstop (m-case-format / m-conformance-adapter) -----
 #
 # A case is compile-eligible by default; it is declared RUN-ONLY (a top-level
@@ -269,8 +336,8 @@ def _validate_scenario_reference_sql(
 def validate_tree(compatibility_root: Path) -> list[str]:
     """Validate every schema and every fixture; return a list of error strings."""
     compatibility_root = compatibility_root.resolve()
-    schemas = schemas_dir(compatibility_root)
-    schema_map = _load_schemas(schemas)
+    schema_map = load_schemas(compatibility_root)
+    registry = build_registry(schema_map)
     errors: list[str] = []
 
     # 1. The schemas themselves are valid JSON Schema documents.
@@ -309,7 +376,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         model_rel = case.get("model") if isinstance(case, dict) else None
         model_name = Path(model_rel).name if isinstance(model_rel, str) else None
         family = families.get(model_name) if model_name is not None else None
-        _validate(case, case_schema, f"case {case_path.name}", errors)
+        _validate(case, case_schema, f"case {case_path.name}", errors, registry)
         _check_compile_eligibility(case, f"case {case_path.name}", errors)
         # The action under test lives under `when`; a read case's operation and a
         # scenario/coherence step's `find` are canonical m-op-algebra nodes that
@@ -372,6 +439,14 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                             )
                         except PredicateWriteValidationError as exc:
                             errors.append(f"case {case_path.name} scenario[{index}]: {exc}")
+                if isinstance(step, dict) and isinstance(step.get("write"), list):
+                    _validate_buffered_write(
+                        step["write"],
+                        model_entities.get(model_name or "", []),
+                        operation_schema,
+                        f"case {case_path.name} scenario[{index}]",
+                        errors,
+                    )
         # A coherence case (Phase 11) likewise carries read-step operations under
         # `when.coherence[].find`; each must validate against the operation algebra schema.
         if isinstance(when.get("coherence"), list):

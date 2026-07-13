@@ -18,13 +18,16 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+from reference_harness.schemas import build_registry, load_schemas
+
 _SCHEMA_PATH = (
     Path(__file__).resolve().parents[2] / "core" / "schemas" / "compatibility-case.schema.json"
 )
+_REGISTRY = build_registry(load_schemas(_SCHEMA_PATH.parents[1]))
 
 
 def _case_validator() -> Draft202012Validator:
-    return Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()))
+    return Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()), registry=_REGISTRY)
 
 
 def _valid_boundary_case() -> dict:

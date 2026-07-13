@@ -15,6 +15,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from reference_harness import serde
+
 _SCHEMA_PATH = (
     Path(__file__).resolve().parents[2] / "core" / "schemas" / "write-instruction.schema.json"
 )
@@ -50,7 +52,9 @@ def test_keyed_plain_temporal_carries_business_from_only() -> None:
     )
 
 
-def test_keyed_until_requires_business_to() -> None:
+def test_keyed_until_requires_both_business_bounds() -> None:
+    # Every bounded `*Until` operation is over `[businessFrom, businessTo)`
+    # (m-bitemp-write), so BOTH bounds are required — dropping either rejects it.
     doc = {
         "mutation": "updateUntil",
         "entity": "Position",
@@ -59,8 +63,8 @@ def test_keyed_until_requires_business_to() -> None:
         "businessTo": "2024-06-01T00:00:00+00:00",
     }
     assert _valid(doc)
-    del doc["businessTo"]
-    assert not _valid(doc)
+    assert not _valid({key: value for key, value in doc.items() if key != "businessTo"})
+    assert not _valid({key: value for key, value in doc.items() if key != "businessFrom"})
 
 
 def test_keyed_plain_mutation_rejects_business_to() -> None:
@@ -74,6 +78,65 @@ def test_keyed_rejects_a_processing_instant_field() -> None:
     assert not _valid(
         {"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}], "at": "2024-01-01"}
     )
+
+
+# --- the framework-owned observation is NOT durable instruction state (m-unit-work) --
+
+
+def test_keyed_instruction_row_rejects_observed_version() -> None:
+    # The optimistic-lock version is attached per materialized row at FLUSH (ADR 0013),
+    # never carried on the durable instruction, so it cannot ride in a keyed write row.
+    assert not _valid(
+        {
+            "mutation": "update",
+            "entity": "Balance",
+            "rows": [{"id": 1, "value": 150.0, "observedVersion": 3}],
+        }
+    )
+
+
+def test_keyed_instruction_row_rejects_observed_in_z() -> None:
+    # The observed processing-from (`in_z`) is the temporal analogue of the version;
+    # like it, the observation is flush context, never an instruction field.
+    assert not _valid(
+        {
+            "mutation": "terminate",
+            "entity": "Balance",
+            "rows": [{"id": 1, "observedInZ": "2024-01-01T00:00:00+00:00"}],
+        }
+    )
+
+
+def test_observation_cannot_round_trip_as_instruction_state() -> None:
+    """An observation attached to an instruction row cannot survive as instruction state.
+
+    Serde round-trips the canonical form losslessly, but the SCHEMA is the gate: an
+    instruction that carries the framework-owned `observedVersion` is invalid, so an
+    implementation cannot serialize an observation-bearing row, round-trip it, and have
+    it validate back as a durable instruction — the observation has no home here.
+    """
+    clean = {"mutation": "update", "entity": "Balance", "rows": [{"id": 1, "value": 150.0}]}
+    assert _valid(clean)
+    # Round-trip fidelity holds for the clean instruction (write-side serde contract).
+    assert serde.roundtrip(clean, serde.JSON) == clean
+    assert serde.roundtrip(clean, serde.YAML) == clean
+    # Attaching the framework-owned observation makes it NOT a valid instruction, and it
+    # still fails to validate after a lossless serde round-trip — the observation cannot
+    # round-trip INTO instruction state on either axis.
+    smuggled_version = {
+        "mutation": "update",
+        "entity": "Balance",
+        "rows": [{"id": 1, "value": 150.0, "observedVersion": 3}],
+    }
+    smuggled_in_z = {
+        "mutation": "terminate",
+        "entity": "Balance",
+        "rows": [{"id": 1, "observedInZ": "2024-01-01T00:00:00+00:00"}],
+    }
+    for smuggled in (smuggled_version, smuggled_in_z):
+        assert not _valid(smuggled)
+        assert not _valid(serde.roundtrip(smuggled, serde.JSON))
+        assert not _valid(serde.roundtrip(smuggled, serde.YAML))
 
 
 def test_keyed_value_object_document_and_pk_marker_rows() -> None:
@@ -116,15 +179,18 @@ def test_predicate_delete_rejects_assignments() -> None:
     )
 
 
-def test_predicate_until_requires_business_to() -> None:
+def test_predicate_until_requires_both_business_bounds() -> None:
+    # A bounded `*Until` predicate write is over `[businessFrom, businessTo)`
+    # (m-bitemp-write); both bounds are required.
     doc = {
         "mutation": "terminateUntil",
         "target": {"entity": "Position", "predicate": {"eq": {"attr": "Position.id", "value": 1}}},
+        "businessFrom": "2024-01-01T00:00:00+00:00",
         "businessTo": "2024-06-01T00:00:00+00:00",
     }
     assert _valid(doc)
-    del doc["businessTo"]
-    assert not _valid(doc)
+    assert not _valid({key: value for key, value in doc.items() if key != "businessTo"})
+    assert not _valid({key: value for key, value in doc.items() if key != "businessFrom"})
 
 
 def test_instruction_rejects_unknown_top_level_key() -> None:

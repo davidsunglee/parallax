@@ -19,6 +19,7 @@ from reference_harness.case_runner import CaseFailure, _assert_schema
 from reference_harness.ddl_builder import ddl_for
 from reference_harness.providers.mariadb import MariaDbProvider
 from reference_harness.providers.postgres import PostgresProvider
+from reference_harness.schemas import build_registry, load_schemas
 
 
 def test_postgres_codes_map_to_categories() -> None:
@@ -177,9 +178,11 @@ _SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema.json
 
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
+_REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
+
 
 def _case_validator() -> Draft202012Validator:
-    return Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()))
+    return Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()), registry=_REGISTRY)
 
 
 def test_schema_accepts_single_connection_error_case() -> None:

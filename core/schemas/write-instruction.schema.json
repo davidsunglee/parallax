@@ -2,29 +2,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/write-instruction.schema.json",
   "title": "Parallax Write Instruction (m-unit-work)",
-  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `operation.schema.json`. A write from any frontend lowers into exactly one instruction of one of two shapes: a `keyed` instruction (`mutation` + `entity` + `rows`, the flat attribute-named write input) or a `predicate` instruction (`mutation` + `target` {entity, predicate} + `assignments`, the set-based write). Embedded predicates are canonical `m-op-algebra` nodes, legal here because `m-unit-work` already depends on `m-op-algebra`; this schema treats a predicate as an opaque object and defers its validation to `operation.schema.json`, exactly as `compatibility-case.schema.json` does for a `writeTarget.predicate`. The instant surface is AXIS-EXPLICIT: business bounds are named uniformly `businessFrom` / `businessTo` (never the corpus's overloaded `at` or the split `businessAt` / `until` authoring aliases). The PROCESSING instant is deliberately NOT an instruction field — it is harness / Clock-Strategy supplied context bound at flush (ADR 0010), so no caller-facing instruction shape can smuggle one in. The framework-owned transaction OBSERVATION (optimistic version / observed `in_z`) is likewise not an instruction field; it is attached per materialized row at flush. `compatibility-case.schema.json` keeps the corpus's `at` / `businessAt` / `until` spellings as authoring aliases of these canonical names (the corpus-wide re-authoring to the canonical spellings is deferred). SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML) — the write-side of the `m-op-algebra` serde contract.",
+  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `operation.schema.json`. A write from any frontend lowers into exactly one instruction of one of two shapes: a `keyed` instruction (`mutation` + `entity` + `rows`, the flat attribute-named write input) or a `predicate` instruction (`mutation` + `target` {entity, predicate} + `assignments`, the set-based write). Embedded predicates are canonical `m-op-algebra` nodes, legal here because `m-unit-work` already depends on `m-op-algebra`; this schema treats a predicate as an opaque object and defers its validation to `operation.schema.json`, exactly as `compatibility-case.schema.json` does for a `writeTarget.predicate`. The instant surface is AXIS-EXPLICIT: business bounds are named uniformly `businessFrom` / `businessTo` (never the corpus's overloaded `at` or the split `businessAt` / `until` authoring aliases). Every bounded (`*Until`) operation carries BOTH business bounds — its window is `[businessFrom, businessTo)` (m-bitemp-write). The PROCESSING instant is deliberately NOT an instruction field — it is harness / Clock-Strategy supplied context bound at flush (ADR 0010), so no caller-facing instruction shape can smuggle one in. The framework-owned transaction OBSERVATION (optimistic version / observed `in_z`) is likewise NOT an instruction field: it is attached per materialized row at flush (ADR 0013), so the reserved control keys `observedVersion` and `observedInZ` are explicitly FORBIDDEN on a durable write row — an observation cannot round-trip as instruction state. `compatibility-case.schema.json` keeps the corpus's `at` / `businessAt` / `until` spellings as authoring aliases of these canonical names (the corpus-wide re-authoring to the canonical spellings is deferred), and references these `$defs` rather than redefining them. SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML) — the write-side of the `m-op-algebra` serde contract.",
   "oneOf": [
     { "$ref": "#/$defs/keyedWriteInstruction" },
     { "$ref": "#/$defs/predicateWriteInstruction" }
   ],
   "$defs": {
     "keyedWriteInstruction": {
-      "description": "A keyed write: a mutation on one entity carrying the flat attribute-named neutral write input (`rows`). The MVP non-temporal / audit-only surface is `insert` / `update` / `delete` / `terminate`; the bounded full-bitemporal rectangle split adds `insertUntil` / `updateUntil` / `terminateUntil`. A bounded `*Until` mutation carries an explicit `businessTo`; a plain (unbounded) temporal mutation carries only `businessFrom` (its window runs `[businessFrom, infinity)`). Deferred extension verbs (`cascadeDelete`, business-only, the MAY-tier recovery / increment mutations) are added to `mutation` when their slices claim them, without reshaping the instruction.",
+      "description": "A keyed write: a mutation on one entity carrying the flat attribute-named neutral write input (`rows`). The MVP non-temporal / audit-only surface is `insert` / `update` / `delete` / `terminate`; the bounded full-bitemporal rectangle split adds `insertUntil` / `updateUntil` / `terminateUntil`. A bounded `*Until` mutation carries BOTH explicit business bounds `businessFrom` and `businessTo` (its window is `[businessFrom, businessTo)`); a plain (unbounded) temporal mutation carries only `businessFrom` (its window runs `[businessFrom, infinity)`). Deferred extension verbs (`cascadeDelete`, business-only, the MAY-tier recovery / increment mutations) are added to `keyedMutation` when their slices claim them, without reshaping the instruction.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "entity", "rows"],
       "properties": {
-        "mutation": {
-          "enum": [
-            "insert",
-            "update",
-            "delete",
-            "terminate",
-            "insertUntil",
-            "updateUntil",
-            "terminateUntil"
-          ]
-        },
+        "mutation": { "$ref": "#/$defs/keyedMutation" },
         "entity": { "$ref": "#/$defs/entityName" },
         "rows": {
           "description": "The neutral write input: one or more flat attribute-named rows the mutation operates on (`$defs/writeRow`). A generating implementation classifies each field by its metamodel role and derives the emitted column list and ORDER from `columnOrder(entity)`.",
@@ -33,22 +23,22 @@
           "items": { "$ref": "#/$defs/writeRow" }
         },
         "businessFrom": {
-          "description": "The BUSINESS-axis lower bound of the mutation's valid-time window (`from_z`). Present on a temporal (audit-only / business / bitemporal) mutation; the corpus authoring aliases are `at` on a bitemporal `insertUntil` step and `businessAt` on a business-only step.",
+          "description": "The BUSINESS-axis lower bound of the mutation's valid-time window (`from_z`). Present on a temporal (audit-only / business / bitemporal) mutation, and REQUIRED on every bounded `*Until` mutation (whose window is `[businessFrom, businessTo)`). The corpus authoring alias for the business lower bound on a business-only step is `businessAt`.",
           "$ref": "#/$defs/instant"
         },
         "businessTo": {
-          "description": "The BUSINESS-axis exclusive upper bound of a bounded (`*Until`) mutation's valid-time window (`thru_z`). Present ONLY on `insertUntil` / `updateUntil` / `terminateUntil`; the corpus authoring alias is `until`. A plain (unbounded) temporal mutation omits it — its window runs `[businessFrom, infinity)`.",
+          "description": "The BUSINESS-axis exclusive upper bound of a bounded (`*Until`) mutation's valid-time window (`thru_z`). Present ONLY on `insertUntil` / `updateUntil` / `terminateUntil`, and always PAIRED with `businessFrom` (the window is `[businessFrom, businessTo)`); the corpus authoring alias is `until`. A plain (unbounded) temporal mutation omits it — its window runs `[businessFrom, infinity)`.",
           "$ref": "#/$defs/instant"
         }
       },
       "allOf": [
         {
-          "description": "A bounded `*Until` mutation MUST carry its business window's exclusive upper bound `businessTo`; a plain (unbounded) mutation MUST NOT.",
+          "description": "A bounded `*Until` mutation is over `[businessFrom, businessTo)` (m-bitemp-write), so it MUST carry BOTH business bounds; a plain (unbounded) mutation MUST NOT carry `businessTo`.",
           "if": {
             "properties": { "mutation": { "enum": ["insertUntil", "updateUntil", "terminateUntil"] } },
             "required": ["mutation"]
           },
-          "then": { "required": ["businessTo"] },
+          "then": { "required": ["businessFrom", "businessTo"] },
           "else": { "not": { "required": ["businessTo"] } }
         }
       ]
@@ -59,7 +49,7 @@
       "additionalProperties": false,
       "required": ["mutation", "target"],
       "properties": {
-        "mutation": { "enum": ["update", "delete", "terminate", "updateUntil", "terminateUntil"] },
+        "mutation": { "$ref": "#/$defs/predicateMutation" },
         "target": { "$ref": "#/$defs/writeTarget" },
         "assignments": {
           "type": "array",
@@ -67,11 +57,11 @@
           "items": { "$ref": "#/$defs/writeAssignment" }
         },
         "businessFrom": {
-          "description": "The BUSINESS-axis lower bound for a plain or bounded temporal predicate write (`from_z`). The corpus authoring alias is `businessFrom` already (predicate writes were authored axis-explicit from the start, COR-35).",
+          "description": "The BUSINESS-axis lower bound for a plain or bounded temporal predicate write (`from_z`). REQUIRED on every bounded `*Until` predicate write (whose window is `[businessFrom, businessTo)`). The corpus authoring alias is `businessFrom` already (predicate writes were authored axis-explicit from the start, COR-35).",
           "$ref": "#/$defs/instant"
         },
         "businessTo": {
-          "description": "The BUSINESS-axis exclusive upper bound of a bounded (`*Until`) predicate write's window (`thru_z`). Present ONLY on `updateUntil` / `terminateUntil`; the corpus authoring alias is `until`.",
+          "description": "The BUSINESS-axis exclusive upper bound of a bounded (`*Until`) predicate write's window (`thru_z`). Present ONLY on `updateUntil` / `terminateUntil`, and always PAIRED with `businessFrom` (the window is `[businessFrom, businessTo)`); the corpus authoring alias is `until`.",
           "$ref": "#/$defs/instant"
         }
       },
@@ -86,12 +76,12 @@
           "else": { "not": { "required": ["assignments"] } }
         },
         {
-          "description": "A bounded `*Until` predicate write MUST carry its business window's exclusive upper bound `businessTo`; the unbounded forms MUST NOT.",
+          "description": "A bounded `*Until` predicate write is over `[businessFrom, businessTo)` (m-bitemp-write), so it MUST carry BOTH business bounds; the unbounded forms MUST NOT carry `businessTo`.",
           "if": {
             "properties": { "mutation": { "enum": ["updateUntil", "terminateUntil"] } },
             "required": ["mutation"]
           },
-          "then": { "required": ["businessTo"] },
+          "then": { "required": ["businessFrom", "businessTo"] },
           "else": { "not": { "required": ["businessTo"] } }
         }
       ]
@@ -120,25 +110,27 @@
       }
     },
     "writeRow": {
-      "description": "A flat attribute-named write row — the neutral write input, same vocabulary as a fixture row. The reserved control key `observedVersion` is named explicitly; every OTHER key is an entity ATTRIBUTE name or a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, never a physical column). A scalar attribute's value is a scalar literal, an explicit `null`, or a one-key DB-computed marker (`{ computed: \"maxPlusOne\" }` or `{ increment: <n> }`); a value-object field's value is the WHOLE embedded composite document (a JSON object, or a JSON array of objects for a `many` value object), or `null`. A generating implementation classifies each field by its metamodel role and derives the emitted column list and ORDER from `columnOrder(entity)`, binding a value object atomically as one document in its columnOrder position; a marker-shaped value is a DB-computed marker vs a value-object document by MODEL ROLE, not by the value's shape — so the row cannot be `additionalProperties: false`.",
+      "description": "A flat attribute-named DURABLE write row — the neutral write input, same vocabulary as a fixture row. Every key is an entity ATTRIBUTE name or a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, never a physical column). The framework-owned transaction OBSERVATION is NOT durable instruction state: the reserved control keys `observedVersion` (the optimistic-lock version) and `observedInZ` (the observed processing-from) are attached per materialized row at flush (m-opt-lock, ADR 0013), so they are explicitly FORBIDDEN here — the advance (`observedVersion + 1`) and the `and version = ?` / `and in_z = ?` gates are derived at flush, never authored onto the instruction. A scalar attribute's value is a scalar literal, an explicit `null`, or a one-key DB-computed marker (`{ computed: \"maxPlusOne\" }` or `{ increment: <n> }`); a value-object field's value is the WHOLE embedded composite document (a JSON object, or a JSON array of objects for a `many` value object), or `null`. A generating implementation classifies each field by its metamodel role and derives the emitted column list and ORDER from `columnOrder(entity)`, binding a value object atomically as one document in its columnOrder position; a marker-shaped value is a DB-computed marker vs a value-object document by MODEL ROLE, not by the value's shape — so the row cannot be `additionalProperties: false`.",
       "type": "object",
-      "properties": {
-        "observedVersion": {
-          "description": "The optimistic-lock version the unit of work read (m-opt-lock). A reserved control key, NOT an attribute/column: the advance (`observedVersion + 1`) and the `and version = ?` gate are derived, never authored. It rides on the neutral write input but the framework-owned observation itself is a flush-time input, never durable instruction state.",
-          "type": "integer",
-          "minimum": 0
-        }
-      },
-      "additionalProperties": {
+      "not": {
+        "description": "The framework-owned transaction observation is not an instruction field: neither the optimistic version (`observedVersion`) nor the observed processing-from (`observedInZ`) may ride on the durable write row (m-unit-work, ADR 0013). They are flush-time context on `compatibility-case.schema.json`'s materialization row, never here.",
         "anyOf": [
-          { "type": ["string", "number", "boolean", "null"] },
-          { "$ref": "#/$defs/writeComputedMarker" },
-          {
-            "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite atomically as one document value in its columnOrder position — a JSON object for a `one` value object, a JSON array of objects for a `many` one. The value branches are non-exclusive (`anyOf`): a marker-shaped value-object document validates via both this branch and the computed-marker branch, and the model role decides.",
-            "type": ["object", "array"]
-          }
+          { "required": ["observedVersion"] },
+          { "required": ["observedInZ"] }
         ]
-      }
+      },
+      "additionalProperties": { "$ref": "#/$defs/writeRowValue" }
+    },
+    "writeRowValue": {
+      "description": "The value a neutral write-row field carries, classified by the field's metamodel role (resolved from `columnOrder(entity)`, NOT from the value's shape): a scalar literal / explicit `null` for a scalar attribute; a one-key DB-computed marker (`writeComputedMarker`) for a computed scalar column; or the WHOLE embedded value-object document — a JSON object for a `one` member, a JSON array of objects for a `many` member — bound atomically in its columnOrder position. The branches are NON-exclusive (`anyOf`): a marker-shaped value-object document validates via both the marker and the document branch, and the model role decides. This is the single shared value vocabulary `compatibility-case.schema.json`'s flush-context write row references rather than redefining.",
+      "anyOf": [
+        { "type": ["string", "number", "boolean", "null"] },
+        { "$ref": "#/$defs/writeComputedMarker" },
+        {
+          "description": "A value-object document (m-value-object): a value-object-named field binds the WHOLE embedded composite atomically as one document value in its columnOrder position — a JSON object for a `one` value object, a JSON array of objects for a `many` one.",
+          "type": ["object", "array"]
+        }
+      ]
     },
     "writeComputedMarker": {
       "description": "A one-key DB-COMPUTED marker in a neutral write row: the attribute's value is derived by the database rather than authored as a literal bind, so the generating implementation emits the strategy's SQL fragment. Applies ONLY to a scalar-attribute column (a value-object column's value is always the literal document even when marker-shaped, disambiguated by metamodel role, not by shape).",
@@ -166,6 +158,22 @@
       "description": "An exact concrete descriptor entity name (the position a write begins from).",
       "type": "string",
       "minLength": 1
+    },
+    "keyedMutation": {
+      "description": "The keyed write mutation surface: the MVP non-temporal / audit-only verbs (`insert` / `update` / `delete` / `terminate`) plus the full-bitemporal bounded rectangle split (`insertUntil` / `updateUntil` / `terminateUntil`). Deferred extension verbs are added here when their slices claim them. `compatibility-case.schema.json`'s buffered keyed write references this enum rather than redefining it.",
+      "enum": [
+        "insert",
+        "update",
+        "delete",
+        "terminate",
+        "insertUntil",
+        "updateUntil",
+        "terminateUntil"
+      ]
+    },
+    "predicateMutation": {
+      "description": "The predicate-selected (set-based) write mutation surface: the update / delete / terminate verbs plus the bounded `updateUntil` / `terminateUntil` (a set-based write has no `insert` form — there is no predicate to select rows that do not yet exist). `compatibility-case.schema.json`'s `predicateWrite` references this enum rather than redefining it.",
+      "enum": ["update", "delete", "terminate", "updateUntil", "terminateUntil"]
     }
   }
 }

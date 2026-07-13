@@ -602,6 +602,40 @@ scenario read MAY carry `referenceSql`, with the same string-or-dialect-map shap
 as `then.referenceSql`; it is self-contained (rather than reusing golden binds)
 and must agree with its golden rows as the third oracle.
 
+##### Buffered write instructions (same-transaction coalescing)
+
+A scenario write step MAY carry an **ordered buffer** of write instructions in
+place of a single one: `/scenario/<n>/write` is then a list of two or more
+instructions a single unit of work buffers before a **coalescing flush**
+(`m-unit-work` same-transaction coalescing). Each entry is a **keyed** instruction
+(`mutation` + `entity` + `rows`, the case-format analogue of
+`write-instruction.schema.json`'s `keyedWriteInstruction`) or a **predicate**
+instruction (the `predicateWrite` above); both **reference** the canonical
+write-instruction `$defs` rather than redefining them, layering only the
+`at` / `businessFrom` / `until` authoring surface. The buffer is applied **in
+order** — canonically a keyed `insert` of a new object, then the keyed `update` /
+`delete` of that same object — and the step's golden SQL (`statements`) is the
+**independent expected lowering of the coalesced flush**: one final-value write
+for insert-then-update (`roundTrips: 1`), or **no** DML for insert-then-delete
+(`roundTrips: 0`, no `statements`). The step therefore encodes **both** requested
+mutations explicitly, so an adapter exercises the coalescing rule from the
+instructions themselves, never from the golden SQL or a prose note. Business
+bounds are the axis-explicit canonical `businessFrom` / `businessTo`; the
+processing instant rides as the Clock-context `at`, never an instruction field.
+
+```yaml
+- write:                                    # an ordered buffer, coalesced at flush
+    - mutation: insert
+      entity: Balance
+      rows: [{ id: 9, acctNum: D, value: 100.00 }]
+      at: "2024-06-01T00:00:00+00:00"       # processing (Clock) instant, not an instruction field
+    - mutation: update
+      entity: Balance
+      rows: [{ id: 9, value: 150.00 }]
+      at: "2024-06-01T00:00:00+00:00"
+  roundTrips: 1                             # coalesces to ONE final-value INSERT (value 150)
+```
+
 A case MAY carry a **`when.uow`** block (`{ concurrency: locking |
 optimistic }`) declaring the unit-of-work strategy its golden SQL runs under
 (`m-unit-work` strategy selection). The block is **descriptive**: the harness

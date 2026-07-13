@@ -35,10 +35,12 @@ from reference_harness.case_runner import (
     _assert_binds_dialect_keys,
     _assert_reference_sql_dialect_keys,
 )
+from reference_harness.schemas import build_registry, load_schemas
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 _CASE_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema.json"
+_REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
 
 
 _PG_NESTED = "select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?"
@@ -46,7 +48,9 @@ _MDB_NESTED = "select t0.id from customer t0 where json_value(t0.address, ?) = ?
 
 
 def _case_validator() -> Draft202012Validator:
-    return Draft202012Validator(json.loads(_CASE_SCHEMA_PATH.read_text(encoding="utf-8")))
+    return Draft202012Validator(
+        json.loads(_CASE_SCHEMA_PATH.read_text(encoding="utf-8")), registry=_REGISTRY
+    )
 
 
 def _make_case(statements: list[dict[str, Any]], reference_sql: Any = None) -> Case:

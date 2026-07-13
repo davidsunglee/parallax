@@ -22,9 +22,22 @@ given:
   fixtures: true
 when:
   scenario:
-    - write: flush
+    - write:
+        # Buffer the keyed INSERT of the new account 9, then buffer the keyed DELETE
+        # of that SAME new object. The two annihilate, so the flush emits NO DML —
+        # roundTrips 0, no golden SQL (Reladomo TxOperations.addDelete cancels a
+        # matching same-transaction insert). Account is non-temporal, so the buffered
+        # writes carry no business bound or processing instant.
+        - mutation: insert
+          entity: Account
+          rows:
+            - { id: 9, owner: Noether, balance: 5.00 }
+        - mutation: delete
+          entity: Account
+          rows:
+            - { id: 9 }
       roundTrips: 0
-      note: a buffered insert of new account 9 + a buffered delete of the same new object CANCEL — the flush emits no DML at all (Reladomo addDelete)
+      note: the buffered INSERT of new account 9 then the buffered DELETE of the same new object CANCEL — the flush emits no DML at all (Reladomo addDelete)
     - targetEntity: Account
       find:
         eq:
