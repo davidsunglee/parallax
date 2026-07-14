@@ -143,13 +143,21 @@ self-contained without a system `libpq`.
     ergonomic I/O (participating `find` → instances and the instance→write-input
     derivation an `update` effective change set needs) is staged to the
     snapshot branch (Phase 7), which brings up the instance model both rest on
-    (ledger D-16).
-  - **Remaining (M4):** error/boundary-shape `run`; the API-suite write
-    examples + no-drift guard + D-7 class spellings + the coverage-partition
-    flip + usage-guide regen; the carry-in `case_runner.py` cleanup. The nine
-    `error`-shape `m-db-error` cases and the coalescing witnesses
+    (ledger D-16). Also landed: the **error-shape `run` lane** — the four
+    single-connection `m-db-error` uniqueViolation cases execute their authored
+    trigger DML against a reset database and grade the classified
+    `errorClass` / `nativeCode` (a small additive core amendment defined that
+    observation pair in the adapter envelope schema + spec, and
+    descriptor-derived DDL now enforces declared unique secondary indices); the
+    five two-connection choreography cases are lane-classified to the provider
+    contract proof, and boundary cases to the api-conformance lane — the
+    error-shape compile skip is now a permanent lane classification, not a
+    forward promise.
+  - **Remaining (M4):** the API-suite write examples + no-drift guard + D-7
+    class spellings + the coverage-partition flip + usage-guide regen; the
+    carry-in `case_runner.py` cleanup. The coalescing witnesses
     (`m-audit-write-008`, `m-bitemp-write-014`, `m-unit-work-010`) stay
-    reasoned-skipped with forward reasons until then.
+    reasoned-skipped with forward reasons (`m-batch-write`, Phase 8).
 
 ## Blockers
 

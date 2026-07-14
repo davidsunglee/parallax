@@ -15,6 +15,7 @@ import pytest
 from conftest import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import adapter, case_format
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 
 pytestmark = pytest.mark.unit
@@ -266,3 +267,104 @@ def test_error_envelope() -> None:
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "error"
     assert envelope["diagnostics"][0]["message"] == "boom"
+
+
+# --------------------------------------------------------------------------- #
+# Error-shape run — the m-db-error classification lane (increment 4).          #
+# --------------------------------------------------------------------------- #
+_ERROR_CASE = case_format.default_cases_dir() / "m-db-error-001-unique-violation-pk.yaml"
+_ERROR_CONCURRENCY_CASE = case_format.default_cases_dir() / "m-db-error-004-deadlock-cycle.yaml"
+_BOUNDARY_CASE = (
+    case_format.default_cases_dir() / "m-unit-work-004-callback-value-withheld-on-abort.yaml"
+)
+
+
+class _TriggerPort:
+    """A port whose Nth `execute_write` raises the scripted failure (no Docker)."""
+
+    def __init__(self, *, raise_on: int | None, failure: DatabaseError | None = None) -> None:
+        self._raise_on = raise_on
+        self._failure = failure
+        self.writes = 0
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:  # pragma: no cover
+        raise NotImplementedError
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.writes += 1
+        if self.writes == self._raise_on and self._failure is not None:
+            raise self._failure
+        return 1
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+
+def _unique_violation() -> DatabaseError:
+    return DatabaseError(category="uniqueViolation", native_code="23505", message="dup key")
+
+
+def test_run_case_error_reports_the_classification() -> None:
+    # The final trigger statement raises; the envelope reports the neutral
+    # category + preserved native code (the schema amendment this increment adds).
+    port = _TriggerPort(raise_on=2, failure=_unique_violation())
+    envelope = adapter.run_case(_ERROR_CASE, "postgres", port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    assert envelope["observations"] == {
+        "errorClass": "uniqueViolation",
+        "nativeCode": "23505",
+        "roundTrips": 2,
+    }
+    assert [e["casePointer"] for e in envelope["emissions"]] == [
+        "/then/statements/0",
+        "/then/statements/1",
+    ]
+
+
+def test_run_case_error_rejects_a_premature_raise() -> None:
+    port = _TriggerPort(raise_on=1, failure=_unique_violation())
+    envelope = adapter.run_case(_ERROR_CASE, "postgres", port)
+    assert envelope["status"] == "error"
+    assert "raised before the final statement" in envelope["diagnostics"][0]["message"]
+
+
+def test_run_case_error_rejects_a_trigger_that_does_not_raise() -> None:
+    envelope = adapter.run_case(_ERROR_CASE, "postgres", _TriggerPort(raise_on=None))
+    assert envelope["status"] == "error"
+    assert "did not raise" in envelope["diagnostics"][0]["message"]
+
+
+def test_run_case_error_rejects_an_unclassified_failure() -> None:
+    unclassified = DatabaseError(category=None, native_code=None, message="connection torn down")
+    port = _TriggerPort(raise_on=2, failure=unclassified)
+    envelope = adapter.run_case(_ERROR_CASE, "postgres", port)
+    assert envelope["status"] == "error"
+    assert "unclassified" in envelope["diagnostics"][0]["message"]
+
+
+def test_run_case_error_concurrency_names_the_provider_lane() -> None:
+    # A two-connection choreography cannot run on the single-connection adapter
+    # port; the envelope classifies it to the provider contract proof.
+    envelope = adapter.run_case(_ERROR_CONCURRENCY_CASE, "postgres", _TriggerPort(raise_on=None))
+    assert envelope["status"] == "error"
+    assert "provider contract proof" in envelope["diagnostics"][0]["message"]
+
+
+def test_compile_case_error_shape_names_the_run_lane() -> None:
+    envelope = adapter.compile_case(_ERROR_CASE, "postgres")
+    assert envelope["status"] == "error"
+    assert "authored, not compiled" in envelope["diagnostics"][0]["message"]
+
+
+def test_boundary_case_names_the_api_conformance_lane() -> None:
+    # m-case-format: every boundary case is on the api-conformance lane — the
+    # API Conformance Suite verifies it. Compile short-circuits on the case's
+    # corpus-declared run-only eligibility (every boundary case carries one,
+    # D-10); run classifies it out with the api-conformance reason.
+    compile_envelope = adapter.compile_case(_BOUNDARY_CASE, "postgres")
+    assert compile_envelope["status"] == "run-only"
+    assert compile_envelope["diagnostics"][0]["code"] == "compile-run-only"
+    run_envelope = adapter.run_case(_BOUNDARY_CASE, "postgres", _TriggerPort(raise_on=None))
+    assert run_envelope["status"] == "error"
+    assert "api-conformance" in run_envelope["diagnostics"][0]["message"]

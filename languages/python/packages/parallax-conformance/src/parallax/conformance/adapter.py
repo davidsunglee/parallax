@@ -133,17 +133,36 @@ def _echo(envelope: Envelope, case: case_format.Case, dialect: str) -> Envelope:
     return envelope
 
 
+def _boundary_lane_error(case: case_format.Case) -> engine.EngineError:
+    # `run` classifies a boundary case out with the api-conformance reason
+    # (m-case-format: every boundary case is on the api-conformance lane).
+    return engine.EngineError(
+        f"{case.path.name}: a boundary case carries no golden SQL; the api-conformance "
+        "lane (the API Conformance Suite) verifies it, not compile/run"
+    )
+
+
 def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission], int]:
     """Compile a claimed case by shape (read / scenario / writeSequence).
 
     The scenario and writeSequence lanes emit the keyed unit-of-work DML (and, for a
-    scenario, the read-lock reads); any other shape falls through to the read compiler,
-    which raises the loud non-read ``EngineError`` the caller renders as an ``error``.
+    scenario, the read-lock reads); an error case has no compile artifact (a
+    lane-honest ``EngineError`` names the run lane that grades it); any other shape
+    falls through to the read compiler, which raises the loud non-read
+    ``EngineError`` the caller renders as an ``error``.
     """
     if case.shape == "scenario":
         return engine.compile_scenario_case(case, dialect)
     if case.shape == "writeSequence":
         return engine.compile_write_sequence_case(case, dialect)
+    if case.shape == "error":
+        # Only the single-connection statement-trigger sub-shape reaches here: the
+        # two-connection choreography cases are corpus-declared run-only, as is
+        # every boundary case, so `compile_case` short-circuits those earlier.
+        raise engine.EngineError(
+            f"{case.path.name}: an error case's trigger DML is authored, not compiled "
+            "(m-case-format); `run` grades the single-connection trigger"
+        )
     return engine.compile_read_case(case, dialect)
 
 
@@ -154,7 +173,8 @@ def _run(
 
     A scenario / writeSequence run reports only ``roundTrips`` — the envelope carries no
     per-step rows (``additionalProperties: false``), so per-step row correctness is the
-    oracle-test gate; a read run additionally records its observed ``rows``.
+    oracle-test gate; a read run additionally records its observed ``rows``; an error
+    run records the raised failure's classification (``errorClass`` / ``nativeCode``).
     """
     if case.shape == "scenario":
         emissions, round_trips = engine.run_scenario_case(case, dialect, port)
@@ -162,6 +182,17 @@ def _run(
     if case.shape == "writeSequence":
         emissions, round_trips = engine.run_write_sequence_case(case, dialect, port)
         return emissions, {"roundTrips": round_trips}
+    if case.shape == "error":
+        emissions, error_class, native_code, round_trips = engine.run_error_case(
+            case, dialect, port
+        )
+        return emissions, {
+            "errorClass": error_class,
+            "nativeCode": native_code,
+            "roundTrips": round_trips,
+        }
+    if case.shape == "boundary":
+        raise _boundary_lane_error(case)
     emissions, rows, round_trips = engine.run_read_case(case, dialect, port)
     return emissions, {"rows": rows, "roundTrips": round_trips}
 

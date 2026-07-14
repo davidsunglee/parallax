@@ -22,6 +22,7 @@ from typing import cast
 
 from parallax.conformance import case_format, models
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import Dialect, dialect_for
@@ -41,6 +42,7 @@ __all__ = [
     "compile_write_sequence_case",
     "eligibility",
     "load_case_metamodel",
+    "run_error_case",
     "run_read_case",
     "run_scenario_case",
     "run_write_sequence_case",
@@ -414,6 +416,74 @@ def _execute_writes(
 
     with contextlib.suppress(_RollbackStep):
         port.transaction(body)
+
+
+# --------------------------------------------------------------------------- #
+# Error — the m-db-error single-connection classification lane.                #
+# --------------------------------------------------------------------------- #
+def _error_trigger(
+    case: case_format.Case, dialect_name: str
+) -> list[tuple[str, tuple[object, ...]]]:
+    """The authored single-connection trigger DML (`then.statements`) for ``dialect``."""
+    then_raw = case.document.get("then")
+    then: Mapping[str, object] = (
+        cast("Mapping[str, object]", then_raw) if isinstance(then_raw, Mapping) else {}
+    )
+    raw = then.get("statements")
+    if not isinstance(raw, list) or not raw:
+        raise EngineError(f"{case.path.name}: error case has no `then.statements` trigger")
+    trigger: list[tuple[str, tuple[object, ...]]] = []
+    for entry in cast("list[Mapping[str, object]]", raw):
+        sql = entry["sql"]
+        text = cast("Mapping[str, str]", sql)[dialect_name] if isinstance(sql, Mapping) else sql
+        binds = entry.get("binds", [])
+        trigger.append((cast("str", text), tuple(cast("list[object]", binds))))
+    return trigger
+
+
+def run_error_case(
+    case: case_format.Case, dialect_name: str, port: DbPort
+) -> tuple[list[Emission], str, str | int, int]:
+    """Run an error-shape case and report the raised failure's classification.
+
+    The single-connection trigger IS the authored ``then.statements`` — ordered
+    DML whose final statement raises (m-case-format); there is no neutral
+    instruction to translate, so executing it verbatim is the case contract, not
+    golden reverse-engineering. Every statement before the last must succeed;
+    the last must raise a classified :class:`DatabaseError`, whose neutral
+    category and preserved native code are the observations
+    (``errorClass`` / ``nativeCode``). Round trips count every executed trigger
+    statement, including the raising one. A ``when.concurrency`` trigger needs
+    two barrier-synchronized sessions the single-connection adapter run cannot
+    drive — the harness's provider choreography (and this target's provider
+    deadlock proof) covers that sub-shape.
+    """
+    when = case.document.get("when")
+    if isinstance(when, Mapping) and "concurrency" in when:
+        raise EngineError(
+            f"{case.path.name}: two-connection m-db-error choreography (when.concurrency) is "
+            "driven by the provider contract proof, not the single-connection adapter run"
+        )
+    trigger = _error_trigger(case, dialect_name)
+    dialect = dialect_for(dialect_name)
+    emissions: list[Emission] = []
+    final = len(trigger) - 1
+    for index, (sql, binds) in enumerate(trigger):
+        emissions.append(Emission(f"/then/statements/{index}", sql, binds))
+        try:
+            port.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
+        except DatabaseError as exc:
+            if index != final:
+                raise EngineError(
+                    f"{case.path.name}: trigger statement {index} raised before the final "
+                    f"statement: {exc}"
+                ) from exc
+            if exc.category is None or exc.native_code is None:
+                raise EngineError(
+                    f"{case.path.name}: the trigger raised an unclassified database error: {exc}"
+                ) from exc
+            return emissions, exc.category, exc.native_code, len(trigger)
+    raise EngineError(f"{case.path.name}: the final trigger statement did not raise")
 
 
 def wire_value(value: object) -> object:

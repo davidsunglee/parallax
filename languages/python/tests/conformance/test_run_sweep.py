@@ -11,7 +11,7 @@ reset database. Docker-gated; a skip is reported, never silent (spec §6).
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import jsonschema
 import pytest
@@ -171,3 +171,57 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         assert emission["sql"] == golden_sql, (case.case_id, emission)
         assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (case.case_id, emission)
     assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
+
+
+def _reachable_error_cases() -> list[case_format.Case]:
+    """The single-connection error-shape cases (statement trigger, no choreography)."""
+    from parallax.conformance import sweep
+
+    return [
+        c
+        for c in sweep.reachable_cases()
+        if c.shape == "error" and "concurrency" not in (case_document(c).get("when") or {})
+    ]
+
+
+_ERROR_CASES = _reachable_error_cases()
+
+
+@pytest.mark.parametrize("case", _ERROR_CASES, ids=[c.case_id for c in _ERROR_CASES])
+def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+    """Run each single-connection m-db-error case against a reset real database.
+
+    The authored trigger DML executes in order; the final statement raises a real
+    database error at the port boundary, and the envelope's classification
+    (`errorClass` / `nativeCode`) must equal the case's `then.errorClass` and
+    per-dialect `then.nativeCode`. Fixtures load only when the case declares
+    `given.fixtures` (the unique-violation cases self-seed via their own trigger).
+    """
+    meta = engine.load_case_metamodel(case)
+    from parallax.conformance import provision
+
+    doc = case_document(case)
+    given = cast("dict[str, Any]", doc.get("given") or {})
+    fixtures = provision.load_fixtures(str(doc["model"])) if given.get("fixtures") else {}
+    provisioner.reset(meta, fixtures)
+
+    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+
+    then = doc["then"]
+    assert envelope["observations"]["errorClass"] == then["errorClass"]
+    assert envelope["observations"]["nativeCode"] == then["nativeCode"]["postgres"]
+    assert envelope["observations"]["roundTrips"] == len(then["statements"])
+    golden_trigger = [
+        (
+            entry["sql"]["postgres"] if isinstance(entry["sql"], dict) else entry["sql"],
+            entry.get("binds", []),
+        )
+        for entry in then["statements"]
+    ]
+    for emission, (golden_sql, golden_binds) in zip(
+        envelope["emissions"], golden_trigger, strict=True
+    ):
+        assert emission["sql"] == golden_sql, (case.case_id, emission)
+        assert emission["binds"] == golden_binds, (case.case_id, emission)

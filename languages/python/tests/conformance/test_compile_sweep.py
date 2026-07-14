@@ -128,29 +128,37 @@ def golden(case: case_format.Case) -> tuple[str, list[object]]:
 
 
 def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
-    """The forward-looking reason a reachable case is not in the exercised set.
+    """The reason a reachable case is not in the compile-exercised set.
 
     The read-projection amendment (Phase 5b, ledger D-11) re-goldened every stale
     read to the projection the compiler emits, so every reachable *ok*-status read is
     now exercised (asserted by ``test_every_unexercised_reachable_read_is_refused``).
-    What remains reasoned-skipped is (1) the `error`-shape `m-db-error` cases, (2) the
-    other non-read shapes, whose compile lands with the write path (Phase 6/8), and
-    (3) the reads the Phase-5 compiler refuses with a loud ``SqlGenError`` —
-    inheritance-family reads and to-many value-object array traversal — deferred past
-    the single-entity read path to the snapshot branch (ledger D-12).
+    What remains reasoned-skipped is (1) the `error`-shape `m-db-error` cases — a
+    permanent LANE classification, not a forward promise: the single-connection
+    trigger is graded end-to-end by the error run lane, the two-connection
+    choreography by the provider proof, (2) the other non-read shapes, whose compile
+    lands with the write path (Phase 6/8), and (3) the reads the Phase-5 compiler
+    refuses with a loud ``SqlGenError`` — inheritance-family reads and to-many
+    value-object array traversal — deferred past the single-entity read path to the
+    snapshot branch (ledger D-12).
     """
     if case.shape == "error":
-        # m-db-error cases trigger a real DB error and assert the neutral category +
-        # native code. The classification seam (categories, call-site predicates, the
-        # port-boundary re-raise) is implemented and proven by the dialect contract
-        # suite, the m-db-error unit tests, and the provider deadlock proof; grading
-        # these cases additionally needs error/concurrency-shape `run` support — the
-        # later Phase-6 conformance milestone (case-instruction translation).
+        # An error case's trigger DML is authored, not compiled (m-case-format), so
+        # neither sub-shape ever joins the compile-exercised set: this is a lane
+        # classification. The single-connection statement trigger is graded by the
+        # error run lane (M4 increment 4); the two-connection choreography is
+        # run-only and driven by the provider contract proof's barrier-synchronized
+        # sessions, which the single-connection adapter lanes cannot hold.
+        if engine.eligibility(case) is not None:
+            return (
+                "two-connection m-db-error choreography (deadlock / lock-wait / "
+                "serialization): run-only; the provider contract proof "
+                "(test_provider_contract) drives the barrier-synchronized sessions, "
+                "not the single-connection adapter lanes"
+            )
         return (
-            "error-shape m-db-error case: the classification seam is implemented and "
-            "proven by the dialect contract suite, the m-db-error unit tests, and the "
-            "provider deadlock proof; grading the case needs error/concurrency-shape "
-            "`run` support (COR-3 Phase-6 case-instruction translation)"
+            "error-shape trigger DML is authored, not compiled (m-case-format); graded "
+            "end-to-end by the error run lane (test_run_sweep.test_error_run_sweep)"
         )
     if case.shape == "boundary":
         # The m-unit-work abort-contract case (withheld callback value on rollback) is an
@@ -262,3 +270,30 @@ def test_run_only_cases_are_never_compiled() -> None:
         envelope = adapter.compile_case(case.path, "postgres")
         assert envelope["status"] == "run-only"
         assert envelope["diagnostics"][0]["code"] == "compile-run-only"
+
+
+def test_error_and_boundary_lane_partition() -> None:
+    """The error/boundary run-lane classification is exact (M4 increment 4).
+
+    Every reachable error-shape case is EITHER a single-connection statement
+    trigger (graded by the error run lane) XOR a two-connection choreography
+    (corpus-declared run-only; the provider contract proof drives it) — the
+    trigger marker and the run-only declaration must agree, so no error case
+    can fall between the lanes. Every reachable boundary case is a declared
+    api-conformance-lane case (the API Conformance Suite verifies it) with a
+    run-only declaration, so neither adapter lane ever grades one.
+    """
+    errors = [c for c in _REACHABLE if c.shape == "error"]
+    assert errors, "the reachable intersection lost its m-db-error cases"
+    for case in errors:
+        doc = case_document(case)
+        has_choreography = "concurrency" in (doc.get("when") or {})
+        declared_run_only = engine.eligibility(case) is not None
+        assert has_choreography == declared_run_only, case.case_id
+        if not has_choreography:
+            assert doc["then"]["statements"], case.case_id
+    boundaries = [c for c in _REACHABLE if c.shape == "boundary"]
+    assert boundaries, "the reachable intersection lost its boundary case"
+    for case in boundaries:
+        assert case_document(case).get("lane") == "api-conformance", case.case_id
+        assert engine.eligibility(case) is not None, case.case_id

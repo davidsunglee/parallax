@@ -123,3 +123,34 @@ def test_fixture_statements_skip_non_list_and_non_mapping_rows() -> None:
 def test_fixture_statements_skip_a_non_list_entity_block() -> None:
     # An entity whose fixture value is not a list contributes no insert statements.
     assert provision.fixture_statements(_MODELS["customer"], {"Customer": "not-a-list"}) == []
+
+
+def test_schema_statements_enforce_unique_secondary_indices() -> None:
+    # The m-db-error uniqueViolation-via-secondary-index triggers (m-db-error-002/-008)
+    # need the declared unique index on Tag.name enforced; the PK-matching indices
+    # (widget_pk / tag_pk) emit no redundant constraint beside `primary key (...)`.
+    ddl = provision.schema_statements(_MODELS["error-cases"])
+    (tag,) = [stmt for stmt in ddl if stmt.startswith("create table tag ")]
+    assert "unique (name)" in tag
+    (widget,) = [stmt for stmt in ddl if stmt.startswith("create table widget ")]
+    assert "unique" not in widget
+
+
+def test_schema_statements_skip_the_milestone_index_the_temporal_pk_enforces() -> None:
+    # A temporal model's declared composite unique index names the as-of attribute
+    # (`processingFrom` -> in_z); the physical PK already enforces exactly that
+    # column set, so no duplicate `unique (...)` constraint is emitted.
+    (audit,) = provision.schema_statements(_MODELS["balance"])
+    assert "unique" not in audit
+
+
+def test_schema_statements_reject_an_unresolvable_unique_index() -> None:
+    import dataclasses
+
+    meta = _MODELS["error-cases"]
+    (tag_entity,) = [e for e in meta.entities if e.name == "Tag"]
+    broken_index = dataclasses.replace(tag_entity.indices[1], attributes=("noSuchAttr",))
+    broken_entity = dataclasses.replace(tag_entity, indices=(broken_index,))
+    broken_meta = dataclasses.replace(meta, entities=(broken_entity,))
+    with pytest.raises(ValueError, match="noSuchAttr"):
+        provision.schema_statements(broken_meta)

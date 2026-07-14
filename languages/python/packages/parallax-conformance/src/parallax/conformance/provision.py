@@ -78,8 +78,41 @@ def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]
         pk_columns.extend(dialect.quote(aoa.from_column) for aoa in entity.as_of_attributes)
         if pk_columns:
             columns.append(f"primary key ({', '.join(pk_columns)})")
+        columns.extend(_unique_constraints(entity, pk_columns, dialect))
         statements.append(f"create table {dialect.quote(table)} ({', '.join(columns)})")
     return statements
+
+
+def _unique_constraints(entity: Entity, pk_columns: list[str], dialect: Dialect) -> list[str]:
+    """``unique (…)`` constraints for the entity's declared unique secondary indices.
+
+    An index's attribute names resolve to physical columns through the scalar
+    attributes and each as-of axis's from-column (the corpus convention: the
+    composite milestone indices name the as-of attribute, e.g. ``processingFrom``
+    → ``in_z``). The index matching the physical primary key is skipped —
+    ``primary key (…)`` already enforces it; what remains are the true
+    secondaries (a unique business column, a one-to-one FK column), which must be
+    enforced for the `m-db-error` uniqueViolation-via-secondary-index triggers to
+    raise. An unresolvable attribute name fails loudly rather than silently
+    dropping a declared constraint.
+    """
+    resolve = {attribute.name: attribute.column for attribute in entity.attributes}
+    resolve.update({aoa.name: aoa.from_column for aoa in entity.as_of_attributes})
+    constraints: list[str] = []
+    for index in entity.indices:
+        if not index.unique:
+            continue
+        unresolved = [name for name in index.attributes if name not in resolve]
+        if unresolved:
+            raise ValueError(
+                f"{entity.name}: unique index {index.name!r} names attributes with no "
+                f"physical column: {unresolved}"
+            )
+        quoted = [dialect.quote(resolve[name]) for name in index.attributes]
+        if set(quoted) == set(pk_columns):
+            continue
+        constraints.append(f"unique ({', '.join(quoted)})")
+    return constraints
 
 
 def fixture_statements(
