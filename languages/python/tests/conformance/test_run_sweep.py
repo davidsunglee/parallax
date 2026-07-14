@@ -10,7 +10,6 @@ reset database. Docker-gated; a skip is reported, never silent (spec §6).
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
 from typing import Any, Final, cast
 
 import jsonschema
@@ -23,7 +22,7 @@ from test_compile_sweep import (
     write_golden_statements,
 )
 
-from conftest import adapter_schema, case_document
+from conftest import adapter_schema, case_document, case_fixtures, compare_rows
 from parallax.conformance import adapter, case_format, engine
 
 pytestmark = pytest.mark.conformance
@@ -51,68 +50,6 @@ def _reachable_run_cases() -> list[case_format.Case]:
 
 _CASES = _reachable_run_cases()
 _SCHEMA = adapter_schema()
-
-
-def _wire_row(row: dict[str, Any]) -> dict[str, Any]:
-    # Observed rows arrive already wire-rendered; the authored `then.rows` are
-    # normalized through the same m-db-port boundary so dates / uuids / bytes are
-    # compared in one canonical form.
-    return {key: engine.wire_value(value) for key, value in row.items()}
-
-
-def _to_decimal(value: object) -> object:
-    """Coerce a numeric (or a wire-rendered numeric string) to an exact ``Decimal``.
-
-    The corpus grades numerics as exact Decimals (m-case-format), so a ``decimal``
-    money column matches to the cent regardless of scale. A wire-rendered decimal
-    arrives as a numeric *string* — its canonical wire form is the exact string, not
-    a float — so a numeric-looking string is parsed too; a non-numeric string / date
-    / uuid raises and passes through for exact ``==``.
-    """
-    if isinstance(value, (int, float, str)):
-        try:
-            return Decimal(str(value))
-        except InvalidOperation:
-            return value
-    return value
-
-
-def _scalar_equal(observed: object, expected: object) -> bool:
-    """Exact wire equality, with an exact-Decimal fallback for numerics.
-
-    Exact ``==`` decides every string / date / uuid / bytes / bool value (so this
-    never loosens a comparison that already holds); only a residual numeric
-    difference — the wire-rendered ``decimal`` string ``"99.99"`` against the
-    authored number ``99.99`` — reconciles in Decimal space. ``bool`` is never
-    numeric (``True`` never equals ``1``).
-    """
-    if observed == expected:
-        return True
-    if isinstance(observed, bool) or isinstance(expected, bool):
-        return False
-    left, right = _to_decimal(observed), _to_decimal(expected)
-    return isinstance(left, Decimal) and isinstance(right, Decimal) and left == right
-
-
-def _row_equal(observed: dict[str, Any], expected: dict[str, Any]) -> bool:
-    return observed.keys() == expected.keys() and all(
-        _scalar_equal(observed[key], expected[key]) for key in observed
-    )
-
-
-def compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
-    """Order-insensitive multiset comparison (greedy — result sets are tiny)."""
-    obs = [_wire_row(row) for row in observed]
-    remaining = [_wire_row(row) for row in expected]
-    assert len(obs) == len(remaining), f"row count: observed {obs!r} != expected {remaining!r}"
-    for row in obs:
-        for index, candidate in enumerate(remaining):
-            if _row_equal(row, candidate):
-                del remaining[index]
-                break
-        else:
-            raise AssertionError(f"observed row unmatched: {row!r}\n  expected pool: {remaining!r}")
-    assert not remaining, f"expected rows unmatched: {remaining!r}"
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
@@ -177,22 +114,6 @@ def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] |
     """Each FIND step's declared ``expectRows`` in step order (None asserts nothing)."""
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
     return [step.get("expectRows") for step in steps if "find" in step]
-
-
-def case_fixtures(case: case_format.Case) -> dict[str, Any]:
-    """The fixtures the case's lifecycle loads before its action (m-case-format).
-
-    A writeSequence case starts from an EMPTY schema and builds its own state
-    unless it opts in with `given.fixtures: true`; every other shape starts from
-    the model's default fixtures (a case that injects nothing omits `given`).
-    """
-    doc = case_document(case)
-    given = cast("dict[str, Any]", doc.get("given") or {})
-    if case.shape == "writeSequence" and not given.get("fixtures"):
-        return {}
-    from parallax.conformance import provision
-
-    return provision.load_fixtures(str(doc["model"]))
 
 
 @pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])

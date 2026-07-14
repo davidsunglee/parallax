@@ -7,7 +7,7 @@ IMPLEMENTING.md "Continuous API Conformance Lane"):
 
 - the Usage Guide renders each story's own source (`story_snippet`), so the
   documented spelling IS the executed spelling and cannot drift;
-- the real-database suite (`tests/conformance/test_story_run.py`) executes each
+- the real-database suite (`tests/api_conformance/test_story_run.py`) executes each
   story through the shipped ``parallax-snapshot`` extension and
   ``parallax-postgres`` adapter against real Postgres, grading the case's
   expected rows / table state / abort outcome;

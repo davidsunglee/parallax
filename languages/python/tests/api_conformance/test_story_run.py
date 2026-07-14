@@ -4,10 +4,14 @@ Conformance Suite").
 Every registered write story — the same executable functions the Usage Guide
 renders and the fake-port write no-drift guard drives — executes here through
 the **shipped** surface: `parallax.snapshot.connect` over the `parallax-postgres`
-adapter against the real Testcontainers Postgres (python.md: "executing idiomatic
-public-API code through the shipped `parallax-snapshot` extension and
-`parallax-postgres` adapter"; IMPLEMENTING.md "Continuous API Conformance Lane"
-step 2). Grading is the mirrored case's own oracle: a story returning rows must
+adapter against the real Testcontainers Postgres, inside the documented
+API-conformance lane (python.md: pytest ``-m api_conformance`` under
+``tests/api_conformance/``, "executing idiomatic public-API code through the
+shipped `parallax-snapshot` extension and `parallax-postgres` adapter";
+IMPLEMENTING.md "Continuous API Conformance Lane" step 2). Docker-backed: the
+shared ``provisioner`` fixture skips with a recorded reason when Docker is
+unavailable (never silently), and the ``python-database`` CI job fails on any
+skip. Grading is the mirrored case's own oracle: a story returning rows must
 observe its final find's `expectRows`; a writeSequence story must leave exactly
 `then.tableState` behind; the boundary story must raise (the withheld value) and
 leave the pre-transaction state standing.
@@ -19,15 +23,14 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from test_run_sweep import case_fixtures, compare_rows
 
-from conftest import case_document
+from conftest import case_document, case_fixtures, compare_rows
 from parallax.conformance import case_format, engine
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.core.dialect import POSTGRES
 from parallax.snapshot import connect
 
-pytestmark = pytest.mark.conformance
+pytestmark = pytest.mark.api_conformance
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 
