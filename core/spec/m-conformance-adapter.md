@@ -370,6 +370,18 @@ assert different things:
 - scenario cases report `identityChecks` and `roundTrips`, plus `stateChecks` for
   any step declaring `expectState` and `errors` for any step declaring `expectError`
 - coherence cases report the final observed `rows`, and `identityChecks` for any step that declares `sameObjectAs`
+- error cases with a single-connection trigger (top-level `then.statements`)
+  report `errorClass` — the neutral `m-db-error` category the final trigger
+  statement's raised failure classified to — paired with `nativeCode`, the
+  preserved native witness (Postgres SQLSTATE string, MariaDB vendor errno
+  integer), compared against the case's `then.errorClass` / per-dialect
+  `then.nativeCode`; `roundTrips` counts the executed trigger statements,
+  including the raising one. This pair is distinct from the
+  application-lifecycle `errors` observation. An error case whose trigger is a
+  `when.concurrency` choreography needs two barrier-synchronized sessions
+  (`m-case-format`), which the single-connection `run` command cannot drive —
+  the harness's provider choreography proves it instead, and an adapter asked
+  to `run` one returns `error` with a diagnostic naming that lane.
 
 ### Lifecycle observations (`stateChecks`, `errors`)
 

@@ -278,7 +278,20 @@
           "description": "Neutral application-lifecycle errors (m-detach / m-identity-map) an adapter reports for scenario steps declaring `expectError`. Optional and additive — an adapter that raises no such error omits it, and existing run outputs stay valid.",
           "type": "array",
           "items": { "$ref": "#/$defs/errorObservation" }
+        },
+        "errorClass": {
+          "description": "The neutral `m-db-error` category the final trigger statement's raised failure classified to on an error-shape run, compared against the case's `then.errorClass`. Distinct from the application-lifecycle `errors` observation (which has no native-code witness). Optional and additive — only error-shape runs report it, and existing run outputs stay valid.",
+          "type": "string",
+          "enum": ["uniqueViolation", "deadlock", "lockWaitTimeout"]
+        },
+        "nativeCode": {
+          "description": "The preserved native code witness paired with `errorClass` (Postgres SQLSTATE string / MariaDB vendor errno integer), compared against the case's per-dialect `then.nativeCode`.",
+          "type": ["string", "integer"]
         }
+      },
+      "dependentRequired": {
+        "errorClass": ["nativeCode"],
+        "nativeCode": ["errorClass"]
       }
     },
     "wallTimeMs": {

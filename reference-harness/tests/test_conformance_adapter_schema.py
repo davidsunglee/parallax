@@ -240,6 +240,38 @@ def test_run_rejects_state_check_missing_pass() -> None:
     assert list(_validator().iter_errors(_valid_run(observations)))
 
 
+# --- error-shape run observations: errorClass + nativeCode --------------------
+
+
+def test_run_accepts_error_classification_observations() -> None:
+    # An error-shape run reports the neutral m-db-error category the trigger
+    # classified to plus the preserved native witness (SQLSTATE string or errno
+    # integer — both wire forms are legal).
+    for native in ("23505", 1062):
+        observations = {"roundTrips": 2, "errorClass": "uniqueViolation", "nativeCode": native}
+        assert list(_validator().iter_errors(_valid_run(observations))) == []
+
+
+def test_run_rejects_application_lifecycle_class_in_error_classification() -> None:
+    # The scalar pair carries the m-db-error taxonomy only; the application-
+    # lifecycle vocabulary lives in the `errors` observation, not here.
+    observations = {
+        "roundTrips": 1,
+        "errorClass": "detached-relationship-load",
+        "nativeCode": "23505",
+    }
+    assert list(_validator().iter_errors(_valid_run(observations)))
+
+
+def test_run_rejects_unpaired_error_classification() -> None:
+    # errorClass and nativeCode travel together (dependentRequired, both ways).
+    for observations in (
+        {"roundTrips": 1, "errorClass": "deadlock"},
+        {"roundTrips": 1, "nativeCode": "40P01"},
+    ):
+        assert list(_validator().iter_errors(_valid_run(observations)))
+
+
 def test_describe_accepts_case_tag_claims() -> None:
     errors = list(_validator().iter_errors(_valid_describe()))
     assert errors == []
