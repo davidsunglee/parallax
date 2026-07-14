@@ -393,5 +393,6 @@ def test_run_case_refuses_unsupported_write_forms_before_execution() -> None:
     port = _TriggerPort(raise_on=None)
     envelope = adapter.run_case(case_path, "postgres", port)
     assert envelope["status"] == "error"
-    assert "m-pk-gen" in envelope["diagnostics"][0]["message"]
+    # The refusal names its landing phase explicitly (forward-error posture).
+    assert "COR-3 Phase 8; m-pk-gen" in envelope["diagnostics"][0]["message"]
     assert port.writes == 0  # refused pre-execution — nothing reached the port

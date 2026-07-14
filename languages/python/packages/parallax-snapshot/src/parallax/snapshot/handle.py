@@ -160,7 +160,7 @@ def _refuse_computed_markers(entity: Entity, instruction: KeyedWrite) -> None:
             raise WriteLoweringError(
                 f"DB-computed marker on {entity.name!r}.{name}: computed-column emission "
                 "(the pk-gen registry strategies and friends) lands with the write path "
-                "(a later write increment; m-pk-gen)"
+                "(COR-3 Phase 8; m-pk-gen)"
             )
 
 

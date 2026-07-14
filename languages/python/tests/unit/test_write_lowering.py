@@ -255,7 +255,7 @@ def test_computed_marker_on_a_scalar_attribute_is_refused() -> None:
     # M4 does not lower, so it is refused before any plan executes — never bound
     # literally (the backbone review caught the marker binding as a dict).
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": {"increment": 3}},))
-    with pytest.raises(WriteLoweringError, match=r"DB-computed marker.*m-pk-gen"):
+    with pytest.raises(WriteLoweringError, match=r"DB-computed marker.*COR-3 Phase 8; m-pk-gen"):
         _lower(update, ACCOUNT)
 
 

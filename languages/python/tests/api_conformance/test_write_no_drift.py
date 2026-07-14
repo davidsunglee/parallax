@@ -11,6 +11,10 @@ nothing, the deliberate failure surfaces (or is suppressed by the story itself),
 and the surrounding reads still match their goldens — their rolled-back round
 trips are graded by the conformance run lane, which executes-then-aborts; the
 developer surface discards the buffer before it ever reaches the wire.
+
+Marked ``unit`` as well as ``api_conformance`` (the compile-sweep precedent): it
+is pure, Docker-free, in-process behaviour, so the story executions contribute
+to the unit-lane branch-coverage gate — the story bodies' only DB-free driver.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.dialect import POSTGRES
 from parallax.snapshot.handle import Database
 
-pytestmark = pytest.mark.api_conformance
+pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
 
 _MODELS = models.load_models()
 _CASES = {c.case_id: c for c in case_format.load_cases()}
