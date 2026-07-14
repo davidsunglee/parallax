@@ -721,8 +721,17 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # slice-mvp-1 + slice-snapshot-1 + slice-managed-1 (mirroring m-unit-work-002), so
         # every slice count rises by 2: 195 -> 197, 296 -> 298, 319 -> 321.
         # Counts at that stage: 197 / 298 / 321.
+        #
+        # COR-3 Phase 6a also fills the one predicate-write matrix gap: a predicate-
+        # selected UPDATE on an audit-only entity (m-audit-write-009-predicate-update-
+        # materialize), the exact sibling of the terminate witness m-audit-write-007 with
+        # `terminate` swapped for an `update` + assignment. It materializes per resolved
+        # row to the audit-only close-and-chain. Tagged slice-snapshot-1 ONLY (matching
+        # the m-audit-write-007 / m-bitemp-write-010..013 predicate-write family), so
+        # slice-snapshot-1 rises by 1 (298 -> 299) and slice-mvp-1 / slice-managed-1 are
+        # unchanged. Final counts: 197 / 299 / 321.
         ("slice-mvp-1", 197),
-        ("slice-snapshot-1", 298),
+        ("slice-snapshot-1", 299),
         ("slice-managed-1", 321),
     ],
 )

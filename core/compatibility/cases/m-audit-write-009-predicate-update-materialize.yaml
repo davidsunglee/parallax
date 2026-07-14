@@ -1,0 +1,92 @@
+# Predicate-selected UPDATE over an audit-only (processing-temporal) entity
+# materializes per resolved row to the close-and-chain (m-audit-write + m-opt-lock,
+# ADR 0014).
+#
+# The exact sibling of m-audit-write-007 (predicate-terminate-materialize), swapping
+# `terminate` for an `update` with an assignment. Balance carries a SINGLE processing
+# axis [in_z, out_z); an audit-only update never mutates a value in place — it CLOSES
+# the current row (set out_z = the processing instant) and CHAINS a new current row
+# carrying the new value (the signature audit-only write, keyed m-audit-write-002).
+# Because the write gates each row on its own open interval, the set predicate cannot
+# collapse to one statement: it MATERIALIZES to a close + chain per resolved row.
+#
+# The unit of work runs in LOCKING mode, so the materializing read takes `for share`
+# row locks (`for share of t0`) over the two matches (bal_id 1 and 2, both value < 250,
+# both currently open) and the closes are ungated (no observed-in_z gate — that is the
+# optimistic composition, m-audit-write-006). The update assigns value = 175.00 to
+# every matched row (still < 250, so the verify re-read sees the two chained heads).
+# The acct_num copied into each chained head comes from the MATERIALIZED row (the
+# query-result-dependent part): A for bal_id 1, B for bal_id 2.
+#
+# Multi-row statement ordering is PER RESOLVED ROW (close then chain, one row before
+# the next): [close 1, chain 1, close 2, chain 2] — a materialization iterates the
+# resolved rows and emits each row's complete lowering (m-sql "Versioned set-based
+# updates materialize": one per-object lowering per matched row; the single-row
+# bitemporal precedents m-bitemp-write-010/-012 fix a row's own close-before-chain
+# order). The two matched keys are distinct, so no close interferes with another row's
+# chain and the resulting table state is order-independent; the per-row grouping is the
+# authored form, not a state-discriminated one.
+#
+# The trailing find re-reads the still-open set (out_z = infinity) and expects the two
+# chained heads at value 175.00. Total roundTrips 6 = materialize read (1) + two
+# closes + two chains (4) + verify read (1).
+model: models/balance.yaml
+tags: [m-audit-write, m-opt-lock, m-sql, m-unit-work, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "predicate write materializes per-row from a resolving read - per-row binds (observed version / in_z / matched keys) depend on the query result"
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - targetEntity: Balance
+      find:
+        lessThan: { attr: Balance.value, value: 250.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.val < ? and t0.out_z = ? for share of t0
+          binds: [250.00, infinity]
+      referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where val < 250.00 and out_z = 'infinity'::timestamptz for share of balance
+      expectRows:
+        - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+        - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
+    - write:
+        mutation: update
+        target:
+          entity: Balance
+          predicate:
+            lessThan: { attr: Balance.value, value: 250.00 }
+        assignments:
+          - { attr: Balance.value, value: 175.00 }
+        at: "2024-10-01T00:00:00+00:00"
+      roundTrips: 4
+      statements:
+        - sql:
+            postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, infinity]
+        - sql:
+            postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+          binds: [1, A, 175.00, "2024-10-01T00:00:00+00:00", infinity]
+        - sql:
+            postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 2, infinity]
+        - sql:
+            postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+          binds: [2, B, 175.00, "2024-10-01T00:00:00+00:00", infinity]
+    - targetEntity: Balance
+      find:
+        lessThan: { attr: Balance.value, value: 250.00 }
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.val < ? and t0.out_z = ? for share of t0
+          binds: [250.00, infinity]
+      referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where val < 250.00 and out_z = 'infinity'::timestamptz for share of balance
+      expectRows:
+        - { bal_id: 1, acct_num: A, val: 175.00, in_z: "2024-10-01T00:00:00+00:00", out_z: infinity }
+        - { bal_id: 2, acct_num: B, val: 175.00, in_z: "2024-10-01T00:00:00+00:00", out_z: infinity }
+then:
+  roundTrips: 6
