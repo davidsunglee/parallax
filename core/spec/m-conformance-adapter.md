@@ -208,16 +208,22 @@ For a predicate-selected scenario write, the adapter consumes the structured
 authored DML text as its only write input or reverse-engineer the operation from
 golden SQL.
 
-For a **buffered** scenario write — the ordered keyed coalescing pair under
-`/scenario/<n>/write` (`m-case-format`), a keyed `insert` of a new object then the
-keyed `update` / `delete` of that same object — the adapter buffers **both** keyed
-instructions in one unit of work and applies the `m-unit-work` same-transaction
-coalescing rule at flush. The flush emits the **coalesced** DML: a **single**
-final-value write for insert-then-update, or **no** DML at all for
-insert-then-delete. The adapter consumes the ordered instructions as the requested
-operations exactly as for the single-instruction forms — it MUST NOT treat the
-authored golden SQL as its write input — and under `compile` the buffer follows the
-same compile-eligibility rules as any other write.
+For a **buffered** scenario write — the **ordered keyed buffer** under
+`/scenario/<n>/write` (`m-case-format`), **one or more** keyed instructions a single
+unit of work accumulates — the adapter buffers **every** entry in **one** unit of
+work and applies the `m-unit-work` flush: it **coalesces same-object entries**
+(same-transaction insert-then-update → a single final-value write in place;
+insert-then-delete → cancel to no DML), then **foreign-key-orders and elides** the
+general multi-object flush, emitting the per-object DML. The **same-object
+coalescing pair** — a buffer of exactly two same-object entries — is the
+single-object **special case** of that flush, emitting a **single** final-value
+write or **no** DML at all; a **single** keyed write (a buffer of one) and a
+**mixed multi-object flush** (an `insert`, `update`, and `delete` of **different**
+objects) are the general cases. The adapter consumes the ordered structured
+instructions as the requested operations exactly as for the single-instruction
+forms — it MUST NOT treat the authored golden SQL as its write input or
+reverse-engineer the operation from golden SQL — and under `compile` the buffer
+follows the same compile-eligibility rules as any other write.
 
 ### Compile eligibility
 
@@ -298,10 +304,13 @@ It consumes the same structured predicate-write instruction as `compile`, then
 compares emitted SQL and binds to the authored golden unchanged. The instruction
 adds neutral operation input; it does not relax SQL comparison.
 
-It likewise consumes the same buffered keyed coalescing pair as `compile`,
-buffering both instructions in one unit of work and coalescing at flush; the DML
-that flush emits — one final-value write, or none — is compared to the authored
-golden unchanged, exactly as for any other write.
+It likewise consumes the same **ordered keyed buffer** as `compile`, buffering
+**every** entry in one unit of work and applying the `m-unit-work` flush —
+coalescing same-object entries, then foreign-key-ordering and eliding the general
+multi-object flush. The per-object DML that flush emits — for the same-object
+coalescing special case, one final-value write or none — is compared to the
+authored golden unchanged, exactly as for any other write, never reverse-engineered
+from it.
 
 The adapter is responsible for using a clean database according to its declared
 provisioning mode, applying schema and fixtures, executing the implementation's

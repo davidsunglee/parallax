@@ -666,36 +666,43 @@ scenario read MAY carry `referenceSql`, with the same string-or-dialect-map shap
 as `then.referenceSql`; it is self-contained (rather than reusing golden binds)
 and must agree with its golden rows as the third oracle.
 
-##### Buffered write instructions (same-transaction coalescing)
+##### Buffered keyed write instructions (the ordered flush buffer)
 
-A scenario write step MAY carry the **coalescing pair** in place of a single
-instruction: `/scenario/<n>/write` is then an ordered list of **exactly two
-keyed** instructions a single unit of work buffers before a **coalescing flush**
-(`m-unit-work` same-transaction coalescing). **Entry 0** is a keyed `insert` of a
-new object; **entry 1** is the keyed `update` or `delete` of **that same object** —
-the same entity and the same primary-key identity. Each entry is a **keyed**
+A scenario write step MAY carry an **ordered keyed buffer** in place of a single
+instruction: `/scenario/<n>/write` is then a list of **one or more keyed**
+instructions a single unit of work accumulates and **flushes together**
+(`m-unit-work` buffered, batched, ordered writes). Each entry is a **keyed**
 instruction (`mutation` + `entity` + `rows`, the case-format analogue of
 `write-instruction.schema.json`'s `keyedWriteInstruction`), **referencing** the
 canonical write-instruction `$defs` rather than redefining them and layering only
-the `at` / `businessFrom` / `until` authoring surface. The step's golden SQL
-(`statements`) is the **independent expected lowering of the coalesced flush**: one
-final-value write for insert-then-update (`roundTrips: 1`), or **no** DML for
-insert-then-delete (`roundTrips: 0`, no `statements`). The step therefore encodes
-**both** requested mutations explicitly, so an adapter exercises the coalescing
-rule from the instructions themselves, never from the golden SQL or a prose note.
-Business bounds are the axis-explicit canonical `businessFrom` / `businessTo`; the
-processing instant rides as the Clock-context `at`, never an instruction field.
+the `at` / `businessFrom` / `until` authoring surface. A **predicate**-selected
+instruction is **not** admitted — the buffer is **keyed-only**, and
+predicate-in-buffer stays **deferred** to the string-label→structured write
+migration. The step's golden SQL (`statements`) is the **independent expected
+lowering of that flush**, never the source an adapter deduces the writes from, so
+the step encodes **every** requested mutation explicitly and an adapter exercises
+the flush from the instructions themselves. Business bounds are the axis-explicit
+canonical `businessFrom` / `businessTo`; the processing instant rides as the
+Clock-context `at`, never an instruction field.
 
-The form is **scoped** to that pair — it is **not** a general N-instruction ordered
-buffer, and a **predicate**-selected instruction is **not** admitted (both
-generalities belong to the deferred string-label→structured write migration, kept
-separate). The JSON Schema pins the structural shape (exactly two keyed entries,
-entry 0 `insert`, entry 1 `update` / `delete`); the same-entity and
-same-primary-key equalities it cannot express are enforced by the harness
-validator.
+The buffer is **general**: it spans a **single** keyed write (a buffer of one), a
+**mixed multi-object flush** — an `insert`, `update`, and `delete` of **different**
+objects, foreign-key-ordered at flush — and the **same-object coalescing** case
+alike. **Same-object folding at flush is the coalescing rule**, a runtime/planner
+property rather than a structural one: when two buffered instructions name the
+**same** entity and primary-key identity the flush combines them — insert-then-update
+writes the **final** value in place (`roundTrips: 1`), insert-then-delete **cancels**
+to **no** DML (`roundTrips: 0`, no `statements`). The two-keyed same-object
+insert-then-update / insert-then-delete pair is that rule's **single-object special
+case**, not a separate shape. The JSON Schema pins only the structural shape (one or
+more keyed entries); it imposes **no** cross-entry same-object equality, and the
+retained static check is per-entry **member-name honesty** (each keyed row key names
+a declared attribute / value object of its entity). Coalescing and
+foreign-key-ordering correctness are proven where they always were — the step's
+golden SQL executed verbatim, plus `tableState` / `expectRows`.
 
 ```yaml
-- write:                                    # an ordered buffer, coalesced at flush
+- write:                                    # an ordered keyed buffer (here, the coalescing special case)
     - mutation: insert
       entity: Balance
       rows: [{ id: 9, acctNum: D, value: 100.00 }]
@@ -704,7 +711,7 @@ validator.
       entity: Balance
       rows: [{ id: 9, value: 150.00 }]
       at: "2024-06-01T00:00:00+00:00"
-  roundTrips: 1                             # coalesces to ONE final-value INSERT (value 150)
+  roundTrips: 1                             # same-object fold ⇒ ONE final-value INSERT (value 150)
 ```
 
 A case MAY carry a **`when.uow`** block (`{ concurrency: locking |
