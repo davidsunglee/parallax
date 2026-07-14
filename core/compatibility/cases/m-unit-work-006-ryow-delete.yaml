@@ -17,7 +17,11 @@ tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1, slice-sn
 shape: scenario
 when:
   scenario:
-    - write: delete
+    - write:
+        - mutation: delete
+          entity: Account
+          rows:
+            - { id: 3 }
       roundTrips: 1
       note: buffer + COMMIT a delete of account 3
       statements:

@@ -119,7 +119,12 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find() ->
     # the new value (read-your-own-writes for UPDATE).
     case = _scenario_by_id("m-unit-work-005")
     write, find = case.scenario
-    assert "write" in write and write["write"] == "update"
+    # The write step carries the structured keyed buffer (D-3 migration): a single
+    # keyed UPDATE of account 1, its golden SQL unchanged.
+    (instruction,) = write["write"]
+    assert instruction["mutation"] == "update"
+    assert instruction["entity"] == "Account"
+    assert instruction["rows"] == [{"id": 1, "balance": 175.00, "version": 2}]
     update_sql = write["statements"][0]["sql"]["postgres"]
     assert update_sql.startswith("update account set")
     assert "find" in find
@@ -133,7 +138,12 @@ def test_read_your_own_writes_delete_scenario_observes_absence() -> None:
     # the row's ABSENCE (read-your-own-writes for DELETE).
     case = _scenario_by_id("m-unit-work-006")
     write, find = case.scenario
-    assert "write" in write and write["write"] == "delete"
+    # The write step carries the structured keyed buffer (D-3 migration): a single
+    # keyed DELETE of account 3, its golden SQL unchanged.
+    (instruction,) = write["write"]
+    assert instruction["mutation"] == "delete"
+    assert instruction["entity"] == "Account"
+    assert instruction["rows"] == [{"id": 3}]
     assert write["statements"][0]["sql"]["postgres"] == "delete from account where id = ?"
     # The dependent find returns ZERO rows — the deletion is visible.
     assert find["expectRows"] == []

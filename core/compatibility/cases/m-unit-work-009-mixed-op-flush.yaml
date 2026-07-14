@@ -26,7 +26,19 @@ given:
   fixtures: true
 when:
   scenario:
-    - write: flush
+    - write:
+        - mutation: insert
+          entity: Account
+          rows:
+            - { id: 9, owner: Noether, balance: 5.00, version: 1 }
+        - mutation: update
+          entity: Account
+          rows:
+            - { id: 1, balance: 20.00, version: 2 }
+        - mutation: delete
+          entity: Account
+          rows:
+            - { id: 3 }
       roundTrips: 3
       note: one flush, combined order — insert account 9, update account 1, delete account 3
       statements:

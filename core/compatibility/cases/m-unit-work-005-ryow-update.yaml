@@ -16,7 +16,11 @@ tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1, slice-sn
 shape: scenario
 when:
   scenario:
-    - write: update
+    - write:
+        - mutation: update
+          entity: Account
+          rows:
+            - { id: 1, balance: 175.00, version: 2 }
       roundTrips: 1
       note: buffer + COMMIT a keyed update of account 1 (balance 175.00, version advances to 2)
       statements:

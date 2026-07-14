@@ -33,14 +33,26 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - write: update
+    - write:
+        - mutation: update
+          entity: Account
+          rows:
+            - { id: 2, balance: 999.00, version: 2 }
       roundTrips: 1
       note: a CONCURRENT transaction commits first — account 2 -> balance 999.00, version 2
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [999.00, 2, 2]
-    - write: update
+    - write:
+        - mutation: insert
+          entity: Account
+          rows:
+            - { id: 9, owner: Noether, balance: 5.00, version: 1 }
+        - mutation: update
+          entity: Account
+          rows:
+            - { id: 2, balance: 300.00, version: 2 }
       rollback: true
       roundTrips: 2
       note: our UoW inserts account 9 then hits a stale-version conflict on account 2 (0 rows) -> the whole UoW aborts

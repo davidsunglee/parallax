@@ -17,7 +17,11 @@ tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1, slice-sn
 shape: scenario
 when:
   scenario:
-    - write: insert
+    - write:
+        - mutation: insert
+          entity: Account
+          rows:
+            - { id: 7, owner: Newton, balance: 5.00, version: 1 }
       roundTrips: 1
       note: buffer + COMMIT an insert of a new account 7
       statements:

@@ -37,7 +37,11 @@ when:
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-    - write: update
+    - write:
+        - mutation: update
+          entity: Account
+          rows:
+            - { id: 1, balance: 999.00, version: 2 }
       rollback: true
       roundTrips: 1
       note: apply a new balance for account 1, then ROLL BACK — the write is discarded

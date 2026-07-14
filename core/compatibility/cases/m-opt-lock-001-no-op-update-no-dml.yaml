@@ -38,7 +38,11 @@ when:
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-    - write: update
+    - write:
+        - mutation: update
+          entity: Account
+          rows:
+            - { id: 2, balance: 250.00 }
       roundTrips: 0
       note: a versioned update whose set changes no attribute issues NO DML (no golden SQL)
     - targetEntity: Account

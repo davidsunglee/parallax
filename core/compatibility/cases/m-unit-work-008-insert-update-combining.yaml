@@ -20,7 +20,15 @@ tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-mvp-
 shape: scenario
 when:
   scenario:
-    - write: insert
+    - write:
+        - mutation: insert
+          entity: Account
+          rows:
+            - { id: 8, owner: Turing, balance: 1.00, version: 1 }
+        - mutation: update
+          entity: Account
+          rows:
+            - { id: 8, balance: 99.00 }
       roundTrips: 1
       note: a buffered insert + a buffered update of the SAME new object combine to ONE insert (final balance 99.00)
       statements:
