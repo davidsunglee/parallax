@@ -107,7 +107,7 @@ self-contained without a system `libpq`.
   value-object array-traversal reads, and pre-SQL rejected-operation validation) and
   the write-path shapes (Phase 6/8). The operation no-drift guard exercises 10
   idiomatic op-algebra read spellings.
-- **Phase 6 in progress (transactions + temporal backbone; milestones 1–3 landed).**
+- **Phase 6: transactions + temporal backbone — milestones 1–4 COMPLETE (backbone review pending).**
   - **M1 — `m-db-error`:** the neutral category set + call-site predicates
     (`is_retriable` / `violates_unique_index` / `is_timed_out`) in
     `parallax.core.db_error`, and the port-boundary re-raise in `parallax.postgres`
@@ -130,7 +130,7 @@ self-contained without a system `libpq`.
     `m-sql` / `m-dialect` edge), so the planner emits no SQL; the write-DML → SQL
     lowering is deferred to the composition surface (M4). Docker-free unit tests
     only; no write case runs yet.
-  - **M4 (in progress):** landed — the write-DML → SQL lowering at the
+  - **M4 — COMPLETE (`4298e22..bf6f581`):** the write-DML → SQL lowering at the
     composition surface (`snapshot.handle.lower_write`); the conformance
     case-instruction translation (writeSequence + scenario, the D-3 string
     labels retired for the snapshot slice); and the developer transaction
@@ -164,11 +164,14 @@ self-contained without a system `libpq`.
     no-drift guard); the coverage partition flipped (the `m-unit-work` skip
     entry narrowed to the two `m-batch-write` coalescing witnesses) and the
     usage guide regenerated.
-  - **Remaining (M4):** the carry-in `case_runner.py` cleanup + the closing
-    Docker gates and ledger/outline status updates (increment 6). The
+    Closed by increment 6: the carry-in `case_runner.py` cleanup (the scenario
+    find branch routes through the shared per-step read-entity helper) and the
+    closing gates — `just python-verify` green (108 database-backed checks),
+    the unit lane at 1069, `just oracle-test` at 1405 dual-dialect. The
     coalescing witnesses (`m-audit-write-008`, `m-bitemp-write-014`,
     `m-unit-work-010`) stay reasoned-skipped with forward reasons
-    (`m-batch-write`, Phase 8).
+    (`m-batch-write`, Phase 8). **Next:** the Phase-6 backbone external review
+    (checkpoint 3, M1–M4 + the two in-flight core deltas), then Phase 7.
 
 ## Blockers
 
