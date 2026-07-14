@@ -1,0 +1,110 @@
+# Deferred load x value object: the LIFECYCLE-ACTION analogue of m-deep-fetch-018.
+#
+# 018 pins the value-object materialization at every level of an EAGER
+# `deepFetch(...)` graph read. This case pins the SAME slot-4 materialization at a
+# relationship hop resolved by a deferred lifecycle `action: load` — the managed-
+# object surface's on-demand child fetch (m-deep-fetch deferred load; the sibling
+# scenarios m-deep-fetch-013/014/015/016). The classification the witness proves:
+#
+#   * m-case-format "Read result form" — a relationship `action: load` step is
+#     INSTANCE-FORM (object lane): the SQL-producing read that first materializes the
+#     loaded related objects projects the read entity's OWN instance-form list, its
+#     scalars PLUS any value-object document column it declares.
+#   * m-sql "Read projection" (slot 4) — an instance-form read projects every declared
+#     value-object document column LAST; a `load` to a VO-bearing child therefore rides
+#     the child's whole `address` document on the child-level statement.
+#
+# The load resolves `Customer.locations` (one-to-many -> Location), and the CHILD
+# Location — not the scenario root Customer — owns the `address` composite that
+# decodes each child row (the harness resolves the per-step read entity by walking
+# the relationship path's terminal entity, then materializes with THAT descriptor).
+#
+# Steps:
+#   0  find (Customer id 1, Ada)      : INSTANCE-FORM managed find — the developer find
+#      materializes the owner, so the projection carries Customer's scalars in
+#      columnOrder (id, name) then the `address` document LAST (slot 4). expectRows
+#      carries Ada's materialized address.
+#   1  load (locations, on 0)         : the deferred child fetch — INSTANCE-FORM. It
+#      projects Location's OWN instance-form list `id, customer_id, label, address`
+#      (the FK `customer_id` is a declared scalar in slot 1; the `address` document is
+#      slot 4, LAST), honoring the relationship `orderBy: id asc`. expectRows carries
+#      each Location row WITH its own materialized `address` — the CHILD-VO
+#      materialization at a relationship hop. Customer 1 owns location 100 (present
+#      address, the undeclared geo `zip` dropped by the declared projection) and 101
+#      (SQL-NULL document -> the whole value object materializes null, the absence
+#      collapse pinned AT DEPTH, the analogue of a null-address Customer). Slot 4
+#      present, decoded with LOCATION's descriptor, not Customer's.
+#
+# The child rows reuse m-deep-fetch-018's Location 100/101 projections verbatim, so
+# this witness is consistent with the eager deep-fetch composition. Golden SQL is
+# identical on Postgres and MariaDB (bare column projections, no JSON extraction);
+# both decode to the same composite. Total roundTrips 2 = managed find (1) + deferred
+# load (1) — one IN-keyed child statement, not one per parent.
+#
+# compileEligibility is run-only / query-result-dependent: the deferred load's
+# `customer_id IN (…)` binds are the distinct parent keys gathered from step 0's find
+# RESULT, so the child emission is not a pure function of `when` + `given` — the same
+# criterion m-deep-fetch-018 names for a deep-fetch fan-out bind.
+model: models/customer.yaml
+tags: [m-deep-fetch, m-value-object, relationship, to-many, deferred-load, materialization, json, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deferred load - the Customer.locations child IN-list binds are the distinct parent keys gathered from step 0's find result, so the child emission depends on a query result"
+when:
+  scenario:
+    - targetEntity: Customer
+      find:
+        eq: { attr: Customer.id, value: 1 }
+      roundTrips: 1
+      note: managed find materializes the owner WITH its address document — INSTANCE-FORM, slot 4 present (id, name, then address last)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.address from customer t0 where t0.id = ?
+            mariadb: select t0.id, t0.name, t0.address from customer t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - id: 1
+          name: Ada
+          address:
+            street: 1 Park Ave
+            city: Oslo
+            geo:
+              country: NO
+              elevation: 10.5
+              point: { lat: 59.9, lon: 10.7 }
+            phones:
+              - { type: home, number: '555-1234' }
+              - { type: work, number: '555-9999' }
+    - action: load
+      "on": 0
+      path: locations
+      roundTrips: 1
+      note: deferred load of the VO-bearing child Location — INSTANCE-FORM, projects Location's own list (id, customer_id, label, address); each row's address decodes with LOCATION's descriptor
+      statements:
+        - sql:
+            postgres: select t0.id, t0.customer_id, t0.label, t0.address from location t0 where t0.customer_id in (?) order by t0.id asc
+            mariadb: select t0.id, t0.customer_id, t0.label, t0.address from location t0 where t0.customer_id in (?) order by t0.id asc
+          binds: [1]
+      expectRows:
+        - id: 100
+          customer_id: 1
+          label: HQ
+          address:
+            street: 1 Harbour Way
+            city: Oslo
+            geo:
+              country: NO
+              elevation: 12.0
+              point: { lat: 59.91, lon: 10.75 }
+            phones:
+              - { type: work, number: '555-0100' }
+        # Location 101: SQL-NULL document child -> address materializes null (the
+        # absence collapse pinned AT DEPTH, the analogue of a null-address Customer).
+        - id: 101
+          customer_id: 1
+          label: Depot
+          address: null
+then:
+  roundTrips: 2

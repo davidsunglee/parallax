@@ -687,10 +687,23 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # case tagged slice-snapshot-1 only (matching the m-audit-write-007 /
         # m-bitemp-write-010..013 predicate-write family), so slice-snapshot-1 rises by 1
         # (295 -> 296) and slice-mvp-1 / slice-managed-1 are unchanged.
-        # Final counts: 195 / 296 / 316.
+        # Counts at that stage: 195 / 296 / 316.
+        #
+        # COR-3 Phase 5b (re-review round 3) authors one NEW scenario case,
+        # m-deep-fetch-019-deferred-load-value-object-child: the value-object-bearing
+        # lifecycle-action witness the round-3 finding required. It is the deferred-load
+        # analogue of the eager m-deep-fetch-018 VO composition — a relationship
+        # `action: load` of `Customer.locations` (one-to-many -> the VO-bearing child
+        # Location) that materializes each child row's `address` document with LOCATION's
+        # own descriptor (m-sql "Read projection" slot 4; m-case-format "Read result form":
+        # a `load` step is instance-form). Tagged m-deep-fetch + m-value-object and
+        # slice-managed-1 ONLY (a deferred load is the managed-object surface, like its
+        # siblings m-deep-fetch-013..016), so slice-managed-1 rises by 1 (316 -> 317) and
+        # slice-snapshot-1 / slice-mvp-1 are unchanged.
+        # Final counts: 195 / 296 / 317.
         ("slice-mvp-1", 195),
         ("slice-snapshot-1", 296),
-        ("slice-managed-1", 316),
+        ("slice-managed-1", 317),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

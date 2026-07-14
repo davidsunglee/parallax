@@ -22,10 +22,13 @@
 #   2  terminate (predicate = name Nordic Foods) : closes the resolved current row
 #      (out_z = at). A processing-only close copies no payload, so no document rides a
 #      read here; a reassigned document would ride the write instruction, not the read.
-#   3  find (Nordic Foods)            : verify — the open current set is now empty,
-#      proving the terminate landed (a non-vacuous close).
+#   3  find (Nordic Foods)            : verify — INSTANCE-FORM managed find, the SAME form
+#      as step 0 (slot 4 present, projects `address`); the open current set is now empty,
+#      proving the terminate landed (a non-vacuous close). The empty result must not mask a
+#      stale projection, so this golden mirrors step 0's instance-form shape.
 #
-# The instance-form golden projects `address`; the row-form goldens do not. The harness
+# The instance-form goldens (the managed finds, steps 0 and 3) project `address`; the
+# row-form goldens (the predicate-write resolving read, step 1) do not. The harness
 # decodes the projected document into its declared composite (the same materialization
 # the graph-read path performs) so the managed find's expectRows compares identically on
 # both dialects; the row-form reads carry no document to decode. Total roundTrips 4 =
@@ -93,13 +96,13 @@ when:
       find:
         eq: { attr: Supplier.name, value: Nordic Foods }
       roundTrips: 1
-      note: verify — the open current Nordic Foods set is now empty, proving the terminate landed
+      note: verify (INSTANCE-FORM managed find, same form as step 0, slot 4 present) — the open current Nordic Foods set is now empty, proving the terminate landed
       statements:
         - sql:
-            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z from supplier t0 where t0.name = ? and t0.out_z = ?
-            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z from supplier t0 where t0.name = ? and t0.out_z = ?
+            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
+            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
           binds: [Nordic Foods, infinity]
-      referenceSql: select sup_id, name, in_z, out_z from supplier where name = 'Nordic Foods' and out_z > '9000-01-01'
+      referenceSql: select sup_id, name, in_z, out_z, address from supplier where name = 'Nordic Foods' and out_z > '9000-01-01'
       expectRows: []
 then:
   roundTrips: 4
