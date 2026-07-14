@@ -145,7 +145,10 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "compile/run lanes and land as examples incrementally"
     ),
     "m-temporal-read": (
-        "as-of / history / as-of-range spellings land with the temporal backbone (COR-3 Phase 6)"
+        "as-of / history / as-of-range read lowering is implemented (COR-3 Phase 6) and "
+        "exercised through the compile/run conformance lanes; the idiomatic developer-surface "
+        "temporal example awaits the class-frontend as-of-dimension declaration (ledger D-7), "
+        "since the operation no-drift guard needs a mirrored class that declares its axes"
     ),
     "m-unit-work": "transaction demarcation lands with the transactions backbone (COR-3 Phase 6)",
     "m-db-error": (

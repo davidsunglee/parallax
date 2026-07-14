@@ -52,7 +52,13 @@ def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]
     A table is created once even when several entities map to it (the
     table-per-hierarchy shared table). Merging the full shared-table column set
     and the tag column is deferred with inheritance provisioning (COR-3 Phase 6+);
-    the Phase-5 run lane provisions non-inheritance models only.
+    the run lane provisions non-inheritance models only.
+
+    A **temporal** entity's physical primary key is its business key **plus each
+    as-of axis's ``fromColumn``** (``m-descriptor``): many milestone rows share one
+    business key, so a single-column PK would reject a second milestone. The
+    from-columns are appended in declared axis order (business before processing),
+    matching each model's declared composite unique index.
     """
     statements: list[str] = []
     seen_tables: set[str] = set()
@@ -69,6 +75,7 @@ def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]
                 pk_columns.append(dialect.quote(attribute.column))
         for value_object in entity.value_objects:
             columns.append(f"{dialect.quote(value_object.column)} jsonb")
+        pk_columns.extend(dialect.quote(aoa.from_column) for aoa in entity.as_of_attributes)
         if pk_columns:
             columns.append(f"primary key ({', '.join(pk_columns)})")
         statements.append(f"create table {dialect.quote(table)} ({', '.join(columns)})")

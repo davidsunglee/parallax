@@ -26,13 +26,33 @@ from collections.abc import Callable, Generator, Sequence
 
 import psycopg
 from psycopg.rows import TupleRow, dict_row
+from psycopg.types.datetime import TimestamptzLoader
 from psycopg.types.json import Jsonb
 
+from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 
 __all__ = ["PostgresAdapter"]
+
+
+class _InfinityTimestamptzLoader(TimestamptzLoader):  # pragma: no cover - Docker read lane
+    """Read a ``timestamptz`` back, mapping native ``infinity`` to the neutral sentinel.
+
+    A temporal interval's open upper bound reads back as Postgres native
+    ``infinity``, which is outside ``datetime``'s range — psycopg's default loader
+    raises *timestamp too large*. The port normalizes it to the ``m-core``
+    :data:`~parallax.core.base.INFINITY` (``TemporalBound``) so no driver-specific
+    sentinel and no out-of-range value crosses the port boundary (``m-db-port``
+    normalize-at-boundary); the grader renders it back to the canonical ``infinity``
+    literal. A finite instant delegates to the default loader.
+    """
+
+    def load(self, data: object) -> object:  # type: ignore[override]
+        if bytes(data) == b"infinity":  # type: ignore[arg-type]
+            return INFINITY
+        return super().load(data)  # type: ignore[arg-type]
 
 
 def translate_driver_error(exc: psycopg.Error) -> DatabaseError:
@@ -82,6 +102,10 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
 
     def __init__(self, connection: psycopg.Connection[TupleRow]) -> None:
         self._connection = connection
+        # Normalize native `timestamptz` infinity at the port boundary (m-db-port):
+        # a temporal interval's open upper bound reads back as the neutral m-core
+        # infinity sentinel rather than raising psycopg's out-of-range error.
+        connection.adapters.register_loader("timestamptz", _InfinityTimestamptzLoader)
 
     @classmethod
     def connect(cls, conninfo: str, *, autocommit: bool = True) -> PostgresAdapter:

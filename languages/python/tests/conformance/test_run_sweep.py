@@ -27,9 +27,11 @@ pytestmark = pytest.mark.conformance
 # observation, and an instance-form read asserts a materialized `then.graph`. Graph
 # assembly lands with the snapshot branch (COR-3 Phase 7), so these are run-deferred:
 # executing only their SQL would yield a row-form observation for an instance-form
-# case, verifying nothing the compile sweep does not already pin.
+# case, verifying nothing the compile sweep does not already pin. The temporal value-
+# object reads (028-031) are the same instance-form deferral, one milestone deeper.
 _INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
     {"m-value-object-023", "m-value-object-024"}
+    | {f"m-value-object-{n:03d}" for n in (28, 29, 30, 31)}
 )
 # The reachable read cases whose fixtures + `then.rows` this phase runs end-to-end.
 RUN_EXERCISED = frozenset(COMPILE_EXERCISED) - _INSTANCE_FORM_GRAPH_READS

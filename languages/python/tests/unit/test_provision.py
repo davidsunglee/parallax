@@ -43,6 +43,18 @@ def test_schema_statements_map_value_objects_to_jsonb() -> None:
     assert "primary key (id)" in ddl
 
 
+def test_schema_statements_temporal_pk_is_business_key_plus_from_columns() -> None:
+    # A temporal entity's physical PK is the business key plus each axis's fromColumn
+    # (m-descriptor): audit-only Balance keys on (bal_id, in_z) so successive
+    # milestones sharing one business key coexist.
+    (audit,) = provision.schema_statements(_MODELS["balance"])
+    assert "primary key (bal_id, in_z)" in audit
+    # Bitemporal Position keys on the business key plus BOTH from-columns, business
+    # axis before processing (from_z then in_z), matching its declared composite index.
+    (bitemporal,) = provision.schema_statements(_MODELS["position"])
+    assert "primary key (pos_id, from_z, in_z)" in bitemporal
+
+
 def test_schema_statements_create_the_shared_table_once() -> None:
     # Payment (abstract root) is tableless; its concrete subtypes share ONE table,
     # so exactly one `create table payment` is emitted (not one per subtype).

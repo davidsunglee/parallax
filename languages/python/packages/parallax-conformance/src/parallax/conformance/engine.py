@@ -20,12 +20,13 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.conformance import case_format, models
-from parallax.core.base import normalize_instant
+from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.db_port import DbPort, Row
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import dialect_for
 from parallax.core.op_algebra import OperationError, deserialize
 from parallax.core.sql_gen import ResultForm, SqlGenError, Statement, compile_read
+from parallax.core.temporal_read import TemporalReadError, inject_as_of
 
 __all__ = [
     "Emission",
@@ -123,10 +124,15 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> tuple[str, 
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     try:
-        statement = compile_read(
-            deserialize(operation_doc), meta, dialect, target, result_form=_result_form(case)
-        )
-    except (OperationError, SqlGenError, KeyError) as exc:
+        # Temporal reads are lowered by m-temporal-read (the auto-injected as-of
+        # predicate, defaulted-latest on omitted axes) BEFORE m-sql compiles the
+        # resulting plain predicate: the module DAG forbids m-sql from importing
+        # m-temporal-read, so this composition site (the conformance engine, which
+        # may reference both) is the canonicalize step. `inject_as_of` is a strict
+        # identity for a non-temporal target.
+        operation = inject_as_of(deserialize(operation_doc), meta.entity(target))
+        statement = compile_read(operation, meta, dialect, target, result_form=_result_form(case))
+    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return target, statement
 
@@ -173,6 +179,11 @@ def wire_value(value: object) -> object:
     """
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
+    if isinstance(value, TemporalBound):
+        # A temporal interval's open upper bound (the m-core infinity sentinel the
+        # port returns for native `timestamptz` infinity) renders as the canonical
+        # `infinity` literal — the same literal the golden binds and `then.rows` use.
+        return INFINITY_LITERAL
     if isinstance(value, decimal.Decimal):
         return str(value)
     if isinstance(value, dt.datetime):

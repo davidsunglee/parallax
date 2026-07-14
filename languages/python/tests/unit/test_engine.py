@@ -91,6 +91,11 @@ def test_wire_value_covers_the_managed_type_set() -> None:
     assert engine.wire_value(dt.date(2024, 1, 2)) == "2024-01-02"
     assert engine.wire_value(dt.time(3, 4, 5)) == "03:04:05"
     assert engine.wire_value(memoryview(b"\x01\x02")) == "0102"
+    # The temporal open-upper-bound sentinel renders as the canonical `infinity`
+    # literal (a temporal read's current-row `out_z` reads back as native infinity).
+    from parallax.core.base import INFINITY
+
+    assert engine.wire_value(INFINITY) == "infinity"
     sentinel = object()  # an unrecognized value passes through unchanged
     assert engine.wire_value(sentinel) is sentinel
 

@@ -49,11 +49,28 @@ _ORDERS_OP_ALGEBRA_READS: Final[frozenset[str]] = frozenset(
 _VALUE_OBJECT_MATERIALIZATION_READS: Final[frozenset[str]] = frozenset(
     {"m-value-object-023", "m-value-object-024"}
 )
+# Temporal reads (COR-3 Phase-6 milestone 2, m-temporal-read): the as-of predicate is
+# auto-injected by m-temporal-read (default-latest on omitted axes) and m-sql projects
+# each axis's interval columns (business before processing) from the re-goldened corpus.
+# Audit-only + boundary (001-008) and bitemporal (013-017) are row-form — compiled and
+# run below.
+_TEMPORAL_READ_ROW_FORM: Final[frozenset[str]] = frozenset(
+    f"m-temporal-read-{n:03d}" for n in (*range(1, 9), 13, 14, 15, 16, 17)
+)
+# Temporal value-object reads: the document rides the owner's milestone (m-value-object
+# "Inherited temporality"). Instance-form (assert `then.graph`), so — like the non-
+# temporal 023/024 — compile-exercised (slot-4 `address` + injected as-of predicate) but
+# run-deferred to the snapshot branch (Phase 7).
+_TEMPORAL_VALUE_OBJECT_READS: Final[frozenset[str]] = frozenset(
+    f"m-value-object-{n:03d}" for n in (28, 29, 30, 31)
+)
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _VALUE_OBJECT_PREDICATE_READS
     | _ORDERS_OP_ALGEBRA_READS
     | _VALUE_OBJECT_MATERIALIZATION_READS
+    | _TEMPORAL_READ_ROW_FORM
+    | _TEMPORAL_VALUE_OBJECT_READS
 )
 
 _REACHABLE = sweep.reachable_cases()

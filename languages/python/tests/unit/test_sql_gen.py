@@ -82,7 +82,7 @@ def test_inheritance_read_is_refused() -> None:
         (oa.Narrow(entity="Order", to=("A",), operand=oa.All()), "navigation / narrow"),
         (oa.Navigate(rel="Order.items"), "navigation / narrow"),
         (oa.Exists(rel="Order.items"), "navigation / narrow"),
-        (oa.AsOf(operand=oa.All(), as_of_attr="Order.p", date="now"), "temporal-read lowering"),
+        (oa.AsOf(operand=oa.All(), as_of_attr="Order.p", date="now"), "temporal wrapper reached"),
         (oa.NestedExists(path="Customer.address.phones"), "array traversal"),
     ],
 )

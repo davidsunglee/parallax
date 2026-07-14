@@ -328,4 +328,6 @@ class Entity(BaseModel, metaclass=EntityMeta):
     @classmethod
     def where(cls, *predicates: Predicate) -> Statement:
         """Build a side-effect-free statement conjoining ``predicates`` (empty is find-all)."""
-        return build_statement(cls.__name__, predicates)
+        record = entity_record_of(cls)
+        as_of = record.as_of_attributes if record is not None else ()
+        return build_statement(cls.__name__, predicates, as_of_attributes=as_of)

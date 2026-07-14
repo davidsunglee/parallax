@@ -130,6 +130,16 @@ class _FakeTxn:
         return False
 
 
+class _FakeAdapters:
+    """A ``connection.adapters`` stand-in recording the loaders the adapter registers."""
+
+    def __init__(self) -> None:
+        self.registered: list[tuple[str, object]] = []
+
+    def register_loader(self, name: str, loader: object) -> None:
+        self.registered.append((name, loader))
+
+
 class _FakeConnection:
     """A minimal psycopg-connection stand-in for the boundary-wrapping tests."""
 
@@ -141,6 +151,7 @@ class _FakeConnection:
     ) -> None:
         self._cursor_error = cursor_error
         self._commit_error = commit_error
+        self.adapters = _FakeAdapters()
 
     def cursor(self, **_: object) -> _FakeCursor:
         return _FakeCursor(self._cursor_error)
@@ -151,6 +162,14 @@ class _FakeConnection:
 
 def _adapter(connection: _FakeConnection) -> PostgresAdapter:
     return PostgresAdapter(cast("psycopg.Connection[TupleRow]", connection))
+
+
+def test_adapter_registers_the_infinity_timestamptz_loader() -> None:
+    # The port normalizes native `timestamptz` infinity to the m-core sentinel by
+    # registering a custom loader on the connection at construction.
+    connection = _FakeConnection()
+    _adapter(connection)
+    assert [name for name, _loader in connection.adapters.registered] == ["timestamptz"]
 
 
 def test_execute_reraises_a_driver_error_at_the_boundary() -> None:

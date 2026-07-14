@@ -7,9 +7,11 @@ dialect-specific string. The emitted SQL is produced directly in canonical
 normalized form (alias-qualified columns, lowercase, single-space separated,
 canonical clause order), so ``normalize`` is a fixed-point identity check rather
 than a rewrite — the language target never depends on the reference harness's
-sqlglot normalizer (non-normative). Value-object nested predicates and
-inheritance/temporal/navigation nodes that this phase does not yet lower raise a
-clear :class:`SqlGenError` so a mis-routed case fails loudly, never silently.
+sqlglot normalizer (non-normative). Temporal reads are canonicalized upstream by
+``m-temporal-read`` (``inject_as_of``) into ordinary predicate nodes before they
+reach this compiler; to-many value-object array traversal, inheritance-family, and
+navigation nodes that this phase does not yet lower raise a clear
+:class:`SqlGenError` so a mis-routed case fails loudly, never silently.
 """
 
 from __future__ import annotations
@@ -305,7 +307,18 @@ def _lower_predicate(op: Operation, ctx: _Ctx) -> str:
                 "navigation / narrow / deep-fetch lowering lands with the snapshot branch"
             )
         case AsOf() | AsOfRange() | History():
-            raise SqlGenError("temporal-read lowering lands with the temporal backbone")
+            # Temporal reads are lowered by `m-temporal-read` (auto-injected as-of
+            # predicate + default-latest injection) into ordinary predicate nodes
+            # BEFORE compile_read runs — the module DAG forbids m-sql from importing
+            # m-temporal-read, so the composition happens in the caller (the
+            # conformance engine's canonicalize step). Reaching this branch means a
+            # temporal wrapper survived un-canonicalized, which is a wiring error, not
+            # an unsupported node.
+            raise SqlGenError(
+                "temporal wrapper reached m-sql un-lowered; canonicalize the read with "
+                "m-temporal-read.inject_as_of before compile_read (m-sql cannot import "
+                "m-temporal-read per the module DAG)"
+            )
         case OrderBy() | Limit() | Distinct():
             raise SqlGenError("result-shaping directive nested inside a predicate")
         case _:  # pragma: no cover - exhaustiveness guard

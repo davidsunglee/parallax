@@ -2,18 +2,25 @@
   "parallax.core": [
     "Attr",
     "AttributeExpr",
+    "Edge",
     "Entity",
     "EntityConfig",
     "EntityDefinitionError",
     "Field",
+    "LATEST",
     "NameCollisionError",
     "OrderByTerm",
+    "Pin",
     "Predicate",
     "Rel",
     "Relationship",
     "ReservedNameError",
     "Statement",
-    "meta"
+    "TemporalReadError",
+    "UndeclaredAxisError",
+    "edge_of",
+    "meta",
+    "pin_of"
   ],
   "parallax.postgres": [
     "PostgresAdapter"
