@@ -21,6 +21,7 @@ _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
 CUSTOMER = _MODELS["customer"]
 PAYMENT = _MODELS["payment"]
+ACCOUNT = _MODELS["account"]
 
 
 def test_all_projects_scalar_columns() -> None:
@@ -202,3 +203,37 @@ def test_statement_is_frozen_value() -> None:
     statement = Statement("select 1", (1,))
     assert statement.sql == "select 1"
     assert statement.binds == (1,)
+
+
+# --------------------------------------------------------------------------- #
+# Read-lock suffix (m-sql *Read-lock suffix*, via the m-dialect seam).         #
+# --------------------------------------------------------------------------- #
+def test_locking_object_find_matches_the_scenario_find_golden() -> None:
+    # The exact m-unit-work-001 step-1 golden: an in-transaction object find in the
+    # default `locking` mode carries the shared-row-lock suffix, last in the statement.
+    statement = compile_read(
+        oa.Comparison(op="eq", attr="Account.id", value=7),
+        ACCOUNT,
+        POSTGRES,
+        "Account",
+        lock="locking",
+    )
+    assert statement.sql == (
+        "select t0.id, t0.owner, t0.balance, t0.version from account t0 "
+        "where t0.id = ? for share of t0"
+    )
+    assert statement.binds == (7,)
+
+
+def test_optimistic_and_default_reads_take_no_lock() -> None:
+    for lock in (None, "optimistic"):
+        statement = compile_read(oa.All(), ACCOUNT, POSTGRES, "Account", lock=lock)  # type: ignore[arg-type]
+        assert "for share" not in statement.sql
+
+
+def test_distinct_read_suppresses_the_lock_even_in_locking_mode() -> None:
+    # A `distinct` result has no identifiable base row to lock (read-lock suppression).
+    statement = compile_read(
+        oa.Distinct(operand=oa.All()), ACCOUNT, POSTGRES, "Account", lock="locking"
+    )
+    assert "for share" not in statement.sql

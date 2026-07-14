@@ -29,7 +29,7 @@ from parallax.core.descriptor import (
     ValueObjectAttribute,
     column_order,
 )
-from parallax.core.dialect import Dialect
+from parallax.core.dialect import Dialect, LockMode
 from parallax.core.op_algebra import (
     All,
     And,
@@ -177,6 +177,7 @@ def compile_read(
     target: str,
     *,
     result_form: ResultForm = "row",
+    lock: LockMode | None = None,
 ) -> Statement:
     """Compile a read operation to one canonical ``Statement`` for ``dialect``.
 
@@ -187,6 +188,16 @@ def compile_read(
     rows materialize into instances) additionally projects the value-object document
     columns. The conformance engine derives it from the case's asserted result
     member (`then.rows` = row-form; `then.graph` / `then.graphs` = instance-form).
+
+    ``lock`` renders the transactional read-lock suffix (m-sql *Read-lock suffix*,
+    applied through the m-dialect seam): an in-transaction **object find** in
+    ``locking`` mode appends the dialect's shared-row-lock suffix (Postgres
+    ``for share of t0``) after every other clause; ``optimistic`` mode and the
+    default (``None`` — a non-transactional read) append nothing. A ``distinct``
+    result suppresses the lock (it has no identifiable base row to lock — the
+    read-lock is an object-find property); grouped / aggregate reads are not yet
+    reachable. The conformance scenario runner derives ``lock`` from the step's unit
+    of work concurrency mode.
     """
     entity = meta.entity(target)
     if entity.inheritance is not None:
@@ -213,6 +224,10 @@ def compile_read(
     if limit is not None:
         parts.append(dialect.limit_clause())
         ctx.bind(limit)
+    if lock == "locking" and not distinct:
+        # The shared-row-lock suffix is the last thing in the statement (after any
+        # `where` / `order by` / `limit`); a `distinct` object read suppresses it.
+        parts.append(dialect.read_lock_suffix(ctx.alias))
 
     return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
 
