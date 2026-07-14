@@ -1,0 +1,386 @@
+"""Developer transaction surface unit tests (spec §5, Docker-free fake ports).
+
+`Database.transact` composes M3's unit-of-work shell, increment 1's write
+lowering, and the ``m-auto-retry`` bounded loop over an injected ``m-db-port``.
+These tests drive that composition through recording fake ports: the
+buffer→flush→lower→execute wiring proof, read-your-own-writes ordering, the
+participation-mode lock suffix, join semantics (same Transaction, option
+conflicts, rollback-only foreclosure), withheld values on abort, and the retry
+classification matrix — including the spec §5 requirement that a rollback-only
+commit refusal keeps its original cause's retriability.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import datetime as dt
+from collections.abc import Callable, Sequence
+
+import pytest
+
+from parallax.conformance import models
+from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.dialect import POSTGRES
+from parallax.core.unit_work import (
+    EscapedTransactionError,
+    FixedClock,
+    FlushPlan,
+    RollbackOnlyError,
+    TransactionSettings,
+    UnitOfWork,
+    UnitOfWorkError,
+    WriteInstructionError,
+    run_unit_of_work,
+)
+from parallax.snapshot import connect
+from parallax.snapshot.handle import Database, Transaction, TransactionOptionConflictError
+
+pytestmark = pytest.mark.unit
+
+_ACCOUNT = models.load_models()["account"]
+_FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+
+_NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
+_FIND_BY_ID = {"eq": {"attr": "Account.id", "value": 7}}
+
+# The m-unit-work-001 goldens, rendered to driver SQL as the port receives them.
+_INSERT_SQL = POSTGRES.to_driver_sql(
+    "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
+)
+_FIND_SQL = POSTGRES.to_driver_sql(
+    "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0"
+)
+_FIND_SQL_NO_LOCK = POSTGRES.to_driver_sql(
+    "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?"
+)
+
+
+def _deadlock() -> DatabaseError:
+    return DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
+
+
+class _RecordingPort:
+    """An in-memory ``m-db-port`` recording every call in order (no Docker).
+
+    ``txn_faults`` raises at the next ``transaction`` entries (a driver failure
+    the adapter translated and rolled back); ``read_faults`` raises from the
+    next ``execute`` calls (a failure inside the transaction body).
+    """
+
+    def __init__(self, *, rows: Sequence[Row] = ()) -> None:
+        self.ops: list[tuple[object, ...]] = []
+        self.rows = list(rows)
+        self.txn_faults: list[DatabaseError] = []
+        self.read_faults: list[DatabaseError] = []
+
+    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+        if self.read_faults:
+            raise self.read_faults.pop(0)
+        self.ops.append(("read", sql, tuple(binds)))
+        return [dict(row) for row in self.rows]
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        self.ops.append(("write", sql, tuple(binds)))
+        return 1
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        self.ops.append(("begin",))
+        if self.txn_faults:
+            self.ops.append(("rollback",))
+            raise self.txn_faults.pop(0)
+        try:
+            result = body(self)
+        except BaseException:
+            self.ops.append(("rollback",))
+            raise
+        self.ops.append(("commit",))
+        return result
+
+    @property
+    def begins(self) -> int:
+        return sum(1 for op in self.ops if op == ("begin",))
+
+
+def _db(port: _RecordingPort) -> Database:
+    # The spec §8 module-level `connect` is the classmethod's alias, so this
+    # covers both spellings.
+    return connect(port, _ACCOUNT, clock=FixedClock(_FIXED))
+
+
+# --------------------------------------------------------------------------- #
+# Wiring: buffer -> flush -> lower_write -> execute_write on the connection.   #
+# --------------------------------------------------------------------------- #
+def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> str:
+        tx.insert("Account", _NEW_ROW)
+        return "done"
+
+    assert _db(port).transact(fn) == "done"
+    assert port.ops == [
+        ("begin",),
+        ("write", _INSERT_SQL, (7, "Newton", 5.00, 1)),
+        ("commit",),
+    ]
+
+
+def test_update_and_delete_lower_to_their_keyed_dml() -> None:
+    # m-unit-work-005 / -006: a keyed update (SET the non-PK members, WHERE the
+    # key) and a keyed delete, flushed in the canonical mixed-op order.
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
+        tx.delete("Account", {"id": 3})
+
+    _db(port).transact(fn)
+    assert port.ops == [
+        ("begin",),
+        (
+            "write",
+            POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?"),
+            (175.00, 2, 1),
+        ),
+        ("write", POSTGRES.to_driver_sql("delete from account where id = ?"), (3,)),
+        ("commit",),
+    ]
+
+
+def test_find_force_flushes_pending_writes_first() -> None:
+    # Read-your-own-writes: the buffered insert executes BEFORE the dependent
+    # read, inside the same still-open transaction (m-unit-work-001's shape).
+    port = _RecordingPort(rows=[_NEW_ROW])
+
+    def fn(tx: Transaction) -> list[Row]:
+        tx.insert("Account", _NEW_ROW)
+        return tx.find("Account", _FIND_BY_ID)
+
+    assert _db(port).transact(fn) == [_NEW_ROW]
+    assert port.ops == [
+        ("begin",),
+        ("write", _INSERT_SQL, (7, "Newton", 5.00, 1)),
+        ("read", _FIND_SQL, (7,)),
+        ("commit",),
+    ]
+
+
+def test_optimistic_mode_suppresses_the_read_lock_suffix() -> None:
+    port = _RecordingPort()
+    _db(port).transact(lambda tx: tx.find("Account", _FIND_BY_ID), concurrency="optimistic")
+    assert port.ops == [("begin",), ("read", _FIND_SQL_NO_LOCK, (7,)), ("commit",)]
+
+
+def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> str:
+        tx.insert("Account", _NEW_ROW)
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _db(port).transact(fn)
+    # Nothing flushed: the buffered write never reached the port.
+    assert port.ops == [("begin",), ("rollback",)]
+
+
+def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
+    port = _RecordingPort()
+    with pytest.raises(WriteInstructionError, match="shoe_size"):
+        _db(port).transact(lambda tx: tx.insert("Account", {"id": 1, "shoe_size": 9}))
+    assert ("write", _INSERT_SQL, (1, 9)) not in port.ops
+
+
+def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
+    port = _RecordingPort()
+    escaped: list[Transaction] = []
+
+    def fn(tx: Transaction) -> None:
+        escaped.append(tx)
+
+    _db(port).transact(fn)
+    with pytest.raises(EscapedTransactionError):
+        escaped[0].insert("Account", _NEW_ROW)
+
+
+# --------------------------------------------------------------------------- #
+# Join semantics: same Transaction, option conflicts, foreclosure.             #
+# --------------------------------------------------------------------------- #
+def test_join_receives_the_same_transaction_and_returns_immediately() -> None:
+    port = _RecordingPort()
+    db = _db(port)
+
+    def outer(tx: Transaction) -> int:
+        inner = db.transact(lambda inner_tx: (inner_tx is tx, 42))
+        assert inner == (True, 42)
+        return inner[1]
+
+    assert db.transact(outer) == 42
+    assert port.begins == 1  # the join opened no second database transaction
+
+
+def test_join_with_equal_or_omitted_options_inherits() -> None:
+    port = _RecordingPort()
+    db = _db(port)
+
+    def outer(_tx: Transaction) -> str:
+        # Explicit-and-equal to the resolved defaults: accepted, not a conflict.
+        return db.transact(
+            lambda _inner: "joined",
+            retries=10,
+            concurrency="locking",
+            retry_optimistic_conflicts=False,
+        )
+
+    assert db.transact(outer) == "joined"
+
+
+def _must_not_run(_tx: Transaction) -> None:  # pragma: no cover - conflict forecloses it
+    raise AssertionError("the joined closure must not run on an option conflict")
+
+
+_CONFLICTING_JOINS: list[tuple[str, Callable[[Database], object]]] = [
+    ("retries", lambda db: db.transact(_must_not_run, retries=3)),
+    ("concurrency", lambda db: db.transact(_must_not_run, concurrency="optimistic")),
+    (
+        "retry_optimistic_conflicts",
+        lambda db: db.transact(_must_not_run, retry_optimistic_conflicts=True),
+    ),
+]
+
+
+@pytest.mark.parametrize(("option", "join"), _CONFLICTING_JOINS)
+def test_join_with_a_conflicting_explicit_option_raises(
+    option: str, join: Callable[[Database], object]
+) -> None:
+    port = _RecordingPort()
+    db = _db(port)
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(TransactionOptionConflictError, match=option):
+            join(db)
+        return "survived"
+
+    # The conflict is refused before the joined closure runs, and refusing it
+    # does not doom the outer transaction (nothing entered the joined frame).
+    assert db.transact(outer) == "survived"
+
+
+def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() -> None:
+    port = _RecordingPort()
+    db = _db(port)
+    ran: list[bool] = []
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(RuntimeError, match="inner failure"):
+            db.transact(_raise_inner)
+        with pytest.raises(RollbackOnlyError):
+            db.transact(lambda _inner: ran.append(True))
+        return "unreachable value"
+
+    # The outer callback caught everything and returned normally, but the inner
+    # failure doomed the transaction: commit is refused and the value withheld.
+    with pytest.raises(RollbackOnlyError) as excinfo:
+        db.transact(outer)
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert ran == []
+    assert port.ops == [("begin",), ("rollback",)]
+
+
+def _raise_inner(_tx: Transaction) -> None:
+    raise RuntimeError("inner failure")
+
+
+def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
+    port = _RecordingPort()
+    db = _db(port)
+
+    def executor(_plan: FlushPlan) -> None:  # pragma: no cover - never flushed
+        raise AssertionError("no flush expected")
+
+    def body(_uow: UnitOfWork) -> None:
+        with pytest.raises(UnitOfWorkError, match="bare unit of work"):
+            db.transact(lambda _tx: None)
+
+    run_unit_of_work(
+        body,
+        settings=TransactionSettings(),
+        clock=FixedClock(_FIXED),
+        meta=_ACCOUNT,
+        flush_executor=executor,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Bounded retry (m-auto-retry through db.transact).                            #
+# --------------------------------------------------------------------------- #
+def test_a_deadlock_is_retried_and_the_reexecution_succeeds() -> None:
+    port = _RecordingPort()
+    port.txn_faults = [_deadlock(), _deadlock()]
+    assert _db(port).transact(lambda _tx: "ok") == "ok"
+    assert port.begins == 3
+
+
+def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
+    port = _RecordingPort()
+    port.txn_faults = [_deadlock(), _deadlock(), _deadlock()]
+    with pytest.raises(DatabaseError) as excinfo:
+        _db(port).transact(lambda _tx: "ok", retries=2)
+    assert port.begins == 3
+    assert excinfo.value.is_retriable  # the surfaced error is the failure itself
+    assert "3 attempts (retries=2)" in "".join(excinfo.value.__notes__)
+
+
+def test_the_default_bound_is_ten_reexecutions() -> None:
+    port = _RecordingPort()
+    port.txn_faults = [_deadlock() for _ in range(11)]
+    with pytest.raises(DatabaseError) as excinfo:
+        _db(port).transact(lambda _tx: "ok")
+    assert port.begins == 11
+    assert "11 attempts (retries=10)" in "".join(excinfo.value.__notes__)
+
+
+@pytest.mark.parametrize(
+    ("category", "native"),
+    [("uniqueViolation", "23505"), ("lockWaitTimeout", "55P03")],
+)
+def test_non_retriable_categories_surface_after_one_attempt(category: str, native: str) -> None:
+    port = _RecordingPort()
+    port.txn_faults = [DatabaseError(category=category, native_code=native, message=category)]  # type: ignore[arg-type]
+    with pytest.raises(DatabaseError):
+        _db(port).transact(lambda _tx: "ok")
+    assert port.begins == 1
+
+
+def test_retries_zero_disables_the_loop() -> None:
+    port = _RecordingPort()
+    port.txn_faults = [_deadlock()]
+    with pytest.raises(DatabaseError):
+        _db(port).transact(lambda _tx: "ok", retries=0)
+    assert port.begins == 1
+
+
+def test_negative_retries_are_rejected_before_any_attempt() -> None:
+    port = _RecordingPort()
+    with pytest.raises(ValueError, match="retries must be >= 0"):
+        _db(port).transact(lambda _tx: "ok", retries=-1)
+    assert port.begins == 0
+
+
+def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
+    # Spec §5: an inner deadlock dooms the transaction; even though the outer
+    # callback catches it and returns normally, the commit refusal preserves the
+    # cause's classification — the retry loop re-executes, and the fresh attempt
+    # succeeds.
+    port = _RecordingPort(rows=[_NEW_ROW])
+    port.read_faults = [_deadlock()]
+    db = _db(port)
+
+    def outer(_tx: Transaction) -> str:
+        with contextlib.suppress(DatabaseError):
+            db.transact(lambda inner_tx: inner_tx.find("Account", _FIND_BY_ID))
+        return "caught"
+
+    assert db.transact(outer) == "caught"
+    assert port.begins == 2

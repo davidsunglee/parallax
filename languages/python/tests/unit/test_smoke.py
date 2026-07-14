@@ -26,9 +26,11 @@ _TOP_PACKAGE_NAMES: tuple[str, ...] = (
 
 def test_top_package_public_surfaces() -> None:
     # Phase 3 publishes the model-definition surface on parallax.core; Phase 5 adds
-    # the concrete Postgres adapter surface. The snapshot lifecycle stays a skeleton.
+    # the concrete Postgres adapter surface. Phase 6 (M4) publishes the snapshot
+    # composition-root entry point — §8 pins the package export to `connect()`
+    # alone until Phase 7 adds Snapshot[T] / Execution.
     assert {"Entity", "Field", "Relationship", "Attr", "Rel", "meta"} <= set(parallax.core.__all__)
-    assert parallax.snapshot.__all__ == []
+    assert parallax.snapshot.__all__ == ["connect"]
     # §8 topology fixes the adapter's public export as PostgresAdapter alone;
     # psycopg bind mechanics (Jsonb) stay internal to the adapter.
     assert set(parallax.postgres.__all__) == {"PostgresAdapter"}

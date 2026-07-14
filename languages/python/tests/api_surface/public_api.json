@@ -25,5 +25,7 @@
   "parallax.postgres": [
     "PostgresAdapter"
   ],
-  "parallax.snapshot": []
+  "parallax.snapshot": [
+    "connect"
+  ]
 }

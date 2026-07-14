@@ -33,6 +33,7 @@ from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.unit_work.planner import FlushPlan, ObjectKey, Observation, plan_flush
 
 __all__ = [
+    "Concurrency",
     "EscapedTransactionError",
     "FlushExecutor",
     "RollbackOnlyError",
@@ -93,6 +94,7 @@ class UnitOfWork:
         "_rollback_cause",
         "_rollback_only",
         "clock",
+        "companion",
         "flush_executor",
         "meta",
         "settings",
@@ -110,6 +112,12 @@ class UnitOfWork:
         self.clock = clock
         self.meta = meta
         self.flush_executor = flush_executor
+        # An opaque demarcation-layer companion (the `db.transact` transaction
+        # facade), published for the scope's duration so a joining call recovers
+        # it via `active_unit_of_work()`. The shell never reads it, and it needs
+        # no cleanup of its own: it is reachable only through the per-thread
+        # active binding, which `run_outermost` already clears on every exit.
+        self.companion: object | None = None
         self._buffer: list[WriteInstruction] = []
         self._observations: dict[ObjectKey, Observation] = {}
         self._frame_depth = 0

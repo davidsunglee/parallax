@@ -130,17 +130,25 @@ self-contained without a system `libpq`.
     `m-sql` / `m-dialect` edge), so the planner emits no SQL; the write-DML → SQL
     lowering is deferred to the composition surface (M4). Docker-free unit tests
     only; no write case runs yet.
-  - **Remaining (M4):** `db.transact` public API + sentinel options + the
-    bounded-retry loop — the transaction **plumbing** (demarcation, join /
-    option-conflict, retry, and the injected flush executor); its object-model-
-    dependent ergonomic I/O (participating `find` results and the
-    instance→write-input derivation an `update` effective change set needs) is
-    staged to the snapshot branch (Phase 7), which brings up the instance model
-    both rest on (ledger D-16). The write-DML → SQL lowering at the composition surface;
-    the conformance case-instruction translation (writeSequence + scenario + the
-    D-3 string labels); and error/boundary-shape `run`. The nine `error`-shape
-    `m-db-error` cases, the coalescing witnesses (`m-audit-write-008`,
-    `m-bitemp-write-014`, `m-unit-work-010`), and the D-3 string-label cases stay
+  - **M4 (in progress):** landed — the write-DML → SQL lowering at the
+    composition surface (`snapshot.handle.lower_write`); the conformance
+    case-instruction translation (writeSequence + scenario, the D-3 string
+    labels retired for the snapshot slice); and the developer transaction
+    **plumbing** — `Database.connect` / `db.transact` with sentinel options,
+    join / option-conflict, rollback-only foreclosure, the `m-auto-retry`
+    bounded loop (`parallax.core.auto_retry`; exhaustion re-raises the failure
+    with the attempt count as an exception note), and the injected flush
+    executor, with the neutral `Transaction` verbs (`insert`/`update`/`delete`
+    rows + a participating `find` returning rows). The object-model-dependent
+    ergonomic I/O (participating `find` → instances and the instance→write-input
+    derivation an `update` effective change set needs) is staged to the
+    snapshot branch (Phase 7), which brings up the instance model both rest on
+    (ledger D-16).
+  - **Remaining (M4):** error/boundary-shape `run`; the API-suite write
+    examples + no-drift guard + D-7 class spellings + the coverage-partition
+    flip + usage-guide regen; the carry-in `case_runner.py` cleanup. The nine
+    `error`-shape `m-db-error` cases and the coalescing witnesses
+    (`m-audit-write-008`, `m-bitemp-write-014`, `m-unit-work-010`) stay
     reasoned-skipped with forward reasons until then.
 
 ## Blockers

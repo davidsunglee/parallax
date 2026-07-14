@@ -39,6 +39,7 @@ from parallax.core.unit_work.planner import (
     plan_flush,
 )
 from parallax.core.unit_work.uow import (
+    Concurrency,
     EscapedTransactionError,
     FlushExecutor,
     RollbackOnlyError,
@@ -51,6 +52,7 @@ from parallax.core.unit_work.uow import (
 
 __all__ = [
     "Clock",
+    "Concurrency",
     "EscapedTransactionError",
     "FixedClock",
     "FlushExecutor",
