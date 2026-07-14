@@ -15,6 +15,7 @@ in later phases.
 
 from __future__ import annotations
 
+from parallax.core.descriptor import AsOfAttribute
 from parallax.core.entity import (
     Attr,
     AttributeExpr,
@@ -43,6 +44,7 @@ from parallax.core.temporal_read import (
 
 __all__ = [
     "LATEST",
+    "AsOfAttribute",
     "Attr",
     "AttributeExpr",
     "Edge",

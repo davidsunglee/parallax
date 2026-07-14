@@ -85,3 +85,144 @@ Corpus case: `m-op-algebra-032`
 ```python
 op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)
 ```
+
+## As-of read at a past instant
+
+Corpus case: `m-temporal-read-003`
+
+```python
+op = Balance.where().as_of(processing=datetime(2024, 4, 1, tzinfo=UTC))
+```
+
+## Insert, then read your own write
+
+Corpus case: `m-unit-work-001`
+
+```python
+def fn(tx):
+    row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
+    tx.insert("Account", row)
+    return tx.find("Account", {"eq": {"attr": "Account.id", "value": 7}})
+
+rows = db.transact(fn)
+```
+
+## An aborted update is discarded
+
+Corpus case: `m-unit-work-002`
+
+```python
+def fn(tx):
+    tx.update("Account", {"id": 1, "balance": 999.00, "version": 2})
+    raise RuntimeError("changed my mind")  # abort: the buffered update is discarded
+
+db.transact(fn)  # raises; a later find still observes the original balance
+```
+
+## Foreign-key-ordered inserts in one transaction
+
+Corpus case: `m-unit-work-003`
+
+```python
+def fn(tx):
+    order = {"id": 100, "name": "Hopper", "sku": "X-1", "qty": 1,
+             "price": 9.99, "active": True, "orderedOn": "2024-07-01"}
+    tx.insert("Order", order)
+    tx.insert("OrderItem", {"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3})
+
+db.transact(fn)  # the flush inserts the parent before the child
+```
+
+## The callback value is withheld on abort
+
+Corpus case: `m-unit-work-004`
+
+```python
+def fn(tx):
+    tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
+    tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})  # forces the flush
+    raise RuntimeError("abort")  # even the force-flushed write is rolled back
+
+db.transact(fn)  # raises — no value is returned as though durable
+```
+
+## Keyed update, observed in-transaction
+
+Corpus case: `m-unit-work-005`
+
+```python
+def fn(tx):
+    tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
+    return tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})
+
+rows = db.transact(fn)
+```
+
+## Keyed delete, observed in-transaction
+
+Corpus case: `m-unit-work-006`
+
+```python
+def fn(tx):
+    tx.delete("Account", {"id": 3})
+    return tx.find("Account", {"eq": {"attr": "Account.id", "value": 3}})
+
+rows = db.transact(fn)  # [] — the dependent find observes the deletion
+```
+
+## Create, then later delete, a parent/child pair
+
+Corpus case: `m-unit-work-007`
+
+```python
+def create(tx):
+    order = {"id": 100, "name": "Hopper", "sku": "X-1", "qty": 1,
+             "price": 9.99, "active": True, "orderedOn": "2024-07-01"}
+    tx.insert("Order", order)
+    tx.insert("OrderItem", {"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3})
+
+def teardown(tx):
+    tx.delete("OrderItem", {"id": 200})  # child first, mirroring the FK-ordered insert
+    tx.delete("Order", {"id": 100})
+
+db.transact(create)
+db.transact(teardown)
+```
+
+## One flush, combined mixed-verb order
+
+Corpus case: `m-unit-work-009`
+
+```python
+def fn(tx):
+    tx.insert("Account", {"id": 9, "owner": "Noether", "balance": 5.00, "version": 1})
+    tx.update("Account", {"id": 1, "balance": 20.00, "version": 2})
+    tx.delete("Account", {"id": 3})
+    return tx.find("Account", {"lessThan": {"attr": "Account.balance", "value": 50.00}})
+
+rows = db.transact(fn)  # one flush: insert, update, delete — then the find
+```
+
+## An aborted insert never becomes durable
+
+Corpus case: `m-unit-work-011`
+
+```python
+def fn(tx):
+    tx.insert("Account", {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1})
+    raise RuntimeError("abort")
+
+db.transact(fn)  # raises; a later find for account 7 observes no rows
+```
+
+## An aborted delete leaves the row standing
+
+Corpus case: `m-unit-work-012`
+
+```python
+def fn(tx):
+    tx.delete("Account", {"id": 3})
+    raise RuntimeError("abort")
+
+db.transact(fn)  # raises; account 3 still stands
+```

@@ -21,7 +21,7 @@ from typing import Any, ClassVar, cast, get_args, get_origin
 from pydantic import BaseModel, ConfigDict
 from pydantic._internal._model_construction import ModelMetaclass
 
-from parallax.core.descriptor import UNSET, DescriptorError, validate_entity
+from parallax.core.descriptor import UNSET, AsOfAttribute, DescriptorError, validate_entity
 from parallax.core.descriptor import Attribute as AttributeRecord
 from parallax.core.descriptor import Entity as EntityRecord
 from parallax.core.descriptor import Relationship as RelationshipRecord
@@ -81,11 +81,22 @@ _RelDecl = tuple[str, object, RelationshipSpec]
 
 @dataclass(frozen=True, slots=True)
 class EntityConfig:
-    """Storage configuration declared in an entity class body via ``__parallax__``."""
+    """Storage configuration declared in an entity class body via ``__parallax__``.
+
+    ``as_of`` declares the entity's temporal dimensions in the descriptor's own
+    vocabulary (:class:`~parallax.core.descriptor.AsOfAttribute` — ledger D-7's
+    temporal class spelling): each axis names its interval columns, and the
+    effective ``temporal`` classification is derived from the declared axes
+    exactly as for an ingested descriptor. The interval-bound scalar attributes
+    (e.g. ``processing_from`` on ``in_z``) are declared as ordinary ``Attr``
+    fields beside it, so the class carries no information absent from the
+    descriptor schema.
+    """
 
     table: str | None = None
     namespace: str | None = None
     mutability: str = "read-only"
+    as_of: tuple[AsOfAttribute, ...] = ()
 
 
 def snake_to_camel(name: str) -> str:
@@ -298,6 +309,7 @@ class EntityMeta(ModelMetaclass):
             table=config.table if config.table is not None else camel_to_snake(cls_name),
             mutability=cast("Any", _check_mutability(config.mutability)),
             attributes=attributes,
+            as_of_attributes=config.as_of,
             relationships=relationships,
         )
         # Reject an invalid compiled record (bad neutral type, out-of-range

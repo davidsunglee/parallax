@@ -123,6 +123,120 @@ EXAMPLES: Final[list[Example]] = [
         "Ordering and limiting",
         "op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)",
     ),
+    # Temporal reads (m-temporal-read), unlocked by the D-7 class-frontend axis
+    # declaration (`EntityConfig.as_of`); proven by the operation no-drift guard.
+    Example(
+        "m-temporal-read-003",
+        "As-of read at a past instant",
+        "op = Balance.where().as_of(processing=datetime(2024, 4, 1, tzinfo=UTC))",
+    ),
+    # The developer transaction surface (m-unit-work, M4): neutral keyed-write
+    # verbs + participating finds through `db.transact`; proven by the write
+    # no-drift guard (commit paths emit the golden DML; abort paths prove the
+    # discard contract).
+    Example(
+        "m-unit-work-001",
+        "Insert, then read your own write",
+        """def fn(tx):
+    row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
+    tx.insert("Account", row)
+    return tx.find("Account", {"eq": {"attr": "Account.id", "value": 7}})
+
+rows = db.transact(fn)""",
+    ),
+    Example(
+        "m-unit-work-002",
+        "An aborted update is discarded",
+        """def fn(tx):
+    tx.update("Account", {"id": 1, "balance": 999.00, "version": 2})
+    raise RuntimeError("changed my mind")  # abort: the buffered update is discarded
+
+db.transact(fn)  # raises; a later find still observes the original balance""",
+    ),
+    Example(
+        "m-unit-work-003",
+        "Foreign-key-ordered inserts in one transaction",
+        """def fn(tx):
+    order = {"id": 100, "name": "Hopper", "sku": "X-1", "qty": 1,
+             "price": 9.99, "active": True, "orderedOn": "2024-07-01"}
+    tx.insert("Order", order)
+    tx.insert("OrderItem", {"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3})
+
+db.transact(fn)  # the flush inserts the parent before the child""",
+    ),
+    Example(
+        "m-unit-work-004",
+        "The callback value is withheld on abort",
+        """def fn(tx):
+    tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
+    tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})  # forces the flush
+    raise RuntimeError("abort")  # even the force-flushed write is rolled back
+
+db.transact(fn)  # raises — no value is returned as though durable""",
+    ),
+    Example(
+        "m-unit-work-005",
+        "Keyed update, observed in-transaction",
+        """def fn(tx):
+    tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
+    return tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})
+
+rows = db.transact(fn)""",
+    ),
+    Example(
+        "m-unit-work-006",
+        "Keyed delete, observed in-transaction",
+        """def fn(tx):
+    tx.delete("Account", {"id": 3})
+    return tx.find("Account", {"eq": {"attr": "Account.id", "value": 3}})
+
+rows = db.transact(fn)  # [] — the dependent find observes the deletion""",
+    ),
+    Example(
+        "m-unit-work-007",
+        "Create, then later delete, a parent/child pair",
+        """def create(tx):
+    order = {"id": 100, "name": "Hopper", "sku": "X-1", "qty": 1,
+             "price": 9.99, "active": True, "orderedOn": "2024-07-01"}
+    tx.insert("Order", order)
+    tx.insert("OrderItem", {"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3})
+
+def teardown(tx):
+    tx.delete("OrderItem", {"id": 200})  # child first, mirroring the FK-ordered insert
+    tx.delete("Order", {"id": 100})
+
+db.transact(create)
+db.transact(teardown)""",
+    ),
+    Example(
+        "m-unit-work-009",
+        "One flush, combined mixed-verb order",
+        """def fn(tx):
+    tx.insert("Account", {"id": 9, "owner": "Noether", "balance": 5.00, "version": 1})
+    tx.update("Account", {"id": 1, "balance": 20.00, "version": 2})
+    tx.delete("Account", {"id": 3})
+    return tx.find("Account", {"lessThan": {"attr": "Account.balance", "value": 50.00}})
+
+rows = db.transact(fn)  # one flush: insert, update, delete — then the find""",
+    ),
+    Example(
+        "m-unit-work-011",
+        "An aborted insert never becomes durable",
+        """def fn(tx):
+    tx.insert("Account", {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1})
+    raise RuntimeError("abort")
+
+db.transact(fn)  # raises; a later find for account 7 observes no rows""",
+    ),
+    Example(
+        "m-unit-work-012",
+        "An aborted delete leaves the row standing",
+        """def fn(tx):
+    tx.delete("Account", {"id": 3})
+    raise RuntimeError("abort")
+
+db.transact(fn)  # raises; account 3 still stands""",
+    ),
 ]
 
 # The reviewed skip registry: primary module -> the reason its active cases carry
@@ -145,22 +259,40 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "compile/run lanes and land as examples incrementally"
     ),
     "m-temporal-read": (
-        "as-of / history / as-of-range read lowering is implemented (COR-3 Phase 6) and "
-        "exercised through the compile/run conformance lanes; the idiomatic developer-surface "
-        "temporal example awaits the class-frontend as-of-dimension declaration (ledger D-7), "
-        "since the operation no-drift guard needs a mirrored class that declares its axes"
+        "the representative as-of spelling is exercised as an idiomatic example (the D-7 "
+        "class-frontend axis declaration landed in M4); the remaining temporal-read cases "
+        "are graded through the compile/run conformance lanes and land as examples "
+        "incrementally"
     ),
-    "m-unit-work": "transaction demarcation lands with the transactions backbone (COR-3 Phase 6)",
+    "m-unit-work": (
+        "the same-transaction coalescing witnesses (m-unit-work-008/010) buffer an "
+        "insert+update / insert+delete pair whose one-statement / zero-statement collapse "
+        "is m-batch-write behavior (COR-3 Phase 8); their planner folding is already "
+        "unit-pinned (test_write_lowering), and every other m-unit-work case is exercised "
+        "as an idiomatic transact example"
+    ),
     "m-db-error": (
-        "error-category classification, the call-site predicates, and the port-boundary "
-        "re-raise are implemented (COR-3 Phase 6) and proven by the dialect contract suite, "
-        "the m-db-error unit tests, and the provider deadlock proof; the error-shape "
-        "m-db-error corpus cases additionally need error/concurrency-shape `run` support "
-        "(the later Phase-6 case-instruction translation)"
+        "the m-db-error corpus cases are graded end-to-end by the M4 run lanes — the "
+        "single-connection triggers by the error run sweep, the two-connection "
+        "choreography by the provider deadlock proof; the neutral DatabaseError surface "
+        "the developer sees is exercised through the transact abort/retry unit tests"
     ),
-    "m-pk-gen": "pk-generator inserts land with keyed writes (COR-3 Phase 6)",
-    "m-auto-retry": "bounded automatic retry lands with the transactions backbone (COR-3 Phase 6)",
-    "m-read-lock": "shared-read-lock reads land with the transactions backbone (COR-3 Phase 6)",
+    "m-pk-gen": (
+        "write-side id allocation (the sequence/max registry reads an insert without an "
+        "authored id needs) lands with the pk-gen write path (a later write increment)"
+    ),
+    "m-auto-retry": (
+        "the bounded retry loop is implemented (parallax.core.auto_retry, M4) and proven "
+        "by fake-port unit tests of db.transact (test_transact); the boundary cases need "
+        "the case-driven boundary runner (when.boundary / given.fault / then.outcome over "
+        "a fault-injecting port), which lands with the API-suite boundary lane build-out"
+    ),
+    "m-read-lock": (
+        "the in-transaction shared-read-lock suffix is rendered by every locking-mode "
+        "find (M4 — the write scenarios' golden reads carry it); the m-read-lock case "
+        "matrix (projection suppression, two-session behavioral admits/blocks) lands "
+        "with the lock path (COR-3 Phase 8)"
+    ),
     "m-navigate": "relationship navigation lands with the snapshot branch (COR-3 Phase 7)",
     "m-deep-fetch": "deep-fetch includes land with the snapshot branch (COR-3 Phase 7)",
     "m-snapshot-read": "snapshot materialization lands with the snapshot branch (COR-3 Phase 7)",

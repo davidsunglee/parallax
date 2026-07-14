@@ -9,12 +9,14 @@ truth for the ``api_suite.EXAMPLES`` snippets; the guard compares
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable
 
 import pytest
 from example_models import Order
 
 from conftest import case_document
+from mirrored_models import Balance
 from parallax.conformance import case_format
 from parallax.core import Statement
 
@@ -37,6 +39,11 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     ),
     "m-op-algebra-032": lambda: (
         Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)
+    ),
+    # The temporal as-of spelling (m-temporal-read), unlocked by the D-7
+    # class-frontend axis declaration (EntityConfig.as_of on the Balance mirror).
+    "m-temporal-read-003": lambda: Balance.where().as_of(
+        processing=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     ),
 }
 

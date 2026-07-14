@@ -153,11 +153,22 @@ self-contained without a system `libpq`.
     contract proof, and boundary cases to the api-conformance lane — the
     error-shape compile skip is now a permanent lane classification, not a
     forward promise.
-  - **Remaining (M4):** the API-suite write examples + no-drift guard + D-7
-    class spellings + the coverage-partition flip + usage-guide regen; the
-    carry-in `case_runner.py` cleanup. The coalescing witnesses
-    (`m-audit-write-008`, `m-bitemp-write-014`, `m-unit-work-010`) stay
-    reasoned-skipped with forward reasons (`m-batch-write`, Phase 8).
+    Also landed: the **API-suite write surface** — eleven idiomatic examples
+    (the nine keyed unit-of-work write cases through `db.transact`, the
+    boundary withheld-value case, and the first temporal as-of read), proven
+    by the new write no-drift guard (commit spellings emit the golden DML
+    through the public surface; abort spellings prove the discard contract)
+    and the operation no-drift guard; the **D-7 temporal class spelling**
+    (`EntityConfig.as_of` declares axes in the descriptor's own
+    `AsOfAttribute` vocabulary — the `Balance` mirror joins the descriptor
+    no-drift guard); the coverage partition flipped (the `m-unit-work` skip
+    entry narrowed to the two `m-batch-write` coalescing witnesses) and the
+    usage guide regenerated.
+  - **Remaining (M4):** the carry-in `case_runner.py` cleanup + the closing
+    Docker gates and ledger/outline status updates (increment 6). The
+    coalescing witnesses (`m-audit-write-008`, `m-bitemp-write-014`,
+    `m-unit-work-010`) stay reasoned-skipped with forward reasons
+    (`m-batch-write`, Phase 8).
 
 ## Blockers
 

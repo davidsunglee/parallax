@@ -1,5 +1,6 @@
 {
   "parallax.core": [
+    "AsOfAttribute",
     "Attr",
     "AttributeExpr",
     "Edge",

@@ -490,3 +490,21 @@ def test_decimal_without_precision_is_rejected() -> None:
 def test_unmapped_python_type_is_rejected() -> None:
     with pytest.raises(EntityDefinitionError, match="neutral type"):
         frontend_probes.define_unmapped_attribute()
+
+
+def test_entity_config_declares_as_of_dimensions() -> None:
+    # The D-7 temporal class spelling: `EntityConfig.as_of` declares the axes in
+    # the descriptor's own vocabulary; the effective temporal classification is
+    # derived from them exactly as for an ingested descriptor, and the typed
+    # statement surface accepts the declared axis.
+    import datetime as dt
+
+    from mirrored_models import Balance
+    from parallax.core.entity import entity_records
+
+    record = entity_records()["Balance"]
+    assert record.temporal == "unitemporal-processing"
+    (axis,) = record.as_of_attributes
+    assert (axis.name, axis.from_column, axis.to_column) == ("processingDate", "in_z", "out_z")
+    pinned = Balance.where().as_of(processing=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
+    assert "asOf" in pinned.serialize()
