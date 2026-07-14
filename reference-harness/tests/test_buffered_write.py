@@ -1,15 +1,20 @@
-"""The buffered scenario write is the m-unit-work coalescing PAIR, nothing wider.
+"""The buffered scenario write is a general ordered keyed buffer (m-unit-work).
 
-`compatibility-case.schema.json`'s `bufferedWriteSequence` exists ONLY to let the
-three same-transaction coalescing witnesses (`m-audit-write-008`,
-`m-bitemp-write-014`, `m-unit-work-010`) encode both mutations explicitly. It is
-constrained to exactly that shape — exactly TWO keyed instructions, entry 0 a keyed
-`insert`, entry 1 a keyed `update` / `delete`, both naming the SAME entity and the
-SAME primary-key identity — and NOT a general N-instruction ordered buffer (which
-stays the deferred string-label→structured migration). The structural half is the
-JSON Schema's; the cross-entry same-object equalities it cannot express are the
-harness validator's. These DB-free probes pin both halves: the reviewer's four
-generality probes are REJECTED, and the three witness shapes are ACCEPTED.
+`compatibility-case.schema.json`'s `bufferedWriteSequence` is an ORDERED buffer of
+one-or-more KEYED write instructions a unit of work accumulates and flushes
+together. It spans a single keyed write, a mixed multi-object flush (insert /
+update / delete of DIFFERENT objects), and the two-keyed same-object coalescing
+pair alike — same-object folding at flush is the RUNTIME coalescing rule, not a
+structural constraint, so no cross-entry same-entity / same-primary-key equality is
+imposed. Predicate-selected instructions inside a buffer stay EXCLUDED (keyed-only).
+
+The structural half (one-or-more keyed entries, no predicate entry) is the JSON
+Schema's; the per-entry member-name honesty JSON Schema cannot express is the
+harness validator's. These DB-free probes pin both halves: the general keyed shapes
+— a single write, a mixed multi-object flush, a buffer over different entities /
+different keys, and the three same-transaction coalescing witnesses — are ACCEPTED;
+a predicate-in-buffer entry is REJECTED (schema); and a row naming a non-member is
+REJECTED (harness).
 """
 
 from __future__ import annotations
@@ -53,15 +58,15 @@ _POSITION = _defs("models/position.yaml")
 
 
 def _accepted(instructions: list[Any], entity_defs: list[dict[str, Any]]) -> bool:
-    """A buffered pair is ACCEPTED only when BOTH layers pass — exactly the
-    reviewer's direct probe (schema structural shape + harness cross-entry check)."""
+    """A buffer is ACCEPTED only when BOTH layers pass — the schema structural shape
+    (one-or-more keyed entries, no predicate entry) and the harness member-name check."""
     schema_ok = next(_buffered_validator().iter_errors(instructions), None) is None
     harness_errors: list[str] = []
     _validate_buffered_write(instructions, entity_defs, _OP, "probe", harness_errors)
     return schema_ok and not harness_errors
 
 
-# --- the three witness shapes are ACCEPTED -------------------------------------
+# --- the three coalescing witness shapes stay ACCEPTED (the pair is a special case) -
 
 _WITNESS_AUDIT = [
     {
@@ -118,22 +123,38 @@ def test_coalescing_witness_shapes_are_accepted(
     assert _accepted(instructions, entity_defs), "a coalescing witness pair must validate"
 
 
-# --- the four generality probes are REJECTED -----------------------------------
+# --- the general keyed shapes the migration demands are ACCEPTED ----------------
 
 
-def test_probe_two_deletes_without_a_leading_insert_is_rejected() -> None:
-    # No leading insert: entry 0 is not a keyed `insert`, so it is not a coalescing
-    # pair (the JSON Schema's structural rejection).
+def test_single_keyed_write_is_accepted() -> None:
+    # A buffer of one — the single INSERT / UPDATE / DELETE writes the migration adds.
     probe = [
-        {"mutation": "delete", "entity": "Account", "rows": [{"id": 9}]},
-        {"mutation": "delete", "entity": "Account", "rows": [{"id": 9}]},
+        {
+            "mutation": "insert",
+            "entity": "Account",
+            "rows": [{"id": 7, "owner": "N", "balance": 5.0}],
+        }
     ]
-    assert not _accepted(probe, _ACCOUNT)
+    assert _accepted(probe, _ACCOUNT)
 
 
-def test_probe_different_entities_is_rejected() -> None:
-    # Two different entities are not the SAME object, so not a coalescing pair (the
-    # harness cross-entry same-entity check).
+def test_mixed_multi_object_flush_is_accepted() -> None:
+    # Three different objects in one buffer (the m-unit-work-009 mixed flush): insert
+    # account 9, update account 1, delete account 3.
+    probe = [
+        {
+            "mutation": "insert",
+            "entity": "Account",
+            "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
+        },
+        {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 20.0}]},
+        {"mutation": "delete", "entity": "Account", "rows": [{"id": 3}]},
+    ]
+    assert _accepted(probe, _ACCOUNT)
+
+
+def test_buffer_over_different_entities_is_accepted() -> None:
+    # A general buffer legitimately spans different entities — no same-entity constraint.
     probe = [
         {
             "mutation": "insert",
@@ -151,57 +172,59 @@ def test_probe_different_entities_is_rejected() -> None:
         },
         {"mutation": "delete", "entity": "OrderItem", "rows": [{"id": 1}]},
     ]
-    errors: list[str] = []
-    _validate_buffered_write(probe, _ORDERS, _OP, "probe", errors)
-    assert any("SAME entity" in error for error in errors)
-    assert not _accepted(probe, _ORDERS)
+    assert _accepted(probe, _ORDERS)
 
 
-def test_probe_same_entity_different_primary_keys_is_rejected() -> None:
-    # Same entity but two different keys: the inserted object is not the one updated,
-    # so not a coalescing pair (the harness cross-entry same-primary-key check).
+def test_buffer_over_different_primary_keys_is_accepted() -> None:
+    # Same entity, two different keys (the m-opt-lock-012 abort pair: insert account 9 +
+    # gated update account 2) — no same-primary-key constraint.
     probe = [
         {
             "mutation": "insert",
             "entity": "Account",
             "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
         },
-        {"mutation": "update", "entity": "Account", "rows": [{"id": 10, "balance": 6.0}]},
+        {"mutation": "update", "entity": "Account", "rows": [{"id": 2, "balance": 6.0}]},
+    ]
+    assert _accepted(probe, _ACCOUNT)
+
+
+# --- a predicate-in-buffer entry is REJECTED (keyed-only, schema) ---------------
+
+
+def test_predicate_entry_in_buffer_is_rejected() -> None:
+    # A predicate-selected instruction is the one generality the buffered form still
+    # excludes (the JSON Schema's keyed-only structural rejection).
+    probe = [
+        {
+            "mutation": "insert",
+            "entity": "Account",
+            "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
+        },
+        {"mutation": "delete", "target": {"entity": "Account", "predicate": {"all": {}}}},
+    ]
+    assert next(_buffered_validator().iter_errors(probe), None) is not None
+    assert not _accepted(probe, _ACCOUNT)
+
+
+# --- a row naming a non-member is REJECTED (member honesty, harness) -------------
+
+
+def test_row_naming_a_non_member_is_rejected() -> None:
+    probe = [
+        {
+            "mutation": "insert",
+            "entity": "Account",
+            "rows": [{"id": 9, "owner": "N", "balance": 5.0, "bogus": 1}],
+        }
     ]
     errors: list[str] = []
     _validate_buffered_write(probe, _ACCOUNT, _OP, "probe", errors)
-    assert any("SAME primary-key identity" in error for error in errors)
+    assert any("bogus" in error and "not" in error for error in errors)
     assert not _accepted(probe, _ACCOUNT)
 
 
-def test_probe_two_predicate_deletes_is_rejected() -> None:
-    # A predicate-selected instruction is the speculative generality the buffered form
-    # excludes (the JSON Schema's keyed-only structural rejection).
-    probe = [
-        {"mutation": "delete", "target": {"entity": "Account", "predicate": {"all": {}}}},
-        {"mutation": "delete", "target": {"entity": "Account", "predicate": {"all": {}}}},
-    ]
-    assert next(_buffered_validator().iter_errors(probe), None) is not None
-    assert not _accepted(probe, _ACCOUNT)
-
-
-def test_probe_three_keyed_entries_is_rejected() -> None:
-    # A third instruction is the general N-instruction buffer the form is NOT — the
-    # deferred migration contract, kept out (the JSON Schema's exactly-two rejection).
-    probe = [
-        {
-            "mutation": "insert",
-            "entity": "Account",
-            "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
-        },
-        {"mutation": "update", "entity": "Account", "rows": [{"id": 9, "balance": 6.0}]},
-        {"mutation": "delete", "entity": "Account", "rows": [{"id": 9}]},
-    ]
-    assert next(_buffered_validator().iter_errors(probe), None) is not None
-    assert not _accepted(probe, _ACCOUNT)
-
-
-# --- the cross-entry check is wired into whole-tree validation ------------------
+# --- the member-honesty check is wired into whole-tree validation ---------------
 
 
 def _corrupt_witness(tmp_path: Path, mutate: Any) -> list[str]:
@@ -216,12 +239,12 @@ def _corrupt_witness(tmp_path: Path, mutate: Any) -> list[str]:
     return validate_tree(core / "compatibility")
 
 
-def test_whole_tree_validation_rejects_a_different_key_coalescing_pair(tmp_path: Path) -> None:
+def test_whole_tree_validation_rejects_a_non_member_buffered_row_key(tmp_path: Path) -> None:
     def mutate(case: dict[str, Any]) -> None:
-        # Point the buffered UPDATE at a different object than the INSERT.
-        case["when"]["scenario"][0]["write"][1]["rows"][0]["id"] = 99
+        # Name a key on the buffered INSERT row that is not a declared Balance member.
+        case["when"]["scenario"][0]["write"][0]["rows"][0]["bogus"] = 1
 
     errors = _corrupt_witness(tmp_path, mutate)
     assert any(
-        "m-audit-write-008" in error and "SAME primary-key identity" in error for error in errors
+        "m-audit-write-008" in error and "not" in error and "Balance" in error for error in errors
     )

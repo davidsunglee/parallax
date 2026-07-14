@@ -156,16 +156,23 @@ it is a buffering decision, not a per-verb one — the milestone modules
 defer the same-transaction combination to this scope.
 
 A coalescing witness encodes **both** buffered mutations explicitly by authoring
-the write step as an ordered **buffer-and-flush** scenario: `/scenario/<n>/write`
-carries the ordered **pair of keyed write instructions** (the keyed `insert` of the
-new object, then the keyed `update` / `delete` of **that same object** — the same
-entity and primary-key identity), and the step's golden SQL is the independent
-expected lowering of the coalesced flush — one final-value write, or no DML at all.
-The form is scoped to that pair; a general ordered buffer and predicate-selected
-buffered writes are deferred, not this shape. The buffered form and its authoring
-surface are the case format's (`m-case-format`); the instructions themselves are the
-canonical `write-instruction.schema.json` shapes, so an adapter exercises coalescing
-from the requested operations, never from the golden SQL.
+the write step as an ordered **buffer-and-flush** scenario. `/scenario/<n>/write`
+carries a **general ordered buffer of one-or-more keyed write instructions** — the
+writes a single unit of work accumulates and flushes together — and the step's
+golden SQL is the independent expected lowering of that flush. **Same-object folding
+at flush is the coalescing rule**, a runtime/planner property rather than a
+structural one: when two buffered instructions name the **same** entity and
+primary-key identity the flush combines them (insert-then-update writes the final
+value in place; insert-then-delete cancels to no DML — one final-value write, or no
+DML at all). The two-keyed same-object insert-then-update / insert-then-delete pair
+is that rule's **single-object special case**; the same buffer equally expresses a
+single keyed write and a mixed multi-object flush (an `insert` / `update` / `delete`
+of **different** objects, ordered by foreign-key dependency). Predicate-selected
+buffered instructions remain **deferred** — the buffer is keyed-only. The buffered
+form and its authoring surface are the case format's (`m-case-format`); the
+instructions themselves are the canonical `write-instruction.schema.json` shapes, so
+an adapter exercises coalescing from the requested operations, never from the golden
+SQL.
 
 ## Strategy selection — the per-unit-of-work participation mode
 
