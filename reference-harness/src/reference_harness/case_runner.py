@@ -3746,10 +3746,16 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             )
             continue
         # Every remaining step is a read (`find`, per the schema's exactly-one-of
-        # find/write/action): it names its queried position with `targetEntity`
-        # (m-case-format Q1), so its value-object document is decoded with THAT entity's
-        # composite schema — not the scenario root's.
-        read_entity = case.model.entity(step["targetEntity"])
+        # find/write/action): its read entity resolves through the SAME per-step
+        # helper the action branch uses (`_scenario_step_read_entity`, the single
+        # source of truth) — for a `find` that is the step's declared `targetEntity`
+        # (m-case-format Q1), so its value-object document is decoded with THAT
+        # entity's composite schema, not the scenario root's.
+        read_entity = _scenario_step_read_entity(case, step, step_entities)
+        if read_entity is None:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] find step resolved no read entity"
+            )
         if pairs:
             # A DB-touching step: m-unit-work finds are single-statement, so the round-trip
             # count is one; execute it and capture the rows.
