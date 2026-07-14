@@ -337,13 +337,16 @@ Row-form is **not a developer surface** — the idiomatic find API is instance-f
 results — `m-agg`; a `distinct` / grouped concurrency-witness read is likewise a
 projection over the values lane, `m-sql`). The form is **structural intent** an adapter's
 `compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
-no case edit. The **sole** value-object-bearing step read is the supplier result-form
-witness — a scenario whose managed find projects the `address` document (instance-form)
-while its predicate-write resolving read omits it (row-form) — which is exactly where the
-two forms first diverge. Every other entity read at a step (`balance`, `position`,
-`account`, `order_item`, and the rest) declares no value object, so instance-form and
-row-form project the same columns there: the classification changes no existing golden and
-pins the answer for the value-object-bearing step read.
+no case edit. The supplier result-form witness is the **sole** place the two result
+FORMS **diverge** — a scenario whose managed find projects the `address` document
+(instance-form) while its predicate-write resolving read omits it (row-form). It is **no
+longer the sole value-object-bearing step read**, now that the lifecycle-action
+`load` / first-`access` witnesses carry value-object-bearing instance-form step reads
+(each projecting its read entity's own `address` document at slot 4). Every other entity
+read at a step (`balance`, `position`, `account`, `order_item`, and the rest) declares no
+value object, so instance-form and row-form project the same columns there: the
+classification changes no existing golden and pins the answer for the value-object-bearing
+step reads.
 
 #### Milestone-set graphs (`then.graphs`)
 

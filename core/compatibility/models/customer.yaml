@@ -33,6 +33,18 @@
 # sibling entity + relationship leaves Customer's own attributes/valueObjects and
 # their derived `columnOrder` untouched, so the existing customer reads (the 21
 # filter reads and the -023/-024 materialization graphs) do not ripple.
+#
+# A re-review round adds a THIRD entity `Depot` and the to-many `Customer.depots`,
+# to make the per-step read-entity resolution regression-sensitive. Where `Location`
+# reuses Customer's `address` composite VERBATIM (so a wrong-descriptor decode is
+# indistinguishable), `Depot.address` is a DIFFERENT declared STRUCTURE — a FLAT
+# `{ line, postcode }` in the same `address` column. Decoding a Depot row with the
+# root Customer descriptor therefore yields observably wrong keys, so the deferred
+# `action: load` and operation-list first-`access` witnesses over `depots`
+# (m-deep-fetch-020, m-op-list-004) go RED if a runner materializes them with the
+# scenario root instead of the navigated child entity. `Depot` and its relationship
+# again leave Customer's / Location's attributes, valueObjects, and `columnOrder`
+# untouched, so no existing customer/location case ripples.
 entities:
   - name: Customer
     namespace: parallax.compatibility
@@ -96,6 +108,24 @@ entities:
         relatedEntity: Location
         cardinality: one-to-many
         join: this.id = Location.customerId
+        reverseName: customer
+        dependent: true
+        foreignKey: customer_id
+        orderBy:
+          - { attr: id, direction: asc }
+      # depots: a SECOND VO-bearing child, reached via a distinct one-to-many. Its
+      # `Depot.address` value object reuses the SAME column name `address` but a
+      # DIFFERENT declared STRUCTURE (a FLAT { line, postcode }) than Customer's /
+      # Location's recursive composite — a deliberate descriptor DIVERGENCE. Decoding
+      # a Depot row with Customer's `address` descriptor yields observably wrong keys,
+      # so the deferred-load / first-access witnesses over `depots` are regression-
+      # sensitive to the per-step read-entity resolution (m-sql "Read projection",
+      # slot 4; m-case-format "Read result form"), unlike Location whose composite is
+      # Customer's verbatim.
+      - name: depots
+        relatedEntity: Depot
+        cardinality: one-to-many
+        join: this.id = Depot.customerId
         reverseName: customer
         dependent: true
         foreignKey: customer_id
@@ -185,5 +215,61 @@ entities:
         attributes: [id]
         unique: true
       - name: location_customer_id
+        attributes: [customerId]
+        unique: false
+  # Depot: a SECOND VO-bearing CHILD of Customer (the many side of the to-many
+  # `Customer.depots`). Unlike Location — whose `address` is Customer's recursive
+  # composite VERBATIM — Depot declares a DIFFERENT `address` structure: a FLAT
+  # composite `{ line, postcode }` in the SAME `address` column. This descriptor
+  # DIVERGENCE is deliberate: it makes the deferred-load and first-access witnesses
+  # over `depots` regression-sensitive. Decoding a Depot row with Customer's
+  # recursive `address` descriptor drops `line`/`postcode` and injects
+  # `street`/`city`/`geo`/`phones`, so materializing a Depot list with the WRONG
+  # (root Customer) descriptor is OBSERVABLE — the failure Location cannot surface.
+  # Its own instance-form projection is `id, customer_id, label, address` (scalars in
+  # columnOrder, then the single structured-document column last).
+  - name: Depot
+    namespace: parallax.compatibility
+    table: depot
+    mutability: transactional
+    temporal: non-temporal
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: customerId
+        type: int64
+        column: customer_id
+      - name: label
+        type: string
+        column: label
+        maxLength: 64
+    valueObjects:
+      - name: address
+        column: address
+        mapping: json
+        cardinality: one
+        nullable: true
+        attributes:
+          - name: line
+            type: string
+            nullable: true
+          - name: postcode
+            type: string
+            nullable: true
+    relationships:
+      - name: customer
+        relatedEntity: Customer
+        cardinality: many-to-one
+        join: this.customerId = Customer.id
+        reverseName: depots
+        foreignKey: customer_id
+    indices:
+      - name: depot_pk
+        attributes: [id]
+        unique: true
+      - name: depot_customer_id
         attributes: [customerId]
         unique: false

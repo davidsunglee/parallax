@@ -1,0 +1,67 @@
+# Operation-backed list x DIVERGENT value object: the first-access materialization
+# witness (m-op-list + m-value-object). The operation-list analogue of
+# m-deep-fetch-020: where that case resolves the VO-bearing child via a relationship
+# `action: load`, this one resolves it via an operation-backed list's FIRST
+# `action: access` — the other instance-form step read m-sql "Read result form"
+# classifies (the first access of an operation-list is INSTANCE-FORM, object lane).
+#
+# Step 0 constructs `findMany(all Depot)` — an operation-backed view, roundTrips 0,
+# no SQL (m-op-list laziness, exactly like m-op-list-001). Step 1 is the first
+# access: it resolves the list once in a single query, projecting Depot's OWN
+# instance-form list `id, customer_id, label, address` — the scalars in columnOrder,
+# then the single structured-document `address` column LAST (slot 4). Each row's flat
+# `{ line, postcode }` document is materialized with DEPOT's descriptor. Step 2
+# accesses again and emits NO SQL, returning the SAME resolved objects
+# (sameObjectAs). The whole scenario costs one round trip — the first-access
+# resolution.
+#
+# This is regression-sensitive to the per-step read-entity resolution: Depot's
+# `address` is a FLAT `{ line, postcode }`, DIVERGENT from the recursive Customer /
+# Location composite (models/customer.yaml). A runner that materializes the list with
+# the scenario ROOT (Customer) descriptor instead of Depot's drops `line`/`postcode`
+# and injects `street`/`city`/`geo`/`phones`, so expectRows fails observably — the
+# wrong-entity failure a verbatim-composite child (Location) cannot surface.
+#
+# The all-Depot read returns exactly the two fixture depots (200 present, 201
+# null-document); no other customer owns a depot. Golden SQL is identical on Postgres
+# and MariaDB (bare column projection, no JSON extraction); both decode to the same
+# flat composite. A bare `all(Depot)` read carries no `order by` (it is not a
+# relationship navigation), and expectRows compares order-insensitively.
+model: models/customer.yaml
+tags: [m-op-list, m-value-object, lazy, materialization, json, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Depot
+      find:
+        all: {}
+      roundTrips: 0
+      note: construction -> an operation-backed list, no DB work
+    - action: access
+      "on": 0
+      roundTrips: 1
+      note: first access resolves the list once — INSTANCE-FORM, projects Depot's own list (id, customer_id, label, address); each row's flat address decodes with DEPOT's descriptor
+      statements:
+        - sql:
+            postgres: select t0.id, t0.customer_id, t0.label, t0.address from depot t0
+            mariadb: select t0.id, t0.customer_id, t0.label, t0.address from depot t0
+      expectRows:
+        - id: 200
+          customer_id: 1
+          label: Dock
+          address:
+            line: "1 Dock St"
+            postcode: "0193"
+        # Depot 201: SQL-NULL document -> address materializes null (the absence
+        # collapse pinned for the divergent flat composite).
+        - id: 201
+          customer_id: 1
+          label: Yard
+          address: null
+    - action: access
+      "on": 0
+      roundTrips: 0
+      sameObjectAs: 1
+      note: re-access (iterate / index / size again) -> zero SQL, the same resolved objects
+then:
+  roundTrips: 1

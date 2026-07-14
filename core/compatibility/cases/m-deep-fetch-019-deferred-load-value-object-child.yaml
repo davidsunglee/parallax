@@ -18,6 +18,12 @@
 # Location — not the scenario root Customer — owns the `address` composite that
 # decodes each child row (the harness resolves the per-step read entity by walking
 # the relationship path's terminal entity, then materializes with THAT descriptor).
+# Because Location's composite is Customer's VERBATIM, this case still passes if a
+# runner wrongly decoded with the root descriptor; the wrong-entity regression
+# sensitivity is instead covered by the DIVERGENT `Depot` witnesses
+# (m-deep-fetch-020 / m-op-list-004), whose flat `{ line, postcode }` address makes a
+# root-descriptor decode observably wrong. This case uniquely witnesses the
+# null-document child at depth and pairs with the eager m-deep-fetch-018.
 #
 # Steps:
 #   0  find (Customer id 1, Ada)      : INSTANCE-FORM managed find — the developer find

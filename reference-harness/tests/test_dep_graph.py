@@ -701,9 +701,18 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # siblings m-deep-fetch-013..016), so slice-managed-1 rises by 1 (316 -> 317) and
         # slice-snapshot-1 / slice-mvp-1 are unchanged.
         # Final counts: 195 / 296 / 317.
+        #
+        # COR-3 Phase 5b (re-review round 4) authors TWO NEW scenario witnesses that make
+        # the per-step read-entity resolution regression-sensitive via a DIVERGENT
+        # value-object child (`Depot`, a flat { line, postcode } address):
+        # m-deep-fetch-020 (a deferred `action: load` of `Customer.depots`) and
+        # m-op-list-004 (the operation-list FIRST `action: access` over `all(Depot)`).
+        # Both are managed-object-surface reads tagged slice-managed-1 ONLY, so
+        # slice-managed-1 rises by 2 (317 -> 319) and slice-snapshot-1 / slice-mvp-1 are
+        # unchanged. Final counts: 195 / 296 / 319.
         ("slice-mvp-1", 195),
         ("slice-snapshot-1", 296),
-        ("slice-managed-1", 317),
+        ("slice-managed-1", 319),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:
