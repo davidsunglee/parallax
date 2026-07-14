@@ -15,6 +15,7 @@ under ``pytest -m compile_sweep`` in ``python-static``.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Final, cast
 
 import jsonschema
@@ -73,8 +74,44 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _TEMPORAL_VALUE_OBJECT_READS
 )
 
+# The keyed, non-temporal unit-of-work write cases M4 grades byte-exact (COR-3 Phase 6
+# M4, m-unit-work): scenario read-your-own-writes / rollback / mixed-op flushes, and the
+# FK-ordered writeSequence cases. Each emits its per-step golden DML (a scenario find
+# carries the `for share of t0` read-lock suffix). The m-batch-write coalescing witnesses
+# (008/010) are unreachable under Option B; the newly-reachable m-pk-gen writeSequence
+# cases (write-side id allocation) and the boundary abort case (004) are reasoned-skipped.
+_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
+    f"m-unit-work-{n:03d}" for n in (1, 2, 5, 6, 9, 11, 12)
+)
+_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset({"m-unit-work-003", "m-unit-work-007"})
+WRITE_EXERCISED: Final[frozenset[str]] = _WRITE_SCENARIOS | _WRITE_SEQUENCES
+
 _REACHABLE = sweep.reachable_cases()
 _SCHEMA = adapter_schema()
+
+
+def wire_binds(binds: list[object]) -> list[object]:
+    """The bind list in canonical wire form (m-db-port), reconciling an authored `date`
+    golden bind with the write-input date *string* the keyed lowering carries verbatim."""
+    return [engine.wire_value(b) for b in binds]
+
+
+def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[object]]]:
+    """The ordered golden DML for a write case: a writeSequence's flat `then.statements`,
+    or a scenario's per-step `when.scenario[i].statements` flattened in step order."""
+    doc = case_document(case)
+    if case.shape == "writeSequence":
+        groups = [cast("list[dict[str, Any]]", doc["then"]["statements"])]
+    else:
+        steps = cast("list[dict[str, Any]]", doc["when"]["scenario"])
+        groups = [cast("list[dict[str, Any]]", step["statements"]) for step in steps]
+    out: list[tuple[str, list[object]]] = []
+    for group in groups:
+        for entry in group:
+            sql: Any = entry["sql"]
+            text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
+            out.append((cast("str", text), list(cast("list[object]", entry.get("binds", [])))))
+    return out
 
 
 def golden(case: case_format.Case) -> tuple[str, list[object]]:
@@ -115,10 +152,55 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
             "provider deadlock proof; grading the case needs error/concurrency-shape "
             "`run` support (COR-3 Phase-6 case-instruction translation)"
         )
+    if case.shape == "boundary":
+        # The m-unit-work abort-contract case (withheld callback value on rollback) is an
+        # m-api-conformance-lane assertion the wire golden SQL cannot see; the API
+        # Conformance Suite verifies it, not `run`. It emits no golden DML to grade.
+        return (
+            "boundary abort-contract case (m-api-conformance lane): the withheld-value-"
+            "on-abort contract is verified by the API Conformance Suite, not by `run`"
+        )
+    if case.shape in ("scenario", "writeSequence"):
+        # The reachable keyed unit-of-work cases are graded above (WRITE_EXERCISED). The
+        # rest are either REFUSED by the M4 lowering (inheritance-family / temporal /
+        # predicate / opt-lock writes, whose forward-error diagnostic names the phase) or
+        # lowerable but OUTSIDE the reviewed M4 exercised set (the m-core keyed writes, the
+        # m-pk-gen write-side id allocation, the m-value-object document writes) — these
+        # join the exercised set deliberately as the reviewed write corpus grows.
+        if envelope.get("status") == "error":
+            message = envelope.get("diagnostics", [{}])[0].get("message", "")
+            return f"{case.shape} write refused by the M4 keyed-write lowering: {message}"
+        return (
+            f"{case.shape} `{case.primary_module}` write outside the reviewed M4 keyed "
+            "unit-of-work set (the 9 account/orders cases); write-side primary-key "
+            "allocation (m-pk-gen) and value-object document writes (m-value-object) land "
+            "with a later write increment / phase"
+        )
     if case.shape != "read":
         return f"compile of {case.shape}-shape cases lands with the write path (COR-3 Phase 6/8)"
     message = envelope.get("diagnostics", [{}])[0].get("message", "")
     return f"read lowering deferred past the Phase-5 read path (ledger D-12): {message}"
+
+
+def _pointer_ok(shape: str, pointer: str) -> bool:
+    """Whether an emission ``casePointer`` is well-formed for a write case's shape."""
+    if shape == "writeSequence":
+        return re.fullmatch(r"/writeSequence/\d+", pointer) is not None
+    return re.fullmatch(r"/scenario/\d+/(write|find)", pointer) is not None
+
+
+def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) -> None:
+    """Grade a keyed unit-of-work write case: per-step emissions == the golden DML,
+    round trips == ``then.roundTrips``, and every casePointer well-formed for the shape."""
+    assert envelope["status"] == "ok", envelope
+    golden_statements = write_golden_statements(case)
+    assert envelope["roundTrips"] == case_document(case)["then"]["roundTrips"], case.case_id
+    emissions = envelope["emissions"]
+    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
+    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
+        assert emission["sql"] == golden_sql, (case.case_id, emission)
+        assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (case.case_id, emission)
+        assert _pointer_ok(case.shape, emission["casePointer"]), (case.case_id, emission)
 
 
 @pytest.mark.parametrize("case", _REACHABLE, ids=[c.case_id for c in _REACHABLE])
@@ -126,6 +208,9 @@ def test_compile_sweep(case: case_format.Case) -> None:
     envelope = adapter.compile_case(case.path, "postgres")
     jsonschema.validate(envelope, _SCHEMA)
 
+    if case.case_id in WRITE_EXERCISED:
+        _assert_write_emissions(case, envelope)
+        return
     if case.case_id not in COMPILE_EXERCISED:
         pytest.skip(_skip_reason(case, envelope))
 
@@ -144,6 +229,12 @@ def test_exercised_set_is_a_subset_of_the_reachable_reads() -> None:
     reachable_reads = {c.case_id for c in _REACHABLE if c.shape == "read"}
     stale = COMPILE_EXERCISED - reachable_reads
     assert not stale, f"exercised ids outside the reachable read intersection: {sorted(stale)}"
+
+
+def test_write_exercised_set_is_reachable() -> None:
+    reachable = {c.case_id for c in _REACHABLE}
+    stale = WRITE_EXERCISED - reachable
+    assert not stale, f"write-exercised ids outside the reachable intersection: {sorted(stale)}"
 
 
 def test_every_unexercised_reachable_read_is_refused() -> None:

@@ -133,6 +133,39 @@ def _echo(envelope: Envelope, case: case_format.Case, dialect: str) -> Envelope:
     return envelope
 
 
+def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission], int]:
+    """Compile a claimed case by shape (read / scenario / writeSequence).
+
+    The scenario and writeSequence lanes emit the keyed unit-of-work DML (and, for a
+    scenario, the read-lock reads); any other shape falls through to the read compiler,
+    which raises the loud non-read ``EngineError`` the caller renders as an ``error``.
+    """
+    if case.shape == "scenario":
+        return engine.compile_scenario_case(case, dialect)
+    if case.shape == "writeSequence":
+        return engine.compile_write_sequence_case(case, dialect)
+    return engine.compile_read_case(case, dialect)
+
+
+def _run(
+    case: case_format.Case, dialect: str, port: DbPort
+) -> tuple[list[engine.Emission], dict[str, Any]]:
+    """Run a claimed case by shape, returning its emissions and observation envelope.
+
+    A scenario / writeSequence run reports only ``roundTrips`` — the envelope carries no
+    per-step rows (``additionalProperties: false``), so per-step row correctness is the
+    oracle-test gate; a read run additionally records its observed ``rows``.
+    """
+    if case.shape == "scenario":
+        emissions, round_trips = engine.run_scenario_case(case, dialect, port)
+        return emissions, {"roundTrips": round_trips}
+    if case.shape == "writeSequence":
+        emissions, round_trips = engine.run_write_sequence_case(case, dialect, port)
+        return emissions, {"roundTrips": round_trips}
+    emissions, rows, round_trips = engine.run_read_case(case, dialect, port)
+    return emissions, {"rows": rows, "roundTrips": round_trips}
+
+
 def compile_case(
     case_path: str | Path,
     dialect: str,
@@ -161,7 +194,7 @@ def compile_case(
         )
         return _echo(envelope, case, dialect)
     try:
-        emissions, round_trips = engine.compile_read_case(case, dialect)
+        emissions, round_trips = _compile(case, dialect)
     except engine.EngineError as exc:
         return _non_ok("compile", "error", Diagnostic("compile-failed", str(exc)), adapter)
     envelope = _common("compile", "ok", adapter)
@@ -177,16 +210,17 @@ def run_case(
     claim: Claim = SNAPSHOT_CLAIM,
     adapter: Adapter = ADAPTER,
 ) -> Envelope:
-    """Run one read case through ``port`` and report its emissions and observations."""
+    """Run one case (read / scenario / writeSequence) through ``port`` and report its
+    emissions and observations."""
     case = case_format.load_case(Path(case_path))
     diagnostic = classify("run", dialect, case, claim)
     if diagnostic is not None:
         return _non_ok("run", "unsupported", diagnostic, adapter)
     try:
-        emissions, rows, round_trips = engine.run_read_case(case, dialect, port)
+        emissions, observations = _run(case, dialect, port)
     except engine.EngineError as exc:
         return _non_ok("run", "error", Diagnostic("run-failed", str(exc)), adapter)
     envelope = _common("run", "ok", adapter)
     envelope["emissions"] = [e.to_json() for e in emissions]
-    envelope["observations"] = {"rows": rows, "roundTrips": round_trips}
+    envelope["observations"] = observations
     return _echo(envelope, case, dialect)

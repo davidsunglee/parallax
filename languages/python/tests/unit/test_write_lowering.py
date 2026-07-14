@@ -38,6 +38,7 @@ ACCOUNT = _MODELS["account"]
 ORDERS = _MODELS["orders"]
 CUSTOMER = _MODELS["customer"]
 BALANCE = _MODELS["balance"]
+PAYMENT = _MODELS["payment"]
 
 _B1 = "2024-01-01T00:00:00+00:00"
 
@@ -211,6 +212,14 @@ def test_temporal_entity_write_is_refused() -> None:
     insert = KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 100.00},))
     with pytest.raises(WriteLoweringError, match="temporal write"):
         _lower(insert, BALANCE)
+
+
+def test_inheritance_family_write_is_refused() -> None:
+    # A concrete-subtype write (tag / concrete-subtype DML) is deferred past the M4 keyed
+    # non-temporal path — the forward-error names m-inheritance / Phase 8.
+    insert = KeyedWrite("insert", "CardPayment", ({"id": 1},))
+    with pytest.raises(WriteLoweringError, match="inheritance-family"):
+        _lower(insert, PAYMENT)
 
 
 def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:

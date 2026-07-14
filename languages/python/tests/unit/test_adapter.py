@@ -154,6 +154,47 @@ def test_run_case_ok_through_a_fake_port() -> None:
     assert envelope["observations"]["roundTrips"] == 1
 
 
+class _WritePort:
+    """A port that commits writes and returns canned find rows (no Docker)."""
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        return [{"id": 7}]
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        return 1
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        return body(self)
+
+
+_SCENARIO_CASE = case_format.default_cases_dir() / "m-unit-work-001-read-your-own-writes.yaml"
+_WRITE_SEQUENCE_CASE = case_format.default_cases_dir() / "m-unit-work-003-fk-insert-ordering.yaml"
+
+
+def test_run_case_scenario_reports_round_trips_only() -> None:
+    # A scenario run routes through the write lane: its write step commits and its find
+    # reads committed state; the envelope carries only `roundTrips` (no per-step rows).
+    envelope = adapter.run_case(_SCENARIO_CASE, "postgres", _WritePort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    assert envelope["observations"] == {"roundTrips": 2}
+    assert [e["casePointer"] for e in envelope["emissions"]] == [
+        "/scenario/0/write",
+        "/scenario/1/find",
+    ]
+
+
+def test_run_case_write_sequence_reports_round_trips_only() -> None:
+    envelope = adapter.run_case(_WRITE_SEQUENCE_CASE, "postgres", _WritePort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    assert envelope["observations"] == {"roundTrips": 2}
+    assert [e["casePointer"] for e in envelope["emissions"]] == [
+        "/writeSequence/0",
+        "/writeSequence/1",
+    ]
+
+
 class _ManagedPort:
     """A port returning the managed values psycopg decodes for the m-core-001 row."""
 

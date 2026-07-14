@@ -167,3 +167,152 @@ def test_compile_read_case_reports_missing_fields(
 ) -> None:
     with pytest.raises(engine.EngineError, match=message):
         engine.compile_read_case(_synthetic(document), "postgres")
+
+
+# --------------------------------------------------------------------------- #
+# Scenario / writeSequence — the unit-of-work write lanes (Docker-free).       #
+# --------------------------------------------------------------------------- #
+class FakeWritePort:
+    """An in-memory ``m-db-port`` recording DML + read execution and commit/rollback."""
+
+    def __init__(self, find_rows: list[Row] | None = None) -> None:
+        self.find_rows = find_rows if find_rows is not None else []
+        self.writes: list[tuple[str, list[object]]] = []
+        self.reads: list[tuple[str, list[object]]] = []
+        self.commits = 0
+        self.rollbacks = 0
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        self.reads.append((sql, list(binds)))
+        return list(self.find_rows)
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.writes.append((sql, list(binds)))
+        return 1
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        try:
+            result = body(self)
+        except Exception:
+            self.rollbacks += 1
+            raise
+        self.commits += 1
+        return result
+
+
+def _synthetic_write(shape: str, document: dict[str, object]) -> case_format.Case:
+    from pathlib import Path
+
+    document.setdefault("model", "models/account.yaml")
+    return case_format.Case(
+        path=Path("m-unit-work-999-synthetic.yaml"),
+        case_id="m-unit-work-999",
+        shape=shape,
+        tags=("m-unit-work", "slice-snapshot-1"),
+        model="models/account.yaml",
+        document=document,
+    )
+
+
+def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
+    port = FakeWritePort(find_rows=[{"id": 7}])
+    emissions, round_trips = engine.run_scenario_case(_case("m-unit-work-001"), "postgres", port)
+    assert round_trips == 2
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/write", "/scenario/1/find"]
+    assert emissions[0].sql.startswith("insert into account")
+    assert emissions[1].sql.endswith("for share of t0")  # the read-lock suffix renders
+    assert len(port.writes) == 1 and len(port.reads) == 1
+    assert port.commits == 1 and port.rollbacks == 0
+
+
+def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> None:
+    port = FakeWritePort(find_rows=[])
+    emissions, round_trips = engine.run_scenario_case(_case("m-unit-work-011"), "postgres", port)
+    assert round_trips == 2  # the aborted insert still counts one round trip
+    assert len(port.writes) == 1  # the DML executed before the abort
+    assert port.rollbacks == 1 and port.commits == 0
+    assert emissions[0].case_pointer == "/scenario/0/write"
+
+
+def test_run_write_sequence_case_executes_the_sequence_in_one_transaction() -> None:
+    port = FakeWritePort()
+    emissions, round_trips = engine.run_write_sequence_case(
+        _case("m-unit-work-003"), "postgres", port
+    )
+    assert round_trips == 2
+    assert [e.case_pointer for e in emissions] == ["/writeSequence/0", "/writeSequence/1"]
+    assert len(port.writes) == 2 and port.commits == 1
+
+
+def test_compile_write_sequence_case_lowers_each_entry_without_cross_entry_coalescing() -> None:
+    # m-unit-work-007 inserts then deletes the same rows across four entries; each entry is
+    # its own flush, so it emits FOUR statements (never coalesced to a net-zero cancel).
+    emissions, round_trips = engine.compile_write_sequence_case(
+        _case("m-unit-work-007"), "postgres"
+    )
+    assert round_trips == 4
+    assert [e.case_pointer for e in emissions] == [f"/writeSequence/{i}" for i in range(4)]
+
+
+def test_scenario_compile_wraps_a_lowering_failure_as_engine_error() -> None:
+    bad = _synthetic_write(
+        "scenario",
+        {
+            "when": {
+                "scenario": [
+                    {
+                        "write": [
+                            {
+                                "mutation": "insert",
+                                "entity": "Account",
+                                "rows": [{"id": 1, "no": 2}],
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+    )
+    with pytest.raises(engine.EngineError, match="undeclared member"):
+        engine.compile_scenario_case(bad, "postgres")
+
+
+def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> None:
+    bad = _synthetic_write(
+        "writeSequence",
+        {
+            "when": {
+                "writeSequence": [
+                    {"mutation": "insert", "entity": "Account", "rows": [{"id": 1, "no": 2}]}
+                ]
+            }
+        },
+    )
+    with pytest.raises(engine.EngineError, match="undeclared member"):
+        engine.compile_write_sequence_case(bad, "postgres")
+
+
+def test_scenario_case_without_when_is_rejected() -> None:
+    with pytest.raises(engine.EngineError, match="has no `when`"):
+        engine.compile_scenario_case(_synthetic_write("scenario", {}), "postgres")
+
+
+def test_scenario_case_without_a_scenario_list_is_rejected() -> None:
+    with pytest.raises(engine.EngineError, match=r"when\.scenario"):
+        engine.compile_scenario_case(_synthetic_write("scenario", {"when": {}}), "postgres")
+
+
+def test_scenario_find_step_missing_fields_is_rejected() -> None:
+    bad = _synthetic_write(
+        "scenario",
+        {"when": {"scenario": [{"find": {"eq": {"attr": "Account.id", "value": 1}}}]}},
+    )
+    with pytest.raises(engine.EngineError, match="targetEntity"):
+        engine.compile_scenario_case(bad, "postgres")
+
+
+def test_write_sequence_case_without_a_sequence_list_is_rejected() -> None:
+    with pytest.raises(engine.EngineError, match="writeSequence"):
+        engine.compile_write_sequence_case(
+            _synthetic_write("writeSequence", {"when": {}}), "postgres"
+        )

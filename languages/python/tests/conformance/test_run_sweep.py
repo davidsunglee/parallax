@@ -15,7 +15,13 @@ from typing import Any, Final
 
 import jsonschema
 import pytest
-from test_compile_sweep import COMPILE_EXERCISED, golden
+from test_compile_sweep import (
+    COMPILE_EXERCISED,
+    WRITE_EXERCISED,
+    golden,
+    wire_binds,
+    write_golden_statements,
+)
 
 from conftest import adapter_schema, case_document
 from parallax.conformance import adapter, case_format, engine
@@ -128,3 +134,40 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     expected = case_document(case).get("then", {}).get("rows")
     if expected is not None:
         _compare_rows(envelope["observations"]["rows"], expected)
+
+
+def _reachable_write_cases() -> list[case_format.Case]:
+    from parallax.conformance import sweep
+
+    return [c for c in sweep.reachable_cases() if c.case_id in WRITE_EXERCISED]
+
+
+_WRITE_CASES = _reachable_write_cases()
+
+
+@pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])
+def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+    """Run each keyed unit-of-work write case end-to-end against a reset database.
+
+    A scenario's writes commit (or, `rollback: true`, abort) as separate units of work
+    and its finds read committed state; a writeSequence executes the whole FK-ordered
+    sequence in one transaction. The envelope's per-step emissions must equal the golden
+    DML and its total round trips the case's `then.roundTrips`. Per-step rows are not on
+    the wire (`additionalProperties: false`), so row correctness is the oracle-test gate.
+    """
+    meta = engine.load_case_metamodel(case)
+    from parallax.conformance import provision
+
+    provisioner.reset(meta, provision.load_fixtures(str(case_document(case)["model"])))
+
+    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+
+    golden_statements = write_golden_statements(case)
+    emissions = envelope["emissions"]
+    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
+    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
+        assert emission["sql"] == golden_sql, (case.case_id, emission)
+        assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (case.case_id, emission)
+    assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]

@@ -17,14 +17,17 @@ from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 
 __all__ = ["IMPLEMENTED_MODULES", "reachable_cases"]
 
-# The modules whose behaviour is implemented as of COR-3 Phase 6 (milestone 2). A
+# The modules whose behaviour is implemented as of COR-3 Phase 6 (milestone 4, M4). A
 # reachable case is one whose module tags are ALL in this set (case_format's
 # always-on reachable-intersection filter). Phase-6 milestone 1 added `m-db-error`
 # (all `error`-shape, reasoned-skipped until error/concurrency-shape `run` lands);
-# milestone 2 adds `m-temporal-read` (as-of / history / as-of-range read lowering),
-# making the audit-only, bitemporal, and temporal value-object reads reachable.
-# Remaining Phase-6 work (`m-unit-work`) and the snapshot/write modules append here
-# as they land.
+# milestone 2 added `m-temporal-read` (as-of / history / as-of-range read lowering);
+# M4 adds `m-unit-work` (the keyed, non-temporal unit-of-work write path — scenario
+# read-your-own-writes / rollback / mixed-op flushes + FK-ordered writeSequence),
+# making those write cases reachable. This also unblocks the `m-pk-gen` writeSequence
+# cases (which tag `m-unit-work`), whose WRITE-side id allocation is reasoned-skipped
+# forward to the pk-gen write path. `m-batch-write` is deliberately NOT added, so the
+# set-based coalescing witnesses stay unreachable (Option B: implemented = done).
 IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
     {
         "m-core",
@@ -41,6 +44,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-sql",
         "m-temporal-read",
         "m-api-conformance",
+        "m-unit-work",
     }
 )
 
