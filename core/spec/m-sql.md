@@ -172,12 +172,14 @@ primary key is always in slot 1, `distinct` over an entity read is structurally
 A read is consumed in one of two lanes, and the projection differs **only in slot 4**:
 
 - **Instance-form** (the **object lane**) — the result materializes into instances: a
-  snapshot-graph read, a `deepFetch` (its root and every child level), or any find
-  whose rows become objects. It projects slot 4, so a value-object-bearing entity's
-  whole document rides the owner's single statement (the one-round-trip
+  snapshot-graph read, a `deepFetch` (its root and every child level), a deferred
+  relationship **`load`** or an operation-list **first `access`** (`m-op-list`), or any
+  other find whose rows become objects. It projects slot 4, so a value-object-bearing
+  entity's whole document rides the owner's single statement (the one-round-trip
   materialization contract, `m-value-object`). Deep-fetch and snapshot **child levels
   are instance-form** — each level projects the child entity's own instance-form list
-  (its scalars, plus any value-object document columns it declares).
+  (its scalars, plus any value-object document columns it declares) — as does a deferred
+  `load` / first `access`, which is a child level resolved on demand.
 - **Row-form** (the **values lane**) — the result is consumed as flat values, with no
   instance constructed. It omits slot 4. The corpus's predicate `read` cases
   (`then.rows`) and the internal materialized-predicate-write read — which resolves a
@@ -190,8 +192,10 @@ consumption lane. `m-case-format` fixes the selector — a **top-level** read ca
 form is declared by **which result member it asserts** (`then.rows` = row-form;
 `then.graph` / `then.graphs` = instance-form), and a scenario / coherence / concurrency
 **step** read (asserted with `expectRows` / `observeRows`) is fixed by the step's read
-semantics (a managed-object find or refresh is instance-form; the internal
-materialized-predicate-write resolving read is row-form).
+semantics: a managed-object find or refresh, a relationship `load`, an operation-list
+first `access`, and a full-scalar shared concurrency read are **instance-form**; the
+internal materialized-predicate-write resolving read and a `distinct` / grouped
+concurrency-witness read are **row-form**.
 
 Everything already specified composes with this rule unchanged: the **versioned-read
 projection** (below) is the slot-1 corollary for the framework-owned `version` column;

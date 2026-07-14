@@ -675,9 +675,21 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # three slice tags (mirroring the value-object materialization graphs
         # m-value-object-023/-024, and entering the TypeScript claim's slice-mvp-1 so its
         # conformance lane exercises the witness), so every slice count rises by 1:
-        # 194 -> 195, 294 -> 295, 315 -> 316. Final counts: 195 / 295 / 316.
+        # 194 -> 195, 294 -> 295, 315 -> 316. Counts at that stage: 195 / 295 / 316.
+        #
+        # COR-3 Phase 5b (re-review round 2) authors one NEW scenario case,
+        # m-value-object-047-scenario-result-form-contrast: the value-object-bearing
+        # scenario-step witness the round-2 finding required. Over the audit-only VO owner
+        # Supplier it contrasts a managed find (INSTANCE-FORM, projecting the `address`
+        # document at slot 4) with a materialized-predicate-write resolving read (ROW-FORM,
+        # omitting slot 4) — the first step read where the two lanes diverge, since every
+        # other scenario read is value-object-free. It is a predicate-write / materialize
+        # case tagged slice-snapshot-1 only (matching the m-audit-write-007 /
+        # m-bitemp-write-010..013 predicate-write family), so slice-snapshot-1 rises by 1
+        # (295 -> 296) and slice-mvp-1 / slice-managed-1 are unchanged.
+        # Final counts: 195 / 296 / 316.
         ("slice-mvp-1", 195),
-        ("slice-snapshot-1", 295),
+        ("slice-snapshot-1", 296),
         ("slice-managed-1", 316),
     ],
 )

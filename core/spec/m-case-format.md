@@ -304,17 +304,32 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
 - **A scenario / coherence / concurrency step** asserts its read with a step-level
   **`expectRows`** / **`observeRows`** — a uniform observation channel that does *not*
   name the form — so the form follows the **step's read semantics** (`m-sql`: "any find
-  whose rows become objects"):
+  whose rows become objects"). **Every** SQL-producing read step is classified below, so
+  no read-bearing step location is left without a form:
   - A **managed-object find or refresh step** — a developer-facing find whose rows become
-    managed instances: an identity-map coordinate / refresh read, a coherence re-fetch, or
-    a scenario observation find — is **instance-form** (object lane), exactly like a
-    `then.graph` read. A value-object-bearing target therefore projects its whole document
-    (slot 4) at that step even though the channel is `expectRows`.
+    managed instances: an identity-map coordinate / refresh read, a coherence re-fetch, a
+    scenario observation find, or a **concurrency full-scalar shared read** that observes
+    the object (`m-read-lock`) — is **instance-form** (object lane), exactly like a
+    `then.graph` read.
+  - A relationship **`action: load` step** and the **first `action: access` step** of a
+    relationship or operation-backed list (`m-op-list`) — the SQL-producing read that
+    first **materializes** the loaded / accessed related objects (a deferred deep fetch,
+    or an operation-list first resolution) — is likewise **instance-form** (object lane):
+    it projects the read entity's own instance-form list (its scalars plus any
+    value-object document column it declares), exactly as a deep-fetch / snapshot **child
+    level** does (`m-sql`, *Read result form*). A **subsequent** `action: access` of an
+    already-materialized relationship or list issues **no read** (a cache hit,
+    `roundTrips: 0`) — there is no projection to classify.
+  - A value-object-bearing target therefore projects its whole document (slot 4) at
+    **every** instance-form step above, even though the channel is `expectRows` /
+    `observeRows`.
   - The **internal materialized-predicate-write resolving read** — the "materializing
     find" a set-based versioned / temporal predicate write consumes to plan its per-row
     DML, resolving each matched row to its pk and gate values with **no instance
-    constructed** (`m-sql`, ADR 0014) — is **row-form** (values lane); it omits slot 4 (a
-    reassigned value-object document comes from the write instruction, not the read).
+    constructed** (`m-sql`, ADR 0014) — is the **sole row-form** (values lane) step read;
+    it omits slot 4 (a reassigned value-object document comes from the write instruction,
+    not the read). A **`distinct` / grouped concurrency-witness read** is likewise a
+    projection over the values lane (`m-sql`), constructing no instance.
 
 Row-form is **not a developer surface** — the idiomatic find API is instance-form
 (results always materialize). Row-form is the internal / conformance consumption lane
@@ -322,11 +337,13 @@ Row-form is **not a developer surface** — the idiomatic find API is instance-f
 results — `m-agg`; a `distinct` / grouped concurrency-witness read is likewise a
 projection over the values lane, `m-sql`). The form is **structural intent** an adapter's
 `compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
-no case edit. No value-object-bearing model is read at a scenario / coherence /
-concurrency step today (`balance`, `position`, `account`, and every other entity read at
-a step, declare no value object), so instance-form and row-form project the same columns
-at these locations: the classification changes no existing golden and fixes the answer for
-the first value-object-bearing step read.
+no case edit. The **sole** value-object-bearing step read is the supplier result-form
+witness — a scenario whose managed find projects the `address` document (instance-form)
+while its predicate-write resolving read omits it (row-form) — which is exactly where the
+two forms first diverge. Every other entity read at a step (`balance`, `position`,
+`account`, `order_item`, and the rest) declares no value object, so instance-form and
+row-form project the same columns there: the classification changes no existing golden and
+pins the answer for the value-object-bearing step read.
 
 #### Milestone-set graphs (`then.graphs`)
 

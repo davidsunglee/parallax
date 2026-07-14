@@ -1,0 +1,105 @@
+# Scenario-step RESULT-FORM contrast over a value-object-bearing entity
+# (m-value-object + m-audit-write + m-sql "Read result form"): a managed find
+# materializes the owner's `address` document (INSTANCE-FORM, slot 4) while the
+# internal materialized-predicate-write resolving read observes only pk + gate
+# columns (ROW-FORM, slot 4 omitted). Postgres AND MariaDB.
+#
+# This is the value-object-bearing WITNESS the result-form classification needs: for
+# a value-object-FREE entity (balance, position, account, order_item) the two lanes
+# project identical columns, so no existing scenario step can distinguish them. The
+# Supplier owns the recursive `address` value object on a unitemporal-processing
+# (audit-only) axis, so the two forms first diverge here.
+#
+# Steps (one resolving read PLUS one independent managed find, then the write):
+#   0  find (managed, Baltic Traders) : INSTANCE-FORM — the developer find materializes
+#      the owner, so the projection carries the whole `address` document last
+#      (sup_id, name, in_z, out_z, address). Slot 4 present.
+#   1  find (Nordic Foods)            : the materialized-predicate-write RESOLVING read —
+#      ROW-FORM. It observes each matched row's pk + current gate columns to plan the
+#      per-row close (ADR 0014), constructing no instance, so it OMITS `address`
+#      (sup_id, name, in_z, out_z). Slot 4 absent, even though Supplier owns a value
+#      object — the point of the witness.
+#   2  terminate (predicate = name Nordic Foods) : closes the resolved current row
+#      (out_z = at). A processing-only close copies no payload, so no document rides a
+#      read here; a reassigned document would ride the write instruction, not the read.
+#   3  find (Nordic Foods)            : verify — the open current set is now empty,
+#      proving the terminate landed (a non-vacuous close).
+#
+# The instance-form golden projects `address`; the row-form goldens do not. The harness
+# decodes the projected document into its declared composite (the same materialization
+# the graph-read path performs) so the managed find's expectRows compares identically on
+# both dialects; the row-form reads carry no document to decode. Total roundTrips 4 =
+# managed find (1) + resolve read (1) + close (1) + verify read (1).
+model: models/supplier.yaml
+tags: [m-value-object, m-audit-write, m-opt-lock, m-sql, m-unit-work, temporal, audit-only, json, nested, materialize, predicate-write, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "predicate write materializes per-row from a resolving read - per-row binds (matched keys / observed in_z) depend on the query result"
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Supplier
+      find:
+        eq: { attr: Supplier.name, value: Baltic Traders }
+      roundTrips: 1
+      note: managed find materializes the owner WITH its address document — INSTANCE-FORM, slot 4 present
+      statements:
+        - sql:
+            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
+            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
+          binds: [Baltic Traders, infinity]
+      expectRows:
+        - sup_id: 2
+          name: Baltic Traders
+          in_z: "2024-02-01T00:00:00+00:00"
+          out_z: infinity
+          address:
+            street: 5 Port Road
+            city: Riga
+            geo:
+              country: LV
+            phones: []
+    - targetEntity: Supplier
+      find:
+        eq: { attr: Supplier.name, value: Nordic Foods }
+      roundTrips: 1
+      note: the predicate-write resolving read observes pk + gate columns only — ROW-FORM, NO address document (slot 4 omitted)
+      statements:
+        - sql:
+            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z from supplier t0 where t0.name = ? and t0.out_z = ?
+            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z from supplier t0 where t0.name = ? and t0.out_z = ?
+          binds: [Nordic Foods, infinity]
+      referenceSql: select sup_id, name, in_z, out_z from supplier where name = 'Nordic Foods' and out_z > '9000-01-01'
+      expectRows:
+        - { sup_id: 1, name: Nordic Foods, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+    - write:
+        mutation: terminate
+        target:
+          entity: Supplier
+          predicate:
+            eq: { attr: Supplier.name, value: Nordic Foods }
+        at: "2024-10-01T00:00:00+00:00"
+      roundTrips: 1
+      note: close the resolved current row (out_z = at); a processing-only close copies no payload, so no document rides this write's read
+      statements:
+        - sql:
+            postgres: update supplier set out_z = ? where sup_id = ? and out_z = ?
+            mariadb: update supplier set out_z = ? where sup_id = ? and out_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, infinity]
+    - targetEntity: Supplier
+      find:
+        eq: { attr: Supplier.name, value: Nordic Foods }
+      roundTrips: 1
+      note: verify — the open current Nordic Foods set is now empty, proving the terminate landed
+      statements:
+        - sql:
+            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z from supplier t0 where t0.name = ? and t0.out_z = ?
+            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z from supplier t0 where t0.name = ? and t0.out_z = ?
+          binds: [Nordic Foods, infinity]
+      referenceSql: select sup_id, name, in_z, out_z from supplier where name = 'Nordic Foods' and out_z > '9000-01-01'
+      expectRows: []
+then:
+  roundTrips: 4

@@ -3639,7 +3639,8 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
     results carry the same primary-key identity — the one-object-per-PK rule).
     """
     dialect = db.dialect
-    default_identity = _pk_column(_scenario_root_entity(case))
+    root_entity = _scenario_root_entity(case)
+    default_identity = _pk_column(root_entity)
     tolerance = case.tolerance
 
     results: list[list[dict[str, Any]]] = []
@@ -3694,6 +3695,16 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             rows = _query_rows(db, statement, stmt_binds)
             if "find" in step:
                 _assert_scenario_reference_sql(case, db, index, step, rows)
+            # An INSTANCE-FORM find materializes its owner's value-object document with
+            # the row (m-value-object / m-sql "Read projection", slot 4), so decode +
+            # project each top-level value-object column into its declared composite before
+            # grading expectRows — exactly as the graph-read path does (`_materialize_owner_node`).
+            # A ROW-FORM read (the materialized-predicate-write resolving find) omits the
+            # document column, and a value-object-free entity (every scenario read but the
+            # supplier result-form witness) declares no value object, so this leaves those
+            # rows byte-identical. The referenceSql oracle above already ran on the raw
+            # rows, so the value-object columns never route through that identity compare.
+            rows = [_materialize_owner_node(root_entity, row) for row in rows]
         else:
             # A cache hit (or an m-op-list construction that has not resolved yet): no
             # statement executes. Reuse the SAME interned objects as the step it hits.

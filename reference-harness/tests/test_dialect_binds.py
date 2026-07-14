@@ -268,22 +268,53 @@ def _value_object_cases() -> list[Case]:
     ]
 
 
+def _golden_entries(case: Case) -> list[dict[str, Any]]:
+    """Every golden statement entry, whether TOP-LEVEL (read / write) or PER STEP.
+
+    A scenario-shaped value-object case (the result-form witness) carries its golden
+    SQL per scenario step, not at ``then.statements``, so the frozen-corpus invariant
+    below reads both locations.
+    """
+    if case.is_scenario:
+        entries: list[dict[str, Any]] = []
+        for step in case.scenario:
+            statements = step.get("statements")
+            if isinstance(statements, list):
+                entries.extend(e for e in statements if isinstance(e, dict))
+        return entries
+    return case.golden_entries()
+
+
+def _golden_dialects(entries: list[dict[str, Any]]) -> set[str]:
+    """The dialects EVERY collected golden entry declares (their intersection)."""
+    dialect_sets = [set(e["sql"]) for e in entries if isinstance(e.get("sql"), dict)]
+    return set.intersection(*dialect_sets) if dialect_sets else set()
+
+
 def test_value_object_cases_carry_both_dialects_and_per_dialect_binds() -> None:
     cases = _value_object_cases()
     assert cases, "no m-value-object cases discovered"
     for case in cases:
-        assert case.golden_dialects == {"postgres", "mariadb"}, (
-            f"{case.path.name}: expected postgres+mariadb golden, got {case.golden_dialects}"
+        entries = _golden_entries(case)
+        assert _golden_dialects(entries) == {"postgres", "mariadb"}, (
+            f"{case.path.name}: expected postgres+mariadb golden, got {_golden_dialects(entries)}"
         )
         # The keys-match invariant holds for every value-object case, for both the
-        # per-dialect binds and the per-dialect referenceSql oracle.
+        # per-dialect binds and the per-dialect referenceSql oracle. (The helpers key
+        # off top-level golden entries; a scenario's per-step keyed binds are covered
+        # by the inline keys-match in the loop below.)
         _assert_binds_dialect_keys(case)
         _assert_reference_sql_dialect_keys(case)
-        for index, entry in enumerate(case.golden_entries()):
+        for index, entry in enumerate(entries):
             binds = entry.get("binds")
+            sql = entry.get("sql")
+            if isinstance(binds, dict):
+                assert set(binds) == (set(sql) if isinstance(sql, dict) else set()), (
+                    f"{case.path.name}: statement {index} binds map keys must match its "
+                    f"sql map keys"
+                )
             if binds is None:
                 continue
-            sql = entry.get("sql")
             # The bind HOLES diverge per dialect EXACTLY when the golden SQL text does,
             # so that — not the read/write axis — is what decides flat vs. map binds:
             #
