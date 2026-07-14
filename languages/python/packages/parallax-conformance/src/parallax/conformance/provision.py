@@ -14,8 +14,9 @@ provider / conformance lanes.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import yaml
 
@@ -23,6 +24,9 @@ from parallax.conformance import case_format
 from parallax.core.db_port import DbPort, JsonDocument
 from parallax.core.descriptor import Entity, Metamodel, column_order
 from parallax.core.dialect import POSTGRES, Dialect
+
+if TYPE_CHECKING:
+    from parallax.postgres import PostgresAdapter
 
 __all__ = [
     "Provisioner",
@@ -140,15 +144,32 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
 
         self._container = PostgresContainer(constants.POSTGRES_IMAGE)
         self._container.start()
-        conninfo = self._container.get_connection_url().replace(
+        self._conninfo = self._container.get_connection_url().replace(
             "postgresql+psycopg2://", "postgresql://"
         )
-        self._adapter = PostgresAdapter.connect(conninfo, autocommit=True)
+        self._adapter = PostgresAdapter.connect(self._conninfo, autocommit=True)
+        self._peers: list[PostgresAdapter] = []
 
     @property
     def port(self) -> DbPort:
         """The concrete ``m-db-port`` over the container."""
         return self._adapter
+
+    def peer(self, *, autocommit: bool = True) -> PostgresAdapter:
+        """An independent second connection to the same container (provider `peer`).
+
+        Concurrent-writer checks (the `m-db-error` deadlock / lock-wait proof) need
+        a second connection that holds its own transaction, so `peer` returns the
+        **concrete** :class:`~parallax.postgres.PostgresAdapter` (not just the
+        abstract port) — a non-autocommit peer keeps a transaction open across
+        statements. Tracked for teardown; also usable as a manual
+        ``execRolledBack`` connection.
+        """
+        from parallax.postgres import PostgresAdapter
+
+        peer = PostgresAdapter.connect(self._conninfo, autocommit=autocommit)
+        self._peers.append(peer)
+        return peer
 
     def reset(self, meta: Metamodel, fixtures: Mapping[str, object]) -> None:
         """Reset the schema, apply the descriptor DDL, and load the fixtures.
@@ -165,5 +186,8 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             self._adapter.execute_write(POSTGRES.to_driver_sql(sql), binds)
 
     def close(self) -> None:
+        for peer in self._peers:
+            with suppress(Exception):
+                peer.close()
         self._adapter.close()
         self._container.stop()

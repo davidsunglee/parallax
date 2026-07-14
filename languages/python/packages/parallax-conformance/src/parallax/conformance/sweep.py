@@ -17,10 +17,14 @@ from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 
 __all__ = ["IMPLEMENTED_MODULES", "reachable_cases"]
 
-# The modules whose behaviour is implemented as of COR-3 Phase 5. A reachable
-# case is one whose module tags are ALL in this set (case_format's always-on
-# reachable-intersection filter). Phases 6+ append the transaction/temporal,
-# snapshot, and write modules here as they come online.
+# The modules whose behaviour is implemented as of COR-3 Phase 6 (milestone 1). A
+# reachable case is one whose module tags are ALL in this set (case_format's
+# always-on reachable-intersection filter). Phase-6 milestone 1 adds `m-db-error`
+# (neutral category classification + call-site predicates + the port-boundary
+# re-raise); its corpus cases are all `error`-shape and become reachable but stay
+# reasoned-skipped until error/concurrency-shape `run` support lands (the later
+# Phase-6 case-instruction translation). Remaining Phase-6 modules (`m-unit-work`,
+# `m-temporal-read`) and the snapshot/write modules append here as they land.
 IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
     {
         "m-core",
@@ -33,6 +37,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-op-algebra",
         "m-dialect",
         "m-db-port",
+        "m-db-error",
         "m-sql",
         "m-api-conformance",
     }

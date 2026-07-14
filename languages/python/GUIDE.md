@@ -107,8 +107,17 @@ self-contained without a system `libpq`.
   value-object array-traversal reads, and pre-SQL rejected-operation validation) and
   the write-path shapes (Phase 6/8). The operation no-drift guard exercises 10
   idiomatic op-algebra read spellings.
-- **Phase 6 next:** transactions and the temporal backbone (`db.transact`, the
-  write-instruction IR + keyed writes, temporal reads, SQLSTATE classification).
+- **Phase 6 in progress (milestone 1 — `m-db-error` landed):** the neutral
+  category set + call-site predicates (`is_retriable` / `violates_unique_index` /
+  `is_timed_out`) in `parallax.core.db_error`, and the port-boundary re-raise in
+  `parallax.postgres` (every driver exception becomes a `DatabaseError` carrying
+  category + preserved SQLSTATE + driver message). Proven by the dialect contract
+  suite, the `m-db-error` unit tests, and the provider deadlock proof (a genuine
+  two-connection `40P01` via `peer`). The nine `error`-shape `m-db-error` corpus
+  cases are now reachable but reasoned-skipped pending error/concurrency-shape
+  `run` support. **Remaining Phase-6 milestones:** `m-temporal-read`,
+  `m-unit-work` + `db.transact`, and the conformance case-instruction translation
+  (error/boundary-shape `run`).
 
 ## Blockers
 

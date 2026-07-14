@@ -79,12 +79,25 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     The read-projection amendment (Phase 5b, ledger D-11) re-goldened every stale
     read to the projection the compiler emits, so every reachable *ok*-status read is
     now exercised (asserted by ``test_every_unexercised_reachable_read_is_refused``).
-    What remains reasoned-skipped is (1) the non-read shapes, whose compile lands with
-    the write path (Phase 6/8), and (2) the reads the Phase-5 compiler refuses with a
-    loud ``SqlGenError`` — inheritance-family reads and to-many value-object array
-    traversal — deferred past the single-entity read path to the snapshot branch
-    (ledger D-12).
+    What remains reasoned-skipped is (1) the `error`-shape `m-db-error` cases, (2) the
+    other non-read shapes, whose compile lands with the write path (Phase 6/8), and
+    (3) the reads the Phase-5 compiler refuses with a loud ``SqlGenError`` —
+    inheritance-family reads and to-many value-object array traversal — deferred past
+    the single-entity read path to the snapshot branch (ledger D-12).
     """
+    if case.shape == "error":
+        # m-db-error cases trigger a real DB error and assert the neutral category +
+        # native code. The classification seam (categories, call-site predicates, the
+        # port-boundary re-raise) is implemented and proven by the dialect contract
+        # suite, the m-db-error unit tests, and the provider deadlock proof; grading
+        # these cases additionally needs error/concurrency-shape `run` support — the
+        # later Phase-6 conformance milestone (case-instruction translation).
+        return (
+            "error-shape m-db-error case: the classification seam is implemented and "
+            "proven by the dialect contract suite, the m-db-error unit tests, and the "
+            "provider deadlock proof; grading the case needs error/concurrency-shape "
+            "`run` support (COR-3 Phase-6 case-instruction translation)"
+        )
     if case.shape != "read":
         return f"compile of {case.shape}-shape cases lands with the write path (COR-3 Phase 6/8)"
     message = envelope.get("diagnostics", [{}])[0].get("message", "")
@@ -129,9 +142,15 @@ def test_every_unexercised_reachable_read_is_refused() -> None:
 
 
 def test_run_only_cases_are_never_compiled() -> None:
-    """A compile on a run-only case returns the defined ``run-only`` answer."""
+    """A compile on a run-only case returns the defined ``run-only`` answer.
+
+    Populated in Phase-6 milestone 1: the reachable set now includes the run-only
+    `m-db-error` deadlock / lock-wait cases (single-connection concurrency intent),
+    so this asserts each returns ``run-only`` rather than an emitted golden.
+    """
     run_only = [c for c in _REACHABLE if engine.eligibility(c) is not None]
-    for case in run_only:  # empty for the Phase-5 read intersection, asserted structurally
+    assert run_only, "the reachable intersection now includes run-only m-db-error cases"
+    for case in run_only:
         envelope = adapter.compile_case(case.path, "postgres")
         assert envelope["status"] == "run-only"
         assert envelope["diagnostics"][0]["code"] == "compile-run-only"

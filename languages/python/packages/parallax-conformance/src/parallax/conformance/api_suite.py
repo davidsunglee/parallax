@@ -148,7 +148,13 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "as-of / history / as-of-range spellings land with the temporal backbone (COR-3 Phase 6)"
     ),
     "m-unit-work": "transaction demarcation lands with the transactions backbone (COR-3 Phase 6)",
-    "m-db-error": "error-category classification lands at the port boundary (COR-3 Phase 6)",
+    "m-db-error": (
+        "error-category classification, the call-site predicates, and the port-boundary "
+        "re-raise are implemented (COR-3 Phase 6) and proven by the dialect contract suite, "
+        "the m-db-error unit tests, and the provider deadlock proof; the error-shape "
+        "m-db-error corpus cases additionally need error/concurrency-shape `run` support "
+        "(the later Phase-6 case-instruction translation)"
+    ),
     "m-pk-gen": "pk-generator inserts land with keyed writes (COR-3 Phase 6)",
     "m-auto-retry": "bounded automatic retry lands with the transactions backbone (COR-3 Phase 6)",
     "m-read-lock": "shared-read-lock reads land with the transactions backbone (COR-3 Phase 6)",
