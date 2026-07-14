@@ -131,7 +131,12 @@ self-contained without a system `libpq`.
     lowering is deferred to the composition surface (M4). Docker-free unit tests
     only; no write case runs yet.
   - **Remaining (M4):** `db.transact` public API + sentinel options + the
-    bounded-retry loop; the write-DML → SQL lowering at the composition surface;
+    bounded-retry loop — the transaction **plumbing** (demarcation, join /
+    option-conflict, retry, and the injected flush executor); its object-model-
+    dependent ergonomic I/O (participating `find` results and the
+    instance→write-input derivation an `update` effective change set needs) is
+    staged to the snapshot branch (Phase 7), which brings up the instance model
+    both rest on (ledger D-16). The write-DML → SQL lowering at the composition surface;
     the conformance case-instruction translation (writeSequence + scenario + the
     D-3 string labels); and error/boundary-shape `run`. The nine `error`-shape
     `m-db-error` cases, the coalescing witnesses (`m-audit-write-008`,

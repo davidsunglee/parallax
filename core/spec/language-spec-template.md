@@ -219,6 +219,19 @@ Retain the branch matching the lifecycle profile; do not answer both.
   `update`, and `terminate`, and bitemporal `insertUntil`, `updateUntil`, and
   `terminateUntil` names. Record processing-instant sourcing, business windows,
   and precision validation.
+- **(decide and record — All slices)** How this surface rests on the object model
+  in [§3](#3-object-lifecycle-profile)/[§4](#4-result-collections-and-materialization).
+  This section reads as self-contained, but parts of it are not: the participating
+  `find` result and the instance-to-write-input derivation an `update` effective
+  change set needs both rest on the **materialized object model**, whereas
+  demarcation, buffered-write flush, and foreign-key ordering rest only on the
+  write/unit-of-work modules. Record which part rests on which, and — when the DAG
+  in [`modules.md`](modules.md) places those modules in **different implementation
+  milestones** — the surface's **staged realization**: the demarcation and flush
+  plumbing that can land before the object-model-dependent write input and read
+  output. A milestone MUST NOT be planned to deliver a construct whose constituent
+  modules are not all implemented; an interim milestone that lands only the
+  plumbing MUST say so, naming the milestone that completes the ergonomic surface.
 
 ## 6. Database support and compatibility proof
 
@@ -408,6 +421,10 @@ A finished language spec satisfies every item:
 - claimed capability coverage is the canonical tagged-case union, while every
   transitive unclaimed prerequisite and every explicit deferral is listed
   separately;
+- every developer-surface construct that composes modules the DAG places in
+  different implementation milestones records its staged realization, so no
+  milestone is planned to deliver a surface whose constituent modules are not all
+  implemented;
 - conditional sections exist exactly when their applicability condition is true;
 - the source-enforcement map covers all claimed modules, transitive prerequisites,
   and support scopes and gives a mechanically enforceable legal DAG;
