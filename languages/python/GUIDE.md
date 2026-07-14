@@ -107,17 +107,36 @@ self-contained without a system `libpq`.
   value-object array-traversal reads, and pre-SQL rejected-operation validation) and
   the write-path shapes (Phase 6/8). The operation no-drift guard exercises 10
   idiomatic op-algebra read spellings.
-- **Phase 6 in progress (milestone 1 — `m-db-error` landed):** the neutral
-  category set + call-site predicates (`is_retriable` / `violates_unique_index` /
-  `is_timed_out`) in `parallax.core.db_error`, and the port-boundary re-raise in
-  `parallax.postgres` (every driver exception becomes a `DatabaseError` carrying
-  category + preserved SQLSTATE + driver message). Proven by the dialect contract
-  suite, the `m-db-error` unit tests, and the provider deadlock proof (a genuine
-  two-connection `40P01` via `peer`). The nine `error`-shape `m-db-error` corpus
-  cases are now reachable but reasoned-skipped pending error/concurrency-shape
-  `run` support. **Remaining Phase-6 milestones:** `m-temporal-read`,
-  `m-unit-work` + `db.transact`, and the conformance case-instruction translation
-  (error/boundary-shape `run`).
+- **Phase 6 in progress (transactions + temporal backbone; milestones 1–3 landed).**
+  - **M1 — `m-db-error`:** the neutral category set + call-site predicates
+    (`is_retriable` / `violates_unique_index` / `is_timed_out`) in
+    `parallax.core.db_error`, and the port-boundary re-raise in `parallax.postgres`
+    (every driver exception becomes a `DatabaseError` carrying category + preserved
+    SQLSTATE + driver message). Proven by the dialect contract suite, the
+    `m-db-error` unit tests, and the provider deadlock proof (a genuine
+    two-connection `40P01` via `peer`).
+  - **M2 — `m-temporal-read` (`ca64903`):** as-of predicate templates,
+    default-latest injection on omitted axes, the milestone edge-pin, and the
+    `Pin` / `Edge` value model, expressed as a rewrite of the temporal wrapper
+    nodes into plain `m-op-algebra` predicates (the DAG forbids
+    `m-sql -> m-temporal-read`, so the SQL composition happens one layer up).
+  - **M3 — `m-unit-work` core:** the `UnitOfWork` shell (frame join,
+    rollback-only, abort-and-withhold, write buffer, observations, and the
+    read-your-own-writes force-flush), the write-instruction IR (`KeyedWrite` /
+    `PredicateWrite`, serde against `write-instruction.schema.json`, and
+    member-name honesty), the Clock Strategy, and the pure planner
+    (coalesce → FK-order → elide) producing a neutral `FlushPlan`. The DAG pins
+    `m-unit-work → m-op-algebra` and `m-unit-work → m-db-port` only (no
+    `m-sql` / `m-dialect` edge), so the planner emits no SQL; the write-DML → SQL
+    lowering is deferred to the composition surface (M4). Docker-free unit tests
+    only; no write case runs yet.
+  - **Remaining (M4):** `db.transact` public API + sentinel options + the
+    bounded-retry loop; the write-DML → SQL lowering at the composition surface;
+    the conformance case-instruction translation (writeSequence + scenario + the
+    D-3 string labels); and error/boundary-shape `run`. The nine `error`-shape
+    `m-db-error` cases, the coalescing witnesses (`m-audit-write-008`,
+    `m-bitemp-write-014`, `m-unit-work-010`), and the D-3 string-label cases stay
+    reasoned-skipped with forward reasons until then.
 
 ## Blockers
 
