@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Final
 
 from parallax.core.descriptor import Metamodel
 from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
@@ -51,9 +52,9 @@ __all__ = [
 # coalescing scope and the observation binding are keyed by it.
 ObjectKey = tuple[str, tuple[tuple[str, object], ...]]
 
-_INSERT_VERBS: frozenset[str] = frozenset({"insert", "insertUntil"})
-_UPDATE_VERBS: frozenset[str] = frozenset({"update", "updateUntil"})
-_DELETE_VERBS: frozenset[str] = frozenset({"delete", "terminate", "terminateUntil"})
+_INSERT_VERBS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
+_UPDATE_VERBS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
+_DELETE_VERBS: Final[frozenset[str]] = frozenset({"delete", "terminate", "terminateUntil"})
 
 
 @dataclass(frozen=True, slots=True)

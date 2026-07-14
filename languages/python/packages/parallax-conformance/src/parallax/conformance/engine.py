@@ -18,13 +18,13 @@ import decimal
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Final, cast
 
 from parallax.conformance import case_format, models
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.descriptor import Metamodel
+from parallax.core.descriptor import Metamodel, column_order
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.op_algebra import OperationError, deserialize
 from parallax.core.sql_gen import ResultForm, SqlGenError, Statement, compile_read
@@ -42,6 +42,7 @@ __all__ = [
     "compile_write_sequence_case",
     "eligibility",
     "load_case_metamodel",
+    "read_table_state",
     "run_error_case",
     "run_read_case",
     "run_scenario_case",
@@ -209,7 +210,7 @@ def _driver_binds(binds: Sequence[object]) -> list[object]:
 # The lowering failures the write lanes convert to a neutral :class:`EngineError`,
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer
 # exception type across the conformance seam.
-_LOWERING_ERRORS: tuple[type[Exception], ...] = (
+_LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     instructions.WriteInstructionError,
     WriteLoweringError,
     OperationError,
@@ -376,9 +377,15 @@ def run_scenario_case(
 
 def run_write_sequence_case(
     case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[list[Emission], int]:
+) -> tuple[list[Emission], dict[str, list[Row]], int]:
     """Run a writeSequence: execute the whole (FK-ordered) sequence in one transaction,
-    then report the ordered per-entry emissions and total round trips."""
+    then report the ordered per-entry emissions, the committed table state, and the
+    total round trips.
+
+    The table read-back is the `m-conformance-adapter` write-sequence observation
+    ("write-sequence cases report ``tableState``"): the runner grades it against
+    the case's ``then.tableState``. Observation reads are not case round trips.
+    """
     dialect = dialect_for(dialect_name)
     lowered = _write_sequence_lowered(case, dialect_name)
     flat = [statement for _pointer, statements in lowered for statement in statements]
@@ -389,7 +396,27 @@ def run_write_sequence_case(
 
     port.transaction(body)
     emissions = _emissions(lowered)
-    return emissions, len(emissions)
+    table_state = read_table_state(port, load_case_metamodel(case), dialect)
+    return emissions, table_state, len(emissions)
+
+
+def read_table_state(port: DbPort, meta: Metamodel, dialect: Dialect) -> dict[str, list[Row]]:
+    """The committed contents of every model table, in canonical wire form.
+
+    Each row-owning table is read back with every physical column in descriptor
+    ``columnOrder`` (a shared table is read once), so the observation reports
+    exactly the state ``then.tableState`` asserts — derived from the metamodel,
+    never from the case's expectations.
+    """
+    state: dict[str, list[Row]] = {}
+    for entity in meta.entities:
+        if entity.table is None or entity.table in state:
+            continue
+        columns = ", ".join(dialect.quote(column) for column in column_order(entity))
+        sql = f"select {columns} from {dialect.quote(entity.table)}"
+        rows = port.execute(dialect.to_driver_sql(sql), [])
+        state[entity.table] = [wire_row(row) for row in rows]
+    return state
 
 
 def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statement]) -> None:

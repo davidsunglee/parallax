@@ -171,17 +171,20 @@ def _run(
 ) -> tuple[list[engine.Emission], dict[str, Any]]:
     """Run a claimed case by shape, returning its emissions and observation envelope.
 
-    A scenario / writeSequence run reports only ``roundTrips`` — the envelope carries no
-    per-step rows (``additionalProperties: false``), so per-step row correctness is the
-    oracle-test gate; a read run additionally records its observed ``rows``; an error
-    run records the raised failure's classification (``errorClass`` / ``nativeCode``).
+    A read run records its observed ``rows``; a writeSequence run records the
+    committed ``tableState`` read back from the model tables (the
+    `m-conformance-adapter` write-sequence observation); an error run records the
+    raised failure's classification (``errorClass`` / ``nativeCode``). A scenario
+    run reports the contract observations (``roundTrips``); its per-step find rows
+    are observable at the injected port seam, where the run sweep grades them
+    against each step's ``expectRows``.
     """
     if case.shape == "scenario":
         emissions, round_trips = engine.run_scenario_case(case, dialect, port)
         return emissions, {"roundTrips": round_trips}
     if case.shape == "writeSequence":
-        emissions, round_trips = engine.run_write_sequence_case(case, dialect, port)
-        return emissions, {"roundTrips": round_trips}
+        emissions, table_state, round_trips = engine.run_write_sequence_case(case, dialect, port)
+        return emissions, {"tableState": table_state, "roundTrips": round_trips}
     if case.shape == "error":
         emissions, error_class, native_code, round_trips = engine.run_error_case(
             case, dialect, port

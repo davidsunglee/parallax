@@ -100,7 +100,7 @@ def _row_equal(observed: dict[str, Any], expected: dict[str, Any]) -> bool:
     )
 
 
-def _compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
+def compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
     """Order-insensitive multiset comparison (greedy — result sets are tiny)."""
     obs = [_wire_row(row) for row in observed]
     remaining = [_wire_row(row) for row in expected]
@@ -133,7 +133,7 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     expected = case_document(case).get("then", {}).get("rows")
     if expected is not None:
-        _compare_rows(envelope["observations"]["rows"], expected)
+        compare_rows(envelope["observations"]["rows"], expected)
 
 
 def _reachable_write_cases() -> list[case_format.Case]:
@@ -145,22 +145,73 @@ def _reachable_write_cases() -> list[case_format.Case]:
 _WRITE_CASES = _reachable_write_cases()
 
 
+class _ReadCapturePort:
+    """A pass-through ``m-db-port`` decorator capturing each row-returning read.
+
+    A scenario's per-step find rows are not adapter-envelope observations
+    (m-conformance-adapter: scenario cases report ``identityChecks`` /
+    ``roundTrips``), but design 22 grades every find step's wire rows against its
+    ``expectRows``. Capturing at the injected port seam observes them from the
+    SAME single execution the envelope reports — a scenario's finds are exactly
+    its ``execute`` calls, in step order (writes go through ``execute_write`` /
+    ``transaction``).
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.reads: list[list[dict[str, Any]]] = []
+
+    def execute(self, sql: str, binds: Any) -> list[dict[str, Any]]:
+        rows = self._inner.execute(sql, binds)
+        self.reads.append(rows)
+        return rows
+
+    def execute_write(self, sql: str, binds: Any) -> int:
+        return self._inner.execute_write(sql, binds)
+
+    def transaction(self, body: Any) -> Any:
+        return self._inner.transaction(body)
+
+
+def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] | None]:
+    """Each FIND step's declared ``expectRows`` in step order (None asserts nothing)."""
+    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    return [step.get("expectRows") for step in steps if "find" in step]
+
+
+def case_fixtures(case: case_format.Case) -> dict[str, Any]:
+    """The fixtures the case's lifecycle loads before its action (m-case-format).
+
+    A writeSequence case starts from an EMPTY schema and builds its own state
+    unless it opts in with `given.fixtures: true`; every other shape starts from
+    the model's default fixtures (a case that injects nothing omits `given`).
+    """
+    doc = case_document(case)
+    given = cast("dict[str, Any]", doc.get("given") or {})
+    if case.shape == "writeSequence" and not given.get("fixtures"):
+        return {}
+    from parallax.conformance import provision
+
+    return provision.load_fixtures(str(doc["model"]))
+
+
 @pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])
 def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     """Run each keyed unit-of-work write case end-to-end against a reset database.
 
     A scenario's writes commit (or, `rollback: true`, abort) as separate units of work
     and its finds read committed state; a writeSequence executes the whole FK-ordered
-    sequence in one transaction. The envelope's per-step emissions must equal the golden
-    DML and its total round trips the case's `then.roundTrips`. Per-step rows are not on
-    the wire (`additionalProperties: false`), so row correctness is the oracle-test gate.
+    sequence in one transaction. Grading: the envelope's per-step emissions equal the
+    golden DML and its total round trips the case's `then.roundTrips`; every scenario
+    find step's observed wire rows equal its `expectRows` (captured at the port seam
+    from the same execution); a writeSequence's committed `tableState` observation
+    equals `then.tableState`, table for table.
     """
     meta = engine.load_case_metamodel(case)
-    from parallax.conformance import provision
+    provisioner.reset(meta, case_fixtures(case))
 
-    provisioner.reset(meta, provision.load_fixtures(str(case_document(case)["model"])))
-
-    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    port = _ReadCapturePort(provisioner.port)
+    envelope = adapter.run_case(case.path, "postgres", port)
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -171,6 +222,21 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
         assert emission["sql"] == golden_sql, (case.case_id, emission)
         assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (case.case_id, emission)
     assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
+
+    if case.shape == "scenario":
+        expected_per_find = _scenario_expect_rows(case)
+        assert len(port.reads) == len(expected_per_find), (case.case_id, port.reads)
+        for observed, expected in zip(port.reads, expected_per_find, strict=True):
+            if expected is not None:
+                compare_rows([engine.wire_row(row) for row in observed], expected)
+    else:
+        expected_state = cast(
+            "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
+        )
+        observed_state = envelope["observations"]["tableState"]
+        assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
+        for table, expected_rows in expected_state.items():
+            compare_rows(observed_state[table], expected_rows)
 
 
 def _reachable_error_cases() -> list[case_format.Case]:

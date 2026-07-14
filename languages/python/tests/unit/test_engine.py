@@ -236,12 +236,16 @@ def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> N
 
 def test_run_write_sequence_case_executes_the_sequence_in_one_transaction() -> None:
     port = FakeWritePort()
-    emissions, round_trips = engine.run_write_sequence_case(
+    emissions, table_state, round_trips = engine.run_write_sequence_case(
         _case("m-unit-work-003"), "postgres", port
     )
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/writeSequence/0", "/writeSequence/1"]
     assert len(port.writes) == 2 and port.commits == 1
+    # The committed table state is read back for every model table (the
+    # m-conformance-adapter write-sequence observation); the read-back is an
+    # observation, so it never counts toward the case's round trips.
+    assert set(table_state) == {"orders", "order_item", "order_status", "order_tag"}
 
 
 def test_compile_write_sequence_case_lowers_each_entry_without_cross_entry_coalescing() -> None:
@@ -316,3 +320,17 @@ def test_write_sequence_case_without_a_sequence_list_is_rejected() -> None:
         engine.compile_write_sequence_case(
             _synthetic_write("writeSequence", {"when": {}}), "postgres"
         )
+
+
+def test_read_table_state_reads_each_physical_table_once() -> None:
+    # The payment model is the degenerate layout: an abstract TABLELESS root
+    # (Payment, table None — nothing to read) and two concrete subtypes SHARING
+    # one table, which is read back exactly once.
+    from parallax.conformance import models
+    from parallax.core.dialect import POSTGRES
+
+    port = FakeWritePort()
+    meta = models.load_models()["payment"]
+    state = engine.read_table_state(port, meta, POSTGRES)
+    assert set(state) == {"payment"}
+    assert len(port.reads) == 1

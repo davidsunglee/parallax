@@ -231,3 +231,39 @@ def test_business_bound_on_a_non_temporal_entity_is_refused() -> None:
     insert = KeyedWrite("insert", "Account", ({"id": 1, "balance": 1.00},), business_from=_B1)
     with pytest.raises(WriteLoweringError, match="business bound"):
         _lower(insert, ACCOUNT)
+
+
+def test_multi_row_keyed_write_is_refused() -> None:
+    # M4 lowers single-row keyed writes only; a multi-row instruction's set-based
+    # collapse is m-batch-write (Phase 8). Refusing loudly prevents the silent
+    # rows[0]-only lowering the backbone review caught (dropped later rows).
+    insert = KeyedWrite(
+        "insert",
+        "Account",
+        (
+            {"id": 8, "owner": "Ada", "balance": 1.00, "version": 1},
+            {"id": 9, "owner": "Grace", "balance": 2.00, "version": 1},
+        ),
+    )
+    with pytest.raises(WriteLoweringError, match=r"multi-row keyed 'insert'.*m-batch-write"):
+        _lower(insert, ACCOUNT)
+
+
+def test_computed_marker_on_a_scalar_attribute_is_refused() -> None:
+    # A scalar attribute carrying a mapping is a DB-computed marker (the pk-gen
+    # `{increment: n}` registry form): the emission depends on a strategy fragment
+    # M4 does not lower, so it is refused before any plan executes — never bound
+    # literally (the backbone review caught the marker binding as a dict).
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": {"increment": 3}},))
+    with pytest.raises(WriteLoweringError, match=r"DB-computed marker.*m-pk-gen"):
+        _lower(update, ACCOUNT)
+
+
+def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
+    # The marker check classifies by metamodel role, not shape: a value-object
+    # member's whole-document mapping still lowers to one JsonDocument bind.
+    insert = KeyedWrite(
+        "insert", "Customer", ({"id": 5, "name": "Vera", "address": {"city": "Berlin"}},)
+    )
+    statement = _lower(insert, CUSTOMER)[0]
+    assert statement.binds[-1] == JsonDocument({"city": "Berlin"})

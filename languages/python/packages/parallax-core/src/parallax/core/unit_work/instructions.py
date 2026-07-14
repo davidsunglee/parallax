@@ -39,7 +39,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
 from parallax.core import op_algebra
 from parallax.core.descriptor import Entity, Metamodel
@@ -68,21 +68,23 @@ KeyedMutation = Literal[
 # predicate cannot select rows that do not yet exist.
 PredicateMutation = Literal["update", "delete", "terminate", "updateUntil", "terminateUntil"]
 
-_KEYED_MUTATIONS: frozenset[str] = frozenset(
+_KEYED_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"insert", "update", "delete", "terminate", "insertUntil", "updateUntil", "terminateUntil"}
 )
-_PREDICATE_MUTATIONS: frozenset[str] = frozenset(
+_PREDICATE_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"update", "delete", "terminate", "updateUntil", "terminateUntil"}
 )
 # The bounded `*Until` forms carry BOTH business bounds; every other form carries
 # no `businessTo` (its window runs `[businessFrom, infinity)` or is non-temporal).
-_BOUNDED_MUTATIONS: frozenset[str] = frozenset({"insertUntil", "updateUntil", "terminateUntil"})
+_BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
+    {"insertUntil", "updateUntil", "terminateUntil"}
+)
 # The assignment-bearing predicate verbs; the others name nothing to assign.
-_ASSIGNMENT_MUTATIONS: frozenset[str] = frozenset({"update", "updateUntil"})
+_ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 
 # The framework-owned transaction observation is NOT durable instruction state
 # (ADR 0013): these control keys are forbidden on a write row.
-_FORBIDDEN_ROW_KEYS: frozenset[str] = frozenset({"observedVersion", "observedInZ"})
+_FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedInZ"})
 
 
 class WriteInstructionError(ValueError):

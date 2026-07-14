@@ -316,3 +316,13 @@ def test_edge_of_and_pin_of_read_materialized_coordinates() -> None:
         edge_of(_PlainNode())
     with pytest.raises(TemporalReadError, match="no temporal pin"):
         pin_of(_PlainNode())
+
+
+def test_edge_is_frozen() -> None:
+    # An Edge is hashable, so it must be immutable: reassigning or deleting an
+    # axis after construction would silently invalidate any dict/set holding it.
+    edge = Edge(processing=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+    with pytest.raises(AttributeError, match="frozen"):
+        edge._processing = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)  # type: ignore[misc]
+    with pytest.raises(AttributeError, match="frozen"):
+        del edge._business  # type: ignore[misc]

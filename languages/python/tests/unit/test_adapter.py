@@ -185,11 +185,23 @@ def test_run_case_scenario_reports_round_trips_only() -> None:
     ]
 
 
-def test_run_case_write_sequence_reports_round_trips_only() -> None:
+def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
+    # The write-sequence observation reads back every model table after commit
+    # (m-conformance-adapter "write-sequence cases report tableState"); the fake
+    # port answers every read with its canned row, so both orders-model tables
+    # report it here — the run sweep grades real state against then.tableState.
     envelope = adapter.run_case(_WRITE_SEQUENCE_CASE, "postgres", _WritePort())
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
-    assert envelope["observations"] == {"roundTrips": 2}
+    assert envelope["observations"] == {
+        "tableState": {
+            "orders": [{"id": 7}],
+            "order_item": [{"id": 7}],
+            "order_status": [{"id": 7}],
+            "order_tag": [{"id": 7}],
+        },
+        "roundTrips": 2,
+    }
     assert [e["casePointer"] for e in envelope["emissions"]] == [
         "/writeSequence/0",
         "/writeSequence/1",
@@ -368,3 +380,18 @@ def test_boundary_case_names_the_api_conformance_lane() -> None:
     run_envelope = adapter.run_case(_BOUNDARY_CASE, "postgres", _TriggerPort(raise_on=None))
     assert run_envelope["status"] == "error"
     assert "api-conformance" in run_envelope["diagnostics"][0]["message"]
+
+
+def test_run_case_refuses_unsupported_write_forms_before_execution() -> None:
+    # m-pk-gen-008: a reachable claimed writeSequence whose rows carry a DB-computed
+    # marker ({increment: 3}) and a multi-row insert. The backbone review caught the
+    # shipped run binding the marker literally and dropping the second row (a false
+    # ok on a permissive port; an uncaught driver error on a real one). The lowering
+    # now refuses BEFORE execution: an `error` envelope naming the deferral, and the
+    # port never sees a statement.
+    case_path = case_format.default_cases_dir() / "m-pk-gen-008-sequence-batch-partial.yaml"
+    port = _TriggerPort(raise_on=None)
+    envelope = adapter.run_case(case_path, "postgres", port)
+    assert envelope["status"] == "error"
+    assert "m-pk-gen" in envelope["diagnostics"][0]["message"]
+    assert port.writes == 0  # refused pre-execution — nothing reached the port

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Final
 
 from parallax.core import op_algebra
 from parallax.core.auto_retry import run_with_retry
@@ -71,7 +72,7 @@ __all__ = [
 # The keyed mutation verbs M4 lowers (the non-temporal write triad). The temporal
 # `*Until` / `terminate` verbs open / split / close milestones and land with the
 # write path (Phase 8).
-_NON_TEMPORAL_VERBS: frozenset[str] = frozenset({"insert", "update", "delete"})
+_NON_TEMPORAL_VERBS: Final[frozenset[str]] = frozenset({"insert", "update", "delete"})
 
 
 class WriteLoweringError(ValueError):
@@ -126,11 +127,41 @@ def lower_write(planned: PlannedWrite, meta: Metamodel, dialect: Dialect) -> lis
             f"{instruction.mutation!r} is a temporal milestone verb; its lowering lands with the "
             "write path (COR-3 Phase 8)"
         )
+    if len(instruction.rows) != 1:
+        raise WriteLoweringError(
+            f"multi-row keyed {instruction.mutation!r} on {entity.name!r} "
+            f"({len(instruction.rows)} rows): the set-based collapse lands with the write path "
+            "(COR-3 Phase 8; m-batch-write) — M4 lowers single-row keyed writes only"
+        )
+    _refuse_computed_markers(entity, instruction)
     if instruction.mutation == "insert":
         return [_lower_insert(entity, instruction, dialect)]
     if instruction.mutation == "update":
         return [_lower_update(entity, instruction, dialect)]
     return [_lower_delete(entity, instruction, dialect)]
+
+
+def _refuse_computed_markers(entity: Entity, instruction: KeyedWrite) -> None:
+    """Refuse a row whose scalar-attribute value is a DB-computed marker.
+
+    The write-instruction schema classifies a row value by the member's metamodel
+    role, not its shape: a value-object member legitimately carries a whole
+    document, but a **scalar** attribute carrying a mapping (e.g. the pk-gen
+    ``{increment: n}`` / ``{computed: …}`` marker) means the database derives the
+    value, so the generating implementation must emit the strategy's SQL fragment
+    — a lowering M4 does not have. Refusing here (before any plan executes) keeps
+    the forward-error posture: never a wrong emission, never a literally-bound
+    marker document.
+    """
+    members = _members(entity)
+    for name, value in instruction.rows[0].items():
+        _column, is_value_object = members[name]
+        if not is_value_object and isinstance(value, Mapping):
+            raise WriteLoweringError(
+                f"DB-computed marker on {entity.name!r}.{name}: computed-column emission "
+                "(the pk-gen registry strategies and friends) lands with the write path "
+                "(a later write increment; m-pk-gen)"
+            )
 
 
 def _lower_insert(entity: Entity, instruction: KeyedWrite, dialect: Dialect) -> Statement:

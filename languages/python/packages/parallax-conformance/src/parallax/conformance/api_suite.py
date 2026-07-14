@@ -22,8 +22,10 @@ from typing import Final
 
 from parallax.conformance import case_format
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
+from parallax.conformance.stories import WRITE_STORIES, story_snippet
 
 __all__ = [
+    "CASE_SKIP_REASONS",
     "EXAMPLES",
     "SKIP_REASONS",
     "Example",
@@ -130,113 +132,13 @@ EXAMPLES: Final[list[Example]] = [
         "As-of read at a past instant",
         "op = Balance.where().as_of(processing=datetime(2024, 4, 1, tzinfo=UTC))",
     ),
-    # The developer transaction surface (m-unit-work, M4): neutral keyed-write
-    # verbs + participating finds through `db.transact`; proven by the write
-    # no-drift guard (commit paths emit the golden DML; abort paths prove the
-    # discard contract).
-    Example(
-        "m-unit-work-001",
-        "Insert, then read your own write",
-        """def fn(tx):
-    row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
-    tx.insert("Account", row)
-    return tx.find("Account", {"eq": {"attr": "Account.id", "value": 7}})
-
-rows = db.transact(fn)""",
-    ),
-    Example(
-        "m-unit-work-002",
-        "An aborted update is discarded",
-        """def fn(tx):
-    tx.update("Account", {"id": 1, "balance": 999.00, "version": 2})
-    raise RuntimeError("changed my mind")  # abort: the buffered update is discarded
-
-db.transact(fn)  # raises; a later find still observes the original balance""",
-    ),
-    Example(
-        "m-unit-work-003",
-        "Foreign-key-ordered inserts in one transaction",
-        """def fn(tx):
-    order = {"id": 100, "name": "Hopper", "sku": "X-1", "qty": 1,
-             "price": 9.99, "active": True, "orderedOn": "2024-07-01"}
-    tx.insert("Order", order)
-    tx.insert("OrderItem", {"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3})
-
-db.transact(fn)  # the flush inserts the parent before the child""",
-    ),
-    Example(
-        "m-unit-work-004",
-        "The callback value is withheld on abort",
-        """def fn(tx):
-    tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
-    tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})  # forces the flush
-    raise RuntimeError("abort")  # even the force-flushed write is rolled back
-
-db.transact(fn)  # raises — no value is returned as though durable""",
-    ),
-    Example(
-        "m-unit-work-005",
-        "Keyed update, observed in-transaction",
-        """def fn(tx):
-    tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
-    return tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})
-
-rows = db.transact(fn)""",
-    ),
-    Example(
-        "m-unit-work-006",
-        "Keyed delete, observed in-transaction",
-        """def fn(tx):
-    tx.delete("Account", {"id": 3})
-    return tx.find("Account", {"eq": {"attr": "Account.id", "value": 3}})
-
-rows = db.transact(fn)  # [] — the dependent find observes the deletion""",
-    ),
-    Example(
-        "m-unit-work-007",
-        "Create, then later delete, a parent/child pair",
-        """def create(tx):
-    order = {"id": 100, "name": "Hopper", "sku": "X-1", "qty": 1,
-             "price": 9.99, "active": True, "orderedOn": "2024-07-01"}
-    tx.insert("Order", order)
-    tx.insert("OrderItem", {"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3})
-
-def teardown(tx):
-    tx.delete("OrderItem", {"id": 200})  # child first, mirroring the FK-ordered insert
-    tx.delete("Order", {"id": 100})
-
-db.transact(create)
-db.transact(teardown)""",
-    ),
-    Example(
-        "m-unit-work-009",
-        "One flush, combined mixed-verb order",
-        """def fn(tx):
-    tx.insert("Account", {"id": 9, "owner": "Noether", "balance": 5.00, "version": 1})
-    tx.update("Account", {"id": 1, "balance": 20.00, "version": 2})
-    tx.delete("Account", {"id": 3})
-    return tx.find("Account", {"lessThan": {"attr": "Account.balance", "value": 50.00}})
-
-rows = db.transact(fn)  # one flush: insert, update, delete — then the find""",
-    ),
-    Example(
-        "m-unit-work-011",
-        "An aborted insert never becomes durable",
-        """def fn(tx):
-    tx.insert("Account", {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1})
-    raise RuntimeError("abort")
-
-db.transact(fn)  # raises; a later find for account 7 observes no rows""",
-    ),
-    Example(
-        "m-unit-work-012",
-        "An aborted delete leaves the row standing",
-        """def fn(tx):
-    tx.delete("Account", {"id": 3})
-    raise RuntimeError("abort")
-
-db.transact(fn)  # raises; account 3 still stands""",
-    ),
+    # The developer transaction surface (m-unit-work, M4): each write example IS
+    # an executable story (`parallax.conformance.stories`) — the snippet is the
+    # story's own source, the real-Postgres suite executes it through the shipped
+    # `parallax.snapshot.connect` + `parallax-postgres` (test_story_run), and the
+    # fake-port write no-drift guard drives the same function against the golden
+    # DML. One source, three consumers: the guide cannot drift from execution.
+    *(Example(story.case_id, story.title, story_snippet(story)) for story in WRITE_STORIES),
 ]
 
 # The reviewed skip registry: primary module -> the reason its active cases carry
@@ -263,13 +165,6 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "class-frontend axis declaration landed in M4); the remaining temporal-read cases "
         "are graded through the compile/run conformance lanes and land as examples "
         "incrementally"
-    ),
-    "m-unit-work": (
-        "the same-transaction coalescing witnesses (m-unit-work-008/010) buffer an "
-        "insert+update / insert+delete pair whose one-statement / zero-statement collapse "
-        "is m-batch-write behavior (COR-3 Phase 8); their planner folding is already "
-        "unit-pinned (test_write_lowering), and every other m-unit-work case is exercised "
-        "as an idiomatic transact example"
     ),
     "m-db-error": (
         "the m-db-error corpus cases are graded end-to-end by the M4 run lanes — the "
@@ -308,6 +203,21 @@ SKIP_REASONS: Final[dict[str, str]] = {
     "m-batch-write": "batched and set-based writes land with the write family (COR-3 Phase 8)",
 }
 
+# Case-scoped skips take precedence over the module registry and exist so a
+# module can be MOSTLY exercised without a broad bucket silently absorbing a
+# case that loses its example (the backbone review's partition red-check): with
+# no `m-unit-work` module entry, dropping any exercised m-unit-work example
+# fails the partition ("covered by neither") instead of inheriting a reason.
+_COALESCING_WITNESS_REASON: Final[str] = (
+    "a same-transaction coalescing witness: it buffers an insert+update / insert+delete "
+    "pair whose one-statement / zero-statement collapse is m-batch-write behavior "
+    "(COR-3 Phase 8); the planner folding is already unit-pinned (test_write_lowering)"
+)
+CASE_SKIP_REASONS: Final[dict[str, str]] = {
+    "m-unit-work-008": _COALESCING_WITNESS_REASON,
+    "m-unit-work-010": _COALESCING_WITNESS_REASON,
+}
+
 
 def _selection_filter(claim: Claim) -> case_format.SelectionFilter:
     return case_format.SelectionFilter(
@@ -331,40 +241,56 @@ def build_skips(
     active: list[case_format.Case],
     examples: list[Example],
     reasons: Mapping[str, str] = SKIP_REASONS,
+    case_reasons: Mapping[str, str] = CASE_SKIP_REASONS,
 ) -> list[Skip]:
-    """Reasoned skips for un-exercised active cases whose module the registry covers.
+    """Reasoned skips for un-exercised active cases the registries cover.
 
-    A case whose ``primary_module`` is absent from ``reasons`` is deliberately
-    left uncovered — the partition then flags it as covered by neither, forcing a
-    human to classify the newly reachable module rather than minting a generic
-    reason for it.
+    A case-scoped reason (``case_reasons``, keyed by case id) takes precedence
+    over the module registry. A case covered by neither is deliberately left
+    uncovered — the partition then flags it as covered by neither, forcing a
+    human to classify the newly reachable case rather than letting a broad
+    module bucket absorb it.
     """
     exercised = {example.case_id for example in examples}
-    return [
-        Skip(case.case_id, reasons[case.primary_module])
-        for case in active
-        if case.case_id not in exercised and case.primary_module in reasons
-    ]
+    skips: list[Skip] = []
+    for case in active:
+        if case.case_id in exercised:
+            continue
+        if case.case_id in case_reasons:
+            skips.append(Skip(case.case_id, case_reasons[case.case_id]))
+        elif case.primary_module in reasons:
+            skips.append(Skip(case.case_id, reasons[case.primary_module]))
+    return skips
 
 
 def stale_skip_reasons(
     active: list[case_format.Case],
     examples: list[Example],
     reasons: Mapping[str, str] = SKIP_REASONS,
+    case_reasons: Mapping[str, str] = CASE_SKIP_REASONS,
 ) -> list[str]:
     """Error strings for registry entries that name no un-exercised active case.
 
-    An entry is stale when its module is absent from the active slice or every
-    case it would cover is already exercised — either way it produces no skip and
-    is dead weight that must be pruned.
+    A module entry is stale when its module is absent from the active slice or
+    every case it would cover is already exercised (or case-scoped); a
+    case-scoped entry is stale when its case is inactive or exercised. Either
+    way the entry produces no skip and is dead weight that must be pruned.
     """
     exercised = {example.case_id for example in examples}
-    covered = {case.primary_module for case in active if case.case_id not in exercised}
-    return [
+    unexercised = [case for case in active if case.case_id not in exercised]
+    covered = {case.primary_module for case in unexercised if case.case_id not in case_reasons}
+    stale = [
         f"stale skip-registry entry {module!r}: names no un-exercised active case"
         for module in sorted(reasons)
         if module not in covered
     ]
+    unexercised_ids = {case.case_id for case in unexercised}
+    stale.extend(
+        f"stale case-skip entry {case_id!r}: not an un-exercised active case"
+        for case_id in sorted(case_reasons)
+        if case_id not in unexercised_ids
+    )
+    return stale
 
 
 def compute_partition(
@@ -442,7 +368,26 @@ def render_usage_guide(examples: list[Example]) -> str:
         )
         lines.append("")
     else:
+        staging_notice_pending = True
         for example in sorted(examples, key=lambda item: item.case_id):
+            if staging_notice_pending and example.case_id.startswith("m-unit-work"):
+                # The D-16 staged-realization notice: the transaction examples
+                # below use the provisional neutral verbs, and readers must not
+                # mistake them for the final entity-instance surface.
+                lines.append("## Transactions — a provisional surface (ledger D-16)")
+                lines.append("")
+                lines.append(
+                    "> The transaction examples below use the **neutral, provisional** "
+                    "write surface: `tx.insert` / `tx.update` / `tx.delete` take an "
+                    "entity **name** and a plain row document, and `tx.find` returns "
+                    "plain rows. These spellings are the deliberate M4 staging of the "
+                    "spec §5 transaction surface; they graduate to entity-instance "
+                    "signatures (`insert(instance)`, sparse `update(edited_copy)`, "
+                    "materialized finds) when the Phase-7 instance model lands "
+                    "(deferred-work ledger D-16)."
+                )
+                lines.append("")
+                staging_notice_pending = False
             lines.append(f"## {example.title}")
             lines.append("")
             lines.append(f"Corpus case: `{example.case_id}`")

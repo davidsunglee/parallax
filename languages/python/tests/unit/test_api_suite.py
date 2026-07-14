@@ -30,13 +30,28 @@ def test_active_slice_is_non_empty_and_all_snapshot_tagged() -> None:
 
 
 def test_build_skips_covers_cases_without_examples() -> None:
+    # With one synthetic example, the registries cover every other active case
+    # EXCEPT the deliberately example-dependent m-unit-work residue: the module
+    # has no broad bucket (the backbone review's partition red-check), so its
+    # cases are covered only by a real example or the two case-scoped skips.
     active = api_suite.active_slice()
     examples = [Example(active[0].case_id, "t", "snippet")]
     skips = api_suite.build_skips(active, examples)
     skipped_ids = {skip.case_id for skip in skips}
     assert active[0].case_id not in skipped_ids
     assert all(skip.reason for skip in skips)
-    assert len(skips) == len(active) - 1
+    uncovered = {
+        case.case_id
+        for case in active
+        if case.case_id != active[0].case_id and case.case_id not in skipped_ids
+    }
+    assert uncovered == {
+        case.case_id
+        for case in active
+        if case.primary_module == "m-unit-work"
+        and case.case_id not in api_suite.CASE_SKIP_REASONS
+        and case.case_id != active[0].case_id
+    }
 
 
 def test_partition_report_is_a_clean_full_partition() -> None:
@@ -80,11 +95,20 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 
 
 def test_registry_classifies_every_active_module_without_stale_entries() -> None:
-    # The committed registry is reconciled against the live corpus: it covers
-    # every module in the active slice and carries no entry that names none.
+    # The committed registries are reconciled against the live corpus: every
+    # active module is covered by the module registry EXCEPT m-unit-work, whose
+    # cases are individually exercised or case-scoped (no broad bucket — so a
+    # dropped example fails the partition instead of inheriting a reason), and
+    # no entry names nothing.
     active = api_suite.active_slice()
     modules = {case.primary_module for case in active}
-    assert modules <= set(api_suite.SKIP_REASONS)
+    assert modules - set(api_suite.SKIP_REASONS) == {"m-unit-work"}
+    exercised = {example.case_id for example in api_suite.EXAMPLES}
+    for case in active:
+        if case.primary_module == "m-unit-work":
+            assert case.case_id in exercised or case.case_id in api_suite.CASE_SKIP_REASONS, (
+                case.case_id
+            )
     assert api_suite.stale_skip_reasons(active, api_suite.EXAMPLES) == []
 
 
@@ -207,3 +231,16 @@ def test_usage_guide_main_check_detects_drift(
     target.parent.mkdir(parents=True)
     target.write_text("stale content", encoding="utf-8")
     assert usage_guide.main(["--check"]) == 1
+
+
+def test_dropping_a_write_example_fails_the_partition() -> None:
+    # The backbone review's partition red-check, made effective: m-unit-work has
+    # no broad module bucket, so a case that loses its example is covered by
+    # NEITHER registry and the partition fails — never silently reclassified
+    # under a coalescing-witness reason.
+    slimmed = [example for example in api_suite.EXAMPLES if example.case_id != "m-unit-work-005"]
+    report = api_suite.partition_report(examples=slimmed)
+    assert not report.ok
+    assert any(
+        "covered by neither" in error and "m-unit-work-005" in error for error in report.errors
+    )

@@ -127,11 +127,24 @@ class Edge:
 
     __slots__ = ("_business", "_processing")
 
+    _processing: _dt.datetime | None
+    _business: _dt.datetime | None
+
     def __init__(
         self, *, processing: _dt.datetime | None = None, business: _dt.datetime | None = None
     ) -> None:
-        self._processing = processing
-        self._business = business
+        # Frozen by hand (the raise-on-undeclared accessor properties preclude a
+        # frozen dataclass): construction writes through `object.__setattr__`,
+        # and the overrides below refuse every later mutation — a hashable Edge
+        # can never change under a dictionary or set.
+        object.__setattr__(self, "_processing", processing)
+        object.__setattr__(self, "_business", business)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(f"Edge is frozen; cannot assign {name!r}")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"Edge is frozen; cannot delete {name!r}")
 
     @property
     def processing(self) -> _dt.datetime:
