@@ -73,6 +73,21 @@ advances. Current rows of the same key *outside* the written window keep their
 `in_z`: conflict granularity is the milestone, not the primary key. The
 conflict/retry contract itself is `m-opt-lock`.
 
+## Statement order when a set-based write materializes
+
+A set-based (predicate-selected) audit write **materializes** to per-row
+statements (`m-opt-lock`, ADR 0014; emission order is `m-sql`) — the set predicate
+cannot collapse to one statement because each close is keyed by its own resolved
+current-row (`pk and out_z = infinity`) and each chain carries that row's resolved
+columns. The golden emits those statements in the resolving read's **resolved-row
+order**, and each resolved row's **close-and-chain stays together as one adjacent
+unit** — the row's close `UPDATE` immediately followed by its chain `INSERT` —
+**never regrouped by statement kind** (all closes, then all inserts). This is the
+multi-statement-per-row generalization of `m-sql`'s "one keyed per-object write per
+resolved row": a `terminate` row contributes a lone close, an `update` row a
+close-then-chain pair. `m-audit-write-007` (terminate) and `m-audit-write-009`
+(update) are the corpus witnesses.
+
 ## How the harness verifies (`m-case-format`)
 
 Write-sequence cases carry a `when.writeSequence` (ordered `insert` / `update` /
