@@ -23,7 +23,9 @@ from reference_harness.case_runner import (
     _assert_scenario_normalization,
     _assert_scenario_reference_sql,
     _assert_scenario_sql_bookkeeping,
+    _relationship_path_target,
     _reuse_prior_rows,
+    _scenario_step_read_entity,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -315,3 +317,61 @@ def test_assert_action_on_rejects_more_groups_than_sources() -> None:
     pairs = [("select ...", [1]), ("select ...", [2]), ("select ...", [3])]
     with pytest.raises(CaseFailure):
         _assert_action_on(_any_case(), 2, step, pairs)
+
+
+# --- per-step read-entity resolution (value-object decode uses the RIGHT entity) ---
+#
+# `_assert_scenario` decodes each step's rows with the entity that step actually
+# read — a find's `targetEntity`, a load / access path's terminal entity, a
+# path-less operation-list access's source entity — so a value-object-bearing child
+# materializes with its OWN composite schema, never the scenario root's. These pin
+# the resolver on the real corpus scenarios that exercise each shape.
+
+
+def test_relationship_path_target_walks_each_hop() -> None:
+    # A single hop lands on the relationship's target; a dotted multi-hop path walks
+    # each hop to the terminal entity whose value-object schema decodes the rows.
+    case = _scenario_by_id("m-deep-fetch-015")
+    order = case.model.entity("Order")
+    assert _relationship_path_target(case, order, "items").name == "OrderItem"
+    assert _relationship_path_target(case, order, "items.statuses").name == "OrderStatus"
+
+
+def test_scenario_find_step_read_entity_is_its_target_entity() -> None:
+    # A read step decodes with its declared `targetEntity`, not the scenario root.
+    case = _scenario_by_id("m-deep-fetch-015")
+    entity = _scenario_step_read_entity(case, case.scenario[0], [])
+    assert entity is not None and entity.name == "Order"
+
+
+def test_scenario_load_step_read_entity_walks_the_relationship_path() -> None:
+    # m-deep-fetch-015 step 1: `load` of `items.statuses` from the step-0 orders ->
+    # the terminal OrderStatus, whose value-object schema decodes its rows.
+    case = _scenario_by_id("m-deep-fetch-015")
+    entity = _scenario_step_read_entity(case, case.scenario[1], [case.model.entity("Order")])
+    assert entity is not None and entity.name == "OrderStatus"
+
+
+def test_scenario_coordinate_grouped_load_resolves_from_first_source() -> None:
+    # m-deep-fetch-014 step 2: `load` of `lines` over an ARRAY `on: [0, 1]` (two
+    # pinned invoice views) -> the terminal InvoiceLine, resolved from the first
+    # source (the grouped coordinates share one source entity).
+    case = _scenario_by_id("m-deep-fetch-014")
+    invoice = case.model.entity("Invoice")
+    entity = _scenario_step_read_entity(case, case.scenario[2], [invoice, invoice])
+    assert entity is not None and entity.name == "InvoiceLine"
+
+
+def test_scenario_operation_list_access_resolves_the_list_entity() -> None:
+    # m-op-list-001 step 1: a path-LESS `access` of the step-0 constructed list ->
+    # the list's own (source) entity, Order.
+    case = _scenario_by_id("m-op-list-001")
+    entity = _scenario_step_read_entity(case, case.scenario[1], [case.model.entity("Order")])
+    assert entity is not None and entity.name == "Order"
+
+
+def test_scenario_non_read_action_step_reads_no_entity() -> None:
+    # A boundary / DML action (flush / commit / mutate) observes no rows, so it
+    # resolves no read entity and decodes nothing.
+    case = _any_case()
+    assert _scenario_step_read_entity(case, {"action": "flush", "roundTrips": 0}, []) is None

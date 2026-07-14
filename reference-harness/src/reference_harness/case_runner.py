@@ -3467,6 +3467,52 @@ _ACTION_DML_VERBS = frozenset({"flush", "mergeBack", "commit"})
 _ACTION_READ_VERBS = frozenset({"load", "access"})
 
 
+def _relationship_path_target(case: Case, start: Entity, path: str) -> Entity:
+    """The terminal entity of a dotted relationship *path* walked from *start*.
+
+    A ``load`` / ``access`` navigates one hop (``items``) or a dotted multi-hop path
+    (``items.statuses``) from the source object, so its rows are of the entity the
+    LAST hop targets — the entity whose value-object schema decodes them. Each hop
+    resolves through its owning entity's relationship definition (``relatedEntity``).
+    """
+    entity = start
+    for rel_name in path.split("."):
+        entity = case.model.entity(entity.relationship_by_name(rel_name)["relatedEntity"])
+    return entity
+
+
+def _scenario_step_read_entity(
+    case: Case, step: dict[str, Any], step_entities: list[Entity | None]
+) -> Entity | None:
+    """The entity a scenario step's observed rows belong to (for value-object decode).
+
+    Resolving the PER-STEP read entity — rather than assuming the scenario root —
+    is what lets a step reading a DIFFERENT, value-object-bearing entity decode its
+    document column with the RIGHT composite schema (m-sql *Read projection*, slot 4;
+    m-case-format *Read result form*). A read (``find``) step names its queried
+    position with ``targetEntity`` (m-case-format Q1). A ``load`` / ``access`` action
+    navigates from an earlier object (``on``, required for the read verbs): with a
+    ``path`` its rows are the path's TERMINAL entity; a path-less operation-list
+    ``access`` resolves the constructed list's own (source) entity. Every other step
+    (a write, a boundary / in-memory action) observes no rows, so it decodes nothing
+    (``None``).
+    """
+    if "find" in step:
+        return case.model.entity(step["targetEntity"])
+    if step.get("action") in _ACTION_READ_VERBS:
+        on = step["on"]
+        source = on[0] if isinstance(on, list) else on
+        start = step_entities[source]
+        path = step.get("path")
+        if path is None or start is None:
+            # A path-less operation-list `access` resolves the list's own (source)
+            # entity; a source that observed no rows (should not occur for a read
+            # verb, whose `on` names a row-producing step) decodes nothing.
+            return start
+        return _relationship_path_target(case, start, path)
+    return None
+
+
 def _reuse_prior_rows(
     case: Case, step: dict[str, Any], index: int, results: list[list[dict[str, Any]]]
 ) -> list[dict[str, Any]]:
@@ -3644,6 +3690,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
     tolerance = case.tolerance
 
     results: list[list[dict[str, Any]]] = []
+    step_entities: list[Entity | None] = []
     for index, step in enumerate(case.scenario):
         pairs = _entry_pairs(step.get("statements"), dialect)
         if "write" in step:
@@ -3674,8 +3721,9 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 for statement, stmt_binds in pairs:
                     db.execute(statement, stmt_binds)
             # The step's index still occupies a slot so `sameObjectAs` references
-            # stay aligned.
+            # stay aligned. A write observes no rows, so it reads no entity.
             results.append([])
+            step_entities.append(None)
             continue
         if "action" in step:
             # A lifecycle ACTION step (m-case-format, COR-30): execute its golden SQL
@@ -3683,18 +3731,31 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             # and grade its row-level observables; identity / state / error observables
             # are adapter-delegated (validated, then skipped on the wire lane).
             rows = _run_scenario_action(case, db, index, step, pairs, results)
+            read_entity = _scenario_step_read_entity(case, step, step_entities)
+            if pairs and read_entity is not None:
+                # A FRESHLY-resolved load / first access materializes the value-object
+                # document of the entity it navigated TO (m-sql "Read projection", slot 4;
+                # m-case-format "Read result form") — resolved per-step, so a value-object-
+                # bearing child decodes with its OWN composite schema, never the root's. A
+                # zero-round-trip re-access reuses rows already materialized upstream.
+                rows = [_materialize_owner_node(read_entity, row) for row in rows]
             results.append(rows)
+            step_entities.append(read_entity)
             _assert_step_row_observables(
                 case, index, step, rows, results, tolerance, default_identity
             )
             continue
+        # Every remaining step is a read (`find`, per the schema's exactly-one-of
+        # find/write/action): it names its queried position with `targetEntity`
+        # (m-case-format Q1), so its value-object document is decoded with THAT entity's
+        # composite schema — not the scenario root's.
+        read_entity = case.model.entity(step["targetEntity"])
         if pairs:
             # A DB-touching step: m-unit-work finds are single-statement, so the round-trip
             # count is one; execute it and capture the rows.
             statement, stmt_binds = pairs[0]
             rows = _query_rows(db, statement, stmt_binds)
-            if "find" in step:
-                _assert_scenario_reference_sql(case, db, index, step, rows)
+            _assert_scenario_reference_sql(case, db, index, step, rows)
             # An INSTANCE-FORM find materializes its owner's value-object document with
             # the row (m-value-object / m-sql "Read projection", slot 4), so decode +
             # project each top-level value-object column into its declared composite before
@@ -3704,12 +3765,13 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             # supplier result-form witness) declares no value object, so this leaves those
             # rows byte-identical. The referenceSql oracle above already ran on the raw
             # rows, so the value-object columns never route through that identity compare.
-            rows = [_materialize_owner_node(root_entity, row) for row in rows]
+            rows = [_materialize_owner_node(read_entity, row) for row in rows]
         else:
             # A cache hit (or an m-op-list construction that has not resolved yet): no
             # statement executes. Reuse the SAME interned objects as the step it hits.
             rows = _reuse_prior_rows(case, step, index, results)
         results.append(rows)
+        step_entities.append(read_entity)
         _assert_step_row_observables(case, index, step, rows, results, tolerance, default_identity)
 
 
