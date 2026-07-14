@@ -709,10 +709,21 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # m-op-list-004 (the operation-list FIRST `action: access` over `all(Depot)`).
         # Both are managed-object-surface reads tagged slice-managed-1 ONLY, so
         # slice-managed-1 rises by 2 (317 -> 319) and slice-snapshot-1 / slice-mvp-1 are
-        # unchanged. Final counts: 195 / 296 / 319.
-        ("slice-mvp-1", 195),
-        ("slice-snapshot-1", 296),
-        ("slice-managed-1", 319),
+        # unchanged. Counts at that stage: 195 / 296 / 319.
+        #
+        # COR-3 Phase 6a (D-3 write-instruction migration, core amendment) authors two
+        # NEW rollback witnesses that complete the abort-discards contract across the
+        # insert / update / delete triad (m-unit-work-002 already witnesses UPDATE):
+        # m-unit-work-011 (an INSERT applied then rolled back; the post-abort find sees no
+        # row) and m-unit-work-012 (a DELETE of a pre-existing row applied then rolled
+        # back; the post-abort find sees the original row). Both are pure m-unit-work
+        # scenario cases authored in the generalized single-keyed buffer and tagged
+        # slice-mvp-1 + slice-snapshot-1 + slice-managed-1 (mirroring m-unit-work-002), so
+        # every slice count rises by 2: 195 -> 197, 296 -> 298, 319 -> 321.
+        # Counts at that stage: 197 / 298 / 321.
+        ("slice-mvp-1", 197),
+        ("slice-snapshot-1", 298),
+        ("slice-managed-1", 321),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

@@ -1,0 +1,48 @@
+# Rollback / abort scenario for DELETE (m-unit-work): a DELETE performed inside a
+# unit of work that ABORTS is discarded — a post-abort find observes the ORIGINAL row.
+#
+# m-unit-work-002 witnesses the abort contract for UPDATE and m-unit-work-011 for
+# INSERT; this pins the DELETE variant, completing the insert / update / delete triad.
+# The unit of work deletes a pre-existing account 3 (Grace, 10.00), then ROLLS BACK —
+# the delete lands inside the atomic scope the abort discards, so the row survives:
+#   step 0 write : apply a DELETE of the pre-existing account 3, then ROLL BACK
+#                  (rollback: true) — the buffered write executes and is discarded.
+#   step 1 find  : query account 3 — it MUST observe the ORIGINAL row, unchanged;
+#                  the aborted delete never became durable.
+# The teeth: the find is a cache MISS that re-resolves against committed data and MUST
+# see account 3 exactly as the fixture holds it. Both the aborting unit of work and the
+# re-resolve run in the DEFAULT `locking` mode, so the find carries the m-read-lock
+# shared-row-lock suffix (`for share of t0`). roundTrips = 2 (the rolled-back delete,
+# whose DML still executes, + the dependent find).
+model: models/account.yaml
+tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        - mutation: delete
+          entity: Account
+          rows:
+            - { id: 3 }
+      rollback: true
+      roundTrips: 1
+      note: apply a delete of the pre-existing account 3, then ROLL BACK — the delete is discarded
+      statements:
+        - sql:
+            postgres: delete from account where id = ?
+          binds: [3]
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 3
+      roundTrips: 1
+      note: the aborted delete was discarded — the find MUST observe the ORIGINAL account 3
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          binds: [3]
+      expectRows:
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+then:
+  roundTrips: 2

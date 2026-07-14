@@ -1,0 +1,48 @@
+# Rollback / abort scenario for INSERT (m-unit-work): an INSERT performed inside a
+# unit of work that ABORTS is discarded — a post-abort find observes NO row.
+#
+# m-unit-work-002 witnesses the abort contract for UPDATE; this pins the INSERT
+# variant, so the rollback-discards contract is witnessed across the insert / update /
+# delete triad (the DELETE variant is m-unit-work-012). The unit of work inserts a
+# brand-new account 7, then ROLLS BACK — the insert lands inside the atomic scope the
+# abort discards, so it never becomes durable:
+#   step 0 write : apply an INSERT of a new account 7 (Newton, 5.00), then ROLL BACK
+#                  (rollback: true) — the buffered write executes and is discarded.
+#   step 1 find  : query account 7 — it MUST observe NO rows; the aborted insert
+#                  never became durable.
+# The teeth: the find is a cache MISS that re-resolves against committed data and MUST
+# see the absence of account 7. Both the aborting unit of work and the re-resolve run
+# in the DEFAULT `locking` mode, so the find carries the m-read-lock shared-row-lock
+# suffix (`for share of t0` — locking zero rows is valid SQL). roundTrips = 2 (the
+# rolled-back insert, whose DML still executes, + the dependent find).
+model: models/account.yaml
+tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        - mutation: insert
+          entity: Account
+          rows:
+            - { id: 7, owner: Newton, balance: 5.00, version: 1 }
+      rollback: true
+      roundTrips: 1
+      note: apply an insert of a new account 7, then ROLL BACK — the insert is discarded
+      statements:
+        - sql:
+            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [7, Newton, 5.00, 1]
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 7
+      roundTrips: 1
+      note: the aborted insert never became durable — the find MUST observe NO rows
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          binds: [7]
+      expectRows: []
+then:
+  roundTrips: 2
