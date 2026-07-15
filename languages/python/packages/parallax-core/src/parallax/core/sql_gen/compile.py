@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal, assert_never
+from typing import Literal, assert_never, cast
 
 from parallax.core import inheritance
 from parallax.core.descriptor import (
@@ -111,6 +111,7 @@ __all__ = [
     "ResultForm",
     "SqlGenError",
     "Statement",
+    "apply_family_variant",
     "compile_read",
     "family_variant_plan",
 ]
@@ -277,6 +278,7 @@ def compile_read(
     *,
     result_form: ResultForm = "row",
     lock: LockMode | None = None,
+    relationship_order: bool = False,
 ) -> Statement:
     """Compile a read operation to one canonical ``Statement`` for ``dialect``.
 
@@ -297,12 +299,32 @@ def compile_read(
     read-lock is an object-find property); grouped / aggregate reads are not yet
     reachable. The conformance scenario runner derives ``lock`` from the step's unit
     of work concurrency mode.
+
+    ``relationship_order`` marks the peeled ``orderBy`` (if any) as a **declared
+    relationship ordering** (`m-deep-fetch` "Ordered to-many children", a deep-fetch
+    child level's own descriptor-derived directive) rather than a user-authored
+    directive: a NULLABLE key renders through the dialect's NULLS-last rule
+    (`Dialect.null_order`) instead of the plain `col dir` rendering every ordinary
+    `orderBy` operation node still gets — the canonical, dialect-independent
+    NULLs-last-both-directions rule applies only to the declared form (a
+    non-nullable key renders identically either way, matching every existing
+    relationship-ordering golden byte-for-byte).
     """
     entity = meta.entity(target)
     predicate, distinct, order_keys, limit = _peel_directives(op)
     if entity.inheritance is not None:
         return _compile_inheritance_read(
-            entity, predicate, distinct, order_keys, limit, meta, dialect, target, result_form, lock
+            entity,
+            predicate,
+            distinct,
+            order_keys,
+            limit,
+            meta,
+            dialect,
+            target,
+            result_form,
+            lock,
+            relationship_order,
         )
     ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
 
@@ -314,7 +336,7 @@ def compile_read(
     where_sql = _lower_predicate(predicate, ctx)
     if where_sql:
         parts.append(f"where {where_sql}")
-    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock)
+    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
 
     return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
 
@@ -326,14 +348,22 @@ def _append_result_shape(
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     lock: LockMode | None,
+    relationship_order: bool = False,
 ) -> None:
     """Append the shared ``order by`` / ``limit`` / read-lock tail (m-sql), used by
     every single-select read form (plain, table-per-hierarchy, and a
-    table-per-concrete-subtype read resolving to one concrete)."""
+    table-per-concrete-subtype read resolving to one concrete).
+
+    ``relationship_order`` (m-deep-fetch "Ordered to-many children") renders each
+    NULLABLE key through the dialect's NULLs-last rule (``Dialect.null_order``);
+    a non-nullable key, and every key under an ordinary (non-declared) `orderBy`,
+    renders the plain ``col dir`` form — the two forms coincide for `asc` on
+    Postgres and for any non-nullable key, so this changes no existing golden.
+    """
     if order_keys:
         # An authored key that omitted `direction` (serde `None`) lowers to the
         # schema default `asc`.
-        terms = [f"{ctx.column_of(key.attr)} {key.direction or 'asc'}" for key in order_keys]
+        terms = [_order_term(ctx, key, relationship_order) for key in order_keys]
         parts.append("order by " + ", ".join(terms))
     if limit is not None:
         parts.append(ctx.dialect.limit_clause())
@@ -342,6 +372,16 @@ def _append_result_shape(
         # The shared-row-lock suffix is the last thing in the statement (after any
         # `where` / `order by` / `limit`); a `distinct` object read suppresses it.
         parts.append(ctx.dialect.read_lock_suffix(ctx.alias))
+
+
+def _order_term(ctx: _Ctx, key: OrderKey, relationship_order: bool) -> str:
+    """One ``order by`` term: `m-deep-fetch`'s declared-relationship NULLs-last
+    rule for a NULLABLE key under ``relationship_order``, else the plain form."""
+    direction = key.direction or "asc"
+    column_sql = ctx.column_of(key.attr)
+    if relationship_order and ctx.entity_attribute(key.attr).nullable:
+        return ctx.dialect.null_order(column_sql, direction)
+    return f"{column_sql} {direction}"
 
 
 def _peel_directives(op: Operation) -> tuple[Operation, bool, tuple[OrderKey, ...], int | None]:
@@ -450,6 +490,7 @@ def _compile_inheritance_read(
     target: str,
     result_form: ResultForm,
     lock: LockMode | None,
+    relationship_order: bool = False,
 ) -> Statement:
     """Dispatch an inheritance-family read to its strategy's lowering (m-inheritance
     admits exactly two strategies; a third is rejected long before SQL, by the
@@ -470,10 +511,21 @@ def _compile_inheritance_read(
             target,
             result_form,
             lock,
+            relationship_order,
         )
     if strategy == "table-per-concrete-subtype":
         return _compile_tpcs_read(
-            entity, predicate, distinct, order_keys, limit, meta, dialect, target, result_form, lock
+            entity,
+            predicate,
+            distinct,
+            order_keys,
+            limit,
+            meta,
+            dialect,
+            target,
+            result_form,
+            lock,
+            relationship_order,
         )
     # m-inheritance admits only the two strategies above; a descriptor failing to
     # declare one is refused by the model-aware validator long before a read
@@ -495,6 +547,7 @@ def _compile_tph_read(
     target: str,
     result_form: ResultForm,
     lock: LockMode | None,
+    relationship_order: bool = False,
 ) -> Statement:
     """Table-per-hierarchy: one shared correlated `EXISTS`-free single-table SELECT
     (m-sql "Inheritance — table-per-hierarchy lowering").
@@ -559,7 +612,7 @@ def _compile_tph_read(
     if where_terms:
         parts.append("where " + " and ".join(where_terms))
 
-    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock)
+    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
     return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
 
 
@@ -631,6 +684,7 @@ def _compile_tpcs_read(
     target: str,
     result_form: ResultForm,
     lock: LockMode | None,
+    relationship_order: bool = False,
 ) -> Statement:
     """Table-per-concrete-subtype (m-sql "Inheritance — table-per-concrete-subtype
     lowering"): a position resolving to ONE concrete is an ordinary single-table
@@ -665,6 +719,7 @@ def _compile_tpcs_read(
             result_form,
             lock,
             position,
+            relationship_order,
         )
 
     if distinct or order_keys or limit is not None or lock is not None:
@@ -722,6 +777,7 @@ def _compile_tpcs_single(
     result_form: ResultForm,
     lock: LockMode | None,
     position: Sequence[str],
+    relationship_order: bool = False,
 ) -> Statement:
     """A table-per-concrete-subtype read resolving to exactly one concrete: an
     ordinary single-table read of that subtype's own table, no tag, no union, no
@@ -747,7 +803,7 @@ def _compile_tpcs_single(
     where_sql = _lower_predicate(inner, ctx)
     if where_sql:
         parts.append(f"where {where_sql}")
-    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock)
+    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
     return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
 
 
@@ -803,6 +859,30 @@ def family_variant_plan(meta: Metamodel, target: str, op: Operation) -> FamilyVa
     if len(position) <= 1:
         return None
     return FamilyVariantPlan(kind="literal", column="family_variant")
+
+
+def apply_family_variant(
+    row: Mapping[str, object], plan: FamilyVariantPlan | None
+) -> dict[str, object]:
+    """Materialize ``familyVariant`` on one observed row from its ``plan`` (or
+    return ``row`` unchanged when ``plan`` is ``None``).
+
+    The single application of a :class:`FamilyVariantPlan` every consumer shares —
+    the conformance engine's flat wire rows and the production snapshot find
+    executor's instance-form graph rows alike (COR-3 Phase 7 increment 5) — so
+    the `tag` (pop the raw tag column, look it up in ``plan.tag_map``) / `literal`
+    (rename the projected literal column) derivation lives once, in `m-sql`.
+    """
+    if plan is None:
+        return dict(row)
+    materialized = dict(row)
+    raw = materialized.pop(plan.column)
+    if plan.kind == "tag":
+        assert plan.tag_map is not None
+        materialized["familyVariant"] = plan.tag_map[cast("str", raw)]
+    else:
+        materialized["familyVariant"] = raw
+    return materialized
 
 
 # --------------------------------------------------------------------------- #

@@ -2,54 +2,82 @@
 
 Every exercised reachable read case is compiled, executed against a freshly reset
 real database (``DROP SCHEMA … CASCADE`` → descriptor DDL → fixtures), and its
-observed rows compared to the case's ``then.rows`` (order-insensitive, wire
-space); its emitted SQL and binds equal the ``postgres`` golden. This is the
-tracer path proven end to end — compile to canonical SQL/binds, then run against a
-reset database. Docker-gated; a skip is reported, never silent (spec §6).
+observation (``then.rows`` / ``then.graph`` / ``then.graphs``, order-insensitive
+where the case format says so, wire space) compared against the golden; its
+emitted SQL and binds equal the ``postgres`` golden, root and every deep-fetch
+child level alike. This is the tracer path proven end to end — compile (where
+eligible) to canonical SQL/binds, then run against a reset database. Docker-
+gated; a skip is reported, never silent (spec §6).
 """
 
 from __future__ import annotations
 
-from typing import Any, Final, cast
+from collections import Counter
+from typing import Any, cast
 
 import jsonschema
 import pytest
 from test_compile_sweep import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
-    golden,
     wire_binds,
     write_golden_statements,
 )
 
-from conftest import adapter_schema, case_document, case_fixtures, compare_rows
+from conftest import (
+    adapter_schema,
+    case_document,
+    case_fixtures,
+    compare_graph,
+    compare_rows,
+    wire_value_deep,
+)
 from parallax.conformance import adapter, case_format, engine
 
 pytestmark = pytest.mark.conformance
 
-# The instance-form value-object graph reads are compile-exercised (their slot-4
-# document projection matches golden), but a *run* verifies the case's asserted
-# observation, and an instance-form read asserts a materialized `then.graph`. Graph
-# assembly lands with the snapshot branch (COR-3 Phase 7), so these are run-deferred:
-# executing only their SQL would yield a row-form observation for an instance-form
-# case, verifying nothing the compile sweep does not already pin. The temporal value-
-# object reads (028-031) are the same instance-form deferral, one milestone deeper.
-_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
-    {"m-value-object-023", "m-value-object-024"}
-    | {f"m-value-object-{n:03d}" for n in (28, 29, 30, 31)}
-)
-# The reachable read cases whose fixtures + `then.rows` this phase runs end-to-end.
-RUN_EXERCISED = frozenset(COMPILE_EXERCISED) - _INSTANCE_FORM_GRAPH_READS
+# The reachable read cases whose fixtures + observation this phase runs end-to-
+# end: every compile-exercised read (COR-3 Phase 7 increment 5 closes the
+# instance-form-graph run deferral this set once carried — m-value-object-023/
+# -024/-028..-031 and the milestone-set m-snapshot-read-013/-014 now materialize
+# and grade their `then.graph` / `then.graphs` here) PLUS every case DECLARED
+# `compileEligibility: run-only` (D-10's query-result-dependent deep-fetch tail:
+# `compile` can never emit their query-result-dependent child binds, so `run` is
+# the ONLY lane that ever grades them — derived from the corpus declaration at
+# collection time, never a hard-coded id list, m-conformance-adapter).
+RUN_EXERCISED = frozenset(COMPILE_EXERCISED)
 
 
 def _reachable_run_cases() -> list[case_format.Case]:
     from parallax.conformance import sweep
 
-    return [c for c in sweep.reachable_cases() if c.case_id in RUN_EXERCISED]
+    reachable = sweep.reachable_cases()
+    return [
+        c
+        for c in reachable
+        if c.shape == "read" and (c.case_id in RUN_EXERCISED or engine.eligibility(c) is not None)
+    ]
 
 
 _CASES = _reachable_run_cases()
 _SCHEMA = adapter_schema()
+
+
+def _read_golden_statements(case: case_format.Case) -> list[tuple[str, list[Any]]]:
+    """A read case's ordered golden statements (root, then every deep-fetch
+    child level) — the same per-entry `{sql, binds}` extraction
+    `write_golden_statements` uses for a write case, applied to a read's own
+    `then.statements`."""
+    statements = case_document(case)["then"]["statements"]
+    out: list[tuple[str, list[Any]]] = []
+    for entry in cast("list[dict[str, Any]]", statements):
+        sql = entry["sql"]
+        text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
+        binds = entry.get("binds", [])
+        if isinstance(binds, dict):
+            binds = cast("dict[str, list[object]]", binds)["postgres"]
+        out.append((cast("str", text), list(cast("list[object]", binds))))
+    return out
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
@@ -63,14 +91,49 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
-    golden_sql, golden_binds = golden(case)
-    assert envelope["emissions"][0]["sql"] == golden_sql
-    assert envelope["emissions"][0]["binds"] == golden_binds
-    assert envelope["observations"]["roundTrips"] == 1
+    doc = case_document(case)
+    then = doc.get("then", {})
+    golden_statements = _read_golden_statements(case)
+    emissions = envelope["emissions"]
+    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
+    for index, (emission, (golden_sql, golden_binds)) in enumerate(
+        zip(emissions, golden_statements, strict=True)
+    ):
+        assert emission["sql"] == golden_sql, (case.case_id, emission)
+        observed_binds = wire_binds(emission["binds"])
+        expected_binds = wire_binds(golden_binds)
+        if index == 0:
+            # The root statement's binds are user-authored (never gathered), so
+            # their order is defined and exact.
+            assert observed_binds == expected_binds, (case.case_id, emission)
+        else:
+            # A deep-fetch child level's `IN`-list binds are the distinct keys
+            # GATHERED from the parent level's own returned rows — an unordered
+            # set (m-case-format fifth assertion layer): the gathered order
+            # depends on the parent query's own row order (itself possibly a
+            # declared, non-id `orderBy`), so only the MULTISET of bind values —
+            # the gathered keys together with any propagated as-of suffix — is
+            # asserted, never positional order.
+            assert Counter(observed_binds) == Counter(expected_binds), (case.case_id, emission)
 
-    expected = case_document(case).get("then", {}).get("rows")
-    if expected is not None:
-        compare_rows(envelope["observations"]["rows"], expected)
+    observations = envelope["observations"]
+    assert observations["roundTrips"] == then.get("roundTrips", 1), case.case_id
+
+    if "rows" in then:
+        compare_rows(observations["rows"], then["rows"])
+    elif "graph" in then:
+        compare_graph(observations["graph"], then["graph"])
+        if "identityChecks" in then:
+            assert observations.get("identityChecks") == then["identityChecks"], case.case_id
+    elif "graphs" in then:
+        expected_graphs = then["graphs"]
+        observed_graphs = observations["graphs"]
+        assert len(observed_graphs) == len(expected_graphs), case.case_id
+        for observed_entry, expected_entry in zip(observed_graphs, expected_graphs, strict=True):
+            assert wire_value_deep(observed_entry["pin"]) == wire_value_deep(
+                expected_entry["pin"]
+            ), case.case_id
+            compare_graph(observed_entry["graph"], expected_entry["graph"])
 
 
 def _reachable_write_cases() -> list[case_format.Case]:

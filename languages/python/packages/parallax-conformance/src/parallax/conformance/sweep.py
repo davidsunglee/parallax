@@ -13,7 +13,15 @@ propagation, polymorphic navigation), which makes the 13 row-form navigate reads
 and 6 polymorphic-relationship reads reachable alongside 3 rejected cases whose
 rule the model-aware validator already classified (increment 1) — and, honestly,
 the 11 deep-fetch-bearing navigate reads too, which stay reasoned-refused (deep
-fetch is increment 5) rather than silently exercised.
+fetch is increment 5) rather than silently exercised; increment 5 adds
+``m-deep-fetch`` / ``m-snapshot-read`` (the pure fetch planner, the graph
+assembler, and the production find executor), which makes every graph-bearing
+read (the 11 navigate deep-fetch reads, the 14 snapshot-read cases, the 3
+polymorphic narrowed-deep-fetch inheritance reads, and ``m-deep-fetch-018``)
+reachable, closes the query-result-dependent tail ledger D-10 anticipated
+(``compileEligibility: run-only``), and reaches the ``m-value-object-035``
+rejected case (deep-fetch-value-object-segment) that only ``m-deep-fetch``
+gated.
 """
 
 from __future__ import annotations
@@ -54,6 +62,8 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-api-conformance",
         "m-unit-work",
         "m-navigate",
+        "m-deep-fetch",
+        "m-snapshot-read",
     }
 )
 

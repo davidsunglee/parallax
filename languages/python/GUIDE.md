@@ -309,6 +309,53 @@ self-contained without a system `libpq`.
   coverage) and the Docker `pg-full`/provider/API-conformance lanes green.
   **Next:** increment 5 (deep fetch + materialization + graph observations),
   then increment 6 (developer surface + ledger closures).
+- **Phase 7 increment 5 COMPLETE — deep fetch, graph materialization, and the
+  graph observation lane.** `parallax.core.deep_fetch` (new scope) is a pure
+  planner: `plan(target, op, meta)` walks a `DeepFetch`'s declared paths into a
+  trie, deduping on `(relationship hop, effective concrete set)` so a shared
+  prefix and equivalent narrowings (`[Pet]` vs `[Cat, Dog]`) converge to one
+  level while a broad vs. narrowed hop over the same relationship stay
+  distinct; an ancestor-revisit hop is flagged `is_back_reference` (zero
+  round trips, resolved by identity instead of a query) and a path may not
+  continue past one. It never compiles or executes — `FetchLevel.
+  child_operation` only composes the neutral `in`-membership + propagated
+  as-of + declared relationship `orderBy` IR a level's own child read needs.
+  `parallax.snapshot.materialize` is the one assembler: `decode_row`/
+  `identity_key` (family-normalized, PK-keyed, coordinate-omitted — safe
+  within one graph's single pin) and `Assembler.attach_level` fan rows back
+  to parent nodes (to-many order-preserving, to-one, back-reference
+  resolution via the identity map, empty-level short-circuit). Wire
+  rendering stays per-view (a fresh `Node` per attach position, never
+  cross-view field-sharing) per m-snapshot-read-012's own diamond-position
+  contract; the identity map serves only back-reference resolution and
+  `identityChecks`. `parallax.snapshot.handle.find`/`find_history` is the
+  ONE production find executor (the per-level loop, `1 + L` round trips) —
+  the conformance engine and the developer `find` surface both call it, no
+  engine-local level loop anywhere. `compile_read` gained a
+  `relationship_order` kwarg so a declared relationship `orderBy`'s
+  NULLS-last rule applies only to nullable keys, never blanket-applied to
+  ordinary reads. The engine wires `run_graph_case`/`run_graphs_case` (single
+  and milestone-set snapshot reads), `identityChecks` evaluation by
+  JSON-Pointer walk over the pre-truncation graph, cycle-stub truncation on
+  the wire, and the scenario `mutate` action (in-memory field update, no
+  write-back — `access` stays deferred to the API Conformance Suite, and its
+  lane is dispatched out honestly by both compile and run). Twenty-four
+  corpus cases (11 `m-navigate` deep-fetch reads, 10 `m-snapshot-read`,
+  3 `m-inheritance` narrowed-view reads) are declared
+  `compileEligibility: run-only` (query-result-dependent — a child level's
+  own IN-list, or whether it executes at all, depends on the parent query's
+  result), discovered by running the refusing compile lane first (D-10);
+  `m-snapshot-read-009`'s scenario needs no declaration (structurally lane-
+  dispatched instead). `m-deep-fetch`/`m-snapshot-read` joined
+  `IMPLEMENTED_MODULES`. Updated counts (measured): unit lane 1437 passed / 77
+  skipped, compile sweep 164 passed / 67 skipped (231 total), rejected sweep
+  unchanged (25 passed / 10 skipped), `pg-full` run sweep 179 passed / 10
+  skipped (real Postgres — this increment's core proof), the combined Docker
+  database lane (`pg-full`/provider/adapter-smoke/API-conformance) 224 passed
+  / 10 skipped, `just oracle-test` 1408 passed. `just python-static` green
+  (Pyright 0 errors, every increment-5-owned file at 100% branch coverage,
+  100% diff coverage against `origin/main`). **Next:** increment 6 (developer
+  surface + ledger closures).
 
 ## Blockers
 

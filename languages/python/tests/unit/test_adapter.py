@@ -451,6 +451,152 @@ def test_run_case_rejected_write_is_a_reasoned_error() -> None:
     assert "Phase 8" in envelope["diagnostics"][0]["message"]
 
 
+# --------------------------------------------------------------------------- #
+# Read-result dispatch (`_read_observations`): `then.graph` / `then.graphs` /  #
+# `then.rows` are mutually exclusive, so `run_case` must route each read case  #
+# to its own rendering lane, not just the plain-rows fallback (increment 5).   #
+# --------------------------------------------------------------------------- #
+class _QueuePort:
+    """A fake `m-db-port` returning one canned response per `execute()` call,
+    in call order (the per-level find executor issues more than one query)."""
+
+    def __init__(self, responses: Sequence[list[Row]]) -> None:
+        self._responses = list(responses)
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        return self._responses.pop(0)
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        raise NotImplementedError
+
+
+_GRAPH_CASE = case_format.default_cases_dir() / "m-snapshot-read-011-back-reference-cycle.yaml"
+_GRAPHS_CASE = (
+    case_format.default_cases_dir() / "m-snapshot-read-013-history-edge-pinned-graphs.yaml"
+)
+
+
+def test_run_case_graph_observation_reports_the_assembled_graph_and_identity_checks() -> None:
+    # `then.graph` (a snapshot graph, not a bare rows list) routes through
+    # `run_graph_case`; the envelope carries `graph`, `roundTrips`, AND
+    # `identityChecks` when the case declares them.
+    port = _QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "name": "Ada",
+                    "sku": "A-100",
+                    "qty": 5,
+                    "price": decimal.Decimal("10.50"),
+                    "active": True,
+                    "ordered_on": dt.date(2024, 1, 5),
+                }
+            ],
+            [
+                {
+                    "id": 12,
+                    "order_id": 1,
+                    "sku": "B-200",
+                    "quantity": 1,
+                    "shipped_on": dt.date(2024, 2, 15),
+                },
+                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+            ],
+        ]
+    )
+    envelope = adapter.run_case(_GRAPH_CASE, "postgres", port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    assert envelope["observations"]["roundTrips"] == 2
+    assert envelope["observations"]["graph"]["Order"][0]["id"] == 1
+    assert envelope["observations"]["identityChecks"] == [
+        {"left": "/then/graph/Order/0", "right": "/then/graph/Order/0/items/0/order", "same": True},
+        {"left": "/then/graph/Order/0", "right": "/then/graph/Order/0/items/1/order", "same": True},
+    ]
+    # The whole envelope round-trips through the wire (json.dumps).
+    assert json.loads(json.dumps(envelope)) == envelope
+
+
+_GRAPH_CASE_NO_IDENTITY_CHECKS = (
+    case_format.default_cases_dir() / "m-snapshot-read-003-null-to-one.yaml"
+)
+
+
+def test_run_case_graph_observation_omits_identity_checks_when_the_case_declares_none() -> None:
+    # A `then.graph` case with no declared `identityChecks` carries no such key
+    # at all in the envelope (the OTHER branch of `_read_observations`' optional
+    # `identityChecks` — the test above pins the declared-and-present branch).
+    port = _QueuePort(
+        [
+            [
+                {"id": 101, "order_id": 1, "order_item_id": None, "code": "NEW"},
+                {
+                    "id": 201,
+                    "order_id": 1,
+                    "order_item_id": 11,
+                    "code": "PICKED",
+                },
+            ],
+            [
+                {
+                    "id": 11,
+                    "order_id": 1,
+                    "sku": "A-100",
+                    "quantity": 2,
+                    "shipped_on": None,
+                }
+            ],
+        ]
+    )
+    envelope = adapter.run_case(_GRAPH_CASE_NO_IDENTITY_CHECKS, "postgres", port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    assert "identityChecks" not in envelope["observations"]
+    assert json.loads(json.dumps(envelope)) == envelope
+
+
+def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> None:
+    # `then.graphs` (a milestone-set snapshot read) routes through
+    # `run_graphs_case`; the envelope's `observations["graphs"]` carries the
+    # chronologically ordered per-milestone pin+graph entries.
+    from parallax.core.base import INFINITY
+
+    port = _QueuePort(
+        [
+            [
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": decimal.Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                    "out_z": INFINITY,
+                },
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": decimal.Decimal("50.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                },
+            ]
+        ]
+    )
+    envelope = adapter.run_case(_GRAPHS_CASE, "postgres", port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    assert envelope["observations"]["roundTrips"] == 1
+    graphs = envelope["observations"]["graphs"]
+    assert [g["pin"]["processingDate"] for g in graphs] == [
+        "2024-01-01T00:00:00+00:00",
+        "2024-04-01T00:00:00+00:00",
+    ]
+    assert json.loads(json.dumps(envelope)) == envelope
+
+
 def test_run_case_refuses_unsupported_write_forms_before_execution() -> None:
     # m-pk-gen-008: a reachable claimed writeSequence whose rows carry a DB-computed
     # marker ({increment: 3}) and a multi-row insert. The backbone review caught the

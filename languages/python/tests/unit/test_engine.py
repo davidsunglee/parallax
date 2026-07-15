@@ -13,6 +13,7 @@ import datetime as dt
 import decimal
 import uuid
 from collections.abc import Callable, Sequence
+from typing import cast
 
 import pytest
 
@@ -21,6 +22,18 @@ from parallax.core.base import InstantError
 from parallax.core.db_port import DbPort, Row
 
 pytestmark = pytest.mark.unit
+
+
+def _rows(row: Row, key: str) -> list[Row]:
+    """A graph leaf's relationship-attached rows, typed for test-side assertions
+    (`then.graph`'s wire shape is intentionally a plain ``dict[str, object]``)."""
+    return cast("list[Row]", row[key])
+
+
+def _entry(entry: dict[str, object], key: str) -> Row:
+    """A milestone-set `{pin, graph}` entry's own member, typed for test-side
+    assertions (`then.graphs`' wire shape is a plain ``dict[str, object]``)."""
+    return cast("Row", entry[key])
 
 
 class FakeDbPort:
@@ -506,3 +519,393 @@ def test_read_table_state_reads_each_physical_table_once() -> None:
     state = engine.read_table_state(port, meta, POSTGRES)
     assert set(state) == {"payment"}
     assert len(port.reads) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Graph reads (m-deep-fetch / m-snapshot-read, COR-3 Phase 7 increment 5): the #
+# `run_graph_case` / `run_graphs_case` rendering lane, and the internal graph- #
+# node serializer / identityChecks evaluator / scenario `mutate` action.       #
+# --------------------------------------------------------------------------- #
+class QueueDbPort:
+    """A fake `m-db-port` returning one canned response per `execute()` call."""
+
+    def __init__(self, responses: Sequence[list[Row]]) -> None:
+        self._responses = list(responses)
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        return self._responses.pop(0)
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        raise NotImplementedError
+
+
+def test_run_graph_case_renders_root_class_keyed_graph_with_relationships() -> None:
+    port = QueueDbPort(
+        [
+            [
+                {
+                    "id": 1,
+                    "name": "Ada",
+                    "sku": "A-100",
+                    "qty": 5,
+                    "price": decimal.Decimal("10.50"),
+                    "active": True,
+                    "ordered_on": dt.date(2024, 1, 5),
+                }
+            ],
+            [
+                {
+                    "id": 12,
+                    "order_id": 1,
+                    "sku": "B-200",
+                    "quantity": 1,
+                    "shipped_on": dt.date(2024, 2, 15),
+                },
+                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+            ],
+            [
+                {
+                    "id": 12,
+                    "order_id": 1,
+                    "sku": "B-200",
+                    "quantity": 1,
+                    "shipped_on": dt.date(2024, 2, 15),
+                },
+                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+            ],
+        ]
+    )
+    emissions, graph, round_trips, identity_checks = engine.run_graph_case(
+        _case("m-snapshot-read-001"), "postgres", port
+    )
+    assert round_trips == 3
+    assert len(emissions) == 3
+    assert identity_checks is None
+    assert [item["id"] for item in _rows(graph["Order"][0], "items")] == [12, 11]
+    assert _rows(graph["Order"][0], "itemsByShipDate")[0]["shipped_on"] == "2024-02-15"
+
+
+def test_run_graph_case_evaluates_identity_checks_over_the_assembled_graph() -> None:
+    port = QueueDbPort(
+        [
+            [
+                {
+                    "id": 1,
+                    "name": "Ada",
+                    "sku": "A-100",
+                    "qty": 5,
+                    "price": decimal.Decimal("10.50"),
+                    "active": True,
+                    "ordered_on": dt.date(2024, 1, 5),
+                }
+            ],
+            [
+                {
+                    "id": 12,
+                    "order_id": 1,
+                    "sku": "B-200",
+                    "quantity": 1,
+                    "shipped_on": dt.date(2024, 2, 15),
+                },
+                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+            ],
+        ]
+    )
+    _emissions, graph, round_trips, identity_checks = engine.run_graph_case(
+        _case("m-snapshot-read-011"), "postgres", port
+    )
+    assert round_trips == 2
+    assert identity_checks == [
+        {"left": "/then/graph/Order/0", "right": "/then/graph/Order/0/items/0/order", "same": True},
+        {"left": "/then/graph/Order/0", "right": "/then/graph/Order/0/items/1/order", "same": True},
+    ]
+    # The back-reference cycle position truncates to a PK-only stub in the wire
+    # rendering — the SAME position identityChecks proved is the root's own
+    # object, above, evaluated over the assembled (pre-truncation) graph.
+    assert _rows(graph["Order"][0], "items")[0]["order"] == {"id": 1}
+
+
+def test_render_node_does_not_stub_a_diamond_at_a_non_cyclic_position() -> None:
+    from parallax.snapshot import materialize
+
+    child = materialize.Node(fields={"id": 11, "name": "child"}, pk_columns=("id",))
+    root = materialize.Node(fields={"id": 1, "a": child, "b": child}, pk_columns=("id",))
+    rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage]
+    assert rendered["a"] == {"id": 11, "name": "child"}
+    assert rendered["b"] == {"id": 11, "name": "child"}
+
+
+def test_render_node_truncates_a_true_ancestor_cycle_to_a_pk_only_stub() -> None:
+    from parallax.snapshot import materialize
+
+    root = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    root.fields["self"] = root
+    rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage]
+    assert rendered["self"] == {"id": 1}
+
+
+def test_resolve_graph_pointer_rejects_a_malformed_pointer() -> None:
+    from parallax.snapshot import materialize
+
+    node = materialize.Node(fields={"id": 1}, pk_columns=("id",))
+    with pytest.raises(engine.EngineError, match="malformed"):
+        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage]
+            _case("m-snapshot-read-011"), {"Order": [node]}, "/nonsense"
+        )
+
+
+def test_apply_mutate_step_updates_the_targeted_nodes_fields_in_place() -> None:
+    from parallax.snapshot import materialize
+
+    node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
+    engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+        _case("m-snapshot-read-010"), step, [[node]]
+    )
+    assert node.fields["name"] == "Mutant"
+
+
+def test_apply_mutate_step_raises_when_the_target_step_materialized_zero_nodes() -> None:
+    step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
+    with pytest.raises(engine.EngineError, match="expected exactly one"):
+        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+            _case("m-snapshot-read-010"), step, [[]]
+        )
+
+
+def test_apply_mutate_step_raises_when_the_target_step_materialized_many_nodes() -> None:
+    from parallax.snapshot import materialize
+
+    nodes = [materialize.Node(fields={}, pk_columns=()), materialize.Node(fields={}, pk_columns=())]
+    step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
+    with pytest.raises(engine.EngineError, match="expected exactly one"):
+        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+            _case("m-snapshot-read-010"), step, [nodes]
+        )
+
+
+def test_apply_mutate_step_raises_when_set_is_not_a_mapping() -> None:
+    from parallax.snapshot import materialize
+
+    node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    step = {"action": "mutate", "on": 0, "set": "not-a-mapping"}
+    with pytest.raises(engine.EngineError, match="needs a `set` mapping"):
+        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+            _case("m-snapshot-read-010"), step, [[node]]
+        )
+
+
+def test_apply_mutate_step_raises_on_an_out_of_range_on_index() -> None:
+    step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
+    with pytest.raises(engine.EngineError, match="invalid `on`"):
+        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage]
+            _case("m-snapshot-read-010"), step, [[]]
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Docker-free error paths (m-conformance-adapter's lane-honest ``EngineError``  #
+# wrapping): a compiled/found operation that fails inside `m-sql` / `m-navigate`#
+# / `m-temporal-read` is caught and re-raised as one `EngineError`, never a     #
+# leaked lower-layer exception type.                                           #
+# --------------------------------------------------------------------------- #
+def test_compile_read_case_wraps_a_sql_gen_error() -> None:
+    case = _synthetic(
+        {
+            "model": "models/orders.yaml",
+            "when": {
+                "targetEntity": "Order",
+                "operation": {"eq": {"attr": "Order.doesNotExist", "value": 1}},
+            },
+        }
+    )
+    with pytest.raises(engine.EngineError, match="names no attribute"):
+        engine.compile_read_case(case, "postgres")
+
+
+def test_run_graph_case_wraps_a_temporal_read_error_from_the_find_executor() -> None:
+    case = _synthetic(
+        {
+            "model": "models/policy.yaml",
+            "when": {
+                "targetEntity": "Policy",
+                "operation": {
+                    "asOf": {
+                        "operand": {"all": {}},
+                        "asOfAttr": "Policy.notAnAxis",
+                        "date": "now",
+                    }
+                },
+            },
+            "then": {"graph": {}},
+        }
+    )
+    with pytest.raises(engine.EngineError, match="undeclared axis"):
+        engine.run_graph_case(case, "postgres", QueueDbPort([]))
+
+
+def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
+    from parallax.core.base import INFINITY
+
+    port = QueueDbPort(
+        [
+            [
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": decimal.Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                    "out_z": INFINITY,
+                },
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": decimal.Decimal("50.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                },
+            ]
+        ]
+    )
+    emissions, graphs, round_trips = engine.run_graphs_case(
+        _case("m-snapshot-read-013"), "postgres", port
+    )
+    assert round_trips == 1
+    assert len(emissions) == 1
+    assert [_entry(g, "pin")["processingDate"] for g in graphs] == [
+        "2024-01-01T00:00:00+00:00",
+        "2024-04-01T00:00:00+00:00",
+    ]
+    assert [_rows(_entry(g, "graph"), "InvoiceLine")[0]["amount"] for g in graphs] == [
+        "50.00",
+        "75.00",
+    ]
+
+
+def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
+    case = _synthetic(
+        {
+            "model": "models/invoice.yaml",
+            "when": {
+                "targetEntity": "InvoiceLine",
+                "operation": {
+                    "history": {"operand": {"all": {}}, "asOfAttr": "InvoiceLine.notAnAxis"}
+                },
+            },
+            "then": {"graphs": []},
+        }
+    )
+    with pytest.raises(engine.EngineError, match="undeclared axis"):
+        engine.run_graphs_case(case, "postgres", QueueDbPort([]))
+
+
+def test_render_value_recurses_into_a_nested_value_object_document() -> None:
+    from parallax.snapshot import materialize
+
+    node = materialize.Node(
+        fields={"id": 1, "address": {"street": "x", "geo": {"country": "NO"}}},
+        pk_columns=("id",),
+    )
+    rendered = engine._render_node(node, frozenset())  # pyright: ignore[reportPrivateUsage]
+    assert rendered["address"] == {"street": "x", "geo": {"country": "NO"}}
+
+
+def test_resolve_graph_pointer_rejects_a_path_continuing_past_a_scalar() -> None:
+    from parallax.snapshot import materialize
+
+    node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    with pytest.raises(engine.EngineError, match="does not resolve"):
+        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage]
+            _case("m-snapshot-read-011"), {"Order": [node]}, "/then/graph/Order/0/name/x"
+        )
+
+
+def test_resolve_graph_pointer_rejects_a_pointer_resolving_to_a_non_node() -> None:
+    from parallax.snapshot import materialize
+
+    node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    with pytest.raises(engine.EngineError, match="does not name a graph node"):
+        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage]
+            _case("m-snapshot-read-011"), {"Order": [node]}, "/then/graph/Order/0/name"
+        )
+
+
+def test_check_action_step_rejects_a_non_mutate_verb() -> None:
+    with pytest.raises(engine.EngineError, match="graded by the API"):
+        engine._check_action_step(  # pyright: ignore[reportPrivateUsage]
+            _case("m-snapshot-read-010"), {"action": "access"}
+        )
+
+
+def test_compile_scenario_case_snapshot_lane_requires_target_entity_and_find() -> None:
+    when = {
+        "scenario": [
+            {"action": "mutate", "on": 0, "set": {"x": 1}},
+            {"targetEntity": "Order"},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    with pytest.raises(engine.EngineError, match="needs `targetEntity` and `find`"):
+        engine.compile_scenario_case(case, "postgres")
+
+
+def test_compile_scenario_case_snapshot_lane_wraps_a_sql_gen_error() -> None:
+    when = {
+        "scenario": [
+            {"targetEntity": "Order", "find": {"eq": {"attr": "Order.nope", "value": 1}}},
+            {"action": "mutate", "on": 0, "set": {"x": 1}},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    with pytest.raises(engine.EngineError, match="names no attribute"):
+        engine.compile_scenario_case(case, "postgres")
+
+
+def test_run_scenario_case_snapshot_lane_requires_target_entity_and_find() -> None:
+    when = {
+        "scenario": [
+            {"targetEntity": "Order"},
+            {"action": "mutate", "on": 0, "set": {"x": 1}},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    with pytest.raises(engine.EngineError, match="needs `targetEntity` and `find`"):
+        engine.run_scenario_case(case, "postgres", QueueDbPort([]))
+
+
+def test_run_scenario_case_snapshot_lane_wraps_an_error_from_the_find_executor() -> None:
+    when = {
+        "scenario": [
+            {"targetEntity": "Order", "find": {"eq": {"attr": "Order.nope", "value": 1}}},
+            {"action": "mutate", "on": 0, "set": {"x": 1}},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    with pytest.raises(engine.EngineError, match="names no attribute"):
+        engine.run_scenario_case(case, "postgres", QueueDbPort([]))
+
+
+def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -> None:
+    port = FakeWritePort(
+        find_rows=[
+            {
+                "id": 1,
+                "name": "Ada",
+                "sku": "A-100",
+                "qty": 5,
+                "price": decimal.Decimal("10.50"),
+                "active": True,
+                "ordered_on": dt.date(2024, 1, 5),
+            }
+        ]
+    )
+    emissions, round_trips = engine.run_scenario_case(
+        _case("m-snapshot-read-010"), "postgres", port
+    )
+    assert round_trips == 2
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/2/find"]
+    assert len(port.reads) == 2
+    assert len(port.writes) == 0

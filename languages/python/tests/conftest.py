@@ -6,7 +6,7 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -108,6 +108,67 @@ def compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]])
         else:
             raise AssertionError(f"observed row unmatched: {row!r}\n  expected pool: {remaining!r}")
     assert not remaining, f"expected rows unmatched: {remaining!r}"
+
+
+# --------------------------------------------------------------------------- #
+# Graph comparison (m-case-format `then.graph` / `then.graphs` leaves): a      #
+# recursive structural comparison over nested dicts/lists, sharing the same   #
+# exact-Decimal / wire-normalized scalar rules `compare_rows` uses.           #
+# --------------------------------------------------------------------------- #
+def wire_value_deep(value: object) -> object:
+    from parallax.conformance import engine
+
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[str, object]", value)
+        return {key: wire_value_deep(v) for key, v in mapping.items()}
+    if isinstance(value, list):
+        items = cast("list[object]", value)
+        return [wire_value_deep(v) for v in items]
+    return engine.wire_value(value)
+
+
+def _values_equal(observed: object, expected: object) -> bool:
+    if isinstance(expected, Mapping):
+        expected_map = cast("Mapping[str, object]", expected)
+        if not isinstance(observed, Mapping):
+            return False
+        observed_map = cast("Mapping[str, object]", observed)
+        return set(observed_map) == set(expected_map) and all(
+            _values_equal(observed_map[key], expected_map[key]) for key in expected_map
+        )
+    if isinstance(expected, list):
+        expected_items = cast("list[object]", expected)
+        if not isinstance(observed, list):
+            return False
+        observed_items = cast("list[object]", observed)
+        if len(observed_items) != len(expected_items):
+            return False
+        if all(_values_equal(o, e) for o, e in zip(observed_items, expected_items, strict=True)):
+            return True
+        # A to-many value-object member's element order is UNSPECIFIED
+        # (m-value-object); fall back to order-insensitive multiset matching —
+        # a declared relationship `orderBy`'s exact order already matched above.
+        remaining = list(expected_items)
+        for item in observed_items:
+            for index, candidate in enumerate(remaining):
+                if _values_equal(item, candidate):
+                    del remaining[index]
+                    break
+            else:
+                return False
+        return True
+    return _scalar_equal(observed, expected)
+
+
+def compare_graph(observed: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
+    """Assert one assembled `then.graph` / `then.graphs` leaf equals ``expected``
+    (m-case-format), both sides normalized through the same wire-value rules
+    `compare_rows` uses for a flat row."""
+    observed_wire = wire_value_deep(dict(observed))
+    expected_wire = wire_value_deep(dict(expected))
+    assert _values_equal(observed_wire, expected_wire), (
+        f"graph mismatch:\n  observed: {observed_wire!r}\n  expected: {expected_wire!r}"
+    )
 
 
 # Database-backed checks skipped because Docker/Postgres was unavailable — printed

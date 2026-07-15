@@ -31,17 +31,18 @@ from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
 from parallax.core.sql_gen import (
-    FamilyVariantPlan,
     ResultForm,
     SqlGenError,
     Statement,
+    apply_family_variant,
     compile_read,
     family_variant_plan,
 )
 from parallax.core.temporal_read import TemporalReadError, inject_as_of, resolve_pinned_instants
 from parallax.core.unit_work import instructions, plan_flush
 from parallax.core.unit_work.instructions import WriteInstruction
-from parallax.snapshot.handle import WriteLoweringError, lower_write
+from parallax.snapshot import materialize
+from parallax.snapshot.handle import WriteLoweringError, find, find_history, lower_write
 
 __all__ = [
     "Emission",
@@ -54,6 +55,8 @@ __all__ = [
     "load_case_metamodel",
     "read_table_state",
     "run_error_case",
+    "run_graph_case",
+    "run_graphs_case",
     "run_read_case",
     "run_rejected_case",
     "run_scenario_case",
@@ -226,25 +229,165 @@ def run_read_case(
     managed = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
     emission = Emission("/operation", statement.sql, statement.binds)
     plan = family_variant_plan(meta, target, operation)
-    rows = [_materialize_family_variant(wire_row(row), plan) for row in managed]
+    rows = [apply_family_variant(wire_row(row), plan) for row in managed]
     return [emission], rows, 1
-
-
-def _materialize_family_variant(row: Row, plan: FamilyVariantPlan | None) -> Row:
-    if plan is None:
-        return row
-    materialized = dict(row)
-    raw = materialized.pop(plan.column)
-    if plan.kind == "tag":
-        assert plan.tag_map is not None
-        materialized["familyVariant"] = plan.tag_map[cast("str", raw)]
-    else:
-        materialized["familyVariant"] = raw
-    return materialized
 
 
 def _driver_binds(binds: Sequence[object]) -> list[object]:
     return list(binds)
+
+
+# --------------------------------------------------------------------------- #
+# Graph reads (m-deep-fetch / m-snapshot-read, COR-3 Phase 7 increment 5): the #
+# production find executor (`parallax.snapshot.handle`) does EVERY level's own #
+# compile/execute/materialize — no engine-local level loop. This lane only     #
+# deserializes the case's operation, calls the shared executor, and renders    #
+# its neutral `materialize.Node`s to the wire `graph` / `graphs` observation.  #
+# --------------------------------------------------------------------------- #
+def run_graph_case(
+    case: case_format.Case, dialect_name: str, port: DbPort
+) -> tuple[list[Emission], dict[str, list[Row]], int, list[dict[str, object]] | None]:
+    """Run a single-graph deep-fetch / snapshot read, rendering its assembled
+    neutral nodes to the wire `then.graph` shape (root-class-keyed) and, for a
+    case declaring `then.identityChecks`, evaluating each declared reference-
+    identity assertion over the ASSEMBLED (pre-truncation) graph.
+    """
+    target, operation_doc = _read_target_and_operation(case)
+    meta = load_case_metamodel(case)
+    dialect = dialect_for(dialect_name)
+    try:
+        raw_op = deserialize(operation_doc)
+        result = find(raw_op, meta, dialect, target, port)
+    except (
+        OperationError,
+        SqlGenError,
+        TemporalReadError,
+        materialize.MaterializeError,
+        KeyError,
+    ) as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    emissions = [
+        Emission("/operation", statement.sql, statement.binds)
+        for statement in result.execution.statements
+    ]
+    graph_wire = _render_graph(target, result.nodes)
+    identity_checks = _evaluate_identity_checks(case, target, result.nodes)
+    return emissions, graph_wire, result.execution.round_trips, identity_checks
+
+
+def run_graphs_case(
+    case: case_format.Case, dialect_name: str, port: DbPort
+) -> tuple[list[Emission], list[dict[str, object]], int]:
+    """Run a milestone-set (`history` / `asOfRange`) snapshot read, rendering the
+    executor's ordered per-milestone graphs to the wire `then.graphs` shape:
+    an array of `{pin, graph}` entries, each pin keyed by declared as-of
+    attribute name."""
+    target, operation_doc = _read_target_and_operation(case)
+    meta = load_case_metamodel(case)
+    dialect = dialect_for(dialect_name)
+    try:
+        raw_op = deserialize(operation_doc)
+        result = find_history(raw_op, meta, dialect, target, port)
+    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    emissions = [
+        Emission("/operation", statement.sql, statement.binds)
+        for statement in result.execution.statements
+    ]
+    graphs_wire: list[dict[str, object]] = [
+        {
+            "pin": {name: wire_value(instant) for name, instant in graph.pin.items()},
+            "graph": _render_graph(target, graph.nodes),
+        }
+        for graph in result.graphs
+    ]
+    return emissions, graphs_wire, result.execution.round_trips
+
+
+def _render_graph(target: str, nodes: Sequence[materialize.Node]) -> dict[str, list[Row]]:
+    """The wire `then.graph` shape: root-class-keyed, each root row rendered
+    through :func:`_render_node` (back-reference cycles truncate to a PK-only
+    stub; a diamond at a non-cyclic position keeps its full value)."""
+    return {target: [_render_node(node, frozenset()) for node in nodes]}
+
+
+def _render_node(node: materialize.Node, visiting: frozenset[int]) -> Row:
+    """Render one assembled node to wire JSON: a node whose identity is ALREADY
+    on the current recursion path (a true back-reference cycle, m-case-format
+    "Back-reference cycles") truncates to a PK-only stub instead of recursing
+    again; every other position — including a diamond reached a second time
+    from a DIFFERENT, non-ancestor position — renders its full value.
+    """
+    node_id = id(node)
+    if node_id in visiting:
+        return {column: wire_value(node.fields[column]) for column in node.pk_columns}
+    nested = visiting | {node_id}
+    return {key: _render_value(value, nested) for key, value in node.fields.items()}
+
+
+def _render_value(value: object, visiting: frozenset[int]) -> object:
+    if isinstance(value, materialize.Node):
+        return _render_node(value, visiting)
+    if isinstance(value, list):
+        return [_render_value(item, visiting) for item in cast("list[object]", value)]
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[str, object]", value)
+        return {key: _render_value(v, visiting) for key, v in mapping.items()}
+    return wire_value(value)
+
+
+def _evaluate_identity_checks(
+    case: case_format.Case, target: str, nodes: Sequence[materialize.Node]
+) -> list[dict[str, object]] | None:
+    """The case's declared `then.identityChecks` (m-case-format / m-conformance-
+    adapter), each evaluated as Python reference identity (`is`) over the
+    ASSEMBLED graph — resolved by walking the SAME JSON-Pointer path the case
+    declares, against the neutral nodes directly (never the truncated wire
+    JSON, so a stubbed cycle position still resolves to its real referent).
+    Returns ``None`` when the case declares no identityChecks at all.
+    """
+    then = case.document.get("then")
+    declared = (
+        cast("Mapping[str, object]", then).get("identityChecks")
+        if isinstance(then, Mapping)
+        else None
+    )
+    if not declared:
+        return None
+    root_map = {target: nodes}
+    results: list[dict[str, object]] = []
+    for check in cast("list[Mapping[str, object]]", declared):
+        left = _resolve_graph_pointer(case, root_map, cast("str", check["left"]))
+        right = _resolve_graph_pointer(case, root_map, cast("str", check["right"]))
+        results.append({"left": check["left"], "right": check["right"], "same": left is right})
+    return results
+
+
+def _resolve_graph_pointer(
+    case: case_format.Case, root_map: Mapping[str, Sequence[materialize.Node]], pointer: str
+) -> materialize.Node:
+    """Resolve a `/then/graph/<RootClass>/<index>/<key>/<index>/...` JSON Pointer
+    against the assembled (pre-truncation) graph, alternating list-index and
+    relationship-key navigation exactly as the pointer's own segments do."""
+    parts = pointer.lstrip("/").split("/")
+    if len(parts) < 4 or parts[0] != "then" or parts[1] != "graph":
+        raise EngineError(f"{case.path.name}: identityChecks pointer {pointer!r} is malformed")
+    current: object = root_map[parts[2]][int(parts[3])]
+    for part in parts[4:]:
+        if isinstance(current, materialize.Node):
+            current = current.fields[part]
+        elif isinstance(current, list):
+            current = cast("list[object]", current)[int(part)]
+        else:
+            raise EngineError(
+                f"{case.path.name}: identityChecks pointer {pointer!r} does not resolve "
+                "against the assembled graph"
+            )
+    if not isinstance(current, materialize.Node):
+        raise EngineError(
+            f"{case.path.name}: identityChecks pointer {pointer!r} does not name a graph node"
+        )
+    return current
 
 
 # --------------------------------------------------------------------------- #
@@ -397,8 +540,121 @@ def _emissions(pointer_statements: Sequence[tuple[str, Sequence[Statement]]]) ->
     ]
 
 
+def _has_action_step(steps: Sequence[Mapping[str, object]]) -> bool:
+    """Whether a scenario carries at least one lifecycle **action** step
+    (m-case-format "Lifecycle action steps") — the snapshot-read scenario shape
+    (`mutate`) this module lowers/runs through a SEPARATE path from the keyed
+    unit-of-work M4 scenarios (`write` / `find` steps only), never mixed."""
+    return any("action" in step for step in steps)
+
+
+def _check_action_step(case: case_format.Case, step: Mapping[str, object]) -> None:
+    """Refuse an action verb this lane does not grade (only `mutate` does; an
+    `action: access` case — m-snapshot-read's closed-world absence witness — is
+    dispatched to the api-conformance lane before reaching here at all, per the
+    adapter's own lane guard)."""
+    action = step.get("action")
+    if action != "mutate":
+        raise EngineError(
+            f"{case.path.name}: scenario action {action!r} is graded by the API "
+            "Conformance Suite (api-conformance lane), not compile/run"
+        )
+
+
+def _compile_snapshot_scenario(
+    case: case_format.Case, dialect_name: str, steps: Sequence[Mapping[str, object]]
+) -> tuple[list[Emission], int]:
+    """Compile a snapshot-read scenario's own find steps (instance-form,
+    unlocked — a snapshot materialization is not a locking object find);
+    `mutate` contributes no emissions and no round trips at all (m-snapshot-
+    read: an in-memory-only change, never SQL)."""
+    meta = load_case_metamodel(case)
+    dialect = dialect_for(dialect_name)
+    emissions: list[Emission] = []
+    try:
+        for index, step in enumerate(steps):
+            if "action" in step:
+                _check_action_step(case, step)
+                continue
+            target = step.get("targetEntity")
+            find_doc = step.get("find")
+            if not isinstance(target, str) or find_doc is None:
+                raise EngineError(
+                    f"{case.path.name}: scenario find step needs `targetEntity` and `find`"
+                )
+            operation = _canonicalize_read(find_doc, meta.entity(target), meta)
+            statement = compile_read(operation, meta, dialect, target, result_form="instance")
+            emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
+    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    return emissions, len(emissions)
+
+
+def _run_snapshot_scenario(
+    case: case_format.Case,
+    dialect_name: str,
+    port: DbPort,
+    steps: Sequence[Mapping[str, object]],
+) -> tuple[list[Emission], int]:
+    """Run a snapshot-read scenario: each find step materializes fresh neutral
+    nodes through the SAME production find executor every graph read uses (no
+    engine-local level loop); `mutate` applies its `set` directly to the
+    referenced step's own materialized node — a plain in-memory field update,
+    zero round trips, nothing at the port (m-snapshot-read closed world: a
+    snapshot node is never enrolled in a unit of work, so mutating it can never
+    write back)."""
+    meta = load_case_metamodel(case)
+    dialect = dialect_for(dialect_name)
+    emissions: list[Emission] = []
+    round_trips = 0
+    results: list[list[materialize.Node]] = []
+    for index, step in enumerate(steps):
+        if "action" in step:
+            _apply_mutate_step(case, step, results)
+            results.append([])
+            continue
+        target = step.get("targetEntity")
+        find_doc = step.get("find")
+        if not isinstance(target, str) or find_doc is None:
+            raise EngineError(
+                f"{case.path.name}: scenario find step needs `targetEntity` and `find`"
+            )
+        try:
+            raw_op = deserialize(find_doc)
+            result = find(raw_op, meta, dialect, target, port)
+        except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+            raise EngineError(f"{case.path.name}: {exc}") from exc
+        for statement in result.execution.statements:
+            emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
+        round_trips += result.execution.round_trips
+        results.append(list(result.nodes))
+    return emissions, round_trips
+
+
+def _apply_mutate_step(
+    case: case_format.Case, step: Mapping[str, object], results: Sequence[list[materialize.Node]]
+) -> None:
+    _check_action_step(case, step)
+    on = step.get("on")
+    if not isinstance(on, int) or not (0 <= on < len(results)):
+        raise EngineError(f"{case.path.name}: `mutate` names an invalid `on` step index {on!r}")
+    nodes = results[on]
+    if len(nodes) != 1:
+        raise EngineError(
+            f"{case.path.name}: `mutate` targets step {on}, which materialized "
+            f"{len(nodes)} nodes (expected exactly one to mutate)"
+        )
+    set_values = step.get("set")
+    if not isinstance(set_values, Mapping):
+        raise EngineError(f"{case.path.name}: a `mutate` action needs a `set` mapping")
+    nodes[0].fields.update(cast("Mapping[str, object]", set_values))
+
+
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
     """Compile a scenario case to its ordered per-step emissions and round-trip count."""
+    steps = _scenario_steps(case)
+    if _has_action_step(steps):
+        return _compile_snapshot_scenario(case, dialect_name, steps)
     emissions = _emissions(
         [(step.pointer, step.statements) for step in _scenario_lowered(case, dialect_name)]
     )
@@ -418,6 +674,9 @@ def run_scenario_case(
 ) -> tuple[list[Emission], int]:
     """Run a scenario: each write step commits (or aborts) as one unit of work, each
     find reads committed state. Reports the ordered emissions and total round trips."""
+    steps = _scenario_steps(case)
+    if _has_action_step(steps):
+        return _run_snapshot_scenario(case, dialect_name, port, steps)
     dialect = dialect_for(dialect_name)
     lowered = _scenario_lowered(case, dialect_name)
     for step in lowered:

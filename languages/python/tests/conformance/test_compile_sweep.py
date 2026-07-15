@@ -100,17 +100,33 @@ _INHERITANCE_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
 # lower byte-identically since m-temporal-read's default-injection rule makes a
 # defaulted root indistinguishable from an explicit `asOf(..., now)` one) — all
 # row-form, compiled and run below. The 11 deep-fetch-bearing navigate reads
-# (012-017/019-022/024) stay reasoned-refused: deep fetch itself is increment 5.
+# (012-017/019-022/024) stay OUT of this set: increment 5 declares them
+# `compileEligibility: run-only` (query-result-dependent), so `compile` answers
+# the defined `run-only` envelope, never `ok` — asserted by
+# `test_run_only_cases_are_never_compiled`, not this exercised set.
 _NAVIGATE_READS: Final[frozenset[str]] = frozenset(
     {f"m-navigate-{n:03d}" for n in (*range(1, 12), 18, 23)}
 )
 # Polymorphic relationship-navigation reads (m-navigate x m-inheritance): the TPH
 # abstract-root/abstract-subtype/narrowed-to-concrete/narrowed-to-abstract-subtype
 # hops over animal.yaml (060-063) and the TPCS grouped-OR abstract-root/narrowed
-# hops over document.yaml (070-071) — all row-form.
+# hops over document.yaml (070-071) — all row-form. The 3 narrowed-deep-fetch
+# inheritance reads (065-067) stay OUT of this set for the same declared-run-only
+# reason as the navigate deep-fetch reads above.
 _NAVIGATE_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-060", "m-inheritance-061", "m-inheritance-062", "m-inheritance-063"}
     | {"m-inheritance-070", "m-inheritance-071"}
+)
+# Milestone-set snapshot reads (COR-3 Phase 7 increment 5, m-snapshot-read
+# "Milestone-set graphs"): `history` / `asOfRange` compile to a single, pure
+# statement — no deep-fetch levels, so no query-result-dependent child binds —
+# and stay UNDECLARED (compile-eligible), unlike every other graph-bearing case
+# this increment reaches (D-10's query-result-dependent tail declares only the
+# deep-fetch-bearing ones). Run grades the `then.graphs` observation (per-
+# milestone edge-pinned graphs), not `then.rows`, but compile only cares about
+# the one golden statement.
+_SNAPSHOT_READ_MILESTONE_SET_READS: Final[frozenset[str]] = frozenset(
+    {"m-snapshot-read-013", "m-snapshot-read-014"}
 )
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
@@ -124,6 +140,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _INHERITANCE_TEMPORAL_READS
     | _NAVIGATE_READS
     | _NAVIGATE_INHERITANCE_READS
+    | _SNAPSHOT_READ_MILESTONE_SET_READS
 )
 
 # The keyed, non-temporal unit-of-work write cases M4 grades byte-exact (COR-3 Phase 6
@@ -136,7 +153,18 @@ _WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
     f"m-unit-work-{n:03d}" for n in (1, 2, 5, 6, 9, 11, 12)
 )
 _WRITE_SEQUENCES: Final[frozenset[str]] = frozenset({"m-unit-work-003", "m-unit-work-007"})
-WRITE_EXERCISED: Final[frozenset[str]] = _WRITE_SCENARIOS | _WRITE_SEQUENCES
+# The snapshot-read `mutate` scenario (m-snapshot-read-010, COR-3 Phase 7 increment
+# 5): no write DML at all — its 2 `find` steps' emissions/round-trips grade byte-
+# exact through the SAME per-step emission machinery `_assert_write_emissions`
+# already applies to a keyed scenario's steps (the `mutate` action step
+# contributes an empty statement group, `write_golden_statements` above); its
+# find-step wire rows equal `expectRows` through `test_write_run_sweep`'s
+# existing port-capture grading, proving the mutate step's own zero round trips
+# left the re-read observing the UNCHANGED original row (no write-back).
+_SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-010"})
+WRITE_EXERCISED: Final[frozenset[str]] = (
+    _WRITE_SCENARIOS | _WRITE_SEQUENCES | _SNAPSHOT_MUTATE_SCENARIOS
+)
 
 _REACHABLE = sweep.reachable_cases()
 _SCHEMA = adapter_schema()
@@ -150,13 +178,18 @@ def wire_binds(binds: list[object]) -> list[object]:
 
 def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[object]]]:
     """The ordered golden DML for a write case: a writeSequence's flat `then.statements`,
-    or a scenario's per-step `when.scenario[i].statements` flattened in step order."""
+    or a scenario's per-step `when.scenario[i].statements` flattened in step order.
+
+    A lifecycle **action** step (m-case-format) carries no `statements` key at
+    all when it emits no SQL (a snapshot-read `mutate`'s in-memory-only change);
+    it contributes an empty group rather than a missing-key error.
+    """
     doc = case_document(case)
     if case.shape == "writeSequence":
         groups = [cast("list[dict[str, Any]]", doc["then"]["statements"])]
     else:
         steps = cast("list[dict[str, Any]]", doc["when"]["scenario"])
-        groups = [cast("list[dict[str, Any]]", step["statements"]) for step in steps]
+        groups = [cast("list[dict[str, Any]]", step.get("statements", [])) for step in steps]
     out: list[tuple[str, list[object]]] = []
     for group in groups:
         for entry in group:
@@ -243,6 +276,15 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
         )
     if case.shape != "read":
         return f"compile of {case.shape}-shape cases lands with the write path (COR-3 Phase 6/8)"
+    if envelope.get("status") == "run-only":
+        # Declared `compileEligibility: run-only` (D-10's query-result-dependent
+        # tail, enumerated by increment 5's refusing compile lane): permanent, not
+        # a forward promise — `test_run_only_cases_are_never_compiled` asserts the
+        # envelope, and `run` grades the case instead.
+        reason = envelope.get("diagnostics", [{}])[0].get("message", "")
+        return (
+            f"declared compile-run-only ({reason}); graded by run instead (m-conformance-adapter)"
+        )
     message = envelope.get("diagnostics", [{}])[0].get("message", "")
     return f"read lowering deferred past the Phase-5 read path (ledger D-12): {message}"
 
@@ -315,9 +357,17 @@ def test_every_unexercised_reachable_read_is_refused() -> None:
     """After the read-projection amendment closed D-11, the only reads left out of
     the exercised set are the ones the Phase-5 compiler refuses with an ``error``
     envelope (D-12: inheritance-family reads, to-many value-object array traversal) —
-    never an ``ok``-status read whose projection silently mismatches the golden."""
+    never an ``ok``-status read whose projection silently mismatches the golden.
+
+    A DECLARED run-only read (`compileEligibility`, COR-3 Phase 7 increment 5's
+    query-result-dependent deep-fetch tail) is exempt: its envelope is the
+    defined ``run-only`` answer, not ``error`` — asserted instead by
+    `test_run_only_cases_are_never_compiled`, which every such case must join.
+    """
     for case in _REACHABLE:
         if case.shape != "read" or case.case_id in COMPILE_EXERCISED:
+            continue
+        if engine.eligibility(case) is not None:
             continue
         envelope = adapter.compile_case(case.path, "postgres")
         assert envelope["status"] == "error", (case.case_id, envelope)
@@ -363,3 +413,31 @@ def test_error_and_boundary_lane_partition() -> None:
     for case in boundaries:
         assert case_document(case).get("lane") == "api-conformance", case.case_id
         assert engine.eligibility(case) is not None, case.case_id
+
+
+def test_scenario_lane_dispatch_is_honest() -> None:
+    """Every reachable scenario-shape case whose top-level `lane` is
+    `api-conformance` (m-snapshot-read-009's `action: access` closed-world
+    witness — its per-language absence surfacing needs the developer-facing
+    surface a later increment builds) answers a lane-honest `error` from
+    `compile` — the SAME `_boundary_lane_error` precedent, extended to a second
+    shape (m-case-format "Case lanes"). It carries NO `compileEligibility`
+    declaration (neither closed reason — `single-connection` /
+    `query-result-dependent` — honestly describes why; the lane dispatch alone
+    is the compile-time refusal), unlike a boundary case's mechanical
+    run-only backstop.
+    """
+    lane_dispatched = [
+        c
+        for c in _REACHABLE
+        if c.shape == "scenario" and case_document(c).get("lane") == "api-conformance"
+    ]
+    assert lane_dispatched, "the reachable intersection lost its scenario api-conformance-lane case"
+    for case in lane_dispatched:
+        assert engine.eligibility(case) is None, case.case_id
+        envelope = adapter.compile_case(case.path, "postgres")
+        assert envelope["status"] == "error", (case.case_id, envelope)
+        # `run` answers the SAME lane-honest error, never touching a port at all
+        # (a `None` port would raise loudly on any attempted use — it never is).
+        run_envelope = adapter.run_case(case.path, "postgres", cast("Any", None))
+        assert run_envelope["status"] == "error", (case.case_id, run_envelope)

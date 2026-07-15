@@ -26,6 +26,14 @@ work), ``m-temporal-read`` (a pinned as-of value propagates per hop — the reas
 module exists at all, since the DAG forbids ``m-sql`` from importing
 ``m-temporal-read``), and ``m-inheritance`` (a relationship target may be a
 polymorphic position; its temporal declaration lives on the family root).
+
+:func:`resolve_relationship` and :func:`hop_as_of_terms` are exported (COR-3 Phase 7
+increment 5) so ``parallax.core.deep_fetch`` — the sole downstream ``m-navigate``
+dependent per the DQ5 amendment — resolves each deep-fetch path segment's
+relationship and composes each per-level child query's own propagated as-of
+predicate through the SAME primitives this module's own hop canonicalization uses,
+rather than re-deriving temporal/relationship knowledge the DAG already lets it reach
+only through this module.
 """
 
 from __future__ import annotations
@@ -57,7 +65,7 @@ from parallax.core.op_algebra import (
 )
 from parallax.core.temporal_read import AXIS_ORDER, attr_ref_for_column, conjunction_terms
 
-__all__ = ["canonicalize"]
+__all__ = ["canonicalize", "hop_as_of_terms", "resolve_relationship"]
 
 _EMPTY_PINS: Mapping[Axis, str] = MappingProxyType({})
 
@@ -169,13 +177,20 @@ def _hop_inner(
 ) -> Operation | None:
     """The hop's rewritten interior: its own navigation walked, then its own
     per-hop as-of term (if temporal) appended after (m-navigate As-of propagation)."""
-    relationship = _resolve_relationship(rel, meta)
+    relationship = resolve_relationship(rel, meta)
     target_entity = meta.entity(relationship.related_entity)
     walked = _walk(inner, meta, root_pins) if inner is not None else None
     return _inject_hop_as_of(walked, target_entity, meta, root_pins)
 
 
-def _resolve_relationship(rel_ref: str, meta: Metamodel) -> Relationship:
+def resolve_relationship(rel_ref: str, meta: Metamodel) -> Relationship:
+    """Resolve a ``Class.relationship`` reference to its declared :class:`Relationship`.
+
+    Exported so `parallax.core.deep_fetch` (the sole downstream `m-navigate`
+    dependent, per the DQ5 core amendment) resolves each deep-fetch path
+    segment's relationship through the SAME lookup this module's own hop
+    canonicalization uses, rather than re-deriving it.
+    """
     class_name, _, member_name = rel_ref.partition(".")
     entity = meta.entity(class_name)
     for relationship in entity.relationships:
@@ -201,6 +216,38 @@ def _temporal_declarer(meta: Metamodel, entity: Entity) -> Entity:
     return inheritance.family_root(meta, entity)
 
 
+def hop_as_of_terms(
+    target_entity: Entity, meta: Metamodel, root_pins: Mapping[Axis, str]
+) -> tuple[Operation, ...]:
+    """The per-axis as-of term(s) for a hop's ``target_entity`` (m-navigate
+    "As-of propagation"): empty for a non-temporal target; one term per its own
+    declared axis (two for a bounded past instant), business-axis-first — the
+    root's pinned instant for that axis (``root_pins``) when the root itself
+    pinned a specific past moment, else **latest**.
+
+    Exported (alongside :func:`resolve_relationship`) so `parallax.core.deep_fetch`
+    composes the IDENTICAL per-hop as-of predicate for each deep-fetch child
+    level, matched by axis exactly as a `navigate` / `exists` / `notExists` hop's
+    own interior is rewritten by :func:`_inject_hop_as_of` below (which now
+    builds on this same term derivation).
+    """
+    declarer = _temporal_declarer(meta, target_entity)
+    if not declarer.as_of_attributes:
+        return ()
+    terms: list[Operation] = []
+    for aoa in sorted(declarer.as_of_attributes, key=lambda attribute: AXIS_ORDER[attribute.axis]):
+        from_ref = attr_ref_for_column(declarer, aoa.from_column)
+        to_ref = attr_ref_for_column(declarer, aoa.to_column)
+        instant = root_pins.get(aoa.axis)
+        if instant is None:
+            terms.append(Comparison(op="eq", attr=to_ref, value=INFINITY_LITERAL))
+        else:
+            upper_op = "greaterThanEquals" if aoa.to_is_inclusive else "greaterThan"
+            terms.append(Comparison(op="lessThanEquals", attr=from_ref, value=instant))
+            terms.append(Comparison(op=upper_op, attr=to_ref, value=instant))
+    return tuple(terms)
+
+
 def _inject_hop_as_of(
     inner: Operation | None,
     target_entity: Entity,
@@ -219,22 +266,11 @@ def _inject_hop_as_of(
     non-temporal (or axis-undeclared) root simply never populates ``root_pins`` for
     that axis.
     """
-    declarer = _temporal_declarer(meta, target_entity)
-    if not declarer.as_of_attributes:
+    terms = hop_as_of_terms(target_entity, meta, root_pins)
+    if not terms:
         return inner
-    terms: list[Operation] = []
-    for aoa in sorted(declarer.as_of_attributes, key=lambda attribute: AXIS_ORDER[attribute.axis]):
-        from_ref = attr_ref_for_column(declarer, aoa.from_column)
-        to_ref = attr_ref_for_column(declarer, aoa.to_column)
-        instant = root_pins.get(aoa.axis)
-        if instant is None:
-            terms.append(Comparison(op="eq", attr=to_ref, value=INFINITY_LITERAL))
-        else:
-            upper_op = "greaterThanEquals" if aoa.to_is_inclusive else "greaterThan"
-            terms.append(Comparison(op="lessThanEquals", attr=from_ref, value=instant))
-            terms.append(Comparison(op=upper_op, attr=to_ref, value=instant))
     if inner is None:
-        conjuncts: tuple[Operation, ...] = tuple(terms)
+        conjuncts: tuple[Operation, ...] = terms
     else:
         conjuncts = (*conjunction_terms(inner), *terms)
     return conjuncts[0] if len(conjuncts) == 1 else And(operands=conjuncts)

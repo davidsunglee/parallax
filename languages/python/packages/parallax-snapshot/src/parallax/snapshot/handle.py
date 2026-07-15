@@ -39,17 +39,23 @@ forbids ``m-sql`` from ever seeing a temporal wrapper.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, cast
 
-from parallax.core import navigate, op_algebra
+from parallax.core import deep_fetch, navigate, op_algebra
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import Entity, Metamodel, column_order
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.sql_gen import Statement, compile_read
-from parallax.core.temporal_read import inject_as_of, resolve_pinned_instants
+from parallax.core.dialect import POSTGRES, Dialect, LockMode
+from parallax.core.sql_gen import Statement, apply_family_variant, compile_read, family_variant_plan
+from parallax.core.temporal_read import (
+    AXIS_ORDER,
+    Edge,
+    inject_as_of,
+    milestone_edge,
+    resolve_pinned_instants,
+)
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -66,13 +72,21 @@ from parallax.core.unit_work import (
     instructions,
     run_unit_of_work,
 )
+from parallax.snapshot import materialize
 
 __all__ = [
     "Database",
+    "ExecutedStatement",
+    "Execution",
+    "FindResult",
+    "HistoryFindResult",
+    "MilestoneGraph",
     "Transaction",
     "TransactionOptionConflictError",
     "WriteLoweringError",
     "connect",
+    "find",
+    "find_history",
     "lower_write",
 ]
 
@@ -243,6 +257,239 @@ def _members(entity: Entity) -> dict[str, tuple[str, bool]]:
     for value_object in entity.value_objects:
         members[value_object.name] = (value_object.column, True)
     return members
+
+
+# --------------------------------------------------------------------------- #
+# The production find executor (m-deep-fetch / m-snapshot-read; COR-3 Phase 7  #
+# increment 5). The module DAG's snapshot-handle scope already reaches         #
+# `materialize` + `m-sql` + `m-db-port`, so the deliberate DAG-forbidden edges  #
+# (`m-deep-fetch`/`m-snapshot-read` may not import `m-sql`; `m-sql` may not    #
+# import `m-navigate`/`m-temporal-read`) are composed HERE, exactly like       #
+# `lower_write` composes the write-side `m-unit-work` x `m-sql` edge above —   #
+# one executor, production-owned: `db.find`/`tx.find` (a later increment) and  #
+# the conformance run lane both call the SAME `find`/`find_history`, wrap or   #
+# render the SAME neutral `materialize.Node`s, and no engine-local level loop  #
+# exists anywhere in this codebase.                                            #
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True, slots=True)
+class ExecutedStatement:
+    """One statement this executor actually ran (or would run — the caller's own
+    compile-eligibility posture is not this module's concern)."""
+
+    sql: str
+    binds: tuple[object, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Execution:
+    """The ordered record of every statement one `find` / `find_history` call
+    executed — the production analogue of the conformance adapter's `emissions`
+    + `roundTrips`, built once here and consumed by both."""
+
+    statements: tuple[ExecutedStatement, ...]
+
+    @property
+    def round_trips(self) -> int:
+        return len(self.statements)
+
+
+@dataclass(frozen=True, slots=True)
+class FindResult:
+    """A single-graph find's root nodes plus its execution record."""
+
+    nodes: tuple[materialize.Node, ...]
+    execution: Execution
+
+
+@dataclass(frozen=True, slots=True)
+class MilestoneGraph:
+    """One `history` / `asOfRange` milestone's own edge-pinned graph (m-snapshot-
+    read "The whole-graph pin"): ``pin`` maps each declared as-of attribute name
+    to its edge (from-instant) coordinate for this milestone; ``nodes`` is the
+    root-only graph at that milestone (a v1 milestone-set graph carries no
+    includes, m-case-format)."""
+
+    pin: Mapping[str, object]
+    nodes: tuple[materialize.Node, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryFindResult:
+    """A milestone-set find's ordered per-milestone graphs plus its (single-
+    statement) execution record."""
+
+    graphs: tuple[MilestoneGraph, ...]
+    execution: Execution
+
+
+def find(
+    op: op_algebra.Operation,
+    meta: Metamodel,
+    dialect: Dialect,
+    target: str,
+    port: DbPort,
+    *,
+    lock: LockMode | None = None,
+) -> FindResult:
+    """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
+    "one query per non-empty relationship level"; m-snapshot-read "round trips").
+
+    ``op`` is the read's raw operation: a `DeepFetch` node, or any other read
+    operation planned with zero levels (root-only instance-form materialization
+    — a plain snapshot read, or the source find behind a scenario `mutate`
+    action). Canonicalizes the root query (`m-temporal-read` + `m-navigate`,
+    composed here — the M2 precedent), compiles and executes it, then for each
+    planned level: gathers the distinct non-null parent keys; an empty gathered
+    set attaches the empty/null relationship result and issues no child SQL; a
+    back-reference level issues no SQL either (resolved via the assembler's own
+    graph-local identity map); otherwise compiles and executes ONE child query
+    (declared relationship ordering rendered through the dialect's NULLs-last
+    rule), applies `familyVariant` materialization (`m-sql`) to its rows, and
+    feeds the assembler. Returns the root's own materialized nodes — reached
+    from them, every attached level's nodes hang off `Node.fields` — plus the
+    full ordered execution record.
+    """
+    plan_ = deep_fetch.plan(target, op, meta)
+    statements: list[ExecutedStatement] = []
+
+    root_statement = compile_read(
+        plan_.root_operation, meta, dialect, target, result_form="instance", lock=lock
+    )
+    root_rows = _execute(port, dialect, root_statement, statements)
+    root_plan = family_variant_plan(meta, target, plan_.root_operation)
+    root_rows = [apply_family_variant(row, root_plan) for row in root_rows]
+
+    assembler = materialize.Assembler(meta=meta)
+    root_nodes = assembler.materialize_root(target, root_rows)
+
+    level_rows: list[Sequence[Row]] = []
+    level_nodes: list[list[materialize.Node]] = []
+    for level in plan_.levels:
+        parent_rows, parent_nodes = _parent_data(
+            level.parent, root_rows, root_nodes, level_rows, level_nodes
+        )
+        if level.is_back_reference:
+            nodes = assembler.attach_level(level, parent_nodes, parent_rows, None)
+            level_rows.append(())
+            level_nodes.append(nodes)
+            continue
+        keys = _distinct_keys(parent_rows, level.parent_column)
+        if not keys:
+            nodes = assembler.attach_level(level, parent_nodes, parent_rows, None)
+            level_rows.append(())
+            level_nodes.append(nodes)
+            continue
+        child_target, child_op = level.child_operation(keys)
+        child_statement = compile_read(
+            child_op,
+            meta,
+            dialect,
+            child_target,
+            result_form="instance",
+            lock=lock,
+            relationship_order=True,
+        )
+        rows = _execute(port, dialect, child_statement, statements)
+        variant_plan = family_variant_plan(meta, child_target, child_op)
+        rows = [apply_family_variant(row, variant_plan) for row in rows]
+        nodes = assembler.attach_level(level, parent_nodes, parent_rows, rows)
+        level_rows.append(rows)
+        level_nodes.append(nodes)
+
+    return FindResult(nodes=tuple(root_nodes), execution=Execution(tuple(statements)))
+
+
+def find_history(
+    op: op_algebra.Operation, meta: Metamodel, dialect: Dialect, target: str, port: DbPort
+) -> HistoryFindResult:
+    """The milestone-set snapshot read (m-snapshot-read "The whole-graph pin";
+    m-case-format "Milestone-set graphs"): `history` / `asOfRange` return the
+    full matching milestone SET in one statement, partitioned here by each
+    row's own edge (`~parallax.core.temporal_read.milestone_edge`) into one
+    root-only graph per milestone — no levels (a v1 milestone-set graph carries
+    no includes). Rows are grouped in chronological edge order (business axis
+    first, matching the corpus's own authored `then.graphs` order) rather than
+    relying on the database's unspecified natural row order.
+    """
+    plan_ = deep_fetch.plan(target, op, meta)
+    if plan_.levels:
+        raise ValueError(  # pragma: no cover - m-case-format: v1 carries no includes
+            "a milestone-set (history / asOfRange) read carries no deep-fetch levels"
+        )
+    entity = meta.entity(target)
+    statement = compile_read(plan_.root_operation, meta, dialect, target, result_form="instance")
+    statements: list[ExecutedStatement] = []
+    rows = _execute(port, dialect, statement, statements)
+
+    order: list[Edge] = []
+    groups: dict[Edge, list[Row]] = {}
+    for row in sorted(rows, key=lambda row: _edge_sort_key(entity, row)):
+        edge = milestone_edge(entity, row)
+        if edge not in groups:
+            groups[edge] = []
+            order.append(edge)
+        groups[edge].append(row)
+
+    graphs = tuple(
+        MilestoneGraph(
+            pin=_edge_pin(entity, edge),
+            nodes=tuple(materialize.Assembler(meta=meta).materialize_root(target, groups[edge])),
+        )
+        for edge in order
+    )
+    return HistoryFindResult(graphs=graphs, execution=Execution(tuple(statements)))
+
+
+def _execute(
+    port: DbPort, dialect: Dialect, statement: Statement, statements: list[ExecutedStatement]
+) -> list[Row]:
+    statements.append(ExecutedStatement(statement.sql, statement.binds))
+    return port.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
+
+
+def _parent_data(
+    parent: deep_fetch.ParentRef,
+    root_rows: Sequence[Row],
+    root_nodes: Sequence[materialize.Node],
+    level_rows: Sequence[Sequence[Row]],
+    level_nodes: Sequence[list[materialize.Node]],
+) -> tuple[Sequence[Row], Sequence[materialize.Node]]:
+    if isinstance(parent, deep_fetch.RootRef):
+        return root_rows, root_nodes
+    return level_rows[parent.index], level_nodes[parent.index]
+
+
+def _distinct_keys(rows: Sequence[Row], column: str) -> list[op_algebra.Scalar]:
+    """The distinct NON-NULL values of ``column`` across ``rows``, in first-
+    encountered order (m-deep-fetch: the gathered set is unordered for grading
+    purposes — an implementation MUST NOT sort at runtime to match a fixture —
+    so encounter order is as good as any, and deterministic run to run).
+
+    A gathered key is always a declared PRIMARY-KEY (or unique FK) attribute's
+    own value — one of `m-op-algebra`'s neutral scalar types — even though the
+    port's own row values are typed as plain ``object`` (`m-db-port`); the cast
+    reflects that runtime invariant, not a widening of the membership node's
+    own typed-literal contract.
+    """
+    values = dict.fromkeys(row[column] for row in rows if row[column] is not None)
+    return cast("list[op_algebra.Scalar]", list(values))
+
+
+def _edge_sort_key(entity: Entity, row: Row) -> tuple[object, ...]:
+    """Business axis first, then processing (m-sql's own bind-order convention),
+    each axis's own from-column value — used only to chronologically order a
+    milestone-set read's grouped graphs, never to select or filter rows."""
+    ordered = sorted(entity.as_of_attributes, key=lambda aoa: AXIS_ORDER[aoa.axis])
+    return tuple(row[aoa.from_column] for aoa in ordered)
+
+
+def _edge_pin(entity: Entity, edge: Edge) -> dict[str, object]:
+    """The milestone-set `then.graphs` `pin` entry: each declared as-of attribute
+    name mapped to its edge (from-instant) coordinate on that axis."""
+    return {
+        aoa.name: (edge.business if aoa.axis == "business" else edge.processing)
+        for aoa in entity.as_of_attributes
+    }
 
 
 # --------------------------------------------------------------------------- #

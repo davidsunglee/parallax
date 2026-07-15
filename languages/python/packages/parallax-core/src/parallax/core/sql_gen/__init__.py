@@ -14,6 +14,7 @@ from parallax.core.sql_gen.compile import (
     ResultForm,
     SqlGenError,
     Statement,
+    apply_family_variant,
     compile_read,
     family_variant_plan,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "ResultForm",
     "SqlGenError",
     "Statement",
+    "apply_family_variant",
     "compile_read",
     "family_variant_plan",
 ]

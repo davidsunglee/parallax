@@ -10,6 +10,7 @@ until the compile/run lanes come online (COR-3 Phase 5+).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -142,6 +143,22 @@ def _boundary_lane_error(case: case_format.Case) -> engine.EngineError:
     )
 
 
+def _scenario_lane_error(case: case_format.Case) -> engine.EngineError:
+    # A `scenario`-shape case whose top-level `lane` is `api-conformance` (m-
+    # snapshot-read-009, `action: access`'s closed-world absence witness): its
+    # observable is a per-language surfacing (the developer-facing surface a
+    # later increment builds), not a wire-observable golden this lane can grade
+    # — the SAME `_boundary_lane_error` precedent, extended to a second shape.
+    return engine.EngineError(
+        f"{case.path.name}: this scenario's lane is `api-conformance` (m-case-format); "
+        "the API Conformance Suite verifies it, not compile/run"
+    )
+
+
+def _is_scenario_lane_dispatched(case: case_format.Case) -> bool:
+    return case.shape == "scenario" and case.document.get("lane") == "api-conformance"
+
+
 def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission], int]:
     """Compile a claimed case by shape (read / scenario / writeSequence).
 
@@ -151,6 +168,8 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
     falls through to the read compiler, which raises the loud non-read
     ``EngineError`` the caller renders as an ``error``.
     """
+    if _is_scenario_lane_dispatched(case):
+        raise _scenario_lane_error(case)
     if case.shape == "scenario":
         return engine.compile_scenario_case(case, dialect)
     if case.shape == "writeSequence":
@@ -166,21 +185,49 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
     return engine.compile_read_case(case, dialect)
 
 
+def _read_observations(case: case_format.Case, dialect: str, port: DbPort) -> dict[str, Any]:
+    """A read case's own observation shape (m-case-format "Read result form"):
+    ``then.graphs`` (a milestone-set snapshot read) / ``then.graph`` (a deep
+    fetch or a plain instance-form materialization) / ``then.rows`` (row-form) —
+    a case satisfies its `then` requirement with exactly one, so exactly one of
+    these three run lanes ever answers it."""
+    then = case.document.get("then")
+    has_graphs = isinstance(then, Mapping) and "graphs" in then
+    has_graph = isinstance(then, Mapping) and "graph" in then
+    if has_graphs:
+        emissions, graphs, round_trips = engine.run_graphs_case(case, dialect, port)
+        return {
+            "emissions": emissions,
+            "observations": {"graphs": graphs, "roundTrips": round_trips},
+        }
+    if has_graph:
+        emissions, graph, round_trips, identity_checks = engine.run_graph_case(case, dialect, port)
+        observations: dict[str, Any] = {"graph": graph, "roundTrips": round_trips}
+        if identity_checks is not None:
+            observations["identityChecks"] = identity_checks
+        return {"emissions": emissions, "observations": observations}
+    emissions, rows, round_trips = engine.run_read_case(case, dialect, port)
+    return {"emissions": emissions, "observations": {"rows": rows, "roundTrips": round_trips}}
+
+
 def _run(
     case: case_format.Case, dialect: str, port: DbPort
 ) -> tuple[list[engine.Emission], dict[str, Any]]:
     """Run a claimed case by shape, returning its emissions and observation envelope.
 
-    A read run records its observed ``rows``; a writeSequence run records the
-    committed ``tableState`` read back from the model tables (the
-    `m-conformance-adapter` write-sequence observation); an error run records the
-    raised failure's classification (``errorClass`` / ``nativeCode``). A scenario
-    run reports the contract observations (``roundTrips``); its per-step find rows
-    are observable at the injected port seam, where the run sweep grades them
+    A read run records its observed ``rows`` / ``graph`` / ``graphs``
+    (:func:`_read_observations`); a writeSequence run records the committed
+    ``tableState`` read back from the model tables (the `m-conformance-adapter`
+    write-sequence observation); an error run records the raised failure's
+    classification (``errorClass`` / ``nativeCode``). A scenario run reports the
+    contract observations (``roundTrips``); its per-step find rows are
+    observable at the injected port seam, where the run sweep grades them
     against each step's ``expectRows``. A rejected run touches no database and
     no port: it reports the classified ``rejectedRule`` with ``roundTrips: 0``
     (m-conformance-adapter, resolved DQ3/DQ8).
     """
+    if _is_scenario_lane_dispatched(case):
+        raise _scenario_lane_error(case)
     if case.shape == "scenario":
         emissions, round_trips = engine.run_scenario_case(case, dialect, port)
         return emissions, {"roundTrips": round_trips}
@@ -201,8 +248,8 @@ def _run(
     if case.shape == "rejected":
         rule = engine.run_rejected_case(case)
         return [], {"rejectedRule": rule, "roundTrips": 0}
-    emissions, rows, round_trips = engine.run_read_case(case, dialect, port)
-    return emissions, {"rows": rows, "roundTrips": round_trips}
+    result = _read_observations(case, dialect, port)
+    return result["emissions"], result["observations"]
 
 
 def _rejected_shape_run_only(adapter: Adapter) -> Envelope:
