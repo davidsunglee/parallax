@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from parallax.conformance.graph_models import Policy
+from parallax.conformance.read_models import DepositRate
 from parallax.conformance.story_models import Order
 from parallax.core.temporal_read import LATEST
 from parallax.snapshot.handle import Database, Snapshot
@@ -100,6 +101,17 @@ def mutation_has_no_writeback(db: Database) -> tuple[Any, Snapshot[Any]]:
     return mutated, reread
 
 
+def concrete_temporal_node_inherits_the_roots_pin(db: Database) -> Snapshot[Any]:
+    # `DepositRate` declares NO `as_of` of its own (`Rate`, the family root,
+    # does — the binding root-ownership decision); `.history(...)` still
+    # accepts `DepositRate`'s own inherited axis spelling
+    # (`_temporal_as_of_attributes`), and the strengthened fixtures/rate.yaml
+    # milestone history (m-inheritance-100) surfaces the closed historical
+    # correction and the current row as two distinct, edge-pinned nodes
+    # sharing one business key.
+    return db.find(DepositRate.where().history(axis="processing"))
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
     GraphStory(
         "m-snapshot-read-001",
@@ -142,5 +154,11 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "Mutating a snapshot node never writes back",
         "orders",
         mutation_has_no_writeback,
+    ),
+    GraphStory(
+        "m-inheritance-100",
+        "A concrete TPCS node inherits its root-declared pin/edge across a processing correction",
+        "rate",
+        concrete_temporal_node_inherits_the_roots_pin,
     ),
 )

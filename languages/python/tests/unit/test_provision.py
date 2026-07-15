@@ -126,6 +126,18 @@ def test_schema_statements_tpcs_temporal_pk_includes_the_root_declared_axes() ->
     assert "primary key (id, in_z)" in spot
 
 
+def test_schema_statements_tph_temporal_pk_includes_the_root_declared_axes() -> None:
+    # Instrument (models/instrument.yaml): a table-per-hierarchy family whose
+    # bitemporal axes are declared on the abstract ROOT and inherited by every
+    # concrete subtype — Bond/Stock declare NO `asOfAttributes` locally. The
+    # shared table's physical PK must still be the business key plus EACH
+    # axis's from-column, never just the business key alone.
+    (ddl,) = [
+        stmt for stmt in provision.schema_statements(_MODELS["instrument"]) if "instrument" in stmt
+    ]
+    assert "primary key (id, from_z, in_z)" in ddl
+
+
 def test_fixture_statements_tph_binds_the_tag_from_tagvalue_never_the_fixture_row() -> None:
     fixtures = provision.load_fixtures("models/payment.yaml")
     statements = provision.fixture_statements(_MODELS["payment"], fixtures)
@@ -144,6 +156,24 @@ def test_fixture_statements_tph_resolves_inherited_members_by_name() -> None:
     dog_sql, dog_binds = statements[0]
     assert "name" in dog_sql and "license_id" in dog_sql and "bark_volume" in dog_sql
     assert "Rex" in dog_binds and "L-100" in dog_binds
+
+
+def test_fixture_statements_load_multiple_milestones_sharing_one_business_key() -> None:
+    # fixtures/rate.yaml's DepositRate carries TWO processing milestones
+    # sharing business key id=1 (a closed historical correction plus the
+    # current row) — the temporal-PK fix (`(id, from_z, in_z)`, never `(id)`)
+    # is what admits the second row at all; this is the statement-generation
+    # half of that proof (the Docker-backed `m-inheritance-100` API-conformance
+    # story provisions it for real).
+    fixtures = provision.load_fixtures("models/rate.yaml")
+    statements = provision.fixture_statements(_MODELS["rate"], fixtures)
+    deposit_inserts = [
+        sql for sql, _binds in statements if sql.startswith("insert into deposit_rate")
+    ]
+    assert len(deposit_inserts) == 2
+    binds = [b for sql, b in statements if sql.startswith("insert into deposit_rate")]
+    ids = [row[0] for row in binds]
+    assert ids == [1, 1]  # same business key, both milestones
 
 
 def test_fixture_statements_tpcs_has_no_tag_assignment() -> None:

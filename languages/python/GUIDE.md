@@ -240,6 +240,27 @@ self-contained without a system `libpq`.
   sweep unchanged at 164, combined Docker lane 271 passed / 10 skipped,
   rejected sweep 25 passed / 10 skipped. **Phase 7 (the snapshot branch) is
   COMPLETE.** **Next:** Phase 8 (writes and correctness).
+- **Temporal root-ownership remediation round (core amendment, ADR 0026).**
+  Corrected a latent core-spec ambiguity: temporality is now normatively a
+  FAMILY-WIDE property — only the family root may declare `asOfAttributes`;
+  a descendant that redeclares, adds, or shadows an axis is rejected pre-SQL
+  (`inheritance-temporal-axes-not-root-owned`), regardless of the root's own
+  temporal state. `parallax.core.inheritance.validate` and the D-7 class
+  frontend (`EntityConfig(as_of=...)` on a family subclass) both enforce it;
+  every temporal consumer (as-of injection, pin/edge, history/range,
+  identity, propagation, TPH/TPCS DDL) resolves through the family root
+  uniformly. Four corpus cases added (two `when.model` rejected witnesses,
+  two concrete-target temporal reads); the `rate.yaml` fixture gained a
+  second processing milestone sharing one business key, exercising the
+  `(id, from_z, in_z)` temporal physical PK. Measured post-round: unit lane
+  (`pytest -m unit`) 1583 passed / 77 skipped; compile-sweep module
+  (`pytest -m compile_sweep`) 168 passed / 67 skipped; combined Docker lane
+  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 312
+  passed / 10 skipped; rejected sweep (`test_rejected_sweep.py`) 27 passed /
+  10 skipped; API-suite partition exact over 303 active cases (47 exercised
+  / 256 reasoned-skip); reference-harness `just oracle-test` 1421 passed
+  dual-dialect; slice tag counts `slice-mvp-1`/`slice-snapshot-1`/
+  `slice-managed-1` = 197 / 303 / 325 (`just core-dep-graph` profile gate).
 
 ## Blockers
 

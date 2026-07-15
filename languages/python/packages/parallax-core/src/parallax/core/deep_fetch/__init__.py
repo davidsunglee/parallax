@@ -189,9 +189,14 @@ def plan(target: str, op: Operation, meta: Metamodel) -> FetchPlan:
     with no relationships" case a plain snapshot read, or a milestone-set
     ``history`` / ``asOfRange`` read, needs — both funnel through the SAME root
     canonicalization this function performs). ``target`` is the read's queried
-    root entity (``targetEntity``).
+    root entity (``targetEntity``) — an inheritance participant (abstract root,
+    abstract subtype, or concrete subtype) declares no as-of axes of its own
+    when its family's axes live on the root (`m-inheritance`), so the root
+    query's as-of injection resolves through `inheritance.declaring_entity`
+    (the family root) rather than ``target``'s own (possibly empty) record.
     """
     root_entity = meta.entity(target)
+    temporal_entity = inheritance.declaring_entity(meta, root_entity)
     if isinstance(op, DeepFetch):
         root_raw: Operation = op.operand
         paths: tuple[tuple[PathSegment, ...], ...] = op.paths
@@ -199,8 +204,8 @@ def plan(target: str, op: Operation, meta: Metamodel) -> FetchPlan:
         root_raw = op
         paths = ()
 
-    root_pins = resolve_pinned_instants(root_raw, root_entity)
-    root_injected = inject_as_of(root_raw, root_entity)
+    root_pins = resolve_pinned_instants(root_raw, temporal_entity)
+    root_injected = inject_as_of(root_raw, temporal_entity)
     root_operation = navigate.canonicalize(root_injected, meta, root_pins)
 
     builder = _PlanBuilder(meta=meta, root_pins=root_pins)

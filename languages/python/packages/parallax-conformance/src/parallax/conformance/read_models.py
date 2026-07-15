@@ -3,9 +3,12 @@ build statements over: real-named mirrors of ``models/balance.yaml`` (a plain
 audit-only temporal entity), ``models/payment.yaml`` (table-per-hierarchy:
 ``Payment`` / ``CardPayment`` / ``CashPayment``), ``models/document.yaml``
 (table-per-concrete-subtype: ``Document`` / ``FinancialDocument`` / ``Invoice``
-/ ``Receipt`` / ``Memo`` / ``Folder``), and the NON-owner portion of
+/ ``Receipt`` / ``Memo`` / ``Folder``), the NON-owner portion of
 ``models/animal.yaml`` (table-per-hierarchy: ``Animal`` / ``Pet`` / ``Dog`` /
-``Cat``).
+``Cat``), and ``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL:
+``Rate`` / ``DepositRate`` / ``LoanRate`` — the root ALONE declares the
+family's as-of axes; the concrete subtypes declare none of their own, per the
+binding root-ownership decision, m-inheritance "Inherited members").
 
 Owned by ``parallax.conformance`` for the same reason ``story_models`` /
 ``graph_models`` are: ``read_stories.py`` is a real dev-only package module
@@ -40,14 +43,17 @@ __all__ = [
     "CardPayment",
     "CashPayment",
     "Cat",
+    "DepositRate",
     "Document",
     "Dog",
     "FinancialDocument",
     "Folder",
     "Invoice",
+    "LoanRate",
     "Memo",
     "Payment",
     "Pet",
+    "Rate",
     "Receipt",
 ]
 
@@ -194,3 +200,44 @@ class Cat(Pet, frozen=True):
     __parallax__ = EntityConfig(inheritance=Concrete(tag_value="cat"))
 
     indoor: Attr[bool | None] = Field(type="boolean", column="indoor", nullable=True, default=None)
+
+
+# --------------------------------------------------------------------------- #
+# Rate: table-per-concrete-subtype BITEMPORAL family (models/rate.yaml). The   #
+# root ALONE declares the family's as-of axes (m-inheritance "Inherited        #
+# members", the binding root-ownership decision); DepositRate/LoanRate        #
+# inherit them and declare NONE of their own.                                 #
+# --------------------------------------------------------------------------- #
+class Rate(Entity, frozen=True):
+    __parallax__ = EntityConfig(
+        namespace=_NS,
+        mutability="transactional",
+        inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
+        as_of=(
+            AsOfAttribute(
+                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            ),
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    amount: Attr[Decimal] = Field(type="decimal(18,2)")
+    business_from: Attr[dt.datetime] = Field(column="from_z")
+    business_to: Attr[dt.datetime] = Field(column="thru_z")
+    processing_from: Attr[dt.datetime] = Field(column="in_z")
+    processing_to: Attr[dt.datetime] = Field(column="out_z")
+
+
+class DepositRate(Rate, frozen=True):
+    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
+
+    grade: Attr[str | None] = Field(type="string", max_length=8, nullable=True)
+
+
+class LoanRate(Rate, frozen=True):
+    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
+
+    spread: Attr[Decimal | None] = Field(type="decimal(18,2)", nullable=True)

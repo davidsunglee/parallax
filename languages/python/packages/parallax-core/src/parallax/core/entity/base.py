@@ -220,7 +220,12 @@ class EntityConfig:
     exactly as for an ingested descriptor. The interval-bound scalar attributes
     (e.g. ``processing_from`` on ``in_z``) are declared as ordinary ``Attr``
     fields beside it, so the class carries no information absent from the
-    descriptor schema.
+    descriptor schema. Temporal axes are family-wide, not an ordinary
+    per-entity member (m-inheritance "Inherited members"): on a family
+    subclass (an abstract-subtype or concrete-subtype) ``as_of`` MUST be empty
+    — only the family's own root may declare it — and `_derive_inheritance`
+    rejects a subclass that does, at class-definition time
+    (``inheritance-temporal-axes-not-root-owned``).
 
     ``inheritance`` declares the same family's own vocabulary (ledger D-7,
     DQ2): a :class:`FamilyRoot` on the family's abstract root, a
@@ -265,6 +270,21 @@ def _current_metamodel() -> MetamodelRecord:
     registered so far — the statement frontend's own validation surface
     (``validate_operation`` needs a full metamodel, not a per-class record)."""
     return MetamodelRecord(entities=tuple(entity_records().values()))
+
+
+def _temporal_as_of_attributes(record: EntityRecord) -> tuple[AsOfAttribute, ...]:
+    """``record``'s EFFECTIVE as-of axes for the statement frontend's
+    ``.as_of()`` / ``.as_of_range()`` / ``.history()`` axis resolution: the
+    family root's declared axes for an inheritance participant (temporality is
+    a family-wide property, declared only on the root — m-inheritance), else
+    ``record``'s own. A concrete-subtype class's own compiled record carries no
+    ``as_of_attributes`` of its own when its family's axes live on the root, so
+    reading it directly here would wrongly refuse ``ConcreteType.where().as_of(...)``
+    as "declares no temporal dimension" for an inherited axis.
+    """
+    if record.inheritance is None:
+        return record.as_of_attributes
+    return _inheritance.declaring_entity(_current_metamodel(), record).as_of_attributes
 
 
 def _serialize_member(value: object) -> object:
@@ -490,6 +510,19 @@ def _derive_inheritance(
         raise EntityDefinitionError(
             f"{cls_name}: a family SUBCLASS cannot itself declare "
             "EntityConfig(inheritance=FamilyRoot(...)) — only the family's own root does"
+        )
+    if config.as_of:
+        # Temporal axes are family-wide metadata (the binding root-ownership
+        # decision, `inheritance-temporal-axes-not-root-owned`): only the
+        # family root may declare `EntityConfig(as_of=...)`; an abstract- or
+        # concrete-subtype family member declaring its own — even one
+        # verbatim-repeating the root's — is rejected here, at class-definition
+        # time, the same way a subclass-declared `table` or `FamilyRoot` is
+        # rejected above (m-inheritance "Inherited members").
+        raise EntityDefinitionError(
+            f"{cls_name}: a family SUBCLASS cannot declare EntityConfig(as_of=...) — "
+            "temporal axes are family-wide and only the family's own root may declare "
+            "them (inheritance-temporal-axes-not-root-owned)"
         )
     if isinstance(config.inheritance, Concrete):
         if config.table is not None:
@@ -777,10 +810,15 @@ class Entity(BaseModel, metaclass=EntityMeta):
         subtype-declared attribute referenced outside a compatible ``narrow``
         scope raises the moment this statement is built, never later — the
         statement-level ``.narrow(...)`` clause grants no retroactive scope to
-        an already-built ``where`` argument.
+        an already-built ``where`` argument. An inheritance participant's
+        temporal axes resolve through the family root
+        (`_temporal_as_of_attributes`), so a concrete-subtype class's
+        ``.as_of()`` / ``.as_of_range()`` / ``.history()`` accepts its
+        inherited ``ConcreteType.axis`` spelling even though the class's own
+        record declares no axis locally.
         """
         record = entity_record_of(cls)
-        as_of = record.as_of_attributes if record is not None else ()
+        as_of = _temporal_as_of_attributes(record) if record is not None else ()
         statement = build_statement(cls.__name__, predicates, as_of_attributes=as_of)
         validate_operation(cls.__name__, statement.predicate, _current_metamodel())
         return statement

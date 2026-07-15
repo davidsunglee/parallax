@@ -31,7 +31,7 @@ Deliberately ABSENT, each for its own reasoned-skip in ``api_suite.CASE_SKIP_REA
   already claims that canonical name in the single, global, process-wide
   entity registry and is test-only — the SAME Person/AnimalOwner-style
   collision ``read_models``'s own docstring documents for the animal family's
-  owner side, just for a different family;
+  owner side, just for a different family (ledger D-20);
 - the multi-concrete polymorphic PROJECTING reads (``m-inheritance-003``/
   ``-013``/``-015``/``-052``): a table-per-hierarchy multi-concrete row's own
   typed instance carries only its OWN concrete class's fields, never a
@@ -39,7 +39,7 @@ Deliberately ABSENT, each for its own reasoned-skip in ``api_suite.CASE_SKIP_REA
   table-per-concrete-subtype instance-form projection over 2+ resolved
   concretes has no goldened lowering at all yet (``SqlGenError``) — a genuine
   engine gap `db.find`'s instance-form materialization hits, not a
-  partition-honesty concern to paper over by grading around it.
+  partition-honesty concern to paper over by grading around it (ledger D-22).
 """
 
 from __future__ import annotations

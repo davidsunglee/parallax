@@ -1,20 +1,30 @@
 """D-7 inheritance class frontend (DQ2): unit-level no-drift proof against
 ``models/payment.yaml`` (table-per-hierarchy) and ``models/document.yaml``
-(table-per-concrete-subtype, COR-3 Phase 7 increment 6a). The full
-API-conformance no-drift guard extension is the next agent's job; this is the
+(table-per-concrete-subtype, COR-3 Phase 7 increment 6a). This is the
 build-time proof that ``parent`` / ``role`` derive from the Python class
 hierarchy and ``strategy`` / ``tag`` / ``tagValue`` thread through
 ``EntityConfig(inheritance=...)`` exactly as an ingested descriptor would.
+
+The API-conformance no-drift guard extension this docstring used to defer is
+DONE: `read_stories.py`'s Dog/CardPayment/Invoice examples (COR-3 Phase 7
+increment 6b / the Phase-7 implementation review remediation) already execute
+inheritance-family reads through the shipped surface against real Postgres.
+This file also proves the temporal composition's class-frontend spelling —
+``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL, the root ALONE
+declaring ``EntityConfig(as_of=...)``, COR-3 residual-finding remediation) —
+against the SAME installed ``Rate`` family the ``m-inheritance-100`` graph
+story queries, so its own definition never drifts from the corpus descriptor
+either.
 """
 
 from __future__ import annotations
 
 from typing import cast
 
-import inheritance_models as im
 import pytest
 import yaml
 
+import inheritance_models as im
 from parallax.conformance import case_format
 from parallax.core.descriptor import canonicalize
 from parallax.core.entity import descriptor_document, entity_record_of
@@ -53,6 +63,17 @@ def test_table_per_concrete_subtype_class_export_has_no_drift_from_document_yaml
     mine = descriptor_document(
         [im.Document, im.FinancialDocument, im.Invoice, im.Receipt, im.Memo, im.Folder]
     )
+    assert mine == corpus
+
+
+def test_temporal_tpcs_class_export_has_no_drift_from_rate_yaml() -> None:
+    # The root ALONE declares `as_of` (the binding root-ownership decision); the
+    # concrete subtypes declare none of their own — proving that spelling
+    # (`EntityConfig(as_of=...)` on `Rate`, absent on `DepositRate`/`LoanRate`)
+    # threads through exactly as the ingested descriptor's root-only
+    # `asOfAttributes` does.
+    corpus = _corpus("rate")
+    mine = descriptor_document([im.Rate, im.DepositRate, im.LoanRate])
     assert mine == corpus
 
 
@@ -119,3 +140,54 @@ def test_subclassing_a_non_family_entity_is_rejected() -> None:
 
         class NotAFamilyMember(Plain, frozen=True):  # pyright: ignore[reportUnusedClass]
             extra: Attr[int] = Field(type="int32", default=0)
+
+
+# --------------------------------------------------------------------------- #
+# Binding decision (COR-3 residual-finding remediation): temporal axes are     #
+# family-wide; only the family ROOT may declare `EntityConfig(as_of=...)`.    #
+# The class frontend rejects a subclass that declares its own, at class-      #
+# definition time, consistently with `parallax.core.inheritance.validate`'s   #
+# `inheritance-temporal-axes-not-root-owned` descriptor invariant.            #
+# --------------------------------------------------------------------------- #
+def test_concrete_subtype_declaring_its_own_as_of_is_rejected() -> None:
+    from parallax.core import Attr, EntityConfig, Field
+    from parallax.core.descriptor import AsOfAttribute
+    from parallax.core.entity.base import Concrete
+
+    with pytest.raises(Exception, match="family SUBCLASS cannot declare EntityConfig\\(as_of"):
+
+        class BadConcrete(im.Rate, frozen=True):  # pyright: ignore[reportUnusedClass]
+            __parallax__ = EntityConfig(
+                inheritance=Concrete(),
+                as_of=(
+                    AsOfAttribute(
+                        name="businessDate",
+                        from_column="from_z",
+                        to_column="thru_z",
+                        axis="business",
+                    ),
+                ),
+            )
+
+            extra: Attr[str | None] = Field(type="string", nullable=True, default=None)
+
+
+def test_abstract_subtype_declaring_its_own_as_of_is_rejected() -> None:
+    from parallax.core import Attr, EntityConfig, Field
+    from parallax.core.descriptor import AsOfAttribute
+
+    with pytest.raises(Exception, match="family SUBCLASS cannot declare EntityConfig\\(as_of"):
+
+        class BadAbstract(im.Rate, frozen=True):  # pyright: ignore[reportUnusedClass]
+            __parallax__ = EntityConfig(
+                as_of=(
+                    AsOfAttribute(
+                        name="businessDate",
+                        from_column="from_z",
+                        to_column="thru_z",
+                        axis="business",
+                    ),
+                )
+            )
+
+            extra: Attr[str | None] = Field(type="string", nullable=True, default=None)

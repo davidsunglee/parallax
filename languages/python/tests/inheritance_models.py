@@ -1,11 +1,14 @@
-"""Idiomatic entity classes mirroring the corpus's two inheritance families
+"""Idiomatic entity classes mirroring the corpus's inheritance families
 (D-7 inheritance class spelling, DQ2, COR-3 Phase 7 increment 6a):
 ``models/payment.yaml`` (table-per-hierarchy: ``Payment`` / ``CardPayment`` /
-``CashPayment``) and ``models/document.yaml`` (table-per-concrete-subtype, with
+``CashPayment``), ``models/document.yaml`` (table-per-concrete-subtype, with
 an intermediate abstract subtype and a polymorphic owner: ``Document`` /
-``FinancialDocument`` / ``Invoice`` / ``Receipt`` / ``Memo`` / ``Folder``).
-This module deliberately avoids ``from __future__ import annotations`` so the
-metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
+``FinancialDocument`` / ``Invoice`` / ``Receipt`` / ``Memo`` / ``Folder``), and
+``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL, the root ALONE
+declaring ``EntityConfig(as_of=...)``: ``Rate`` / ``DepositRate`` /
+``LoanRate``, COR-3 residual-finding remediation). This module deliberately
+avoids ``from __future__ import annotations`` so the metaclass reads the live
+``Attr[T]`` / ``Rel[T]`` objects directly.
 
 The corpus-named classes themselves are **re-exported** from
 ``parallax.conformance.read_models`` (the installed package's own mirror,
@@ -28,12 +31,15 @@ reliably regardless of which lane's files pytest collects first.
 from parallax.conformance.read_models import (
     CardPayment,
     CashPayment,
+    DepositRate,
     Document,
     FinancialDocument,
     Folder,
     Invoice,
+    LoanRate,
     Memo,
     Payment,
+    Rate,
     Receipt,
 )
 from parallax.core import Attr, EntityConfig, Field
@@ -42,12 +48,15 @@ from parallax.core.entity.base import Concrete
 __all__ = [
     "CardPayment",
     "CashPayment",
+    "DepositRate",
     "Document",
     "FinancialDocument",
     "Folder",
     "Invoice",
+    "LoanRate",
     "Memo",
     "Payment",
+    "Rate",
     "Receipt",
     "WirePayment",
 ]

@@ -19,6 +19,7 @@ from decimal import Decimal
 
 import pytest
 
+import inheritance_models as im
 import mirrored_models as mm
 from parallax.conformance import models
 from parallax.core.db_error import DatabaseError
@@ -212,6 +213,37 @@ def test_db_find_pins_an_explicit_as_of_statement() -> None:
     statement = mm.Balance.where(mm.Balance.id == 1).as_of(processing=LATEST)
     snapshot = db.find(statement)
     assert snapshot.pin.processing is LATEST
+
+
+def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge() -> None:
+    # `DepositRate` declares NO `as_of` of its own (`Rate`, the family root,
+    # does) — `_temporal_entity` (`parallax.snapshot.handle`) must resolve
+    # through the root to compute both the statement pin and the row's own
+    # milestone edge (COR-3 Phase 7 review remediation, P3/P4).
+    from parallax.core import LATEST, edge_of
+
+    port = _RecordingPort(
+        rows=[
+            {
+                "id": 1,
+                "amount": Decimal("2.50"),
+                "grade": "A",
+                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "thru_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
+                "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+                "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
+            }
+        ]
+    )
+    rate = models.load_models()["rate"]
+    db = Database.connect(port, rate, clock=FixedClock(_FIXED))
+    statement = im.DepositRate.where().as_of(processing=LATEST)
+    snapshot = db.find(statement)
+    assert snapshot.pin.processing is LATEST
+    assert snapshot.pin.business is None
+    edge = edge_of(snapshot.result())
+    assert edge.processing == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    assert edge.business == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 def _balance_history_rows() -> list[Row]:

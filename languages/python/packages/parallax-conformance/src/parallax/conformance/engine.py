@@ -166,16 +166,22 @@ def _canonicalize_read(operation_doc: object, entity: Entity, meta: Metamodel) -
     resulting plain predicate: the module DAG forbids ``m-sql`` from importing
     ``m-temporal-read``, so this composition site (the conformance engine, which
     may reference both) is the canonicalize step. ``inject_as_of`` is a strict
-    identity for a non-temporal target. ``parallax.core.navigate.canonicalize``
-    runs immediately after: it resolves the root's own pinned per-axis instant
-    (``resolve_pinned_instants``, read from the SAME raw operation) and injects
-    the matching per-hop as-of predicate into every ``navigate`` / ``exists`` /
-    ``notExists`` node the operation carries, however deeply nested — a strict
-    identity when the operation carries no navigation node at all.
+    identity for a non-temporal target. ``entity`` resolves through
+    `inheritance.declaring_entity` first: an inheritance participant's as-of
+    axes are declared on the family root alone (`m-inheritance`), so a
+    concrete- or abstract-subtype-target read's own record carries none of its
+    own — the root's axes are what ``inject_as_of`` must see.
+    ``parallax.core.navigate.canonicalize`` runs immediately after: it resolves
+    the root's own pinned per-axis instant (``resolve_pinned_instants``, read
+    from the SAME raw operation) and injects the matching per-hop as-of
+    predicate into every ``navigate`` / ``exists`` / ``notExists`` node the
+    operation carries, however deeply nested — a strict identity when the
+    operation carries no navigation node at all.
     """
     raw_op = deserialize(operation_doc)
-    root_pins = resolve_pinned_instants(raw_op, entity)
-    injected = inject_as_of(raw_op, entity)
+    temporal_entity = inheritance.declaring_entity(meta, entity)
+    root_pins = resolve_pinned_instants(raw_op, temporal_entity)
+    injected = inject_as_of(raw_op, temporal_entity)
     return navigate.canonicalize(injected, meta, root_pins)
 
 
@@ -403,6 +409,11 @@ def _resolve_graph_pointer(
 # path. A **writeSequence** lowers each entry independently (no cross-entry
 # coalescing — an insert-then-delete pair across two entries is two round trips, not
 # a cancellation) and executes the whole sequence in one transaction.
+#
+# This engine-local choreography still drives ``plan_flush``/``lower_write``
+# directly rather than the shipped ``db.transact`` entry points — the one-engine
+# end state (design 30) re-routes it through the production developer surface;
+# deferred to Phase 8's write-side re-route, ledger D-18.
 
 # The lowering failures the write lanes convert to a neutral :class:`EngineError`,
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer

@@ -284,10 +284,10 @@ def _wrap(
     # A temporal inheritance participant declares its as-of axes on the family
     # root (m-inheritance "Inherited members"), never re-declares them locally
     # on a concrete descendant — `inheritance.declaring_entity` resolves the
-    # entity that actually carries them (Spec-3 fix: a TPH/TPCS concrete node
-    # now gets its pin/edge attached), the same resolution `m-navigate`'s
-    # per-hop propagation and `m-snapshot-read`'s own identity/pk resolution
-    # already share.
+    # entity that actually carries them (a TPH/TPCS concrete node gets its
+    # pin/edge attached from the root's axes), the same resolution
+    # `m-navigate`'s per-hop propagation and `m-snapshot-read`'s own
+    # identity/pk resolution already share.
     declaring = inheritance.declaring_entity(meta, entity_record)
     if declaring.as_of_attributes:
         object.__setattr__(instance, _PIN_ATTR, pin)

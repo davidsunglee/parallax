@@ -73,6 +73,22 @@ Corpus case: `m-inheritance-071`
 op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))
 ```
 
+## A concrete TPCS node inherits its root-declared pin/edge across a processing correction
+
+Corpus case: `m-inheritance-100`
+
+```python
+def concrete_temporal_node_inherits_the_roots_pin(db: Database) -> Snapshot[Any]:
+    # `DepositRate` declares NO `as_of` of its own (`Rate`, the family root,
+    # does — the binding root-ownership decision); `.history(...)` still
+    # accepts `DepositRate`'s own inherited axis spelling
+    # (`_temporal_as_of_attributes`), and the strengthened fixtures/rate.yaml
+    # milestone history (m-inheritance-100) surfaces the closed historical
+    # correction and the current row as two distinct, edge-pinned nodes
+    # sharing one business key.
+    return db.find(DepositRate.where().history(axis="processing"))
+```
+
 ## Relationship existence (bare `.any()`)
 
 Corpus case: `m-navigate-002`

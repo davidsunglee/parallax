@@ -1,10 +1,13 @@
 """D-7 value-object class frontend: unit-level no-drift proof against
 ``models/customer.yaml``'s recursive ``Address`` / ``Geo`` / ``Point`` /
 ``Phone`` composite (COR-3 Phase 7 increment 6a). The full API-conformance
-no-drift guard extension is the next agent's job (per the increment's scope);
-this is the build-time proof that the ``ValueObject`` class frontend threads
-its declared structure into the compiled entity record exactly as an ingested
-descriptor would.
+no-drift guard extension is blocked by the SAME single, global, process-wide
+entity-registry constraint `read_models.py`/`read_stories.py` document
+(ledger D-20 — no installed Customer mirror can share that canonical name
+with the test-only `value_object_models.Customer`; D-21 covers the
+Supplier/Branch value-object families separately); this is the build-time
+proof that the ``ValueObject`` class frontend threads its declared structure
+into the compiled entity record exactly as an ingested descriptor would.
 """
 
 from __future__ import annotations
@@ -13,8 +16,8 @@ from decimal import Decimal
 from typing import cast
 
 import pytest
-import value_object_models as vm
 
+import value_object_models as vm
 from parallax.conformance import case_format
 from parallax.core import Attr
 from parallax.core.descriptor import canonicalize

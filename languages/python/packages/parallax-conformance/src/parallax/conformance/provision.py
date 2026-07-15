@@ -121,6 +121,21 @@ def _inheritance_table_ddl(meta: Metamodel, entity: Entity, table: str, dialect:
 
 
 def _tph_table_ddl(meta: Metamodel, root: Entity, table: str, dialect: Dialect) -> str:
+    """A table-per-hierarchy family's ONE shared table, merging every member
+    sharing it — root, every intermediate abstract-subtype, and every
+    concrete subtype.
+
+    Value objects and unique secondary indices may be declared on ANY member
+    of the family (m-inheritance "Inherited members"), so both are derived
+    from the WHOLE member set (``ancestors + concretes``) rather than read off
+    ``root`` alone: reading them off the root only would silently drop an
+    intermediate- or concrete-declared value object, or a secondary unique
+    index declared anywhere but the root. As-of axes are DIFFERENT: temporality
+    is a family-wide property the root ALONE declares (the
+    `inheritance-temporal-axes-not-root-owned` invariant rejects any
+    descendant that does), so the milestone-interval PK suffix is read off
+    ``root`` directly — never unioned across the member set.
+    """
     assert root.inheritance is not None
     concretes = sorted(
         (e for e in meta.entities if e.inheritance is not None and e.table == table),
@@ -138,7 +153,8 @@ def _tph_table_ddl(meta: Metamodel, root: Entity, table: str, dialect: Dialect) 
             f"{dialect.quote(tag_col)} "
             f"{dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)}"
         )
-    for ancestor in inheritance.ancestor_chain(meta, tuple(c.name for c in concretes)):
+    ancestors = inheritance.ancestor_chain(meta, tuple(c.name for c in concretes))
+    for ancestor in ancestors:
         if ancestor.name == root.name:
             continue  # root's own columns already emitted above, in their declared order
         for attribute in ancestor.attributes:
@@ -146,12 +162,23 @@ def _tph_table_ddl(meta: Metamodel, root: Entity, table: str, dialect: Dialect) 
     for concrete in concretes:
         for attribute in concrete.attributes:
             columns.append(_column_ddl(attribute, dialect))
-    for value_object in root.value_objects:
-        columns.append(f"{dialect.quote(value_object.column)} jsonb")
+
+    # The whole family sharing this table: every ancestor (root first) plus
+    # every concrete row-owner — the complete member set value objects and
+    # unique indices may be declared across (never root-only).
+    members = (*ancestors, *concretes)
+    for member in members:
+        for value_object in member.value_objects:
+            columns.append(f"{dialect.quote(value_object.column)} jsonb")
+
+    # The root's own as-of axes — the family's ONLY legal declaration site
+    # (temporality is family-wide; `validate` rejects a descendant that
+    # declares any) — appended as the table's milestone-interval PK suffix.
     pk_columns.extend(dialect.quote(aoa.from_column) for aoa in root.as_of_attributes)
+
     if pk_columns:
         columns.append(f"primary key ({', '.join(pk_columns)})")
-    columns.extend(_unique_constraints((root,), pk_columns, dialect))
+    columns.extend(_unique_constraints(members, pk_columns, dialect))
     return f"create table {dialect.quote(table)} ({', '.join(columns)})"
 
 
@@ -159,18 +186,21 @@ def _tpcs_table_ddl(meta: Metamodel, concrete: Entity, dialect: Dialect) -> str:
     """A table-per-concrete-subtype concrete's own table, its full
     ancestry-derived column chain (root → … → concrete).
 
-    A TPCS family's temporal as-of axes, and any unique secondary index, are
-    declared on the abstract ROOT and inherited by every concrete subtype —
-    never repeated on the concrete descriptor (m-inheritance "Inherited
-    members") — so both are derived through `inheritance.declaring_entity`
-    (the family root) rather than read off `concrete` directly: reading them
-    off the concrete alone would silently omit the milestone-interval
-    from-columns from the physical primary key, leaving no way to store a
-    second milestone for the same business key (`m-descriptor` "a temporal
-    entity's physical primary key is the business key plus each dimension's
-    fromColumn"). Value objects are unioned across the whole chain (today's
-    corpus declares them only on the concrete, but a future root-declared one
-    must not be dropped either).
+    A TPCS family's temporal as-of axes are declared on the abstract ROOT
+    ALONE and inherited by every concrete subtype — never repeated or amended
+    lower (`inheritance-temporal-axes-not-root-owned`) — so the axes are
+    derived through `inheritance.declaring_entity` (which resolves to the
+    root for any participant) rather than read off `concrete` directly:
+    reading them off the concrete alone would silently omit the
+    milestone-interval from-columns from the physical primary key, leaving no
+    way to store a second milestone for the same business key (`m-descriptor`
+    "a temporal entity's physical primary key is the business key plus each
+    dimension's fromColumn"). Any unique secondary index, though, MAY be
+    declared on any ancestor along ``concrete``'s own chain (m-inheritance
+    "Inherited members" places no such restriction on non-temporal members),
+    so value objects and unique indices are unioned across the whole chain
+    (today's corpus declares value objects only on the concrete, but a root-
+    or intermediate-declared one must not be dropped either).
     """
     assert concrete.table is not None
     chain = (*inheritance.ancestor_chain(meta, (concrete.name,)), concrete)
@@ -196,10 +226,10 @@ def _unique_constraints(
     chain: Sequence[Entity], pk_columns: list[str], dialect: Dialect
 ) -> list[str]:
     """``unique (…)`` constraints for the declared unique secondary indices of
-    every entity in ``chain`` (a plain entity's own single-element chain, or a
-    table-per-concrete-subtype concrete's full ancestry — a TPCS root's own
-    index, e.g. its temporal composite, is otherwise invisible from the
-    concrete descriptor alone).
+    every entity in ``chain`` (a plain entity's own single-element chain, a
+    table-per-concrete-subtype concrete's full ancestry, or a table-per-hierarchy
+    table's whole member set — an ancestor's own index, e.g. its temporal
+    composite, is otherwise invisible from a concrete descriptor alone).
 
     An index's attribute names resolve to physical columns through the WHOLE
     chain's scalar attributes and each as-of axis's from-column (the corpus

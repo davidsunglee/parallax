@@ -19,6 +19,7 @@ from parallax.core.descriptor import Metamodel
 from parallax.core.op_algebra import (
     All,
     And,
+    AsOf,
     Comparison,
     DeepFetch,
     Membership,
@@ -34,6 +35,7 @@ _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
 ANIMAL = _MODELS["animal"]
 POLICY = _MODELS["policy"]
+RATE = _MODELS["rate"]
 
 
 def _seg(rel: str, narrow: tuple[str, ...] = ()) -> PathSegment:
@@ -294,3 +296,41 @@ def test_plan_accepts_a_non_deep_fetch_operation_with_zero_levels() -> None:
     plan = deep_fetch.plan("Order", literal, ORDERS)
     assert plan.levels == ()
     assert plan.root_operation == literal
+
+
+# --------------------------------------------------------------------------- #
+# Root as-of injection over a CONCRETE inheritance target whose family's axes  #
+# are declared on the ROOT alone (COR-3 Phase 7 review remediation, P3/P4):   #
+# `plan()` must inject the default-latest / pinned as-of predicate even       #
+# though `DepositRate`'s own record carries no `as_of_attributes` locally.    #
+# --------------------------------------------------------------------------- #
+def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
+    plan = deep_fetch.plan("DepositRate", All(), RATE)
+    # Business-axis-first (m-temporal-read), both defaulted to the current
+    # milestone since neither axis is pinned: `thru_z = infinity`, `out_z = infinity`.
+    assert plan.root_operation == And(
+        operands=(
+            Comparison(op="eq", attr="Rate.businessTo", value="infinity"),
+            Comparison(op="eq", attr="Rate.processingTo", value="infinity"),
+        )
+    )
+
+
+def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:
+    op = AsOf(
+        operand=All(), as_of_attr="DepositRate.processingDate", date="2024-01-15T00:00:00+00:00"
+    )
+    plan = deep_fetch.plan("DepositRate", op, RATE)
+    assert plan.root_operation == And(
+        operands=(
+            # business defaults to latest (never pinned by this operation)
+            Comparison(op="eq", attr="Rate.businessTo", value="infinity"),
+            # processing is pinned to the past instant (containment)
+            Comparison(
+                op="lessThanEquals", attr="Rate.processingFrom", value="2024-01-15T00:00:00+00:00"
+            ),
+            Comparison(
+                op="greaterThan", attr="Rate.processingTo", value="2024-01-15T00:00:00+00:00"
+            ),
+        )
+    )

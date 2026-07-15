@@ -152,9 +152,13 @@ def family_root(meta: Metamodel, entity: Entity) -> Entity:
 
 def declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
     """The entity that actually DECLARES ``entity``'s primary key and temporal
-    (as-of) axes: the family root for an inheritance participant — the primary
-    key and every as-of axis are always declared there and inherited by every
-    descendant ("Inherited members") — else ``entity`` itself.
+    (as-of) axes: the family root for an inheritance participant — temporality
+    is a FAMILY-WIDE property (the binding COR-3 residual-finding correction),
+    so the primary key and every as-of axis are always declared on the root
+    ALONE and inherited unchanged by every abstract and concrete descendant
+    ("Inherited members"); a descendant MUST NOT redeclare, add, remove,
+    override, or shadow them (the `inheritance-temporal-axes-not-root-owned`
+    family invariant, enforced by :func:`validate`) — else ``entity`` itself.
 
     The one shared resolution every DAG-legal caller needing an inheritance
     participant's declaring entity reuses: graph-local identity / primary-key
@@ -245,9 +249,9 @@ def validate(metamodel: Metamodel) -> None:
     """Validate every inheritance family invariant, raising :class:`InheritanceError`.
 
     The check order pins each corpus ``rejectedRule``: parent resolution, then
-    acyclicity, tableless-abstract nodes, strategy locality, strategy-vs-tag
-    coherence, ancestry-reaches-a-root, root cardinality, and the
-    table-per-hierarchy tag rules.
+    acyclicity, tableless-abstract nodes, strategy locality, temporal-axis root
+    ownership, strategy-vs-tag coherence, ancestry-reaches-a-root, root
+    cardinality, and the table-per-hierarchy tag rules.
     """
     participants = _participants(metamodel)
     if not participants:
@@ -259,6 +263,7 @@ def validate(metamodel: Metamodel) -> None:
     _reject_cycles(participants)
     _reject_abstract_with_table(participants)
     _reject_strategy_redeclared(participants)
+    _reject_descendant_temporal_axes(participants)
     _reject_tag_under_tpcs(roots, participants)
     _reject_concrete_without_root(participants, by_name)
     _reject_root_cardinality(roots)
@@ -310,6 +315,30 @@ def _reject_strategy_redeclared(participants: tuple[Entity, ...]) -> None:
             raise InheritanceError(
                 "inheritance-strategy-redeclared",
                 f"non-root {entity.name} redeclares the family strategy",
+                entity=entity.name,
+            )
+
+
+def _reject_descendant_temporal_axes(participants: tuple[Entity, ...]) -> None:
+    """Reject any ``abstract-subtype`` or ``concrete-subtype`` that declares its
+    own ``asOfAttributes``.
+
+    Temporality is a family-wide property: only the family ROOT may declare
+    as-of axes, and every descendant inherits exactly that set (never
+    redeclares, adds, removes, overrides, or shadows an axis) — regardless of
+    whether the root itself is temporal. A non-temporal root with a temporal
+    descendant would leave the family's root-owned coordinate system
+    ill-defined (mixed temporality is not supported); a temporal root whose
+    descendant redeclares or adds an axis would make the descendant's own
+    temporal profile diverge from the family it belongs to. Both shapes are
+    rejected here, uniformly, before any SQL.
+    """
+    for entity in participants:
+        if _inh(entity).role != "root" and entity.as_of_attributes:
+            raise InheritanceError(
+                "inheritance-temporal-axes-not-root-owned",
+                f"non-root {entity.name} declares its own as-of axes; temporal axes are a "
+                "family-wide property and MUST be declared only on the root",
                 entity=entity.name,
             )
 

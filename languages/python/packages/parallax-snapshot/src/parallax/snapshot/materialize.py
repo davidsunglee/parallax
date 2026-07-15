@@ -81,12 +81,21 @@ class Node:
     pk_columns: tuple[str, ...]
 
 
-def _declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
-    """The entity that DECLARES ``entity``'s primary key / temporal axes: the
-    family root for an inheritance participant (m-inheritance: the primary key
-    and every as-of axis are always declared there), else ``entity`` itself —
-    the shared `inheritance.declaring_entity` resolution."""
-    return inheritance.declaring_entity(meta, entity)
+def _pk_declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
+    """The entity that DECLARES ``entity``'s primary key: the family root for
+    an inheritance participant (m-inheritance: the primary key is always
+    declared there and inherited by every descendant) — else ``entity`` itself.
+
+    Primary-key identity and temporal-axis resolution are conceptually
+    distinct questions (`inheritance.declaring_entity` answers the temporal
+    one), but under the family-wide temporal-ownership invariant both resolve
+    to the same entity — the family root. This helper stays a separate,
+    locally-named seam for graph-local IDENTITY specifically (never as-of),
+    calling `inheritance.family_root` directly.
+    """
+    if entity.inheritance is None:
+        return entity
+    return inheritance.family_root(meta, entity)
 
 
 def _resolved_position(
@@ -141,7 +150,7 @@ def identity_key(
     """
     del narrow_to  # resolved position does not affect identity (family + PK only)
     entity = meta.entity(entity_name)
-    declaring = _declaring_entity(meta, entity)
+    declaring = _pk_declaring_entity(meta, entity)
     if not declaring.primary_key:
         return None
     pk = tuple(row[attr.column] for attr in declaring.primary_key)
@@ -149,7 +158,7 @@ def identity_key(
 
 
 def _pk_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
-    declaring = _declaring_entity(meta, meta.entity(entity_name))
+    declaring = _pk_declaring_entity(meta, meta.entity(entity_name))
     return tuple(attr.column for attr in declaring.primary_key)
 
 

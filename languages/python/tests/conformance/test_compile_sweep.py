@@ -93,6 +93,17 @@ _INHERITANCE_READS: Final[frozenset[str]] = frozenset(
 _INHERITANCE_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-092", "m-inheritance-093"}
 )
+# Concrete-target temporal reads over a family whose as-of axes are declared ONLY on
+# the root (COR-3 Phase 7 review remediation — the binding root-ownership decision:
+# temporality is family-wide; `m-inheritance-100` pins `DepositRate.processingDate`
+# through the TPCS concrete position, `m-inheritance-101` pins `Bond.businessDate`
+# through the TPH concrete position, tag predicate included). Both resolve the
+# inherited axis through `inheritance.declaring_entity` (the family root) exactly as
+# `_INHERITANCE_TEMPORAL_READS`'s abstract-root reads do — a strategy/position
+# sibling, not a new lowering mechanism — so both compile byte-exact and join here.
+_INHERITANCE_CONCRETE_TARGET_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
+    {"m-inheritance-100", "m-inheritance-101"}
+)
 # Relationship-navigation reads (COR-3 Phase 7 increment 3, m-navigate / m-sql
 # "Joins by navigation"): the 13 row-form correlated-EXISTS/anti-join reads over
 # orders.yaml/person.yaml/policy.yaml (to-many, to-one, one-to-one, multi-hop,
@@ -138,6 +149,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _TEMPORAL_VALUE_OBJECT_READS
     | _INHERITANCE_READS
     | _INHERITANCE_TEMPORAL_READS
+    | _INHERITANCE_CONCRETE_TARGET_TEMPORAL_READS
     | _NAVIGATE_READS
     | _NAVIGATE_INHERITANCE_READS
     | _SNAPSHOT_READ_MILESTONE_SET_READS

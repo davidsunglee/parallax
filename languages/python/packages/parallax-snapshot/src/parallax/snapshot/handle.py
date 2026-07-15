@@ -45,7 +45,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
-from parallax.core import deep_fetch, op_algebra
+from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import Entity, Metamodel, column_order
@@ -504,7 +504,7 @@ def find_history(
         raise ValueError(  # pragma: no cover - m-case-format: v1 carries no includes
             "a milestone-set (history / asOfRange) read carries no deep-fetch levels"
         )
-    entity = meta.entity(target)
+    entity = _temporal_entity(meta, meta.entity(target))
     statement = compile_read(plan_.root_operation, meta, dialect, target, result_form="instance")
     statements: list[ExecutedStatement] = []
     rows = _execute(port, dialect, statement, statements)
@@ -526,6 +526,22 @@ def find_history(
         for edge in order
     )
     return HistoryFindResult(graphs=graphs, execution=Execution(tuple(statements)))
+
+
+def _temporal_entity(meta: Metamodel, entity: Entity) -> Entity:
+    """The entity whose ``as_of_attributes`` are ``entity``'s FAMILY's actual
+    temporal declaration: the family root for an inheritance participant
+    (temporality is family-wide, `m-inheritance`) — else ``entity`` itself.
+
+    Every consumer of `~parallax.core.temporal_read`'s per-entity primitives
+    (`milestone_edge`, `statement_pin`, `resolve_pinned_instants`, ...) MUST
+    resolve through this rather than consult a queried entity's own local
+    ``as_of_attributes`` directly: a concrete (or abstract-subtype) position
+    whose family declares its axes on the root carries none of its own, so
+    reading `entity.as_of_attributes` straight would misclassify it
+    non-temporal.
+    """
+    return inheritance.declaring_entity(meta, entity)
 
 
 def _execute(
@@ -702,7 +718,7 @@ class Transaction:
         """
         target = statement.target
         op = statement.operation()
-        entity = self._meta.entity(target)
+        entity = _temporal_entity(self._meta, self._meta.entity(target))
         pin = _statement_pin(op, entity)
         lock = self._uow.settings.concurrency
         if _is_milestone_set_op(op):
@@ -782,7 +798,7 @@ def _snapshot_from_find_result(
 def _snapshot_from_history_result(
     result: HistoryFindResult, target: str, meta: Metamodel
 ) -> Snapshot[Any]:
-    entity = meta.entity(target)
+    entity = _temporal_entity(meta, meta.entity(target))
     roots: list[Any] = []
     for graph in result.graphs:
         milestone_pin = _pin_from_milestone(entity, graph.pin)
@@ -838,7 +854,7 @@ class Database:
         """
         target = statement.target
         op = statement.operation()
-        entity = self._meta.entity(target)
+        entity = _temporal_entity(self._meta, self._meta.entity(target))
         pin = _statement_pin(op, entity)
         if _is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)

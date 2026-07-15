@@ -72,8 +72,8 @@ def story_snippet(story: WriteStory) -> str:
 def _as_rows(snapshot: Snapshot[Any]) -> list[Row]:
     """Render a ``Snapshot[T]``'s wrapped instances back to plain canonical row
     dicts — the neutral ``list[Row]`` shape this suite's grading still expects
-    (the full example rework, incl. instance-native grading, is the next
-    agent's job)."""
+    (the full example rework, incl. instance-native grading, is deferred to
+    Phase 8's write-family API-suite build-out — ledger D-23)."""
     rows: list[Row] = []
     for raw in snapshot.results():
         # Every Snapshot root this suite renders is a registered entity instance;

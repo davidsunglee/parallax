@@ -33,6 +33,7 @@ _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]
 ANIMAL = _MODELS["animal"]
 INVOICE = _MODELS["invoice"]
+RATE = _MODELS["rate"]
 
 _UTC = dt.UTC
 
@@ -283,6 +284,57 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
     result = handle.find_history(op, INVOICE, POSTGRES, "InvoiceLine", port)
     assert len(result.graphs) == 1
     assert [n.fields["id"] for n in result.graphs[0].nodes] == [1000, 2000]
+
+
+def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
+    # `DepositRate` declares NO `as_of_attributes` of its own (`Rate`, the
+    # family root, does) — before the COR-3 Phase 7 review remediation,
+    # `milestone_edge`/`_edge_pin`/`_edge_sort_key` consulted `DepositRate`'s
+    # own (empty) record directly and raised "not a temporal entity"; they
+    # must now resolve through the root instead (P3/P4).
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "amount": Decimal("2.25"),
+                    "grade": "B",
+                    "from_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "thru_z": INFINITY,
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "out_z": dt.datetime(2024, 2, 1, tzinfo=_UTC),
+                },
+                {
+                    "id": 1,
+                    "amount": Decimal("2.50"),
+                    "grade": "A",
+                    "from_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "thru_z": INFINITY,
+                    "in_z": dt.datetime(2024, 2, 1, tzinfo=_UTC),
+                    "out_z": INFINITY,
+                },
+            ]
+        ]
+    )
+    op = deserialize(
+        {
+            "history": {
+                "operand": {"eq": {"attr": "DepositRate.id", "value": 1}},
+                "asOfAttr": "DepositRate.processingDate",
+            }
+        }
+    )
+    result = handle.find_history(op, RATE, POSTGRES, "DepositRate", port)
+    assert [g.pin["processingDate"] for g in result.graphs] == [
+        dt.datetime(2024, 1, 1, tzinfo=_UTC),
+        dt.datetime(2024, 2, 1, tzinfo=_UTC),
+    ]
+    assert [g.nodes[0].fields["amount"] for g in result.graphs] == [
+        Decimal("2.25"),
+        Decimal("2.50"),
+    ]
+    # The business axis rides along too (bitemporal): both milestones share it.
+    assert all(g.pin["businessDate"] == dt.datetime(2024, 1, 1, tzinfo=_UTC) for g in result.graphs)
 
 
 def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:

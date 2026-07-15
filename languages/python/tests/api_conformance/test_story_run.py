@@ -33,7 +33,7 @@ from parallax.conformance.graph_stories import GRAPH_STORIES
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Account
-from parallax.core import LATEST, edge_of, is_loaded
+from parallax.core import LATEST, edge_of, is_loaded, pin_of
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity.expressions import UnloadedRelationshipError
 from parallax.snapshot import connect
@@ -195,6 +195,37 @@ def test_mutation_has_no_writeback(provisioner: Any) -> None:
     mutated, reread = story.run(db)
     assert mutated.name == "Mutant"  # the in-memory copy sees the edit
     assert reread.result().name == "Ada"  # the re-read never observes it
+
+
+def test_concrete_temporal_node_inherits_the_roots_pin(provisioner: Any) -> None:
+    # m-inheritance-100 (P3/P4 residual-finding remediation): a concrete
+    # TPCS node (DepositRate) whose family's as-of axes are declared on the
+    # root (Rate) alone still gets its own pin/edge attached, and a
+    # `.history(...)` milestone-set read's closed historical correction and
+    # current row remain distinct identities sharing one business key.
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-100"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    nodes = snapshot.results()
+    assert len(nodes) == 2
+    by_amount = {node.amount: node for node in nodes}
+    historical = by_amount[Decimal("2.25")]
+    current = by_amount[Decimal("2.50")]
+    assert historical is not current  # distinct identities per milestone
+    assert historical.grade == "B"
+    assert current.grade == "A"
+    historical_edge = edge_of(historical)
+    current_edge = edge_of(current)
+    assert historical_edge.business == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert historical_edge.processing == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert current_edge.business == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert current_edge.processing == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    # Both `pin_of` calls succeed (the root-owned axes attach a pin to a
+    # concrete node exactly as they would at the abstract root or an
+    # abstract-subtype position).
+    pin_of(historical)
+    pin_of(current)
 
 
 def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:

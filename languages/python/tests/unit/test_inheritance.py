@@ -11,7 +11,14 @@ import yaml
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.core import inheritance
-from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, deserialize
+from parallax.core.descriptor import (
+    AsOfAttribute,
+    Attribute,
+    Entity,
+    Inheritance,
+    Metamodel,
+    deserialize,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -37,8 +44,9 @@ _REJECTIONS = _descriptor_rejection_cases()
 
 
 def test_every_descriptor_rejection_case_is_covered() -> None:
-    # 13 inline-descriptor inheritance rejection cases carry `when.model`.
-    assert len(_REJECTIONS) == 13
+    # 15 inline-descriptor inheritance rejection cases carry `when.model` (13
+    # original + the two root-ownership witnesses, m-inheritance-098/099).
+    assert len(_REJECTIONS) == 15
 
 
 @pytest.mark.parametrize("stem, model, rule", _REJECTIONS, ids=[r[0] for r in _REJECTIONS])
@@ -166,3 +174,132 @@ def test_concrete_descendants_terminates_on_a_cyclic_family() -> None:
         )
     )
     assert inheritance.family_of(cyclic).concrete_descendants("A") == frozenset({"A", "B"})
+
+
+# --------------------------------------------------------------------------- #
+# Binding decision (COR-3 Phase 7 review remediation, P3/P4): temporality is a #
+# family-wide property; only the root may declare `asOfAttributes`, and every #
+# descendant — abstract-subtype or concrete-subtype — inherits exactly that   #
+# set. `declaring_entity` always resolves to the family root; a non-root      #
+# participant that declares its own axes is rejected pre-SQL.                 #
+# --------------------------------------------------------------------------- #
+def _synthetic_temporal_family() -> Metamodel:
+    """A THREE-level TPH family — Root (temporal) -> Mid (abstract-subtype) ->
+    Leaf (concrete) — proving `declaring_entity` resolves to the root from
+    EVERY position in the chain, not just the immediate parent."""
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        as_of_attributes=(
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+    mid = Entity(
+        name="Mid",
+        inheritance=Inheritance(role="abstract-subtype", parent="Root"),
+    )
+    leaf = Entity(
+        name="Leaf",
+        table="root_tbl",
+        inheritance=Inheritance(role="concrete-subtype", parent="Mid", tag_value="leaf"),
+        attributes=(Attribute(name="x", type="int32", column="x"),),
+    )
+    return Metamodel(entities=(root, mid, leaf))
+
+
+def test_declaring_entity_resolves_to_the_family_root_from_every_position() -> None:
+    meta = _synthetic_temporal_family()
+    for name in ("Root", "Mid", "Leaf"):
+        declaring = inheritance.declaring_entity(meta, meta.entity(name))
+        assert declaring.name == "Root", name
+        assert declaring.as_of_attributes == meta.entity("Root").as_of_attributes
+
+
+def test_declaring_entity_is_the_entity_itself_outside_a_family() -> None:
+    # A non-inheritance temporal entity remains unaffected: `declaring_entity`
+    # is a strict identity for it (m-inheritance only applies within a family).
+    plain = Entity(
+        name="Balance",
+        table="balance",
+        attributes=(Attribute(name="id", type="int64", column="bal_id", primary_key=True),),
+        as_of_attributes=(
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+    meta = Metamodel(entities=(plain,))
+    assert inheritance.declaring_entity(meta, plain) is plain
+
+
+def _minimal_attrs() -> tuple[Attribute, ...]:
+    return (Attribute(name="id", type="int64", column="id", primary_key=True),)
+
+
+def test_reject_descendant_temporal_axes_under_a_non_temporal_root() -> None:
+    # A non-temporal TPH root with an abstract-subtype that declares its own axes.
+    root = Entity(
+        name="Animal",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=_minimal_attrs(),
+    )
+    pet = Entity(
+        name="Pet",
+        inheritance=Inheritance(role="abstract-subtype", parent="Animal"),
+        as_of_attributes=(
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+    dog = Entity(
+        name="Dog",
+        table="animal",
+        inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="dog"),
+        attributes=(Attribute(name="barkVolume", type="int32", column="bark_volume"),),
+    )
+    meta = Metamodel(entities=(root, pet, dog))
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        inheritance.validate(meta)
+    assert caught.value.rule == "inheritance-temporal-axes-not-root-owned"
+    assert caught.value.entity == "Pet"
+
+
+def test_reject_descendant_temporal_axes_under_a_temporal_root() -> None:
+    # A temporal TPCS root whose concrete subtype adds its own second axis.
+    root = Entity(
+        name="Rate",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=_minimal_attrs(),
+        as_of_attributes=(
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+    deposit = Entity(
+        name="DepositRate",
+        table="deposit_rate",
+        inheritance=Inheritance(role="concrete-subtype", parent="Rate"),
+        attributes=(Attribute(name="grade", type="string", column="grade"),),
+        as_of_attributes=(
+            AsOfAttribute(
+                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            ),
+        ),
+    )
+    meta = Metamodel(entities=(root, deposit))
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        inheritance.validate(meta)
+    assert caught.value.rule == "inheritance-temporal-axes-not-root-owned"
+    assert caught.value.entity == "DepositRate"
+
+
+def test_temporal_root_and_root_owned_axes_still_validate_cleanly() -> None:
+    # A well-formed family (axes declared ONLY on the root) passes validation —
+    # the new invariant must not reject the corpus's own root-declared families.
+    inheritance.validate(_MODELS["rate"])
+    inheritance.validate(_MODELS["instrument"])

@@ -177,7 +177,8 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "the bounded retry loop is implemented (parallax.core.auto_retry, M4) and proven "
         "by fake-port unit tests of db.transact (test_transact); the boundary cases need "
         "the case-driven boundary runner (when.boundary / given.fault / then.outcome over "
-        "a fault-injecting port), which lands with the API-suite boundary lane build-out"
+        "a fault-injecting port), which lands with the API-suite boundary lane build-out "
+        "(ledger D-17)"
     ),
     "m-read-lock": (
         "the in-transaction shared-read-lock suffix is rendered by every locking-mode "
@@ -246,6 +247,22 @@ _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON: Final[str] = (
     "existing example mirrors; no new mechanism, no distinct spelling"
 )
 
+# The TPH concrete-target temporal read (m-inheritance-101, Bond): a strategy sibling
+# of the concrete-target root-owned-axis inheritance mechanism the NEW
+# m-inheritance-100 graph story proves for real (through `db.find`, real Postgres) —
+# TPH's own tag-predicate composition is independently proven by m-inheritance-001,
+# and its as-of composition by m-temporal-read-003; the residual-finding binding
+# decision's genuinely new mechanism (a concrete-target read resolves its family's
+# root-declared axes) is proven once, by the TPCS witness, not twice.
+_CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
+    "a table-per-hierarchy strategy sibling of the concrete-target root-owned-axis "
+    "inheritance mechanism the executed `m-inheritance-100` graph story proves for real "
+    "(through `db.find`, real Postgres): TPH's own tag-predicate composition is already "
+    "proven by `m-inheritance-001`, its as-of composition by `m-temporal-read-003` — the "
+    "genuinely new mechanism (a concrete-target read resolves its family's root-declared "
+    "axes) is proven once by the TPCS witness, not twice"
+)
+
 # Multi-concrete polymorphic PROJECTING inheritance reads (an abstract-root read,
 # or a narrow resolving to 2+ concretes): genuinely UNREACHABLE through
 # `db.find` today, for two independent reasons — (1) table-per-hierarchy: each
@@ -258,7 +275,9 @@ _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON: Final[str] = (
 # `sql_gen.compile._compile_tpcs_read`) — a genuine engine gap. Distinct from
 # every other inheritance reasoned-skip above: those are spelling repeats of an
 # executed mechanism; these cannot be executed through the shipped surface at
-# all yet.
+# all yet. Deferred: ledger D-22 (an instance-form grading convention for
+# abstract-target reads, or an explicit row-form-only statement, is a Phase 8
+# design pass or Phase-9 sweep item).
 _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "a multi-concrete polymorphic PROJECTING read (an abstract-root read, or a narrow "
     "resolving to 2+ concretes) — genuinely unreachable through `db.find` today: a "
@@ -293,8 +312,9 @@ _INHERITANCE_WRITE_REJECT_PHASE8_REASON: Final[str] = (
     "inputs"
 )
 
-# `when.model` descriptor-shape rejects (m-inheritance-020..032): a DIFFERENT
-# validation surface than the operation-level rejected lane increment 1 built.
+# `when.model` descriptor-shape rejects (m-inheritance-020..032, plus the
+# residual-finding root-ownership witnesses 098/099): a DIFFERENT validation
+# surface than the operation-level rejected lane increment 1 built.
 # `parallax.core.inheritance.validate` classifies these exact rules, but the
 # class metaclass never calls it (grep-verified) — DQ2's hierarchy-derived
 # `parent`/`role` obsoletes most of what it checks. Most of these malformed
@@ -304,19 +324,26 @@ _INHERITANCE_WRITE_REJECT_PHASE8_REASON: Final[str] = (
 # table-placement rules that ARE independently authorable (`EntityConfig
 # (table=...)` on an abstract node) are already rejected by the class
 # frontend's own, DIFFERENT, unclassified error (`test_inheritance_frontend.py`
-# "tableless and rowless"), not by `InheritanceError.rule` — so no case here
+# "tableless and rowless"), not by `InheritanceError.rule`. A descendant
+# declaring `EntityConfig(as_of=...)` (098/099's own rule,
+# `inheritance-temporal-axes-not-root-owned`) is ALSO independently
+# authorable, and NOW likewise rejected by the class frontend's own,
+# DIFFERENT, unclassified error (`test_inheritance_frontend.py`
+# "family SUBCLASS cannot declare EntityConfig(as_of...)"), joining the
+# table-placement rules in the same posture — so no case in this whole group
 # reproduces `then.rejectedRule` through today's public surface.
 _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "a `when.model` raw-descriptor invariant `parallax.core.inheritance.validate` "
-    "classifies (parent/root/cycle/strategy/tag shape) — the class metaclass never "
-    "calls this validator (DQ2: `parent`/`role` are DERIVED from the live Python class "
-    "hierarchy, never separately authored, so most of these malformed shapes — an "
-    "unknown parent, a cycle, multiple roots, a missing root, a redeclared strategy, a "
-    "duplicate/misplaced tag — have no idiomatic spelling at all); the two "
-    "table-placement rules ARE independently authorable, but the class frontend's own "
-    "existing check raises a different, unclassified error, not `InheritanceError.rule` "
-    "— wiring an idiomatic path to that SAME classified vocabulary is unbuilt "
-    "infrastructure, not a Phase-7 capability gap"
+    "classifies (parent/root/cycle/strategy/tag/temporal-axis-ownership shape) — the "
+    "class metaclass never calls this validator (DQ2: `parent`/`role` are DERIVED from "
+    "the live Python class hierarchy, never separately authored, so most of these "
+    "malformed shapes — an unknown parent, a cycle, multiple roots, a missing root, a "
+    "redeclared strategy, a duplicate/misplaced tag — have no idiomatic spelling at "
+    "all); the table-placement rules AND a descendant's own `as_of` ARE independently "
+    "authorable, but the class frontend's own existing checks raise a different, "
+    "unclassified error in each case, not `InheritanceError.rule` — wiring an idiomatic "
+    "path to the classified vocabulary is unbuilt infrastructure, not a Phase-7 "
+    "capability gap"
 )
 
 # `navigate`-tagged corpus siblings: a deliberate spelling redundancy for the
@@ -542,6 +569,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-063": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
+    "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
     # -- m-inheritance: multi-concrete polymorphic PROJECTING reads (genuinely #
     # unreachable through `db.find` today — see the reason's own comment) --- #
     "m-inheritance-003": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
@@ -583,6 +611,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-030": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-031": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-032": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-098": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-099": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-inheritance / m-navigate: the Person/AnimalOwner collision -------- #
     "m-inheritance-064": _ANIMAL_OWNER_COLLISION_REASON,
     "m-inheritance-072": _ANIMAL_OWNER_COLLISION_REASON,
