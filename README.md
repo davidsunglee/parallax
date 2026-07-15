@@ -315,3 +315,9 @@ artifacts. Further language implementations should treat
 oracle. See
 [Building A Language Implementation](#building-a-language-implementation) for the
 two-stage author-spec, implement-spec workflow and its two proof artifacts.
+
+## License
+
+Copyright 2026 David Lee.
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
