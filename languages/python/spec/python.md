@@ -18,7 +18,7 @@ never something an application developer hand-writes.
 | Conformance Slice | `slice-snapshot-1` — tag `slice-snapshot-1`, plain-value **snapshot** lifecycle profile, defined in [`core/spec/slices.md`](../../../core/spec/slices.md). |
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 23 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
-| Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. `m-op-list` — reached via `m-navigate` and `m-deep-fetch`; supplied by the internal, unexported `parallax.core.op_list` scope; the snapshot surface never exposes an operation-backed lazy list. |
+| Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
 | Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; `m-business-only`; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; statement `where`-refinement chaining and `as_of` re-pinning. Deferral is roadmap intent; **unsupported classification** is the adapter's wire behavior for out-of-claim requests — the two are recorded separately and never conflated. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest -m conformance` (the `pg-full` run profile, every claimed case), aggregated by `just python-static` and `just python-verify`. |
 
@@ -858,9 +858,8 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-audit-write` | `parallax.core.audit_write` | `parallax.core.audit_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
 | `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-audit-write` | generated forbidden contracts |
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
-| `m-op-list` (unclaimed prerequisite, internal) | `parallax.core.op_list` (unexported) | `parallax.core.op_list` | `m-op-algebra`, `m-unit-work` | generated forbidden contracts + private-module convention |
-| `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-list`, `m-unit-work`, `m-temporal-read`, `m-inheritance` | generated forbidden contracts |
-| `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-op-list` | generated forbidden contracts |
+| `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance` | generated forbidden contracts |
+| `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-pk-gen`, `m-sql`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
@@ -920,7 +919,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy, internal `op_list`) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `Pin`, `Edge`, `meta`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, entity/statement frontend, driver-free postgres dialect strategy) | `pydantic`, `pyyaml` | (none) | `parallax.core`: entity base, `Field`, `Relationship`, `Attr`, `Rel`, statement API, `LATEST`, `Pin`, `Edge`, `meta`, `pin_of`, `edge_of`, `is_loaded`, `narrowed`, errors |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
@@ -997,11 +996,11 @@ subsection of the template is deleted from this completed spec.
   branch are retained; all managed-object instructions are removed.
 - `slice-snapshot-1` exists in `slices.md`, is lifecycle-complete, and the §1
   envelope equals its canonical claim except for the `adapter` identity.
-- Claimed coverage is the canonical tagged-case union; the two transitive
-  unclaimed prerequisites and every explicit deferral are listed separately.
+- Claimed coverage is the canonical tagged-case union; the sole transitive
+  unclaimed prerequisite and every explicit deferral are listed separately.
 - No conditional section's applicability condition is true, and none is
   present.
-- The §7 map covers all claimed modules, both prerequisites, and the support
+- The §7 map covers all claimed modules, the prerequisite, and the support
   scopes, and is mechanically enforceable via the generated import-linter
   forbidden-edge complement plus the DAG drift check.
 - The §8 map contains an independent common runtime, exactly the snapshot

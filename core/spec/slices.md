@@ -48,8 +48,8 @@ TypeScript implementation migrates its conformance claim to `slice-managed-1`.
 - **`slice-managed-1`** — the **managed-object** surface: reads materialize
   managed objects interned in the transaction-scoped identity map
   (`m-identity-map`), mutation buffers through the unit of work, objects detach
-  at their owning scope's end and merge back (`m-detach`), and navigation yields
-  operation-backed lists (`m-op-list`).
+  at their owning scope's end and merge back (`m-detach`), and relationship
+  access resolves through operation-backed lists (`m-op-list`).
 
 Neither slice claims the deferred process caches (`m-process-cache`,
 `m-coherence`), aggregation (`m-agg`, `m-sql-agg`), the business-only temporal

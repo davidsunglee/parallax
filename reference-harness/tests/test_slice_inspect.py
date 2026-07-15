@@ -21,7 +21,7 @@ _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
             "slice-snapshot-1",
             "m-snapshot-read",
             "m-identity-map",
-            ["m-db-port", "m-op-list"],
+            ["m-db-port"],
         ),
         ("slice-managed-1", "m-identity-map", "m-snapshot-read", ["m-db-port"]),
     ],

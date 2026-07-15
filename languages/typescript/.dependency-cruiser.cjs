@@ -21,6 +21,13 @@ const { join } = require("node:path");
  * propagate per relationship hop) but the spec's §9.3 transcription previously
  * omitted is present here.
  *
+ * Re-pinned (core amendment, ADR 0025 — mechanical maintenance, not design
+ * input): `modules.md` inverted the lifecycle-result-surface edges, so
+ * `relationships` (`m-navigate` + `m-deep-fetch`) now depends on `operation`
+ * (`m-op-algebra`) directly instead of on `lists`, and `lists` (`m-op-list`)
+ * now depends on `relationships` (a lazy list is populated by deep fetch — the
+ * same relationship `m-snapshot-read` already has with deep fetch).
+ *
  * Semantics: with an `allowed` array, any dependency that matches no rule is
  * reported as `not-in-allowed`. `allowedSeverity: "error"` makes that fail the
  * build. The list therefore enumerates every legal dependency: same-package
@@ -121,7 +128,8 @@ module.exports = {
     // m-read-lock -> m-dialect.
     edge("lists", "operation"), //     m-op-list -> m-op-algebra
     edge("lists", "transactions"), //  m-op-list -> m-unit-work
-    edge("relationships", "lists"), // m-navigate -> m-op-list
+    edge("lists", "relationships"), // m-op-list -> m-deep-fetch (ADR 0025 re-pin)
+    edge("relationships", "operation"), // m-navigate -> m-op-algebra (ADR 0025 re-pin)
     edge("relationships", "transactions"), // m-navigate -> m-unit-work
     edge("relationships", "bitemporal"), //   m-navigate -> m-temporal-read  (design Q5 correction)
     edge("bitemporal", "transactions"), //    m-audit-write -> m-unit-work

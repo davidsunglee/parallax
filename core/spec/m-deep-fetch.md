@@ -2,9 +2,13 @@
 
 `m-deep-fetch` specifies how **deep fetch** eagerly populates an object graph
 while **eliminating N+1** round trips. Per the dependency graph, `m-deep-fetch`
-depends on `m-navigate` (deep fetch traverses relationships) and `m-op-list` (deep
-fetch *populates* lists). The `deepFetch` **algebra node** is `m-op-algebra`; the
-**SQL emission** is `m-sql`. This module ties them to observable behavior.
+depends on `m-navigate` alone (deep fetch traverses relationships). The
+`deepFetch` **algebra node** is `m-op-algebra`; the **SQL emission** is `m-sql`.
+This module ties them to observable behavior. The two lifecycle result surfaces
+— operation-backed lists (`m-op-list`) for the managed lifecycle, snapshot
+graphs (`m-snapshot-read`) for the plain-value lifecycle — sit **above** deep
+fetch and are populated by it; deep fetch itself is a pure per-level fetch
+algorithm and reifies neither.
 
 Every `deepFetch` path segment names a **relationship** between identity-bearing
 entities; a **value-object segment is invalid** in the path grammar and MUST be

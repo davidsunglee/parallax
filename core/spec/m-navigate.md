@@ -2,11 +2,11 @@
 
 `m-navigate` specifies how **relationship navigation** turns into joins, and it
 owns **cross-entity as-of propagation**. Per the dependency graph, `m-navigate`
-depends on `m-op-list` (navigation *yields* lists), `m-unit-work` (navigation
-resolves through the unit of work), and `m-temporal-read` (a pinned as-of value
-propagates per hop). The navigation **algebra** (the `navigate` / `exists` /
-`notExists` nodes) is `m-op-algebra`; the **SQL emission** is `m-sql`. This module
-ties them to observable behavior. Deep fetch — eagerly populating an object graph
+depends on `m-op-algebra` (the `navigate` / `exists` / `notExists` nodes it
+lowers **are** algebra vocabulary), `m-unit-work` (navigation resolves through
+the unit of work), and `m-temporal-read` (a pinned as-of value propagates per
+hop). The **SQL emission** for these nodes is `m-sql`; this module ties the
+algebra to observable behavior. Deep fetch — eagerly populating an object graph
 while eliminating N+1 — builds on navigation and is `m-deep-fetch`.
 
 ## Navigation → join semantics

@@ -2,10 +2,14 @@
 
 `m-op-list` specifies **operation-backed list results** — the collection an
 implementation returns from a set-based query. Per the dependency graph,
-`m-op-list` depends on `m-op-algebra` (a list is backed by an operation) and
-`m-unit-work` (it resolves within a unit of work). Relationships sit *above*
-lists: navigation yields lists and deep fetch populates them, so `m-navigate`
-depends on `m-op-list` (the reverse of the obvious guess).
+`m-op-list` depends on `m-op-algebra` (a list is backed by an operation),
+`m-unit-work` (it resolves within a unit of work), and `m-deep-fetch` (a lazy
+list is *populated by* deep fetch — the same relationship `m-snapshot-read`
+has with deep fetch). Lists sit *above* the shared fetch algorithm, not
+underneath it: a navigation node used as a predicate inside an operation is a
+semi-join and yields no list, so `m-navigate` carries no edge to `m-op-list` at
+all; deep fetch populates the list instead, and this module's contract is what
+makes that population's round-trip guarantees observable.
 
 ## Operation-backed lazy list results (`findMany`)
 

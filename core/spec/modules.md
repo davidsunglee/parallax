@@ -174,12 +174,12 @@ m-op-list --> m-unit-work
 m-batch-write --> m-unit-work
 m-cascade-delete --> m-op-list
 m-cascade-delete --> m-unit-work
-m-navigate --> m-op-list
+m-navigate --> m-op-algebra
 m-navigate --> m-unit-work
 m-navigate --> m-temporal-read
 m-navigate --> m-inheritance
 m-deep-fetch --> m-navigate
-m-deep-fetch --> m-op-list
+m-op-list --> m-deep-fetch
 m-snapshot-read --> m-deep-fetch
 m-temporal-read --> m-op-algebra
 m-audit-write --> m-temporal-read
@@ -216,9 +216,18 @@ construction it may reference any behavioral module it harnesses.
   therefore references the inheritance family model, not the reverse — `m-sql`'s
   tag/branch lowering of a narrow reaches `m-inheritance` transitively through this
   edge and needs no separate `m-sql --> m-inheritance` declaration.
-- **`m-navigate --> m-op-list`.** A list is an operation-backed collection;
-  navigation *yields* lists and deep fetch *populates* them, so navigation
-  depends on lists, not the reverse.
+- **`m-op-list --> m-deep-fetch`.** A navigation filter is a *predicate*
+  (semi-join) and yields no list; deep fetch is a pure per-level fetch
+  algorithm. The lifecycle result surfaces — operation-backed lists for the
+  managed lifecycle, snapshot graphs for the plain-value lifecycle — sit
+  *above* it and are populated by it, mirroring the documented
+  `m-snapshot-read --> m-deep-fetch` bullet below: the two are peers, and
+  neither depends on the other.
+- **`m-navigate --> m-op-algebra`.** Navigation's `navigate`/`exists`/
+  `notExists` nodes are algebra vocabulary, so navigation references the
+  algebra directly; before this edge, `m-op-algebra` was reachable from
+  navigate only transitively, through the now-removed `m-navigate -->
+  m-op-list` edge.
 - **`m-navigate --> m-inheritance`.** A relationship target may be a **polymorphic
   position** (`m-inheritance`): navigation resolves it to its effective
   concrete-subtype set (single-`EXISTS` interior tag predicate under

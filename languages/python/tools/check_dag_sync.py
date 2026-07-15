@@ -65,7 +65,6 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-audit-write": "parallax.core.audit_write",
     "m-bitemp-write": "parallax.core.bitemp_write",
     "m-batch-write": "parallax.core.batch_write",
-    "m-op-list": "parallax.core.op_list",
     "m-navigate": "parallax.core.navigate",
     "m-deep-fetch": "parallax.core.deep_fetch",
     "m-snapshot-read": "parallax.snapshot.materialize",
