@@ -209,11 +209,11 @@ def _temporal_declarer(meta: Metamodel, entity: Entity) -> Entity:
     A plain entity declares its own; an inheritance participant's temporal axes are
     declared on the family ROOT and inherited by every concrete subtype
     (`m-inheritance`), so a relationship target that names an abstract position (or
-    even a concrete leaf) must resolve to the root to find them.
+    even a concrete leaf) must resolve to the root to find them — the shared
+    `inheritance.declaring_entity` resolution (also reused by `m-snapshot-read`'s
+    identity/pin-edge resolution and the conformance provisioning DDL).
     """
-    if entity.inheritance is None:
-        return entity
-    return inheritance.family_root(meta, entity)
+    return inheritance.declaring_entity(meta, entity)
 
 
 def hop_as_of_terms(

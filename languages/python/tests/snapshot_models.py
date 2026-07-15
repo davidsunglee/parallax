@@ -17,10 +17,17 @@ classes. This module deliberately avoids ``from __future__ import annotations``
 so the metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 
 Lives at the top level of ``tests/`` (moved from ``tests/unit/`` in increment
-6b): ``Animal``/``Pet``/``Dog``/``Cat``/``WildBoar`` (declared with their real
-corpus names, unlike the renamed ``SnapOrder``/``AnimalOwner`` siblings) are
-reused by the API Conformance Suite's animal-family inheritance/narrow examples
-that never reference the polymorphic owner. Reaching the owner side
+6b): ``Animal``/``Pet``/``Dog``/``Cat`` (declared with their real corpus names,
+unlike the renamed ``SnapOrder``/``AnimalOwner`` siblings) are **re-exported**
+from ``parallax.conformance.read_models`` (the installed package's own
+mirror, which the API Conformance Suite's real-database read stories execute
+against `db.find`), so the unit lane's frontend/wrap tests here and the
+API-suite's execution both resolve the exact SAME registered class rather than
+a second, differently-scoped copy silently racing it in the shared, global,
+process-wide entity registry. ``WildBoar`` and ``AnimalOwner`` stay local:
+neither is reachable from the installed distribution's read stories (the
+owner side collides with ``mirrored_models.Person``, below), so they serve
+only this module's own structural fixtures. Reaching the owner side
 (``models/animal.yaml``'s own ``Person``) is NOT reproducible from the suite
 today: it would collide with ``mirrored_models.Person`` (``models/person.yaml``)
 in the same shared registry, so the owner-relationship cases stay
@@ -31,9 +38,24 @@ mis-resolving whichever "Person" a dict happened to keep.
 import datetime as dt
 from decimal import Decimal
 
+from parallax.conformance.read_models import Animal, Cat, Dog, Pet
 from parallax.core import Attr, Entity, EntityConfig, Field, Rel, Relationship
-from parallax.core.entity.base import Concrete, FamilyRoot
+from parallax.core.entity.base import Concrete
 from parallax.core.entity.value_object import ValueObject, VoField
+
+__all__ = [
+    "Animal",
+    "AnimalOwner",
+    "Cat",
+    "Detail",
+    "Dog",
+    "Pet",
+    "SnapOrder",
+    "SnapOrderItem",
+    "SnapOrderStatus",
+    "Tag",
+    "WildBoar",
+]
 
 _NS = "parallax.compatibility"
 
@@ -116,38 +138,6 @@ class SnapOrderStatus(Entity, frozen=True):
     code: Attr[str] = Field(max_length=16)
     primary_tag: Attr[Tag | None] = Field(nullable=True, default=None)
     tags: Attr[tuple[Tag, ...]] = Field(nullable=True, default=())
-
-
-class Animal(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS,
-        mutability="transactional",
-        inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=32)
-    owner_id: Attr[int | None] = Field(type="int64", column="owner_id", nullable=True, default=None)
-
-
-class Pet(Animal, frozen=True):
-    license_id: Attr[str | None] = Field(
-        type="string", max_length=16, column="license_id", nullable=True, default=None
-    )
-
-
-class Dog(Pet, frozen=True):
-    __parallax__ = EntityConfig(inheritance=Concrete(tag_value="dog"))
-
-    bark_volume: Attr[int | None] = Field(
-        type="int32", column="bark_volume", nullable=True, default=None
-    )
-
-
-class Cat(Pet, frozen=True):
-    __parallax__ = EntityConfig(inheritance=Concrete(tag_value="cat"))
-
-    indoor: Attr[bool | None] = Field(type="boolean", column="indoor", nullable=True, default=None)
 
 
 class WildBoar(Animal, frozen=True):

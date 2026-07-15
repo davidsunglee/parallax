@@ -14,16 +14,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel
+from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, ValueObject
 
 __all__ = [
     "Family",
     "InheritanceError",
     "ancestor_chain",
+    "declaring_entity",
     "effective_concrete_subtypes",
     "family_attributes",
     "family_of",
     "family_root",
+    "superset_value_objects",
     "validate",
 ]
 
@@ -148,6 +150,23 @@ def family_root(meta: Metamodel, entity: Entity) -> Entity:
     return meta.entity(root_name)
 
 
+def declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
+    """The entity that actually DECLARES ``entity``'s primary key and temporal
+    (as-of) axes: the family root for an inheritance participant — the primary
+    key and every as-of axis are always declared there and inherited by every
+    descendant ("Inherited members") — else ``entity`` itself.
+
+    The one shared resolution every DAG-legal caller needing an inheritance
+    participant's declaring entity reuses: graph-local identity / primary-key
+    resolution (`m-snapshot-read`), per-hop temporal propagation (`m-navigate`),
+    frozen-node pin/edge attachment (the snapshot handle's wrap), and
+    inheritance-aware DDL derivation (the conformance provisioning path).
+    """
+    if entity.inheritance is None:
+        return entity
+    return family_root(meta, entity)
+
+
 def ancestor_chain(meta: Metamodel, effective_concretes: Sequence[str]) -> tuple[Entity, ...]:
     """Every abstract ancestor (root + abstract-subtype) reachable from any
     concrete in ``effective_concretes``, in canonical ancestry order (m-inheritance
@@ -199,6 +218,27 @@ def family_attributes(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
         if candidate.inheritance is not None and _root_name(meta, candidate) == root_name:
             attrs.extend(candidate.attributes)
     return tuple(attrs)
+
+
+def superset_value_objects(meta: Metamodel, position: Sequence[str]) -> list[ValueObject]:
+    """Every value object reachable from ``position`` (an effective concrete
+    set), in the family's stable superset order: each ancestor's own value
+    objects in ancestry order, then each position concrete's own in canonical
+    alphabetical order.
+
+    The one shared resolution both `m-sql`'s abstract-read/union-all
+    projection and `m-snapshot-read`'s row-decoding superset use — DAG-safe for
+    both (each already depends on `m-inheritance` directly: `m-sql` through
+    `m-op-algebra`, `m-snapshot-read` through `m-deep-fetch` -> `m-navigate`),
+    so the identical family-value-object walk lives here once rather than
+    staying duplicated in each caller.
+    """
+    value_objects: list[ValueObject] = []
+    for ancestor in ancestor_chain(meta, position):
+        value_objects.extend(ancestor.value_objects)
+    for name in sorted(position):
+        value_objects.extend(meta.entity(name).value_objects)
+    return value_objects
 
 
 def validate(metamodel: Metamodel) -> None:

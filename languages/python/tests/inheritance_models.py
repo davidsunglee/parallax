@@ -7,55 +7,52 @@ an intermediate abstract subtype and a polymorphic owner: ``Document`` /
 This module deliberately avoids ``from __future__ import annotations`` so the
 metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 
+The corpus-named classes themselves are **re-exported** from
+``parallax.conformance.read_models`` (the installed package's own mirror,
+which the API Conformance Suite's real-database read stories execute against
+`db.find` — a real dev-only package module needs classes resolvable at
+ordinary import time, not only under pytest's test-path magic): they are
+declared there ONCE, so the unit lane's frontend/no-drift tests here and the
+API-suite's execution both resolve the exact SAME registered class, never a
+second, differently-scoped copy that would silently race it in the shared,
+global, process-wide entity registry. ``WirePayment`` stays local: a
+standalone structural fixture no corpus no-drift proof or read example needs.
+
 Lives at the top level of ``tests/`` (moved from ``tests/unit/`` in increment
 6b) rather than lane-local: the unit lane's frontend/no-drift tests AND the API
-Conformance Suite's descriptor no-drift guard / idiomatic read examples both
-need the SAME classes (one compiled entity per corpus name — the class
-registry is a single process-wide namespace, so a second, differently-scoped
-copy would silently race it), and only a module directly on
-``pythonpath = ["tools", "tests"]`` resolves reliably regardless of which
-lane's files pytest collects first.
+Conformance Suite's descriptor no-drift guard both need the SAME classes, and
+only a module directly on ``pythonpath = ["tools", "tests"]`` resolves
+reliably regardless of which lane's files pytest collects first.
 """
 
-from decimal import Decimal
+from parallax.conformance.read_models import (
+    CardPayment,
+    CashPayment,
+    Document,
+    FinancialDocument,
+    Folder,
+    Invoice,
+    Memo,
+    Payment,
+    Receipt,
+)
+from parallax.core import Attr, EntityConfig, Field
+from parallax.core.entity.base import Concrete
 
-from parallax.core import Attr, Entity, EntityConfig, Field, Rel, Relationship
-from parallax.core.entity.base import Concrete, FamilyRoot
+__all__ = [
+    "CardPayment",
+    "CashPayment",
+    "Document",
+    "FinancialDocument",
+    "Folder",
+    "Invoice",
+    "Memo",
+    "Payment",
+    "Receipt",
+    "WirePayment",
+]
 
 _NS = "parallax.compatibility"
-
-
-# --------------------------------------------------------------------------- #
-# Payment: table-per-hierarchy (models/payment.yaml).                         #
-# --------------------------------------------------------------------------- #
-class Payment(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        table="payment",
-        namespace=_NS,
-        mutability="transactional",
-        inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    amount: Attr[Decimal] = Field(type="decimal(18,2)")
-
-
-class CardPayment(Payment, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="card")
-    )
-
-    card_network: Attr[str | None] = Field(
-        type="string", column="card_network", max_length=16, nullable=True
-    )
-
-
-class CashPayment(Payment, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="cash")
-    )
-
-    tendered: Attr[Decimal | None] = Field(type="decimal(18,2)", nullable=True)
 
 
 class WirePayment(Payment, frozen=True):
@@ -72,56 +69,3 @@ class WirePayment(Payment, frozen=True):
     )
 
     reference: Attr[str | None] = Field(type="string", max_length=32, nullable=True)
-
-
-# --------------------------------------------------------------------------- #
-# Document: table-per-concrete-subtype (models/document.yaml).                #
-# --------------------------------------------------------------------------- #
-class Document(Entity, frozen=True):
-    __parallax__ = EntityConfig(
-        namespace=_NS,
-        mutability="transactional",
-        inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    title: Attr[str] = Field(max_length=64)
-    folder_id: Attr[int | None] = Field(type="int64", column="folder_id", nullable=True)
-
-
-class FinancialDocument(Document, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS)
-
-    currency: Attr[str] = Field(max_length=3)
-
-
-class Invoice(FinancialDocument, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
-
-    amount_due: Attr[Decimal] = Field(type="decimal(18,2)", column="amount_due")
-
-
-class Receipt(FinancialDocument, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
-
-    paid_amount: Attr[Decimal] = Field(type="decimal(18,2)", column="paid_amount")
-
-
-class Memo(Document, frozen=True):
-    __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
-
-    body: Attr[str] = Field(max_length=64)
-
-
-class Folder(Entity, frozen=True):
-    __parallax__ = EntityConfig(table="folder", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
-    name: Attr[str] = Field(max_length=32)
-    documents: Rel[tuple["Document", ...]] = Relationship(
-        cardinality="one-to-many",
-        join="this.id = Document.folderId",
-        related_entity="Document",
-        reverse_name="folder",
-        foreign_key="folder_id",
-    )

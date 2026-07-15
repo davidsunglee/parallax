@@ -9,6 +9,11 @@ entity frontend build on. ``m-descriptor`` depends only on ``m-core``.
 from __future__ import annotations
 
 from parallax.core.descriptor.errors import DescriptorError
+from parallax.core.descriptor.neutral_type import (
+    NEUTRAL_FROM_PY,
+    infer_neutral_type,
+    snake_to_camel,
+)
 from parallax.core.descriptor.records import (
     UNSET,
     AsOfAttribute,
@@ -39,6 +44,7 @@ from parallax.core.descriptor.vo_path import (
 )
 
 __all__ = [
+    "NEUTRAL_FROM_PY",
     "UNSET",
     "AsOfAttribute",
     "Attribute",
@@ -63,8 +69,10 @@ __all__ = [
     "deserialize",
     "find_value_object",
     "find_vo_member",
+    "infer_neutral_type",
     "resolve_vo_leaf",
     "serialize",
+    "snake_to_camel",
     "validate_entity",
     "validate_metamodel",
 ]

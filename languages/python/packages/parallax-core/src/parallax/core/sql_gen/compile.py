@@ -470,13 +470,10 @@ def _superset_columns(meta: Metamodel, position: Sequence[str]) -> list[tuple[At
 
 def _superset_value_objects(meta: Metamodel, position: Sequence[str]) -> list[ValueObject]:
     """The value objects reachable from ``position``, same ordering rule as
-    :func:`_superset_columns` (ancestry prefix, then alphabetical own blocks)."""
-    value_objects: list[ValueObject] = []
-    for ancestor in inheritance.ancestor_chain(meta, position):
-        value_objects.extend(ancestor.value_objects)
-    for name in sorted(position):
-        value_objects.extend(meta.entity(name).value_objects)
-    return value_objects
+    :func:`_superset_columns` (ancestry prefix, then alphabetical own blocks) —
+    the shared `inheritance.superset_value_objects` resolution (also used by
+    `m-snapshot-read`'s row-decoding superset)."""
+    return inheritance.superset_value_objects(meta, position)
 
 
 def _compile_inheritance_read(

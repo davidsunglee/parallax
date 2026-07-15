@@ -13,7 +13,7 @@ provider / conformance lanes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -101,7 +101,7 @@ def _plain_table_ddl(entity: Entity, table: str, dialect: Dialect) -> str:
     pk_columns.extend(dialect.quote(aoa.from_column) for aoa in entity.as_of_attributes)
     if pk_columns:
         columns.append(f"primary key ({', '.join(pk_columns)})")
-    columns.extend(_unique_constraints(entity, pk_columns, dialect))
+    columns.extend(_unique_constraints((entity,), pk_columns, dialect))
     return f"create table {dialect.quote(table)} ({', '.join(columns)})"
 
 
@@ -151,11 +151,27 @@ def _tph_table_ddl(meta: Metamodel, root: Entity, table: str, dialect: Dialect) 
     pk_columns.extend(dialect.quote(aoa.from_column) for aoa in root.as_of_attributes)
     if pk_columns:
         columns.append(f"primary key ({', '.join(pk_columns)})")
-    columns.extend(_unique_constraints(root, pk_columns, dialect))
+    columns.extend(_unique_constraints((root,), pk_columns, dialect))
     return f"create table {dialect.quote(table)} ({', '.join(columns)})"
 
 
 def _tpcs_table_ddl(meta: Metamodel, concrete: Entity, dialect: Dialect) -> str:
+    """A table-per-concrete-subtype concrete's own table, its full
+    ancestry-derived column chain (root → … → concrete).
+
+    A TPCS family's temporal as-of axes, and any unique secondary index, are
+    declared on the abstract ROOT and inherited by every concrete subtype —
+    never repeated on the concrete descriptor (m-inheritance "Inherited
+    members") — so both are derived through `inheritance.declaring_entity`
+    (the family root) rather than read off `concrete` directly: reading them
+    off the concrete alone would silently omit the milestone-interval
+    from-columns from the physical primary key, leaving no way to store a
+    second milestone for the same business key (`m-descriptor` "a temporal
+    entity's physical primary key is the business key plus each dimension's
+    fromColumn"). Value objects are unioned across the whole chain (today's
+    corpus declares them only on the concrete, but a future root-declared one
+    must not be dropped either).
+    """
     assert concrete.table is not None
     chain = (*inheritance.ancestor_chain(meta, (concrete.name,)), concrete)
     columns: list[str] = []
@@ -165,44 +181,63 @@ def _tpcs_table_ddl(meta: Metamodel, concrete: Entity, dialect: Dialect) -> str:
             columns.append(_column_ddl(attribute, dialect))
             if attribute.primary_key:
                 pk_columns.append(dialect.quote(attribute.column))
-    for value_object in concrete.value_objects:
-        columns.append(f"{dialect.quote(value_object.column)} jsonb")
-    pk_columns.extend(dialect.quote(aoa.from_column) for aoa in concrete.as_of_attributes)
+    for member in chain:
+        for value_object in member.value_objects:
+            columns.append(f"{dialect.quote(value_object.column)} jsonb")
+    declaring = inheritance.declaring_entity(meta, concrete)
+    pk_columns.extend(dialect.quote(aoa.from_column) for aoa in declaring.as_of_attributes)
     if pk_columns:
         columns.append(f"primary key ({', '.join(pk_columns)})")
-    columns.extend(_unique_constraints(concrete, pk_columns, dialect))
+    columns.extend(_unique_constraints(chain, pk_columns, dialect))
     return f"create table {dialect.quote(concrete.table)} ({', '.join(columns)})"
 
 
-def _unique_constraints(entity: Entity, pk_columns: list[str], dialect: Dialect) -> list[str]:
-    """``unique (…)`` constraints for the entity's declared unique secondary indices.
+def _unique_constraints(
+    chain: Sequence[Entity], pk_columns: list[str], dialect: Dialect
+) -> list[str]:
+    """``unique (…)`` constraints for the declared unique secondary indices of
+    every entity in ``chain`` (a plain entity's own single-element chain, or a
+    table-per-concrete-subtype concrete's full ancestry — a TPCS root's own
+    index, e.g. its temporal composite, is otherwise invisible from the
+    concrete descriptor alone).
 
-    An index's attribute names resolve to physical columns through the scalar
-    attributes and each as-of axis's from-column (the corpus convention: the
-    composite milestone indices name the as-of attribute, e.g. ``processingFrom``
-    → ``in_z``). The index matching the physical primary key is skipped —
-    ``primary key (…)`` already enforces it; what remains are the true
-    secondaries (a unique business column, a one-to-one FK column), which must be
-    enforced for the `m-db-error` uniqueViolation-via-secondary-index triggers to
-    raise. An unresolvable attribute name fails loudly rather than silently
-    dropping a declared constraint.
+    An index's attribute names resolve to physical columns through the WHOLE
+    chain's scalar attributes and each as-of axis's from-column (the corpus
+    convention: the composite milestone indices name the as-of attribute, e.g.
+    ``processingFrom`` → ``in_z``), so an index declared on one chain member
+    may reference an attribute inherited from another. The index matching the
+    physical primary key is skipped — ``primary key (…)`` already enforces it
+    — what remains are the true secondaries (a unique business column, a
+    one-to-one FK column), which must be enforced for the `m-db-error`
+    uniqueViolation-via-secondary-index triggers to raise. A duplicate
+    constraint (the same resolved column set declared more than once in the
+    chain) is emitted once. An unresolvable attribute name fails loudly rather
+    than silently dropping a declared constraint.
     """
-    resolve = {attribute.name: attribute.column for attribute in entity.attributes}
-    resolve.update({aoa.name: aoa.from_column for aoa in entity.as_of_attributes})
+    resolve: dict[str, str] = {}
+    for member in chain:
+        resolve.update({attribute.name: attribute.column for attribute in member.attributes})
+        resolve.update({aoa.name: aoa.from_column for aoa in member.as_of_attributes})
     constraints: list[str] = []
-    for index in entity.indices:
-        if not index.unique:
-            continue
-        unresolved = [name for name in index.attributes if name not in resolve]
-        if unresolved:
-            raise ValueError(
-                f"{entity.name}: unique index {index.name!r} names attributes with no "
-                f"physical column: {unresolved}"
-            )
-        quoted = [dialect.quote(resolve[name]) for name in index.attributes]
-        if set(quoted) == set(pk_columns):
-            continue
-        constraints.append(f"unique ({', '.join(quoted)})")
+    seen: set[frozenset[str]] = set()
+    for member in chain:
+        for index in member.indices:
+            if not index.unique:
+                continue
+            unresolved = [name for name in index.attributes if name not in resolve]
+            if unresolved:
+                raise ValueError(
+                    f"{member.name}: unique index {index.name!r} names attributes with no "
+                    f"physical column: {unresolved}"
+                )
+            quoted = [dialect.quote(resolve[name]) for name in index.attributes]
+            if set(quoted) == set(pk_columns):
+                continue
+            key = frozenset(quoted)
+            if key in seen:
+                continue
+            seen.add(key)
+            constraints.append(f"unique ({', '.join(quoted)})")
     return constraints
 
 

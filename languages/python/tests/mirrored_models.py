@@ -14,12 +14,12 @@ targets use string forward references (``Rel["Passport"]``).
 """
 
 import copy
-import datetime as dt
 from decimal import Decimal
 from typing import Any
 
 import inheritance_models as _im
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, Rel, Relationship
+from parallax.conformance.read_models import Balance
+from parallax.core import Attr, Entity, EntityConfig, Field, Rel, Relationship
 
 _NS = "parallax.compatibility"
 
@@ -78,31 +78,14 @@ class Passport(Entity, frozen=True):
     )
 
 
-class Balance(Entity, frozen=True):
-    """Mirror of ``models/balance.yaml`` (audit-only / processing-temporal).
-
-    The D-7 temporal class spelling: the processing axis is declared in the
-    descriptor's own vocabulary via ``EntityConfig.as_of``, and the interval
-    bounds are ordinary scalar attributes beside it.
-    """
-
-    __parallax__ = EntityConfig(
-        table="balance",
-        namespace=_NS,
-        mutability="transactional",
-        as_of=(
-            AsOfAttribute(
-                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
-            ),
-        ),
-    )
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none", column="bal_id")
-    acct_num: Attr[str] = Field(max_length=32)
-    value: Attr[Decimal] = Field(type="decimal(18,2)", column="val")
-    processing_from: Attr[dt.datetime] = Field(column="in_z")
-    processing_to: Attr[dt.datetime] = Field(column="out_z")
-
+# ``Balance`` (mirror of ``models/balance.yaml``, audit-only / processing-
+# temporal, the D-7 temporal class spelling) is **re-exported** from
+# ``parallax.conformance.read_models`` — the installed package's own mirror,
+# which the API Conformance Suite's real-database read stories execute
+# against `db.find` — so this module's own no-drift proof and the API-suite's
+# execution resolve the exact SAME registered class, never a second,
+# differently-scoped copy silently racing it in the shared, global,
+# process-wide entity registry.
 
 # corpus model stem -> the idiomatic classes assembled into that descriptor.
 #

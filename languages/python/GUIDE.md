@@ -190,299 +190,56 @@ self-contained without a system `libpq`.
   unreachable until increments 3/5 land (their owning modules aren't in
   `IMPLEMENTED_MODULES` yet, though `validate_operation` already classifies
   them correctly).
-- **Phase 7 increment 2 COMPLETE — inheritance read lowering.** `compile_read`
-  (`parallax.core.sql_gen`) lowers both inheritance strategies directly (the
-  D-12 refusal is gone): table-per-hierarchy tag-predicate selection (whole
-  family → no predicate; one concrete → `=`; several, or any `narrow` → `in`,
-  canonical alphabetical order), the abstract-read superset projection
-  (ancestry prefix, then each concrete's own block alphabetically, then the
-  raw tag column — projected iff `targetEntity` itself is abstract, regardless
-  of a narrow's resolved cardinality), grouped branch predicates for a narrow
-  nested inside `and`/`or`/`not`/`group`, and table-per-concrete-subtype
-  lowering (a single resolved concrete is an ordinary read; two or more lower
-  to canonical `union all`, one branch per concrete, each restarting its own
-  alias at `t0` and NULL-casting columns it does not own, plus its own
-  `familyVariant` literal). `parallax.core.inheritance` gained the shared
-  ancestry helpers (`ancestor_chain`, `family_attributes`, `family_root`) both
-  `sql_gen` and provisioning reuse — the `m-sql → m-inheritance` edge is legal
-  (`modules.md`'s "Notable directions": `m-sql` already reaches `m-inheritance`
-  transitively through `m-op-algebra`), confirmed by `lint-imports`. The
-  conformance engine (`run_read_case`) materializes `familyVariant` from the
-  projected tag column via the family's tag→subtype-name map (table-per-
-  hierarchy) or renames the projected literal column (table-per-concrete-
-  subtype); a concrete-target (or single-resolved-position table-per-concrete-
-  subtype) read carries neither. Provisioning (`provision.py`) now derives
-  inheritance-aware DDL and fixture loading: one shared table per
-  table-per-hierarchy family (root + every abstract-subtype's own columns,
-  every concrete's own columns nullable, plus the tag column) created once,
-  and one table per table-per-concrete-subtype concrete carrying its full
-  ancestry-derived chain; fixture rows resolve inherited members by name and
-  bind a table-per-hierarchy tag column from the concrete's own `tagValue`,
-  never a fixture-authored field. The 17 in-slice inheritance reads
-  (`m-inheritance-001–006/011–017` over payment.yaml/animal.yaml,
-  `-050–053` over document.yaml) flip from reasoned-skip to byte-exact
-  compile + row-graded run, and two temporal-composed abstract reads
-  (`m-inheritance-092`/`-093`, corpus-commented "Phase 8 temporal composition")
-  flip alongside them as an unplanned but verified-correct side effect of the
-  lowering being strategy-shaped rather than temporal-aware — leaving them
-  silently un-exercised once they answered `ok` would itself be a D-11-style
-  gap. Updated counts: unit lane 1273, compile sweep 129 (+19), `pg-full` run
-  sweep 114 passed (+19, real Postgres). **Next:** increments 3–4 (navigate
-  lowering, to-many value-object array traversal — mutually independent), then
-  increment 5 (deep fetch + materialization + graph observations), then
-  increment 6 (developer surface + ledger closures).
-- **Phase 7 increment 3 COMPLETE — navigate lowering.** `parallax.core.navigate`
-  (new scope, filled in from its Phase-1 skeleton) owns per-hop as-of
-  canonicalization: `canonicalize(op, meta, root_pins)` walks an already
-  root-injected operation and, for every `navigate`/`exists`/`notExists` hop,
-  resolves the relationship's target entity and — when it (or its inheritance
-  family, resolved through the family root) is temporal — injects the child's
-  own per-axis as-of predicate as plain `m-op-algebra` nodes, matched by axis,
-  business-first, defaulting to latest whenever the root's own pin
-  (`m-temporal-read.resolve_pinned_instants`, a new export alongside
-  `inject_as_of`) carries no specific instant for that axis; a navigation-free
-  operation is a strict identity. Composed at the engine (`_compile_statement`'s
-  new `_canonicalize_read` helper, reused by the scenario-find lowering) and at
-  `snapshot/handle.py`'s `Transaction.find`, immediately after `inject_as_of` —
-  the M2 precedent. `compile_read` (`parallax.core.sql_gen`) lowers
-  `navigate`/`exists`/`notExists` to a correlated `EXISTS`/`not exists`
-  semi-join: correlation columns derived mechanically from the relationship's
-  `join` predicate (never authored), continuing the single `t0, t1, …` alias
-  sequence and bind list across arbitrarily nested hops via a new `_Ctx.
-  next_alias`/`.child()` pair; a polymorphic hop reuses increment 2's
-  tag-fragment machinery directly (table-per-hierarchy: one `EXISTS` + interior
-  tag predicate; table-per-concrete-subtype: a grouped `OR` of one `EXISTS` per
-  effective concrete, alphabetical, continuing the same alias sequence).
-  `DeepFetch` keeps refusing, its message narrowed to name increment 5
-  specifically rather than the whole snapshot branch. The 13 row-form navigate
-  reads (`m-navigate-001–011/018/023`, orders/person/policy.yaml — to-many,
-  to-one, one-to-one, multi-hop, boolean composition, and the temporal-hop
-  propagation pair that must lower byte-identically defaulted vs explicit
-  `asOf(..., now)`) and the 6 polymorphic-relationship reads
-  (`m-inheritance-060–063` TPH over animal.yaml, `-070–071` TPCS over
-  document.yaml) flip from reasoned-skip to byte-exact compile + row-graded
-  run; the 11 deep-fetch-bearing navigate reads (`-012–017/019–022/024`) stay
-  reasoned-refused (increment 5). `m-navigate` joining `IMPLEMENTED_MODULES`
-  also flips 3 rejected cases the model-aware validator already classified in
-  increment 1 (`m-inheritance-064/-072` `narrow-outside-relationship-target`,
-  `m-value-object-036` `navigate-value-object-target`) — no engine change
-  needed, just reachability. `languages/python/spec/python.md` §7 gained
-  `m-navigate` in the handle scope's allowed dependencies (already legal
-  transitively through `m-snapshot-read → m-deep-fetch → m-navigate`, so
-  `check_dag_sync.py --write` produced no contract diff) and prose explaining
-  the edge; `tools/check_dag_sync.py`'s `SUPPORT_SCOPE_DEPS` mirrors it.
-  Updated counts (measured): unit lane 1326 passed / 70 skipped, compile sweep
-  151 passed / 60 skipped (206 parametrized cases total), `pg-full` run sweep
-  99 parametrized cases, rejected sweep 32 parametrized cases (22 passed + 10
-  `when.write` skipped, +3 over increment 1's baseline), `just python-static`
-  and `just python-verify` green (100% branch + 100% diff coverage). **Next:**
-  increment 4 (to-many value-object array traversal), then increment 5 (deep
-  fetch + materialization + graph observations), then increment 6 (developer
-  surface + ledger closures).
-- **Phase 7 increment 4 COMPLETE — to-many value-object array-traversal
-  lowering.** `compile_read` (`parallax.core.sql_gen`) lowers `nestedExists` /
-  `nestedNotExists` and every flat `nested*` predicate crossing a
-  `cardinality: many` value-object member (the D-12 refusal is gone for this
-  family): a correlated `EXISTS` over a guarded `jsonb_array_elements` unnest,
-  continuing increment 3's single `_Ctx.next_alias` sequence. The array-type
-  guard (new `Dialect.array_guard`, m-sql's `<arr>` fragment) keeps the strict
-  `jsonb_array_elements` from erroring on a non-array `many` value — a NULL
-  column, a missing key, a JSON `null`, a JSON scalar, or a JSON object all
-  fold to zero elements (m-op-algebra absence collapse) — binding its path
-  segments TWICE (the `jsonb_typeof` probe, then the re-extraction). A flat
-  predicate crossing a `many` member is **any-element** and self-guards
-  independently per predicate (two ANDed flat predicates open two independent
-  `EXISTS` subqueries, aliases continuing `t1`, `t2`, …); a scoped
-  `nestedExists`/`nestedNotExists` `where` is **same-element** — every element
-  predicate in the compound lowers against the SAME unnested alias,
-  element-relative (no `Class.valueObject` prefix), reusing the existing
-  extraction machinery for the field within the element. Postgres `EXISTS` is
-  never NULL, so the negated forms need no `coalesce` wrap (unlike the
-  documented-but-unimplemented MariaDB containment form). The 8 in-slice
-  corpus reads (`m-value-object-015..-022`, customer.yaml's `address.phones`)
-  flip from reasoned-skip to byte-exact compile + row-graded run; no other
-  reachable case was gated only on this refusal. Increments 2–4 are now all
-  landed. Updated counts (measured): unit lane 1348 passed / 62 skipped,
-  compile sweep 159 passed / 52 skipped (+8), `pg-full` run sweep 107
-  parametrized read cases (+8, real Postgres), rejected sweep unchanged,
-  `just python-static` green (Pyright 0 errors, 100% branch + 100% diff
-  coverage) and the Docker `pg-full`/provider/API-conformance lanes green.
-  **Next:** increment 5 (deep fetch + materialization + graph observations),
-  then increment 6 (developer surface + ledger closures).
-- **Phase 7 increment 5 COMPLETE — deep fetch, graph materialization, and the
-  graph observation lane.** `parallax.core.deep_fetch` (new scope) is a pure
-  planner: `plan(target, op, meta)` walks a `DeepFetch`'s declared paths into a
-  trie, deduping on `(relationship hop, effective concrete set)` so a shared
-  prefix and equivalent narrowings (`[Pet]` vs `[Cat, Dog]`) converge to one
-  level while a broad vs. narrowed hop over the same relationship stay
-  distinct; an ancestor-revisit hop is flagged `is_back_reference` (zero
-  round trips, resolved by identity instead of a query) and a path may not
-  continue past one. It never compiles or executes — `FetchLevel.
-  child_operation` only composes the neutral `in`-membership + propagated
-  as-of + declared relationship `orderBy` IR a level's own child read needs.
-  `parallax.snapshot.materialize` is the one assembler: `decode_row`/
-  `identity_key` (family-normalized, PK-keyed, coordinate-omitted — safe
-  within one graph's single pin) and `Assembler.attach_level` fan rows back
-  to parent nodes (to-many order-preserving, to-one, back-reference
-  resolution via the identity map, empty-level short-circuit). Wire
-  rendering stays per-view (a fresh `Node` per attach position, never
-  cross-view field-sharing) per m-snapshot-read-012's own diamond-position
-  contract; the identity map serves only back-reference resolution and
-  `identityChecks`. `parallax.snapshot.handle.find`/`find_history` is the
-  ONE production find executor (the per-level loop, `1 + L` round trips) —
-  the conformance engine and the developer `find` surface both call it, no
-  engine-local level loop anywhere. `compile_read` gained a
-  `relationship_order` kwarg so a declared relationship `orderBy`'s
-  NULLS-last rule applies only to nullable keys, never blanket-applied to
-  ordinary reads. The engine wires `run_graph_case`/`run_graphs_case` (single
-  and milestone-set snapshot reads), `identityChecks` evaluation by
-  JSON-Pointer walk over the pre-truncation graph, cycle-stub truncation on
-  the wire, and the scenario `mutate` action (in-memory field update, no
-  write-back — `access` stays deferred to the API Conformance Suite, and its
-  lane is dispatched out honestly by both compile and run). Twenty-four
-  corpus cases (11 `m-navigate` deep-fetch reads, 10 `m-snapshot-read`,
-  3 `m-inheritance` narrowed-view reads) are declared
-  `compileEligibility: run-only` (query-result-dependent — a child level's
-  own IN-list, or whether it executes at all, depends on the parent query's
-  result), discovered by running the refusing compile lane first (D-10);
-  `m-snapshot-read-009`'s scenario needs no declaration (structurally lane-
-  dispatched instead). `m-deep-fetch`/`m-snapshot-read` joined
-  `IMPLEMENTED_MODULES`. Updated counts (measured): unit lane 1437 passed / 77
-  skipped, compile sweep 164 passed / 67 skipped (231 total), rejected sweep
-  unchanged (25 passed / 10 skipped), `pg-full` run sweep 179 passed / 10
-  skipped (real Postgres — this increment's core proof), the combined Docker
-  database lane (`pg-full`/provider/adapter-smoke/API-conformance) 224 passed
-  / 10 skipped, `just oracle-test` 1408 passed. `just python-static` green
-  (Pyright 0 errors, every increment-5-owned file at 100% branch coverage,
-  100% diff coverage against `origin/main`). **Next:** increment 6 (developer
-  surface + ledger closures).
-- **Phase 7 increment 6a COMPLETE — public developer surface, D-7 class
-  spellings, D-16 verb graduation.** `parallax.snapshot.Snapshot[T]` (spec
-  §3/§4): `result()`/`result_or_none()`/`results()`, `pin`, `execution`,
-  `__repr__` — no iteration/`len`/truthiness/indexing/refresh/write/lazy
-  behavior. `db.find(statement)` / `tx.find(statement)` both wrap the
-  increment-5 find/find_history executors and return `Snapshot[Any]` (DQ6);
-  `.history()`/`.as_of_range()` combined with `.include()` raises
-  `UnsupportedFeatureError` naming `snapshot-history-includes`. Frozen-node
-  wrapping (`parallax.snapshot.wrap`) turns a materialized graph into
-  instances of the caller's registered entity classes via `model_construct` +
-  the `object.__setattr__` backdoor: tuples for to-many/cardinality-many value
-  objects, the `UNLOADED` sentinel translated to `UnloadedRelationshipError`
-  by the `Rel[T]` data descriptor, polymorphic children as their CONCRETE
-  classes, `parallax.core.is_loaded`/`narrowed` for closed-world load-state
-  introspection, hashability conditional (never forced). The statement
-  frontend gained `.include(*paths)` (chained `Rel[T]` class access,
-  hop-level `.narrow(*subtypes)`), `.any()`/`.none()` quantifiers on `Rel`,
-  and `Entity.narrow(*subtypes, where=...)` plus the statement-level
-  `.narrow(...)` clause — all validated at build time via
-  `validate_operation`, never deferred to execution. The D-7 `ValueObject`
-  class spelling (frozen, metaclass-light, `Attr[VOClass]` /
-  `Attr[tuple[VOClass, ...]]` fields, element-scoped `ElementAttributeExpr`
-  expressions, instances-only input policy enforced by a `field_validator`)
-  and the D-7 inheritance spelling (DQ2: `parent`/`role` derive from the
-  Python class hierarchy, `strategy`/`tag`/`tagValue` thread through
-  `EntityConfig(inheritance=FamilyRoot(...)/Concrete(...))`) both proved
-  no-drift against their corpus models (customer.yaml; payment.yaml TPH,
-  document.yaml TPCS) at the unit level. D-16 graduated to its FULL shape:
-  a validating `Entity.model_copy` override builds a Change Record
-  (touched field → earliest original across a copy chain, net-zero changes
-  tracked but excluded from the effective set); `tx.insert(instance)` /
-  `tx.update(edited_copy)` (sparse row, an empty effective change set is a
-  true no-op — zero round trips) / `tx.delete(node_or_instance)` replace the
-  neutral row-document verb signatures (the conformance engine's own
-  `KeyedWrite` path is unaffected; `lower_write`'s Phase-8 refusal set stays
-  byte-stable). The API-conformance write stories (`parallax.conformance.
-  stories`) now execute the graduated verbs end to end; `tests/api_conformance`
-  was touched only as needed to keep it green under the new signatures (a
-  `_as_rows` helper renders a `Snapshot[T]`'s wrapped instances back to the
-  suite's still-neutral `list[Row]` grading shape) — the full instance-native
-  example rework is the next agent's job. Updated counts (measured): unit lane
-  1541 passed / 77 skipped, compile sweep unchanged at 164 passed / 67
-  skipped (no read-path regression), the combined Docker database lane
-  (`pg-full`/provider/adapter-smoke/API-conformance) unchanged at 224 passed /
-  10 skipped. `just python-static` green (Pyright 0 errors across production
-  AND tests, 100% branch coverage on every file this increment touched, 100%
-  diff coverage against `origin/main`); the public-API snapshot
-  (`tests/api_surface/public_api.json`) and the usage guide
-  (`docs/usage-guide.md`) both regenerated for the new exports. **Next:**
-  increment 6b (the example build-out over the graduated instance-native
-  surface), then increment 7 (remaining ledger closures).
+- **Phase 7 increment 2 COMPLETE — inheritance read lowering (`8a0b506`).**
+  Table-per-hierarchy tag-predicate/abstract-root reads and table-per-
+  concrete-subtype union-all reads land in `compile_read`; provisioning
+  derives inheritance-aware DDL and fixture loading. The 17 in-slice
+  inheritance reads flip from reasoned-skip to byte-exact compile + row-graded
+  run; `m-inheritance-092`/`-093` (temporal abstract reads) flip alongside
+  them as a verified-correct side effect. Counts: unit lane 1273, compile
+  sweep 129 (+19), `pg-full` run sweep 114 (+19, real Postgres).
+- **Phase 7 increment 3 COMPLETE — navigate lowering (`2fb36d7`).**
+  Relationship navigation lowers to correlated EXISTS/anti-join semi-joins in
+  `parallax.core.navigate` + `compile_read`, with per-hop as-of propagation
+  and polymorphic hop resolution. The 13 row-form navigate reads and 6
+  polymorphic-relationship reads flip; 3 already-classified rejected cases
+  become reachable. Counts: unit lane 1326, compile sweep 151 (+22), rejected
+  sweep 22 passed / 10 skipped.
+- **Phase 7 increment 4 COMPLETE — to-many value-object array traversal
+  (`9802456`).** `nestedExists`/`nestedNotExists` and flat `nested*`
+  predicates over `cardinality: many` value-object members lower to a guarded
+  `jsonb_array_elements` unnest. The 8 in-slice value-object traversal reads
+  flip. Counts: unit lane 1348, compile sweep 159 (+8), `pg-full` run sweep
+  107 (+8, real Postgres).
+- **Phase 7 increment 5 COMPLETE — deep fetch, materialization, graph
+  observations (`22248e7`).** The pure deep-fetch planner
+  (`parallax.core.deep_fetch`), the snapshot assembler
+  (`parallax.snapshot.materialize`), and the one production find executor
+  (`parallax.snapshot.handle.find`/`find_history`) land; the engine grades
+  `then.graph`/`then.graphs`/`identityChecks`. 24 query-result-dependent graph
+  cases are declared `compileEligibility: run-only` (ledger D-10). Counts:
+  unit lane 1437, compile sweep 164 (+5, 231 total), `pg-full` run sweep 179
+  (real Postgres), combined Docker lane 224 passed / 10 skipped.
+- **Phase 7 increment 6a COMPLETE — developer surface, D-7 spellings, D-16
+  graduation (`5386081`).** `Snapshot[T]`, `db.find`/`tx.find`, frozen-node
+  wrapping (`parallax.snapshot.wrap`), the `.include`/`.narrow`/`.any`/`.none`
+  statement spellings, the D-7 value-object and inheritance class spellings,
+  and D-16's full write-verb graduation (`tx.insert`/`tx.update`/`tx.delete`
+  over entity instances/edited copies) all land. Counts: unit lane 1541,
+  compile sweep unchanged at 164, combined Docker lane unchanged at 224
+  passed / 10 skipped.
 - **Phase 7 increment 6b COMPLETE — API-suite build-out, coverage partition
-  flip, guide regeneration. PHASE 7 COMPLETE.** The five Phase-7 module skip
-  buckets (`m-navigate`/`m-deep-fetch`/`m-snapshot-read`/`m-value-object`/
-  `m-inheritance`) retired from `SKIP_REASONS`; every active-slice case under
-  them is now either an idiomatic example or a reasoned, case-scoped
-  `CASE_SKIP_REASONS` entry — 57 exercised examples total (up from 26), 242
-  case-scoped reasoned skips, partition exact (`exercised ∪ reasoned-skipped
-  == active slice`, 299 cases, no stale ids, no empty reasons). Per-module
-  split (exercised / reasoned-skip of active): `m-navigate` 12/20,
-  `m-deep-fetch` 0/4, `m-snapshot-read` 6/8, `m-value-object` 8/38,
-  `m-inheritance` 10/45. New idiomatic examples cover: navigate predicates
-  (`.any()`/`.none()`, multi-hop, to-one, per-hop temporal propagation);
-  inheritance TPH/TPCS reads (abstract/concrete/tag, `Entity.narrow(...)`,
-  the statement `.narrow(...)` clause, an OR of narrowed branches,
-  polymorphic navigation); value-object traversal (nested equality,
-  `.is_null()`, to-many `.any()`/`.none()`, flat any-element, scoped
-  same-element); and 4 build-time rejected-case proofs
-  (`m-value-object-038`, `m-inheritance-040/041/042`) sharing the SAME
-  `validate_operation` the corpus's own rejected lane grades. Seven executable
-  graph stories (`parallax.conformance.graph_stories`, run against real
-  Postgres through `parallax.snapshot.connect` + `PostgresAdapter` in
-  `test_story_run.py`) prove developer-facing guarantees a wire grade cannot
-  see: diamond identity sharing one child node across two include paths
-  (`m-snapshot-read-001`), a back-reference cycle resolving to the SAME root
-  node via Python reference identity (`m-snapshot-read-011`), closed-world
-  unloaded access raising `UnloadedRelationshipError` with zero SQL
-  (`m-snapshot-read-009`, this suite's official grader for its
-  `lane: api-conformance` field), an empty root/empty intermediate level
-  eliding child statements (`m-snapshot-read-004/-005`), a deep fetch pinned
-  to a past business instant with `snapshot.pin`/`edge_of` on the
-  materialized node (`m-navigate-013`), and mutation-no-writeback via
-  `model_copy` (`m-snapshot-read-010`). Fixing the diamond-identity story
-  surfaced a real wrap-time bug: `parallax.snapshot.wrap` previously deduped
-  by the neutral `Node`'s own python identity, but the assembler
-  deliberately does NOT dedupe across sibling include paths (each attach
-  position keeps its own freshly decoded `Node`, per m-snapshot-read-012's
-  own per-view wire contract) — so two `Node`s for the SAME logical row never
-  wrapped to the same frozen instance. Fixed to dedupe by the LOGICAL identity
-  triple (family-normalized name + primary key, `materialize.identity_key`),
-  closing cycles/diamonds at the correct layer without disturbing the
-  wire-level per-view rendering. The D-16 staged-realization notice retired
-  from `render_usage_guide` (plain removal, not a replacement banner — every
-  rendered transaction example already uses the graduated
-  `tx.insert(instance)`/`tx.update(edited_copy)`/`tx.delete(node)`/
-  `tx.find(...) -> Snapshot[T]` surface, so there is nothing left to warn
-  about). Of the 10 read-side rejected cases (COR-3 Phase 7 increment 1), 4
-  reproduce build-time through the idiomatic surface; the other 6
-  (`m-value-object-034/035/036/037`, `m-inheritance-064/072`) are honestly
-  case-scoped skips — each empirically confirmed to have NO idiomatic
-  spelling reaching `validate_operation` with the corpus's own invalid shape
-  (an unknown attribute, a type the `.include()`/`.where()` API structurally
-  refuses, or — for the two `narrow-outside-relationship-target` cases — the
-  `models/animal.yaml` owner's real name `Person` colliding with
-  `mirrored_models.Person` in the single global entity registry, the same
-  reachability constraint `snapshot_models`'s own `AnimalOwner` rename
-  documents). That SAME Person/AnimalOwner collision (and an analogous
-  Customer-registry collision for customer.yaml's own VO graph/write cases)
-  blocks a handful of other cases from a real executable story today
-  (`m-snapshot-read-007/-012`, `m-inheritance-065/066/067`,
-  `m-deep-fetch-018`, `m-value-object-023/024/025/026/027`) — recorded
-  case-scoped, not silently absorbed; closing it (a registry/naming
-  refactor) is future work, not this increment's scope.
-  `tests/unit/test_api_suite.py`'s two backbone-review reconciliation tests
-  (hardcoded to `m-unit-work` as the only bucket-free module) generalized to
-  the actual bucket-free set. Updated counts (measured): unit lane 1543
-  passed / 77 skipped (100% branch coverage, 100% diff coverage against
-  `origin/main` — the wrap.py identity-key fix needed one added unit test to
-  stay covered), compile sweep unchanged at 164 passed / 67 skipped (231
-  total — no read-path regression), the combined Docker database lane
-  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 271
-  passed / 10 skipped (up from 224 — the 47 new passes are exactly the
-  flipped examples/stories), the rejected sweep 25 passed / 10 skipped
-  (`when.write` cases, Phase 8). `just python-static` and `just python-verify`
-  both green; `uv run gen-usage-guide --check` passes (the regenerated guide
-  gained every new example/story, lost the D-16 notice). **Phase 7 (the
-  snapshot branch) is COMPLETE.** **Next:** Phase 8 (writes and correctness).
+  flip. PHASE 7 COMPLETE (`d192226`).** Every Phase-7 module's active cases
+  are now either an idiomatic example or a reasoned, case-scoped skip (57
+  exercised, 242 case-scoped skips, partition exact over 299 cases). Seven
+  executable graph stories prove developer-facing guarantees (diamond
+  identity, back-reference cycles, closed-world access, pin/edge) against
+  real Postgres; fixing the diamond-identity story surfaced and fixed a
+  wrap-time identity bug (`parallax.snapshot.wrap` now dedupes by logical
+  identity, not python object identity). Counts: unit lane 1543, compile
+  sweep unchanged at 164, combined Docker lane 271 passed / 10 skipped,
+  rejected sweep 25 passed / 10 skipped. **Phase 7 (the snapshot branch) is
+  COMPLETE.** **Next:** Phase 8 (writes and correctness).
 
 ## Blockers
 

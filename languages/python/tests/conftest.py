@@ -9,9 +9,12 @@ import subprocess
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+
+if TYPE_CHECKING:
+    from parallax.core.entity import Entity
 
 PY_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PY_ROOT.parents[1]
@@ -127,7 +130,30 @@ def compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]])
                 break
         else:
             raise AssertionError(f"observed row unmatched: {row!r}\n  expected pool: {remaining!r}")
-    assert not remaining, f"expected rows unmatched: {remaining!r}"
+
+
+def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str, Any]:
+    """Render one materialized entity instance's OWN scalar/value-object
+    members to a PHYSICAL-COLUMN-keyed row — the same key convention
+    ``then.rows`` / ``expectRows`` use (`m-case-format` "Triple equivalence":
+    a case's expected row is asserted against the golden SQL's OWN projected
+    column names, e.g. ``ordered_on``, never the canonical camelCase wire
+    name ``orderedOn`` ``canonical_row`` renders). ``family_variant=True``
+    additionally reports ``familyVariant`` as ``type(instance).__name__`` —
+    the API-suite's own observation of polymorphism (`python.md` §4: "every
+    materialized node is an instance of its concrete entity class, so the
+    corpus's `familyVariant` is observable as `type(node)`"), needed only when
+    grading a case whose oracle projects the raw tag column for an
+    abstract-root read.
+    """
+    from parallax.core.entity import wire_names_of
+
+    names = wire_names_of(type(instance))
+    column_by_py = {py_name: column for column, py_name in names.column_to_py.items()}
+    row = {column_by_py[py_name]: getattr(instance, py_name) for py_name in names.py_to_name}
+    if family_variant:
+        row["familyVariant"] = type(instance).__name__
+    return row
 
 
 # --------------------------------------------------------------------------- #

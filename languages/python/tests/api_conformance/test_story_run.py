@@ -27,9 +27,10 @@ from typing import Any, cast
 
 import pytest
 
-from conftest import case_document, case_fixtures, compare_rows
+from conftest import case_document, case_fixtures, compare_rows, instance_row
 from parallax.conformance import case_format, engine
 from parallax.conformance.graph_stories import GRAPH_STORIES
+from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Account
 from parallax.core import LATEST, edge_of, is_loaded
@@ -200,5 +201,49 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
     assert len(_GRAPH_STORIES_BY_ID) == len(GRAPH_STORIES)
     for story in GRAPH_STORIES:
         assert story.case_id in _CASES, story.case_id
+        model_ref = str(case_document(_CASES[story.case_id])["model"])
+        assert story.model == model_ref.removeprefix("models/").removesuffix(".yaml"), story.case_id
+
+
+# --------------------------------------------------------------------------- #
+# Read stories (m-api-conformance S1 remediation): a GENERIC runner, unlike    #
+# the write/graph stories above — every read-only example's execution shape   #
+# is identical (reset, `db.find(build())`, compare), so ONE parametrized test #
+# drives every `read_stories.READ_STORIES` entry instead of a hand-rolled     #
+# per-case function. Grading is the case's own `then.rows` (order-insensitive,#
+# exact-typed, physical-column-keyed — `instance_row`, never the canonical    #
+# camelCase `orderedOn` spelling `then.rows` never uses) plus `then.roundTrips`#
+# when the case declares it. `familyVariant` is reported only for a case whose #
+# own oracle rows declare it (an abstract-root inheritance read) — the        #
+# API-suite's own polymorphism observation (`python.md` §4: "observable as    #
+# `type(node)`"), not a field the developer surface itself exposes.           #
+# --------------------------------------------------------------------------- #
+_READ_STORY_IDS = [story.case_id for story in READ_STORIES]
+
+
+@pytest.mark.parametrize("story", READ_STORIES, ids=_READ_STORY_IDS)
+def test_read_story_runs_through_the_shipped_surface(story: ReadStory, provisioner: Any) -> None:
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = db.find(story.build())
+    expected_rows = cast(
+        "list[dict[str, Any]]", case_document(_CASES[story.case_id])["then"]["rows"]
+    )
+    expects_variant = any("familyVariant" in row for row in expected_rows)
+    observed_rows = [
+        instance_row(instance, family_variant=expects_variant) for instance in snapshot.results()
+    ]
+    compare_rows(observed_rows, expected_rows)
+    expected_round_trips = case_document(_CASES[story.case_id])["then"].get("roundTrips")
+    if expected_round_trips is not None:
+        assert snapshot.execution.round_trips == expected_round_trips, story.case_id
+
+
+def test_every_read_story_mirrors_an_active_case_exactly_once() -> None:
+    by_id = {story.case_id: story for story in READ_STORIES}
+    assert len(by_id) == len(READ_STORIES)
+    for story in READ_STORIES:
+        assert story.case_id in _CASES, story.case_id
+        assert _CASES[story.case_id].shape == "read", story.case_id
         model_ref = str(case_document(_CASES[story.case_id])["model"])
         assert story.model == model_ref.removeprefix("models/").removesuffix(".yaml"), story.case_id

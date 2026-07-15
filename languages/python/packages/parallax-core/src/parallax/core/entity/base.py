@@ -10,11 +10,8 @@ The class carries no information absent from the descriptor schema.
 
 from __future__ import annotations
 
-import datetime as _dt
-import decimal as _decimal
 import re
 import sys
-import uuid as _uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, Self, cast, get_args, get_origin
@@ -34,6 +31,8 @@ from parallax.core.descriptor import Inheritance as InheritanceRecord
 from parallax.core.descriptor import Metamodel as MetamodelRecord
 from parallax.core.descriptor import Relationship as RelationshipRecord
 from parallax.core.descriptor import ValueObject as ValueObjectRecord
+from parallax.core.descriptor.neutral_type import infer_neutral_type as _infer_neutral_type_lookup
+from parallax.core.descriptor.neutral_type import snake_to_camel
 from parallax.core.entity.errors import (
     EntityDefinitionError,
     NameCollisionError,
@@ -85,19 +84,6 @@ __all__ = [
 _RESERVED: frozenset[str] = frozenset(
     {"where", "narrow", "include", "as_of", "as_of_range", "history", "meta", "descriptor"}
 )
-
-_NEUTRAL_FROM_PY: dict[type, str] = {
-    bool: "boolean",
-    int: "int64",
-    float: "float64",
-    str: "string",
-    bytes: "bytes",
-    _dt.date: "date",
-    _dt.time: "time",
-    _dt.datetime: "timestamp",
-    _uuid.UUID: "uuid",
-    _decimal.Decimal: "decimal",
-}
 
 _ATTR_STR = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_STR = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)
@@ -250,12 +236,6 @@ class EntityConfig:
     mutability: str = "read-only"
     as_of: tuple[AsOfAttribute, ...] = ()
     inheritance: FamilyRoot | Concrete | None = None
-
-
-def snake_to_camel(name: str) -> str:
-    """Convert a snake_case field name to its canonical camelCase identifier."""
-    head, *tail = name.split("_")
-    return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
 def camel_to_snake(name: str) -> str:
@@ -428,17 +408,22 @@ def _unwrap(annotation: object, globalns: dict[str, Any]) -> tuple[str | None, o
 
 
 def _infer_neutral_type(inner: object, py_name: str) -> str:
-    if isinstance(inner, type) and inner in _NEUTRAL_FROM_PY:
-        neutral = _NEUTRAL_FROM_PY[inner]
-        if neutral == "decimal":
-            raise EntityDefinitionError(
-                f"attribute {py_name!r}: a decimal needs an explicit precision — "
-                "pass Field(type='decimal(p,s)')"
-            )
-        return neutral
-    raise EntityDefinitionError(
-        f"attribute {py_name!r}: cannot infer a neutral type from {inner!r}; pass Field(type=...)"
-    )
+    # `parallax.core.descriptor.infer_neutral_type` is error-neutral (shared
+    # with the ValueObject frontend, which cannot import this module without
+    # cycling); this classifies its own unresolved-type / needs-precision
+    # cases into the Entity frontend's own message text.
+    neutral = _infer_neutral_type_lookup(inner)
+    if neutral is None:
+        raise EntityDefinitionError(
+            f"attribute {py_name!r}: cannot infer a neutral type from {inner!r}; "
+            "pass Field(type=...)"
+        )
+    if neutral == "decimal":
+        raise EntityDefinitionError(
+            f"attribute {py_name!r}: a decimal needs an explicit precision — "
+            "pass Field(type='decimal(p,s)')"
+        )
+    return neutral
 
 
 def _family_parent(bases: tuple[type, ...]) -> type | None:

@@ -13,7 +13,15 @@ import pytest
 
 from parallax.conformance import models, provision
 from parallax.core.db_port import JsonDocument
-from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, ValueObject
+from parallax.core.descriptor import (
+    AsOfAttribute,
+    Attribute,
+    Entity,
+    Index,
+    Inheritance,
+    Metamodel,
+    ValueObject,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -98,6 +106,24 @@ def test_schema_statements_tpcs_creates_one_table_per_concrete_with_its_own_ance
     (memo,) = [t for t in tables if t.startswith("create table memo ")]
     assert "currency" not in memo  # Memo does not descend from FinancialDocument
     assert "kind" not in invoice and "kind" not in memo
+
+
+def test_schema_statements_tpcs_temporal_pk_includes_the_root_declared_axes() -> None:
+    # Rate (models/rate.yaml): a table-per-concrete-subtype family whose
+    # bitemporal axes are declared on the abstract ROOT and inherited by every
+    # concrete subtype (m-inheritance "Inherited members") — DepositRate/LoanRate
+    # declare NO `asOfAttributes` locally. The physical PK must still be the
+    # business key plus EACH axis's from-column (`m-descriptor`), never just the
+    # business key alone, or a second milestone for the same id could not be
+    # stored.
+    tables = provision.schema_statements(_MODELS["rate"])
+    (deposit,) = [t for t in tables if t.startswith("create table deposit_rate ")]
+    assert "primary key (id, from_z, in_z)" in deposit
+    (loan,) = [t for t in tables if t.startswith("create table loan_rate ")]
+    assert "primary key (id, from_z, in_z)" in loan
+    # Quote (models/quote.yaml): the audit-only (single-axis) TPCS counterpart.
+    (spot,) = provision.schema_statements(_MODELS["quote"])
+    assert "primary key (id, in_z)" in spot
 
 
 def test_fixture_statements_tph_binds_the_tag_from_tagvalue_never_the_fixture_row() -> None:
@@ -273,3 +299,95 @@ def test_fixture_statements_tph_resolves_an_inherited_value_object_by_name() -> 
     (sql, binds) = provision.fixture_statements(meta, fixtures)[0]
     assert "meta" in sql
     assert any(isinstance(bind, JsonDocument) for bind in binds)
+
+
+# --------------------------------------------------------------------------- #
+# TPCS-family DDL derivation through the FULL ancestry chain (review Spec-4    #
+# fix): as-of axes are already proven against the corpus's own Rate/Quote     #
+# family above; these two synthetic families prove the root-declared unique   #
+# secondary index and the root-declared value object, neither of which any    #
+# corpus model combines with table-per-concrete-subtype today.                #
+# --------------------------------------------------------------------------- #
+def _tpcs_family_with_a_root_declared_unique_index() -> Metamodel:
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="code", type="string", column="code", max_length=8),
+        ),
+        indices=(Index(name="root_code_uq", attributes=("code",), unique=True),),
+    )
+    leaf = Entity(
+        name="Leaf",
+        table="leaf",
+        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+        attributes=(Attribute(name="x", type="int32", column="x"),),
+    )
+    return Metamodel(entities=(root, leaf))
+
+
+def test_schema_statements_tpcs_surfaces_a_root_declared_unique_index() -> None:
+    # `code` is declared only on the ROOT, and the index that constrains it is
+    # ALSO declared only on the root — invisible from the concrete descriptor
+    # alone; the concrete's own generated table must still enforce it.
+    (ddl,) = provision.schema_statements(_tpcs_family_with_a_root_declared_unique_index())
+    assert "unique (code)" in ddl
+
+
+def _tpcs_family_with_a_temporal_root_and_matching_index() -> Metamodel:
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        as_of_attributes=(
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+        indices=(Index(name="root_pk", attributes=("id", "processingDate"), unique=True),),
+    )
+    leaf = Entity(
+        name="Leaf",
+        table="leaf",
+        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+        attributes=(Attribute(name="x", type="int32", column="x"),),
+    )
+    return Metamodel(entities=(root, leaf))
+
+
+def test_schema_statements_tpcs_skips_a_root_index_matching_the_temporal_pk() -> None:
+    # The root's OWN declared composite unique index names exactly the physical
+    # primary key (business key + from-column) the temporal-PK fix already
+    # derives; it must not ALSO appear as a redundant `unique (...)` constraint.
+    (ddl,) = provision.schema_statements(_tpcs_family_with_a_temporal_root_and_matching_index())
+    assert "primary key (id, in_z)" in ddl
+    assert "unique" not in ddl
+
+
+def _tpcs_family_with_a_redundantly_declared_index() -> Metamodel:
+    # A malformed-but-tolerated declaration: the ROOT and the CONCRETE each
+    # declare their OWN unique index over the SAME resolved column — the chain
+    # walk must emit that constraint exactly once, never twice.
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="code", type="string", column="code", max_length=8),
+        ),
+        indices=(Index(name="root_code_uq", attributes=("code",), unique=True),),
+    )
+    leaf = Entity(
+        name="Leaf",
+        table="leaf",
+        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+        attributes=(Attribute(name="x", type="int32", column="x"),),
+        indices=(Index(name="leaf_code_uq", attributes=("code",), unique=True),),
+    )
+    return Metamodel(entities=(root, leaf))
+
+
+def test_schema_statements_tpcs_deduplicates_a_redundant_index_across_the_chain() -> None:
+    (ddl,) = provision.schema_statements(_tpcs_family_with_a_redundantly_declared_index())
+    assert ddl.count("unique (code)") == 1

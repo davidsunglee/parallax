@@ -25,10 +25,7 @@ the entity/statement frontend).
 
 from __future__ import annotations
 
-import datetime as _dt
-import decimal as _decimal
 import sys
-import uuid as _uuid
 from dataclasses import dataclass
 from types import UnionType
 from typing import Any, ClassVar, Literal, Union, cast, get_args, get_origin
@@ -37,6 +34,8 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic._internal._model_construction import ModelMetaclass
 
 from parallax.core.descriptor import UNSET, NestedValueObject, ValueObjectAttribute
+from parallax.core.descriptor.neutral_type import infer_neutral_type as _infer_neutral_type_lookup
+from parallax.core.descriptor.neutral_type import snake_to_camel as _snake_to_camel
 from parallax.core.entity.errors import EntityDefinitionError, ReservedNameError
 from parallax.core.entity.expressions import Attr, ElementAttr
 
@@ -52,23 +51,6 @@ __all__ = [
     "vo_instance_validator",
     "wire_names_of",
 ]
-
-# Duplicated from ``entity.base``'s own neutral-type table (m-descriptor "no
-# drift risk" precedent, e.g. ``deep_fetch._parse_join``): a tiny, mechanical
-# Python-type -> neutral-type map neither module can share without creating a
-# cross-import cycle (``base`` -> ``value_object`` for VO-field detection).
-_NEUTRAL_FROM_PY: dict[type, str] = {
-    bool: "boolean",
-    int: "int64",
-    float: "float64",
-    str: "string",
-    bytes: "bytes",
-    _dt.date: "date",
-    _dt.time: "time",
-    _dt.datetime: "timestamp",
-    _uuid.UUID: "uuid",
-    _decimal.Decimal: "decimal",
-}
 
 _RESERVED: frozenset[str] = frozenset({"model_construct", "model_copy", "model_dump"})
 
@@ -139,18 +121,22 @@ def wire_names_of(cls: type) -> VoWireNames:
 
 
 def _infer_neutral_type(inner: object, py_name: str) -> str:
-    if isinstance(inner, type) and inner in _NEUTRAL_FROM_PY:
-        neutral = _NEUTRAL_FROM_PY[inner]
-        if neutral == "decimal":
-            raise EntityDefinitionError(
-                f"value-object member {py_name!r}: a decimal needs an explicit precision — "
-                "pass VoField(type='decimal(p,s)')"
-            )
-        return neutral
-    raise EntityDefinitionError(
-        f"value-object member {py_name!r}: cannot infer a neutral type from {inner!r}; "
-        "pass VoField(type=...)"
-    )
+    # `parallax.core.descriptor.infer_neutral_type` is error-neutral (shared
+    # with the Entity frontend, which this module cannot import back from
+    # without cycling); this classifies its own unresolved-type /
+    # needs-precision cases into the ValueObject frontend's own message text.
+    neutral = _infer_neutral_type_lookup(inner)
+    if neutral is None:
+        raise EntityDefinitionError(
+            f"value-object member {py_name!r}: cannot infer a neutral type from {inner!r}; "
+            "pass VoField(type=...)"
+        )
+    if neutral == "decimal":
+        raise EntityDefinitionError(
+            f"value-object member {py_name!r}: a decimal needs an explicit precision — "
+            "pass VoField(type='decimal(p,s)')"
+        )
+    return neutral
 
 
 def _strip_optional(annotation: object) -> object:
@@ -342,11 +328,6 @@ def _attr_inner(annotation: object, globalns: dict[str, Any]) -> object | None:
     if get_origin(annotation) is Attr:
         return get_args(annotation)[0]
     return None
-
-
-def _snake_to_camel(name: str) -> str:
-    head, *tail = name.split("_")
-    return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
 class ValueObject(BaseModel, metaclass=ValueObjectMeta):

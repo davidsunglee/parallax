@@ -84,10 +84,9 @@ class Node:
 def _declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
     """The entity that DECLARES ``entity``'s primary key / temporal axes: the
     family root for an inheritance participant (m-inheritance: the primary key
-    and every as-of axis are always declared there), else ``entity`` itself."""
-    if entity.inheritance is None:
-        return entity
-    return inheritance.family_root(meta, entity)
+    and every as-of axis are always declared there), else ``entity`` itself —
+    the shared `inheritance.declaring_entity` resolution."""
+    return inheritance.declaring_entity(meta, entity)
 
 
 def _resolved_position(
@@ -113,13 +112,10 @@ def _superset_value_objects(meta: Metamodel, position: Sequence[str]) -> list[Va
     """Every value object reachable from ``position`` (ancestry prefix, then
     each concrete's own — the SAME ordering `m-sql`'s own projection uses, not
     that it matters for decoding: only the SET of declared value objects, not
-    their order, decides what a row's document columns hold)."""
-    value_objects: list[ValueObject] = []
-    for ancestor in inheritance.ancestor_chain(meta, position):
-        value_objects.extend(ancestor.value_objects)
-    for name in sorted(position):
-        value_objects.extend(meta.entity(name).value_objects)
-    return value_objects
+    their order, decides what a row's document columns hold) — the shared
+    `inheritance.superset_value_objects` resolution (also used by `m-sql`'s
+    abstract-read/union-all projection)."""
+    return inheritance.superset_value_objects(meta, position)
 
 
 def identity_key(

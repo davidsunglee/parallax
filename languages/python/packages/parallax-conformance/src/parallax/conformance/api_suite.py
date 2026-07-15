@@ -23,6 +23,7 @@ from typing import Final
 from parallax.conformance import case_format
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
+from parallax.conformance.read_stories import READ_STORIES
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
 
 __all__ = [
@@ -76,63 +77,20 @@ class Partition:
 # the operation no-drift guard (its statement serializes to the case's operation).
 # Later phases append an Example per newly reachable case as its capability lands.
 EXAMPLES: Final[list[Example]] = [
-    Example(
-        "m-op-algebra-002",
-        "Equality on the primary key",
-        "op = Order.where(Order.id == 42)",
-    ),
-    Example(
-        "m-op-algebra-009",
-        "Is-null predicate",
-        "op = Order.where(Order.sku.is_null())",
-    ),
-    Example(
-        "m-op-algebra-011",
-        "SQL-pattern LIKE",
-        'op = Order.where(Order.sku.like("A-%"))',
-    ),
-    Example(
-        "m-op-algebra-013",
-        "Literal starts-with (wildcards escaped)",
-        'op = Order.where(Order.sku.starts_with("A-"))',
-    ),
-    Example(
-        "m-op-algebra-018",
-        "Membership (IN)",
-        "op = Order.where(Order.id.in_([1, 2, 42]))",
-    ),
-    Example(
-        "m-op-algebra-020",
-        "Conjoined filters (big-AND)",
-        "op = Order.where(Order.active.is_(True), Order.qty > 10)",
-    ),
-    Example(
-        "m-op-algebra-021",
-        "Disjunction with parentheses",
-        "op = Order.where((Order.qty < 10) | (Order.qty > 25))",
-    ),
-    Example(
-        "m-op-algebra-024",
-        "Grouped precedence — an OR under an AND",
-        "op = Order.where((Order.qty >= 25) | (Order.qty <= 5), Order.active.is_(True))",
-    ),
-    Example(
-        "m-op-algebra-025",
-        "Natural precedence — an AND under an OR (no group)",
-        "op = Order.where((Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True)))",
-    ),
-    Example(
-        "m-op-algebra-032",
-        "Ordering and limiting",
-        "op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)",
-    ),
-    # Temporal reads (m-temporal-read), unlocked by the D-7 class-frontend axis
-    # declaration (`EntityConfig.as_of`); proven by the operation no-drift guard.
-    Example(
-        "m-temporal-read-003",
-        "As-of read at a past instant",
-        "op = Balance.where().as_of(processing=datetime(2024, 4, 1, tzinfo=UTC))",
-    ),
+    # The op-algebra / temporal-read / navigate / single-concrete-inheritance
+    # read examples: each is an executable read story
+    # (`parallax.conformance.read_stories`) — the snippet is the story's own
+    # authored source, and the real-Postgres suite executes the SAME `build()`
+    # through the shipped `parallax.snapshot.connect` + `parallax-postgres`
+    # (test_story_run's generic runner), grading the mirrored case's own
+    # `then.rows` (order-insensitive, exact-typed) and `then.roundTrips`. The
+    # `navigate`-tagged siblings (a corpus spelling redundancy for the
+    # identical correlated-EXISTS lowering `exists` already expresses —
+    # m-op-algebra), the deep-fetch-bearing temporal siblings, the
+    # multi-concrete polymorphic PROJECTING inheritance reads, and the
+    # Customer value-object family are reasoned-skipped; see
+    # CASE_SKIP_REASONS.
+    *(Example(story.case_id, story.title, story.snippet) for story in READ_STORIES),
     # The developer transaction surface (m-unit-work, M4): each write example IS
     # an executable story (`parallax.conformance.stories`) — the snippet is the
     # story's own source, the real-Postgres suite executes it through the shipped
@@ -140,159 +98,6 @@ EXAMPLES: Final[list[Example]] = [
     # fake-port write no-drift guard drives the same function against the golden
     # DML. One source, three consumers: the guide cannot drift from execution.
     *(Example(story.case_id, story.title, story_snippet(story)) for story in WRITE_STORIES),
-    # Relationship navigation (m-navigate), COR-3 Phase 7: the `.any()`/`.none()`
-    # quantifiers, multi-hop composition, the to-one form, and per-hop temporal
-    # propagation (explicit `.as_of(...)` and its defaulted equivalent). The
-    # `navigate`-tagged siblings (a corpus spelling redundancy for the identical
-    # correlated-EXISTS lowering `exists` already expresses — m-op-algebra) and the
-    # deep-fetch-bearing temporal siblings are reasoned-skipped; see CASE_SKIP_REASONS.
-    Example(
-        "m-navigate-002",
-        "Relationship existence (bare `.any()`)",
-        "op = Order.where(Order.items.any())",
-    ),
-    Example(
-        "m-navigate-003",
-        "Relationship absence (bare `.none()`)",
-        "op = Order.where(Order.items.none())",
-    ),
-    Example(
-        "m-navigate-004",
-        "Relationship existence with a predicate",
-        "op = Order.where(Order.items.any(OrderItem.quantity >= 4))",
-    ),
-    Example(
-        "m-navigate-006",
-        "A navigation filter composed with a scalar predicate",
-        "op = Order.where(Order.items.none(), Order.active.is_(True))",
-    ),
-    Example(
-        "m-navigate-008",
-        "Multi-hop relationship existence",
-        "op = Order.where(\n"
-        '    Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED"))\n'
-        ")",
-    ),
-    Example(
-        "m-navigate-009",
-        "Existence over a to-one (nullable) relationship",
-        "op = OrderStatus.where(OrderStatus.order_item.any())",
-    ),
-    Example(
-        "m-navigate-010",
-        "Negated multi-hop relationship existence",
-        "op = Order.where(Order.items.none(OrderItem.statuses.any()))",
-    ),
-    Example(
-        "m-navigate-018",
-        "A semi-join across a temporal hop, explicitly pinned to latest",
-        "op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(\n"
-        "    processing=LATEST, business=LATEST\n"
-        ")",
-    ),
-    Example(
-        "m-navigate-023",
-        "The same semi-join, defaulted to latest (no `.as_of()` at all)",
-        "op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00))",
-    ),
-    # Inheritance reads (m-inheritance): table-per-hierarchy concrete/abstract
-    # targets, the `Entity.narrow(...)` constructor, the statement-level
-    # `.narrow(...)` clause, an OR of two narrowed branches, and the
-    # table-per-concrete-subtype narrow clause. The remaining tag-predicate/
-    # narrow/union-all reads are reasoned-skipped as representative siblings.
-    Example(
-        "m-inheritance-001",
-        "Table-per-hierarchy concrete-target read",
-        "op = CardPayment.where()",
-    ),
-    Example(
-        "m-inheritance-003",
-        "Table-per-hierarchy abstract-root read (familyVariant)",
-        "op = Payment.where()",
-    ),
-    Example(
-        "m-inheritance-005",
-        "Table-per-concrete-subtype concrete read",
-        "op = Invoice.where()",
-    ),
-    Example(
-        "m-inheritance-012",
-        "The `Entity.narrow(...)` constructor, narrowed to one concrete subtype",
-        "op = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))",
-    ),
-    Example(
-        "m-inheritance-013",
-        "The statement-level `.narrow(...)` clause",
-        "op = Animal.where().narrow(Pet)",
-    ),
-    Example(
-        "m-inheritance-015",
-        "An OR of two narrowed branches",
-        "op = Animal.where(\n"
-        "    Animal.narrow(Dog, where=Dog.bark_volume > 5)\n"
-        "    | Animal.narrow(Cat, where=Cat.indoor.is_(True))\n"
-        ")",
-    ),
-    Example(
-        "m-inheritance-052",
-        "Table-per-concrete-subtype `.narrow(...)` to an abstract subtype",
-        "op = Document.where().narrow(FinancialDocument)",
-    ),
-    Example(
-        "m-inheritance-070",
-        "Polymorphic navigation over table-per-concrete-subtype (grouped OR)",
-        "op = Folder.where(Folder.documents.any())",
-    ),
-    Example(
-        "m-inheritance-071",
-        "The same polymorphic navigation, narrowed to one abstract subtype",
-        "op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))",
-    ),
-    # Value-object traversal (m-value-object): shallow/deep nested equality,
-    # `.is_null()`, the bare `.any()`/`.none()` to-many presence quantifiers, a
-    # flat any-element predicate, and the scoped same-element `.any(...)` form
-    # (python.md §2's own worked example). The remaining operator/depth variants
-    # are reasoned-skipped as representative siblings.
-    Example(
-        "m-value-object-001",
-        "Nested value-object field equality",
-        'op = Customer.where(Customer.address.city == "Oslo")',
-    ),
-    Example(
-        "m-value-object-002",
-        "A deeply nested value-object field",
-        'op = Customer.where(Customer.address.geo.country == "US")',
-    ),
-    Example(
-        "m-value-object-007",
-        "A nested value-object presence test (`.is_null()`)",
-        "op = Customer.where(Customer.address.city.is_null())",
-    ),
-    Example(
-        "m-value-object-015",
-        "A to-many value-object member's presence (`.any()`)",
-        "op = Customer.where(Customer.address.phones.any())",
-    ),
-    Example(
-        "m-value-object-016",
-        "A to-many value-object member's absence (`.none()`)",
-        "op = Customer.where(Customer.address.phones.none())",
-    ),
-    Example(
-        "m-value-object-017",
-        "A flat any-element predicate through a to-many value-object member",
-        'op = Customer.where(Customer.address.phones.type == "home")',
-    ),
-    Example(
-        "m-value-object-019",
-        "A scoped same-element `.any(...)` over a to-many value-object member",
-        "op = Customer.where(\n"
-        "    Customer.address.phones.any(\n"
-        '        Phone.type == "home",\n'
-        '        Phone.number == "555-9999",\n'
-        "    )\n"
-        ")",
-    ),
     # Rejected-case build-time proofs (m-op-algebra/m-navigate/m-value-object):
     # the idiomatic surface refuses the SAME invalid input the corpus's own
     # rejected lane grades, through the SAME model-aware validator
@@ -407,20 +212,24 @@ _COALESCING_WITNESS_REASON: Final[str] = (
 
 # Rows-form inheritance reads (TPH tag-predicate/abstract-root/narrow, TPCS
 # union-all/narrow) that are a REPRESENTATIVE SIBLING of an already-exercised
-# example: the SAME correlated tag-predicate / superset-projection / union-all
-# mechanism, proven once per shape (m-inheritance-001/003/005/012/013/015/052/
-# 070/071), applied to a different family or narrow combination. No new
-# developer-facing spelling to add; the no-drift guard already proves the
-# mechanism these siblings would only repeat.
+# SINGLE-CONCRETE example: the SAME correlated tag-predicate / superset-projection
+# mechanism, proven once per shape (m-inheritance-001/012, the two exercised
+# single-concrete-resolving reads), applied to a different family or narrow
+# combination. No new developer-facing spelling to add; the no-drift guard
+# already proves the mechanism these siblings would only repeat. (The
+# MULTI-concrete-resolving siblings — abstract-root / narrow-to-2+-concretes —
+# are NOT covered by this reason: see
+# `_INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON` below, which is
+# a genuinely different, structural block, not a mere spelling repeat.)
 _TPH_ROW_SIBLING_REASON: Final[str] = (
-    "a representative sibling of the exercised TPH tag-predicate/abstract-root/narrow "
-    "examples (m-inheritance-001/003/012/013/015): the SAME correlated tag-predicate + "
+    "a representative sibling of the exercised TPH single-concrete tag-predicate "
+    "examples (m-inheritance-001/012): the SAME correlated tag-predicate + "
     "superset-projection mechanism, over a different family or narrow combination — no "
     "distinct developer-facing spelling to add"
 )
 _TPCS_ROW_SIBLING_REASON: Final[str] = (
-    "a representative sibling of the exercised TPCS union-all/narrow examples "
-    "(m-inheritance-005/052/070/071): the SAME union-all-over-concretes + narrow-scope "
+    "a representative sibling of the exercised TPCS single-concrete/semi-join examples "
+    "(m-inheritance-005/070/071): the SAME union-all-over-concretes + narrow-scope "
     "mechanism, over a different subtype combination — no distinct developer-facing "
     "spelling to add"
 )
@@ -432,9 +241,34 @@ _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON: Final[str] = (
 )
 _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON: Final[str] = (
     "a representative sibling combining two INDEPENDENTLY exercised capabilities — the "
-    "as-of spelling (m-temporal-read-003) and the TPH/TPCS tag-predicate/union-all read "
-    "(m-inheritance-001/003/005) — over a bitemporal instrument/rate family neither "
+    "as-of spelling (m-temporal-read-003) and the TPH/TPCS single-concrete tag-predicate "
+    "read (m-inheritance-001/005) — over a bitemporal instrument/rate family neither "
     "existing example mirrors; no new mechanism, no distinct spelling"
+)
+
+# Multi-concrete polymorphic PROJECTING inheritance reads (an abstract-root read,
+# or a narrow resolving to 2+ concretes): genuinely UNREACHABLE through
+# `db.find` today, for two independent reasons — (1) table-per-hierarchy: each
+# row's own typed instance carries only ITS OWN concrete class's fields, never a
+# sibling's nullable column the wire row's superset includes, so a flat
+# `then.rows` comparison cannot be reproduced from typed instances at all
+# (python.md §4 says the RIGHT observation is `type(node)`, not a flattened
+# dict); (2) table-per-concrete-subtype: instance-form projection over 2+
+# resolved concretes has no goldened lowering yet at all (`SqlGenError`,
+# `sql_gen.compile._compile_tpcs_read`) — a genuine engine gap. Distinct from
+# every other inheritance reasoned-skip above: those are spelling repeats of an
+# executed mechanism; these cannot be executed through the shipped surface at
+# all yet.
+_INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
+    "a multi-concrete polymorphic PROJECTING read (an abstract-root read, or a narrow "
+    "resolving to 2+ concretes) — genuinely unreachable through `db.find` today: a "
+    "table-per-hierarchy row's own typed instance carries only its OWN concrete class's "
+    "fields, never a sibling's nullable column the wire row's superset includes, so a "
+    "flat `then.rows` comparison cannot be reproduced from typed instances (python.md "
+    "§4: the right observation is `type(node)`, not a flattened dict); "
+    "table-per-concrete-subtype instance-form projection over 2+ resolved concretes has "
+    "no goldened lowering at all yet (`SqlGenError`) — a genuine engine gap, not a "
+    "partition-honesty concern to grade around"
 )
 
 # Inheritance-family / temporal writes: `lower_write` (parallax.snapshot.handle)
@@ -523,7 +357,8 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 # the installed `parallax-conformance` distribution `graph_stories.py` needs
 # (package-boundary rule, spec §7/§8): no parallax.conformance-scoped Person
 # mirror exists, so this case cannot be driven through a real db.find story
-# today.
+# today. Deferred: ledger D-20 (the single, global, process-wide entity-registry
+# constraint — closing it needs a registry/naming refactor, not this suite).
 _PERSON_MIRROR_UNREACHABLE_REASON: Final[str] = (
     "`models/person.yaml`'s Person/Passport pair lives in `tests/mirrored_models.py` — "
     "test-only, unreachable from the installed `parallax-conformance` distribution "
@@ -539,7 +374,9 @@ _PERSON_MIRROR_UNREACHABLE_REASON: Final[str] = (
 # (`rel: Person.pets`) or a real db.find over the animal family's owner
 # relationship is unreachable: `snapshot_models`/`inheritance_models` are
 # themselves test-only (same package-boundary rule as Person above), so even a
-# renamed mirror cannot be driven from `parallax.conformance`.
+# renamed mirror cannot be driven from `parallax.conformance`. Deferred: ledger
+# D-20 (the SAME single, global, process-wide entity-registry constraint the
+# Person-mirror reason above defers).
 _ANIMAL_OWNER_COLLISION_REASON: Final[str] = (
     "`models/animal.yaml`'s own polymorphic owner is ALSO named `Person` — the same "
     "canonical name `mirrored_models.Person` claims in the single, global, "
@@ -563,15 +400,19 @@ _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON: Final[str] = (
 )
 
 # Value-object nested/absence/cast/array-traversal PREDICATE reads: rows-form,
-# representative siblings of the exercised Customer.address examples
-# (m-value-object-001/002/007/015/016/017/019) — the SAME nested-path
-# resolution / absence-collapse / any-element lowering, a different operator,
-# depth, or dialect-cast variant.
+# representative siblings of the Customer.address predicate BUILD-TIME proofs
+# (m-value-object-001/002/007/015/016/017/019 — themselves case-scoped skips
+# below, the Customer registry collision, never executed for real either) —
+# the SAME nested-path resolution / absence-collapse / any-element lowering, a
+# different operator, depth, or dialect-cast variant, and the SAME
+# reachability block a real execution of any of them would hit.
 _VO_PREDICATE_SIBLING_REASON: Final[str] = (
-    "a representative sibling of the exercised Customer.address predicate examples "
-    "(m-value-object-001/002/007/015/016/017/019): the SAME nested-path resolution / "
+    "a representative sibling of the Customer.address predicate build-time proofs "
+    "(m-value-object-001/002/007/015/016/017/019 — themselves case-scoped skips, the "
+    "Customer registry collision below): the SAME nested-path resolution / "
     "absence-collapse / any-element lowering, a different operator, depth, or "
-    "dialect-cast variant — no distinct developer-facing shape to add"
+    "dialect-cast variant — no distinct developer-facing shape to add, and the SAME "
+    "reachability block a real execution would hit"
 )
 
 # Customer-model cases needing a REAL execution (a `db.find`/`db.transact`
@@ -579,18 +420,22 @@ _VO_PREDICATE_SIBLING_REASON: Final[str] = (
 # SAME canonical name this case's model declares — already claims "Customer"
 # in the single, global, process-wide entity registry, and it is test-only
 # (unreachable from the installed `parallax-conformance` distribution
-# `stories.py`/`graph_stories.py` need, the SAME package-boundary rule
-# `snapshot_models`'s own docstring documents for animal.yaml's owner). A
-# purpose-built, differently-named mirror could reproduce the WRITE DML or
-# GRAPH shape but never the exact corpus operation/wire text this suite's
-# no-drift guards compare, since the case's own `targetEntity`/`entity` names
-# the real "Customer".
+# `stories.py`/`graph_stories.py`/`read_stories.py` need, the SAME
+# package-boundary rule `snapshot_models`'s own docstring documents for
+# animal.yaml's owner). A purpose-built, differently-named mirror could
+# reproduce the WRITE DML, GRAPH shape, or ROW result but never the exact
+# corpus operation/wire text this suite's no-drift guards compare, since the
+# case's own `targetEntity`/`entity` names the real "Customer" — this covers
+# the row-form predicate reads (m-value-object-001/002/007/015/016/017/019)
+# exactly as it already covered the graph/write cases. Deferred: ledger D-20
+# (the SAME single, global, process-wide entity-registry constraint the
+# Person/AnimalOwner reasons above defer).
 _CUSTOMER_UNREACHABLE_REASON: Final[str] = (
     "needs a REAL execution (a `db.find`/`db.transact` story) over the Customer "
     "entity, but `value_object_models.Customer` already claims that canonical name in "
     "the single, global, process-wide entity registry and is test-only — unreachable "
     "from the installed `parallax-conformance` distribution `stories.py`/"
-    "`graph_stories.py` need (the same package-boundary collision "
+    "`graph_stories.py`/`read_stories.py` need (the same package-boundary collision "
     "`snapshot_models`'s own docstring documents for animal.yaml's owner); a "
     "differently-named mirror could run the SQL but could never reproduce this case's "
     "own `Customer`-named operation/wire text"
@@ -600,7 +445,9 @@ _CUSTOMER_UNREACHABLE_REASON: Final[str] = (
 # principle (temporal as-of and value-object materialization are each already
 # proven independently), but no suite mirror or story exists yet for these two
 # families — new coverage surface this increment's explicit item list did not
-# build, not a structural block.
+# build, not a structural block. Deferred: ledger D-21 (add the Supplier/Branch
+# mirror and story — a coverage-surface gap, distinct from D-20's structural
+# registry constraint).
 _VO_TEMPORAL_GRAPH_DEFERRED_REASON: Final[str] = (
     "combines two independently-proven capabilities (temporal as-of reads, "
     "value-object composite materialization) over Supplier/Branch, families with no "
@@ -695,6 +542,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-063": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
+    # -- m-inheritance: multi-concrete polymorphic PROJECTING reads (genuinely #
+    # unreachable through `db.find` today — see the reason's own comment) --- #
+    "m-inheritance-003": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
+    "m-inheritance-013": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
+    "m-inheritance-015": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
+    "m-inheritance-052": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     # -- m-inheritance: write family (COR-3 Phase 8) ------------------------- #
     "m-inheritance-007": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-008": _INHERITANCE_WRITE_PHASE8_REASON,
@@ -780,6 +633,13 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-021": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-022": _VO_PREDICATE_SIBLING_REASON,
     # -- m-value-object: the Customer-registry collision (read + write) ------ #
+    "m-value-object-001": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-002": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-007": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-015": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-016": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-017": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-019": _CUSTOMER_UNREACHABLE_REASON,
     "m-value-object-023": _CUSTOMER_UNREACHABLE_REASON,
     "m-value-object-024": _CUSTOMER_UNREACHABLE_REASON,
     "m-value-object-025": _CUSTOMER_UNREACHABLE_REASON,

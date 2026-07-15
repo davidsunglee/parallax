@@ -18,6 +18,18 @@ a ``scenario`` case's per-step ``find`` bodies are graded by the executable grap
 stories (``test_story_run.py``) instead, when their own statement is trivial
 (a bare primary-key equality already proven by the ``m-op-algebra`` examples
 above) or their behavior is not a query at all (a mutation/access step).
+
+Most read-only entries below are **derived** from
+``parallax.conformance.read_stories.READ_STORIES`` — the SAME ``build()`` the
+real-database generic runner (``test_story_run.py``) executes against real
+Postgres, so this guard's no-drift proof and that execution share one source,
+never a second, hand-duplicated expression that could drift from it. The
+remaining hand-authored entries are the ones that genuinely have no executable
+real-database story yet (a graph-story's own bare-statement half; a
+multi-concrete polymorphic read `db.find` cannot grade as flat rows; the
+Customer value-object family's registry collision) — see
+``read_stories``'s own module docstring and ``api_suite.CASE_SKIP_REASONS``
+for exactly why each one stays build-only.
 """
 
 from __future__ import annotations
@@ -31,10 +43,10 @@ import inheritance_models as im
 import snapshot_models as sm
 import value_object_models as vm
 from conftest import case_document
-from mirrored_models import Balance
 from parallax.conformance import case_format
-from parallax.conformance.graph_models import Coverage, Policy
-from parallax.conformance.story_models import Order, OrderItem, OrderStatus
+from parallax.conformance.graph_models import Policy
+from parallax.conformance.read_stories import READ_STORIES
+from parallax.conformance.story_models import Order
 from parallax.core import Entity, OperationRejectedError, Predicate, Statement
 from parallax.core.op_algebra import serialize
 from parallax.core.temporal_read import LATEST
@@ -43,50 +55,10 @@ pytestmark = pytest.mark.api_conformance
 
 # case id -> the idiomatic statement that must serialize to the case's operation.
 BUILDERS: dict[str, Callable[[], Statement]] = {
-    "m-op-algebra-002": lambda: Order.where(Order.id == 42),
-    "m-op-algebra-009": lambda: Order.where(Order.sku.is_null()),
-    "m-op-algebra-011": lambda: Order.where(Order.sku.like("A-%")),
-    "m-op-algebra-013": lambda: Order.where(Order.sku.starts_with("A-")),
-    "m-op-algebra-018": lambda: Order.where(Order.id.in_([1, 2, 42])),
-    "m-op-algebra-020": lambda: Order.where(Order.active.is_(True), Order.qty > 10),
-    "m-op-algebra-021": lambda: Order.where((Order.qty < 10) | (Order.qty > 25)),
-    "m-op-algebra-024": lambda: Order.where(
-        (Order.qty >= 25) | (Order.qty <= 5), Order.active.is_(True)
-    ),
-    "m-op-algebra-025": lambda: Order.where(
-        (Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True))
-    ),
-    "m-op-algebra-032": lambda: (
-        Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)
-    ),
-    # The temporal as-of spelling (m-temporal-read), unlocked by the D-7
-    # class-frontend axis declaration (EntityConfig.as_of on the Balance mirror).
-    "m-temporal-read-003": lambda: Balance.where().as_of(
-        processing=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
-    ),
-    # Relationship navigation (m-navigate), COR-3 Phase 7 increment 6b: the
-    # `.any()` / `.none()` quantifiers always serialize to the `exists` /
-    # `notExists` wire spelling — the ONE canonical form the idiomatic surface
-    # implements for a navigation filter (m-op-algebra: "navigate and exists are
-    # the same correlated-EXISTS lowering", a spelling redundancy the corpus also
-    # exercises through the `navigate`-tagged siblings this suite reasoned-skips,
-    # see api_suite.py).
-    "m-navigate-003": lambda: Order.where(Order.items.none()),
-    "m-navigate-004": lambda: Order.where(Order.items.any(OrderItem.quantity >= 4)),
-    "m-navigate-006": lambda: Order.where(Order.items.none(), Order.active.is_(True)),
-    "m-navigate-008": lambda: Order.where(
-        Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED"))
-    ),
-    "m-navigate-009": lambda: OrderStatus.where(OrderStatus.order_item.any()),
-    "m-navigate-010": lambda: Order.where(Order.items.none(OrderItem.statuses.any())),
-    # Temporal navigate (m-navigate x m-temporal-read): the propagated per-hop
-    # as-of pin (m-navigate-018, explicit `.as_of(...)`) and its defaulted
-    # equivalent (m-navigate-023, no `.as_of()` at all — the SAME golden SQL and
-    # rows, m-temporal-read's own default-injection rule applied per hop).
-    "m-navigate-018": lambda: Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(
-        processing=LATEST, business=LATEST
-    ),
-    "m-navigate-023": lambda: Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)),
+    # The op-algebra / temporal-read / navigate / single-concrete-inheritance
+    # read examples: derived from the SAME `build()` the real-database runner
+    # executes (`read_stories.READ_STORIES`) — see this file's own docstring.
+    **{story.case_id: story.build for story in READ_STORIES},
     # Deep-fetch include paths (m-deep-fetch) that also drive an executable graph
     # story (`parallax.conformance.graph_stories`) — the SAME statement expression;
     # this entry is the query-shape no-drift half, the story is the execution half.
@@ -101,33 +73,26 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
         .as_of(business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), processing=LATEST)
         .include(Policy.coverages)
     ),
-    # Inheritance reads (m-inheritance): table-per-hierarchy concrete/abstract
-    # targets, the `Entity.narrow(...)` constructor, the statement-level
-    # `.narrow(...)` clause, an OR of two narrowed branches, and the
-    # table-per-concrete-subtype narrow clause.
-    "m-inheritance-001": lambda: im.CardPayment.where(),
+    # Multi-concrete polymorphic PROJECTING reads (m-inheritance): build-only —
+    # `db.find`'s instance-form materialization cannot reproduce a flat
+    # `then.rows` comparison for these (a table-per-hierarchy multi-concrete
+    # row's own typed instance carries only its own concrete class's fields;
+    # table-per-concrete-subtype instance-form projection over 2+ resolved
+    # concretes has no goldened lowering yet) — see `read_stories`'s own
+    # module docstring.
     "m-inheritance-003": lambda: im.Payment.where(),
-    "m-inheritance-005": lambda: im.Invoice.where(),
-    "m-inheritance-012": lambda: sm.Animal.where(
-        sm.Animal.narrow(sm.Dog, where=sm.Dog.bark_volume > 3)
-    ),
     "m-inheritance-013": lambda: sm.Animal.where().narrow(sm.Pet),
     "m-inheritance-015": lambda: sm.Animal.where(
         sm.Animal.narrow(sm.Dog, where=sm.Dog.bark_volume > 5)
         | sm.Animal.narrow(sm.Cat, where=sm.Cat.indoor.is_(True))
     ),
     "m-inheritance-052": lambda: im.Document.where().narrow(im.FinancialDocument),
-    # TPCS polymorphic navigation (m-navigate x m-inheritance): a grouped-OR
-    # semi-join over the abstract root's concrete tables, and the SAME shape
-    # narrowed to one abstract subtype (dropping the sibling branch).
-    "m-inheritance-070": lambda: im.Folder.where(im.Folder.documents.any()),
-    "m-inheritance-071": lambda: im.Folder.where(
-        im.Folder.documents.any(im.Document.narrow(im.FinancialDocument))
-    ),
-    # Value-object traversal (m-value-object): shallow/deep nested equality,
-    # `.is_null()`, the bare `.any()` / `.none()` to-many presence quantifiers, a
-    # flat any-element predicate, and the scoped same-element `.any(...)` form
-    # (python.md §2's own worked example).
+    # Value-object traversal (m-value-object): build-only — `value_object_
+    # models.Customer` already claims that canonical name in the single,
+    # global, process-wide entity registry and is test-only, so no
+    # installed-package mirror can drive these as a real story (the SAME
+    # Person/AnimalOwner-style collision `read_models`'s own docstring
+    # documents for the animal family's owner side).
     "m-value-object-001": lambda: vm.Customer.where(vm.Customer.address.city == "Oslo"),
     "m-value-object-002": lambda: vm.Customer.where(vm.Customer.address.geo.country == "US"),
     "m-value-object-007": lambda: vm.Customer.where(vm.Customer.address.city.is_null()),
