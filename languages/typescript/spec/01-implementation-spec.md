@@ -1401,9 +1401,10 @@ m-unit-work --> m-op-algebra
 m-unit-work --> m-dialect
 m-op-list --> m-op-algebra
 m-op-list --> m-unit-work
-m-navigate --> m-op-list
+m-navigate --> m-op-algebra
 m-navigate --> m-unit-work
 m-navigate --> m-temporal-read
+m-op-list --> m-deep-fetch
 m-temporal-read --> m-unit-work
 m-detach --> m-unit-work
 m-opt-lock --> m-unit-work
@@ -1421,15 +1422,25 @@ m-coherence --> m-unit-work
 
 The non-obvious directions carry over verbatim from the core graph: `m-unit-work` depends
 on `m-op-algebra` not `m-sql` (the transaction / unit-of-work layer is expressed over
-operations, not SQL); `m-navigate` depends on `m-op-list` (relationship navigation yields lists,
-the reverse of the obvious guess); `m-navigate` depends on `m-temporal-read` (a pinned as-of value
+operations, not SQL); `m-navigate` depends on `m-op-algebra` directly (navigation's
+`navigate`/`exists`/`notExists` nodes are algebra vocabulary — [core ADR
+0025](../../../docs/adr/0025-lifecycle-result-surfaces-sit-above-the-shared-fetch-algorithm.md)
+inverted the lifecycle-result-surface edges, so `m-op-algebra` is no longer reachable from
+navigate only transitively, through the now-removed `m-navigate → m-op-list` edge); `m-op-list`
+depends on `m-deep-fetch` in turn (a lazy list is *populated by* deep fetch — core's own graph
+gives the snapshot-read lifecycle the same relationship with deep fetch, `m-snapshot-read -->
+m-deep-fetch`, though `slice-mvp-1` does not claim that module: the two lifecycle result
+surfaces sit as peers *above* the shared fetch algorithm, and neither depends on the other);
+`m-navigate` depends on
+`m-temporal-read` (a pinned as-of value
 propagates per relationship hop, so the relationship layer references the as-of
 model — the edge the claimed temporal deep-fetch 03xx cases require); and `m-sql`
 depends on `m-dialect` (SQL generation routes through the portability seam). `m-case-format`
 additionally depends on `m-unit-work` directly — the harness realizes m-unit-work unit-of-work
 behavior itself (batched write-sequence flushes, read-your-own-writes scenarios),
 a direct edge that coexists with the transitive `m-case-format → m-opt-lock → m-unit-work` path, mirroring
-how `m-navigate → m-unit-work` coexists with `m-navigate → m-op-list → m-unit-work` — and on `m-dialect` directly, since the
+how `m-navigate → m-unit-work` coexists with the transitive `m-navigate → m-temporal-read →
+m-unit-work` path — and on `m-dialect` directly, since the
 harness applies the dialect's DDL / quoting / read-lock-application rules to
 assemble SQL (`applyReadLock`). m-coherence's
 single legal direction `m-coherence → m-unit-work` is
