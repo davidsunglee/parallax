@@ -729,10 +729,23 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # row to the audit-only close-and-chain. Tagged slice-snapshot-1 ONLY (matching
         # the m-audit-write-007 / m-bitemp-write-010..013 predicate-write family), so
         # slice-snapshot-1 rises by 1 (298 -> 299) and slice-mvp-1 / slice-managed-1 are
-        # unchanged. Final counts: 197 / 299 / 321.
+        # unchanged. Counts at that stage: 197 / 299 / 321.
+        #
+        # COR-3 Phase 7 review remediation (the binding root-ownership decision:
+        # temporality is family-wide, only the family root may declare `asOfAttributes`)
+        # authors FOUR new inheritance cases: two `when.model` rejected witnesses
+        # (m-inheritance-098, a non-temporal TPH root whose abstract-subtype declares its
+        # own axes; m-inheritance-099, a temporal TPCS root whose concrete subtype adds a
+        # second axis) and two concrete-target temporal read witnesses (m-inheritance-100,
+        # a TPCS DepositRate read pinning its ROOT-inherited `processingDate`, resolving the
+        # strengthened multi-milestone Rate fixture's closed historical row;
+        # m-inheritance-101, a TPH Bond read pinning its ROOT-inherited `businessDate`,
+        # composing with the tag predicate). All four are tagged slice-snapshot-1 +
+        # slice-managed-1 ONLY (never slice-mvp-1), so both counts rise by 4:
+        # 299 -> 303, 321 -> 325; slice-mvp-1 is unchanged. Final counts: 197 / 303 / 325.
         ("slice-mvp-1", 197),
-        ("slice-snapshot-1", 299),
-        ("slice-managed-1", 321),
+        ("slice-snapshot-1", 303),
+        ("slice-managed-1", 325),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

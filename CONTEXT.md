@@ -23,7 +23,7 @@ A closed polymorphic entity tree with one abstract root, optional abstract subty
 _Avoid_: class tree, inheritance graph, open hierarchy
 
 **Abstract Root Type**:
-The non-instantiable, tableless entity that names an inheritance family, owns the family strategy, and carries attributes common to every descendant concrete subtype.
+The non-instantiable, tableless entity that names an inheritance family, owns the family strategy and its temporal as-of axes (a family is either entirely non-temporal or entirely temporal), and carries attributes common to every descendant concrete subtype.
 _Avoid_: base class object, root row
 
 **Abstract Subtype**:

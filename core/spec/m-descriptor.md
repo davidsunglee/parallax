@@ -85,6 +85,18 @@ entity declares and **MUST** be consistent with them:
 It is recorded explicitly for clarity and validated for consistency. The temporal
 MVP exercises `non-temporal` and `unitemporal-processing` (audit-only).
 
+**For an inheritance participant, "the `asOfAttribute` children an entity
+declares" means the family's — not necessarily this entity's own local —
+children.** Temporal axes are family-wide metadata declared only on the root
+(`m-inheritance` "Inherited members"); an abstract-subtype or concrete-subtype
+declares none of its own, so its **derived temporal classification** is the
+root's, inherited unchanged, never re-derived from an empty local
+`asOfAttributes`. A model-aware reader that does not flatten inheritance (a
+per-entity introspection view) MAY still surface a non-root participant's own,
+locally-empty `asOfAttributes` for structural inspection; every OTHER
+consumer — reads, writes, provisioning, identity, propagation — MUST use the
+entity's **effective inherited classification** within its family.
+
 Every entity **MUST** resolve to at least one `attribute` with `primaryKey: true`
 — declared locally, or (for a concrete subtype) inherited from an abstract
 ancestor through its ancestry chain (`m-inheritance`).

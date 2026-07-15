@@ -11,10 +11,17 @@ column carrying each concrete subtype's ``tagValue``; ``table-per-concrete-subty
 Per-entity structure is validated by ``metamodel.schema.json``; the genuinely
 CROSS-ENTITY family invariants (parent resolution, acyclicity, single root,
 concrete-under-abstract-root, family-wide ``tagValue`` uniqueness, shared-table
-consistency, tag placement) are semantic and live here — the same non-normative
-grading pattern the value-object resolvers follow, raising the shared
+consistency, tag placement, temporal-axis root ownership) are semantic and live
+here — the same non-normative grading pattern the value-object resolvers
+follow, raising the shared
 :class:`~reference_harness.value_object_resolve.RejectionError` with the violated
 ``then.rejectedRule``.
+
+Temporality is a FAMILY-WIDE property, not an ordinary inherited member: only
+the root may declare ``asOfAttributes``, and every descendant inherits the
+root's complete axis set unchanged (never redeclaring, adding, removing,
+overriding, or shadowing one), regardless of whether the root itself is
+temporal.
 
 This module also owns the **effective definition** derivation: a concrete subtype
 does not repeat inherited attributes, so the harness derives the full inherited
@@ -64,6 +71,11 @@ INHERITANCE_MISSING_TAG_VALUE = "inheritance-missing-tag-value"
 INHERITANCE_DUPLICATE_TAG_VALUE = "inheritance-duplicate-tag-value"
 INHERITANCE_INCONSISTENT_HIERARCHY_TABLE = "inheritance-inconsistent-hierarchy-table"
 INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY = "inheritance-tag-on-concrete-subtype-strategy"
+# Temporality is a family-wide property (the binding root-ownership decision,
+# COR-3 Phase 7 review remediation): only the root may declare `asOfAttributes`;
+# an `abstract-subtype` or `concrete-subtype` that declares its own — whether
+# the root is itself non-temporal or temporal — is rejected.
+INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED = "inheritance-temporal-axes-not-root-owned"
 
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
@@ -79,6 +91,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_DUPLICATE_TAG_VALUE,
         INHERITANCE_INCONSISTENT_HIERARCHY_TABLE,
         INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
+        INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
     }
 )
 
@@ -407,24 +420,24 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     resolved = copy.deepcopy(definition)
     resolved["attributes"] = merged
 
-    # Inherit the temporal AXES (asOfAttributes) + classification (temporal) from the
-    # nearest ancestor that declares them (m-inheritance: temporal axes declared on an
-    # abstract ancestor are inherited by every descendant). A family's temporal profile
-    # lives on the ROOT, so a concrete subtype declares no asOfAttributes of its own —
-    # the harness surfaces the inherited axes here, exactly as it derives the inherited
-    # attribute chain, so the DDL builds the milestone key, is_temporal is true, and the
-    # milestone-write / as-of-read oracles treat the concrete as the milestone-owning row
-    # it is. A per-entity metamodel reader (which does not flatten inheritance) still
-    # classifies the concrete non-temporal from its own empty axes — this is the
-    # inheritance-aware view.
+    # Inherit the temporal AXES (asOfAttributes) + classification (temporal) from
+    # the family ROOT ALONE (the binding root-ownership decision: temporality is
+    # family-wide, not an ordinary inherited member — `validate_family_defs`
+    # check 4a rejects any OTHER participant that declares its own axes, so a
+    # valid descriptor's non-root `resolved` never carries them locally). The
+    # harness surfaces the root's axes here, exactly as it derives the inherited
+    # attribute chain, so the DDL builds the milestone key, is_temporal is true,
+    # and the milestone-write / as-of-read oracles treat the concrete as the
+    # milestone-owning row it is. A per-entity metamodel reader (which does not
+    # flatten inheritance) still classifies the concrete non-temporal from its
+    # own empty axes — this is the inheritance-aware view.
     if "asOfAttributes" not in resolved:
-        for ancestor in reversed(family.ancestry(name)[:-1]):
-            ancestor_def = family.defs.get(ancestor, {})
-            if "asOfAttributes" in ancestor_def:
-                resolved["asOfAttributes"] = copy.deepcopy(ancestor_def["asOfAttributes"])
-                if "temporal" in ancestor_def and "temporal" not in resolved:
-                    resolved["temporal"] = ancestor_def["temporal"]
-                break
+        root_name = family.root_of(name)
+        root_def = family.defs.get(root_name, {}) if root_name is not None else {}
+        if "asOfAttributes" in root_def:
+            resolved["asOfAttributes"] = copy.deepcopy(root_def["asOfAttributes"])
+            if "temporal" in root_def and "temporal" not in resolved:
+                resolved["temporal"] = root_def["temporal"]
 
     role = role_of(definition)
     strategy = family.strategy_of(name)
@@ -527,6 +540,18 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 INHERITANCE_STRATEGY_REDECLARED,
                 f"non-root {definition['name']!r} redeclares the family strategy; only the "
                 f"root declares it",
+            )
+
+    # 4a. A non-root participant MUST NOT declare its own temporal axes (the
+    #     binding root-ownership decision): temporality is family-wide, so only
+    #     the root may declare `asOfAttributes`, regardless of whether the root
+    #     itself is temporal.
+    for definition in participants:
+        if role_of(definition) != ROLE_ROOT and "asOfAttributes" in definition:
+            raise RejectionError(
+                INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
+                f"non-root {definition['name']!r} declares its own as-of axes; temporal axes "
+                f"are family-wide and MUST be declared only on the root",
             )
 
     # 5. An abstract node (root / abstract-subtype) is tableless.

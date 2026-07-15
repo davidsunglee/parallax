@@ -100,13 +100,38 @@ inheritance:
 
 ## Inherited members
 
-Attributes, value objects, relationships, temporal axes (`asOfAttribute`), and
-mutability declared on an abstract ancestor are **inherited by every descendant**.
-A concrete subtype descriptor **does not repeat** inherited attributes merely to
-satisfy `table-per-concrete-subtype`; validation and lowering **derive the full
-inherited attribute/column chain from the ancestry** (root → … → self). A
-concrete subtype whose members are entirely inherited declares no `attributes` of
-its own (the conditional requirement in `m-descriptor`).
+Attributes, value objects, relationships, and mutability declared on an abstract
+ancestor are **inherited by every descendant**. A concrete subtype descriptor
+**does not repeat** inherited attributes merely to satisfy
+`table-per-concrete-subtype`; validation and lowering **derive the full inherited
+attribute/column chain from the ancestry** (root → … → self). A concrete subtype
+whose members are entirely inherited declares no `attributes` of its own (the
+conditional requirement in `m-descriptor`).
+
+**Temporal axes are different: they are family-level metadata, not an ordinary
+inherited member.** Temporality is a property of the **whole inheritance
+family**, not of any one entity in it. Only the family **root** may declare
+`asOfAttributes`; every abstract and concrete descendant **inherits the root's
+complete axis set unchanged**. A descendant **MUST NOT** redeclare, add, remove,
+override, or shadow a temporal axis — not even to repeat the root's own
+declaration verbatim. A family is therefore either **entirely non-temporal**
+(the root declares no axes, and no descendant may declare any) or **entirely
+temporal** (the root declares one or two axes, and every descendant is temporal
+along exactly those axes). Mixed temporality within one family — some concrete
+subtypes temporal, others not, or descendants disagreeing on which axes apply —
+is **not supported**: it would leave the family's root-owned as-of coordinate
+system, root-result identity, and relationship-propagation target ill-defined
+(see *Family invariants* below and the family-wide rejection rule there). Every
+concrete table in a temporal family derives its temporal physical primary key
+from the root's axes (`m-descriptor` "physical primary key"); reads through the
+root, an intermediate abstract position, or a concrete subtype all resolve and
+inject the same root-owned axes (`m-temporal-read`, `m-navigate`).
+
+This is a deliberate simplification relative to Reladomo, whose generator can
+merge inherited axes declared at multiple levels of a class hierarchy: Parallax's
+first-class abstract-root reads, family-normalized identity, whole-graph pins, and
+relationship propagation all need one uniform per-family coordinate system, so the
+root is made the family's single temporal-schema owner.
 
 ## Physical mapping
 
@@ -245,6 +270,13 @@ pins each as a portable `rejected` / `when.model` case with a
   map to one physical table (`inheritance-inconsistent-hierarchy-table`).
 - **Tag placement** — a table-per-concrete-subtype family declares no `tag` /
   `tagValue` anywhere (`inheritance-tag-on-concrete-subtype-strategy`).
+- **Temporal axes are root-owned** — an `abstract-subtype` or `concrete-subtype`
+  declares no `asOfAttributes` of its own, regardless of whether the root itself
+  is temporal (`inheritance-temporal-axes-not-root-owned`). This holds for BOTH
+  malformed shapes: a non-temporal root with a descendant that declares axes, and
+  a temporal root whose descendant redeclares, adds, removes, overrides, or
+  shadows an axis. Only the root may ever carry `asOfAttributes` (*Inherited
+  members*, above).
 
 ## Prior art (Reladomo)
 

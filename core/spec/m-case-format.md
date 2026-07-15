@@ -961,8 +961,9 @@ invariants per-entity schema validation cannot express, carried inline under
 `inheritance-concrete-without-abstract-root`,
 `inheritance-abstract-node-with-table`, `inheritance-abstract-node-fixture-rows`,
 `inheritance-strategy-redeclared`, `inheritance-missing-tag-value`,
-`inheritance-duplicate-tag-value`, `inheritance-inconsistent-hierarchy-table`, and
-`inheritance-tag-on-concrete-subtype-strategy` (see `m-inheritance` for each
+`inheritance-duplicate-tag-value`, `inheritance-inconsistent-hierarchy-table`,
+`inheritance-tag-on-concrete-subtype-strategy`, and
+`inheritance-temporal-axes-not-root-owned` (see `m-inheritance` for each
 invariant). A `when.model` case carries an **inline** model descriptor — an
 instance of `metamodel.schema.json` whose *family* is invalid — kept inside the
 case rather than in the shared `models/` registry, so an invalid family cannot

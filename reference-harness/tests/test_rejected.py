@@ -34,12 +34,14 @@ from reference_harness.inheritance import (
     INHERITANCE_MISSING_ROOT,
     INHERITANCE_MISSING_TAG_VALUE,
     INHERITANCE_MULTIPLE_ROOTS,
+    INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
     INHERITANCE_UNKNOWN_PARENT,
     MODEL_REJECTED_RULES,
     SUBTYPE_WRITE_METADATA_FIELD,
     SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
     SUBTYPE_WRITE_SIBLING_ATTRIBUTE,
     WRITE_REJECTED_RULES,
+    resolve_effective_definition,
     validate_family,
 )
 from reference_harness.op_validate import validate_operation
@@ -208,6 +210,130 @@ def test_concrete_without_abstract_root_is_not_reclassified_as_missing_root() ->
     with pytest.raises(RejectionError) as exc:
         validate_family(descriptor)
     assert exc.value.rule == INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT
+
+
+def test_descendant_temporal_axes_under_a_non_temporal_root_is_rejected() -> None:
+    # Temporality is a family-wide property (the binding root-ownership
+    # decision): a NON-temporal TPH root with an abstract-subtype that
+    # declares its own axes MUST be rejected, regardless of the root's own
+    # temporal state.
+    descriptor = {
+        "entities": [
+            _tph_root(),
+            {
+                "name": "Pet",
+                "inheritance": {"role": "abstract-subtype", "parent": "Animal"},
+                "asOfAttributes": [
+                    {
+                        "name": "processingDate",
+                        "fromColumn": "in_z",
+                        "toColumn": "out_z",
+                        "axis": "processing",
+                    }
+                ],
+            },
+            {
+                "name": "Dog",
+                "table": "animal",
+                "inheritance": {"role": "concrete-subtype", "parent": "Pet", "tagValue": "dog"},
+                "attributes": [
+                    {
+                        "name": "barkVolume",
+                        "type": "int32",
+                        "column": "bark_volume",
+                        "nullable": True,
+                    }
+                ],
+            },
+        ]
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED
+
+
+def test_descendant_temporal_axes_under_a_temporal_root_is_rejected() -> None:
+    # A TEMPORAL TPCS root whose concrete subtype adds its own second axis
+    # MUST also be rejected: a descendant may not redeclare, add, remove,
+    # override, or shadow an axis even when the root itself is temporal.
+    descriptor = {
+        "entities": [
+            {
+                "name": "Rate",
+                "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                "attributes": [
+                    {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                    {"name": "amount", "type": "decimal(18,2)", "column": "amount"},
+                    {"name": "processingFrom", "type": "timestamp", "column": "in_z"},
+                    {"name": "processingTo", "type": "timestamp", "column": "out_z"},
+                ],
+                "asOfAttributes": [
+                    {
+                        "name": "processingDate",
+                        "fromColumn": "in_z",
+                        "toColumn": "out_z",
+                        "axis": "processing",
+                    }
+                ],
+            },
+            {
+                "name": "DepositRate",
+                "table": "deposit_rate",
+                "inheritance": {"role": "concrete-subtype", "parent": "Rate"},
+                "attributes": [
+                    {"name": "grade", "type": "string", "column": "grade", "nullable": True},
+                    {"name": "businessFrom", "type": "timestamp", "column": "from_z"},
+                    {"name": "businessTo", "type": "timestamp", "column": "thru_z"},
+                ],
+                "asOfAttributes": [
+                    {
+                        "name": "businessDate",
+                        "fromColumn": "from_z",
+                        "toColumn": "thru_z",
+                        "axis": "business",
+                    }
+                ],
+            },
+        ]
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED
+
+
+def test_resolve_effective_definition_inherits_temporal_axes_from_the_root_only() -> None:
+    # `DepositRate` declares NO `asOfAttributes` of its own; the flattened
+    # definition surfaces the ROOT's axes (never a nearer, non-root ancestor —
+    # a valid descriptor never HAS one, per the invariant above).
+    entity_defs = [
+        {
+            "name": "Rate",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "temporal": "unitemporal-processing",
+            "attributes": [
+                {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                {"name": "processingFrom", "type": "timestamp", "column": "in_z"},
+                {"name": "processingTo", "type": "timestamp", "column": "out_z"},
+            ],
+            "asOfAttributes": [
+                {
+                    "name": "processingDate",
+                    "fromColumn": "in_z",
+                    "toColumn": "out_z",
+                    "axis": "processing",
+                }
+            ],
+        },
+        {
+            "name": "DepositRate",
+            "table": "deposit_rate",
+            "inheritance": {"role": "concrete-subtype", "parent": "Rate"},
+            "attributes": [{"name": "grade", "type": "string", "column": "grade"}],
+        },
+    ]
+    resolved = resolve_effective_definition(entity_defs, "DepositRate")
+    assert resolved["asOfAttributes"] == entity_defs[0]["asOfAttributes"]
+    assert resolved["temporal"] == "unitemporal-processing"
 
 
 def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None:
