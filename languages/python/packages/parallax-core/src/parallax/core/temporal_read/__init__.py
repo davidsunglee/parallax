@@ -60,6 +60,7 @@ __all__ = [
     "milestone_edge",
     "pin_of",
     "resolve_pinned_instants",
+    "statement_pin",
 ]
 
 # Business axis is the OUTER pin (the corpus's bitemporal nesting order) and its
@@ -435,6 +436,37 @@ def resolve_pinned_instants(op: Operation, entity: Entity) -> dict[Axis, str]:
             pins[aoa.axis] = mode.instant
         current = current.operand
     return pins
+
+
+def statement_pin(op: Operation, entity: Entity) -> Pin:
+    """The as-of coordinates a statement's OWN temporal wrapper explicitly
+    pins (spec §3 ``snapshot.pin``): an OMITTED axis (no wrapper at all — its
+    latest default is injected only at lowering) or a SCANNED axis (``history``
+    / ``as_of_range`` — "a scan is not a pin") is absent; a PINNED axis carries
+    its coordinate, including the explicit :data:`LATEST` sentinel
+    (``date: now``). The whole-graph pin ``Database.find`` / ``Transaction.find``
+    (``parallax.snapshot.handle``) attach to the returned ``Snapshot``.
+
+    Called on the SAME raw (pre-:func:`inject_as_of`) operation
+    :func:`resolve_pinned_instants` consumes — an independent, side-effect-free
+    read of the statement's own temporal wrapper, never a database round trip.
+    """
+    core, _directives = _peel_directives(op)
+    processing: _dt.datetime | Latest | None = None
+    business: _dt.datetime | Latest | None = None
+    current = core
+    while isinstance(current, (AsOf, AsOfRange, History)):
+        aoa = _resolve_axis(current.as_of_attr, entity)
+        if isinstance(current, AsOf):
+            value: _dt.datetime | Latest = (
+                LATEST if current.date == "now" else _dt.datetime.fromisoformat(current.date)
+            )
+            if aoa.axis == "processing":
+                processing = value
+            else:
+                business = value
+        current = current.operand
+    return Pin(processing=processing, business=business)
 
 
 def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy | Distinct]]:

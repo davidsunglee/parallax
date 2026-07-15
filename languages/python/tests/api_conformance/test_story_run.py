@@ -27,6 +27,7 @@ import pytest
 from conftest import case_document, case_fixtures, compare_rows
 from parallax.conformance import case_format, engine
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
+from parallax.conformance.story_models import Account
 from parallax.core.dialect import POSTGRES
 from parallax.snapshot import connect
 
@@ -63,10 +64,8 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
         # discarded even the force-flushed write — the fixture row stands.
         with pytest.raises(RuntimeError, match="abort"):
             story.run(db)
-        rows = db.transact(
-            lambda tx: tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})
-        )
-        assert rows[0]["balance"] == Decimal("100.00"), rows
+        snapshot = db.transact(lambda tx: tx.find(Account.where(Account.id == 1)))
+        assert snapshot.result().balance == Decimal("100.00"), snapshot.results()
         return
 
     result = story.run(db)

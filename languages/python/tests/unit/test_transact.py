@@ -15,9 +15,11 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 from collections.abc import Callable, Sequence
+from decimal import Decimal
 
 import pytest
 
+import mirrored_models as mm
 from parallax.conformance import models
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row
@@ -39,10 +41,26 @@ from parallax.snapshot.handle import Database, Transaction, TransactionOptionCon
 pytestmark = pytest.mark.unit
 
 _ACCOUNT = models.load_models()["account"]
+_BALANCE = models.load_models()["balance"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 _NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
-_FIND_BY_ID = {"eq": {"attr": "Account.id", "value": 7}}
+
+
+def _new_account() -> mm.Account:
+    return mm.Account(id=7, owner="Newton", balance=Decimal("5.00"), version=1)
+
+
+def _edited_balance(balance: str) -> mm.Account:
+    # A "fetched" Ada (id=1, balance=100.00, version=1), then an edited copy
+    # touching only `balance` — the Change Record `tx.update` reads.
+    fetched = mm.Account(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
+    return fetched.model_copy(update={"balance": Decimal(balance)})
+
+
+def _grace() -> mm.Account:
+    return mm.Account(id=3, owner="Grace", balance=Decimal("10.00"), version=1)
+
 
 # The m-unit-work-001 goldens, rendered to driver SQL as the port receives them.
 _INSERT_SQL = POSTGRES.to_driver_sql(
@@ -115,7 +133,7 @@ def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
     port = _RecordingPort()
 
     def fn(tx: Transaction) -> str:
-        tx.insert("Account", _NEW_ROW)
+        tx.insert(_new_account())
         return "done"
 
     assert _db(port).transact(fn) == "done"
@@ -132,8 +150,8 @@ def test_update_and_delete_lower_to_their_keyed_dml() -> None:
     port = _RecordingPort()
 
     def fn(tx: Transaction) -> None:
-        tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
-        tx.delete("Account", {"id": 3})
+        tx.update(_edited_balance("175.00"))
+        tx.delete(_grace())
 
     _db(port).transact(fn)
     assert port.ops == [
@@ -153,11 +171,11 @@ def test_find_force_flushes_pending_writes_first() -> None:
     # read, inside the same still-open transaction (m-unit-work-001's shape).
     port = _RecordingPort(rows=[_NEW_ROW])
 
-    def fn(tx: Transaction) -> list[Row]:
-        tx.insert("Account", _NEW_ROW)
-        return tx.find("Account", _FIND_BY_ID)
+    def fn(tx: Transaction) -> list[mm.Account]:
+        tx.insert(_new_account())
+        return tx.find(mm.Account.where(mm.Account.id == 7)).results()
 
-    assert _db(port).transact(fn) == [_NEW_ROW]
+    assert _db(port).transact(fn) == [_new_account()]
     assert port.ops == [
         ("begin",),
         ("write", _INSERT_SQL, (7, "Newton", 5.00, 1)),
@@ -168,15 +186,107 @@ def test_find_force_flushes_pending_writes_first() -> None:
 
 def test_optimistic_mode_suppresses_the_read_lock_suffix() -> None:
     port = _RecordingPort()
-    _db(port).transact(lambda tx: tx.find("Account", _FIND_BY_ID), concurrency="optimistic")
+    _db(port).transact(
+        lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)), concurrency="optimistic"
+    )
     assert port.ops == [("begin",), ("read", _FIND_SQL_NO_LOCK, (7,)), ("commit",)]
+
+
+def test_db_find_pins_an_explicit_as_of_statement() -> None:
+    # `statement_pin` reads the statement's OWN temporal wrapper: an explicit
+    # `.as_of(processing=LATEST)` pin comes back on the returned `Snapshot`.
+    from parallax.core import LATEST
+
+    port = _RecordingPort(
+        rows=[
+            {
+                "bal_id": 1,
+                "acct_num": "A-1",
+                "val": Decimal("5.00"),
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+            }
+        ]
+    )
+    db = Database.connect(port, _BALANCE, clock=FixedClock(_FIXED))
+    statement = mm.Balance.where(mm.Balance.id == 1).as_of(processing=LATEST)
+    snapshot = db.find(statement)
+    assert snapshot.pin.processing is LATEST
+
+
+def _balance_history_rows() -> list[Row]:
+    # Two milestones on the SAME processing axis, closed then current.
+    return [
+        {
+            "bal_id": 1,
+            "acct_num": "A-1",
+            "val": Decimal("5.00"),
+            "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+        },
+        {
+            "bal_id": 1,
+            "acct_num": "A-1",
+            "val": Decimal("9.00"),
+            "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+            "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
+        },
+    ]
+
+
+def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
+    from parallax.core import Pin
+
+    port = _RecordingPort(rows=_balance_history_rows())
+    db = Database.connect(port, _BALANCE, clock=FixedClock(_FIXED))
+    # `.distinct()` after `.history()` also exercises `_is_milestone_set_op`'s
+    # own directive-peeling loop (a result-shaping wrapper around the scan).
+    statement = mm.Balance.where(mm.Balance.id == 1).history("processing").distinct()
+    snapshot = db.find(statement)
+    assert len(snapshot.results()) == 2
+    assert snapshot.pin == Pin()  # the whole-graph pin is per-milestone, not here
+
+
+def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
+    port = _RecordingPort(rows=_balance_history_rows())
+    db = Database.connect(port, _BALANCE, clock=FixedClock(_FIXED))
+    statement = mm.Balance.where(mm.Balance.id == 1).history("processing")
+    snapshot = db.transact(lambda tx: tx.find(statement))
+    assert len(snapshot.results()) == 2
+
+
+def test_pin_from_milestone_skips_an_axis_absent_from_the_milestone_pin() -> None:
+    # `_pin_from_milestone` is generic over any `Mapping` (not tied to how
+    # `_edge_pin` always populates every declared axis in practice) — a
+    # bitemporal entity's OWN as-of-attribute loop must skip an axis absent
+    # from a given milestone's pin, not KeyError.
+    from parallax.snapshot.handle import _pin_from_milestone  # pyright: ignore[reportPrivateUsage]
+
+    position = models.load_models()["position"].entity("Position")
+    pin = _pin_from_milestone(position, {"processingDate": _FIXED})
+    assert pin.processing == _FIXED
+    assert pin.business is None
+
+
+def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
+    # A `model_copy()` with no `update=` carries forward the SAME (empty)
+    # Change Record: the sparse-update no-op rule (spec §3/§5).
+    port = _RecordingPort()
+    fetched = mm.Account(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
+    edited = fetched.model_copy(update={"balance": Decimal("100.00")})  # net-zero touch
+
+    def fn(tx: Transaction) -> None:
+        tx.update(edited)
+
+    _db(port).transact(fn)
+    assert port.ops == [("begin",), ("commit",)]  # no write round trip at all
 
 
 def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
     port = _RecordingPort()
 
     def fn(tx: Transaction) -> str:
-        tx.insert("Account", _NEW_ROW)
+        tx.insert(_new_account())
         raise RuntimeError("boom")
 
     with pytest.raises(RuntimeError, match="boom"):
@@ -186,9 +296,17 @@ def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
 
 
 def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
+    # The instance-graduated verbs build their row from the compiled entity's
+    # OWN declared members, so an undeclared member can no longer be smuggled
+    # in through `tx.insert`; the member-name honesty gate still protects the
+    # lower-level neutral document route directly (`Transaction._buffer`).
     port = _RecordingPort()
     with pytest.raises(WriteInstructionError, match="shoe_size"):
-        _db(port).transact(lambda tx: tx.insert("Account", {"id": 1, "shoe_size": 9}))
+        _db(port).transact(
+            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                "insert", "Account", {"id": 1, "shoe_size": 9}
+            )
+        )
     assert ("write", _INSERT_SQL, (1, 9)) not in port.ops
 
 
@@ -201,7 +319,7 @@ def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
 
     _db(port).transact(fn)
     with pytest.raises(EscapedTransactionError):
-        escaped[0].insert("Account", _NEW_ROW)
+        escaped[0].insert(_new_account())
 
 
 # --------------------------------------------------------------------------- #
@@ -379,7 +497,7 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 
     def outer(_tx: Transaction) -> str:
         with contextlib.suppress(DatabaseError):
-            db.transact(lambda inner_tx: inner_tx.find("Account", _FIND_BY_ID))
+            db.transact(lambda inner_tx: inner_tx.find(mm.Account.where(mm.Account.id == 7)))
         return "caught"
 
     assert db.transact(outer) == "caught"

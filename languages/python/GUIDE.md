@@ -356,6 +356,57 @@ self-contained without a system `libpq`.
   (Pyright 0 errors, every increment-5-owned file at 100% branch coverage,
   100% diff coverage against `origin/main`). **Next:** increment 6 (developer
   surface + ledger closures).
+- **Phase 7 increment 6a COMPLETE — public developer surface, D-7 class
+  spellings, D-16 verb graduation.** `parallax.snapshot.Snapshot[T]` (spec
+  §3/§4): `result()`/`result_or_none()`/`results()`, `pin`, `execution`,
+  `__repr__` — no iteration/`len`/truthiness/indexing/refresh/write/lazy
+  behavior. `db.find(statement)` / `tx.find(statement)` both wrap the
+  increment-5 find/find_history executors and return `Snapshot[Any]` (DQ6);
+  `.history()`/`.as_of_range()` combined with `.include()` raises
+  `UnsupportedFeatureError` naming `snapshot-history-includes`. Frozen-node
+  wrapping (`parallax.snapshot.wrap`) turns a materialized graph into
+  instances of the caller's registered entity classes via `model_construct` +
+  the `object.__setattr__` backdoor: tuples for to-many/cardinality-many value
+  objects, the `UNLOADED` sentinel translated to `UnloadedRelationshipError`
+  by the `Rel[T]` data descriptor, polymorphic children as their CONCRETE
+  classes, `parallax.core.is_loaded`/`narrowed` for closed-world load-state
+  introspection, hashability conditional (never forced). The statement
+  frontend gained `.include(*paths)` (chained `Rel[T]` class access,
+  hop-level `.narrow(*subtypes)`), `.any()`/`.none()` quantifiers on `Rel`,
+  and `Entity.narrow(*subtypes, where=...)` plus the statement-level
+  `.narrow(...)` clause — all validated at build time via
+  `validate_operation`, never deferred to execution. The D-7 `ValueObject`
+  class spelling (frozen, metaclass-light, `Attr[VOClass]` /
+  `Attr[tuple[VOClass, ...]]` fields, element-scoped `ElementAttributeExpr`
+  expressions, instances-only input policy enforced by a `field_validator`)
+  and the D-7 inheritance spelling (DQ2: `parent`/`role` derive from the
+  Python class hierarchy, `strategy`/`tag`/`tagValue` thread through
+  `EntityConfig(inheritance=FamilyRoot(...)/Concrete(...))`) both proved
+  no-drift against their corpus models (customer.yaml; payment.yaml TPH,
+  document.yaml TPCS) at the unit level. D-16 graduated to its FULL shape:
+  a validating `Entity.model_copy` override builds a Change Record
+  (touched field → earliest original across a copy chain, net-zero changes
+  tracked but excluded from the effective set); `tx.insert(instance)` /
+  `tx.update(edited_copy)` (sparse row, an empty effective change set is a
+  true no-op — zero round trips) / `tx.delete(node_or_instance)` replace the
+  neutral row-document verb signatures (the conformance engine's own
+  `KeyedWrite` path is unaffected; `lower_write`'s Phase-8 refusal set stays
+  byte-stable). The API-conformance write stories (`parallax.conformance.
+  stories`) now execute the graduated verbs end to end; `tests/api_conformance`
+  was touched only as needed to keep it green under the new signatures (a
+  `_as_rows` helper renders a `Snapshot[T]`'s wrapped instances back to the
+  suite's still-neutral `list[Row]` grading shape) — the full instance-native
+  example rework is the next agent's job. Updated counts (measured): unit lane
+  1541 passed / 77 skipped, compile sweep unchanged at 164 passed / 67
+  skipped (no read-path regression), the combined Docker database lane
+  (`pg-full`/provider/adapter-smoke/API-conformance) unchanged at 224 passed /
+  10 skipped. `just python-static` green (Pyright 0 errors across production
+  AND tests, 100% branch coverage on every file this increment touched, 100%
+  diff coverage against `origin/main`); the public-API snapshot
+  (`tests/api_surface/public_api.json`) and the usage guide
+  (`docs/usage-guide.md`) both regenerated for the new exports. **Next:**
+  increment 6b (the example build-out over the graduated instance-native
+  surface), then increment 7 (remaining ledger closures).
 
 ## Blockers
 

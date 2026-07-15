@@ -130,7 +130,12 @@ def test_attribute_descriptor_get_on_class_and_instance() -> None:
 
 def test_relationship_descriptor_get_on_class_and_instance() -> None:
     descriptor = mm.Passport.__dict__["holder"]
-    assert descriptor.__get__(None, mm.Passport) == RelationshipRef("Passport", "holder")
+    # Class access yields a RelationshipPath (the include/any/none seed); its
+    # `.ref` mirrors AttributeExpr's own class-access identity, and `.target`
+    # is the declared relationship's own related entity.
+    path = descriptor.__get__(None, mm.Passport)
+    assert path.ref == RelationshipRef("Passport", "holder")
+    assert path.target == "Person"
     person = mm.Person(id=2, name="p")
     carrier = _Carrier()
     carrier.holder = person  # a materialized peer lives in the instance __dict__

@@ -6,7 +6,7 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -93,6 +93,26 @@ def _row_equal(observed: dict[str, Any], expected: dict[str, Any]) -> bool:
     return observed.keys() == expected.keys() and all(
         _scalar_equal(observed[key], expected[key]) for key in observed
     )
+
+
+def compare_binds(observed: Sequence[object], expected: Sequence[object]) -> None:
+    """Order-SENSITIVE positional bind comparison with the same exact-Decimal
+    fallback ``compare_rows`` uses (m-case-format): an authored golden literal
+    (``5.00``, a plain YAML float) and a real ``decimal``-typed bind
+    (``Decimal("5.00")``, e.g. an idiomatic entity instance's own field value)
+    reconcile in Decimal space; everything else is exact wire equality.
+    """
+    obs = [_wire_value(value) for value in observed]
+    exp = [_wire_value(value) for value in expected]
+    assert len(obs) == len(exp), f"bind count: observed {obs!r} != expected {exp!r}"
+    for index, (left, right) in enumerate(zip(obs, exp, strict=True)):
+        assert _scalar_equal(left, right), (index, left, right)
+
+
+def _wire_value(value: object) -> object:
+    from parallax.conformance import engine
+
+    return engine.wire_value(value)
 
 
 def compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:

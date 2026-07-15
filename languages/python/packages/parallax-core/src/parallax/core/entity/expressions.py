@@ -9,43 +9,93 @@ inserting a ``group`` node exactly where an ``or`` binds looser than its enclosi
 ``and`` so an idiomatic operation can never drift from canonical grouping.
 Expressions reject ``__bool__`` (catching accidental ``and`` / ``or`` / ``not``
 and chained comparisons), pointing at ``&`` / ``|`` / ``~`` and ``.between()``.
+
+Class-level ``Rel[T]`` access yields a :class:`RelationshipPath` (COR-3 Phase 7
+increment 6a): the seed of the deep-fetch ``.include(...)`` spelling
+(``Order.items.statuses``, deeper hops resolved dynamically via metamodel lookup),
+the hop-level narrowed-view request (``.narrow(*subtypes)``), and the single-hop
+relationship quantifiers (``.any(*predicates)`` / ``.none(*predicates)``,
+serializing to ``exists`` / ``notExists``). ``ElementAttributeExpr`` is the
+value-object CLASS-level access carrier (``Phone.type``): always builds
+element-relative ``nested*`` nodes (no leading entity prefix), for use inside a
+relationship or value-object quantifier's ``where=`` scope.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 from parallax.core.op_algebra import (
     And,
     Between,
     Comparison,
     ComparisonOp,
+    Exists,
     Group,
     Membership,
     NestedComparison,
     NestedComparisonOp,
+    NestedExists,
     NestedMembership,
+    NestedNotExists,
     NestedNullCheck,
     Not,
+    NotExists,
     NullCheck,
     Operation,
     Or,
     OrderKey,
+    PathSegment,
     Scalar,
     StringMatch,
     StringOp,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 __all__ = [
+    "UNLOADED",
     "Attr",
     "AttributeExpr",
     "AttributeRef",
+    "ElementAttr",
+    "ElementAttributeExpr",
     "Predicate",
     "Rel",
+    "RelationshipPath",
     "RelationshipRef",
+    "UnloadedRelationshipError",
     "and_terms",
+    "conjoin",
 ]
+
+
+class UnloadedRelationshipError(AttributeError):
+    """A closed-world relationship (or narrowed view) was not fetched by the read
+    that produced this node (spec §3): access raises, naming the path and the
+    ``.include(...)`` fix rather than issuing lazy SQL."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"{path!r} was not included in this find; add `.include({path})` "
+            "to fetch it (this snapshot lifecycle never lazy-loads)"
+        )
+        self.path = path
+
+
+class _Unloaded:
+    """The private closed-world sentinel a frozen node's relationship field holds
+    when its path was outside the include set (spec §3); never a public value."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid only
+        return "UNLOADED"
+
+
+UNLOADED: _Unloaded = _Unloaded()
 
 _BOOL_HINT = (
     "a Parallax expression has no truth value; combine predicates with & / | / ~ and "
@@ -125,6 +175,25 @@ def _or_terms(pred: Predicate) -> tuple[Operation, ...]:
     return (pred.op,)
 
 
+def conjoin(predicates: Sequence[Predicate]) -> Operation | None:
+    """The big-AND of ``predicates`` (flattened, order-preserving), or ``None``
+    for zero arguments — the shared builder behind every variadic predicate
+    scope (relationship ``.any()``/``.none()``, value-object ``.any()``/
+    ``.none()``, the whole-statement ``where(*predicates)``): a bare presence/
+    absence test carries no interior ``where`` at all, one predicate needs no
+    wrapper, and two or more flatten into one ``And`` exactly like
+    ``build_statement``'s own combination — so the two conjunction sites can
+    never drift."""
+    if not predicates:
+        return None
+    if len(predicates) == 1:
+        return predicates[0].op
+    operands: list[Operation] = []
+    for predicate in predicates:
+        operands.extend(and_terms(predicate))
+    return And(operands=tuple(operands))
+
+
 class AttributeExpr:
     """A class-level attribute/value-object expression (the seed of a predicate)."""
 
@@ -199,6 +268,18 @@ class AttributeExpr:
             return Predicate(NestedNullCheck(op="nestedIsNotNull", path=self._dotted()))
         return Predicate(NullCheck(op="isNotNull", attr=str(self.ref)))
 
+    def any(self, *predicates: Predicate) -> Predicate:
+        """The value-object member is present/non-empty (optionally matching
+        ``predicates``, same-element composed): ``nestedExists`` over this
+        VALUE-OBJECT-TERMINATED path. Zero arguments emit the bare presence
+        test; the interior predicates are built from the value object's own
+        class-level (element-scoped) attributes, never re-prefixed."""
+        return Predicate(NestedExists(path=self._dotted(), where=conjoin(predicates)))
+
+    def none(self, *predicates: Predicate) -> Predicate:
+        """The complement of :meth:`any` — ``nestedNotExists``."""
+        return Predicate(NestedNotExists(path=self._dotted(), where=conjoin(predicates)))
+
     def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate:
         # The fluent surface authors the canonical minimal form: an unset flag
         # omits `caseInsensitive` (None), a set flag emits `true`. It never
@@ -269,21 +350,217 @@ class Attr[T]:
         return value
 
 
-class Rel[T]:
-    """Typed relationship descriptor: class access → ``RelationshipRef``, instance → ``T``."""
+class ElementAttributeExpr:
+    """A value-object CLASS-level attribute expression (``Phone.type``).
 
-    __slots__ = ("_py_name", "_ref")
+    Always builds ELEMENT-RELATIVE ``nested*`` nodes (no leading entity prefix,
+    per python.md §2's value-object quantifier scope) — the class-level access
+    carrier for a ``ValueObject`` subclass's own ``Attr[T]`` fields, used inside
+    a relationship or value-object quantifier's ``where=``/interior predicates
+    (``Phone.type == "home"`` inside ``.any(...)``). Deeper hops resolve
+    dynamically via ``__getattr__`` (``Address.geo.country``), mirroring
+    :class:`AttributeExpr`'s own dynamic value-object hop.
+    """
 
-    def __init__(self, ref: RelationshipRef, py_name: str) -> None:
-        self._ref = ref
+    __slots__ = ("_path",)
+
+    def __init__(self, path: tuple[str, ...]) -> None:
+        self._path = path
+
+    def __getattr__(self, name: str) -> ElementAttributeExpr:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return ElementAttributeExpr((*self._path, name))
+
+    def _dotted(self) -> str:
+        return ".".join(self._path)
+
+    def _cmp(self, kind: str, value: Scalar) -> Predicate:
+        return Predicate(NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=value))
+
+    def __eq__(self, other: object) -> Predicate:  # type: ignore[override]
+        return self._cmp("eq", _as_scalar(other))
+
+    def __ne__(self, other: object) -> Predicate:  # type: ignore[override]
+        return self._cmp("ne", _as_scalar(other))
+
+    def __gt__(self, other: Scalar) -> Predicate:
+        return self._cmp("gt", other)
+
+    def __ge__(self, other: Scalar) -> Predicate:
+        return self._cmp("ge", other)
+
+    def __lt__(self, other: Scalar) -> Predicate:
+        return self._cmp("lt", other)
+
+    def __le__(self, other: Scalar) -> Predicate:
+        return self._cmp("le", other)
+
+    def is_(self, value: bool) -> Predicate:
+        return self._cmp("eq", value)
+
+    def in_(self, values: list[Scalar]) -> Predicate:
+        return Predicate(NestedMembership(path=self._dotted(), values=tuple(values)))
+
+    def is_null(self) -> Predicate:
+        return Predicate(NestedNullCheck(op="nestedIsNull", path=self._dotted()))
+
+    def is_not_null(self) -> Predicate:
+        return Predicate(NestedNullCheck(op="nestedIsNotNull", path=self._dotted()))
+
+    def __bool__(self) -> bool:
+        raise TypeError(_BOOL_HINT)
+
+    def __hash__(self) -> int:  # pragma: no cover - expressions are not dict keys
+        return hash(self._path)
+
+
+class ElementAttr[T]:
+    """Typed value-object-class attribute descriptor: class access →
+    ``ElementAttributeExpr``, instance → ``T`` (the ``ValueObject`` frontend's
+    own field carrier — python.md §2's element-scoped expression surface)."""
+
+    __slots__ = ("_canonical", "_py_name")
+
+    def __init__(self, canonical: str, py_name: str) -> None:
+        self._canonical = canonical
         self._py_name = py_name
 
     @overload
-    def __get__(self, obj: None, _owner: type, /) -> RelationshipRef: ...
+    def __get__(self, obj: None, _owner: type, /) -> ElementAttributeExpr: ...
     @overload
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
-    def __get__(self, obj: object | None, _owner: type | None = None) -> RelationshipRef | T:
+    def __get__(self, obj: object | None, _owner: type | None = None) -> ElementAttributeExpr | T:
         if obj is None:
-            return self._ref
-        value: T = obj.__dict__[self._py_name]
-        return value
+            return ElementAttributeExpr((self._canonical,))
+        # `ElementAttr` is a NON-data descriptor (no `__set__`, unlike `Rel[T]`'s
+        # own data-descriptor fix): Pydantic's own instance `__dict__` always
+        # shadows this branch for an ordinary field read, so it never actually
+        # runs — kept only as the documented instance-access contract (a pure
+        # passthrough with no sentinel translation to protect, unlike `Rel[T]`).
+        value: T = obj.__dict__[self._py_name]  # pragma: no cover - shadowed by __dict__
+        return value  # pragma: no cover
+
+
+def _subtype_entity_name(subtype: type) -> str:
+    """A subtype class's canonical entity name (falls back to the bare class
+    name for a class this process has not compiled — defensive only)."""
+    from parallax.core.entity.base import entity_record_of
+
+    record = entity_record_of(subtype)
+    return record.name if record is not None else subtype.__name__
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipPath:
+    """A chained class-level relationship reference (``Order.items``,
+    ``Order.items.statuses``) — the seed of the ``.include(...)`` deep-fetch
+    spelling, the hop-level ``.narrow(*subtypes)`` narrowed-view request, and
+    the single-hop relationship quantifiers ``.any()``/``.none()``.
+
+    ``segments`` is the traversal so far, in ``m-deep-fetch``'s own
+    ``PathSegment`` shape (reused directly — no separate path vocabulary).
+    ``target`` is the canonical entity name the path currently points AT (the
+    last hop's related entity, or the narrowed subtype when the narrow resolves
+    to exactly one) — resolved eagerly via the entity registry at each dynamic
+    hop, since Python attribute access has no other place to look it up. The
+    first hop is statically typed via the ``Rel[T]`` descriptor overload;
+    deeper hops resolve dynamically through ``__getattr__``.
+    """
+
+    segments: tuple[PathSegment, ...]
+    target: str
+
+    @property
+    def ref(self) -> RelationshipRef:
+        """The FIRST hop's relationship reference (mirrors ``AttributeExpr.ref``)."""
+        owner, _, relationship = self.segments[0].rel.partition(".")
+        return RelationshipRef(owner, relationship)
+
+    def __getattr__(self, name: str) -> RelationshipPath:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        from parallax.core.entity.base import entity_records, snake_to_camel
+
+        canonical = snake_to_camel(name)
+        record = entity_records().get(self.target)
+        if record is None:
+            raise AttributeError(
+                f"{self.target!r} is not a registered Parallax entity class; import it "
+                f"before chaining `.{name}`"
+            )
+        for relationship in record.relationships:
+            if relationship.name == canonical:
+                return RelationshipPath(
+                    segments=(*self.segments, PathSegment(rel=f"{self.target}.{canonical}")),
+                    target=relationship.related_entity,
+                )
+        raise AttributeError(f"{self.target!r} declares no relationship {canonical!r}")
+
+    def narrow(self, *subtypes: type) -> RelationshipPath:
+        """A hop-level narrowed-view request (``Owner.pets.narrow(Dog)``),
+        continuable to a deeper hop. Requests the derived narrowed view
+        (python.md §3), never marking the broad relationship loaded."""
+        names = tuple(_subtype_entity_name(subtype) for subtype in subtypes)
+        *head, last = self.segments
+        new_last = PathSegment(rel=last.rel, narrow=names)
+        new_target = names[0] if len(names) == 1 else self.target
+        return RelationshipPath(segments=(*head, new_last), target=new_target)
+
+    def any(self, *predicates: Predicate) -> Predicate:
+        """The single-hop relationship quantifier: ``>= 1`` related row
+        (optionally matching ``predicates``), serializing to ``exists``."""
+        return Predicate(Exists(rel=self._single_hop_ref(), op=conjoin(predicates)))
+
+    def none(self, *predicates: Predicate) -> Predicate:
+        """The complement of :meth:`any` — ``notExists``."""
+        return Predicate(NotExists(rel=self._single_hop_ref(), op=conjoin(predicates)))
+
+    def _single_hop_ref(self) -> str:
+        if len(self.segments) != 1:
+            raise ValueError(
+                ".any()/.none() quantify a single relationship hop, not a multi-hop "
+                "include path (m-navigate)"
+            )
+        return self.segments[0].rel
+
+
+class Rel[T]:
+    """Typed relationship descriptor: class access → ``RelationshipPath``, instance → ``T``.
+
+    ``related_entity`` is the declared relationship target (known at class-
+    compile time), threaded straight onto the first hop's ``RelationshipPath``
+    so a deeper dynamic hop (``.statuses``) resolves against it without a
+    registry round trip for the FIRST hop.
+    """
+
+    __slots__ = ("_py_name", "_ref", "_related_entity")
+
+    def __init__(self, ref: RelationshipRef, py_name: str, related_entity: str) -> None:
+        self._ref = ref
+        self._py_name = py_name
+        self._related_entity = related_entity
+
+    @overload
+    def __get__(self, obj: None, _owner: type, /) -> RelationshipPath: ...
+    @overload
+    def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
+    def __get__(self, obj: object | None, _owner: type | None = None) -> RelationshipPath | T:
+        if obj is None:
+            return RelationshipPath(
+                segments=(PathSegment(rel=str(self._ref)),), target=self._related_entity
+            )
+        value = obj.__dict__[self._py_name]
+        if value is UNLOADED:
+            raise UnloadedRelationshipError(self._ref.relationship)
+        return value  # type: ignore[return-value]
+
+    def __set__(self, obj: object, value: object) -> None:
+        # A DATA descriptor (defines `__set__`) so instance attribute lookup
+        # ALWAYS consults `__get__` — never shadowed by the instance `__dict__`
+        # the way `Attr`'s non-data descriptor legitimately is. Without this,
+        # the frozen-node wrapper's `UNLOADED` sentinel (set via the
+        # `object.__setattr__` backdoor, which itself still honors the data-
+        # descriptor protocol) would sit in `__dict__` and read back directly,
+        # silently skipping the `UnloadedRelationshipError` check below.
+        obj.__dict__[self._py_name] = value

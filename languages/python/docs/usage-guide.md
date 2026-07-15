@@ -105,8 +105,8 @@ Corpus case: `m-unit-work-001`
 ```python
 def insert_then_read_your_own_write(db: Database) -> list[Row]:
     def fn(tx: Transaction) -> list[Row]:
-        tx.insert("Account", {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1})
-        return tx.find("Account", {"eq": {"attr": "Account.id", "value": 7}})
+        tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00"), version=1))
+        return _as_rows(tx.find(Account.where(Account.id == 7)))
 
     return db.transact(fn)  # the dependent find observes the flushed insert
 ```
@@ -117,16 +117,17 @@ Corpus case: `m-unit-work-002`
 
 ```python
 def aborted_update_is_discarded(db: Database) -> list[Row]:
-    db.transact(lambda tx: tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}}))
+    fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
+    edited = fetched.model_copy(update={"balance": Decimal("999.00")})
 
     def doomed(tx: Transaction) -> None:
-        tx.update("Account", {"id": 1, "balance": 999.00, "version": 2})
+        tx.update(edited)
         raise RuntimeError("changed my mind")  # abort: the buffered update is discarded
 
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The same find re-resolves and observes the ORIGINAL balance, not 999.00.
-    return db.transact(lambda tx: tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}}))
+    return _as_rows(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))))
 ```
 
 ## Foreign-key-ordered inserts in one transaction
@@ -136,10 +137,18 @@ Corpus case: `m-unit-work-003`
 ```python
 def fk_ordered_inserts(db: Database) -> None:
     def fn(tx: Transaction) -> None:
-        order = {"id": 100, "name": "Hopper", "sku": "X-1", "qty": 1}
-        order |= {"price": 9.99, "active": True, "orderedOn": "2024-07-01"}
-        tx.insert("Order", order)
-        tx.insert("OrderItem", {"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3})
+        tx.insert(
+            Order(
+                id=100,
+                name="Hopper",
+                sku="X-1",
+                qty=1,
+                price=Decimal("9.99"),
+                active=True,
+                ordered_on=dt.date(2024, 7, 1),
+            )
+        )
+        tx.insert(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))
 
     db.transact(fn)  # the flush inserts the parent before the child
 ```
@@ -151,9 +160,9 @@ Corpus case: `m-unit-work-004`
 ```python
 def callback_value_withheld_on_abort(db: Database) -> list[Row]:
     def fn(tx: Transaction) -> list[Row]:
-        tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})  # observe the row
-        tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
-        tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})  # forces the flush
+        current = tx.find(Account.where(Account.id == 1)).result()  # observe the row
+        tx.update(current.model_copy(update={"balance": Decimal("175.00")}))
+        tx.find(Account.where(Account.id == 1))  # forces the flush
         raise RuntimeError("abort")  # even the force-flushed write is rolled back
 
     return db.transact(fn)  # raises — no value is returned as though durable
@@ -165,9 +174,13 @@ Corpus case: `m-unit-work-005`
 
 ```python
 def keyed_update_observed_in_transaction(db: Database) -> list[Row]:
+    edited = _known_account(id=1, owner="Ada", balance="100.00", version=1).model_copy(
+        update={"balance": Decimal("175.00")}
+    )
+
     def fn(tx: Transaction) -> list[Row]:
-        tx.update("Account", {"id": 1, "balance": 175.00, "version": 2})
-        return tx.find("Account", {"eq": {"attr": "Account.id", "value": 1}})
+        tx.update(edited)
+        return _as_rows(tx.find(Account.where(Account.id == 1)))
 
     return db.transact(fn)
 ```
@@ -179,8 +192,8 @@ Corpus case: `m-unit-work-006`
 ```python
 def keyed_delete_observed_in_transaction(db: Database) -> list[Row]:
     def fn(tx: Transaction) -> list[Row]:
-        tx.delete("Account", {"id": 3})
-        return tx.find("Account", {"eq": {"attr": "Account.id", "value": 3}})
+        tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
+        return _as_rows(tx.find(Account.where(Account.id == 3)))
 
     return db.transact(fn)  # [] — the dependent find observes the deletion
 ```
@@ -192,14 +205,32 @@ Corpus case: `m-unit-work-007`
 ```python
 def create_then_delete_a_parent_child_pair(db: Database) -> None:
     def create(tx: Transaction) -> None:
-        order = {"id": 100, "name": "Hopper", "sku": "X-1", "qty": 1}
-        order |= {"price": 9.99, "active": True, "orderedOn": "2024-07-01"}
-        tx.insert("Order", order)
-        tx.insert("OrderItem", {"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3})
+        tx.insert(
+            Order(
+                id=100,
+                name="Hopper",
+                sku="X-1",
+                qty=1,
+                price=Decimal("9.99"),
+                active=True,
+                ordered_on=dt.date(2024, 7, 1),
+            )
+        )
+        tx.insert(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))
 
     def teardown(tx: Transaction) -> None:
-        tx.delete("OrderItem", {"id": 200})  # child first, mirroring the FK-ordered insert
-        tx.delete("Order", {"id": 100})
+        tx.delete(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))  # child first
+        tx.delete(
+            Order(
+                id=100,
+                name="Hopper",
+                sku="X-1",
+                qty=1,
+                price=Decimal("9.99"),
+                active=True,
+                ordered_on=dt.date(2024, 7, 1),
+            )
+        )
 
     db.transact(create)
     db.transact(teardown)
@@ -211,11 +242,15 @@ Corpus case: `m-unit-work-009`
 
 ```python
 def one_flush_combined_mixed_verb_order(db: Database) -> list[Row]:
+    edited = _known_account(id=1, owner="Ada", balance="100.00", version=1).model_copy(
+        update={"balance": Decimal("20.00")}
+    )
+
     def fn(tx: Transaction) -> list[Row]:
-        tx.insert("Account", {"id": 9, "owner": "Noether", "balance": 5.00, "version": 1})
-        tx.update("Account", {"id": 1, "balance": 20.00, "version": 2})
-        tx.delete("Account", {"id": 3})
-        return tx.find("Account", {"lessThan": {"attr": "Account.balance", "value": 50.00}})
+        tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00"), version=1))
+        tx.update(edited)
+        tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
+        return _as_rows(tx.find(Account.where(Account.balance < 50.00)))
 
     return db.transact(fn)  # one flush: insert, update, delete — then the find
 ```
@@ -227,13 +262,13 @@ Corpus case: `m-unit-work-011`
 ```python
 def aborted_insert_never_becomes_durable(db: Database) -> list[Row]:
     def doomed(tx: Transaction) -> None:
-        tx.insert("Account", {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1})
+        tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00"), version=1))
         raise RuntimeError("abort")
 
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted insert was discarded: the find observes NO rows for account 7.
-    return db.transact(lambda tx: tx.find("Account", {"eq": {"attr": "Account.id", "value": 7}}))
+    return _as_rows(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))))
 ```
 
 ## An aborted delete leaves the row standing
@@ -243,11 +278,11 @@ Corpus case: `m-unit-work-012`
 ```python
 def aborted_delete_leaves_the_row_standing(db: Database) -> list[Row]:
     def doomed(tx: Transaction) -> None:
-        tx.delete("Account", {"id": 3})
+        tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
         raise RuntimeError("abort")
 
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted delete was discarded: account 3 still stands.
-    return db.transact(lambda tx: tx.find("Account", {"eq": {"attr": "Account.id", "value": 3}}))
+    return _as_rows(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))))
 ```

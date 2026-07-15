@@ -24,8 +24,8 @@ from typing import Any, cast
 
 import pytest
 
-from conftest import case_document
-from parallax.conformance import case_format, engine, models
+from conftest import case_document, compare_binds
+from parallax.conformance import case_format, models
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.dialect import POSTGRES
@@ -76,12 +76,6 @@ class _RecordingPort:
         return any(op[0] == "write" for op in self.ops)
 
 
-def _wire(binds: Sequence[object]) -> list[object]:
-    # Reconcile authored YAML binds (a `date` object, ints) with the write-input
-    # values the verbs carry verbatim — the same wire normalization the sweeps use.
-    return [engine.wire_value(bind) for bind in binds]
-
-
 def _driver_goldens(entries: list[dict[str, Any]]) -> list[tuple[str, list[object]]]:
     out: list[tuple[str, list[object]]] = []
     for entry in entries:
@@ -113,7 +107,11 @@ def _assert_statements(
     assert len(observed) == len(goldens), (case_id, observed, goldens)
     for (sql, binds), (golden_sql, golden_binds) in zip(observed, goldens, strict=True):
         assert sql == golden_sql, (case_id, sql, golden_sql)
-        assert _wire(binds) == _wire(golden_binds), (case_id, binds, golden_binds)
+        # A graduated verb's bind is a REAL typed value (e.g. `Decimal("5.00")`
+        # from an idiomatic entity instance), while the case's own authored
+        # golden is a plain YAML literal (`5.00`, a float) — `compare_binds`
+        # reconciles the two in exact-Decimal space, same as row grading.
+        compare_binds(binds, golden_binds)
 
 
 def _db(port: _RecordingPort, story: WriteStory) -> Database:

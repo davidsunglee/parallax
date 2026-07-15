@@ -15,34 +15,69 @@ import decimal as _decimal
 import re
 import sys
 import uuid as _uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast, get_args, get_origin
+from typing import Any, ClassVar, Literal, Self, cast, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict
+
+# A documented, deliberate reach into Pydantic internals — the SQLAlchemy
+# Mapped[T]-pattern realization technique python.md §2 pins; no public
+# Pydantic seam offers a metaclass hook.
 from pydantic._internal._model_construction import ModelMetaclass
 
+from parallax.core import inheritance as _inheritance
 from parallax.core.descriptor import UNSET, AsOfAttribute, DescriptorError, validate_entity
 from parallax.core.descriptor import Attribute as AttributeRecord
 from parallax.core.descriptor import Entity as EntityRecord
+from parallax.core.descriptor import Inheritance as InheritanceRecord
+from parallax.core.descriptor import Metamodel as MetamodelRecord
 from parallax.core.descriptor import Relationship as RelationshipRecord
+from parallax.core.descriptor import ValueObject as ValueObjectRecord
 from parallax.core.entity.errors import (
     EntityDefinitionError,
     NameCollisionError,
     ReservedNameError,
 )
-from parallax.core.entity.expressions import Attr, AttributeRef, Predicate, Rel, RelationshipRef
+from parallax.core.entity.expressions import (
+    Attr,
+    AttributeRef,
+    Predicate,
+    Rel,
+    RelationshipRef,
+)
 from parallax.core.entity.fields import FieldSpec, RelationshipSpec
 from parallax.core.entity.statement import Statement, build_statement
+from parallax.core.entity.value_object import (
+    ValueObject,
+    structure_of,
+    to_document,
+    vo_field_info,
+    vo_instance_validator,
+)
+from parallax.core.op_algebra import All, Narrow, Operation, validate_operation
 
 __all__ = [
+    "Concrete",
     "Entity",
     "EntityConfig",
     "EntityMeta",
+    "FamilyRoot",
+    "ModelCopyError",
+    "ProvenanceError",
+    "WireNames",
     "camel_to_snake",
+    "canonical_row",
+    "changed_fields",
+    "effective_change_set",
     "entity_record_of",
     "entity_records",
     "entity_registry",
+    "framework_owned_advance",
+    "full_row",
+    "primary_key_row",
     "snake_to_camel",
+    "wire_names_of",
 ]
 
 # Names reserved for the query root and introspection surface, plus the Pydantic
@@ -74,9 +109,118 @@ _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _REGISTRY: dict[str, type[BaseModel]] = {}
 _ENTITY_BY_CLASS: dict[type, EntityRecord] = {}
 
+
+class ModelCopyError(EntityDefinitionError):
+    """A ``model_copy(update=...)`` call names an unassignable field (spec §3):
+    unknown, primary-key, framework-owned, or a relationship."""
+
+
+class ProvenanceError(ValueError):
+    """An instance carries no Change Record (never produced via ``model_copy``)
+    and cannot drive a sparse ``tx.update`` (spec §5)."""
+
+
+@dataclass(frozen=True, slots=True)
+class WireNames:
+    """Per-class canonical <-> python-field-name maps the snapshot node wrapper,
+    the write-row document builders, and the ``model_copy`` assignability guard
+    all need — built once at class-compile time from the SAME declarations the
+    metamodel record itself derives from, so the two can never drift.
+
+    ``column_to_py`` (scalar attribute / value-object PHYSICAL column -> python
+    field name) is what a materialized snapshot node decodes with;
+    ``name_to_py`` / ``py_to_name`` (CANONICAL business name <-> python field
+    name, over the same member set) is what a write-row document is built
+    with; ``relationship_py`` (canonical relationship name -> python field
+    name) is what the frozen-node wrapper attaches relationship values under;
+    ``assignable_py`` is the ``model_copy(update=...)`` allow-list (every
+    scalar/value-object python field name except ``pk_py`` and
+    ``framework_owned_py``).
+    """
+
+    column_to_py: dict[str, str]
+    name_to_py: dict[str, str]
+    py_to_name: dict[str, str]
+    relationship_py: dict[str, str]
+    assignable_py: frozenset[str]
+    pk_py: frozenset[str]
+    framework_owned_py: frozenset[str]
+    vo_classes: dict[str, type]
+
+
+_WIRE_NAMES: dict[type, WireNames] = {}
+
+
+def wire_names_of(cls: type) -> WireNames:
+    """The MRO-merged :class:`WireNames` map of a Parallax entity class: its
+    own declared members PLUS every Parallax-entity ancestor's (a TPH/TPCS
+    family member inherits its ancestors' declared columns/relationships —
+    "note TPH members share the root's table" — merged base-first so a
+    subclass's own declaration wins any name clash, none expected in a
+    well-formed family). Non-family classes have no Parallax-entity ancestor
+    beyond themselves, so this is simply their own map."""
+    if cls not in _WIRE_NAMES:
+        raise EntityDefinitionError(f"{cls!r} is not a compiled Parallax entity class")
+    column_to_py: dict[str, str] = {}
+    name_to_py: dict[str, str] = {}
+    py_to_name: dict[str, str] = {}
+    relationship_py: dict[str, str] = {}
+    assignable_py: set[str] = set()
+    pk_py: set[str] = set()
+    framework_owned_py: set[str] = set()
+    vo_classes: dict[str, type] = {}
+    for ancestor in reversed(cls.__mro__):
+        names = _WIRE_NAMES.get(ancestor)
+        if names is None:
+            continue
+        column_to_py.update(names.column_to_py)
+        name_to_py.update(names.name_to_py)
+        py_to_name.update(names.py_to_name)
+        relationship_py.update(names.relationship_py)
+        assignable_py.update(names.assignable_py)
+        pk_py.update(names.pk_py)
+        framework_owned_py.update(names.framework_owned_py)
+        vo_classes.update(names.vo_classes)
+    return WireNames(
+        column_to_py=column_to_py,
+        name_to_py=name_to_py,
+        py_to_name=py_to_name,
+        relationship_py=relationship_py,
+        assignable_py=frozenset(assignable_py),
+        pk_py=frozenset(pk_py),
+        framework_owned_py=frozenset(framework_owned_py),
+        vo_classes=vo_classes,
+    )
+
+
 # A declared attribute captured during the annotation pass.
 _AttrDecl = tuple[str, object, FieldSpec]
 _RelDecl = tuple[str, object, RelationshipSpec]
+_VoDecl = tuple[str, type, Literal["one", "many"], FieldSpec]
+
+
+@dataclass(frozen=True, slots=True)
+class FamilyRoot:
+    """The inheritance-family ROOT's own vocabulary (ledger D-7's inheritance
+    class spelling, DQ2): ``strategy`` names the mapping strategy exactly as the
+    descriptor spells it; ``tag`` is the shared discriminator COLUMN name
+    (table-per-hierarchy only — ``None`` for table-per-concrete-subtype). A root
+    class's own ``EntityConfig.table`` (if any) is the TPH family's SHARED table
+    default for a concrete-subtype descendant that declares no table of its
+    own — the compiled root record itself always stays tableless (the
+    tableless-and-rowless role rule)."""
+
+    strategy: Literal["table-per-hierarchy", "table-per-concrete-subtype"]
+    tag: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Concrete:
+    """A concrete-subtype family member's own vocabulary: ``tag_value`` is the
+    row's own discriminator value (table-per-hierarchy only — ``None`` under
+    table-per-concrete-subtype, which carries no tag at all)."""
+
+    tag_value: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,12 +235,21 @@ class EntityConfig:
     (e.g. ``processing_from`` on ``in_z``) are declared as ordinary ``Attr``
     fields beside it, so the class carries no information absent from the
     descriptor schema.
+
+    ``inheritance`` declares the same family's own vocabulary (ledger D-7,
+    DQ2): a :class:`FamilyRoot` on the family's abstract root, a
+    :class:`Concrete` on a concrete-subtype leaf, or ``None`` on an
+    abstract-subtype interior node (its role and parent derive from the Python
+    class hierarchy alone — subclassing a Parallax entity makes the subclass a
+    family member; the descriptor's own tableless-and-rowless role rule decides
+    abstractness).
     """
 
     table: str | None = None
     namespace: str | None = None
     mutability: str = "read-only"
     as_of: tuple[AsOfAttribute, ...] = ()
+    inheritance: FamilyRoot | Concrete | None = None
 
 
 def snake_to_camel(name: str) -> str:
@@ -124,6 +277,107 @@ def entity_records() -> dict[str, EntityRecord]:
     """Every compiled metamodel record keyed by canonical entity name."""
     return {
         name: _ENTITY_BY_CLASS[cls] for name, cls in _REGISTRY.items() if cls in _ENTITY_BY_CLASS
+    }
+
+
+def _current_metamodel() -> MetamodelRecord:
+    """The :class:`~parallax.core.descriptor.Metamodel` of every entity class
+    registered so far — the statement frontend's own validation surface
+    (``validate_operation`` needs a full metamodel, not a per-class record)."""
+    return MetamodelRecord(entities=tuple(entity_records().values()))
+
+
+def _serialize_member(value: object) -> object:
+    """A scalar/value-object member's write-row value: a ``ValueObject``
+    instance serializes to its canonical document, a tuple of them to a list
+    of documents (``cardinality: many``), everything else passes through."""
+    if isinstance(value, ValueObject):
+        return to_document(value)
+    if isinstance(value, tuple):
+        items = cast("tuple[object, ...]", value)
+        return [to_document(item) if isinstance(item, ValueObject) else item for item in items]
+    return value
+
+
+def full_row(instance: Entity) -> dict[str, object]:
+    """Every member of ``instance`` the caller actually SET, keyed by CANONICAL
+    name — the ``insert`` Create Payload row (spec §5). Filtered by Pydantic's
+    own ``model_fields_set`` (not every declared member unconditionally): a
+    nullable member the caller never populated (relying on its declared
+    default) is OMITTED, producing the narrower ``INSERT`` the corpus goldens
+    pin (never an explicit bound ``NULL``) — the same distinction the ingested
+    write-instruction row already expresses structurally.
+    """
+    names = wire_names_of(type(instance))
+    fields_set = instance.model_fields_set
+    return {
+        canonical: _serialize_member(getattr(instance, py_name))
+        for canonical, py_name in names.name_to_py.items()
+        if py_name in fields_set
+    }
+
+
+def primary_key_row(instance: object) -> dict[str, object]:
+    """``instance``'s primary-key members, keyed by CANONICAL name — what
+    ``tx.delete`` and a sparse ``tx.update`` row key off (spec §5)."""
+    names = wire_names_of(type(instance))
+    return {names.py_to_name[py_name]: getattr(instance, py_name) for py_name in names.pk_py}
+
+
+def canonical_row(instance: object, py_row: dict[str, object]) -> dict[str, object]:
+    """Translate a python-name-keyed row to its CANONICAL-name-keyed,
+    write-serialized form (value objects rendered to documents)."""
+    names = wire_names_of(type(instance))
+    return {
+        names.py_to_name[py_name]: _serialize_member(value) for py_name, value in py_row.items()
+    }
+
+
+def changed_fields(instance: object) -> dict[str, object] | None:
+    """``instance``'s Change Record (python field name -> EARLIEST recorded
+    original across its copy chain), or ``None`` when it carries none — a
+    "provenance-less" instance, never produced via ``model_copy`` (spec §5)."""
+    changes = (
+        instance.__dict__.get("__parallax_changes__") if hasattr(instance, "__dict__") else None
+    )
+    if isinstance(changes, dict):
+        return cast("dict[str, object]", changes)
+    return None
+
+
+def effective_change_set(copy: object) -> dict[str, object]:
+    """The touched-AND-different fields of an edited copy (python field name ->
+    CURRENT value) — a touched field whose current value equals its recorded
+    original drops out (the net-zero-chain no-op rule, spec §3/§5). Raises
+    :class:`ProvenanceError` for a provenance-less instance."""
+    changes = changed_fields(copy)
+    if changes is None:
+        raise ProvenanceError(
+            f"{type(copy).__name__} carries no Change Record; derive an edited copy via "
+            "`instance.model_copy(update={...})` before passing it to `tx.update`"
+        )
+    return {
+        py_name: getattr(copy, py_name)
+        for py_name, original in changes.items()
+        if getattr(copy, py_name) != original
+    }
+
+
+def framework_owned_advance(instance: object) -> dict[str, object]:
+    """The provisional (COR-3 Phase 7) framework-owned version advance for a
+    sparse ``tx.update`` row: ``{canonical name: current + 1}`` for each
+    ``optimistic_locking`` attribute the entity declares, read from the edited
+    copy's own (untouched — ``model_copy`` forbids assigning it) current
+    value. This is NOT ``m-opt-lock``'s observation-gated advance (COR-3 Phase
+    8: no transaction-scoped-observation requirement, no ``and version = ?``
+    gate) — it reproduces the corpus's own "locking mode: no gate, version
+    advances" M4-era goldens (e.g. ``m-unit-work-005``) until the write path
+    lands; ``lower_write`` still refuses any write an OBSERVATION actually
+    gates (COR-3 Phase 8; ledger unaffected)."""
+    names = wire_names_of(type(instance))
+    return {
+        names.py_to_name[py_name]: cast("int", getattr(instance, py_name)) + 1
+        for py_name in names.framework_owned_py
     }
 
 
@@ -187,6 +441,116 @@ def _infer_neutral_type(inner: object, py_name: str) -> str:
     )
 
 
+def _family_parent(bases: tuple[type, ...]) -> type | None:
+    """The nearest base that is ITSELF a compiled Parallax entity class, or
+    ``None`` — the Python-hierarchy-derived family-membership test (ledger D-7,
+    DQ2): subclassing an entity always joins its family; ``Entity`` itself is
+    never registered, so no false positive arises for an ordinary declaration."""
+    for base in bases:
+        if base in _ENTITY_BY_CLASS:
+            return base
+    return None
+
+
+# The TPH family's shared table default, keyed by the ROOT entity's own name —
+# populated when the root compiles (its EntityConfig.table, possibly ``None``),
+# consumed by a concrete-subtype descendant that declares no table of its own.
+_FAMILY_SHARED_TABLE: dict[str, str | None] = {}
+
+
+def _derive_inheritance(
+    cls_name: str, config: EntityConfig, family_parent: type | None
+) -> tuple[InheritanceRecord | None, str | None]:
+    """Derive the compiled ``Inheritance`` record and this entity's own resolved
+    ``table`` from the Python class hierarchy + ``EntityConfig.inheritance``
+    (ledger D-7, DQ2). Returns ``(None, <default table>)`` — unchanged existing
+    behavior — for a plain, non-family entity.
+    """
+    if family_parent is None:
+        if isinstance(config.inheritance, FamilyRoot):
+            _FAMILY_SHARED_TABLE[cls_name] = config.table
+            record = InheritanceRecord(
+                role="root",
+                strategy=config.inheritance.strategy,
+                parent=None,
+                tag_column=config.inheritance.tag,
+                tag_value=None,
+            )
+            return record, None  # the root is always tableless (rowless too)
+        if isinstance(config.inheritance, Concrete):
+            raise EntityDefinitionError(
+                f"{cls_name}: EntityConfig(inheritance=Concrete(...)) requires subclassing "
+                "another Parallax entity (its family parent) — a family root declares "
+                "EntityConfig(inheritance=FamilyRoot(...)) instead"
+            )
+        table = config.table if config.table is not None else camel_to_snake(cls_name)
+        return None, table
+
+    parent_record = _ENTITY_BY_CLASS[family_parent]
+    if parent_record.inheritance is None:
+        raise EntityDefinitionError(
+            f"{cls_name}: subclassing {family_parent.__name__!r} makes it an inheritance-family "
+            f"member, but {family_parent.__name__!r} declares no inheritance family "
+            "(EntityConfig(inheritance=FamilyRoot(...)) on the family's own root) — subclassing "
+            "a Parallax entity always joins its family (ledger D-7)"
+        )
+    try:
+        temp_meta = MetamodelRecord(entities=tuple(entity_records().values()))
+        root_record = _inheritance.family_root(temp_meta, parent_record)
+    except ValueError as exc:  # pragma: no cover - guards a malformed family
+        raise EntityDefinitionError(f"{cls_name}: {exc}") from exc
+    assert root_record.inheritance is not None  # a resolved root always carries one
+
+    if isinstance(config.inheritance, FamilyRoot):
+        raise EntityDefinitionError(
+            f"{cls_name}: a family SUBCLASS cannot itself declare "
+            "EntityConfig(inheritance=FamilyRoot(...)) — only the family's own root does"
+        )
+    if isinstance(config.inheritance, Concrete):
+        if config.table is not None:
+            table = config.table
+        elif root_record.inheritance.strategy == "table-per-hierarchy":
+            shared = _FAMILY_SHARED_TABLE.get(root_record.name)
+            table = shared if shared is not None else camel_to_snake(root_record.name)
+        else:  # table-per-concrete-subtype: every concrete owns its own table
+            table = camel_to_snake(cls_name)
+        record = InheritanceRecord(
+            role="concrete-subtype",
+            strategy=None,
+            parent=parent_record.name,
+            tag_column=None,
+            tag_value=config.inheritance.tag_value,
+        )
+        return record, table
+
+    # No `EntityConfig.inheritance` on a family subclass: an interior
+    # abstract-subtype node — tableless and rowless (m-inheritance).
+    if config.table is not None:
+        raise EntityDefinitionError(
+            f"{cls_name}: an abstract-subtype family member is tableless and rowless "
+            "(m-inheritance); declare EntityConfig(inheritance=Concrete(...)) for a "
+            "concrete (row-owning) leaf instead"
+        )
+    record = InheritanceRecord(
+        role="abstract-subtype", strategy=None, parent=parent_record.name, tag_column=None
+    )
+    return record, None
+
+
+def _value_object_of(decl: _VoDecl) -> ValueObjectRecord:
+    py_name, vo_class, cardinality, spec = decl
+    canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
+    sub = structure_of(vo_class)
+    return ValueObjectRecord(
+        name=canonical,
+        column=spec.column if spec.column is not None else py_name,
+        nullable=spec.nullable,
+        cardinality=cardinality,
+        attributes=sub.attributes,
+        value_objects=sub.value_objects,
+    )
+
+
 def _attribute_of(decl: _AttrDecl) -> AttributeRecord:
     py_name, inner, spec = decl
     canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
@@ -226,10 +590,16 @@ def _reject_reserved(py_name: str) -> None:
 
 
 def _reject_collisions(
-    attributes: tuple[AttributeRecord, ...], relationships: tuple[RelationshipRecord, ...]
+    attributes: tuple[AttributeRecord, ...],
+    relationships: tuple[RelationshipRecord, ...],
+    value_objects: tuple[ValueObjectRecord, ...] = (),
 ) -> None:
     seen: set[str] = set()
-    for name in (*(a.name for a in attributes), *(r.name for r in relationships)):
+    for name in (
+        *(a.name for a in attributes),
+        *(r.name for r in relationships),
+        *(v.name for v in value_objects),
+    ):
         if name in seen:
             raise NameCollisionError(f"two fields resolve to the same canonical name {name!r}")
         seen.add(name)
@@ -265,6 +635,7 @@ class EntityMeta(ModelMetaclass):
         globalns = _module_globalns(namespace)
         attr_decls: list[_AttrDecl] = []
         rel_decls: list[_RelDecl] = []
+        vo_decls: list[_VoDecl] = []
 
         for py_name, annotation in list(annotations.items()):
             if get_origin(annotation) is ClassVar:
@@ -273,13 +644,18 @@ class EntityMeta(ModelMetaclass):
             _reject_reserved(py_name)
             value = namespace.get(py_name)
             if kind == "attr":
-                annotations[py_name] = inner  # Attr[T] -> T for Pydantic
                 spec = value if isinstance(value, FieldSpec) else FieldSpec()
+                annotations[py_name] = inner  # Attr[T] -> T for Pydantic
                 if spec.default is not UNSET:
                     namespace[py_name] = spec.default
                 else:
                     namespace.pop(py_name, None)
-                attr_decls.append((py_name, inner, spec))
+                vo_info = vo_field_info(inner)
+                if vo_info is not None:
+                    vo_class, cardinality = vo_info
+                    vo_decls.append((py_name, vo_class, cardinality, spec))
+                else:
+                    attr_decls.append((py_name, inner, spec))
             elif kind == "rel":
                 if not isinstance(value, RelationshipSpec):
                     raise EntityDefinitionError(
@@ -294,42 +670,113 @@ class EntityMeta(ModelMetaclass):
                 )
 
         namespace["__annotations__"] = annotations
+        for vo_py_name, vo_cls, vo_cardinality, _vo_spec in vo_decls:
+            namespace[f"_validate_vo_{vo_py_name}"] = vo_instance_validator(
+                vo_py_name, vo_cls, vo_cardinality
+            )
 
         # Compile the metamodel record BEFORE Pydantic builds the model, so a
         # neutral-type / relationship rejection is a Parallax error rather than a
         # downstream Pydantic schema-generation failure.
         attributes = tuple(_attribute_of(decl) for decl in attr_decls)
         relationships = tuple(_relationship_of(decl) for decl in rel_decls)
-        _reject_collisions(attributes, relationships)
-        if not attributes:
-            raise EntityDefinitionError(f"entity {cls_name!r} declares no attributes")
+        value_objects = tuple(_value_object_of(decl) for decl in vo_decls)
+        _reject_collisions(attributes, relationships, value_objects)
+        family_parent = _family_parent(bases)
+        inheritance_record, resolved_table = _derive_inheritance(cls_name, config, family_parent)
         entity = EntityRecord(
             name=cls_name,
             namespace=config.namespace,
-            table=config.table if config.table is not None else camel_to_snake(cls_name),
+            table=resolved_table,
             mutability=cast("Any", _check_mutability(config.mutability)),
             attributes=attributes,
             as_of_attributes=config.as_of,
             relationships=relationships,
+            value_objects=value_objects,
+            inheritance=inheritance_record,
         )
         # Reject an invalid compiled record (bad neutral type, out-of-range
-        # maxLength, optimistic-lock composition, PK-generator bounds, …) at
-        # definition time, before the class is registered or ever exported.
+        # maxLength, optimistic-lock composition, PK-generator bounds, no
+        # attributes at all outside an inheritance family, …) at definition
+        # time, before the class is registered or ever exported.
         try:
             validate_entity(entity)
         except DescriptorError as exc:
             raise EntityDefinitionError(str(exc)) from exc
 
         cls = super().__new__(mcs, cls_name, bases, namespace, **kwargs)
+        column_to_py: dict[str, str] = {}
+        name_to_py: dict[str, str] = {}
+        py_to_name: dict[str, str] = {}
+        pk_py: set[str] = set()
+        framework_owned_py: set[str] = set()
         for py_name, _inner, spec in attr_decls:
             canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
+            column = spec.column if spec.column is not None else py_name
             setattr(cls, py_name, Attr(AttributeRef(cls_name, canonical), py_name))
+            column_to_py[column] = py_name
+            name_to_py[canonical] = py_name
+            py_to_name[py_name] = canonical
+            if spec.primary_key:
+                pk_py.add(py_name)
+            if spec.optimistic_locking:
+                framework_owned_py.add(py_name)
+        vo_classes: dict[str, type] = {}
+        for py_name, vo_class, _card, spec in vo_decls:
+            canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
+            column = spec.column if spec.column is not None else py_name
+            setattr(cls, py_name, Attr(AttributeRef(cls_name, canonical), py_name))
+            column_to_py[column] = py_name
+            name_to_py[canonical] = py_name
+            py_to_name[py_name] = canonical
+            vo_classes[py_name] = vo_class
+        relationship_py: dict[str, str] = {}
         for py_name, _inner, rel_spec in rel_decls:
             canonical = rel_spec.name if rel_spec.name is not None else snake_to_camel(py_name)
-            setattr(cls, py_name, Rel(RelationshipRef(cls_name, canonical), py_name))
+            rel_descriptor: Rel[Any] = Rel(
+                RelationshipRef(cls_name, canonical), py_name, rel_spec.related_entity
+            )
+            setattr(cls, py_name, rel_descriptor)
+            relationship_py[canonical] = py_name
         _REGISTRY[cls_name] = cast("type[BaseModel]", cls)
         _ENTITY_BY_CLASS[cls] = entity
+        _WIRE_NAMES[cls] = WireNames(
+            column_to_py=column_to_py,
+            name_to_py=name_to_py,
+            py_to_name=py_to_name,
+            relationship_py=relationship_py,
+            assignable_py=frozenset(py_to_name) - pk_py - framework_owned_py,
+            pk_py=frozenset(pk_py),
+            framework_owned_py=frozenset(framework_owned_py),
+            vo_classes=vo_classes,
+        )
         return cls
+
+
+def _entity_name_of(cls: type) -> str:
+    record = entity_record_of(cls)
+    return record.name if record is not None else cls.__name__
+
+
+def _validate_copy_keys(cls_name: str, names: WireNames, update: Mapping[str, Any]) -> None:
+    """Reject an unassignable ``model_copy(update=...)`` key (spec §3): unknown,
+    primary-key, framework-owned, or relationship."""
+    for py_name in update:
+        if py_name in names.assignable_py:
+            continue
+        if py_name in names.relationship_py.values():
+            raise ModelCopyError(
+                f"{cls_name}.{py_name}: relationship fields are not assignable via model_copy "
+                "(no cascade or association-mutation semantics to lower it to)"
+            )
+        if py_name in names.pk_py:
+            raise ModelCopyError(f"{cls_name}.{py_name}: primary-key fields may not be assigned")
+        if py_name in names.framework_owned_py:
+            raise ModelCopyError(
+                f"{cls_name}.{py_name}: framework-owned fields (the version column) may not "
+                "be assigned"
+            )
+        raise ModelCopyError(f"{cls_name}.{py_name}: unknown field name")
 
 
 class Entity(BaseModel, metaclass=EntityMeta):
@@ -339,7 +786,69 @@ class Entity(BaseModel, metaclass=EntityMeta):
 
     @classmethod
     def where(cls, *predicates: Predicate) -> Statement:
-        """Build a side-effect-free statement conjoining ``predicates`` (empty is find-all)."""
+        """Build a side-effect-free statement conjoining ``predicates`` (empty is find-all).
+
+        Validates immediately via ``validate_operation`` (python.md §2): a
+        subtype-declared attribute referenced outside a compatible ``narrow``
+        scope raises the moment this statement is built, never later — the
+        statement-level ``.narrow(...)`` clause grants no retroactive scope to
+        an already-built ``where`` argument.
+        """
         record = entity_record_of(cls)
         as_of = record.as_of_attributes if record is not None else ()
-        return build_statement(cls.__name__, predicates, as_of_attributes=as_of)
+        statement = build_statement(cls.__name__, predicates, as_of_attributes=as_of)
+        validate_operation(cls.__name__, statement.predicate, _current_metamodel())
+        return statement
+
+    @classmethod
+    def narrow(cls, *subtypes: type, where: Predicate | None = None) -> Predicate:
+        """The scoped subtype-narrowing constructor (python.md §2):
+        ``Animal.narrow(Dog, where=Dog.bark_volume > 3)``. ``entity`` is this
+        class's own canonical position; ``to`` preserves the authored subtype
+        list verbatim (each entry a concrete or abstract subtype class);
+        ``where=`` grants attribute scope to ``to``'s declared members ONLY
+        inside its own operand (omitted ⇒ ``all``). An ordinary predicate: it
+        composes with ``&`` / ``|`` / ``~`` like any other, and inside a
+        relationship quantifier the constructor must be called on exactly the
+        relationship target — ``m-navigate``'s exact-naming rule.
+
+        Deliberately UNVALIDATED here: this constructor's own position
+        (top-level clamp vs. a relationship hop's exact-naming rule) depends on
+        WHERE the caller composes it, which this call site cannot know —
+        ``Entity.where(...)`` / ``.include(...)`` / a relationship
+        ``.any()``/``.none()`` scope validate the FULLY assembled tree with the
+        correct threaded scope once it is built, never twice with the wrong one.
+        """
+        to = tuple(_entity_name_of(subtype) for subtype in subtypes)
+        operand: Operation = where.op if where is not None else All()
+        return Predicate(Narrow(entity=cls.__name__, to=to, operand=operand))
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+        """The validating D-16 override (python.md §3): a copy carries a Change
+        Record mapping each touched field to its EARLIEST original across copy
+        chains (copies of copies merge records). Also VALIDATES — Pydantic's
+        own ``model_copy`` never validates ``update=`` data — applying the same
+        build-time rules as construction: unknown field names, primary-key
+        fields, framework-owned fields (the version column), and relationship
+        fields all raise; every value passes the §2 scalar input policies (the
+        merged instance is fully re-validated through the ordinary
+        constructor), so an invalid edit raises at copy time, never at the
+        database.
+        """
+        if not update:
+            copied = super().model_copy(update=None, deep=deep)
+            carried = dict(changed_fields(self) or {})
+            object.__setattr__(copied, "__parallax_changes__", carried)
+            return copied
+        names = wire_names_of(type(self))
+        _validate_copy_keys(type(self).__name__, names, update)
+        declared = set(names.py_to_name)
+        merged = {k: v for k, v in self.__dict__.items() if k in declared}
+        merged.update(update)
+        validated = type(self)(**merged)  # re-validates the WHOLE instance (§2 scalar policies)
+        changes = dict(changed_fields(self) or {})
+        for py_name in update:
+            if py_name not in changes:
+                changes[py_name] = getattr(self, py_name)
+        object.__setattr__(validated, "__parallax_changes__", changes)
+        return validated

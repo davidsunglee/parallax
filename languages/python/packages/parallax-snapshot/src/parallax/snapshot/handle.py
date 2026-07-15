@@ -23,39 +23,45 @@ The **developer transaction surface** (spec §5) also composes here:
 and :meth:`Database.transact` is the callback demarcation — sentinel-backed
 options, join with the option-conflict check, the ``m-auto-retry`` bounded retry
 loop, and the injected flush executor that lowers each planned write and runs it
-on the transaction's own connection. Per ledger D-16 the :class:`Transaction`
-verbs are **neutral and provisional**: they buffer keyed write *documents* and
-``find`` returns *rows*; the entity-instance signatures (materialized finds,
-``insert(instance)`` / sparse ``update(edited_copy)``) graduate with the Phase-7
-instance model.
+on the transaction's own connection. Per ledger D-16 (COR-3 Phase 7 increment
+6a, full graduation) the :class:`Transaction` verbs take entity instances:
+``insert(instance)`` (the Create Payload), ``update(edited_copy)`` (the sparse
+row: primary key + effective change set), ``delete(node_or_instance)`` (keys
+off it); :meth:`Database.find` / :meth:`Transaction.find` both wrap the SAME
+production find executor below in ``Snapshot[T]`` (DQ6).
 
-:meth:`Transaction.find` is also where ``m-navigate`` composes (COR-3 Phase 7
-increment 3, the same M2-precedent composition order the conformance engine
-uses): ``m-temporal-read``'s root as-of injection runs first, then
-``parallax.core.navigate.canonicalize`` rewrites every navigation hop's own
-per-hop as-of propagation, both before ``compile_read`` — the module DAG
-forbids ``m-sql`` from ever seeing a temporal wrapper.
+:meth:`Transaction.find` participates in the transaction (force-flush +
+read-your-own-writes, the transaction's own lock suffix) by running the shared
+:func:`find` / :func:`find_history` executor through
+:meth:`~parallax.core.unit_work.UnitOfWork.read` — root canonicalization
+(``m-temporal-read`` + ``m-navigate``) happens inside the shared executor via
+``parallax.core.deep_fetch.plan``, never re-derived here.
 """
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Any, Final, cast
 
-from parallax.core import deep_fetch, navigate, op_algebra
+from parallax.core import deep_fetch, op_algebra
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import Entity, Metamodel, column_order
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
-from parallax.core.sql_gen import Statement, apply_family_variant, compile_read, family_variant_plan
-from parallax.core.temporal_read import (
-    AXIS_ORDER,
-    Edge,
-    inject_as_of,
-    milestone_edge,
-    resolve_pinned_instants,
+from parallax.core.entity import Entity as EntityBase
+from parallax.core.entity import Statement as EntityStatement
+from parallax.core.entity import (
+    canonical_row,
+    effective_change_set,
+    entity_record_of,
+    framework_owned_advance,
+    full_row,
+    primary_key_row,
 )
+from parallax.core.sql_gen import Statement, apply_family_variant, compile_read, family_variant_plan
+from parallax.core.temporal_read import AXIS_ORDER, Edge, Pin, milestone_edge, statement_pin
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -72,7 +78,7 @@ from parallax.core.unit_work import (
     instructions,
     run_unit_of_work,
 )
-from parallax.snapshot import materialize
+from parallax.snapshot import materialize, wrap
 
 __all__ = [
     "Database",
@@ -81,6 +87,9 @@ __all__ = [
     "FindResult",
     "HistoryFindResult",
     "MilestoneGraph",
+    "NoResultFound",
+    "Snapshot",
+    "TooManyResultsFound",
     "Transaction",
     "TransactionOptionConflictError",
     "WriteLoweringError",
@@ -274,10 +283,13 @@ def _members(entity: Entity) -> dict[str, tuple[str, bool]]:
 @dataclass(frozen=True, slots=True)
 class ExecutedStatement:
     """One statement this executor actually ran (or would run — the caller's own
-    compile-eligibility posture is not this module's concern)."""
+    compile-eligibility posture is not this module's concern). ``duration`` is
+    the WALL-CLOCK seconds the port's own ``execute`` call took — informational
+    only (spec §3: never graded, never used for control flow)."""
 
     sql: str
     binds: tuple[object, ...]
+    duration: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +303,82 @@ class Execution:
     @property
     def round_trips(self) -> int:
         return len(self.statements)
+
+
+class NoResultFound(RuntimeError):
+    """``Snapshot.result()`` matched zero roots (spec §2/§3)."""
+
+
+class TooManyResultsFound(RuntimeError):
+    """``Snapshot.result()`` / ``.result_or_none()`` matched more than one root
+    (spec §2/§3)."""
+
+
+class Snapshot[T]:
+    """The Python reification of a core Snapshot Graph (spec §3): ``db.find`` /
+    ``tx.find``'s result. The complete surface: :meth:`result`,
+    :meth:`result_or_none`, :meth:`results` (a FRESH ``list[T]`` per call),
+    :attr:`pin` (the lowered as-of coordinates — only genuinely PINNED axes; a
+    scanned axis is absent), :attr:`execution` (per-statement ``sql`` /
+    ``binds``, informational ``duration``, and ``round_trips``), and
+    ``__repr__``. Deliberately ABSENT: iteration / ``len`` / truthiness /
+    indexing on the container, refresh or write methods, and any lazy
+    behavior — every accessor is a pure in-memory read over roots already
+    materialized in full by ``db.find`` / ``tx.find``.
+    """
+
+    __slots__ = ("_execution", "_pin", "_roots")
+
+    _roots: tuple[T, ...]
+    _pin: Pin
+    _execution: Execution
+
+    def __init__(self, roots: tuple[T, ...], pin: Pin, execution: Execution) -> None:
+        self._roots = roots
+        self._pin = pin
+        self._execution = execution
+
+    def result(self) -> T:
+        """The single matched root; raises on zero or more than one."""
+        count = len(self._roots)
+        if count == 0:
+            raise NoResultFound("the snapshot matched no roots")
+        if count > 1:
+            raise TooManyResultsFound(f"the snapshot matched {count} roots, expected exactly 1")
+        return self._roots[0]
+
+    def result_or_none(self) -> T | None:
+        """The single matched root, or ``None`` on zero; raises on more than one."""
+        count = len(self._roots)
+        if count == 0:
+            return None
+        if count > 1:
+            raise TooManyResultsFound(f"the snapshot matched {count} roots, expected 0 or 1")
+        return self._roots[0]
+
+    def results(self) -> list[T]:
+        """Every matched root as an ordinary ``list[T]`` the caller owns (a
+        fresh copy per call — this accessor is unaffected by node immutability)."""
+        return list(self._roots)
+
+    @property
+    def pin(self) -> Pin:
+        """The statement's OWN lowered as-of coordinates (spec §3): only
+        genuinely pinned axes — a scanned (``history`` / ``as_of_range``) axis
+        is absent, per the core rule that a scan is not a pin."""
+        return self._pin
+
+    @property
+    def execution(self) -> Execution:
+        """This find's execution record (per-statement ``sql`` / ``binds``,
+        informational ``duration``, and ``round_trips``)."""
+        return self._execution
+
+    def __repr__(self) -> str:
+        return (
+            f"Snapshot(roots={len(self._roots)}, pin={self._pin!r}, "
+            f"round_trips={self._execution.round_trips})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,8 +531,12 @@ def find_history(
 def _execute(
     port: DbPort, dialect: Dialect, statement: Statement, statements: list[ExecutedStatement]
 ) -> list[Row]:
-    statements.append(ExecutedStatement(statement.sql, statement.binds))
-    return port.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
+    started = time.perf_counter()
+    rows = port.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
+    statements.append(
+        ExecutedStatement(statement.sql, statement.binds, time.perf_counter() - started)
+    )
+    return rows
 
 
 def _parent_data(
@@ -542,11 +634,14 @@ class Transaction:
     """The developer transaction handed to a ``db.transact`` closure (spec §5).
 
     A facade over the active unit of work and the transaction's own connection.
-    The verbs are the **neutral, provisional** D-16 surface: the write triad
-    buffers keyed write *documents* (deserialized and member-validated on
-    entry), and :meth:`find` runs a participating read returning *rows*; the
-    entity-instance signatures graduate with the Phase-7 instance model. A
-    reference used after its owning scope ends raises
+    The graduated D-16 verbs take entity instances: :meth:`insert` a full
+    instance (the Create Payload), :meth:`update` an edited copy (the sparse
+    row: primary key + effective change set — an empty effective set is a
+    no-op, zero round trips), :meth:`delete` a node or instance (keys off its
+    primary key). :meth:`find` runs a participating read and returns
+    ``Snapshot[T]`` (DQ6): force-flush + the transaction's own lock suffix,
+    otherwise identical to :meth:`Database.find`. A reference used after its
+    owning scope ends raises
     :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
     delegates to the unit of work, which fences use-after-scope).
     """
@@ -565,48 +660,60 @@ class Transaction:
         self._meta = meta
         self._dialect = dialect
 
-    def insert(self, entity: str, row: Mapping[str, object]) -> None:
-        """Buffer a keyed ``insert`` of one full row (attribute name -> value)."""
-        self._buffer("insert", entity, row)
+    def insert(self, instance: EntityBase) -> None:
+        """Buffer a keyed ``insert`` of a full instance (the Create Payload,
+        spec §5): every member the instance actually SET."""
+        record = _entity_record_of_instance(instance)
+        self._buffer("insert", record.name, full_row(instance))
 
-    def update(self, entity: str, row: Mapping[str, object]) -> None:
-        """Buffer a keyed ``update``: the primary key plus the changed members."""
-        self._buffer("update", entity, row)
+    def update(self, copy: EntityBase) -> None:
+        """Buffer a sparse keyed ``update``: primary key + the effective change
+        set of an edited copy (touched fields whose current value differs from
+        the recorded original, spec §3/§5). An EMPTY effective change set
+        issues no DML at all (zero round trips, the net-zero-chain no-op rule).
+        Raises :class:`~parallax.core.entity.ProvenanceError` for a
+        provenance-less instance (never produced via ``model_copy``)."""
+        record = _entity_record_of_instance(copy)
+        effective = effective_change_set(copy)
+        if not effective:
+            return
+        row: dict[str, object] = primary_key_row(copy)
+        row.update(canonical_row(copy, effective))
+        row.update(framework_owned_advance(copy))
+        self._buffer("update", record.name, row)
 
-    def delete(self, entity: str, row: Mapping[str, object]) -> None:
-        """Buffer a keyed ``delete`` of the row named by its primary key."""
-        self._buffer("delete", entity, row)
+    def delete(self, node_or_instance: EntityBase) -> None:
+        """Buffer a keyed ``delete``, keyed off ``node_or_instance``'s primary
+        key (a frozen ``Snapshot`` node, a fresh instance, or an edited copy —
+        all carry valid primary-key values, spec §5)."""
+        record = _entity_record_of_instance(node_or_instance)
+        self._buffer("delete", record.name, primary_key_row(node_or_instance))
 
-    def find(self, entity: str, op: Mapping[str, object]) -> list[Row]:
-        """Run a participating read for ``op`` (an operation document) on ``entity``.
-
-        Read-your-own-writes: pending buffered writes are force-flushed inside
-        the still-open atomic scope before the read runs. The transaction's
-        participation mode renders the read-lock suffix (``locking`` takes the
-        dialect's shared row lock; ``optimistic`` takes none). Navigation hops
-        (``exists`` / ``notExists`` / ``navigate``) canonicalize their own
-        per-hop as-of propagation immediately after the root's own injection —
-        the same composition-at-the-engine order every read compile site shares
-        (COR-3 Phase 7 increment 3).
+    def find(self, statement: EntityStatement) -> Snapshot[Any]:
+        """Run a participating read for ``statement`` and return ``Snapshot[T]``
+        (DQ6): force-flushes pending writes first (read-your-own-writes), and
+        the transaction's participation mode renders the read-lock suffix
+        (``locking`` takes the dialect's shared row lock; ``optimistic`` takes
+        none). Otherwise identical to :meth:`Database.find` — the SAME shared
+        find executor, the SAME frozen-node wrapping. Returns ``Snapshot[Any]``:
+        the concrete root type is resolved only at runtime (from the
+        statement's own target), so callers annotate their own binding
+        (``snapshot: Snapshot[Order] = tx.find(...)``) for static typing.
         """
-        raw_operation = op_algebra.deserialize(op)
-        root_entity = self._meta.entity(entity)
-        root_pins = resolve_pinned_instants(raw_operation, root_entity)
-        injected = inject_as_of(raw_operation, root_entity)
-        operation = navigate.canonicalize(injected, self._meta, root_pins)
-        statement = compile_read(
-            operation,
-            self._meta,
-            self._dialect,
-            entity,
-            result_form="row",
-            lock=self._uow.settings.concurrency,
-        )
-        return self._uow.read(
-            lambda: self._conn.execute(
-                self._dialect.to_driver_sql(statement.sql), list(statement.binds)
+        target = statement.target
+        op = statement.operation()
+        entity = self._meta.entity(target)
+        pin = statement_pin(op, entity)
+        lock = self._uow.settings.concurrency
+        if _is_milestone_set_op(op):
+            history_result = self._uow.read(
+                lambda: find_history(op, self._meta, self._dialect, target, self._conn)
             )
+            return _snapshot_from_history_result(history_result, target, self._meta)
+        find_result = self._uow.read(
+            lambda: find(op, self._meta, self._dialect, target, self._conn, lock=lock)
         )
+        return _snapshot_from_find_result(find_result, target, self._meta, pin)
 
     def _buffer(self, mutation: str, entity: str, row: Mapping[str, object]) -> None:
         # The document route buys the IR's structural validation (no `at` alias,
@@ -616,6 +723,54 @@ class Transaction:
         )
         instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(instruction)
+
+
+def _entity_record_of_instance(instance: EntityBase) -> Entity:
+    record = entity_record_of(type(instance))
+    if record is None:  # pragma: no cover - guards a non-Parallax-compiled class
+        raise TypeError(f"{type(instance).__name__} is not a registered Parallax entity class")
+    return record
+
+
+def _is_milestone_set_op(op: op_algebra.Operation) -> bool:
+    """Whether ``op``'s temporal wrapper SCANS an axis (``history`` /
+    ``as_of_range``) rather than pinning it — the milestone-set find shape
+    (spec §3 "one root per milestone")."""
+    current: op_algebra.Operation = op
+    while isinstance(current, (op_algebra.Limit, op_algebra.OrderBy, op_algebra.Distinct)):
+        current = current.operand
+    return isinstance(current, (op_algebra.AsOfRange, op_algebra.History))
+
+
+def _pin_from_milestone(entity: Entity, milestone_pin: Mapping[str, object]) -> Pin:
+    """One milestone's own edge, rendered as a :class:`Pin` (spec §3: each
+    milestone-set root is edge-pinned at its own milestone's from-instant)."""
+    coords: dict[str, object] = {}
+    for aoa in entity.as_of_attributes:
+        if aoa.name in milestone_pin:
+            coords[aoa.axis] = milestone_pin[aoa.name]
+    return Pin(
+        processing=cast("Any", coords.get("processing")),
+        business=cast("Any", coords.get("business")),
+    )
+
+
+def _snapshot_from_find_result(
+    result: FindResult, target: str, meta: Metamodel, pin: Pin
+) -> Snapshot[Any]:
+    roots = wrap.wrap_graph(result.nodes, target, meta, pin)
+    return Snapshot(roots, pin, result.execution)
+
+
+def _snapshot_from_history_result(
+    result: HistoryFindResult, target: str, meta: Metamodel
+) -> Snapshot[Any]:
+    entity = meta.entity(target)
+    roots: list[Any] = []
+    for graph in result.graphs:
+        milestone_pin = _pin_from_milestone(entity, graph.pin)
+        roots.extend(wrap.wrap_graph(graph.nodes, target, meta, milestone_pin))
+    return Snapshot(tuple(roots), Pin(), result.execution)
 
 
 class Database:
@@ -653,6 +808,26 @@ class Database:
         (inject a fixed clock in tests).
         """
         return cls(adapter, meta, dialect=dialect, clock=clock)
+
+    def find(self, statement: EntityStatement) -> Snapshot[Any]:
+        """Execute ``statement`` exactly once, materializing fully, and return
+        ``Snapshot[T]`` (spec §3). Non-transactional: no read lock, no
+        participation mode. ``.history()`` / ``.as_of_range()`` return one root
+        per milestone, each edge-pinned at its own milestone's from-instant.
+        Returns ``Snapshot[Any]``: the concrete root type is resolved only at
+        runtime (from the statement's own target), so callers annotate their
+        own binding (``snapshot: Snapshot[Order] = db.find(...)``) for static
+        typing.
+        """
+        target = statement.target
+        op = statement.operation()
+        entity = self._meta.entity(target)
+        pin = statement_pin(op, entity)
+        if _is_milestone_set_op(op):
+            history_result = find_history(op, self._meta, self._dialect, target, self._port)
+            return _snapshot_from_history_result(history_result, target, self._meta)
+        find_result = find(op, self._meta, self._dialect, target, self._port)
+        return _snapshot_from_find_result(find_result, target, self._meta, pin)
 
     def transact[T](
         self,

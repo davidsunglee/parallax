@@ -6,11 +6,15 @@ and the abstract database port. Populated across COR-3 phases 2+.
 
 This surface publishes the model-definition and read surface: the frozen entity
 base, the ``Attr`` / ``Rel`` typed-access carriers, the ``Field`` /
-``Relationship`` declaration helpers, ``meta`` introspection, the ``Statement``
-query surface (predicate, result-shaping, and the axis-keyed temporal-read
-clauses), and the temporal as-of coordinate model (``LATEST`` / ``Pin`` /
-``Edge`` / ``pin_of`` / ``edge_of``). The transaction and snapshot surfaces land
-in later phases.
+``Relationship`` declaration helpers, the ``ValueObject`` class frontend (D-7),
+the inheritance-family vocabulary (``FamilyRoot`` / ``Concrete``, D-7 DQ2),
+``meta`` introspection, the ``Statement`` query surface (predicate,
+result-shaping, deep-fetch ``.include``, subtype ``.narrow``, and the
+axis-keyed temporal-read clauses), the temporal as-of coordinate model
+(``LATEST`` / ``Pin`` / ``Edge`` / ``pin_of`` / ``edge_of``), and the
+closed-world relationship load-state introspection (``is_loaded`` /
+``narrowed``) the frozen ``Snapshot[T]`` node surface uses. The transaction and
+snapshot surfaces land with ``parallax.snapshot``.
 """
 
 from __future__ import annotations
@@ -19,18 +23,29 @@ from parallax.core.descriptor import AsOfAttribute
 from parallax.core.entity import (
     Attr,
     AttributeExpr,
+    Concrete,
     Entity,
     EntityConfig,
     EntityDefinitionError,
+    FamilyRoot,
     Field,
+    ModelCopyError,
     NameCollisionError,
     OrderByTerm,
     Predicate,
+    ProvenanceError,
     Rel,
     Relationship,
+    RelationshipPath,
     ReservedNameError,
     Statement,
+    UnloadedRelationshipError,
+    UnsupportedFeatureError,
+    ValueObject,
+    VoField,
+    is_loaded,
     meta,
+    narrowed,
 )
 from parallax.core.temporal_read import (
     LATEST,
@@ -47,22 +62,33 @@ __all__ = [
     "AsOfAttribute",
     "Attr",
     "AttributeExpr",
+    "Concrete",
     "Edge",
     "Entity",
     "EntityConfig",
     "EntityDefinitionError",
+    "FamilyRoot",
     "Field",
+    "ModelCopyError",
     "NameCollisionError",
     "OrderByTerm",
     "Pin",
     "Predicate",
+    "ProvenanceError",
     "Rel",
     "Relationship",
+    "RelationshipPath",
     "ReservedNameError",
     "Statement",
     "TemporalReadError",
     "UndeclaredAxisError",
+    "UnloadedRelationshipError",
+    "UnsupportedFeatureError",
+    "ValueObject",
+    "VoField",
     "edge_of",
+    "is_loaded",
     "meta",
+    "narrowed",
     "pin_of",
 ]

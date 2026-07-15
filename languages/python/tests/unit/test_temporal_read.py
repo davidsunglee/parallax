@@ -20,7 +20,13 @@ from parallax.core import op_algebra as oa
 from parallax.core.descriptor import Entity
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import compile_read
-from parallax.core.temporal_read import LATEST, TemporalReadError, inject_as_of, milestone_edge
+from parallax.core.temporal_read import (
+    LATEST,
+    TemporalReadError,
+    inject_as_of,
+    milestone_edge,
+    statement_pin,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -288,6 +294,30 @@ def test_pin_reports_only_pinned_axes() -> None:
     assert pin.business is None
     assert not pin.is_empty
     assert Pin().is_empty
+
+
+def test_statement_pin_reads_both_bitemporal_axes() -> None:
+    op = oa.AsOf(
+        operand=oa.AsOf(operand=oa.All(), as_of_attr="Position.businessDate", date=_B),
+        as_of_attr="Position.processingDate",
+        date="now",
+    )
+    pin = statement_pin(op, POSITION)
+    assert pin.processing is LATEST
+    assert pin.business == dt.datetime.fromisoformat(_B)
+
+
+def test_statement_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> None:
+    # A scan is not a pin (spec §3): `AsOfRange` / `History` never set a
+    # coordinate, even though `statement_pin` still walks through them (called
+    # unconditionally ahead of the milestone-set/pinned-read branch decision).
+    ranged = oa.AsOfRange(
+        operand=oa.All(), as_of_attr="Position.processingDate", from_=_P, to="infinity"
+    )
+    assert statement_pin(ranged, POSITION) == Pin()
+
+    scanned = oa.History(operand=oa.All(), as_of_attr="Position.processingDate")
+    assert statement_pin(scanned, POSITION) == Pin()
 
 
 class _TemporalNode:
