@@ -13,7 +13,7 @@ import jsonschema
 import pytest
 
 from conftest import adapter_schema, canonical_snapshot_claim
-from parallax.conformance import adapter, case_format
+from parallax.conformance import adapter, case_format, engine
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
@@ -380,6 +380,75 @@ def test_boundary_case_names_the_api_conformance_lane() -> None:
     run_envelope = adapter.run_case(_BOUNDARY_CASE, "postgres", _TriggerPort(raise_on=None))
     assert run_envelope["status"] == "error"
     assert "api-conformance" in run_envelope["diagnostics"][0]["message"]
+
+
+# --------------------------------------------------------------------------- #
+# Rejected — the pre-SQL model-aware validation lane (COR-3 Phase 7            #
+# increment 1: resolved DQ3/DQ8).                                             #
+# --------------------------------------------------------------------------- #
+_REJECTED_OPERATION_CASE = (
+    case_format.default_cases_dir() / "m-inheritance-040-rejected-narrow-outside-position.yaml"
+)
+_REJECTED_MODEL_CASE = (
+    case_format.default_cases_dir() / "m-inheritance-020-rejected-unknown-parent.yaml"
+)
+_REJECTED_WRITE_CASE = (
+    case_format.default_cases_dir()
+    / "m-value-object-039-rejected-write-required-attribute-depth-1.yaml"
+)
+
+
+class _NeverCalledPort:
+    """An `m-db-port` that fails loudly if a rejected run ever touches it."""
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        raise AssertionError("a rejected-case run must not execute SQL")
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        raise AssertionError("a rejected-case run must not execute SQL")
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        raise AssertionError("a rejected-case run must not open a transaction")
+
+
+def test_compile_case_rejected_shape_is_shape_intrinsic_run_only() -> None:
+    # A rejected case carries no `compileEligibility` declaration (DQ8: its
+    # run-only status is shape-intrinsic, not authored per-case) yet still
+    # answers the defined run-only envelope.
+    envelope = adapter.compile_case(_REJECTED_OPERATION_CASE, "postgres")
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "run-only"
+    assert envelope["caseShape"] == "rejected"
+    assert envelope["diagnostics"][0]["code"] == "compile-run-only"
+    assert engine.eligibility(case_format.load_case(_REJECTED_OPERATION_CASE)) is None
+
+
+def test_run_case_rejected_operation_reports_the_classified_rule() -> None:
+    envelope = adapter.run_case(_REJECTED_OPERATION_CASE, "postgres", _NeverCalledPort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    assert envelope["emissions"] == []
+    assert envelope["observations"] == {
+        "rejectedRule": "narrow-outside-position",
+        "roundTrips": 0,
+    }
+
+
+def test_run_case_rejected_model_reports_the_classified_rule() -> None:
+    envelope = adapter.run_case(_REJECTED_MODEL_CASE, "postgres", _NeverCalledPort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok"
+    assert envelope["observations"] == {
+        "rejectedRule": "inheritance-unknown-parent",
+        "roundTrips": 0,
+    }
+
+
+def test_run_case_rejected_write_is_a_reasoned_error() -> None:
+    envelope = adapter.run_case(_REJECTED_WRITE_CASE, "postgres", _NeverCalledPort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "error"
+    assert "Phase 8" in envelope["diagnostics"][0]["message"]
 
 
 def test_run_case_refuses_unsupported_write_forms_before_execution() -> None:

@@ -322,6 +322,90 @@ def test_write_sequence_case_without_a_sequence_list_is_rejected() -> None:
         )
 
 
+# --------------------------------------------------------------------------- #
+# Rejected — the pre-SQL model-aware validation lane (COR-3 Phase 7            #
+# increment 1: resolved DQ3/DQ8). Three-way `when` dispatch.                   #
+# --------------------------------------------------------------------------- #
+def _rejected_case(case_id: str) -> case_format.Case:
+    (case,) = [c for c in case_format.load_cases() if c.case_id == case_id]
+    return case
+
+
+def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:
+    from pathlib import Path
+
+    return case_format.Case(
+        path=Path("m-op-algebra-998-synthetic-rejected.yaml"),
+        case_id="m-op-algebra-998",
+        shape="rejected",
+        tags=("m-op-algebra", "rejected", "slice-snapshot-1"),
+        model="models/animal.yaml",
+        document={"model": "models/animal.yaml", "when": when, "then": {"rejectedRule": "x"}},
+    )
+
+
+def test_run_rejected_case_operation_dispatch_classifies_the_rule() -> None:
+    case = _rejected_case("m-inheritance-040")
+    assert engine.run_rejected_case(case) == "narrow-outside-position"
+
+
+def test_run_rejected_case_operation_dispatch_over_a_value_object_model() -> None:
+    case = _rejected_case("m-value-object-037")
+    assert engine.run_rejected_case(case) == "find-root-value-object"
+
+
+def test_run_rejected_case_model_dispatch_reuses_the_phase_3_validator() -> None:
+    case = _rejected_case("m-inheritance-020")
+    assert engine.run_rejected_case(case) == "inheritance-unknown-parent"
+
+
+def test_run_rejected_case_write_dispatch_names_phase_8() -> None:
+    case = _rejected_case("m-value-object-039")
+    with pytest.raises(engine.EngineError, match="Phase 8"):
+        engine.run_rejected_case(case)
+
+
+def test_run_rejected_case_raises_when_operation_unexpectedly_accepted() -> None:
+    valid: dict[str, object] = {"operation": {"all": {}}}
+    with pytest.raises(engine.EngineError, match="accepted an operation"):
+        engine.run_rejected_case(_synthetic_rejected(valid))
+
+
+def test_run_rejected_case_raises_when_model_unexpectedly_accepted() -> None:
+    valid_model: dict[str, object] = {
+        "model": {
+            "entities": [
+                {
+                    "name": "Widget",
+                    "table": "widget",
+                    "attributes": [
+                        {"name": "id", "type": "int64", "column": "id", "primaryKey": True}
+                    ],
+                }
+            ]
+        }
+    }
+    with pytest.raises(engine.EngineError, match="accepted an inline inheritance family"):
+        engine.run_rejected_case(_synthetic_rejected(valid_model))
+
+
+def test_run_rejected_case_raises_for_a_malformed_operation() -> None:
+    malformed_operation: dict[str, object] = {"operation": {"eq": {}}}
+    with pytest.raises(engine.EngineError, match="missing required key"):
+        engine.run_rejected_case(_synthetic_rejected(malformed_operation))
+
+
+def test_run_rejected_case_raises_for_a_malformed_inline_model() -> None:
+    malformed_model: dict[str, object] = {"model": {"entities": [{"attributes": []}]}}
+    with pytest.raises(engine.EngineError, match="`name` must be a string"):
+        engine.run_rejected_case(_synthetic_rejected(malformed_model))
+
+
+def test_run_rejected_case_raises_when_when_carries_none_of_the_three_inputs() -> None:
+    with pytest.raises(engine.EngineError, match="none of operation/model/write"):
+        engine.run_rejected_case(_synthetic_rejected({}))
+
+
 def test_read_table_state_reads_each_physical_table_once() -> None:
     # The payment model is the degenerate layout: an abstract TABLELESS root
     # (Payment, table None — nothing to read) and two concrete subtypes SHARING

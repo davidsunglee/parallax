@@ -216,6 +216,15 @@ def test_compile_sweep(case: case_format.Case) -> None:
     envelope = adapter.compile_case(case.path, "postgres")
     jsonschema.validate(envelope, _SCHEMA)
 
+    if case.shape == "rejected":
+        # A rejected case carries no golden SQL by construction (m-case-format);
+        # its run-only status is shape-intrinsic, not authored per-case
+        # (m-conformance-adapter, resolved DQ3/DQ8) — every reachable rejected
+        # case answers it, never a silent skip.
+        assert envelope["status"] == "run-only", envelope
+        assert envelope["diagnostics"][0]["code"] == "compile-run-only", envelope
+        return
+
     if case.case_id in WRITE_EXERCISED:
         _assert_write_emissions(case, envelope)
         return

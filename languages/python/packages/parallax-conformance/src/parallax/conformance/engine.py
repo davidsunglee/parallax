@@ -21,12 +21,15 @@ from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.conformance import case_format, models
+from parallax.core import inheritance
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.descriptor import Metamodel, column_order
+from parallax.core.descriptor import DescriptorError, Metamodel, column_order
+from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
-from parallax.core.op_algebra import OperationError, deserialize
+from parallax.core.op_algebra import OperationError, OperationRejectedError, deserialize
+from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
 from parallax.core.sql_gen import ResultForm, SqlGenError, Statement, compile_read
 from parallax.core.temporal_read import TemporalReadError, inject_as_of
 from parallax.core.unit_work import instructions, plan_flush
@@ -45,6 +48,7 @@ __all__ = [
     "read_table_state",
     "run_error_case",
     "run_read_case",
+    "run_rejected_case",
     "run_scenario_case",
     "run_write_sequence_case",
     "wire_row",
@@ -511,6 +515,83 @@ def run_error_case(
                 ) from exc
             return emissions, exc.category, exc.native_code, len(trigger)
     raise EngineError(f"{case.path.name}: the final trigger statement did not raise")
+
+
+# --------------------------------------------------------------------------- #
+# Rejected — the pre-SQL model-aware validation lane (m-case-format, COR-3     #
+# Phase 7 increment 1: resolved DQ3/DQ8).                                      #
+# --------------------------------------------------------------------------- #
+def _rejected_target(meta: Metamodel) -> str:
+    """The queried root a `rejected` operation case's `when` omits.
+
+    A `rejected` case never authors `targetEntity` (m-case-format schema): the
+    model-aware default `m-op-algebra` "the four-step validation rule" fixes is
+    the inheritance family root when the model declares one, else the model's
+    own first entity. This seeds `validate_operation`'s narrow / subtype-
+    attribute position tracking only; the value-object structural rules
+    resolve their own entity from each node's own `Class.member` reference and
+    do not otherwise depend on it.
+    """
+    root = inheritance.family_of(meta).root
+    if root is not None:
+        return root.name
+    return meta.entities[0].name
+
+
+def run_rejected_case(case: case_format.Case) -> str:
+    """Grade a `rejected` case's pre-SQL refusal, returning the classified rule.
+
+    A `rejected` case carries EXACTLY ONE of `when.operation` / `when.model` /
+    `when.write` (m-case-format schema `oneOf`): an `operation` input is
+    deserialized through the same `m-op-algebra` serde every read uses, then
+    checked by the shared `validate_operation` (`m-op-algebra` / `m-navigate` /
+    `m-value-object`) — the same validator an idiomatic statement frontend
+    calls at build time, so the two paths cannot drift. A `model` input reuses
+    the Phase-3 `m-inheritance` family-invariant validator unchanged. A `write`
+    input is Phase-8 territory (ledger D-12): it raises a lane-honest
+    :class:`EngineError` naming the deferral so the case stays reasoned-skipped
+    rather than silently graded wrong. Raises :class:`EngineError` if the input
+    is unexpectedly accepted (no rule violation detected) — the caller compares
+    the returned rule against the case's `then.rejectedRule`.
+    """
+    when = _when(case)
+    meta = load_case_metamodel(case)
+    if "operation" in when:
+        try:
+            operation = deserialize(when["operation"])
+        except OperationError as exc:
+            raise EngineError(f"{case.path.name}: {exc}") from exc
+        target = _rejected_target(meta)
+        try:
+            validate_op_algebra_operation(target, operation, meta)
+        except OperationRejectedError as exc:
+            return exc.rule
+        raise EngineError(
+            f"{case.path.name}: the model-aware validator accepted an operation the case "
+            "expects rejected pre-SQL"
+        )
+    if "model" in when:
+        inline_model = cast("Mapping[str, object]", when["model"])
+        try:
+            inline_meta = deserialize_metamodel(inline_model)
+        except DescriptorError as exc:
+            raise EngineError(f"{case.path.name}: {exc}") from exc
+        try:
+            inheritance.validate(inline_meta)
+        except inheritance.InheritanceError as exc:
+            return exc.rule
+        raise EngineError(
+            f"{case.path.name}: the model-aware validator accepted an inline inheritance "
+            "family the case expects rejected pre-SQL"
+        )
+    if "write" in when:
+        raise EngineError(
+            f"{case.path.name}: write-validation rejected cases (m-value-object "
+            "required-attribute / type-mismatch checks, m-inheritance subtype-write "
+            "protocol checks) are Phase 8 territory (COR-3 Phase 7; ledger D-12); the "
+            "read-side rejected lane does not grade `when.write` inputs yet"
+        )
+    raise EngineError(f"{case.path.name}: rejected case carries none of operation/model/write")
 
 
 def wire_value(value: object) -> object:

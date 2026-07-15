@@ -177,7 +177,9 @@ def _run(
     raised failure's classification (``errorClass`` / ``nativeCode``). A scenario
     run reports the contract observations (``roundTrips``); its per-step find rows
     are observable at the injected port seam, where the run sweep grades them
-    against each step's ``expectRows``.
+    against each step's ``expectRows``. A rejected run touches no database and
+    no port: it reports the classified ``rejectedRule`` with ``roundTrips: 0``
+    (m-conformance-adapter, resolved DQ3/DQ8).
     """
     if case.shape == "scenario":
         emissions, round_trips = engine.run_scenario_case(case, dialect, port)
@@ -196,8 +198,28 @@ def _run(
         }
     if case.shape == "boundary":
         raise _boundary_lane_error(case)
+    if case.shape == "rejected":
+        rule = engine.run_rejected_case(case)
+        return [], {"rejectedRule": rule, "roundTrips": 0}
     emissions, rows, round_trips = engine.run_read_case(case, dialect, port)
     return emissions, {"rows": rows, "roundTrips": round_trips}
+
+
+def _rejected_shape_run_only(adapter: Adapter) -> Envelope:
+    # A `rejected` case carries no golden SQL BY CONSTRUCTION (`then.statements` is
+    # disallowed, m-case-format): it is implicitly run-graded, a shape-intrinsic
+    # rule needing no per-case `compileEligibility` authoring (m-conformance-adapter,
+    # resolved DQ3/DQ8) — unlike the query-result-dependent run-only cases above.
+    return _non_ok(
+        "compile",
+        "run-only",
+        Diagnostic(
+            "compile-run-only",
+            "a rejected case carries no golden SQL by construction; it is implicitly "
+            "run-graded (m-conformance-adapter)",
+        ),
+        adapter,
+    )
 
 
 def compile_case(
@@ -212,12 +234,16 @@ def compile_case(
     ``run-only`` status with a ``compile-run-only`` diagnostic; a compile-eligible
     claimed read case returns ``ok`` with its ordered ``emissions`` and round
     trips. Compilation touches no database — the refusing port never sees a row
-    request from a well-declared read.
+    request from a well-declared read. A `rejected` case answers the same
+    ``run-only`` envelope unconditionally — its run-only status is shape-intrinsic,
+    not authored per-case (see :func:`_rejected_shape_run_only`).
     """
     case = case_format.load_case(Path(case_path))
     diagnostic = classify("compile", dialect, case, claim)
     if diagnostic is not None:
         return _non_ok("compile", "unsupported", diagnostic, adapter)
+    if case.shape == "rejected":
+        return _echo(_rejected_shape_run_only(adapter), case, dialect)
     run_only = engine.eligibility(case)
     if run_only is not None:
         envelope = _non_ok(
