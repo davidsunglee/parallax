@@ -5,7 +5,15 @@ count): the active slice intersected with the capability tags of the modules
 already implemented, so a case joins a sweep exactly when every module it tags is
 online. :data:`IMPLEMENTED_MODULES` grows one phase at a time — this is the COR-3
 Phase 5 set (the read path across ``m-op-algebra`` / ``m-sql`` / ``m-dialect`` /
-``m-db-port`` on top of the metamodel hub and the conformance spine).
+``m-db-port`` on top of the metamodel hub and the conformance spine), extended by
+Phase 7's increments: increment 2 added ``m-inheritance`` / ``m-value-object``
+(polymorphic TPH/TPCS read lowering); increment 3 adds ``m-navigate`` (relationship
+navigation — the correlated-``EXISTS`` semi-join/anti-join, per-hop as-of
+propagation, polymorphic navigation), which makes the 13 row-form navigate reads
+and 6 polymorphic-relationship reads reachable alongside 3 rejected cases whose
+rule the model-aware validator already classified (increment 1) — and, honestly,
+the 11 deep-fetch-bearing navigate reads too, which stay reasoned-refused (deep
+fetch is increment 5) rather than silently exercised.
 """
 
 from __future__ import annotations
@@ -45,6 +53,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-temporal-read",
         "m-api-conformance",
         "m-unit-work",
+        "m-navigate",
     }
 )
 

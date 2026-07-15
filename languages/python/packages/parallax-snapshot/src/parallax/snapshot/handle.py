@@ -28,6 +28,13 @@ verbs are **neutral and provisional**: they buffer keyed write *documents* and
 ``find`` returns *rows*; the entity-instance signatures (materialized finds,
 ``insert(instance)`` / sparse ``update(edited_copy)``) graduate with the Phase-7
 instance model.
+
+:meth:`Transaction.find` is also where ``m-navigate`` composes (COR-3 Phase 7
+increment 3, the same M2-precedent composition order the conformance engine
+uses): ``m-temporal-read``'s root as-of injection runs first, then
+``parallax.core.navigate.canonicalize`` rewrites every navigation hop's own
+per-hop as-of propagation, both before ``compile_read`` — the module DAG
+forbids ``m-sql`` from ever seeing a temporal wrapper.
 """
 
 from __future__ import annotations
@@ -36,13 +43,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core import op_algebra
+from parallax.core import navigate, op_algebra
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import Entity, Metamodel, column_order
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.sql_gen import Statement, compile_read
-from parallax.core.temporal_read import inject_as_of
+from parallax.core.temporal_read import inject_as_of, resolve_pinned_instants
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -329,9 +336,17 @@ class Transaction:
         Read-your-own-writes: pending buffered writes are force-flushed inside
         the still-open atomic scope before the read runs. The transaction's
         participation mode renders the read-lock suffix (``locking`` takes the
-        dialect's shared row lock; ``optimistic`` takes none).
+        dialect's shared row lock; ``optimistic`` takes none). Navigation hops
+        (``exists`` / ``notExists`` / ``navigate``) canonicalize their own
+        per-hop as-of propagation immediately after the root's own injection —
+        the same composition-at-the-engine order every read compile site shares
+        (COR-3 Phase 7 increment 3).
         """
-        operation = inject_as_of(op_algebra.deserialize(op), self._meta.entity(entity))
+        raw_operation = op_algebra.deserialize(op)
+        root_entity = self._meta.entity(entity)
+        root_pins = resolve_pinned_instants(raw_operation, root_entity)
+        injected = inject_as_of(raw_operation, root_entity)
+        operation = navigate.canonicalize(injected, self._meta, root_pins)
         statement = compile_read(
             operation,
             self._meta,

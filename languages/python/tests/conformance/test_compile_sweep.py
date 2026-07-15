@@ -84,6 +84,25 @@ _INHERITANCE_READS: Final[frozenset[str]] = frozenset(
 _INHERITANCE_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-092", "m-inheritance-093"}
 )
+# Relationship-navigation reads (COR-3 Phase 7 increment 3, m-navigate / m-sql
+# "Joins by navigation"): the 13 row-form correlated-EXISTS/anti-join reads over
+# orders.yaml/person.yaml/policy.yaml (to-many, to-one, one-to-one, multi-hop,
+# boolean composition, and the temporal-hop propagation pair 018/023, which MUST
+# lower byte-identically since m-temporal-read's default-injection rule makes a
+# defaulted root indistinguishable from an explicit `asOf(..., now)` one) — all
+# row-form, compiled and run below. The 11 deep-fetch-bearing navigate reads
+# (012-017/019-022/024) stay reasoned-refused: deep fetch itself is increment 5.
+_NAVIGATE_READS: Final[frozenset[str]] = frozenset(
+    {f"m-navigate-{n:03d}" for n in (*range(1, 12), 18, 23)}
+)
+# Polymorphic relationship-navigation reads (m-navigate x m-inheritance): the TPH
+# abstract-root/abstract-subtype/narrowed-to-concrete/narrowed-to-abstract-subtype
+# hops over animal.yaml (060-063) and the TPCS grouped-OR abstract-root/narrowed
+# hops over document.yaml (070-071) — all row-form.
+_NAVIGATE_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
+    {"m-inheritance-060", "m-inheritance-061", "m-inheritance-062", "m-inheritance-063"}
+    | {"m-inheritance-070", "m-inheritance-071"}
+)
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _VALUE_OBJECT_PREDICATE_READS
@@ -93,6 +112,8 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _TEMPORAL_VALUE_OBJECT_READS
     | _INHERITANCE_READS
     | _INHERITANCE_TEMPORAL_READS
+    | _NAVIGATE_READS
+    | _NAVIGATE_INHERITANCE_READS
 )
 
 # The keyed, non-temporal unit-of-work write cases M4 grades byte-exact (COR-3 Phase 6
@@ -159,9 +180,12 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     trigger is graded end-to-end by the error run lane, the two-connection
     choreography by the provider proof, (2) the other non-read shapes, whose compile
     lands with the write path (Phase 6/8), and (3) the reads the compiler still
-    refuses with a loud ``SqlGenError`` — to-many value-object array traversal,
-    deferred past the single-entity read path to the snapshot branch (ledger D-12).
-    Inheritance-family reads closed out of this ledger entry in Phase 7 increment 2.
+    refuses with a loud ``SqlGenError`` — to-many value-object array traversal and
+    deep fetch, deferred past the single-entity read path to the snapshot branch
+    (ledger D-12). Inheritance-family reads closed out of this ledger entry in
+    Phase 7 increment 2; relationship-navigation reads (the correlated-EXISTS
+    semi-join / anti-join, plain and polymorphic) closed out in increment 3 — only
+    the 11 deep-fetch-bearing navigate reads stay refused, forward to increment 5.
     """
     if case.shape == "error":
         # An error case's trigger DML is authored, not compiled (m-case-format), so

@@ -231,6 +231,54 @@ self-contained without a system `libpq`.
   lowering, to-many value-object array traversal — mutually independent), then
   increment 5 (deep fetch + materialization + graph observations), then
   increment 6 (developer surface + ledger closures).
+- **Phase 7 increment 3 COMPLETE — navigate lowering.** `parallax.core.navigate`
+  (new scope, filled in from its Phase-1 skeleton) owns per-hop as-of
+  canonicalization: `canonicalize(op, meta, root_pins)` walks an already
+  root-injected operation and, for every `navigate`/`exists`/`notExists` hop,
+  resolves the relationship's target entity and — when it (or its inheritance
+  family, resolved through the family root) is temporal — injects the child's
+  own per-axis as-of predicate as plain `m-op-algebra` nodes, matched by axis,
+  business-first, defaulting to latest whenever the root's own pin
+  (`m-temporal-read.resolve_pinned_instants`, a new export alongside
+  `inject_as_of`) carries no specific instant for that axis; a navigation-free
+  operation is a strict identity. Composed at the engine (`_compile_statement`'s
+  new `_canonicalize_read` helper, reused by the scenario-find lowering) and at
+  `snapshot/handle.py`'s `Transaction.find`, immediately after `inject_as_of` —
+  the M2 precedent. `compile_read` (`parallax.core.sql_gen`) lowers
+  `navigate`/`exists`/`notExists` to a correlated `EXISTS`/`not exists`
+  semi-join: correlation columns derived mechanically from the relationship's
+  `join` predicate (never authored), continuing the single `t0, t1, …` alias
+  sequence and bind list across arbitrarily nested hops via a new `_Ctx.
+  next_alias`/`.child()` pair; a polymorphic hop reuses increment 2's
+  tag-fragment machinery directly (table-per-hierarchy: one `EXISTS` + interior
+  tag predicate; table-per-concrete-subtype: a grouped `OR` of one `EXISTS` per
+  effective concrete, alphabetical, continuing the same alias sequence).
+  `DeepFetch` keeps refusing, its message narrowed to name increment 5
+  specifically rather than the whole snapshot branch. The 13 row-form navigate
+  reads (`m-navigate-001–011/018/023`, orders/person/policy.yaml — to-many,
+  to-one, one-to-one, multi-hop, boolean composition, and the temporal-hop
+  propagation pair that must lower byte-identically defaulted vs explicit
+  `asOf(..., now)`) and the 6 polymorphic-relationship reads
+  (`m-inheritance-060–063` TPH over animal.yaml, `-070–071` TPCS over
+  document.yaml) flip from reasoned-skip to byte-exact compile + row-graded
+  run; the 11 deep-fetch-bearing navigate reads (`-012–017/019–022/024`) stay
+  reasoned-refused (increment 5). `m-navigate` joining `IMPLEMENTED_MODULES`
+  also flips 3 rejected cases the model-aware validator already classified in
+  increment 1 (`m-inheritance-064/-072` `narrow-outside-relationship-target`,
+  `m-value-object-036` `navigate-value-object-target`) — no engine change
+  needed, just reachability. `languages/python/spec/python.md` §7 gained
+  `m-navigate` in the handle scope's allowed dependencies (already legal
+  transitively through `m-snapshot-read → m-deep-fetch → m-navigate`, so
+  `check_dag_sync.py --write` produced no contract diff) and prose explaining
+  the edge; `tools/check_dag_sync.py`'s `SUPPORT_SCOPE_DEPS` mirrors it.
+  Updated counts (measured): unit lane 1326 passed / 70 skipped, compile sweep
+  151 passed / 60 skipped (206 parametrized cases total), `pg-full` run sweep
+  99 parametrized cases, rejected sweep 32 parametrized cases (22 passed + 10
+  `when.write` skipped, +3 over increment 1's baseline), `just python-static`
+  and `just python-verify` green (100% branch + 100% diff coverage). **Next:**
+  increment 4 (to-many value-object array traversal), then increment 5 (deep
+  fetch + materialization + graph observations), then increment 6 (developer
+  surface + ledger closures).
 
 ## Blockers
 

@@ -21,11 +21,11 @@ from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.conformance import case_format, models
-from parallax.core import inheritance
+from parallax.core import inheritance, navigate
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.descriptor import DescriptorError, Metamodel, column_order
+from parallax.core.descriptor import DescriptorError, Entity, Metamodel, column_order
 from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
@@ -38,7 +38,7 @@ from parallax.core.sql_gen import (
     compile_read,
     family_variant_plan,
 )
-from parallax.core.temporal_read import TemporalReadError, inject_as_of
+from parallax.core.temporal_read import TemporalReadError, inject_as_of, resolve_pinned_instants
 from parallax.core.unit_work import instructions, plan_flush
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.snapshot.handle import WriteLoweringError, lower_write
@@ -152,6 +152,30 @@ def _result_form(case: case_format.Case) -> ResultForm:
     return "row"
 
 
+def _canonicalize_read(operation_doc: object, entity: Entity, meta: Metamodel) -> Operation:
+    """Deserialize + canonicalize one read: root as-of injection, then per-hop
+    navigation canonicalization — the composition-at-the-engine order every read
+    compile site shares (M2 precedent, restated for navigation, COR-3 Phase 7
+    increment 3).
+
+    Temporal reads are lowered by ``m-temporal-read`` (the auto-injected as-of
+    predicate, defaulted-latest on omitted axes) BEFORE ``m-sql`` compiles the
+    resulting plain predicate: the module DAG forbids ``m-sql`` from importing
+    ``m-temporal-read``, so this composition site (the conformance engine, which
+    may reference both) is the canonicalize step. ``inject_as_of`` is a strict
+    identity for a non-temporal target. ``parallax.core.navigate.canonicalize``
+    runs immediately after: it resolves the root's own pinned per-axis instant
+    (``resolve_pinned_instants``, read from the SAME raw operation) and injects
+    the matching per-hop as-of predicate into every ``navigate`` / ``exists`` /
+    ``notExists`` node the operation carries, however deeply nested — a strict
+    identity when the operation carries no navigation node at all.
+    """
+    raw_op = deserialize(operation_doc)
+    root_pins = resolve_pinned_instants(raw_op, entity)
+    injected = inject_as_of(raw_op, entity)
+    return navigate.canonicalize(injected, meta, root_pins)
+
+
 def _compile_statement(
     case: case_format.Case, dialect_name: str
 ) -> tuple[str, Statement, Metamodel, Operation]:
@@ -164,13 +188,7 @@ def _compile_statement(
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     try:
-        # Temporal reads are lowered by m-temporal-read (the auto-injected as-of
-        # predicate, defaulted-latest on omitted axes) BEFORE m-sql compiles the
-        # resulting plain predicate: the module DAG forbids m-sql from importing
-        # m-temporal-read, so this composition site (the conformance engine, which
-        # may reference both) is the canonicalize step. `inject_as_of` is a strict
-        # identity for a non-temporal target.
-        operation = inject_as_of(deserialize(operation_doc), meta.entity(target))
+        operation = _canonicalize_read(operation_doc, meta.entity(target), meta)
         statement = compile_read(operation, meta, dialect, target, result_form=_result_form(case))
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -332,7 +350,7 @@ def _lower_find(step: Mapping[str, object], meta: Metamodel, dialect: Dialect) -
     find_doc = step.get("find")
     if not isinstance(target, str) or find_doc is None:
         raise EngineError("scenario find step needs `targetEntity` and `find`")
-    operation = inject_as_of(deserialize(find_doc), meta.entity(target))
+    operation = _canonicalize_read(find_doc, meta.entity(target), meta)
     return compile_read(operation, meta, dialect, target, result_form="row", lock="locking")
 
 

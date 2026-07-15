@@ -32,6 +32,8 @@ PAYMENT = _MODELS["payment"]
 ACCOUNT = _MODELS["account"]
 ANIMAL = _MODELS["animal"]
 DOCUMENT = _MODELS["document"]
+PERSON = _MODELS["person"]
+POLICY = _MODELS["policy"]
 
 
 def test_all_projects_scalar_columns() -> None:
@@ -85,10 +87,12 @@ def test_unbound_attribute_is_refused() -> None:
 @pytest.mark.parametrize(
     "op, message",
     [
-        (oa.Navigate(rel="Order.items"), "navigation / deep-fetch"),
-        (oa.Exists(rel="Order.items"), "navigation / deep-fetch"),
         (oa.AsOf(operand=oa.All(), as_of_attr="Order.p", date="now"), "temporal wrapper reached"),
         (oa.NestedExists(path="Customer.address.phones"), "array traversal"),
+        (
+            oa.DeepFetch(operand=oa.All(), paths=((oa.PathSegment(rel="Order.items"),),)),
+            "deep fetch .* increment 5",
+        ),
     ],
 )
 def test_deferred_nodes_are_refused(op: oa.Operation, message: str) -> None:
@@ -527,3 +531,175 @@ def test_family_variant_plan_tpcs_is_literal_and_only_for_two_or_more_branches()
     # — the settled asymmetry with table-per-hierarchy (m-sql, explicit).
     narrowed_to_one = oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All())
     assert family_variant_plan(DOCUMENT, "Document", narrowed_to_one) is None
+
+
+# --------------------------------------------------------------------------- #
+# Navigation lowering (m-sql "Joins by navigation"; COR-3 Phase 7 increment 3). #
+# These feed already-canonicalized operations directly (the per-hop as-of      #
+# rewrite is `parallax.core.navigate`'s job, tested in `test_navigate.py`) —   #
+# this module only lowers whatever op-algebra tree it receives.               #
+# --------------------------------------------------------------------------- #
+def test_navigate_to_many_lowers_to_correlated_exists() -> None:
+    op = oa.Navigate(
+        rel="Order.items", op=oa.Comparison(op="eq", attr="OrderItem.sku", value="A-100")
+    )
+    statement = compile_read(op, ORDERS, POSTGRES, "Order")
+    assert statement.sql.endswith(
+        "where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)"
+    )
+    assert statement.binds == ("A-100",)
+
+
+def test_exists_with_no_inner_op_is_a_pure_correlation_check() -> None:
+    statement = compile_read(oa.Exists(rel="Order.items"), ORDERS, POSTGRES, "Order")
+    assert statement.sql.endswith(
+        "where exists (select 1 from order_item t1 where t1.order_id = t0.id)"
+    )
+    assert statement.binds == ()
+
+
+def test_not_exists_negates_the_semi_join() -> None:
+    statement = compile_read(oa.NotExists(rel="Order.items"), ORDERS, POSTGRES, "Order")
+    assert statement.sql.endswith(
+        "where not exists (select 1 from order_item t1 where t1.order_id = t0.id)"
+    )
+
+
+def test_navigate_composes_inside_the_boolean_algebra() -> None:
+    op = oa.And(
+        operands=(
+            oa.NotExists(rel="Order.items"),
+            oa.Comparison(op="eq", attr="Order.active", value=True),
+        )
+    )
+    statement = compile_read(op, ORDERS, POSTGRES, "Order")
+    assert statement.sql.endswith(
+        "where not exists (select 1 from order_item t1 where t1.order_id = t0.id) and t0.active = ?"
+    )
+    assert statement.binds == (True,)
+
+
+def test_reverse_to_one_navigation_resolves_the_mirror_correlation() -> None:
+    op = oa.Navigate(
+        rel="OrderItem.order", op=oa.Comparison(op="eq", attr="Order.name", value="Ada")
+    )
+    statement = compile_read(op, ORDERS, POSTGRES, "OrderItem")
+    assert statement.sql.endswith(
+        "where exists (select 1 from orders t1 where t1.id = t0.order_id and t1.name = ?)"
+    )
+    assert statement.binds == ("Ada",)
+
+
+def test_one_to_one_navigation_lowers_like_any_to_one_hop() -> None:
+    op = oa.Navigate(
+        rel="Person.passport", op=oa.Comparison(op="eq", attr="Passport.number", value="P-AAA")
+    )
+    statement = compile_read(op, PERSON, POSTGRES, "Person")
+    assert statement.sql.endswith(
+        "where exists (select 1 from passport t1 where t1.person_id = t0.id and t1.number = ?)"
+    )
+
+
+def test_nullable_many_to_one_exists_correlates_on_the_owned_fk() -> None:
+    statement = compile_read(
+        oa.Exists(rel="OrderStatus.orderItem"), ORDERS, POSTGRES, "OrderStatus"
+    )
+    assert statement.sql.endswith(
+        "where exists (select 1 from order_item t1 where t1.id = t0.order_item_id)"
+    )
+
+
+def test_multi_hop_exists_continues_the_single_alias_sequence() -> None:
+    op = oa.Exists(
+        rel="Order.items",
+        op=oa.Exists(
+            rel="OrderItem.statuses",
+            op=oa.Comparison(op="eq", attr="OrderStatus.code", value="PACKED"),
+        ),
+    )
+    statement = compile_read(op, ORDERS, POSTGRES, "Order")
+    assert statement.sql.endswith(
+        "where exists (select 1 from order_item t1 where t1.order_id = t0.id and "
+        "exists (select 1 from order_status t2 where t2.order_item_id = t1.id and t2.code = ?))"
+    )
+    assert statement.binds == ("PACKED",)
+
+
+def test_not_exists_multi_hop_negates_only_the_outer_hop() -> None:
+    op = oa.NotExists(rel="Order.items", op=oa.Exists(rel="OrderItem.statuses"))
+    statement = compile_read(op, ORDERS, POSTGRES, "Order")
+    assert statement.sql.endswith(
+        "where not exists (select 1 from order_item t1 where t1.order_id = t0.id and "
+        "exists (select 1 from order_status t2 where t2.order_item_id = t1.id))"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Polymorphic navigation lowering (m-sql "Polymorphic navigation lowering").   #
+# --------------------------------------------------------------------------- #
+def test_tph_abstract_root_relationship_target_injects_no_tag() -> None:
+    statement = compile_read(oa.Exists(rel="Person.animals"), ANIMAL, POSTGRES, "Person")
+    assert statement.sql.endswith(
+        "where exists (select 1 from animal t1 where t1.owner_id = t0.id)"
+    )
+
+
+def test_tph_abstract_subtype_relationship_target_injects_the_in_list() -> None:
+    statement = compile_read(oa.Exists(rel="Person.pets"), ANIMAL, POSTGRES, "Person")
+    assert statement.sql.endswith(
+        "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))"
+    )
+    assert statement.binds == ("cat", "dog")
+
+
+def test_tph_relationship_narrow_to_one_concrete_lowers_to_eq() -> None:
+    op = oa.Exists(rel="Person.pets", op=oa.Narrow(entity="Pet", to=("Cat",), operand=oa.All()))
+    statement = compile_read(op, ANIMAL, POSTGRES, "Person")
+    assert statement.sql.endswith(
+        "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind = ?)"
+    )
+    assert statement.binds == ("cat",)
+
+
+def test_tph_relationship_narrow_to_abstract_subtype_matches_the_broad_relationship() -> None:
+    op = oa.Exists(
+        rel="Person.animals", op=oa.Narrow(entity="Animal", to=("Pet",), operand=oa.All())
+    )
+    statement = compile_read(op, ANIMAL, POSTGRES, "Person")
+    assert statement.sql.endswith(
+        "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))"
+    )
+    assert statement.binds == ("cat", "dog")
+
+
+def test_tpcs_abstract_root_relationship_target_groups_every_branch_alphabetically() -> None:
+    statement = compile_read(oa.Exists(rel="Folder.documents"), DOCUMENT, POSTGRES, "Folder")
+    assert statement.sql.endswith(
+        "where (exists (select 1 from invoice t1 where t1.folder_id = t0.id) "
+        "or exists (select 1 from memo t2 where t2.folder_id = t0.id) "
+        "or exists (select 1 from receipt t3 where t3.folder_id = t0.id))"
+    )
+
+
+def test_tpcs_relationship_narrow_drops_the_excluded_branch_but_keeps_its_alias_slot_free() -> None:
+    op = oa.Exists(
+        rel="Folder.documents",
+        op=oa.Narrow(entity="Document", to=("FinancialDocument",), operand=oa.All()),
+    )
+    statement = compile_read(op, DOCUMENT, POSTGRES, "Folder")
+    assert statement.sql.endswith(
+        "where (exists (select 1 from invoice t1 where t1.folder_id = t0.id) "
+        "or exists (select 1 from receipt t2 where t2.folder_id = t0.id))"
+    )
+
+
+def test_tpcs_relationship_narrow_to_a_single_concrete_is_one_exists_no_grouping() -> None:
+    # m-sql "a single concrete is one EXISTS (no grouping)" — the TPCS analogue of
+    # the TPH narrow-to-one-concrete case above.
+    op = oa.Exists(
+        rel="Folder.documents", op=oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All())
+    )
+    statement = compile_read(op, DOCUMENT, POSTGRES, "Folder")
+    assert statement.sql.endswith(
+        "where exists (select 1 from invoice t1 where t1.folder_id = t0.id)"
+    )

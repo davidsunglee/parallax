@@ -46,22 +46,29 @@ from parallax.core.op_algebra import (
 )
 
 __all__ = [
+    "AXIS_ORDER",
     "LATEST",
     "Edge",
     "Latest",
     "Pin",
     "TemporalReadError",
     "UndeclaredAxisError",
+    "attr_ref_for_column",
+    "conjunction_terms",
     "edge_of",
     "inject_as_of",
     "milestone_edge",
     "pin_of",
+    "resolve_pinned_instants",
 ]
 
 # Business axis is the OUTER pin (the corpus's bitemporal nesting order) and its
 # injected fragment reads first; the processing axis is inner. The injected terms
 # therefore compose business-first (m-sql: "business-axis-first then processing").
-_AXIS_ORDER: Final[dict[Axis, int]] = {"business": 0, "processing": 1}
+# Exported (m-navigate reuses the same business-first ordering when propagating a
+# root's as-of coordinates per hop).
+AXIS_ORDER: Final[dict[Axis, int]] = {"business": 0, "processing": 1}
+_AXIS_ORDER = AXIS_ORDER
 
 
 class TemporalReadError(ValueError):
@@ -316,7 +323,7 @@ def _inject_core(core: Operation, entity: Entity) -> Operation:
         # Non-temporal read, or a read whose every declared axis is scanned
         # (bitemporal history): the user predicate stands unchanged.
         return user_predicate
-    terms = (*_conjunction_terms(user_predicate), *axis_terms)
+    terms = (*conjunction_terms(user_predicate), *axis_terms)
     return terms[0] if len(terms) == 1 else And(operands=terms)
 
 
@@ -340,8 +347,8 @@ def _mode_of(wrapper: AsOf | AsOfRange | History) -> _AxisMode:
 
 
 def _terms(mode: _AxisMode, aoa: AsOfAttribute, entity: Entity) -> list[Operation]:
-    from_ref = _attr_ref(entity, aoa.from_column)
-    to_ref = _attr_ref(entity, aoa.to_column)
+    from_ref = attr_ref_for_column(entity, aoa.from_column)
+    to_ref = attr_ref_for_column(entity, aoa.to_column)
     if isinstance(mode, _Scan):
         return []
     if isinstance(mode, _Current):
@@ -361,14 +368,16 @@ def _terms(mode: _AxisMode, aoa: AsOfAttribute, entity: Entity) -> list[Operatio
     ]
 
 
-def _attr_ref(entity: Entity, column: str) -> str:
+def attr_ref_for_column(entity: Entity, column: str) -> str:
     """The ``Entity.attribute`` reference of the interval column ``column``.
 
     A temporal entity's interval columns are ordinary declared attributes
     (``m-descriptor``: the ``fromColumn`` / ``toColumn`` are declared after the
     business attributes), so the injected comparison references them by name exactly
     as a user predicate would, and ``m-sql`` resolves the column with no temporal
-    special-casing.
+    special-casing. Exported so ``m-navigate`` can build the identically-shaped
+    per-hop as-of predicate over a temporal entity reached by navigation (the same
+    column-lookup rule, applied to the hop's own target entity).
     """
     for attr in entity.attributes:
         if attr.column == column:
@@ -381,13 +390,14 @@ def _attr_ref(entity: Entity, column: str) -> str:
     )
 
 
-def _conjunction_terms(op: Operation) -> tuple[Operation, ...]:
+def conjunction_terms(op: Operation) -> tuple[Operation, ...]:
     """The top-level conjuncts of a user predicate (mirrors the statement builder).
 
     ``all`` contributes nothing; an ``and`` flattens (order-preserving); an ``or``
     binds looser than the enclosing ``and`` and is wrapped in a ``group`` so the
     injected as-of term does not silently re-associate into it; every other node is
-    a single conjunct.
+    a single conjunct. Exported so ``m-navigate`` composes a hop's own per-axis as-of
+    terms onto its interior predicate with the identical flattening rule.
     """
     if isinstance(op, All):
         return ()
@@ -396,6 +406,35 @@ def _conjunction_terms(op: Operation) -> tuple[Operation, ...]:
     if isinstance(op, Or):
         return (Group(operand=op),)
     return (op,)
+
+
+def resolve_pinned_instants(op: Operation, entity: Entity) -> dict[Axis, str]:
+    """The per-axis literal instant this read pins ``entity`` to a specific PAST
+    moment (an ``asOf(..., date=<instant>)`` wrapper) — the coordinate ``m-navigate``
+    re-applies, matched by axis, to a temporal entity reached by navigation.
+
+    Every other axis — undeclared by ``entity``, pinned/defaulted to ``now``, or
+    scanned via ``history`` / ``asOfRange`` — independently resolves to **latest**
+    at its own hop target (`m-navigate` "As-of propagation across relationships"),
+    so this map omits them; the caller defaults an absent axis to latest by
+    construction rather than re-deriving it here.
+
+    Called on the SAME raw (pre-:func:`inject_as_of`) operation ``inject_as_of``
+    itself consumes — an independent, side-effect-free read of the same input, not
+    incremental parsing of the root-injected result (the module DAG forbids
+    ``m-sql`` from ever seeing a temporal wrapper, so nothing downstream re-derives
+    this from already-lowered predicate nodes).
+    """
+    core, _directives = _peel_directives(op)
+    pins: dict[Axis, str] = {}
+    current = core
+    while isinstance(current, (AsOf, AsOfRange, History)):
+        aoa = _resolve_axis(current.as_of_attr, entity)
+        mode = _mode_of(current)
+        if isinstance(mode, _Containment):
+            pins[aoa.axis] = mode.instant
+        current = current.operand
+    return pins
 
 
 def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy | Distinct]]:

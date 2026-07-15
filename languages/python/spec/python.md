@@ -861,7 +861,7 @@ directions; artifact co-location never legalizes a forbidden edge.
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-pk-gen`, `m-sql`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `m-unit-work`, `m-auto-retry`, `m-read-lock`, `m-opt-lock`, `m-batch-write`, `m-audit-write`, `m-bitemp-write`, `m-pk-gen`, `m-sql`, `m-navigate`, `m-db-port`, `parallax.core.entity` | generated forbidden contracts + cross-package contract |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api_conformance` (dev-only) | `tests.api_conformance` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
@@ -881,7 +881,11 @@ directions; artifact co-location never legalizes a forbidden edge.
   (core routes dialect SQL through the `m-db-port` execution seam at the
   composition surface), so `parallax.snapshot.handle` is where claimed finds
   are compiled and buffered DML is lowered, and the generated complement
-  permits that edge rather than forbidding it. The generator also encodes
+  permits that edge rather than forbidding it. The handle scope's `m-navigate`
+  edge (COR-3 Phase 7 increment 3) follows the identical reasoning: `Transaction.find`
+  is a claimed find, so it composes `parallax.core.navigate.canonicalize`
+  immediately after `m-temporal-read`'s root injection, mirroring the
+  conformance engine's own composition-at-the-engine order. The generator also encodes
   the core **conformance-family exception** (`modules.md`): the
   conformance-family scopes (`parallax.conformance.*`, plus the
   pytest-bounded `tests.api_conformance`) are exempted from the complement

@@ -94,6 +94,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.bitemp_write",
             "parallax.core.pk_gen",
             "parallax.core.sql_gen",
+            "parallax.core.navigate",
             "parallax.core.db_port",
             "parallax.core.entity",
         }
