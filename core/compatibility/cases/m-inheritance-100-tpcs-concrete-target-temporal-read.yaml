@@ -1,0 +1,41 @@
+# Table-per-concrete-subtype CONCRETE-target TEMPORAL read: DepositRate's root-owned
+# axes, referenced through the concrete position (m-inheritance x m-temporal-read x
+# m-sql — binding decision: temporal axes are family-wide and root-owned, but every
+# concrete-target read still inherits and uses them).
+#
+# Targeting the CONCRETE subtype DepositRate directly (never the abstract root Rate)
+# is an ordinary single-table read of `deposit_rate` — no union, no tag, no
+# familyVariant (m-inheritance "Physical mapping"). The operation pins `asOfAttr:
+# DepositRate.processingDate` — DepositRate's OWN class-name prefix over an axis it
+# never locally declares (Rate, the root, does) — proving the inherited spelling
+# resolves. Pinning processingDate to 2024-01-15 (inside the strengthened
+# fixtures/rate.yaml's CLOSED first milestone's window [2024-01-01, 2024-02-01))
+# with businessDate defaulted to NOW (`thru_z = ?`) selects the SUPERSEDED historical
+# row (amount 2.25 / grade B), not the current one (amount 2.50 / grade A,
+# m-inheritance-093) — proving the milestone history is genuinely queryable through
+# the concrete position, not just materialized at it.
+#
+# Non-trivial (temporal) case => referenceSql is the independent oracle (inline
+# infinity / instant literals, a different formulation returning the same row).
+model: models/rate.yaml
+tags: [m-inheritance, m-temporal-read, m-sql, table-per-concrete-subtype, temporal, bitemporal, as-of, slice-snapshot-1, slice-managed-1]
+shape: read
+given:
+  fixtures: true
+when:
+  targetEntity: DepositRate
+  operation:
+    asOf:
+      operand:
+        all: {}
+      asOfAttr: DepositRate.processingDate
+      date: "2024-01-15T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.grade from deposit_rate t0 where t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?
+      binds: [infinity, "2024-01-15T00:00:00+00:00", "2024-01-15T00:00:00+00:00"]
+  referenceSql: select id, amount, from_z, thru_z, in_z, out_z, grade from deposit_rate where thru_z = 'infinity'::timestamptz and in_z <= '2024-01-15T00:00:00+00:00'::timestamptz and out_z > '2024-01-15T00:00:00+00:00'::timestamptz
+  rows:
+    - { id: 1, amount: 2.25, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-02-01T00:00:00+00:00", grade: B }
+  roundTrips: 1

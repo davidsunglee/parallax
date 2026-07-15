@@ -1,0 +1,40 @@
+# Table-per-hierarchy CONCRETE-target TEMPORAL read: Bond's root-owned axes,
+# referenced through the concrete position (m-inheritance x m-temporal-read x m-sql —
+# binding decision: temporal axes are family-wide and root-owned, but every
+# concrete-target read still inherits and uses them).
+#
+# Targeting the CONCRETE subtype Bond injects the tag-equality predicate
+# (`t0.kind = ?`, bind ['bond']) AFTER the as-of predicate (m-sql: the temporal
+# composition runs upstream of the tag-predicate lowering) — Stock's row is excluded
+# regardless of the as-of pin. The operation pins `asOfAttr: Bond.businessDate` —
+# Bond's OWN class-name prefix over an axis it never locally declares (Instrument,
+# the root, does) — proving the inherited spelling resolves for a table-per-hierarchy
+# concrete position exactly as it does for table-per-concrete-subtype
+# (m-inheritance-100). Pinning businessDate to 2024-06-01 (a past instant) with
+# processingDate defaulted to NOW selects Bond's current rectangle; there is NO
+# familyVariant (the caller queried a known variant).
+#
+# Non-trivial (temporal + tag) case => referenceSql is the independent oracle (inline
+# infinity / instant literals, a different formulation returning the same row).
+model: models/instrument.yaml
+tags: [m-inheritance, m-temporal-read, m-sql, table-per-hierarchy, tag, temporal, bitemporal, as-of, slice-snapshot-1, slice-managed-1]
+shape: read
+given:
+  fixtures: true
+when:
+  targetEntity: Bond
+  operation:
+    asOf:
+      operand:
+        all: {}
+      asOfAttr: Bond.businessDate
+      date: "2024-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.price, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.coupon from instrument t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? and t0.kind = ?
+      binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", infinity, bond]
+  referenceSql: select id, price, from_z, thru_z, in_z, out_z, coupon from instrument where from_z <= '2024-06-01T00:00:00+00:00'::timestamptz and thru_z > '2024-06-01T00:00:00+00:00'::timestamptz and out_z = 'infinity'::timestamptz and kind = 'bond'
+  rows:
+    - { id: 1, price: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity, coupon: 5.00 }
+  roundTrips: 1

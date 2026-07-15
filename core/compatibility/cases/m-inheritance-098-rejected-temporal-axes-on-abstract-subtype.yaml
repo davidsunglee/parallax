@@ -1,0 +1,48 @@
+# Negative (m-inheritance, binding decision — COR-3 Phase 7 review remediation):
+# a NON-TEMPORAL table-per-hierarchy root with an INTERMEDIATE abstract subtype
+# that declares its own temporal axes.
+#
+# Temporality is a family-wide property: only the family ROOT may declare
+# `asOfAttributes`, and every descendant inherits exactly that set — when the
+# root declares none, no descendant may declare any either (mixed temporality
+# within one family is not supported; a root without axes cannot expose a
+# uniform `Root.processingDate`, and a non-temporal branch cannot safely stand
+# in as timeless data returned at every historical coordinate). `Animal`
+# (root) declares NO axes; `Pet` (abstract-subtype) declares its own
+# `processingDate` — a model-aware validator MUST reject the family before
+# any SQL, exactly as the sibling `inheritance-strategy-redeclared` /
+# `inheritance-tag-on-concrete-subtype-strategy` root-only invariants do.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, temporal, table-per-hierarchy, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Pet
+        inheritance:
+          role: abstract-subtype
+          parent: Animal
+        attributes:
+          - { name: licenseId, type: string, column: license_id, nullable: true }
+        asOfAttributes:
+          - name: processingDate
+            fromColumn: in_z
+            toColumn: out_z
+            axis: processing
+      - name: Dog
+        table: animal
+        inheritance:
+          role: concrete-subtype
+          parent: Pet
+          tagValue: dog
+        attributes:
+          - { name: barkVolume, type: int32, column: bark_volume, nullable: true }
+then:
+  rejectedRule: inheritance-temporal-axes-not-root-owned

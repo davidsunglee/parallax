@@ -18,6 +18,12 @@
 # placeholder diverges per dialect (Postgres varchar / MariaDB char), the decimal is
 # identical — hence the per-dialect goldens. The interval columns are inherited, so they
 # are real references in EVERY branch (never NULL-cast).
+#
+# DepositRate now carries TWO processing milestones sharing business key id=1 (the
+# strengthened fixtures/rate.yaml, m-inheritance-100's own witness); this read's
+# processing-now default (`out_z = ?` bind `infinity`) still resolves to exactly the
+# CURRENT row (amount 2.50 / grade A) — the same current-result values this case always
+# asserted — only its `in_z` moved to the milestone's own (later) from-instant.
 model: models/rate.yaml
 tags: [m-inheritance, m-temporal-read, m-sql, table-per-concrete-subtype, union-all, temporal, bitemporal, as-of, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -38,6 +44,6 @@ then:
         mariadb: select t0.id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.grade, cast(null as decimal(18, 2)) spread, 'DepositRate' family_variant from deposit_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? union all select t0.id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, cast(null as char(8)) grade, t0.spread, 'LoanRate' family_variant from loan_rate t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
       binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", infinity, "2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", infinity]
   rows:
-    - { id: 1, amount: 2.50, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity, grade: A, spread: null, familyVariant: DepositRate }
+    - { id: 1, amount: 2.50, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity, grade: A, spread: null, familyVariant: DepositRate }
     - { id: 2, amount: 6.75, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity, grade: null, spread: 1.25, familyVariant: LoanRate }
   roundTrips: 1

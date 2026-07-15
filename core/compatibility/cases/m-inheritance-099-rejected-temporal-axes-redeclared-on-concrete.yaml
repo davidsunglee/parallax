@@ -1,0 +1,52 @@
+# Negative (m-inheritance, binding decision — COR-3 Phase 7 review remediation):
+# a TEMPORAL table-per-concrete-subtype root whose CONCRETE subtype adds a
+# second temporal axis of its own.
+#
+# Temporality is a family-wide property: the root ALONE declares the family's
+# as-of axes, and every descendant inherits EXACTLY that set — a descendant
+# MUST NOT redeclare, add, remove, override, or shadow an axis, even when the
+# root itself is already temporal (a root-result's identity would otherwise
+# mix `(family, PK)` and `(family, PK, coordinates)` depending on which
+# branch a row resolved through). `Rate` (root) declares `processingDate`
+# only; `DepositRate` (concrete) additionally declares its own
+# `businessDate` — a model-aware validator MUST reject the family before any
+# SQL. Different physical strategy than the sibling witness
+# (`m-inheritance-098`, table-per-hierarchy): this one is
+# table-per-concrete-subtype, so both strategies exercise the same
+# invariant.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, temporal, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Rate
+        inheritance:
+          strategy: table-per-concrete-subtype
+          role: root
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+          - { name: amount, type: decimal(18,2), column: amount }
+          - { name: processingFrom, type: timestamp, column: in_z }
+          - { name: processingTo, type: timestamp, column: out_z }
+        asOfAttributes:
+          - name: processingDate
+            fromColumn: in_z
+            toColumn: out_z
+            axis: processing
+      - name: DepositRate
+        table: deposit_rate
+        inheritance:
+          role: concrete-subtype
+          parent: Rate
+        attributes:
+          - { name: grade, type: string, column: grade, nullable: true }
+          - { name: businessFrom, type: timestamp, column: from_z }
+          - { name: businessTo, type: timestamp, column: thru_z }
+        asOfAttributes:
+          - name: businessDate
+            fromColumn: from_z
+            toColumn: thru_z
+            axis: business
+then:
+  rejectedRule: inheritance-temporal-axes-not-root-owned

@@ -18,12 +18,18 @@
 #
 # Branch alpha order: DepositRate, LoanRate. A temporal abstract-target `union all`
 # read (m-inheritance-093) carries the per-branch as-of binds (business-axis-first,
-# repeated in alphabetical branch order); the bitemporal terminate / terminateUntil
-# writes (m-inheritance-095 / -097) route to the concrete subtype's OWN table — the
-# standalone m-bitemp-write shapes, no tag guard.
+# repeated in alphabetical branch order); a concrete-target read (m-inheritance-100)
+# refers to the inherited axis through the concrete position (`DepositRate.
+# processingDate`) — proving the axes are usable there too, not just at the abstract
+# root; the bitemporal terminate / terminateUntil writes (m-inheritance-095 / -097)
+# route to the concrete subtype's OWN table — the standalone m-bitemp-write shapes, no
+# tag guard.
 #
-# Row data lives in the sibling fixtures/rate.yaml (the temporal `union all` read). The
-# write-sequence cases construct their own milestone history from ordered DML.
+# Row data lives in the sibling fixtures/rate.yaml: DepositRate carries TWO processing
+# milestones sharing one business key (a closed historical correction plus the current
+# row) — the milestone history m-inheritance-100's historical/default reads distinguish,
+# and the fixture the TPCS provisioning DDL must key on `(id, from_z, in_z)` to admit at
+# all. The write-sequence cases construct their own milestone history from ordered DML.
 entities:
   - name: Rate
     namespace: parallax.compatibility
