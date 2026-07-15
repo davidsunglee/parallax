@@ -12,6 +12,10 @@
 model: models/orders.yaml
 tags: [m-snapshot-read, m-deep-fetch, empty-intermediate, relationship, graph, materialization, slice-snapshot-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - the Order.items IN-list binds are the distinct order ids the root query returned, and the empty items result means the OrderItem.statuses level gathers no parent keys and issues no statement at all, so the child emissions (including the statement count) depend on a query result"
 when:
   targetEntity: Order
   operation:

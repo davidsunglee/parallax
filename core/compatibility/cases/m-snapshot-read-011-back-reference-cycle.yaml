@@ -13,6 +13,10 @@
 model: models/orders.yaml
 tags: [m-snapshot-read, m-deep-fetch, back-reference, cycle, relationship, graph, slice-snapshot-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Order.items IN-list binds are the distinct order ids gathered from the root query result, so the child emissions depend on a query result (the back-reference OrderItem.order hop resolves from the already-materialized graph and issues no SQL of its own)"
 lane: api-conformance
 when:
   targetEntity: Order

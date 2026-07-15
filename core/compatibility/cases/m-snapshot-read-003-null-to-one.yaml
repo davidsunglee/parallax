@@ -10,6 +10,10 @@
 model: models/orders.yaml
 tags: [m-snapshot-read, m-deep-fetch, to-one, nullable, relationship, graph, materialization, slice-snapshot-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the OrderStatus.orderItem IN-list binds are the distinct non-null order-item ids gathered from the root query result, so the child emissions (including whether the level executes at all) depend on a query result"
 when:
   targetEntity: OrderStatus
   operation:

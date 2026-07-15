@@ -17,6 +17,10 @@
 model: models/animal.yaml
 tags: [m-snapshot-read, m-deep-fetch, m-inheritance, table-per-hierarchy, diamond, familyVariant, graph, slice-snapshot-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - the broad Person.animals and narrowed pets[Dog] IN-list binds are both the distinct owner ids gathered from the root query result, so the child emissions depend on a query result"
 when:
   targetEntity: Person
   operation:

@@ -12,6 +12,10 @@
 model: models/invoice.yaml
 tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, temporal, as-of, past, propagation, graph, audit-only, slice-snapshot-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Invoice.lines IN-list binds are the distinct invoice ids gathered from the root query result, so the child emissions depend on a query result"
 when:
   targetEntity: Invoice
   operation:

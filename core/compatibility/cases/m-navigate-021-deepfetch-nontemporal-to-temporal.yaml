@@ -5,6 +5,10 @@
 model: models/lease.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Tenant.leases IN-list binds are the distinct tenant ids gathered from the root query result, so the child emissions depend on a query result"
 when:
   targetEntity: Tenant
   operation:

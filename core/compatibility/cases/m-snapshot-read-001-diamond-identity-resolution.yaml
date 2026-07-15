@@ -15,6 +15,10 @@
 model: models/orders.yaml
 tags: [m-snapshot-read, m-deep-fetch, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - the Order.items and Order.itemsByShipDate IN-list binds are the distinct order ids gathered from the root query result, so the child emissions depend on a query result"
 when:
   targetEntity: Order
   operation:

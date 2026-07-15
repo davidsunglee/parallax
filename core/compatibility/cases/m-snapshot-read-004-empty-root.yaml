@@ -7,6 +7,10 @@
 model: models/orders.yaml
 tags: [m-snapshot-read, m-deep-fetch, empty-root, relationship, graph, materialization, slice-snapshot-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the empty root query result means the Order.items level gathers no parent keys and issues no child statement at all, so even the statement COUNT depends on a query result"
 when:
   targetEntity: Order
   operation:

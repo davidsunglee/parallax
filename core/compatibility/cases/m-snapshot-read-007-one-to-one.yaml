@@ -11,6 +11,10 @@
 model: models/person.yaml
 tags: [m-snapshot-read, m-deep-fetch, one-to-one, relationship, nullable, graph, materialization, slice-snapshot-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Person.passport IN-list binds are the distinct person ids gathered from the root query result, so the child emissions depend on a query result"
 when:
   targetEntity: Person
   operation:

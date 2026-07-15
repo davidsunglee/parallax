@@ -7,6 +7,10 @@
 model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, multi-hop, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - the Policy.coverages IN-list binds are the distinct policy ids the root query returned, and the Coverage.claims IN-list binds are the distinct coverage ids the coverages level returned, so both child emissions depend on a query result"
 when:
   targetEntity: Policy
   operation:
