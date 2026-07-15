@@ -538,25 +538,52 @@ def _rejected_target(meta: Metamodel) -> str:
     return meta.entities[0].name
 
 
+# The `rejected` shape's schema `oneOf`: exactly one of these keys, never zero
+# or more than one (m-case-format).
+_REJECTED_WHEN_KINDS: Final[tuple[str, ...]] = ("operation", "model", "write")
+
+
+def _rejected_when_kind(case: case_format.Case, when: Mapping[str, object]) -> str:
+    """The `rejected` case's single recognized `when` input, enforcing the
+    schema's `oneOf` (m-case-format): a caller that reaches the engine without
+    schema validation (or a hand-built two-input synthetic case) must not
+    silently dispatch on the first recognized key — zero or more than one
+    recognized input is a loud, named refusal, mirroring the harness's own
+    mirror guard for this rule.
+    """
+    present = [kind for kind in _REJECTED_WHEN_KINDS if kind in when]
+    if len(present) != 1:
+        raise EngineError(
+            f"{case.path.name}: a `rejected` case must carry EXACTLY ONE of "
+            f"`when.operation` / `when.model` / `when.write` (m-case-format schema "
+            f"`oneOf`); found {present!r}"
+        )
+    return present[0]
+
+
 def run_rejected_case(case: case_format.Case) -> str:
     """Grade a `rejected` case's pre-SQL refusal, returning the classified rule.
 
     A `rejected` case carries EXACTLY ONE of `when.operation` / `when.model` /
-    `when.write` (m-case-format schema `oneOf`): an `operation` input is
-    deserialized through the same `m-op-algebra` serde every read uses, then
-    checked by the shared `validate_operation` (`m-op-algebra` / `m-navigate` /
-    `m-value-object`) — the same validator an idiomatic statement frontend
-    calls at build time, so the two paths cannot drift. A `model` input reuses
-    the Phase-3 `m-inheritance` family-invariant validator unchanged. A `write`
-    input is Phase-8 territory (ledger D-12): it raises a lane-honest
-    :class:`EngineError` naming the deferral so the case stays reasoned-skipped
-    rather than silently graded wrong. Raises :class:`EngineError` if the input
-    is unexpectedly accepted (no rule violation detected) — the caller compares
-    the returned rule against the case's `then.rejectedRule`.
+    `when.write` (m-case-format schema `oneOf`) — enforced by
+    :func:`_rejected_when_kind` before dispatch, since the schema `oneOf` cannot
+    protect a caller that reaches this engine without schema validation. An
+    `operation` input is deserialized through the same `m-op-algebra` serde
+    every read uses, then checked by the shared `validate_operation`
+    (`m-op-algebra` / `m-navigate` / `m-value-object`) — the same validator an
+    idiomatic statement frontend calls at build time, so the two paths cannot
+    drift. A `model` input reuses the Phase-3 `m-inheritance` family-invariant
+    validator unchanged. A `write` input is Phase-8 territory (ledger D-12): it
+    raises a lane-honest :class:`EngineError` naming the deferral so the case
+    stays reasoned-skipped rather than silently graded wrong. Raises
+    :class:`EngineError` if the input is unexpectedly accepted (no rule
+    violation detected) — the caller compares the returned rule against the
+    case's `then.rejectedRule`.
     """
     when = _when(case)
+    kind = _rejected_when_kind(case, when)
     meta = load_case_metamodel(case)
-    if "operation" in when:
+    if kind == "operation":
         try:
             operation = deserialize(when["operation"])
         except OperationError as exc:
@@ -570,7 +597,7 @@ def run_rejected_case(case: case_format.Case) -> str:
             f"{case.path.name}: the model-aware validator accepted an operation the case "
             "expects rejected pre-SQL"
         )
-    if "model" in when:
+    if kind == "model":
         inline_model = cast("Mapping[str, object]", when["model"])
         try:
             inline_meta = deserialize_metamodel(inline_model)
@@ -584,14 +611,12 @@ def run_rejected_case(case: case_format.Case) -> str:
             f"{case.path.name}: the model-aware validator accepted an inline inheritance "
             "family the case expects rejected pre-SQL"
         )
-    if "write" in when:
-        raise EngineError(
-            f"{case.path.name}: write-validation rejected cases (m-value-object "
-            "required-attribute / type-mismatch checks, m-inheritance subtype-write "
-            "protocol checks) are Phase 8 territory (COR-3 Phase 7; ledger D-12); the "
-            "read-side rejected lane does not grade `when.write` inputs yet"
-        )
-    raise EngineError(f"{case.path.name}: rejected case carries none of operation/model/write")
+    raise EngineError(
+        f"{case.path.name}: write-validation rejected cases (m-value-object "
+        "required-attribute / type-mismatch checks, m-inheritance subtype-write "
+        "protocol checks) are Phase 8 territory (COR-3 Phase 7; ledger D-12); the "
+        "read-side rejected lane does not grade `when.write` inputs yet"
+    )
 
 
 def wire_value(value: object) -> object:

@@ -103,11 +103,12 @@ self-contained without a system `libpq`.
   the instance-form slot-4 document projection but are run-deferred to the snapshot
   branch (their graph observation lands with materialization, Phase 7). The
   remaining reachable cases are reasoned-skipped in the sweep (no silent gaps, zero
-  D-11) with forward reasons — ledger D-12 (17 inheritance-family reads, 8 to-many
-  value-object array-traversal reads, and pre-SQL rejected-operation validation) and
-  the write-path shapes (Phase 6/8). The operation no-drift guard exercises 10
-  idiomatic op-algebra read spellings.
-- **Phase 6: transactions + temporal backbone — milestones 1–4 COMPLETE (backbone review pending).**
+  D-11) with forward reasons — ledger D-12 (17 inheritance-family reads and 8
+  to-many value-object array-traversal reads, both landing later in Phase 7;
+  the read-side pre-SQL rejected-operation validation landed in Phase 7
+  increment 1) and the write-path shapes (Phase 6/8). The operation no-drift
+  guard exercises 10 idiomatic op-algebra read spellings.
+- **Phase 6: transactions + temporal backbone — milestones 1–4 COMPLETE (backbone review closed).**
   - **M1 — `m-db-error`:** the neutral category set + call-site predicates
     (`is_retriable` / `violates_unique_index` / `is_timed_out`) in
     `parallax.core.db_error`, and the port-boundary re-raise in `parallax.postgres`
@@ -170,8 +171,28 @@ self-contained without a system `libpq`.
     the unit lane at 1069, `just oracle-test` at 1405 dual-dialect. The
     coalescing witnesses (`m-audit-write-008`, `m-bitemp-write-014`,
     `m-unit-work-010`) stay reasoned-skipped with forward reasons
-    (`m-batch-write`, Phase 8). **Next:** the Phase-6 backbone external review
-    (checkpoint 3, M1–M4 + the two in-flight core deltas), then Phase 7.
+    (`m-batch-write`, Phase 8). The Phase-6 backbone external review
+    (checkpoint 3, M1–M4 + the two in-flight core deltas) is closed.
+- **Phase 7: Snapshot branch — increment 1 COMPLETE (`6766fe0..972a0e2`).** The
+  core-amendment bundle (DQ5: `m-navigate --> m-op-list` inverted to
+  `m-navigate --> m-op-algebra`, `m-op-list --> m-deep-fetch` mirroring
+  `m-snapshot-read --> m-deep-fetch`; DQ3/DQ8: the rejected-case run answer —
+  `observations.rejectedRule`, `roundTrips: 0`, no provisioning — added to the
+  adapter envelope + schema) and the Python rejected lane: `validate_operation`
+  in `parallax.core.op_algebra` (narrow / subtype-attribute position tracking,
+  value-object path grammar + typed-literal checks, including the scoped
+  `nestedExists`/`nestedNotExists` `where`), the engine's `run_rejected_case`
+  three-way `when.operation`/`when.model`/`when.write` dispatch (an
+  exactly-one guard over the recognized `when` keys), and a Docker-free
+  rejected sweep. Current counts: unit lane 1219, compile sweep 110, rejected
+  sweep 21 passed + 10 skipped (the `when.write` cases, reasoned-skipped to
+  Phase 8). Deferred: 4 rejected cases tagged `m-navigate`/`m-deep-fetch` stay
+  unreachable until increments 3/5 land (their owning modules aren't in
+  `IMPLEMENTED_MODULES` yet, though `validate_operation` already classifies
+  them correctly). **Next:** increments 2–4 (inheritance read lowering,
+  navigate lowering, to-many value-object array traversal — mutually
+  independent), then increment 5 (deep fetch + materialization + graph
+  observations), then increment 6 (developer surface + ledger closures).
 
 ## Blockers
 

@@ -31,6 +31,12 @@ from parallax.core.descriptor.records import (
 )
 from parallax.core.descriptor.serde import canonicalize, deserialize, serialize
 from parallax.core.descriptor.validate import validate_entity, validate_metamodel
+from parallax.core.descriptor.vo_path import (
+    VoPathMiss,
+    find_value_object,
+    find_vo_member,
+    resolve_vo_leaf,
+)
 
 __all__ = [
     "UNSET",
@@ -51,9 +57,13 @@ __all__ = [
     "Temporal",
     "ValueObject",
     "ValueObjectAttribute",
+    "VoPathMiss",
     "canonicalize",
     "column_order",
     "deserialize",
+    "find_value_object",
+    "find_vo_member",
+    "resolve_vo_leaf",
     "serialize",
     "validate_entity",
     "validate_metamodel",

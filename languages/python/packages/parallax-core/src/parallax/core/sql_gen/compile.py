@@ -27,7 +27,11 @@ from parallax.core.descriptor import (
     NestedValueObject,
     ValueObject,
     ValueObjectAttribute,
+    VoPathMiss,
     column_order,
+    find_value_object,
+    find_vo_member,
+    resolve_vo_leaf,
 )
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.op_algebra import (
@@ -431,53 +435,36 @@ def _crosses_many(vo: ValueObject, segments: Sequence[str]) -> bool:
         return True
     container: ValueObject | NestedValueObject = vo
     for segment in segments:
-        nested = _find_nested(container, segment)
-        if nested is None:
-            return False  # reached a scalar leaf without crossing a many member
-        if nested.cardinality == "many":
+        member = find_vo_member(container, segment)
+        if not isinstance(member, NestedValueObject):
+            return False  # reached a scalar leaf (or an unresolved segment) uncrossed
+        if member.cardinality == "many":
             return True
-        container = nested
+        container = member
     return False
 
 
 def _value_object(entity: Entity, name: str) -> ValueObject:
-    for vo in entity.value_objects:
-        if vo.name == name:
-            return vo
-    raise SqlGenError(f"{entity.name}: {name!r} is not a declared value object")
+    vo = find_value_object(entity, name)
+    if vo is None:
+        raise SqlGenError(f"{entity.name}: {name!r} is not a declared value object")
+    return vo
 
 
 def _resolve_leaf(
     vo: ValueObject | NestedValueObject, segments: Sequence[str]
 ) -> ValueObjectAttribute:
-    container: ValueObject | NestedValueObject = vo
-    for index, segment in enumerate(segments):
-        attribute = _find_attribute(container, segment)
-        if attribute is not None:
-            if index != len(segments) - 1:
-                raise SqlGenError(f"value-object path continues past scalar {segment!r}")
-            return attribute
-        nested = _find_nested(container, segment)
-        if nested is None:
-            raise SqlGenError(f"value-object path segment {segment!r} is undeclared")
-        container = nested
-    raise SqlGenError("value-object path does not reach a scalar leaf")
-
-
-def _find_attribute(
-    container: ValueObject | NestedValueObject, name: str
-) -> ValueObjectAttribute | None:
-    for attribute in container.attributes:
-        if attribute.name == name:
-            return attribute
-    return None
-
-
-def _find_nested(container: ValueObject | NestedValueObject, name: str) -> NestedValueObject | None:
-    for nested in container.value_objects:
-        if nested.name == name:
-            return nested
-    return None
+    """Resolve dotted ``segments`` against ``vo`` via the shared, error-neutral
+    `parallax.core.descriptor.vo_path` walk (S3: the same one `m-op-algebra`'s
+    operation validator uses), classifying a miss into `SqlGenError` verbatim."""
+    result = resolve_vo_leaf(vo, segments)
+    if isinstance(result, VoPathMiss):
+        if result.reason == "scalar-continues":
+            raise SqlGenError(f"value-object path continues past scalar {result.segment!r}")
+        if result.reason == "ends-on-nested":
+            raise SqlGenError("value-object path does not reach a scalar leaf")
+        raise SqlGenError(f"value-object path segment {result.segment!r} is undeclared")
+    return result
 
 
 # --------------------------------------------------------------------------- #

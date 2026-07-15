@@ -40,9 +40,9 @@ Rule provenance:
 DAG note: `m-op-algebra` depends only on `m-descriptor` and `m-inheritance`
 (`modules.md`); it may **not** import `m-value-object` (the same constraint
 `m-sql`'s `sql_gen/compile.py` already documents), so the value-object
-structural checks below resolve paths directly against the raw
-`parallax.core.descriptor` records rather than reusing
-`parallax.core.value_object`'s helpers.
+structural checks below resolve paths through
+`parallax.core.descriptor.vo_path`'s shared, error-neutral walk — the same one
+`sql_gen/compile.py` uses — rather than `parallax.core.value_object`'s helpers.
 """
 
 from __future__ import annotations
@@ -58,6 +58,10 @@ from parallax.core.descriptor import (
     Relationship,
     ValueObject,
     ValueObjectAttribute,
+    VoPathMiss,
+    find_value_object,
+    find_vo_member,
+    resolve_vo_leaf,
 )
 from parallax.core.inheritance import effective_concrete_subtypes
 from parallax.core.op_algebra.nodes import (
@@ -155,12 +159,15 @@ def _walk(op: Operation, meta: Metamodel, scope: _PositionScope) -> None:
             _check_nested_membership(op, meta)
         case NestedNullCheck():
             _check_nested_null_check(op, meta)
-        case NestedExists(path=path) | NestedNotExists(path=path):
+        case NestedExists(path=path, where=where) | NestedNotExists(path=path, where=where):
             # The path is value-object-TERMINATED (ends at the object itself, not a
             # leaf). The optional `where` is element-relative (no `Class` prefix) —
             # a different addressing scheme the narrow/attribute position tracking
-            # above does not apply to — so it is not walked here.
-            _check_nested_vo_terminated(path, meta)
+            # above does not apply to — so it is validated against the TERMINAL
+            # value-object descriptor `path` resolves to, not walked by `_walk`.
+            container = _check_nested_vo_terminated(path, meta)
+            if where is not None:
+                _check_element_predicate(where, container)
         case And(operands=operands) | Or(operands=operands):
             for operand in operands:
                 _walk(operand, meta, scope)
@@ -292,7 +299,7 @@ def _resolve_relationship(rel_ref: str, meta: Metamodel, *, wrong_kind_rule: str
     for relationship in entity.relationships:
         if relationship.name == member_name:
             return relationship
-    if _find_value_object(entity, member_name) is not None:
+    if find_value_object(entity, member_name) is not None:
         raise OperationRejectedError(
             wrong_kind_rule,
             f"{rel_ref!r} names the value object {member_name!r}, not a relationship; a "
@@ -327,30 +334,33 @@ def _check_deep_fetch_path(path: tuple[PathSegment, ...], meta: Metamodel) -> No
 
 # --------------------------------------------------------------------------- #
 # Nested value-object predicates (m-op-algebra "Nested value-object            #
-# predicates"; resolved inline against parallax.core.descriptor records — the  #
-# DAG forbids m-op-algebra from importing m-value-object).                    #
+# predicates"; resolved against the shared, error-neutral                     #
+# `parallax.core.descriptor.vo_path` walk — the DAG forbids m-op-algebra from  #
+# importing m-value-object, but both it and m-sql already depend on           #
+# m-descriptor, so the walk `sql_gen/compile.py` needs too lives there rather  #
+# than staying duplicated (S3 remediation)).                                  #
 # --------------------------------------------------------------------------- #
-def _find_value_object(entity: Entity, name: str) -> ValueObject | None:
-    for vo in entity.value_objects:
-        if vo.name == name:
-            return vo
-    return None
-
-
 def _is_value_object_name_anywhere(meta: Metamodel, name: str) -> bool:
-    return any(_find_value_object(entity, name) is not None for entity in meta.entities)
+    return any(find_value_object(entity, name) is not None for entity in meta.entities)
 
 
-def _member_of(
-    container: ValueObject | NestedValueObject, name: str
-) -> ValueObjectAttribute | NestedValueObject | None:
-    for attribute in container.attributes:
-        if attribute.name == name:
-            return attribute
-    for nested in container.value_objects:
-        if nested.name == name:
-            return nested
-    return None
+def _classify_vo_path_miss(path: str, miss: VoPathMiss) -> OperationRejectedError:
+    """Translate an error-neutral :class:`VoPathMiss` into this module's own
+    `nested-path-unknown-member` classification and message text."""
+    if miss.reason == "scalar-continues":
+        return OperationRejectedError(
+            "nested-path-unknown-member",
+            f"{path!r}: {miss.segment!r} is a scalar attribute but the path continues",
+        )
+    if miss.reason == "ends-on-nested":
+        return OperationRejectedError(
+            "nested-path-unknown-member",
+            f"{path!r} ends on the nested value object {miss.segment!r}, not a scalar leaf",
+        )
+    return OperationRejectedError(
+        "nested-path-unknown-member",
+        f"{path!r}: {miss.segment!r} names no declared member",
+    )
 
 
 def _resolve_nested_leaf(path: str, meta: Metamodel) -> ValueObjectAttribute:
@@ -363,42 +373,40 @@ def _resolve_nested_leaf(path: str, meta: Metamodel) -> ValueObjectAttribute:
         )
     class_name, vo_name, *segments = parts
     entity = meta.entity(class_name)
-    vo = _find_value_object(entity, vo_name)
+    vo = find_value_object(entity, vo_name)
     if vo is None:
         raise OperationRejectedError(
             "nested-path-first-segment-not-value-object",
             f"{class_name}.{vo_name} is not a declared value object on {class_name} "
             "(m-op-algebra nested-predicate resolver MUST)",
         )
-    container: ValueObject | NestedValueObject = vo
-    for index, segment in enumerate(segments):
-        is_last = index == len(segments) - 1
-        member = _member_of(container, segment)
-        if member is None:
-            raise OperationRejectedError(
-                "nested-path-unknown-member",
-                f"{path!r}: {segment!r} names no declared member of {class_name}.{vo_name}",
-            )
-        if isinstance(member, ValueObjectAttribute):
-            if not is_last:
-                raise OperationRejectedError(
-                    "nested-path-unknown-member",
-                    f"{path!r}: {segment!r} is a scalar attribute but the path continues",
-                )
-            return member
-        if is_last:
-            raise OperationRejectedError(
-                "nested-path-unknown-member",
-                f"{path!r} ends on the nested value object {segment!r}, not a scalar leaf",
-            )
-        container = member
-    raise OperationRejectedError(
-        "nested-path-unknown-member", f"{path!r} has no leaf segment"
-    )  # pragma: no cover
+    result = resolve_vo_leaf(vo, segments)
+    if isinstance(result, VoPathMiss):
+        raise _classify_vo_path_miss(path, result)
+    return result
 
 
-def _check_nested_vo_terminated(path: str, meta: Metamodel) -> None:
-    """Resolve a `nestedExists`/`nestedNotExists` path (ends at a value object)."""
+def _resolve_element_leaf(
+    container: ValueObject | NestedValueObject, path: str
+) -> ValueObjectAttribute:
+    """Resolve an element-relative path (`type`, `geo.country`) to its leaf.
+
+    ``container`` is the TERMINAL value-object descriptor a `nestedExists`/
+    `nestedNotExists` `path` resolves to (`_check_nested_vo_terminated`); the
+    scoped `where`'s own paths are relative to that SAME element (`m-value-object`
+    same-element semantics), never re-prefixed with `Class.valueObject`.
+    """
+    result = resolve_vo_leaf(container, path.split("."))
+    if isinstance(result, VoPathMiss):
+        raise _classify_vo_path_miss(path, result)
+    return result
+
+
+def _check_nested_vo_terminated(path: str, meta: Metamodel) -> ValueObject | NestedValueObject:
+    """Resolve a `nestedExists`/`nestedNotExists` path (ends at a value object),
+    returning the TERMINAL value-object descriptor — the same-element scope an
+    optional `where` predicate's element-relative members resolve against.
+    """
     parts = path.split(".")
     if len(parts) < 2:
         raise OperationRejectedError(
@@ -406,7 +414,7 @@ def _check_nested_vo_terminated(path: str, meta: Metamodel) -> None:
         )
     class_name, vo_name, *segments = parts
     entity = meta.entity(class_name)
-    vo = _find_value_object(entity, vo_name)
+    vo = find_value_object(entity, vo_name)
     if vo is None:
         raise OperationRejectedError(
             "nested-path-first-segment-not-value-object",
@@ -414,13 +422,14 @@ def _check_nested_vo_terminated(path: str, meta: Metamodel) -> None:
         )
     container: ValueObject | NestedValueObject = vo
     for segment in segments:
-        member = _member_of(container, segment)
+        member = find_vo_member(container, segment)
         if not isinstance(member, NestedValueObject):
             raise OperationRejectedError(
                 "nested-path-unknown-member",
                 f"{path!r}: {segment!r} does not name a nested value object",
             )
         container = member
+    return container
 
 
 def _literal_matches_type(value: Scalar, neutral_type: str) -> bool:
@@ -449,26 +458,80 @@ def _literal_matches_type(value: Scalar, neutral_type: str) -> bool:
     return isinstance(value, str)
 
 
-def _check_nested_comparison(node: NestedComparison, meta: Metamodel) -> None:
-    leaf = _resolve_nested_leaf(node.path, meta)
-    if not _literal_matches_type(node.value, leaf.type):
+def _check_typed_literal(path: str, value: Scalar, leaf: ValueObjectAttribute) -> None:
+    """Reject ``value`` if it does not match ``leaf``'s declared neutral type.
+
+    Shared by the flat nested rules and the scoped element-relative rules
+    inside a `nestedExists`/`nestedNotExists` `where` — the same
+    `nested-literal-type-mismatch` check, only the leaf's resolution differs.
+    """
+    if not _literal_matches_type(value, leaf.type):
         raise OperationRejectedError(
             "nested-literal-type-mismatch",
-            f"{node.path!r}: literal {node.value!r} does not match the leaf's declared "
+            f"{path!r}: literal {value!r} does not match the leaf's declared "
             f"type {leaf.type!r} (m-op-algebra typed literals)",
         )
+
+
+def _check_nested_comparison(node: NestedComparison, meta: Metamodel) -> None:
+    leaf = _resolve_nested_leaf(node.path, meta)
+    _check_typed_literal(node.path, node.value, leaf)
 
 
 def _check_nested_membership(node: NestedMembership, meta: Metamodel) -> None:
     leaf = _resolve_nested_leaf(node.path, meta)
     for value in node.values:
-        if not _literal_matches_type(value, leaf.type):
-            raise OperationRejectedError(
-                "nested-literal-type-mismatch",
-                f"{node.path!r}: literal {value!r} does not match the leaf's declared "
-                f"type {leaf.type!r} (m-op-algebra typed literals)",
-            )
+        _check_typed_literal(node.path, value, leaf)
 
 
 def _check_nested_null_check(node: NestedNullCheck, meta: Metamodel) -> None:
     _resolve_nested_leaf(node.path, meta)
+
+
+# --------------------------------------------------------------------------- #
+# Scoped `where` inside nestedExists/nestedNotExists (m-value-object          #
+# same-element semantics; the serde's `elementPredicate` grammar admits only  #
+# the nested*-family + boolean combinators here, element-relative paths).     #
+# --------------------------------------------------------------------------- #
+def _check_element_comparison(
+    node: NestedComparison, container: ValueObject | NestedValueObject
+) -> None:
+    leaf = _resolve_element_leaf(container, node.path)
+    _check_typed_literal(node.path, node.value, leaf)
+
+
+def _check_element_membership(
+    node: NestedMembership, container: ValueObject | NestedValueObject
+) -> None:
+    leaf = _resolve_element_leaf(container, node.path)
+    for value in node.values:
+        _check_typed_literal(node.path, value, leaf)
+
+
+def _check_element_predicate(op: Operation, container: ValueObject | NestedValueObject) -> None:
+    """Validate a `nestedExists`/`nestedNotExists` `where` against ``container``
+    — the TERMINAL value-object descriptor its `path` resolves to.
+
+    ``op`` is assumed schema-valid (this module's own precondition): the
+    `elementPredicate` grammar (`operation.schema.json`) admits only the
+    nested*-family and boolean combinators here, so this dispatch does not
+    need to re-derive that restriction — only resolve each element-relative
+    reference and typed literal against the same element (m-value-object).
+    """
+    match op:
+        case NestedComparison():
+            _check_element_comparison(op, container)
+        case NestedMembership():
+            _check_element_membership(op, container)
+        case NestedNullCheck(path=path):
+            _resolve_element_leaf(container, path)
+        case And(operands=operands) | Or(operands=operands):
+            for operand in operands:
+                _check_element_predicate(operand, container)
+        case Not(operand=operand) | Group(operand=operand):
+            _check_element_predicate(operand, container)
+        case _:  # pragma: no cover - the elementPredicate schema admits nothing else here
+            raise ValueError(
+                f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
+                "(m-op-algebra elementPredicate)"
+            )

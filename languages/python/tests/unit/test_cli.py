@@ -50,6 +50,33 @@ def test_run_unsupported_dialect_exit_10(capsys: pytest.CaptureFixture[str]) -> 
     assert envelope["diagnostics"][0]["code"] == "unsupported-dialect"
 
 
+def test_run_rejected_case_never_provisions_a_container(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A `rejected`-shape `run` is provisioning-free by contract
+    # (m-conformance-adapter, resolved DQ3): it must never construct a
+    # `Provisioner` (Docker), so the shape's short-circuit is proven
+    # structurally here rather than merely by exit code — a fake provisioner
+    # factory that raises on construction fails loudly if the CLI's dispatch
+    # order regresses back to provisioning-before-shape-check.
+    from parallax.conformance import provision
+
+    class _RaisingProvisioner:
+        def __init__(self) -> None:
+            raise AssertionError("a rejected-case run must not construct a Provisioner")
+
+    monkeypatch.setattr(provision, "Provisioner", _RaisingProvisioner)
+    rejected_case = str(
+        case_format.default_cases_dir() / "m-inheritance-040-rejected-narrow-outside-position.yaml"
+    )
+    code, envelope = _run(capsys, ["run", "--case", rejected_case, "--dialect", "postgres"])
+    assert code == 0
+    assert envelope["status"] == "ok"
+    assert envelope["emissions"] == []
+    assert envelope["observations"]["rejectedRule"] == "narrow-outside-position"
+    assert envelope["observations"]["roundTrips"] == 0
+
+
 def test_compile_unsupported_dialect_exit_10(capsys: pytest.CaptureFixture[str]) -> None:
     code, envelope = _run(capsys, ["compile", "--case", _READ_CASE, "--dialect", "mariadb"])
     assert code == 10

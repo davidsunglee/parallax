@@ -402,8 +402,29 @@ def test_run_rejected_case_raises_for_a_malformed_inline_model() -> None:
 
 
 def test_run_rejected_case_raises_when_when_carries_none_of_the_three_inputs() -> None:
-    with pytest.raises(engine.EngineError, match="none of operation/model/write"):
+    with pytest.raises(engine.EngineError, match="EXACTLY ONE"):
         engine.run_rejected_case(_synthetic_rejected({}))
+
+
+def test_run_rejected_case_raises_when_when_carries_operation_and_model() -> None:
+    # The schema `oneOf` cannot protect a caller that reaches the engine without
+    # schema validation (a hand-built synthetic case, here) — the engine's own
+    # mirror guard must still refuse a multi-input `when`.
+    when: dict[str, object] = {"operation": {"all": {}}, "model": {"entities": []}}
+    with pytest.raises(engine.EngineError, match="EXACTLY ONE"):
+        engine.run_rejected_case(_synthetic_rejected(when))
+
+
+def test_run_rejected_case_raises_when_when_carries_operation_and_write() -> None:
+    when: dict[str, object] = {"operation": {"all": {}}, "write": {}}
+    with pytest.raises(engine.EngineError, match="EXACTLY ONE"):
+        engine.run_rejected_case(_synthetic_rejected(when))
+
+
+def test_run_rejected_case_raises_when_when_carries_model_and_write() -> None:
+    when: dict[str, object] = {"model": {"entities": []}, "write": {}}
+    with pytest.raises(engine.EngineError, match="EXACTLY ONE"):
+        engine.run_rejected_case(_synthetic_rejected(when))
 
 
 def test_read_table_state_reads_each_physical_table_once() -> None:

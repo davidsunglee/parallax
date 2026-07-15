@@ -399,6 +399,87 @@ def test_nested_exists_unknown_intermediate_segment_rejects() -> None:
     assert exc.rule == "nested-path-unknown-member"
 
 
+# --------------------------------------------------------------------------- #
+# The scoped `where` inside nestedExists/nestedNotExists: element-relative     #
+# (no `Class` prefix), validated against the TERMINAL value-object descriptor #
+# `path` resolves to (m-value-object same-element semantics).                 #
+# --------------------------------------------------------------------------- #
+def test_nested_exists_scoped_where_unknown_member_rejects() -> None:
+    op = NestedExists(
+        path="Customer.address.phones",
+        where=NestedComparison(op="nestedEq", path="bogus", value="x"),
+    )
+    exc = _rejects(op, _CUSTOMER, "Customer")
+    assert exc.rule == "nested-path-unknown-member"
+
+
+def test_nested_not_exists_scoped_where_unknown_member_rejects() -> None:
+    op = NestedNotExists(
+        path="Customer.address.phones",
+        where=NestedComparison(op="nestedEq", path="bogus", value="x"),
+    )
+    exc = _rejects(op, _CUSTOMER, "Customer")
+    assert exc.rule == "nested-path-unknown-member"
+
+
+def test_nested_exists_scoped_where_literal_type_mismatch_rejects() -> None:
+    # `phones.type` is declared `string`; a numeric literal must reject, exactly
+    # as the flat (unscoped) nested-comparison rule does.
+    op = NestedExists(
+        path="Customer.address.phones",
+        where=NestedComparison(op="nestedEq", path="type", value=42),
+    )
+    exc = _rejects(op, _CUSTOMER, "Customer")
+    assert exc.rule == "nested-literal-type-mismatch"
+
+
+def test_nested_exists_scoped_where_membership_literal_type_mismatch_rejects() -> None:
+    op = NestedExists(
+        path="Customer.address.phones",
+        where=NestedMembership(path="number", values=("555-9999", 42)),
+    )
+    exc = _rejects(op, _CUSTOMER, "Customer")
+    assert exc.rule == "nested-literal-type-mismatch"
+
+
+def test_nested_exists_scoped_where_valid_compound_accepts() -> None:
+    # A same-element compound (and/or/not) over nested element-relative paths,
+    # one of which descends through an intermediate nested value object
+    # (`point.lat`) — the multi-segment element-relative walk.
+    where = And(
+        operands=(
+            NestedComparison(op="nestedEq", path="country", value="Norway"),
+            Or(
+                operands=(
+                    NestedComparison(op="nestedEq", path="point.lat", value=59.9),
+                    Not(operand=NestedNullCheck(op="nestedIsNotNull", path="point.lon")),
+                )
+            ),
+        )
+    )
+    op = NestedExists(path="Customer.address.geo", where=where)
+    validate_operation("Customer", op, _CUSTOMER)  # no raise
+
+
+def test_nested_exists_no_where_still_validates_the_terminal_path() -> None:
+    # Absence of `where` must not regress the plain path validation.
+    exc = _rejects(NestedExists(path="Customer.address.unknown"), _CUSTOMER, "Customer")
+    assert exc.rule == "nested-path-unknown-member"
+
+
+@pytest.mark.parametrize(
+    "case_id", ["m-value-object-019", "m-value-object-020", "m-value-object-022"]
+)
+def test_corpus_scoped_where_cases_still_validate_unrejected(case_id: str) -> None:
+    # These claimed `read` cases carry a legitimate scoped `where` (the P2 gap
+    # silently accepted them before this fix by never walking `where` at all);
+    # confirm they still classify as VALID now that `where` is actually checked.
+    case = _load_rejected_case(case_id)
+    when = cast("Mapping[str, Any]", case.document["when"])
+    op = deserialize(cast("Mapping[str, object]", when["operation"]))
+    validate_operation("Customer", op, _CUSTOMER)  # no raise
+
+
 def test_deep_fetch_value_object_segment_rejects() -> None:
     op = DeepFetch(operand=All(), paths=((PathSegment(rel="Customer.address"),),))
     exc = _rejects(op, _CUSTOMER, "Customer")
