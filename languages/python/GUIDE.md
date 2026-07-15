@@ -279,6 +279,36 @@ self-contained without a system `libpq`.
   increment 4 (to-many value-object array traversal), then increment 5 (deep
   fetch + materialization + graph observations), then increment 6 (developer
   surface + ledger closures).
+- **Phase 7 increment 4 COMPLETE — to-many value-object array-traversal
+  lowering.** `compile_read` (`parallax.core.sql_gen`) lowers `nestedExists` /
+  `nestedNotExists` and every flat `nested*` predicate crossing a
+  `cardinality: many` value-object member (the D-12 refusal is gone for this
+  family): a correlated `EXISTS` over a guarded `jsonb_array_elements` unnest,
+  continuing increment 3's single `_Ctx.next_alias` sequence. The array-type
+  guard (new `Dialect.array_guard`, m-sql's `<arr>` fragment) keeps the strict
+  `jsonb_array_elements` from erroring on a non-array `many` value — a NULL
+  column, a missing key, a JSON `null`, a JSON scalar, or a JSON object all
+  fold to zero elements (m-op-algebra absence collapse) — binding its path
+  segments TWICE (the `jsonb_typeof` probe, then the re-extraction). A flat
+  predicate crossing a `many` member is **any-element** and self-guards
+  independently per predicate (two ANDed flat predicates open two independent
+  `EXISTS` subqueries, aliases continuing `t1`, `t2`, …); a scoped
+  `nestedExists`/`nestedNotExists` `where` is **same-element** — every element
+  predicate in the compound lowers against the SAME unnested alias,
+  element-relative (no `Class.valueObject` prefix), reusing the existing
+  extraction machinery for the field within the element. Postgres `EXISTS` is
+  never NULL, so the negated forms need no `coalesce` wrap (unlike the
+  documented-but-unimplemented MariaDB containment form). The 8 in-slice
+  corpus reads (`m-value-object-015..-022`, customer.yaml's `address.phones`)
+  flip from reasoned-skip to byte-exact compile + row-graded run; no other
+  reachable case was gated only on this refusal. Increments 2–4 are now all
+  landed. Updated counts (measured): unit lane 1348 passed / 62 skipped,
+  compile sweep 159 passed / 52 skipped (+8), `pg-full` run sweep 107
+  parametrized read cases (+8, real Postgres), rejected sweep unchanged,
+  `just python-static` green (Pyright 0 errors, 100% branch + 100% diff
+  coverage) and the Docker `pg-full`/provider/API-conformance lanes green.
+  **Next:** increment 5 (deep fetch + materialization + graph observations),
+  then increment 6 (developer surface + ledger closures).
 
 ## Blockers
 

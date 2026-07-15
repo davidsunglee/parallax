@@ -87,6 +87,42 @@ def test_nested_extraction_and_cast(dialect: Dialect) -> None:
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_array_guard_fragment_binds_the_path_twice(dialect: Dialect) -> None:
+    # m-sql "To-many — exists / notExists and any-element predicates", the `<arr>`
+    # guard: the path segment(s) reaching the array are bound TWICE (the
+    # `jsonb_typeof` probe, then the `then` branch's re-extraction), followed by
+    # the `array` type-name literal and the `[]` empty-array fallback.
+    fragment, binds = dialect.array_guard("t0", "address", ("phones",))
+    assert fragment == (
+        "case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? "
+        "then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end"
+    )
+    assert binds == ["phones", "array", "phones", "[]"]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_array_guard_fragment_multi_segment_path_doubles_every_segment(dialect: Dialect) -> None:
+    # A `many` member reached through an intermediate nested value object binds
+    # EVERY segment of the path twice, in the same order (m-sql rule 4).
+    fragment, binds = dialect.array_guard("t0", "profile", ("shipping", "rates"))
+    assert fragment == (
+        "case when jsonb_typeof(jsonb_extract_path(t0.profile, ?, ?)) = ? "
+        "then jsonb_extract_path(t0.profile, ?, ?) else cast(? as jsonb) end"
+    )
+    assert binds == ["shipping", "rates", "array", "shipping", "rates", "[]"]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_array_guard_fragment_top_level_many_needs_no_path_descent(dialect: Dialect) -> None:
+    # A `many` value object declared AT THE TOP LEVEL is itself the array — no
+    # `jsonb_extract_path` call is needed to reach it, so the guard probes the
+    # plain column reference directly and binds only the type-name/fallback pair.
+    fragment, binds = dialect.array_guard("t0", "tags", ())
+    assert fragment == "case when jsonb_typeof(t0.tags) = ? then t0.tags else cast(? as jsonb) end"
+    assert binds == ["array", "[]"]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_placeholder_translation(dialect: Dialect) -> None:
     assert dialect.to_driver_sql("select t0.id from t where t0.id = ?") == (
         "select t0.id from t where t0.id = %s"

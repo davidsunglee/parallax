@@ -36,6 +36,15 @@ _SCALAR_READS: Final[frozenset[str]] = frozenset({"m-core-001", "m-descriptor-00
 _VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
 )
+# To-many value-object array-traversal reads (COR-3 Phase 7 increment 4, ledger
+# D-12 closes for this row-form family, m-sql "To-many — exists / notExists and
+# any-element predicates"): the guarded-unnest correlated `EXISTS`/`NOT EXISTS`
+# (bare non-empty/empty-or-absent, and same-element scoped `where`) and the flat
+# any-element `nested*` forms crossing customer.yaml's `address.phones` — row-form,
+# compiled and run below.
+_VALUE_OBJECT_TO_MANY_READS: Final[frozenset[str]] = frozenset(
+    f"m-value-object-{n:03d}" for n in range(15, 23)
+)
 # Orders op-algebra reads. The read-projection amendment (Phase 5b) re-goldened these
 # to the full declared scalar projection the default find projection already emits, so
 # they now compile-match with no code change — closing ledger D-11. Includes the named
@@ -106,6 +115,7 @@ _NAVIGATE_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _VALUE_OBJECT_PREDICATE_READS
+    | _VALUE_OBJECT_TO_MANY_READS
     | _ORDERS_OP_ALGEBRA_READS
     | _VALUE_OBJECT_MATERIALIZATION_READS
     | _TEMPORAL_READ_ROW_FORM
@@ -180,12 +190,14 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     trigger is graded end-to-end by the error run lane, the two-connection
     choreography by the provider proof, (2) the other non-read shapes, whose compile
     lands with the write path (Phase 6/8), and (3) the reads the compiler still
-    refuses with a loud ``SqlGenError`` — to-many value-object array traversal and
-    deep fetch, deferred past the single-entity read path to the snapshot branch
-    (ledger D-12). Inheritance-family reads closed out of this ledger entry in
-    Phase 7 increment 2; relationship-navigation reads (the correlated-EXISTS
-    semi-join / anti-join, plain and polymorphic) closed out in increment 3 — only
-    the 11 deep-fetch-bearing navigate reads stay refused, forward to increment 5.
+    refuses with a loud ``SqlGenError`` — deep fetch, deferred past the
+    single-entity read path to the snapshot branch (ledger D-12). Inheritance-family
+    reads closed out of this ledger entry in Phase 7 increment 2; relationship-
+    navigation reads (the correlated-EXISTS semi-join / anti-join, plain and
+    polymorphic) closed out in increment 3; to-many value-object array traversal
+    (the guarded-unnest `nestedExists`/`nestedNotExists` and flat any-element forms)
+    closed out in increment 4 — only the 11 deep-fetch-bearing navigate reads stay
+    refused, forward to increment 5.
     """
     if case.shape == "error":
         # An error case's trigger DML is authored, not compiled (m-case-format), so

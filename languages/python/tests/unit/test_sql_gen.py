@@ -88,7 +88,6 @@ def test_unbound_attribute_is_refused() -> None:
     "op, message",
     [
         (oa.AsOf(operand=oa.All(), as_of_attr="Order.p", date="now"), "temporal wrapper reached"),
-        (oa.NestedExists(path="Customer.address.phones"), "array traversal"),
         (
             oa.DeepFetch(operand=oa.All(), paths=((oa.PathSegment(rel="Order.items"),),)),
             "deep fetch .* increment 5",
@@ -96,9 +95,8 @@ def test_unbound_attribute_is_refused() -> None:
     ],
 )
 def test_deferred_nodes_are_refused(op: oa.Operation, message: str) -> None:
-    meta = CUSTOMER if "Customer" in str(op) else ORDERS
     with pytest.raises(SqlGenError, match=message):
-        compile_read(op, meta, POSTGRES, "Customer" if meta is CUSTOMER else "Order")
+        compile_read(op, ORDERS, POSTGRES, "Order")
 
 
 def test_narrow_nested_under_a_table_per_concrete_subtype_family_is_refused() -> None:
@@ -190,7 +188,12 @@ def test_nested_path_ending_on_a_value_object_is_refused() -> None:
         )
 
 
-def test_top_level_many_value_object_is_refused() -> None:
+def test_top_level_many_value_object_any_element_needs_no_path_descent() -> None:
+    # A `many` value object declared AT THE TOP LEVEL (the array IS the whole
+    # document, not a nested member reached by descending through a `one` VO) is
+    # not corpus-covered — customer.yaml's `phones` nests one level under `address`
+    # — so this proves the degenerate zero-pre-segment guard: `array_guard` probes
+    # the plain column reference directly, no `jsonb_extract_path` call at all.
     from parallax.core.descriptor import (
         Attribute,
         Entity,
@@ -213,13 +216,18 @@ def test_top_level_many_value_object_is_refused() -> None:
         ),
     )
     meta = Metamodel(entities=(doc,))
-    with pytest.raises(SqlGenError, match="crosses a `many` member"):
-        compile_read(
-            oa.NestedComparison(op="nestedEq", path="Doc.tags.label", value="x"),
-            meta,
-            POSTGRES,
-            "Doc",
-        )
+    statement = compile_read(
+        oa.NestedComparison(op="nestedEq", path="Doc.tags.label", value="x"),
+        meta,
+        POSTGRES,
+        "Doc",
+    )
+    assert statement.sql == (
+        "select t0.id from doc t0 where exists (select 1 from jsonb_array_elements("
+        "case when jsonb_typeof(t0.tags) = ? then t0.tags else cast(? as jsonb) end) "
+        "t1 where jsonb_extract_path_text(t1.value, ?) = ?)"
+    )
+    assert statement.binds == ("array", "[]", "label", "x")
 
 
 def test_statement_is_frozen_value() -> None:
@@ -703,3 +711,266 @@ def test_tpcs_relationship_narrow_to_a_single_concrete_is_one_exists_no_grouping
     assert statement.sql.endswith(
         "where exists (select 1 from invoice t1 where t1.folder_id = t0.id)"
     )
+
+
+# --------------------------------------------------------------------------- #
+# To-many value-object array traversal (m-sql "To-many — exists / notExists   #
+# and any-element predicates"; COR-3 Phase 7 increment 4). The 8 in-slice     #
+# corpus cases (`m-value-object-015..-022`, customer.yaml's `address.phones`) #
+# are the byte-exact acceptance surface (`test_compile_sweep`/                #
+# `test_run_sweep`); these unit tests isolate seams the corpus alone would    #
+# not pin as clearly: the guard fragment's exact shape, alias continuation,   #
+# the deliberate absence of a Postgres negation `coalesce`, and paths the     #
+# in-slice model does not happen to exercise (an intermediate nested VO       #
+# before the `many` hop, and the refusal boundaries either side of the       #
+# implemented lowering).                                                     #
+# --------------------------------------------------------------------------- #
+def test_nested_exists_bare_is_a_non_empty_test_no_where() -> None:
+    statement = compile_read(
+        oa.NestedExists(path="Customer.address.phones"), CUSTOMER, POSTGRES, "Customer"
+    )
+    assert statement.sql == (
+        "select t0.id, t0.name from customer t0 where exists (select 1 from "
+        "jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? "
+        "then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1)"
+    )
+    assert statement.binds == ("phones", "array", "phones", "[]")
+
+
+def test_nested_not_exists_bare_negates_with_no_coalesce() -> None:
+    # Postgres `EXISTS` is never NULL — unlike MariaDB's containment form (not
+    # implemented; this claim is Postgres-only), the negated bare form needs no
+    # `coalesce` wrap at all.
+    statement = compile_read(
+        oa.NestedNotExists(path="Customer.address.phones"), CUSTOMER, POSTGRES, "Customer"
+    )
+    assert statement.sql.startswith("select t0.id, t0.name from customer t0 where not exists (")
+    assert "coalesce" not in statement.sql
+    assert statement.binds == ("phones", "array", "phones", "[]")
+
+
+def test_nested_exists_scoped_where_reuses_one_alias_for_every_conjunct() -> None:
+    # Same-element semantics (m-value-object): every element predicate in the
+    # scoped `where` binds the SAME unnested alias — one guard, one FROM clause —
+    # never one subquery per conjunct (the any-element flat form's shape, below).
+    op = oa.NestedExists(
+        path="Customer.address.phones",
+        where=oa.And(
+            operands=(
+                oa.NestedComparison(op="nestedEq", path="type", value="home"),
+                oa.NestedComparison(op="nestedEq", path="number", value="555-9999"),
+            )
+        ),
+    )
+    statement = compile_read(op, CUSTOMER, POSTGRES, "Customer")
+    assert statement.sql.count("jsonb_array_elements(") == 1  # ONE guarded unnest, not two
+    assert statement.sql == (
+        "select t0.id, t0.name from customer t0 where exists (select 1 from "
+        "jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? "
+        "then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where "
+        "jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)"
+    )
+    assert statement.binds == (
+        "phones",
+        "array",
+        "phones",
+        "[]",
+        "type",
+        "home",
+        "number",
+        "555-9999",
+    )
+
+
+def test_nested_not_exists_scoped_where_negates_the_same_element_check() -> None:
+    op = oa.NestedNotExists(
+        path="Customer.address.phones",
+        where=oa.NestedComparison(op="nestedEq", path="number", value="555-0000"),
+    )
+    statement = compile_read(op, CUSTOMER, POSTGRES, "Customer")
+    assert statement.sql.startswith("select t0.id, t0.name from customer t0 where not exists (")
+    assert "coalesce" not in statement.sql
+    assert statement.sql.endswith("where jsonb_extract_path_text(t1.value, ?) = ?)")
+    assert statement.binds == ("phones", "array", "phones", "[]", "number", "555-0000")
+
+
+def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
+    # Not corpus-covered (the 8 in-slice cases only exercise a bare `and`/single
+    # leaf inside `where`) — the scoped `elementPredicate` grammar also admits
+    # `or`/`not`/`group`, element-relative and same-element exactly like `and`.
+    op = oa.NestedExists(
+        path="Customer.address.phones",
+        where=oa.Group(
+            operand=oa.Or(
+                operands=(
+                    oa.NestedComparison(op="nestedEq", path="type", value="home"),
+                    oa.Not(operand=oa.NestedComparison(op="nestedEq", path="type", value="work")),
+                )
+            )
+        ),
+    )
+    statement = compile_read(op, CUSTOMER, POSTGRES, "Customer")
+    assert statement.sql.endswith(
+        "where (jsonb_extract_path_text(t1.value, ?) = ? or "
+        "not jsonb_extract_path_text(t1.value, ?) = ?))"
+    )
+    assert statement.binds == ("phones", "array", "phones", "[]", "type", "home", "type", "work")
+
+
+def test_flat_any_element_predicates_are_independent_not_same_element() -> None:
+    # m-value-object-018's discriminating witness: two ANDed flat predicates
+    # through the same `many` member open TWO independent subqueries (t1, t2),
+    # each self-guarding — the contrast with the scoped `where` form above, which
+    # shares ONE alias across every conjunct.
+    op = oa.And(
+        operands=(
+            oa.NestedComparison(op="nestedEq", path="Customer.address.phones.type", value="home"),
+            oa.NestedComparison(
+                op="nestedEq", path="Customer.address.phones.number", value="555-9999"
+            ),
+        )
+    )
+    statement = compile_read(op, CUSTOMER, POSTGRES, "Customer")
+    assert statement.sql.count("jsonb_array_elements(") == 2  # TWO independent unnests
+    assert statement.sql == (
+        "select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements("
+        "case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then "
+        "jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where "
+        "jsonb_extract_path_text(t1.value, ?) = ?) and exists (select 1 from jsonb_array_elements("
+        "case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then "
+        "jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t2 where "
+        "jsonb_extract_path_text(t2.value, ?) = ?)"
+    )
+    assert statement.binds == (
+        "phones",
+        "array",
+        "phones",
+        "[]",
+        "type",
+        "home",
+        "phones",
+        "array",
+        "phones",
+        "[]",
+        "number",
+        "555-9999",
+    )
+
+
+def test_flat_any_element_scalar_collapse_uses_the_same_guard_fragment() -> None:
+    # The guard fragment is identical regardless of context (bare exists, scoped
+    # where, or a flat any-element predicate) — one canonical `<arr>` spelling
+    # keyed only to the path, never re-derived per call site.
+    guard = (
+        "case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? "
+        "then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end"
+    )
+    flat = compile_read(
+        oa.NestedComparison(op="nestedEq", path="Customer.address.phones.number", value="555-0000"),
+        CUSTOMER,
+        POSTGRES,
+        "Customer",
+    )
+    bare = compile_read(
+        oa.NestedExists(path="Customer.address.phones"), CUSTOMER, POSTGRES, "Customer"
+    )
+    assert guard in flat.sql
+    assert guard in bare.sql
+
+
+def test_nested_exists_over_a_one_cardinality_value_object_has_no_lowering_yet() -> None:
+    # `geo` is `cardinality: one` — nestedExists over it is schema-legal
+    # (m-op-algebra: "the value object at `path` is present (`one`)…") but has no
+    # goldened Postgres lowering in this corpus, so it refuses loudly rather than
+    # guess a shape.
+    with pytest.raises(SqlGenError, match=r"one.*cardinality.*has no goldened lowering yet"):
+        compile_read(oa.NestedExists(path="Customer.address.geo"), CUSTOMER, POSTGRES, "Customer")
+
+
+def test_flat_any_element_ending_on_the_array_itself_is_refused() -> None:
+    # `Customer.address.phones` names the array itself, not a field within an
+    # element — a flat comparator needs a leaf inside the element.
+    with pytest.raises(SqlGenError, match="ends on the `many` array itself"):
+        compile_read(
+            oa.NestedComparison(op="nestedEq", path="Customer.address.phones", value="x"),
+            CUSTOMER,
+            POSTGRES,
+            "Customer",
+        )
+
+
+def test_nested_exists_where_element_relative_unknown_member_is_refused() -> None:
+    op = oa.NestedExists(
+        path="Customer.address.phones",
+        where=oa.NestedComparison(op="nestedEq", path="mystery", value="x"),
+    )
+    with pytest.raises(SqlGenError, match="undeclared"):
+        compile_read(op, CUSTOMER, POSTGRES, "Customer")
+
+
+def test_nested_exists_path_naming_a_scalar_segment_is_refused() -> None:
+    # `city` is a scalar leaf, not a nested value object — a nestedExists path
+    # must stay value-object-terminated at every segment.
+    with pytest.raises(SqlGenError, match="does not name a nested value object"):
+        compile_read(oa.NestedExists(path="Customer.address.city"), CUSTOMER, POSTGRES, "Customer")
+
+
+def test_many_member_nested_two_levels_deep_binds_every_path_segment_twice() -> None:
+    # customer.yaml's `phones` nests directly under the top-level `address` (one
+    # segment before the `many` hop); this synthetic model proves the general
+    # case — a `many` member reached through an INTERMEDIATE nested `one` value
+    # object — composes correctly with the existing extraction machinery: every
+    # segment on the path from the document column to the array binds TWICE in
+    # the guard, and the field-within-the-element binds once more, after.
+    from parallax.core.descriptor import (
+        Attribute,
+        Entity,
+        Metamodel,
+        NestedValueObject,
+        ValueObject,
+        ValueObjectAttribute,
+    )
+
+    store = Entity(
+        name="Store",
+        table="store",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        value_objects=(
+            ValueObject(
+                name="profile",
+                column="profile",
+                value_objects=(
+                    NestedValueObject(
+                        name="shipping",
+                        value_objects=(
+                            NestedValueObject(
+                                name="rates",
+                                cardinality="many",
+                                attributes=(ValueObjectAttribute(name="zone", type="string"),),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    meta = Metamodel(entities=(store,))
+
+    flat = compile_read(
+        oa.NestedComparison(op="nestedEq", path="Store.profile.shipping.rates.zone", value="west"),
+        meta,
+        POSTGRES,
+        "Store",
+    )
+    assert flat.sql == (
+        "select t0.id from store t0 where exists (select 1 from jsonb_array_elements("
+        "case when jsonb_typeof(jsonb_extract_path(t0.profile, ?, ?)) = ? then "
+        "jsonb_extract_path(t0.profile, ?, ?) else cast(? as jsonb) end) t1 where "
+        "jsonb_extract_path_text(t1.value, ?) = ?)"
+    )
+    assert flat.binds == ("shipping", "rates", "array", "shipping", "rates", "[]", "zone", "west")
+
+    bare_exists = compile_read(
+        oa.NestedExists(path="Store.profile.shipping.rates"), meta, POSTGRES, "Store"
+    )
+    assert bare_exists.binds == ("shipping", "rates", "array", "shipping", "rates", "[]")

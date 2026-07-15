@@ -114,6 +114,34 @@ class Dialect:
             return extraction  # string / text — compare directly
         return f"cast({extraction} as {target})"
 
+    def array_guard(
+        self, alias: str, column: str, segments: tuple[str, ...]
+    ) -> tuple[str, list[object]]:
+        """The array-type guard fragment for a `cardinality: many` value-object
+        member (m-sql "To-many — exists / notExists and any-element predicates",
+        abbreviated `<arr>`): the strict `jsonb_array_elements` ERRORS on a
+        non-array argument, so the array is reached through a `case` that yields
+        the extracted value only when `jsonb_typeof` confirms it IS a JSON array,
+        an empty `[]` jsonb literal otherwise — collapsing a NULL column, a
+        missing key, a JSON `null`, a JSON scalar, and a JSON object alike to
+        zero elements (m-op-algebra absence collapse). ``segments`` is bound
+        TWICE — the guard's own `jsonb_typeof` probe, then the `then` branch's
+        re-extraction — in the same order every other path bind rides (rule 4).
+        An empty ``segments`` (the value object's own top-level `many` column IS
+        the array, no further descent) needs no `jsonb_extract_path` call at all;
+        the guard then probes the plain column reference directly.
+        """
+        qualified = self.qualified(alias, column)
+        if segments:
+            holes = ", ".join(["?"] * len(segments))
+            extract = f"jsonb_extract_path({qualified}, {holes})"
+            path_binds: list[object] = list(segments)
+        else:
+            extract = qualified
+            path_binds = []
+        fragment = f"case when jsonb_typeof({extract}) = ? then {extract} else cast(? as jsonb) end"
+        return fragment, [*path_binds, "array", *path_binds, "[]"]
+
     # -- placeholders ------------------------------------------------------ #
     def to_driver_sql(self, canonical_sql: str) -> str:
         """Translate the canonical `?` placeholders to this driver's form (`%s`)."""

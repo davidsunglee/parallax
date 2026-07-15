@@ -9,9 +9,9 @@ canonical clause order), so ``normalize`` is a fixed-point identity check rather
 than a rewrite — the language target never depends on the reference harness's
 sqlglot normalizer (non-normative). Temporal reads are canonicalized upstream by
 ``m-temporal-read`` (``inject_as_of``) into ordinary predicate nodes before they
-reach this compiler; to-many value-object array traversal and navigation nodes
-that this phase does not yet lower raise a clear :class:`SqlGenError` so a
-mis-routed case fails loudly, never silently.
+reach this compiler; deep fetch (`DeepFetch`), the one node this phase does not
+yet lower, raises a clear :class:`SqlGenError` so a mis-routed case fails
+loudly, never silently.
 
 Inheritance-family reads (table-per-hierarchy tag predicates / abstract-read
 superset projection, table-per-concrete-subtype union-all) are lowered here too
@@ -33,6 +33,23 @@ composition-at-the-engine M2 precedent, since the DAG forbids `m-sql` from
 importing `m-temporal-read`). The correlated-`EXISTS` alias sequence continues
 the single `t0, t1, …` numbering across nested hops via `_Ctx.next_alias`,
 sharing one mutable counter and one bind list with its parent context.
+
+To-many value-object array traversal (`nestedExists` / `nestedNotExists`, and a
+flat `nested*` predicate whose path crosses a `cardinality: many` member) lowers
+here too (COR-3 Phase 7 increment 4, `m-sql` "To-many — exists / notExists and
+any-element predicates"): a correlated `EXISTS` over a guarded `jsonb_array_
+elements` unnest, continuing the same `_Ctx.next_alias` sequence navigation
+already uses. The array-type guard (`Dialect.array_guard`, abbreviated `<arr>`
+below) keeps the strict `jsonb_array_elements` from erroring on a non-array
+value, folding it to zero elements exactly like a NULL column or a missing key
+(m-op-algebra absence collapse). A flat predicate crossing a `many` member is
+**any-element** and self-guards independently per predicate (two ANDed flat
+predicates open two independent `EXISTS` subqueries, `m-value-object-018`); a
+scoped `nestedExists`/`nestedNotExists` `where` is **same-element** — every
+element predicate lowers against the SAME unnested alias, element-relative
+(no `Class.valueObject` prefix). This claim is Postgres-only; MariaDB's
+`json_contains`/`json_length` containment family is documented in `m-sql` but
+not goldened for this target and is not implemented here.
 """
 
 from __future__ import annotations
@@ -1038,11 +1055,7 @@ def _lower_predicate(op: Operation, ctx: _Ctx) -> str:
         case NestedComparison() | NestedMembership() | NestedNullCheck():
             return _lower_nested(op, ctx)
         case NestedExists() | NestedNotExists():
-            raise SqlGenError(
-                "to-many value-object array traversal (nestedExists/nestedNotExists) "
-                "is deferred past the Phase-5 read path to the snapshot branch's "
-                "value-object materialization (COR-3 Phase 7; ledger D-12)"
-            )
+            return _lower_nested_exists(op, ctx)
         case Narrow():
             return _lower_branch_narrow(op, ctx)
         case Navigate() | Exists() | NotExists():
@@ -1110,9 +1123,47 @@ def _affix_pattern(kind: str, value: str) -> tuple[str, bool]:
 # Value-object nested predicates (m-value-object; resolved inline — the DAG    #
 # forbids m-op-algebra / m-sql from importing m-value-object).                 #
 # --------------------------------------------------------------------------- #
-def _lower_nested(op: Operation, ctx: _Ctx) -> str:
+def _lower_nested(op: NestedComparison | NestedMembership | NestedNullCheck, ctx: _Ctx) -> str:
+    """Lower a flat `nested*` predicate (m-op-algebra "Nested value-object
+    predicates"): a scalar extraction against `ctx.alias` when the path stays
+    within `one`-cardinality members, or — when it crosses a `cardinality: many`
+    member — the any-element array-traversal form (m-sql "To-many — exists /
+    notExists and any-element predicates"; `m-value-object-017/-018/-021`)."""
+    vo, segments = _flat_vo_path(op.path, ctx.entity)
+    crossing = _split_at_many(vo, segments)
+    if crossing is not None:
+        return _lower_any_element(op, vo, crossing, ctx)
+    leaf = _resolve_leaf(vo, segments)
+    extraction, path_binds = ctx.dialect.nested_extract(ctx.alias, vo.column, segments)
+    ctx.binds.extend(path_binds)
+    return _lower_comparator(op, extraction, leaf.type, ctx)
+
+
+def _flat_vo_path(path: str, entity: Entity) -> tuple[ValueObject, tuple[str, ...]]:
+    """Parse a flat `Class.valueObject(.valueObject)*.attribute` reference
+    (m-op-algebra) into its top-level value object and the path segments after
+    it (which may cross zero or more nested value objects before reaching a
+    leaf, or a `many` member — `_split_at_many` tells the two apart)."""
+    parts = path.split(".")
+    if len(parts) < 3:
+        raise SqlGenError(f"nested path {path!r} needs Class.valueObject.attribute")
+    _entity_name, vo_name, *segments = parts
+    return _value_object(entity, vo_name), tuple(segments)
+
+
+def _lower_comparator(
+    op: NestedComparison | NestedMembership | NestedNullCheck,
+    extraction: str,
+    leaf_type: str,
+    ctx: _Ctx,
+) -> str:
+    """Render one resolved extraction's comparator fragment (m-sql "valueObject
+    — structured-column read and filter" / "The flat `nested*` operator
+    family"), binding extraction-then-comparator in that order. Shared by the
+    plain scalar path, the flat any-element lowering, and the same-element
+    scoped `where` lowering below — only how `extraction` was resolved differs.
+    """
     if isinstance(op, NestedComparison):
-        extraction, leaf_type = _nested_extraction(op.path, ctx)
         casted = ctx.dialect.nested_cast(extraction, leaf_type)
         ctx.bind(op.value)
         # nestedNotEq lowers to `not <ext> = ?` (the corpus form), not `<ext> <> ?`.
@@ -1120,57 +1171,165 @@ def _lower_nested(op: Operation, ctx: _Ctx) -> str:
             return f"not {casted} = ?"
         return f"{casted} {_NESTED_COMPARATORS[op.op]} ?"
     if isinstance(op, NestedMembership):
-        extraction, leaf_type = _nested_extraction(op.path, ctx)
         casted = ctx.dialect.nested_cast(extraction, leaf_type)
         holes = ", ".join("?" for _ in op.values)
         for value in op.values:
             ctx.bind(value)
         return f"{casted} in ({holes})"
-    assert isinstance(op, NestedNullCheck)
-    extraction, _leaf_type = _nested_extraction(op.path, ctx)
     if op.op == "nestedIsNull":
         return f"{extraction} is null"
     return f"not {extraction} is null"
 
 
-def _nested_extraction(path: str, ctx: _Ctx) -> tuple[str, str]:
-    """Resolve a `Class.vo.seg...` path to its extraction expression and leaf type.
+def _split_at_many(
+    vo: ValueObject, segments: Sequence[str]
+) -> tuple[ValueObject | NestedValueObject, tuple[str, ...], tuple[str, ...]] | None:
+    """Split a flat predicate's path at the first `cardinality: many` hop
+    crossed while walking from `vo` (m-op-algebra "Flat predicates through a
+    `many` segment mean any element matches"). Returns ``(the many container,
+    the segments reaching it from vo's own document column, the remaining
+    segments addressing a field WITHIN the element)`` — or ``None`` when the
+    walk never crosses a `many` member (the plain scalar-extraction case
+    `_lower_nested` handles directly).
+    """
+    if vo.cardinality == "many":
+        return vo, (), tuple(segments)
+    container: ValueObject | NestedValueObject = vo
+    for index, segment in enumerate(segments):
+        member = find_vo_member(container, segment)
+        if not isinstance(member, NestedValueObject):
+            return None  # reached a scalar leaf (or an unresolved segment) uncrossed
+        if member.cardinality == "many":
+            return member, tuple(segments[: index + 1]), tuple(segments[index + 1 :])
+        container = member
+    return None
 
-    A flat predicate whose path crosses a ``cardinality: many`` member takes
-    core's any-element semantics and lowers to array traversal, which this phase
-    does not yet emit; such a path is refused here so a mis-declared case fails
-    loudly rather than emitting a wrong scalar extraction.
+
+def _lower_any_element(
+    op: NestedComparison | NestedMembership | NestedNullCheck,
+    vo: ValueObject,
+    crossing: tuple[ValueObject | NestedValueObject, tuple[str, ...], tuple[str, ...]],
+    ctx: _Ctx,
+) -> str:
+    """Any-element lowering for a flat `nested*` predicate crossing a `many`
+    member (m-sql "To-many — exists / notExists and any-element predicates"):
+    an independent correlated `EXISTS` over the guarded unnest, the field
+    resolved against the SAME unnested element alias (never against `t0`).
+    Each such predicate self-guards and self-aliases — two ANDed flat
+    predicates through the same array open TWO independent subqueries
+    (`m-value-object-018`'s any-element-independence witness), never one
+    shared alias (that would be the same-element `nestedExists`/`where` form
+    below).
+    """
+    container, pre, post = crossing
+    if not post:
+        raise SqlGenError(
+            f"nested path {op.path!r} ends on the `many` array itself, not a field "
+            "within its elements"
+        )
+    leaf = _resolve_leaf(container, post)
+    guard_sql, guard_binds = ctx.dialect.array_guard(ctx.alias, vo.column, pre)
+    ctx.binds.extend(guard_binds)
+    array_alias = ctx.next_alias()
+    extraction, path_binds = ctx.dialect.nested_extract(array_alias, "value", post)
+    ctx.binds.extend(path_binds)
+    comparator = _lower_comparator(op, extraction, leaf.type, ctx)
+    return (
+        f"exists (select 1 from jsonb_array_elements({guard_sql}) {array_alias} where {comparator})"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# `nestedExists` / `nestedNotExists` (m-sql "To-many — exists / notExists and  #
+# any-element predicates"; COR-3 Phase 7 increment 4).                        #
+# --------------------------------------------------------------------------- #
+def _lower_nested_exists(op: NestedExists | NestedNotExists, ctx: _Ctx) -> str:
+    """A bare form is a non-empty / empty-or-absent test over the guarded
+    unnest; a scoped `where` composes its element predicate on the SAME
+    unnested alias (same-element semantics, m-value-object — as opposed to the
+    any-element flat form above, which never shares an alias across
+    predicates). Postgres `EXISTS` is never NULL, so the negated forms need no
+    `coalesce` wrap: `not exists (...)` over zero unnested elements is already
+    true (m-sql, explicit). MariaDB's containment form DOES need one — but this
+    claim is Postgres-only and that form is not implemented here.
+    """
+    vo, pre, container = _resolve_vo_terminus(op.path, ctx.entity)
+    if container.cardinality != "many":
+        raise SqlGenError(
+            f"nestedExists/nestedNotExists over a `one`-cardinality value object "
+            f"({op.path!r}) has no goldened lowering yet"
+        )
+    guard_sql, guard_binds = ctx.dialect.array_guard(ctx.alias, vo.column, pre)
+    ctx.binds.extend(guard_binds)
+    array_alias = ctx.next_alias()
+    inner = f"select 1 from jsonb_array_elements({guard_sql}) {array_alias}"
+    if op.where is not None:
+        where_sql = _lower_element_predicate(op.where, container, array_alias, ctx)
+        inner = f"{inner} where {where_sql}"
+    keyword = "not exists" if isinstance(op, NestedNotExists) else "exists"
+    return f"{keyword} ({inner})"
+
+
+def _resolve_vo_terminus(
+    path: str, entity: Entity
+) -> tuple[ValueObject, tuple[str, ...], ValueObject | NestedValueObject]:
+    """Resolve a `nestedExists`/`nestedNotExists` value-object-TERMINATED path
+    (`Class.valueObject(.valueObject)*`, m-op-algebra) to its top-level value
+    object, the full segment chain from that object's own document column to
+    the terminal member, and the terminal container itself (`vo` unchanged
+    when the path names the top-level object directly, no further segments).
     """
     parts = path.split(".")
-    if len(parts) < 3:
-        raise SqlGenError(f"nested path {path!r} needs Class.valueObject.attribute")
+    if len(parts) < 2:
+        raise SqlGenError(f"nested path {path!r} needs at least Class.valueObject")
     _entity_name, vo_name, *segments = parts
-    vo = _value_object(ctx.entity, vo_name)
-    if _crosses_many(vo, tuple(segments)):
-        raise SqlGenError(
-            f"nested path {path!r} crosses a `many` member (any-element array traversal "
-            "is deferred past the Phase-5 read path to the snapshot branch — "
-            "COR-3 Phase 7; ledger D-12)"
-        )
-    leaf = _resolve_leaf(vo, tuple(segments))
-    extraction, path_binds = ctx.dialect.nested_extract(ctx.alias, vo.column, tuple(segments))
-    ctx.binds.extend(path_binds)
-    return extraction, leaf.type
-
-
-def _crosses_many(vo: ValueObject, segments: Sequence[str]) -> bool:
-    """Whether a flat path traverses any ``cardinality: many`` value-object member."""
-    if vo.cardinality == "many":
-        return True
+    vo = _value_object(entity, vo_name)
     container: ValueObject | NestedValueObject = vo
     for segment in segments:
         member = find_vo_member(container, segment)
         if not isinstance(member, NestedValueObject):
-            return False  # reached a scalar leaf (or an unresolved segment) uncrossed
-        if member.cardinality == "many":
-            return True
+            raise SqlGenError(
+                f"nested path {path!r}: {segment!r} does not name a nested value object"
+            )
         container = member
-    return False
+    return vo, tuple(segments), container
+
+
+def _lower_element_predicate(
+    op: Operation, container: ValueObject | NestedValueObject, alias: str, ctx: _Ctx
+) -> str:
+    """Lower a scoped `nestedExists`/`nestedNotExists` `where` compound
+    (m-op-algebra `elementPredicate`; m-value-object same-element semantics):
+    every leaf's path is element-relative (`type`, `geo.country` — no leading
+    `Class.valueObject`) and resolves against `container`, the SAME array
+    element every predicate here shares — extracted via the unnested element
+    alias (`t1.value`), never re-descending through `Class.valueObject`. The
+    serde's `elementPredicate` grammar admits only the nested* family plus the
+    boolean combinators here, so this dispatch need not re-derive that
+    restriction.
+    """
+    match op:
+        case NestedComparison(path=path) | NestedMembership(path=path) | NestedNullCheck(path=path):
+            segments = tuple(path.split("."))
+            leaf = _resolve_leaf(container, segments)
+            extraction, path_binds = ctx.dialect.nested_extract(alias, "value", segments)
+            ctx.binds.extend(path_binds)
+            return _lower_comparator(op, extraction, leaf.type, ctx)
+        case And(operands=operands):
+            return " and ".join(
+                _lower_element_predicate(o, container, alias, ctx) for o in operands
+            )
+        case Or(operands=operands):
+            return " or ".join(_lower_element_predicate(o, container, alias, ctx) for o in operands)
+        case Not(operand=operand):
+            return f"not {_lower_element_predicate(operand, container, alias, ctx)}"
+        case Group(operand=operand):
+            return f"({_lower_element_predicate(operand, container, alias, ctx)})"
+        case _:  # pragma: no cover - the elementPredicate schema admits nothing else here
+            raise SqlGenError(
+                f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
+                "(m-op-algebra elementPredicate)"
+            )
 
 
 def _value_object(entity: Entity, name: str) -> ValueObject:
