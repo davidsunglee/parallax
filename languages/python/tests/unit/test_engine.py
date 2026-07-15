@@ -79,6 +79,73 @@ def test_run_read_case_wire_renders_managed_row_values() -> None:
     assert rows == [{"id": 1, "external_id": "123e4567-e89b-12d3-a456-426614174000"}]
 
 
+def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> None:
+    # m-inheritance-003 (Payment root, table-per-hierarchy): the compiled SELECT
+    # projects the raw `kind` tag column; run_read_case materializes `familyVariant`
+    # from the tag metadata map at row construction and never leaves the raw tag key
+    # on the wire row (m-case-format: an abstract-target row carries `familyVariant`,
+    # never the framework-owned tag).
+    port = FakeDbPort(
+        [
+            {
+                "id": 1,
+                "amount": decimal.Decimal("100.00"),
+                "card_network": "Visa",
+                "tendered": None,
+                "kind": "card",
+            }
+        ]
+    )
+    _emissions, rows, _round_trips = engine.run_read_case(
+        _case("m-inheritance-003"), "postgres", port
+    )
+    assert rows == [
+        {
+            "id": 1,
+            "amount": "100.00",
+            "card_network": "Visa",
+            "tendered": None,
+            "familyVariant": "CardPayment",
+        }
+    ]
+
+
+def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column() -> None:
+    # m-inheritance-050 (Document root, table-per-concrete-subtype): the compiled
+    # union-all projects the `family_variant` literal per branch; run_read_case just
+    # renames the wire key, no tag map involved.
+    port = FakeDbPort(
+        [
+            {
+                "id": 1,
+                "title": "Invoice-A",
+                "folder_id": 100,
+                "currency": "USD",
+                "amount_due": decimal.Decimal("120.00"),
+                "body": None,
+                "paid_amount": None,
+                "family_variant": "Invoice",
+            }
+        ]
+    )
+    _emissions, rows, _round_trips = engine.run_read_case(
+        _case("m-inheritance-050"), "postgres", port
+    )
+    assert rows[0]["familyVariant"] == "Invoice"
+    assert "family_variant" not in rows[0]
+
+
+def test_run_read_case_concrete_target_read_carries_no_family_variant() -> None:
+    # m-inheritance-001 (CardPayment, concrete target): the compiled SELECT never
+    # projects a tag/literal column, so the row passes through wire rendering alone.
+    port = FakeDbPort([{"id": 1, "amount": decimal.Decimal("100.00"), "card_network": "Visa"}])
+    _emissions, rows, _round_trips = engine.run_read_case(
+        _case("m-inheritance-001"), "postgres", port
+    )
+    assert rows == [{"id": 1, "amount": "100.00", "card_network": "Visa"}]
+    assert "familyVariant" not in rows[0]
+
+
 def test_wire_value_covers_the_managed_type_set() -> None:
     assert engine.wire_value(None) is None
     assert engine.wire_value(True) is True

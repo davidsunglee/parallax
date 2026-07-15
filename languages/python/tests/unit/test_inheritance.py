@@ -95,6 +95,57 @@ def test_inheritance_error_carries_rule_and_entity() -> None:
     assert error.entity == "Pet"
 
 
+def test_ancestor_chain_orders_root_first_then_deeper_abstract_nodes() -> None:
+    animal = _MODELS["animal"]
+    assert [e.name for e in inheritance.ancestor_chain(animal, ("Cat", "Dog"))] == [
+        "Animal",
+        "Pet",
+    ]
+    # WildBoar's own chain is just the root (a sibling branch directly under it).
+    assert [e.name for e in inheritance.ancestor_chain(animal, ("WildBoar",))] == ["Animal"]
+
+
+def test_family_attributes_widens_across_the_whole_family() -> None:
+    animal = _MODELS["animal"]
+    names = {attr.name for attr in inheritance.family_attributes(animal, animal.entity("Dog"))}
+    assert names == {"id", "name", "ownerId", "licenseId", "barkVolume", "indoor", "tuskLength"}
+
+
+def test_family_attributes_is_the_entitys_own_attributes_outside_a_family() -> None:
+    account = _MODELS["account"]
+    entity = account.entity("Account")
+    assert inheritance.family_attributes(account, entity) == entity.attributes
+
+
+def test_family_root_resolves_the_abstract_root() -> None:
+    animal = _MODELS["animal"]
+    assert inheritance.family_root(animal, animal.entity("Dog")).name == "Animal"
+    assert inheritance.family_root(animal, animal.entity("Animal")).name == "Animal"
+
+
+def test_family_root_raises_on_a_malformed_ancestry() -> None:
+    # A concrete-subtype whose parent chain cycles rather than reaching a root.
+    attrs = (Attribute(name="id", type="int64", column="id", primary_key=True),)
+    cyclic = Metamodel(
+        entities=(
+            Entity(
+                name="A",
+                table="a",
+                inheritance=Inheritance(role="concrete-subtype", parent="B"),
+                attributes=attrs,
+            ),
+            Entity(
+                name="B",
+                table="b",
+                inheritance=Inheritance(role="concrete-subtype", parent="A"),
+                attributes=attrs,
+            ),
+        )
+    )
+    with pytest.raises(ValueError, match="no resolvable inheritance root"):
+        inheritance.family_root(cyclic, cyclic.entity("A"))
+
+
 def test_concrete_descendants_terminates_on_a_cyclic_family() -> None:
     # A malformed (cyclic) family: `concrete_descendants` must still terminate.
     attrs = (Attribute(name="id", type="int64", column="id", primary_key=True),)

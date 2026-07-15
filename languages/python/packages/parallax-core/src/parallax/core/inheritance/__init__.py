@@ -11,15 +11,19 @@ descriptor-rejection validator whose ordering pins each corpus ``rejectedRule``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from parallax.core.descriptor import Entity, Inheritance, Metamodel
+from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel
 
 __all__ = [
     "Family",
     "InheritanceError",
+    "ancestor_chain",
     "effective_concrete_subtypes",
+    "family_attributes",
     "family_of",
+    "family_root",
     "validate",
 ]
 
@@ -109,6 +113,92 @@ def effective_concrete_subtypes(metamodel: Metamodel, position: str) -> tuple[st
     if entity.inheritance.role == "concrete-subtype":
         return (position,)
     return tuple(sorted(family_of(metamodel).concrete_descendants(position)))
+
+
+def _root_name(meta: Metamodel, entity: Entity) -> str | None:
+    """The name of ``entity``'s family root, or ``None`` if unresolvable.
+
+    Walks the ``parent`` chain rather than assuming a metamodel holds only one
+    family (`family_of` does, which is fine for its own single-family callers but
+    would silently misattribute a multi-family model's ancestry lookups).
+    """
+    current = entity
+    seen: set[str] = set()
+    while current.inheritance is not None:
+        if current.inheritance.role == "root":
+            return current.name
+        parent = current.inheritance.parent
+        if parent is None or current.name in seen:
+            return None
+        seen.add(current.name)
+        current = meta.entity(parent)
+    return None
+
+
+def family_root(meta: Metamodel, entity: Entity) -> Entity:
+    """The abstract root of ``entity``'s inheritance family.
+
+    Raises :class:`ValueError` if ``entity`` does not participate, or its
+    ancestry does not resolve to a root (a malformed family; `validate` is the
+    authority on rejecting those before this is ever called).
+    """
+    root_name = _root_name(meta, entity)
+    if root_name is None:
+        raise ValueError(f"{entity.name}: no resolvable inheritance root (m-inheritance)")
+    return meta.entity(root_name)
+
+
+def ancestor_chain(meta: Metamodel, effective_concretes: Sequence[str]) -> tuple[Entity, ...]:
+    """Every abstract ancestor (root + abstract-subtype) reachable from any
+    concrete in ``effective_concretes``, in canonical ancestry order (m-inheritance
+    "Canonical concrete-subtype ordering": the inherited-column prefix of a
+    superset stays ancestry order, root first, never alphabetized across the
+    chain).
+
+    Processes ``effective_concretes`` in the family's own canonical alphabetical
+    order and appends each concrete's own ancestor chain (root-to-parent) in that
+    order, skipping an ancestor already added — the deterministic "first
+    encountered" union a shared ancestor (e.g. the root) needs when several
+    concretes in the set pass through it.
+    """
+    ordered: list[Entity] = []
+    seen: set[str] = set()
+    for name in sorted(effective_concretes):
+        chain: list[Entity] = []
+        start_inheritance = meta.entity(name).inheritance
+        parent_name = start_inheritance.parent if start_inheritance is not None else None
+        while parent_name is not None:
+            ancestor = meta.entity(parent_name)
+            chain.append(ancestor)
+            parent_name = ancestor.inheritance.parent if ancestor.inheritance is not None else None
+        for ancestor in reversed(chain):
+            if ancestor.name not in seen:
+                seen.add(ancestor.name)
+                ordered.append(ancestor)
+    return tuple(ordered)
+
+
+def family_attributes(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
+    """Every attribute declared anywhere in ``entity``'s inheritance family.
+
+    Used to resolve an attribute reference whose ``Class.attribute`` class-name
+    prefix names any ancestor or sibling concrete within the same family (a
+    concrete-target read referencing a root-inherited attribute, or a branch
+    predicate inside a `narrow` referencing that branch's own attribute, m-sql
+    predicate lowering) — narrow-position validity for the reference is already
+    enforced upstream by `m-op-algebra`'s model-aware validator, so this need only
+    search, never re-validate scope. Assumes attribute names are unique within one
+    family (the shared-table / ancestry-derived column set is a disjoint union,
+    m-inheritance).
+    """
+    root_name = _root_name(meta, entity)
+    if root_name is None:
+        return entity.attributes
+    attrs: list[Attribute] = []
+    for candidate in meta.entities:
+        if candidate.inheritance is not None and _root_name(meta, candidate) == root_name:
+            attrs.extend(candidate.attributes)
+    return tuple(attrs)
 
 
 def validate(metamodel: Metamodel) -> None:

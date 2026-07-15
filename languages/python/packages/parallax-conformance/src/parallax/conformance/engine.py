@@ -28,9 +28,16 @@ from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import DescriptorError, Metamodel, column_order
 from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
-from parallax.core.op_algebra import OperationError, OperationRejectedError, deserialize
+from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
-from parallax.core.sql_gen import ResultForm, SqlGenError, Statement, compile_read
+from parallax.core.sql_gen import (
+    FamilyVariantPlan,
+    ResultForm,
+    SqlGenError,
+    Statement,
+    compile_read,
+    family_variant_plan,
+)
 from parallax.core.temporal_read import TemporalReadError, inject_as_of
 from parallax.core.unit_work import instructions, plan_flush
 from parallax.core.unit_work.instructions import WriteInstruction
@@ -145,7 +152,9 @@ def _result_form(case: case_format.Case) -> ResultForm:
     return "row"
 
 
-def _compile_statement(case: case_format.Case, dialect_name: str) -> tuple[str, Statement]:
+def _compile_statement(
+    case: case_format.Case, dialect_name: str
+) -> tuple[str, Statement, Metamodel, Operation]:
     if case.shape != "read":
         raise EngineError(
             f"{case.path.name}: only `read`-shape compile is implemented (COR-3 Phase 5 scope; "
@@ -165,12 +174,12 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> tuple[str, 
         statement = compile_read(operation, meta, dialect, target, result_form=_result_form(case))
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    return target, statement
+    return target, statement, meta, operation
 
 
 def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
     """Compile a read case to its ordered emissions and round-trip count."""
-    _target, statement = _compile_statement(case, dialect_name)
+    _target, statement, _meta, _operation = _compile_statement(case, dialect_name)
     emission = Emission("/operation", statement.sql, statement.binds)
     return [emission], 1
 
@@ -185,12 +194,35 @@ def run_read_case(
     each observed row is rendered to canonical wire form here — the grader-side
     serialization the ``m-db-port`` boundary fixes, keeping the adapter free of any
     wire/grading logic and the observation envelope JSON-serializable.
+
+    An **abstract-target** inheritance read (m-case-format / m-sql resolved Q6)
+    additionally materializes `familyVariant` into each wire row from the read's
+    `~parallax.core.sql_gen.family_variant_plan`: a table-per-hierarchy read
+    derives it from the projected raw tag column via the tag-metadata map (the
+    tag column itself is popped, never left on the wire row); a table-per-
+    concrete-subtype read renames its projected `family_variant` literal column.
+    A concrete-target (or single-resolved-position TPCS) read carries neither.
     """
-    _target, statement = _compile_statement(case, dialect_name)
+    target, statement, meta, operation = _compile_statement(case, dialect_name)
     dialect = dialect_for(dialect_name)
     managed = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
     emission = Emission("/operation", statement.sql, statement.binds)
-    return [emission], [wire_row(row) for row in managed], 1
+    plan = family_variant_plan(meta, target, operation)
+    rows = [_materialize_family_variant(wire_row(row), plan) for row in managed]
+    return [emission], rows, 1
+
+
+def _materialize_family_variant(row: Row, plan: FamilyVariantPlan | None) -> Row:
+    if plan is None:
+        return row
+    materialized = dict(row)
+    raw = materialized.pop(plan.column)
+    if plan.kind == "tag":
+        assert plan.tag_map is not None
+        materialized["familyVariant"] = plan.tag_map[cast("str", raw)]
+    else:
+        materialized["familyVariant"] = raw
+    return materialized
 
 
 def _driver_binds(binds: Sequence[object]) -> list[object]:

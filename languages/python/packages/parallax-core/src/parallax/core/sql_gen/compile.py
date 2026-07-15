@@ -9,17 +9,27 @@ canonical clause order), so ``normalize`` is a fixed-point identity check rather
 than a rewrite — the language target never depends on the reference harness's
 sqlglot normalizer (non-normative). Temporal reads are canonicalized upstream by
 ``m-temporal-read`` (``inject_as_of``) into ordinary predicate nodes before they
-reach this compiler; to-many value-object array traversal, inheritance-family, and
-navigation nodes that this phase does not yet lower raise a clear
-:class:`SqlGenError` so a mis-routed case fails loudly, never silently.
+reach this compiler; to-many value-object array traversal and navigation nodes
+that this phase does not yet lower raise a clear :class:`SqlGenError` so a
+mis-routed case fails loudly, never silently.
+
+Inheritance-family reads (table-per-hierarchy tag predicates / abstract-read
+superset projection, table-per-concrete-subtype union-all) are lowered here too
+(COR-3 Phase 7 increment 2, `m-sql` "Metamodel-extension lowering"): narrow
+resolution imports `parallax.core.inheritance` directly — a legal edge, since
+`modules.md` already reaches `m-inheritance` transitively through
+`m-op-algebra`. `validate_operation` runs upstream (the conformance engine /
+statement frontend), so a narrow reaching this compiler is already known
+position-valid; this module only resolves and lowers, it never re-validates.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never
 
+from parallax.core import inheritance
 from parallax.core.descriptor import (
     Attribute,
     Entity,
@@ -66,7 +76,14 @@ from parallax.core.op_algebra import (
     StringMatch,
 )
 
-__all__ = ["ResultForm", "SqlGenError", "Statement", "compile_read"]
+__all__ = [
+    "FamilyVariantPlan",
+    "ResultForm",
+    "SqlGenError",
+    "Statement",
+    "compile_read",
+    "family_variant_plan",
+]
 
 # The read's consumption lane (m-sql *Read projection*, *Result form*): a
 # ``row``-form read (the values lane) projects scalars only; an ``instance``-form
@@ -124,10 +141,26 @@ class _Ctx:
 
     def entity_attribute(self, attr_ref: str) -> Attribute:
         _, _, name = attr_ref.partition(".")
-        for attribute in self.entity.attributes:
+        for attribute in self._searchable_attributes():
             if attribute.name == name:
                 return attribute
         raise SqlGenError(f"{attr_ref!r} names no attribute on {self.entity.name}")
+
+    def _searchable_attributes(self) -> tuple[Attribute, ...]:
+        """The attributes an `attr_ref`'s class-name-qualified name may resolve to.
+
+        A plain entity resolves only against its own declared attributes
+        (unchanged). An inheritance participant resolves against its **whole
+        family** (`parallax.core.inheritance.family_attributes`): the read's own
+        predicate may reference a root-inherited attribute through a concrete
+        target's own class name, and a `narrow` branch predicate references that
+        branch's own attribute by its own class name — narrow-position validity
+        for the reference is enforced upstream (`m-op-algebra`'s model-aware
+        validator), so this need only widen the search, never re-validate scope.
+        """
+        if self.entity.inheritance is None:
+            return self.entity.attributes
+        return inheritance.family_attributes(self.meta, self.entity)
 
     def bind(self, value: object) -> None:
         self.binds.append(value)
@@ -145,8 +178,10 @@ def _projection(
     whole list for a **row-form** read (the values lane). The dialect maps each
     scalar to its select-list expression (a `bytes` column projects `encode(col,
     ?)`; every other column its plain reference). The framework-owned inheritance
-    tag / familyVariant (slots 2/3) are not reached here — inheritance-family reads
-    are refused in this phase (:func:`compile_read`).
+    tag / familyVariant (slots 2/3) are never reached here — an inheritance-family
+    read's projection is a distinct function of its resolved concrete-subtype
+    position, not this per-entity ``column_order`` view, and is built by
+    :func:`_compile_tph_read` / :func:`_compile_tpcs_read`.
 
     An **instance-form** read (the object lane) additionally projects slot 4: each
     declared top-level value object's backing document column, **last among all
@@ -204,12 +239,11 @@ def compile_read(
     of work concurrency mode.
     """
     entity = meta.entity(target)
-    if entity.inheritance is not None:
-        raise SqlGenError(
-            f"{target}: inheritance-family read lowering is deferred past the Phase-5 "
-            "read path to the snapshot branch (COR-3 Phase 7; ledger D-12)"
-        )
     predicate, distinct, order_keys, limit = _peel_directives(op)
+    if entity.inheritance is not None:
+        return _compile_inheritance_read(
+            entity, predicate, distinct, order_keys, limit, meta, dialect, target, result_form, lock
+        )
     ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
 
     proj_sql, proj_binds = _projection(entity, dialect, ctx.alias, result_form)
@@ -220,20 +254,34 @@ def compile_read(
     where_sql = _lower_predicate(predicate, ctx)
     if where_sql:
         parts.append(f"where {where_sql}")
+    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock)
+
+    return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+
+
+def _append_result_shape(
+    parts: list[str],
+    ctx: _Ctx,
+    distinct: bool,
+    order_keys: tuple[OrderKey, ...],
+    limit: int | None,
+    lock: LockMode | None,
+) -> None:
+    """Append the shared ``order by`` / ``limit`` / read-lock tail (m-sql), used by
+    every single-select read form (plain, table-per-hierarchy, and a
+    table-per-concrete-subtype read resolving to one concrete)."""
     if order_keys:
         # An authored key that omitted `direction` (serde `None`) lowers to the
         # schema default `asc`.
         terms = [f"{ctx.column_of(key.attr)} {key.direction or 'asc'}" for key in order_keys]
         parts.append("order by " + ", ".join(terms))
     if limit is not None:
-        parts.append(dialect.limit_clause())
+        parts.append(ctx.dialect.limit_clause())
         ctx.bind(limit)
     if lock == "locking" and not distinct:
         # The shared-row-lock suffix is the last thing in the statement (after any
         # `where` / `order by` / `limit`); a `distinct` object read suppresses it.
-        parts.append(dialect.read_lock_suffix(ctx.alias))
-
-    return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+        parts.append(ctx.dialect.read_lock_suffix(ctx.alias))
 
 
 def _peel_directives(op: Operation) -> tuple[Operation, bool, tuple[OrderKey, ...], int | None]:
@@ -275,6 +323,426 @@ def _reject_stacked(kind: str, seen: set[str]) -> None:
             "silently overwriting the outer clause"
         )
     seen.add(kind)
+
+
+# --------------------------------------------------------------------------- #
+# Inheritance-family reads (m-sql "Metamodel-extension lowering — inheritance"; #
+# COR-3 Phase 7 increment 2).                                                  #
+#                                                                               #
+# The read's queried **position** is the resolved effective concrete-subtype   #
+# set the whole read targets: a top-level `narrow` (the read's ENTIRE predicate #
+# after peeling result-shaping directives) replaces `targetEntity`'s own        #
+# position with its resolved `to` set; a `narrow` reached anywhere else (nested #
+# inside and/or/not/group) is a local BRANCH guard and never changes the read's #
+# own position (`m-inheritance-015`'s `or` of two narrowed branches is the      #
+# corpus witness — the projection and the whole-family "no tag" rule stay keyed #
+# to `targetEntity`, only each branch's own tag guard is injected).             #
+# --------------------------------------------------------------------------- #
+def _narrow_effective_set(meta: Metamodel, to: Sequence[str]) -> tuple[str, ...]:
+    """A narrow's resolved, canonically alphabetical effective concrete set.
+
+    `validate_operation` runs upstream and guarantees the resolved set is
+    non-empty and a subset of the active position (`m-op-algebra` "the four-step
+    validation rule") before this compiler ever sees the operation, so this need
+    only resolve and canonicalize — never re-validate.
+    """
+    resolved: set[str] = set()
+    for name in to:
+        resolved.update(inheritance.effective_concrete_subtypes(meta, name))
+    return tuple(sorted(resolved))
+
+
+def _superset_columns(meta: Metamodel, position: Sequence[str]) -> list[tuple[Attribute, str]]:
+    """The stable superset column list for a read over ``position`` (m-sql
+    *Abstract-read projection* / *union-all lowering*): each ancestor's own
+    attributes in ancestry order, then each position concrete's own attributes in
+    canonical alphabetical order — paired with the declaring entity's name so a
+    table-per-concrete-subtype branch can tell which columns it physically owns.
+    """
+    columns: list[tuple[Attribute, str]] = []
+    for ancestor in inheritance.ancestor_chain(meta, position):
+        columns.extend((attribute, ancestor.name) for attribute in ancestor.attributes)
+    for name in sorted(position):
+        entity = meta.entity(name)
+        columns.extend((attribute, entity.name) for attribute in entity.attributes)
+    return columns
+
+
+def _superset_value_objects(meta: Metamodel, position: Sequence[str]) -> list[ValueObject]:
+    """The value objects reachable from ``position``, same ordering rule as
+    :func:`_superset_columns` (ancestry prefix, then alphabetical own blocks)."""
+    value_objects: list[ValueObject] = []
+    for ancestor in inheritance.ancestor_chain(meta, position):
+        value_objects.extend(ancestor.value_objects)
+    for name in sorted(position):
+        value_objects.extend(meta.entity(name).value_objects)
+    return value_objects
+
+
+def _compile_inheritance_read(
+    entity: Entity,
+    predicate: Operation,
+    distinct: bool,
+    order_keys: tuple[OrderKey, ...],
+    limit: int | None,
+    meta: Metamodel,
+    dialect: Dialect,
+    target: str,
+    result_form: ResultForm,
+    lock: LockMode | None,
+) -> Statement:
+    """Dispatch an inheritance-family read to its strategy's lowering (m-inheritance
+    admits exactly two strategies; a third is rejected long before SQL, by the
+    model-aware descriptor validator)."""
+    root = inheritance.family_root(meta, entity)
+    assert root.inheritance is not None  # a family root always carries its own block
+    strategy = root.inheritance.strategy
+    if strategy == "table-per-hierarchy":
+        return _compile_tph_read(
+            entity,
+            root,
+            predicate,
+            distinct,
+            order_keys,
+            limit,
+            meta,
+            dialect,
+            target,
+            result_form,
+            lock,
+        )
+    if strategy == "table-per-concrete-subtype":
+        return _compile_tpcs_read(
+            entity, predicate, distinct, order_keys, limit, meta, dialect, target, result_form, lock
+        )
+    # m-inheritance admits only the two strategies above; a descriptor failing to
+    # declare one is refused by the model-aware validator long before a read
+    # reaches this compiler.
+    raise SqlGenError(
+        f"{root.name}: unrecognized inheritance strategy {strategy!r}"
+    )  # pragma: no cover
+
+
+def _compile_tph_read(
+    entity: Entity,
+    root: Entity,
+    predicate: Operation,
+    distinct: bool,
+    order_keys: tuple[OrderKey, ...],
+    limit: int | None,
+    meta: Metamodel,
+    dialect: Dialect,
+    target: str,
+    result_form: ResultForm,
+    lock: LockMode | None,
+) -> Statement:
+    """Table-per-hierarchy: one shared correlated `EXISTS`-free single-table SELECT
+    (m-sql "Inheritance — table-per-hierarchy lowering").
+
+    The tag PREDICATE (none / `=` / `in`) is keyed purely to the resolved
+    position's SIZE — one concrete lowers to `=` whether reached by a direct
+    concrete `targetEntity` or a narrow, several lower to `in`, and only an
+    untouched abstract-**root** `targetEntity` (no top-level narrow at all) gets
+    no tag predicate at all. The raw tag column PROJECTION (slot 2) is instead
+    keyed to whether `targetEntity` itself is abstract — independent of the
+    narrow's resolved cardinality (`m-inheritance-012`: `Animal` narrowed to the
+    single concrete `Dog` still projects `t0.kind` and still carries
+    `familyVariant`, because the caller queried the polymorphic `Animal`
+    position). These are deliberately two different conditions.
+    """
+    assert root.inheritance is not None
+    tag_col = root.inheritance.tag_column
+    if tag_col is None:  # pragma: no cover - a validated TPH root always declares one
+        raise SqlGenError(f"{root.name}: table-per-hierarchy root declares no tag column")
+    abstract_target = entity.inheritance is not None and entity.inheritance.role in (
+        "root",
+        "abstract-subtype",
+    )
+
+    if isinstance(predicate, Narrow):
+        position = _narrow_effective_set(meta, predicate.to)
+        inner = predicate.operand
+        tag_kind = "eq" if len(position) == 1 else "in"
+    else:
+        position = tuple(inheritance.effective_concrete_subtypes(meta, target))
+        inner = predicate
+        is_bare_root = entity.inheritance is not None and entity.inheritance.role == "root"
+        tag_kind = "none" if is_bare_root else ("eq" if len(position) == 1 else "in")
+
+    table = meta.entity(position[0]).table
+    if table is None:  # pragma: no cover - a validated TPH concrete always declares one
+        raise SqlGenError(f"{position[0]}: table-per-hierarchy concrete subtype declares no table")
+
+    ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
+    proj_exprs: list[str] = []
+    for attribute, _owner in _superset_columns(meta, position):
+        expr, extra = dialect.project(ctx.alias, attribute.column, attribute.type)
+        proj_exprs.append(expr)
+        ctx.binds.extend(extra)
+    if abstract_target:
+        # Slot 2 (m-sql resolved Q6): the raw tag column, projected iff the read's
+        # OWN targetEntity is abstract — never derived from the resolved position.
+        proj_exprs.append(dialect.qualified(ctx.alias, tag_col))
+    if result_form == "instance":
+        proj_exprs.extend(
+            dialect.qualified(ctx.alias, vo.column)
+            for vo in _superset_value_objects(meta, position)
+        )
+
+    select = f"select {'distinct ' if distinct else ''}{', '.join(proj_exprs)}"
+    parts = [select, f"from {table} {ctx.alias}"]
+
+    inner_sql = _lower_predicate(inner, ctx)
+    where_terms = [inner_sql] if inner_sql else []
+    if tag_kind != "none":
+        where_terms.append(_tph_tag_fragment(ctx, meta, tag_col, tag_kind, position))
+    if where_terms:
+        parts.append("where " + " and ".join(where_terms))
+
+    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock)
+    return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+
+
+def _tph_tag_fragment(
+    ctx: _Ctx, meta: Metamodel, tag_col: str, tag_kind: str, position: Sequence[str]
+) -> str:
+    """The tag-predicate fragment for ``position`` (m-sql *Tag-predicate
+    selection*): `t0.<tag> = ?` for one concrete, `t0.<tag> in (?, …)` for several
+    — the `in` list in ``position``'s already-canonical alphabetical order, so its
+    tag values follow suit. Binds append to ``ctx`` in that same order.
+    """
+    col = ctx.dialect.qualified(ctx.alias, tag_col)
+    tag_values = [_tag_value(meta, name) for name in position]
+    if tag_kind == "eq":
+        ctx.bind(tag_values[0])
+        return f"{col} = ?"
+    holes = ", ".join("?" for _ in tag_values)
+    for value in tag_values:
+        ctx.bind(value)
+    return f"{col} in ({holes})"
+
+
+def _tag_value(meta: Metamodel, concrete_name: str) -> str:
+    concrete = meta.entity(concrete_name)
+    if concrete.inheritance is None or concrete.inheritance.tag_value is None:
+        raise SqlGenError(  # pragma: no cover - a validated TPH concrete always declares one
+            f"{concrete_name}: table-per-hierarchy concrete subtype declares no tagValue"
+        )
+    return concrete.inheritance.tag_value
+
+
+def _lower_branch_narrow(narrow: Narrow, ctx: _Ctx) -> str:
+    """A `narrow` node reached MID-predicate (nested inside and/or/not/group) — a
+    **grouped branch predicate** (m-sql "Grouped branch predicates"): the
+    branch's own operand composes with its own tag guard via `and`, and the
+    composition is wrapped in parens whenever there is a branch predicate to
+    disambiguate against a sibling branch joined by `or` (`m-inheritance-015`).
+    A single narrow with a branch predicate and nothing to combine against
+    needs no grouping — but that is the **top-level** narrow shape, intercepted
+    before `_lower_predicate` ever runs (`_compile_tph_read`); every narrow this
+    function receives is nested, so it always groups when it has two terms.
+    """
+    root = inheritance.family_root(ctx.meta, ctx.entity)
+    if root.inheritance is None or root.inheritance.strategy != "table-per-hierarchy":
+        raise SqlGenError(
+            "a narrow nested inside and/or/not/group over a table-per-concrete-subtype "
+            "family has no goldened lowering yet"
+        )
+    tag_col = root.inheritance.tag_column
+    if tag_col is None:  # pragma: no cover - a validated TPH root always declares one
+        raise SqlGenError(f"{root.name}: table-per-hierarchy root declares no tag column")
+    position = _narrow_effective_set(ctx.meta, narrow.to)
+    tag_kind = "eq" if len(position) == 1 else "in"
+    branch_sql = _lower_predicate(narrow.operand, ctx)
+    tag_sql = _tph_tag_fragment(ctx, ctx.meta, tag_col, tag_kind, position)
+    if not branch_sql:
+        return tag_sql
+    return f"({branch_sql} and {tag_sql})"
+
+
+def _compile_tpcs_read(
+    entity: Entity,
+    predicate: Operation,
+    distinct: bool,
+    order_keys: tuple[OrderKey, ...],
+    limit: int | None,
+    meta: Metamodel,
+    dialect: Dialect,
+    target: str,
+    result_form: ResultForm,
+    lock: LockMode | None,
+) -> Statement:
+    """Table-per-concrete-subtype (m-sql "Inheritance — table-per-concrete-subtype
+    lowering"): a position resolving to ONE concrete is an ordinary single-table
+    read (no union, no `familyVariant`) regardless of how that single concrete was
+    reached; a position resolving to two or more concretes lowers to canonical
+    `union all`, one branch per concrete in alphabetical order, every branch
+    restarting its own alias at `t0` and projecting the same stable superset with
+    `cast(null as <type>)` placeholders for columns it does not own, plus its own
+    `familyVariant` subtype-name literal. Unlike table-per-hierarchy, this
+    single-vs-several split is the ONLY thing that decides `familyVariant` here —
+    there is no table-per-concrete-subtype analogue of the abstract-`targetEntity`
+    slot-2 rule, because a resolved single concrete has no shared table to
+    discriminate and no sibling branch to distinguish it from (m-sql, explicit).
+    """
+    if isinstance(predicate, Narrow):
+        position = _narrow_effective_set(meta, predicate.to)
+        inner = predicate.operand
+    else:
+        position = tuple(inheritance.effective_concrete_subtypes(meta, target))
+        inner = predicate
+
+    if len(position) == 1:
+        return _compile_tpcs_single(
+            meta.entity(position[0]),
+            inner,
+            distinct,
+            order_keys,
+            limit,
+            meta,
+            dialect,
+            entity,
+            result_form,
+            lock,
+            position,
+        )
+
+    if distinct or order_keys or limit is not None or lock is not None:
+        raise SqlGenError(
+            "distinct / orderBy / limit / a read-lock suffix over a table-per-concrete-"
+            "subtype union-all read (2+ effective concretes) has no goldened lowering yet"
+        )
+    if result_form == "instance":
+        raise SqlGenError(
+            "instance-form (value-object document) projection over a table-per-concrete-"
+            "subtype union-all read has no goldened lowering yet"
+        )
+
+    columns = _superset_columns(meta, position)
+    branch_sqls: list[str] = []
+    all_binds: list[object] = []
+    for name in position:
+        concrete = meta.entity(name)
+        if concrete.table is None:  # pragma: no cover - a validated TPCS concrete always has one
+            raise SqlGenError(f"{name}: table-per-concrete-subtype subtype declares no table")
+        owned = {ancestor.name for ancestor in inheritance.ancestor_chain(meta, (name,))} | {name}
+        branch_ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
+        proj_exprs: list[str] = []
+        for attribute, owner in columns:
+            if owner in owned:
+                expr, extra = dialect.project(branch_ctx.alias, attribute.column, attribute.type)
+                proj_exprs.append(expr)
+                branch_ctx.binds.extend(extra)
+            else:
+                cast_type = dialect.null_cast(attribute.type, attribute.max_length)
+                proj_exprs.append(f"cast(null as {cast_type}) {attribute.column}")
+        # Slot 3 (the settled TPH/TPCS asymmetry): TPCS projects the variant NAME
+        # literal per branch directly — there is no tag column to derive it from.
+        proj_exprs.append(f"'{name}' family_variant")
+        select = f"select {', '.join(proj_exprs)}"
+        parts = [select, f"from {concrete.table} {branch_ctx.alias}"]
+        where_sql = _lower_predicate(inner, branch_ctx)
+        if where_sql:
+            parts.append(f"where {where_sql}")
+        branch_sqls.append(" ".join(parts))
+        all_binds.extend(branch_ctx.binds)
+
+    return _normalize(Statement(" union all ".join(branch_sqls), tuple(all_binds)))
+
+
+def _compile_tpcs_single(
+    concrete: Entity,
+    inner: Operation,
+    distinct: bool,
+    order_keys: tuple[OrderKey, ...],
+    limit: int | None,
+    meta: Metamodel,
+    dialect: Dialect,
+    entity: Entity,
+    result_form: ResultForm,
+    lock: LockMode | None,
+    position: Sequence[str],
+) -> Statement:
+    """A table-per-concrete-subtype read resolving to exactly one concrete: an
+    ordinary single-table read of that subtype's own table, no tag, no union, no
+    `familyVariant` — attribute resolution still widens across the family (`ctx.entity`
+    stays the read's own `targetEntity`, e.g. an abstract position narrowed down to
+    this one concrete), matching the table-per-hierarchy concrete-target form.
+    """
+    if concrete.table is None:  # pragma: no cover - a validated TPCS concrete always has one
+        raise SqlGenError(f"{concrete.name}: table-per-concrete-subtype subtype declares no table")
+    ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
+    proj_exprs: list[str] = []
+    for attribute, _owner in _superset_columns(meta, position):
+        expr, extra = dialect.project(ctx.alias, attribute.column, attribute.type)
+        proj_exprs.append(expr)
+        ctx.binds.extend(extra)
+    if result_form == "instance":
+        proj_exprs.extend(
+            dialect.qualified(ctx.alias, vo.column)
+            for vo in _superset_value_objects(meta, position)
+        )
+    select = f"select {'distinct ' if distinct else ''}{', '.join(proj_exprs)}"
+    parts = [select, f"from {concrete.table} {ctx.alias}"]
+    where_sql = _lower_predicate(inner, ctx)
+    if where_sql:
+        parts.append(f"where {where_sql}")
+    _append_result_shape(parts, ctx, distinct, order_keys, limit, lock)
+    return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+
+
+# --------------------------------------------------------------------------- #
+# familyVariant materialization plan (engine-facing; m-case-format /            #
+# m-conformance-adapter): TPH derives it from the projected raw tag column at   #
+# row construction, TPCS reads it straight from the projected literal column.   #
+# A concrete-target read (TPH) or a single-resolved-position read (TPCS)        #
+# carries neither, and `family_variant_plan` returns `None`.                    #
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True, slots=True)
+class FamilyVariantPlan:
+    """How the conformance engine derives ``familyVariant`` for one read's wire
+    rows, or graph leaves (m-case-format). Never used for a concrete-target read.
+    """
+
+    kind: Literal["tag", "literal"]
+    column: str
+    tag_map: Mapping[str, str] | None = None
+
+
+def family_variant_plan(meta: Metamodel, target: str, op: Operation) -> FamilyVariantPlan | None:
+    """The read's ``familyVariant`` materialization plan, or ``None`` when the
+    read carries none.
+
+    Mirrors `compile_read`'s own top-level-narrow / position resolution so the
+    engine's row post-processing can never drift from what was actually
+    projected: a table-per-hierarchy read materializes it whenever `target`
+    itself is abstract (regardless of a narrow's resolved cardinality,
+    `m-inheritance-012`); a table-per-concrete-subtype read carries it only when
+    the resolved position spans two or more concretes (the union-all form).
+    """
+    entity = meta.entity(target)
+    if entity.inheritance is None:
+        return None
+    predicate, *_directives = _peel_directives(op)
+    root = inheritance.family_root(meta, entity)
+    assert root.inheritance is not None
+    if isinstance(predicate, Narrow):
+        position = _narrow_effective_set(meta, predicate.to)
+    else:
+        position = tuple(inheritance.effective_concrete_subtypes(meta, target))
+
+    if root.inheritance.strategy == "table-per-hierarchy":
+        if entity.inheritance.role not in ("root", "abstract-subtype"):
+            return None
+        tag_col = root.inheritance.tag_column
+        assert tag_col is not None
+        family_concretes = inheritance.effective_concrete_subtypes(meta, root.name)
+        tag_map = {_tag_value(meta, name): name for name in family_concretes}
+        return FamilyVariantPlan(kind="tag", column=tag_col, tag_map=tag_map)
+    # table-per-concrete-subtype
+    if len(position) <= 1:
+        return None
+    return FamilyVariantPlan(kind="literal", column="family_variant")
 
 
 # --------------------------------------------------------------------------- #
@@ -321,10 +789,10 @@ def _lower_predicate(op: Operation, ctx: _Ctx) -> str:
                 "is deferred past the Phase-5 read path to the snapshot branch's "
                 "value-object materialization (COR-3 Phase 7; ledger D-12)"
             )
-        case Narrow() | Navigate() | Exists() | NotExists() | DeepFetch():
-            raise SqlGenError(
-                "navigation / narrow / deep-fetch lowering lands with the snapshot branch"
-            )
+        case Narrow():
+            return _lower_branch_narrow(op, ctx)
+        case Navigate() | Exists() | NotExists() | DeepFetch():
+            raise SqlGenError("navigation / deep-fetch lowering lands with the snapshot branch")
         case AsOf() | AsOfRange() | History():
             # Temporal reads are lowered by `m-temporal-read` (auto-injected as-of
             # predicate + default-latest injection) into ordinary predicate nodes

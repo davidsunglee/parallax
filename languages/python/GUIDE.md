@@ -189,10 +189,48 @@ self-contained without a system `libpq`.
   Phase 8). Deferred: 4 rejected cases tagged `m-navigate`/`m-deep-fetch` stay
   unreachable until increments 3/5 land (their owning modules aren't in
   `IMPLEMENTED_MODULES` yet, though `validate_operation` already classifies
-  them correctly). **Next:** increments 2–4 (inheritance read lowering,
-  navigate lowering, to-many value-object array traversal — mutually
-  independent), then increment 5 (deep fetch + materialization + graph
-  observations), then increment 6 (developer surface + ledger closures).
+  them correctly).
+- **Phase 7 increment 2 COMPLETE — inheritance read lowering.** `compile_read`
+  (`parallax.core.sql_gen`) lowers both inheritance strategies directly (the
+  D-12 refusal is gone): table-per-hierarchy tag-predicate selection (whole
+  family → no predicate; one concrete → `=`; several, or any `narrow` → `in`,
+  canonical alphabetical order), the abstract-read superset projection
+  (ancestry prefix, then each concrete's own block alphabetically, then the
+  raw tag column — projected iff `targetEntity` itself is abstract, regardless
+  of a narrow's resolved cardinality), grouped branch predicates for a narrow
+  nested inside `and`/`or`/`not`/`group`, and table-per-concrete-subtype
+  lowering (a single resolved concrete is an ordinary read; two or more lower
+  to canonical `union all`, one branch per concrete, each restarting its own
+  alias at `t0` and NULL-casting columns it does not own, plus its own
+  `familyVariant` literal). `parallax.core.inheritance` gained the shared
+  ancestry helpers (`ancestor_chain`, `family_attributes`, `family_root`) both
+  `sql_gen` and provisioning reuse — the `m-sql → m-inheritance` edge is legal
+  (`modules.md`'s "Notable directions": `m-sql` already reaches `m-inheritance`
+  transitively through `m-op-algebra`), confirmed by `lint-imports`. The
+  conformance engine (`run_read_case`) materializes `familyVariant` from the
+  projected tag column via the family's tag→subtype-name map (table-per-
+  hierarchy) or renames the projected literal column (table-per-concrete-
+  subtype); a concrete-target (or single-resolved-position table-per-concrete-
+  subtype) read carries neither. Provisioning (`provision.py`) now derives
+  inheritance-aware DDL and fixture loading: one shared table per
+  table-per-hierarchy family (root + every abstract-subtype's own columns,
+  every concrete's own columns nullable, plus the tag column) created once,
+  and one table per table-per-concrete-subtype concrete carrying its full
+  ancestry-derived chain; fixture rows resolve inherited members by name and
+  bind a table-per-hierarchy tag column from the concrete's own `tagValue`,
+  never a fixture-authored field. The 17 in-slice inheritance reads
+  (`m-inheritance-001–006/011–017` over payment.yaml/animal.yaml,
+  `-050–053` over document.yaml) flip from reasoned-skip to byte-exact
+  compile + row-graded run, and two temporal-composed abstract reads
+  (`m-inheritance-092`/`-093`, corpus-commented "Phase 8 temporal composition")
+  flip alongside them as an unplanned but verified-correct side effect of the
+  lowering being strategy-shaped rather than temporal-aware — leaving them
+  silently un-exercised once they answered `ok` would itself be a D-11-style
+  gap. Updated counts: unit lane 1273, compile sweep 129 (+19), `pg-full` run
+  sweep 114 passed (+19, real Postgres). **Next:** increments 3–4 (navigate
+  lowering, to-many value-object array traversal — mutually independent), then
+  increment 5 (deep fetch + materialization + graph observations), then
+  increment 6 (developer surface + ledger closures).
 
 ## Blockers
 

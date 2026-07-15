@@ -9,6 +9,20 @@ over the node union; dialect variation enters only through the injected
 
 from __future__ import annotations
 
-from parallax.core.sql_gen.compile import ResultForm, SqlGenError, Statement, compile_read
+from parallax.core.sql_gen.compile import (
+    FamilyVariantPlan,
+    ResultForm,
+    SqlGenError,
+    Statement,
+    compile_read,
+    family_variant_plan,
+)
 
-__all__ = ["ResultForm", "SqlGenError", "Statement", "compile_read"]
+__all__ = [
+    "FamilyVariantPlan",
+    "ResultForm",
+    "SqlGenError",
+    "Statement",
+    "compile_read",
+    "family_variant_plan",
+]

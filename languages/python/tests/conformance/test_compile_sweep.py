@@ -65,6 +65,25 @@ _TEMPORAL_READ_ROW_FORM: Final[frozenset[str]] = frozenset(
 _TEMPORAL_VALUE_OBJECT_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (28, 29, 30, 31)
 )
+# Inheritance-family reads (COR-3 Phase 7 increment 2, ledger D-12 closes for reads):
+# table-per-hierarchy tag-predicate / abstract-superset / narrow / grouped-branch-OR
+# reads over payment.yaml and animal.yaml (001-006, 011-017), and table-per-concrete-
+# subtype single-concrete + union-all reads over document.yaml (050-053). All row-form
+# — compiled and run below.
+_INHERITANCE_READS: Final[frozenset[str]] = frozenset(
+    f"m-inheritance-{n:03d}" for n in (*range(1, 7), *range(11, 18), 50, 51, 52, 53)
+)
+# Bonus: the two temporal-composed abstract reads (`m-inheritance-092`/`-093`, tagged
+# both `m-inheritance` and `m-temporal-read`) are corpus-commented "Phase 8 temporal
+# composition" and were never a design target of increment 2 — but this increment's
+# lowering is not temporal-specific, and both happen to compile and run byte-exact
+# (092 degenerates to the plain "abstract root, no tag" case; 093's per-branch as-of
+# is just `inner` applied identically to every union-all branch, m-sql "Temporal
+# abstract reads"). Leaving them silently un-exercised now that they answer `ok`
+# would be exactly the D-11 gap this sweep's honesty check forbids, so they flip too.
+_INHERITANCE_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
+    {"m-inheritance-092", "m-inheritance-093"}
+)
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _VALUE_OBJECT_PREDICATE_READS
@@ -72,6 +91,8 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _VALUE_OBJECT_MATERIALIZATION_READS
     | _TEMPORAL_READ_ROW_FORM
     | _TEMPORAL_VALUE_OBJECT_READS
+    | _INHERITANCE_READS
+    | _INHERITANCE_TEMPORAL_READS
 )
 
 # The keyed, non-temporal unit-of-work write cases M4 grades byte-exact (COR-3 Phase 6
@@ -137,10 +158,10 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     permanent LANE classification, not a forward promise: the single-connection
     trigger is graded end-to-end by the error run lane, the two-connection
     choreography by the provider proof, (2) the other non-read shapes, whose compile
-    lands with the write path (Phase 6/8), and (3) the reads the Phase-5 compiler
-    refuses with a loud ``SqlGenError`` — inheritance-family reads and to-many
-    value-object array traversal — deferred past the single-entity read path to the
-    snapshot branch (ledger D-12).
+    lands with the write path (Phase 6/8), and (3) the reads the compiler still
+    refuses with a loud ``SqlGenError`` — to-many value-object array traversal,
+    deferred past the single-entity read path to the snapshot branch (ledger D-12).
+    Inheritance-family reads closed out of this ledger entry in Phase 7 increment 2.
     """
     if case.shape == "error":
         # An error case's trigger DML is authored, not compiled (m-case-format), so

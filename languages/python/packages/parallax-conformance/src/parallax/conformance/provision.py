@@ -21,8 +21,9 @@ from typing import TYPE_CHECKING, cast
 import yaml
 
 from parallax.conformance import case_format
+from parallax.core import inheritance
 from parallax.core.db_port import DbPort, JsonDocument
-from parallax.core.descriptor import Entity, Metamodel, column_order
+from parallax.core.descriptor import Attribute, Entity, Metamodel, column_order
 from parallax.core.dialect import POSTGRES, Dialect
 
 if TYPE_CHECKING:
@@ -49,10 +50,20 @@ def _tables(meta: Metamodel) -> list[tuple[Entity, str]]:
 def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]:
     """Descriptor-derived ``create table`` DDL for every row-owning table.
 
-    A table is created once even when several entities map to it (the
-    table-per-hierarchy shared table). Merging the full shared-table column set
-    and the tag column is deferred with inheritance provisioning (COR-3 Phase 6+);
-    the run lane provisions non-inheritance models only.
+    A table is created once even when several entities map to it. For a
+    non-inheritance entity that is the plain per-entity column set. For an
+    inheritance participant (m-inheritance) it is derived from the family: a
+    table-per-hierarchy table merges the WHOLE family sharing it — every
+    concrete's own columns (nullable — a card row leaves the cash-only column
+    null and vice versa), the inherited (root + abstract-subtype) columns, and
+    the framework-owned tag column, physically nullable-free since every row
+    carries one — created exactly once, from the first entity `_tables`
+    encounters mapped to that table (its declaration-order position in the
+    model file); a table-per-concrete-subtype table is one concrete's own
+    ancestry-derived full column chain (root → … → that concrete), no tag.
+    DDL is not asserted byte-exact anywhere in the corpus (`m-case-format`), so
+    column order and the tag column's own type are this provisioning path's own
+    choice, not a golden.
 
     A **temporal** entity's physical primary key is its business key **plus each
     as-of axis's ``fromColumn``** (``m-descriptor``): many milestone rows share one
@@ -66,21 +77,101 @@ def schema_statements(meta: Metamodel, dialect: Dialect = POSTGRES) -> list[str]
         if table in seen_tables:
             continue
         seen_tables.add(table)
-        columns: list[str] = []
-        pk_columns: list[str] = []
-        for attribute in entity.attributes:
-            column_type = dialect.column_type(attribute.type, attribute.max_length)
-            columns.append(f"{dialect.quote(attribute.column)} {column_type}")
+        if entity.inheritance is None:
+            statements.append(_plain_table_ddl(entity, table, dialect))
+        else:
+            statements.append(_inheritance_table_ddl(meta, entity, table, dialect))
+    return statements
+
+
+def _column_ddl(attribute: Attribute, dialect: Dialect) -> str:
+    column_type = dialect.column_type(attribute.type, attribute.max_length)
+    return f"{dialect.quote(attribute.column)} {column_type}"
+
+
+def _plain_table_ddl(entity: Entity, table: str, dialect: Dialect) -> str:
+    columns: list[str] = []
+    pk_columns: list[str] = []
+    for attribute in entity.attributes:
+        columns.append(_column_ddl(attribute, dialect))
+        if attribute.primary_key:
+            pk_columns.append(dialect.quote(attribute.column))
+    for value_object in entity.value_objects:
+        columns.append(f"{dialect.quote(value_object.column)} jsonb")
+    pk_columns.extend(dialect.quote(aoa.from_column) for aoa in entity.as_of_attributes)
+    if pk_columns:
+        columns.append(f"primary key ({', '.join(pk_columns)})")
+    columns.extend(_unique_constraints(entity, pk_columns, dialect))
+    return f"create table {dialect.quote(table)} ({', '.join(columns)})"
+
+
+# A framework-owned tag column is not a declared attribute (m-inheritance), so
+# provisioning fixes its own physical type — wide enough for any authored
+# tagValue and never asserted byte-exact (no DDL golden, `m-case-format`).
+_TAG_COLUMN_TYPE = "string"
+_TAG_COLUMN_MAX_LENGTH = 32
+
+
+def _inheritance_table_ddl(meta: Metamodel, entity: Entity, table: str, dialect: Dialect) -> str:
+    root = inheritance.family_root(meta, entity)
+    assert root.inheritance is not None
+    if root.inheritance.strategy == "table-per-hierarchy":
+        return _tph_table_ddl(meta, root, table, dialect)
+    return _tpcs_table_ddl(meta, entity, dialect)
+
+
+def _tph_table_ddl(meta: Metamodel, root: Entity, table: str, dialect: Dialect) -> str:
+    assert root.inheritance is not None
+    concretes = sorted(
+        (e for e in meta.entities if e.inheritance is not None and e.table == table),
+        key=lambda e: e.name,
+    )
+    columns: list[str] = []
+    pk_columns: list[str] = []
+    for attribute in root.attributes:
+        columns.append(_column_ddl(attribute, dialect))
+        if attribute.primary_key:
+            pk_columns.append(dialect.quote(attribute.column))
+    tag_col = root.inheritance.tag_column
+    if tag_col is not None:
+        columns.append(
+            f"{dialect.quote(tag_col)} "
+            f"{dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)}"
+        )
+    for ancestor in inheritance.ancestor_chain(meta, tuple(c.name for c in concretes)):
+        if ancestor.name == root.name:
+            continue  # root's own columns already emitted above, in their declared order
+        for attribute in ancestor.attributes:
+            columns.append(_column_ddl(attribute, dialect))
+    for concrete in concretes:
+        for attribute in concrete.attributes:
+            columns.append(_column_ddl(attribute, dialect))
+    for value_object in root.value_objects:
+        columns.append(f"{dialect.quote(value_object.column)} jsonb")
+    pk_columns.extend(dialect.quote(aoa.from_column) for aoa in root.as_of_attributes)
+    if pk_columns:
+        columns.append(f"primary key ({', '.join(pk_columns)})")
+    columns.extend(_unique_constraints(root, pk_columns, dialect))
+    return f"create table {dialect.quote(table)} ({', '.join(columns)})"
+
+
+def _tpcs_table_ddl(meta: Metamodel, concrete: Entity, dialect: Dialect) -> str:
+    assert concrete.table is not None
+    chain = (*inheritance.ancestor_chain(meta, (concrete.name,)), concrete)
+    columns: list[str] = []
+    pk_columns: list[str] = []
+    for member in chain:
+        for attribute in member.attributes:
+            columns.append(_column_ddl(attribute, dialect))
             if attribute.primary_key:
                 pk_columns.append(dialect.quote(attribute.column))
-        for value_object in entity.value_objects:
-            columns.append(f"{dialect.quote(value_object.column)} jsonb")
-        pk_columns.extend(dialect.quote(aoa.from_column) for aoa in entity.as_of_attributes)
-        if pk_columns:
-            columns.append(f"primary key ({', '.join(pk_columns)})")
-        columns.extend(_unique_constraints(entity, pk_columns, dialect))
-        statements.append(f"create table {dialect.quote(table)} ({', '.join(columns)})")
-    return statements
+    for value_object in concrete.value_objects:
+        columns.append(f"{dialect.quote(value_object.column)} jsonb")
+    pk_columns.extend(dialect.quote(aoa.from_column) for aoa in concrete.as_of_attributes)
+    if pk_columns:
+        columns.append(f"primary key ({', '.join(pk_columns)})")
+    columns.extend(_unique_constraints(concrete, pk_columns, dialect))
+    return f"create table {dialect.quote(concrete.table)} ({', '.join(columns)})"
 
 
 def _unique_constraints(entity: Entity, pk_columns: list[str], dialect: Dialect) -> list[str]:
@@ -115,38 +206,84 @@ def _unique_constraints(entity: Entity, pk_columns: list[str], dialect: Dialect)
     return constraints
 
 
+def _fixture_columns(
+    meta: Metamodel, entity: Entity
+) -> tuple[list[str], dict[str, tuple[str, bool]], tuple[str, object] | None]:
+    """The column order, member resolution map, and an optional (framework-owned)
+    tag assignment for one fixture-bearing entity.
+
+    A plain (non-inheritance) entity is unchanged: ``column_order`` and its own
+    attributes/value-objects. An inheritance participant's fixture rows carry
+    every ancestry-inherited member BY NAME (`m-case-format`: a Dog fixture row
+    authors ``name``/``ownerId`` — Animal's own — alongside its own
+    ``barkVolume``), so the column order and resolution map are derived from the
+    full ancestry chain (root → … → this concrete) instead of the entity's own
+    ``column_order`` view. A table-per-hierarchy concrete additionally always
+    binds its tag column from its own declared ``tagValue`` — never authored in
+    the fixture row (m-inheritance: "framework-owned metadata, never authored").
+    """
+    if entity.inheritance is None:
+        member_by_column: dict[str, tuple[str, bool]] = {
+            attr.column: (attr.name, False) for attr in entity.attributes
+        }
+        member_by_column.update((vo.column, (vo.name, True)) for vo in entity.value_objects)
+        return list(column_order(entity)), member_by_column, None
+
+    chain = (*inheritance.ancestor_chain(meta, (entity.name,)), entity)
+    col_order: list[str] = []
+    member_by_column = {}
+    for member in chain:
+        for attribute in member.attributes:
+            col_order.append(attribute.column)
+            member_by_column[attribute.column] = (attribute.name, False)
+        for vo in member.value_objects:
+            col_order.append(vo.column)
+            member_by_column[vo.column] = (vo.name, True)
+
+    tag_assignment: tuple[str, object] | None = None
+    root = inheritance.family_root(meta, entity)
+    if root.inheritance is not None and root.inheritance.strategy == "table-per-hierarchy":
+        tag_col = root.inheritance.tag_column
+        tag_value = entity.inheritance.tag_value
+        if tag_col is not None and tag_value is not None:
+            tag_assignment = (tag_col, tag_value)
+    return col_order, member_by_column, tag_assignment
+
+
 def fixture_statements(
     meta: Metamodel, fixtures: Mapping[str, object], dialect: Dialect = POSTGRES
 ) -> list[tuple[str, list[object]]]:
     """``insert`` statements for the model's fixtures, in descriptor column order.
 
     Columns and binds follow the descriptor ``column_order`` derivation (the same
-    canonical physical order DDL and row-write lowering use), never the fixture
-    mapping's key order — so re-spelling a fixture row with permuted keys emits
-    byte-identical SQL (python.md §6 ``loadFixtures``). A physical column with no
-    member in the row (an omitted nullable, or the inheritance tag column) is
-    skipped, so only authored members bind.
+    canonical physical order DDL and row-write lowering use) for a plain entity —
+    an inheritance participant's ancestry-derived order, `_fixture_columns` —
+    never the fixture mapping's key order, so re-spelling a fixture row with
+    permuted keys emits byte-identical SQL (python.md §6 ``loadFixtures``). A
+    physical column with no member in the row (an omitted nullable) is skipped,
+    so only authored members bind; a table-per-hierarchy concrete's tag column is
+    always bound first, derived from its own ``tagValue`` (never a fixture member).
     """
     statements: list[tuple[str, list[object]]] = []
     for entity, table in _tables(meta):
         rows = fixtures.get(entity.name)
         if not isinstance(rows, list):
             continue
-        # column -> (member name, is-value-object) for the row-order resolution.
-        member_by_column: dict[str, tuple[str, bool]] = {
-            attr.column: (attr.name, False) for attr in entity.attributes
-        }
-        member_by_column.update((vo.column, (vo.name, True)) for vo in entity.value_objects)
+        col_order, member_by_column, tag_assignment = _fixture_columns(meta, entity)
         for row in cast("list[object]", rows):
             if not isinstance(row, Mapping):
                 continue
             member_row = cast("Mapping[str, object]", row)
             columns: list[str] = []
             binds: list[object] = []
-            for column in column_order(entity):
+            if tag_assignment is not None:
+                tag_col, tag_value = tag_assignment
+                columns.append(dialect.quote(tag_col))
+                binds.append(tag_value)
+            for column in col_order:
                 member = member_by_column.get(column)
-                if member is None:  # pragma: no cover - inheritance provisioning is COR-3 Phase 6+
-                    continue  # a table-per-hierarchy tag column has no fixture member
+                if member is None:  # pragma: no cover - defends a malformed column plan
+                    continue
                 name, is_value_object = member
                 if name not in member_row:
                     continue  # fixture omits this (nullable) column

@@ -119,6 +119,26 @@ class Dialect:
         """Translate the canonical `?` placeholders to this driver's form (`%s`)."""
         return canonical_sql.replace("?", "%s")
 
+    # -- inheritance (m-inheritance / m-sql) -------------------------------- #
+    def null_cast(self, neutral_type: str, max_length: int | None) -> str:
+        """The ``CAST`` target-type spelling for a ``NULL`` placeholder column in a
+        table-per-concrete-subtype union-all branch (m-sql "table-per-concrete-
+        subtype lowering").
+
+        A distinct `m-dialect` decision from :meth:`column_type` (the DDL column
+        type), spelled independently rather than delegated: a bounded string casts
+        to Postgres ``varchar(n)`` (MariaDB ``char(n)`` — MariaDB's ``CAST`` grammar
+        rejects ``varchar``) and an unbounded string to ``text``, matching the DDL
+        mapping; a ``decimal`` casts to ``decimal(p, s)`` on every dialect —
+        identical to `~parallax.core.sql_gen.compile`'s nested-extraction cast, but
+        **not** :meth:`column_type`'s own ``numeric(p, s)`` DDL spelling.
+        """
+        if _base_type(neutral_type) == "decimal":
+            inner = neutral_type[len("decimal") :].strip("() ")
+            p, s = (part.strip() for part in inner.split(","))
+            return f"decimal({p}, {s})"
+        return self.column_type(neutral_type, max_length)
+
     # -- DDL type mapping -------------------------------------------------- #
     def column_type(self, neutral_type: str, max_length: int | None) -> str:
         """The concrete column type for a neutral type (used by DDL derivation)."""
