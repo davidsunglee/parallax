@@ -258,6 +258,13 @@ structurally enforces the `query-result-dependent` criterion the authored declar
 cannot. `describe` does not enumerate run-only cases — eligibility is a per-case
 property the runner reads from each case, not a capability claim.
 
+A **rejected**-shape case (`m-case-format`) is **implicitly** run-only, by construction
+rather than declaration: `then.statements` is disallowed for the shape, so it carries no
+golden SQL to compile. `compile` on a rejected case therefore answers the same
+`status: "run-only"` envelope with a `compile-run-only` diagnostic — a **shape-intrinsic**
+rule needing no per-case `compileEligibility` authoring, unlike the query-result-dependent
+run-only cases above.
+
 Example:
 
 ```json
@@ -382,6 +389,14 @@ assert different things:
   (`m-case-format`), which the single-connection `run` command cannot drive —
   the harness's provider choreography proves it instead, and an adapter asked
   to `run` one returns `error` with a diagnostic naming that lane.
+- a rejected case executes **no SQL** and requires **no provisioning or
+  dialect**: an adapter whose claim includes the `rejected` caseShape **MUST**
+  report `rejectedRule` — the classified normative rule identifier
+  (`m-op-algebra` / `m-navigate` / `m-value-object` / `m-inheritance`) the
+  input was refused with — with `roundTrips: 0`. This obligation is
+  unconditional for every claimant of the shape; the schema field itself stays
+  optional and additive, exactly like `errorClass` before it, so an existing
+  run output that never claims `rejected` stays valid unchanged.
 
 ### Lifecycle observations (`stateChecks`, `errors`)
 
@@ -498,6 +513,9 @@ same rules as `m-case-format`:
 - conflict affected rows compare to `then.affectedRows`
 - round trips compare to the case's declared `then.roundTrips` or scenario step
   counts
+- a rejected case's `rejectedRule` compares **string-equal** to `then.rejectedRule`;
+  accepting the input, omitting the observation, or naming a different rule all
+  fail
 
 The adapter output is not allowed to weaken the core corpus. If an
 implementation disagrees with a case, fix the implementation or update the core

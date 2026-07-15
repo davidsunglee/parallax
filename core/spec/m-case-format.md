@@ -878,6 +878,8 @@ value-object structure and asserts the refusal happens pre-SQL with **exactly** 
 named rule; a run that accepts the input, or rejects it with a different rule,
 **fails**. Rejection is **dialect-agnostic** — no dialect,
 provisioning, or execution — so a rejected case is checked once, with no database.
+The adapter-side answer for a rejected-case `run` is the `m-conformance-adapter`
+`rejectedRule` observation; see `m-conformance-adapter`.
 This is the portable analogue of Reladomo refusing a structurally-invalid
 embedded-value use (an embedded value is not a relationship target and cannot be
 reverse-navigated); Parallax pins the same "these operations are structurally

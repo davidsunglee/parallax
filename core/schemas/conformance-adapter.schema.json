@@ -287,6 +287,10 @@
         "nativeCode": {
           "description": "The preserved native code witness paired with `errorClass` (Postgres SQLSTATE string / MariaDB vendor errno integer), compared against the case's per-dialect `then.nativeCode`.",
           "type": ["string", "integer"]
+        },
+        "rejectedRule": {
+          "description": "The classified normative rule identifier a rejected-case run refused the input with (m-op-algebra / m-navigate / m-value-object / m-inheritance), compared against the case's `then.rejectedRule`. An adapter whose claim includes the `rejected` caseShape MUST report this observation on a rejected-case run, with `roundTrips: 0` and no provisioning or dialect. Optional and additive at the schema layer — only rejected-shape runs report it, and existing run outputs stay valid.",
+          "type": "string"
         }
       },
       "dependentRequired": {

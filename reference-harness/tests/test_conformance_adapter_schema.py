@@ -272,6 +272,28 @@ def test_run_rejects_unpaired_error_classification() -> None:
         assert list(_validator().iter_errors(_valid_run(observations)))
 
 
+# --- rejected-shape run observation: rejectedRule ------------------------------
+
+
+def test_run_accepts_rejected_rule_observation() -> None:
+    # A rejected-case run touches no database: it reports the classified rule
+    # with roundTrips: 0 (m-conformance-adapter, resolved DQ3/DQ8).
+    observations = {"roundTrips": 0, "rejectedRule": "narrow-outside-position"}
+    assert list(_validator().iter_errors(_valid_run(observations))) == []
+
+
+def test_run_still_valid_without_rejected_rule_observation() -> None:
+    # Additive/optional at the schema layer: an existing run output that never
+    # claims the `rejected` shape stays valid unchanged.
+    observations = {"roundTrips": 1, "rows": [{"id": 1}]}
+    assert list(_validator().iter_errors(_valid_run(observations))) == []
+
+
+def test_run_rejects_non_string_rejected_rule() -> None:
+    observations = {"roundTrips": 0, "rejectedRule": 12345}
+    assert list(_validator().iter_errors(_valid_run(observations)))
+
+
 def test_describe_accepts_case_tag_claims() -> None:
     errors = list(_validator().iter_errors(_valid_describe()))
     assert errors == []
