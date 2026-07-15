@@ -13,6 +13,7 @@
     "LATEST",
     "ModelCopyError",
     "NameCollisionError",
+    "OperationRejectedError",
     "OrderByTerm",
     "Pin",
     "Predicate",

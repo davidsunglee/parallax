@@ -22,6 +22,7 @@ from typing import Final
 
 from parallax.conformance import case_format
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
+from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
 
 __all__ = [
@@ -139,6 +140,197 @@ EXAMPLES: Final[list[Example]] = [
     # fake-port write no-drift guard drives the same function against the golden
     # DML. One source, three consumers: the guide cannot drift from execution.
     *(Example(story.case_id, story.title, story_snippet(story)) for story in WRITE_STORIES),
+    # Relationship navigation (m-navigate), COR-3 Phase 7: the `.any()`/`.none()`
+    # quantifiers, multi-hop composition, the to-one form, and per-hop temporal
+    # propagation (explicit `.as_of(...)` and its defaulted equivalent). The
+    # `navigate`-tagged siblings (a corpus spelling redundancy for the identical
+    # correlated-EXISTS lowering `exists` already expresses — m-op-algebra) and the
+    # deep-fetch-bearing temporal siblings are reasoned-skipped; see CASE_SKIP_REASONS.
+    Example(
+        "m-navigate-002",
+        "Relationship existence (bare `.any()`)",
+        "op = Order.where(Order.items.any())",
+    ),
+    Example(
+        "m-navigate-003",
+        "Relationship absence (bare `.none()`)",
+        "op = Order.where(Order.items.none())",
+    ),
+    Example(
+        "m-navigate-004",
+        "Relationship existence with a predicate",
+        "op = Order.where(Order.items.any(OrderItem.quantity >= 4))",
+    ),
+    Example(
+        "m-navigate-006",
+        "A navigation filter composed with a scalar predicate",
+        "op = Order.where(Order.items.none(), Order.active.is_(True))",
+    ),
+    Example(
+        "m-navigate-008",
+        "Multi-hop relationship existence",
+        "op = Order.where(\n"
+        '    Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED"))\n'
+        ")",
+    ),
+    Example(
+        "m-navigate-009",
+        "Existence over a to-one (nullable) relationship",
+        "op = OrderStatus.where(OrderStatus.order_item.any())",
+    ),
+    Example(
+        "m-navigate-010",
+        "Negated multi-hop relationship existence",
+        "op = Order.where(Order.items.none(OrderItem.statuses.any()))",
+    ),
+    Example(
+        "m-navigate-018",
+        "A semi-join across a temporal hop, explicitly pinned to latest",
+        "op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(\n"
+        "    processing=LATEST, business=LATEST\n"
+        ")",
+    ),
+    Example(
+        "m-navigate-023",
+        "The same semi-join, defaulted to latest (no `.as_of()` at all)",
+        "op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00))",
+    ),
+    # Inheritance reads (m-inheritance): table-per-hierarchy concrete/abstract
+    # targets, the `Entity.narrow(...)` constructor, the statement-level
+    # `.narrow(...)` clause, an OR of two narrowed branches, and the
+    # table-per-concrete-subtype narrow clause. The remaining tag-predicate/
+    # narrow/union-all reads are reasoned-skipped as representative siblings.
+    Example(
+        "m-inheritance-001",
+        "Table-per-hierarchy concrete-target read",
+        "op = CardPayment.where()",
+    ),
+    Example(
+        "m-inheritance-003",
+        "Table-per-hierarchy abstract-root read (familyVariant)",
+        "op = Payment.where()",
+    ),
+    Example(
+        "m-inheritance-005",
+        "Table-per-concrete-subtype concrete read",
+        "op = Invoice.where()",
+    ),
+    Example(
+        "m-inheritance-012",
+        "The `Entity.narrow(...)` constructor, narrowed to one concrete subtype",
+        "op = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))",
+    ),
+    Example(
+        "m-inheritance-013",
+        "The statement-level `.narrow(...)` clause",
+        "op = Animal.where().narrow(Pet)",
+    ),
+    Example(
+        "m-inheritance-015",
+        "An OR of two narrowed branches",
+        "op = Animal.where(\n"
+        "    Animal.narrow(Dog, where=Dog.bark_volume > 5)\n"
+        "    | Animal.narrow(Cat, where=Cat.indoor.is_(True))\n"
+        ")",
+    ),
+    Example(
+        "m-inheritance-052",
+        "Table-per-concrete-subtype `.narrow(...)` to an abstract subtype",
+        "op = Document.where().narrow(FinancialDocument)",
+    ),
+    Example(
+        "m-inheritance-070",
+        "Polymorphic navigation over table-per-concrete-subtype (grouped OR)",
+        "op = Folder.where(Folder.documents.any())",
+    ),
+    Example(
+        "m-inheritance-071",
+        "The same polymorphic navigation, narrowed to one abstract subtype",
+        "op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))",
+    ),
+    # Value-object traversal (m-value-object): shallow/deep nested equality,
+    # `.is_null()`, the bare `.any()`/`.none()` to-many presence quantifiers, a
+    # flat any-element predicate, and the scoped same-element `.any(...)` form
+    # (python.md §2's own worked example). The remaining operator/depth variants
+    # are reasoned-skipped as representative siblings.
+    Example(
+        "m-value-object-001",
+        "Nested value-object field equality",
+        'op = Customer.where(Customer.address.city == "Oslo")',
+    ),
+    Example(
+        "m-value-object-002",
+        "A deeply nested value-object field",
+        'op = Customer.where(Customer.address.geo.country == "US")',
+    ),
+    Example(
+        "m-value-object-007",
+        "A nested value-object presence test (`.is_null()`)",
+        "op = Customer.where(Customer.address.city.is_null())",
+    ),
+    Example(
+        "m-value-object-015",
+        "A to-many value-object member's presence (`.any()`)",
+        "op = Customer.where(Customer.address.phones.any())",
+    ),
+    Example(
+        "m-value-object-016",
+        "A to-many value-object member's absence (`.none()`)",
+        "op = Customer.where(Customer.address.phones.none())",
+    ),
+    Example(
+        "m-value-object-017",
+        "A flat any-element predicate through a to-many value-object member",
+        'op = Customer.where(Customer.address.phones.type == "home")',
+    ),
+    Example(
+        "m-value-object-019",
+        "A scoped same-element `.any(...)` over a to-many value-object member",
+        "op = Customer.where(\n"
+        "    Customer.address.phones.any(\n"
+        '        Phone.type == "home",\n'
+        '        Phone.number == "555-9999",\n'
+        "    )\n"
+        ")",
+    ),
+    # Rejected-case build-time proofs (m-op-algebra/m-navigate/m-value-object):
+    # the idiomatic surface refuses the SAME invalid input the corpus's own
+    # rejected lane grades, through the SAME model-aware validator
+    # (`validate_operation`), naming the SAME classified rule — proven by
+    # `test_idiomatic_statement_build_rejects_the_corpus_rule`.
+    Example(
+        "m-value-object-038",
+        "A nested comparison whose literal type mismatches the declared attribute",
+        "Customer.where(Customer.address.city == 42)\n"
+        '# raises OperationRejectedError(rule="nested-literal-type-mismatch")',
+    ),
+    Example(
+        "m-inheritance-040",
+        "A narrow that broadens beyond its position",
+        "Animal.where(Pet.narrow(WildBoar))\n"
+        '# raises OperationRejectedError(rule="narrow-outside-position")',
+    ),
+    Example(
+        "m-inheritance-041",
+        "A concrete-subtype attribute referenced outside a narrow scope",
+        "Animal.where(Dog.bark_volume > 5)\n"
+        '# raises OperationRejectedError(rule="subtype-attribute-outside-narrow-scope")',
+    ),
+    Example(
+        "m-inheritance-042",
+        "A nested narrow that broadens back out of the enclosing position",
+        "Animal.where(Pet.narrow(Dog, where=Animal.narrow(Cat)))\n"
+        '# raises OperationRejectedError(rule="narrow-outside-position")',
+    ),
+    # Snapshot/graph semantics (m-snapshot-read, m-navigate x m-temporal-read):
+    # each example IS an executable graph story
+    # (`parallax.conformance.graph_stories`) — the snippet is the story's own
+    # source, and the real-Postgres suite executes it through the shipped
+    # `parallax.snapshot.connect` + `parallax-postgres` (test_story_run),
+    # grading the mirrored case's own oracle (a `then.graph`/`identityChecks`
+    # reference-identity assertion, a closed-world `UnloadedRelationshipError`,
+    # a `pin`/`edge_of` coordinate, or a scenario's own per-step observable).
+    *(Example(story.case_id, story.title, graph_story_snippet(story)) for story in GRAPH_STORIES),
 ]
 
 # The reviewed skip registry: primary module -> the reason its active cases carry
@@ -188,15 +380,6 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "matrix (projection suppression, two-session behavioral admits/blocks) lands "
         "with the lock path (COR-3 Phase 8)"
     ),
-    "m-navigate": "relationship navigation lands with the snapshot branch (COR-3 Phase 7)",
-    "m-deep-fetch": "deep-fetch includes land with the snapshot branch (COR-3 Phase 7)",
-    "m-snapshot-read": "snapshot materialization lands with the snapshot branch (COR-3 Phase 7)",
-    "m-value-object": (
-        "value-object predicates and materialization land with the snapshot branch (COR-3 Phase 7)"
-    ),
-    "m-inheritance": (
-        "polymorphic reads and narrowing land with the snapshot branch (COR-3 Phase 7)"
-    ),
     "m-opt-lock": "optimistic-lock writes land with the write family (COR-3 Phase 8)",
     "m-audit-write": "audit (close-and-chain) writes land with the write family (COR-3 Phase 8)",
     "m-bitemp-write": "bitemporal writes land with the write family (COR-3 Phase 8)",
@@ -213,9 +396,418 @@ _COALESCING_WITNESS_REASON: Final[str] = (
     "pair whose one-statement / zero-statement collapse is m-batch-write behavior "
     "(COR-3 Phase 8); the planner folding is already unit-pinned (test_write_lowering)"
 )
+
+# --------------------------------------------------------------------------- #
+# COR-3 Phase 7 increment 6b: the five flipped module buckets (m-navigate,     #
+# m-deep-fetch, m-snapshot-read, m-value-object, m-inheritance) retire their  #
+# blanket "lands with Phase 7" entries above — Phase 7 has landed. Every      #
+# remaining active case under those modules gets its OWN reasoned, honest,   #
+# case-scoped entry below, grouped by identical justification.               #
+# --------------------------------------------------------------------------- #
+
+# Rows-form inheritance reads (TPH tag-predicate/abstract-root/narrow, TPCS
+# union-all/narrow) that are a REPRESENTATIVE SIBLING of an already-exercised
+# example: the SAME correlated tag-predicate / superset-projection / union-all
+# mechanism, proven once per shape (m-inheritance-001/003/005/012/013/015/052/
+# 070/071), applied to a different family or narrow combination. No new
+# developer-facing spelling to add; the no-drift guard already proves the
+# mechanism these siblings would only repeat.
+_TPH_ROW_SIBLING_REASON: Final[str] = (
+    "a representative sibling of the exercised TPH tag-predicate/abstract-root/narrow "
+    "examples (m-inheritance-001/003/012/013/015): the SAME correlated tag-predicate + "
+    "superset-projection mechanism, over a different family or narrow combination — no "
+    "distinct developer-facing spelling to add"
+)
+_TPCS_ROW_SIBLING_REASON: Final[str] = (
+    "a representative sibling of the exercised TPCS union-all/narrow examples "
+    "(m-inheritance-005/052/070/071): the SAME union-all-over-concretes + narrow-scope "
+    "mechanism, over a different subtype combination — no distinct developer-facing "
+    "spelling to add"
+)
+_TPH_POLYMORPHIC_EXISTS_SIBLING_REASON: Final[str] = (
+    "a representative sibling of the exercised polymorphic-navigation examples "
+    "(m-inheritance-070/071 for table-per-concrete-subtype; m-navigate-004/008/010 for "
+    "the correlated-EXISTS form itself): the TPH analogue is the SAME "
+    "EXISTS-over-effective-concrete-set mechanism, just the other inheritance strategy"
+)
+_TEMPORAL_INHERITANCE_ROW_SIBLING_REASON: Final[str] = (
+    "a representative sibling combining two INDEPENDENTLY exercised capabilities — the "
+    "as-of spelling (m-temporal-read-003) and the TPH/TPCS tag-predicate/union-all read "
+    "(m-inheritance-001/003/005) — over a bitemporal instrument/rate family neither "
+    "existing example mirrors; no new mechanism, no distinct spelling"
+)
+
+# Inheritance-family / temporal writes: `lower_write` (parallax.snapshot.handle)
+# explicitly refuses any instruction whose entity declares `inheritance` or is
+# temporal, naming COR-3 Phase 8 — a byte-stable existing refusal this phase
+# does not touch (D-16's full graduation, DQ1, changed the verbs' INPUTS, never
+# the supported write classes).
+_INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
+    "an inheritance-family and/or temporal write: `lower_write` explicitly refuses any "
+    "instruction whose entity declares `inheritance` (tag / concrete-subtype DML) or is "
+    "temporal (milestone lowering), naming COR-3 Phase 8 — the existing, byte-stable "
+    "refusal D-16's full graduation (DQ1) left untouched (it changed the verbs' inputs, "
+    "never the supported write classes)"
+)
+_INHERITANCE_WRITE_REJECT_PHASE8_REASON: Final[str] = (
+    "a write-PAYLOAD validation rule (subtype-write sibling/metadata/abstract-target/"
+    "set-based attribute checks) — the write-side portion of D-12's third bullet, "
+    "explicitly deferred to the write family (COR-3 Phase 8) alongside "
+    "`write-required-attribute-missing` and its siblings (test_rejected_sweep.py already "
+    "grades every `when.write` rejected case this way at the conformance-adapter layer); "
+    "the read-side rejected lane (COR-3 Phase 7 increment 1) grades only `when.operation` "
+    "inputs"
+)
+
+# `when.model` descriptor-shape rejects (m-inheritance-020..032): a DIFFERENT
+# validation surface than the operation-level rejected lane increment 1 built.
+# `parallax.core.inheritance.validate` classifies these exact rules, but the
+# class metaclass never calls it (grep-verified) — DQ2's hierarchy-derived
+# `parent`/`role` obsoletes most of what it checks. Most of these malformed
+# shapes have literally no idiomatic spelling (`parent`/`role` are DERIVED from
+# the live Python class hierarchy, never separately authored; Python's own
+# class system additionally forbids a literal inheritance cycle), and the two
+# table-placement rules that ARE independently authorable (`EntityConfig
+# (table=...)` on an abstract node) are already rejected by the class
+# frontend's own, DIFFERENT, unclassified error (`test_inheritance_frontend.py`
+# "tableless and rowless"), not by `InheritanceError.rule` — so no case here
+# reproduces `then.rejectedRule` through today's public surface.
+_INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
+    "a `when.model` raw-descriptor invariant `parallax.core.inheritance.validate` "
+    "classifies (parent/root/cycle/strategy/tag shape) — the class metaclass never "
+    "calls this validator (DQ2: `parent`/`role` are DERIVED from the live Python class "
+    "hierarchy, never separately authored, so most of these malformed shapes — an "
+    "unknown parent, a cycle, multiple roots, a missing root, a redeclared strategy, a "
+    "duplicate/misplaced tag — have no idiomatic spelling at all); the two "
+    "table-placement rules ARE independently authorable, but the class frontend's own "
+    "existing check raises a different, unclassified error, not `InheritanceError.rule` "
+    "— wiring an idiomatic path to that SAME classified vocabulary is unbuilt "
+    "infrastructure, not a Phase-7 capability gap"
+)
+
+# `navigate`-tagged corpus siblings: a deliberate spelling redundancy for the
+# IDENTICAL correlated-EXISTS lowering the exercised `.any()`/`.none()` examples
+# already prove (m-navigate-002/003/004/006/008/009/010) — m-op-algebra's own
+# framing ("navigate and exists are the same correlated-EXISTS lowering").
+_NAVIGATE_TAG_REDUNDANT_REASON: Final[str] = (
+    "a `navigate`-tagged corpus spelling redundancy for the IDENTICAL correlated-EXISTS "
+    "lowering the exercised `.any()`/`.none()` examples already prove "
+    "(m-navigate-002/003/004/006/008/009/010) — no distinct developer-facing shape to add"
+)
+
+# Temporal deep-fetch GRAPH siblings of the executed m-navigate-013 story (the
+# ONE representative proof that a root as-of pin propagates per-hop into a
+# deep-fetch child level): every other axis/cardinality/model permutation of
+# the SAME propagation mechanism.
+_TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON: Final[str] = (
+    "a representative sibling of the EXECUTED `m-navigate-013` graph story (the "
+    "as-of-pin-propagates-per-hop-into-a-deep-fetch-level capability, real-Postgres "
+    "proven via `parallax.snapshot.connect` + `db.find`): the SAME propagation "
+    "mechanism, a different axis/cardinality/model permutation — building a second "
+    "executable story would re-prove the identical mechanism, not a new one"
+)
+
+# Snapshot-graph siblings of the executed orders-family graph stories (diamond
+# identity, back-reference cycle, closed-world, empty root/intermediate): a
+# different relationship shape (to-one nullable, shared-prefix dedup, declared
+# ordering) over the SAME materializer already exercised for real.
+_ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
+    "a representative sibling of the executed orders-family graph stories "
+    "(m-snapshot-read-001/004/005/009/010/011): a different relationship shape "
+    "(to-one nullable, shared-prefix dedup, declared child ordering) over the SAME "
+    "assembler + frozen-node wrap already proven for real against Postgres"
+)
+
+# `models/person.yaml`'s own Person/Passport pair (the one-to-one graph case)
+# lives in `tests/mirrored_models.py` — a test-only module, unreachable from
+# the installed `parallax-conformance` distribution `graph_stories.py` needs
+# (package-boundary rule, spec §7/§8): no parallax.conformance-scoped Person
+# mirror exists, so this case cannot be driven through a real db.find story
+# today.
+_PERSON_MIRROR_UNREACHABLE_REASON: Final[str] = (
+    "`models/person.yaml`'s Person/Passport pair lives in `tests/mirrored_models.py` — "
+    "test-only, unreachable from the installed `parallax-conformance` distribution "
+    "`graph_stories.py` needs (the package-boundary rule, spec §7/§8) — no "
+    "parallax.conformance-scoped Person mirror exists to drive this as a real story"
+)
+
+# `models/animal.yaml`'s own polymorphic owner is ALSO named `Person` — the
+# same literal canonical name `mirrored_models.Person` already claims in the
+# single, global, process-wide entity registry (see `snapshot_models`'s own
+# module docstring, which renamed its OWN animal-family owner to `AnimalOwner`
+# for exactly this reason). Any proof needing the EXACT corpus operation text
+# (`rel: Person.pets`) or a real db.find over the animal family's owner
+# relationship is unreachable: `snapshot_models`/`inheritance_models` are
+# themselves test-only (same package-boundary rule as Person above), so even a
+# renamed mirror cannot be driven from `parallax.conformance`.
+_ANIMAL_OWNER_COLLISION_REASON: Final[str] = (
+    "`models/animal.yaml`'s own polymorphic owner is ALSO named `Person` — the same "
+    "canonical name `mirrored_models.Person` claims in the single, global, "
+    "process-wide entity registry (`snapshot_models` renames its own mirror to "
+    "`AnimalOwner` for exactly this reason); the exact corpus operation text names the "
+    "real `Person.pets` relationship, and `snapshot_models`/`inheritance_models` are "
+    "themselves test-only (unreachable from the installed `parallax-conformance` "
+    "distribution `graph_stories.py` needs) — no reachable mirror can reproduce this "
+    "case's operation or drive it as a real story today"
+)
+
+# `.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT,
+# documented deferral (spec §3 `snapshot-history-includes`): `Statement`
+# refuses the combination with `UnsupportedFeatureError` naming it. Not a gap —
+# a designed-in refusal.
+_SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON: Final[str] = (
+    "`.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT, "
+    "designed-in deferral (spec §3 `snapshot-history-includes`): `Statement` refuses "
+    "the combination with `UnsupportedFeatureError` naming it — not a capability gap, a "
+    "documented refusal"
+)
+
+# Value-object nested/absence/cast/array-traversal PREDICATE reads: rows-form,
+# representative siblings of the exercised Customer.address examples
+# (m-value-object-001/002/007/015/016/017/019) — the SAME nested-path
+# resolution / absence-collapse / any-element lowering, a different operator,
+# depth, or dialect-cast variant.
+_VO_PREDICATE_SIBLING_REASON: Final[str] = (
+    "a representative sibling of the exercised Customer.address predicate examples "
+    "(m-value-object-001/002/007/015/016/017/019): the SAME nested-path resolution / "
+    "absence-collapse / any-element lowering, a different operator, depth, or "
+    "dialect-cast variant — no distinct developer-facing shape to add"
+)
+
+# Customer-model cases needing a REAL execution (a `db.find`/`db.transact`
+# story, not a build-only statement): `value_object_models.Customer` — the
+# SAME canonical name this case's model declares — already claims "Customer"
+# in the single, global, process-wide entity registry, and it is test-only
+# (unreachable from the installed `parallax-conformance` distribution
+# `stories.py`/`graph_stories.py` need, the SAME package-boundary rule
+# `snapshot_models`'s own docstring documents for animal.yaml's owner). A
+# purpose-built, differently-named mirror could reproduce the WRITE DML or
+# GRAPH shape but never the exact corpus operation/wire text this suite's
+# no-drift guards compare, since the case's own `targetEntity`/`entity` names
+# the real "Customer".
+_CUSTOMER_UNREACHABLE_REASON: Final[str] = (
+    "needs a REAL execution (a `db.find`/`db.transact` story) over the Customer "
+    "entity, but `value_object_models.Customer` already claims that canonical name in "
+    "the single, global, process-wide entity registry and is test-only — unreachable "
+    "from the installed `parallax-conformance` distribution `stories.py`/"
+    "`graph_stories.py` need (the same package-boundary collision "
+    "`snapshot_models`'s own docstring documents for animal.yaml's owner); a "
+    "differently-named mirror could run the SQL but could never reproduce this case's "
+    "own `Customer`-named operation/wire text"
+)
+
+# Supplier/Branch value-object-bearing temporal reads: genuinely exercisable in
+# principle (temporal as-of and value-object materialization are each already
+# proven independently), but no suite mirror or story exists yet for these two
+# families — new coverage surface this increment's explicit item list did not
+# build, not a structural block.
+_VO_TEMPORAL_GRAPH_DEFERRED_REASON: Final[str] = (
+    "combines two independently-proven capabilities (temporal as-of reads, "
+    "value-object composite materialization) over Supplier/Branch, families with no "
+    "suite mirror or story yet — new coverage surface this increment did not build, "
+    "not a structural block; a future increment can add the mirror and story"
+)
+_VO_TEMPORAL_WRITE_PHASE8_REASON: Final[str] = (
+    "an audit-write / bitemp-write temporal write over a value-object-bearing entity — "
+    "the write family's temporal milestone lowering (COR-3 Phase 8; m-audit-write / "
+    "m-bitemp-write), matching this registry's own m-audit-write/m-bitemp-write bucket "
+    "reasons"
+)
+
+# Value-object STRUCTURE rejects: each empirically confirmed (a REPL probe
+# against the shipped surface) to have NO idiomatic spelling that reaches
+# `validate_operation` with the corpus's own invalid shape — four DISTINCT
+# failure modes, not one generic gap.
+_VO_UNKNOWN_NESTED_FIELD_REASON: Final[str] = (
+    "`Customer.contact` (the invalid path's first segment) is not a declared "
+    "attribute at all: `vm.Customer.contact.city == ...` raises a plain Python "
+    "`AttributeError` at attribute-access time — before any operation tree exists to "
+    "validate, so the corpus's own invalid shape (a schema-valid but model-unknown "
+    "nested path) has no idiomatic spelling to build"
+)
+_VO_DEEPFETCH_SEGMENT_REASON: Final[str] = (
+    "`.include(...)` only accepts `RelationshipPath` arguments; `Customer.address` (a "
+    "value-object `Attr`, not a `Rel`) raises a plain Python `TypeError` when passed to "
+    "it — the type system itself prevents authoring the corpus's invalid "
+    "deep-fetch-through-a-value-object shape"
+)
+_VO_NAVIGATE_TARGET_REASON: Final[str] = (
+    "`Customer.address.any()` builds successfully, but to a DIFFERENT, valid operation "
+    "(`nestedExists`, the to-many VO presence quantifier m-value-object-015/016 already "
+    "exercise) — not the corpus's invalid `navigate` node targeting a value object; the "
+    "idiomatic surface has no spelling that produces THAT exact shape, only a "
+    "differently-typed valid one"
+)
+_VO_FIND_ROOT_REASON: Final[str] = (
+    "`ValueObject` classes have no `.where()` classmethod at all (only `Entity` does); "
+    "`vm.Address.where(...)` raises a plain Python `AttributeError` — the type system "
+    "itself prevents rooting a find at a value object"
+)
+
+# Value-object write-input validation rejects (m-value-object-039..044): the
+# write-side portion of D-12's third bullet, explicitly Phase 8 — the SAME
+# reasoning `test_rejected_sweep.py` already applies to every `when.write`
+# rejected case at the conformance-adapter layer.
+_VO_WRITE_VALIDATION_PHASE8_REASON: Final[str] = (
+    "a write-INPUT validation rule (required-attribute-missing at depth 1/2/3, a "
+    "missing required value object, a value-type mismatch, a non-nullable top-level "
+    "null) — the write-side portion of D-12's third bullet, explicitly deferred to the "
+    "write family (COR-3 Phase 8); `test_rejected_sweep.py` already grades every "
+    "`when.write` rejected case this way at the conformance-adapter layer"
+)
+
+# The three remaining m-value-object write-family siblings, each a DIFFERENT
+# Phase-8 concern already named by an existing module bucket above.
+_VO_BATCH_WRITE_REASON: Final[str] = (
+    "a multi-row (batched) insert — the set-based flush collapse lands with the write "
+    "family (COR-3 Phase 8; m-batch-write), matching this registry's own m-batch-write "
+    "bucket reason"
+)
+_VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
+    "a versioned write under an optimistic-lock gate — lands with the write family "
+    "(COR-3 Phase 8; m-opt-lock), matching this registry's own m-opt-lock bucket reason"
+)
+_VO_SCENARIO_COMBO_REASON: Final[str] = (
+    "a scenario combining a managed find, a materialized-predicate-write resolving "
+    "read, and an audit-write terminate under an optimistic-lock gate — every step "
+    "beyond the plain managed find is Phase-8 territory (m-audit-write / m-opt-lock / "
+    "m-batch-write's predicate-write materialization); no isolated Phase-7 read facet "
+    "to exercise separately"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
+    # -- m-inheritance: rows-form representative siblings ------------------- #
+    "m-inheritance-002": _TPH_ROW_SIBLING_REASON,
+    "m-inheritance-004": _TPH_ROW_SIBLING_REASON,
+    "m-inheritance-011": _TPH_ROW_SIBLING_REASON,
+    "m-inheritance-014": _TPH_ROW_SIBLING_REASON,
+    "m-inheritance-016": _TPH_ROW_SIBLING_REASON,
+    "m-inheritance-017": _TPH_ROW_SIBLING_REASON,
+    "m-inheritance-006": _TPCS_ROW_SIBLING_REASON,
+    "m-inheritance-050": _TPCS_ROW_SIBLING_REASON,
+    "m-inheritance-051": _TPCS_ROW_SIBLING_REASON,
+    "m-inheritance-053": _TPCS_ROW_SIBLING_REASON,
+    "m-inheritance-060": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
+    "m-inheritance-061": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
+    "m-inheritance-062": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
+    "m-inheritance-063": _TPH_POLYMORPHIC_EXISTS_SIBLING_REASON,
+    "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
+    "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
+    # -- m-inheritance: write family (COR-3 Phase 8) ------------------------- #
+    "m-inheritance-007": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-008": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-009": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-010": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-080": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-081": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-082": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-083": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-084": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-085": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-090": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-091": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-094": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-095": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-096": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-097": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-086": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
+    "m-inheritance-087": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
+    "m-inheritance-088": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
+    "m-inheritance-089": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
+    # -- m-inheritance: `when.model` descriptor rejects (unreachable) -------- #
+    "m-inheritance-020": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-021": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-022": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-023": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-024": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-025": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-026": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-027": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-028": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-029": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-030": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-031": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-032": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    # -- m-inheritance / m-navigate: the Person/AnimalOwner collision -------- #
+    "m-inheritance-064": _ANIMAL_OWNER_COLLISION_REASON,
+    "m-inheritance-072": _ANIMAL_OWNER_COLLISION_REASON,
+    "m-inheritance-065": _ANIMAL_OWNER_COLLISION_REASON,
+    "m-inheritance-066": _ANIMAL_OWNER_COLLISION_REASON,
+    "m-inheritance-067": _ANIMAL_OWNER_COLLISION_REASON,
+    "m-snapshot-read-012": _ANIMAL_OWNER_COLLISION_REASON,
+    # -- m-deep-fetch: the Customer-registry collision ----------------------- #
+    "m-deep-fetch-018": _CUSTOMER_UNREACHABLE_REASON,
+    # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #
+    "m-navigate-001": _NAVIGATE_TAG_REDUNDANT_REASON,
+    "m-navigate-005": _NAVIGATE_TAG_REDUNDANT_REASON,
+    "m-navigate-007": _NAVIGATE_TAG_REDUNDANT_REASON,
+    "m-navigate-011": _NAVIGATE_TAG_REDUNDANT_REASON,
+    # -- m-navigate / m-snapshot-read: temporal deep-fetch graph siblings ---- #
+    "m-navigate-012": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-navigate-014": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-navigate-015": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-navigate-016": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-navigate-017": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-navigate-019": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-navigate-020": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-navigate-021": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-navigate-022": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-navigate-024": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    "m-snapshot-read-002": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    # -- m-snapshot-read: orders-family graph siblings ----------------------- #
+    "m-snapshot-read-003": _ORDERS_GRAPH_SIBLING_REASON,
+    "m-snapshot-read-006": _ORDERS_GRAPH_SIBLING_REASON,
+    "m-snapshot-read-008": _ORDERS_GRAPH_SIBLING_REASON,
+    # -- m-snapshot-read: Person mirror unreachable / history+include -------- #
+    "m-snapshot-read-007": _PERSON_MIRROR_UNREACHABLE_REASON,
+    "m-snapshot-read-013": _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON,
+    "m-snapshot-read-014": _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON,
+    # -- m-value-object: predicate-read representative siblings ------------- #
+    "m-value-object-004": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-005": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-006": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-008": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-009": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-010": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-011": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-012": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-013": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-014": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-018": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-020": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-021": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-022": _VO_PREDICATE_SIBLING_REASON,
+    # -- m-value-object: the Customer-registry collision (read + write) ------ #
+    "m-value-object-023": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-024": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-025": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-026": _CUSTOMER_UNREACHABLE_REASON,
+    "m-value-object-027": _CUSTOMER_UNREACHABLE_REASON,
+    # -- m-value-object: Supplier/Branch temporal VO (deferred, not blocked) - #
+    "m-value-object-028": _VO_TEMPORAL_GRAPH_DEFERRED_REASON,
+    "m-value-object-029": _VO_TEMPORAL_GRAPH_DEFERRED_REASON,
+    "m-value-object-030": _VO_TEMPORAL_GRAPH_DEFERRED_REASON,
+    "m-value-object-031": _VO_TEMPORAL_GRAPH_DEFERRED_REASON,
+    "m-value-object-032": _VO_TEMPORAL_WRITE_PHASE8_REASON,
+    "m-value-object-033": _VO_TEMPORAL_WRITE_PHASE8_REASON,
+    # -- m-value-object: structural rejects (no idiomatic spelling exists) --- #
+    "m-value-object-034": _VO_UNKNOWN_NESTED_FIELD_REASON,
+    "m-value-object-035": _VO_DEEPFETCH_SEGMENT_REASON,
+    "m-value-object-036": _VO_NAVIGATE_TARGET_REASON,
+    "m-value-object-037": _VO_FIND_ROOT_REASON,
+    # -- m-value-object: write-input validation rejects (COR-3 Phase 8) ------ #
+    "m-value-object-039": _VO_WRITE_VALIDATION_PHASE8_REASON,
+    "m-value-object-040": _VO_WRITE_VALIDATION_PHASE8_REASON,
+    "m-value-object-041": _VO_WRITE_VALIDATION_PHASE8_REASON,
+    "m-value-object-042": _VO_WRITE_VALIDATION_PHASE8_REASON,
+    "m-value-object-043": _VO_WRITE_VALIDATION_PHASE8_REASON,
+    "m-value-object-044": _VO_WRITE_VALIDATION_PHASE8_REASON,
+    # -- m-value-object: the remaining write-family siblings (COR-3 Phase 8) - #
+    "m-value-object-045": _VO_BATCH_WRITE_REASON,
+    "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,
+    "m-value-object-047": _VO_SCENARIO_COMBO_REASON,
 }
 
 
@@ -368,26 +960,16 @@ def render_usage_guide(examples: list[Example]) -> str:
         )
         lines.append("")
     else:
-        staging_notice_pending = True
+        # The D-16 staged-realization notice retired here (COR-3 Phase 7
+        # increment 6b): the transaction verbs it warned about graduated to
+        # their final entity-instance signatures in increment 6a
+        # (`tx.insert(instance)` / `tx.update(edited_copy)` / `tx.delete(node)`,
+        # `tx.find` returning `Snapshot[T]`) — every rendered transaction
+        # example already uses that final surface, so a banner distinguishing
+        # "provisional" from "final" has nothing left to warn about. Plain
+        # removal, not a replacement "graduated" note: the ordinary per-example
+        # rendering below already IS the final, non-provisional documentation.
         for example in sorted(examples, key=lambda item: item.case_id):
-            if staging_notice_pending and example.case_id.startswith("m-unit-work"):
-                # The D-16 staged-realization notice: the transaction examples
-                # below use the provisional neutral verbs, and readers must not
-                # mistake them for the final entity-instance surface.
-                lines.append("## Transactions — a provisional surface (ledger D-16)")
-                lines.append("")
-                lines.append(
-                    "> The transaction examples below use the **neutral, provisional** "
-                    "write surface: `tx.insert` / `tx.update` / `tx.delete` take an "
-                    "entity **name** and a plain row document, and `tx.find` returns "
-                    "plain rows. These spellings are the deliberate M4 staging of the "
-                    "spec §5 transaction surface; they graduate to entity-instance "
-                    "signatures (`insert(instance)`, sparse `update(edited_copy)`, "
-                    "materialized finds) when the Phase-7 instance model lands "
-                    "(deferred-work ledger D-16)."
-                )
-                lines.append("")
-                staging_notice_pending = False
             lines.append(f"## {example.title}")
             lines.append("")
             lines.append(f"Corpus case: `{example.case_id}`")

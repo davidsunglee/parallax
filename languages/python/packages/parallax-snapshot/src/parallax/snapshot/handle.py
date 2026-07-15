@@ -703,7 +703,7 @@ class Transaction:
         target = statement.target
         op = statement.operation()
         entity = self._meta.entity(target)
-        pin = statement_pin(op, entity)
+        pin = _statement_pin(op, entity)
         lock = self._uow.settings.concurrency
         if _is_milestone_set_op(op):
             history_result = self._uow.read(
@@ -730,6 +730,23 @@ def _entity_record_of_instance(instance: EntityBase) -> Entity:
     if record is None:  # pragma: no cover - guards a non-Parallax-compiled class
         raise TypeError(f"{type(instance).__name__} is not a registered Parallax entity class")
     return record
+
+
+def _statement_pin(op: op_algebra.Operation, entity: Entity) -> Pin:
+    """``snapshot.pin`` for ``op`` (spec §3): identical to
+    ``~parallax.core.temporal_read.statement_pin``, except that an outer
+    ``DeepFetch`` directive (``.include(...)`` composed after ``.as_of(...)``)
+    is peeled first. ``m-temporal-read`` never imports ``m-deep-fetch`` (the
+    DAG forbids the reverse dependency direction), so `statement_pin`'s own
+    directive-peeling (`Limit`/`OrderBy`/`Distinct` only) cannot see a
+    `DeepFetch` wrapper — this composition, mirroring the M2 precedent, is the
+    handle's own job. A milestone-set read (`.history()`/`.as_of_range()`)
+    never carries an outer `DeepFetch` (`Statement.include`/`.history`/
+    `.as_of_range` mutually refuse the combination, spec §3
+    ``snapshot-history-includes``), so this peel is unconditionally safe.
+    """
+    pin_op = op.operand if isinstance(op, op_algebra.DeepFetch) else op
+    return statement_pin(pin_op, entity)
 
 
 def _is_milestone_set_op(op: op_algebra.Operation) -> bool:
@@ -822,7 +839,7 @@ class Database:
         target = statement.target
         op = statement.operation()
         entity = self._meta.entity(target)
-        pin = statement_pin(op, entity)
+        pin = _statement_pin(op, entity)
         if _is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
             return _snapshot_from_history_result(history_result, target, self._meta)

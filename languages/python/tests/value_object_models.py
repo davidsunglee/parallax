@@ -4,6 +4,12 @@
 (``geo`` -> ``point``) and one ``cardinality: many`` member (``phones``).
 This module deliberately avoids ``from __future__ import annotations`` so the
 metaclass reads the live ``Attr[T]`` objects directly.
+
+Lives at the top level of ``tests/`` (moved from ``tests/unit/`` in increment
+6b): the unit lane and the API Conformance Suite's VO traversal examples share
+these SAME classes (a second copy would race the single process-wide entity
+registry), and only a module on ``pythonpath = ["tools", "tests"]`` resolves
+reliably regardless of collection order.
 """
 
 from parallax.core import Attr, Entity, EntityConfig, Field

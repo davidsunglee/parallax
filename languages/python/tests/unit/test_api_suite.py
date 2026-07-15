@@ -31,9 +31,10 @@ def test_active_slice_is_non_empty_and_all_snapshot_tagged() -> None:
 
 def test_build_skips_covers_cases_without_examples() -> None:
     # With one synthetic example, the registries cover every other active case
-    # EXCEPT the deliberately example-dependent m-unit-work residue: the module
-    # has no broad bucket (the backbone review's partition red-check), so its
-    # cases are covered only by a real example or the two case-scoped skips.
+    # EXCEPT cases whose module carries no broad bucket entry AND whose own id
+    # the case-scoped registry does not name (the backbone review's partition
+    # red-check): a bucket-free module's cases are covered only by a real
+    # example or their own case-scoped skip, never a generic module reason.
     active = api_suite.active_slice()
     examples = [Example(active[0].case_id, "t", "snippet")]
     skips = api_suite.build_skips(active, examples)
@@ -48,7 +49,7 @@ def test_build_skips_covers_cases_without_examples() -> None:
     assert uncovered == {
         case.case_id
         for case in active
-        if case.primary_module == "m-unit-work"
+        if case.primary_module not in api_suite.SKIP_REASONS
         and case.case_id not in api_suite.CASE_SKIP_REASONS
         and case.case_id != active[0].case_id
     }
@@ -94,18 +95,34 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
     assert any("m-op-algebra" in error for error in stale)
 
 
+# Modules with NO broad SKIP_REASONS bucket: every one of their active cases is
+# covered case-scoped only (a real example or its own CASE_SKIP_REASONS entry),
+# never a generic module-wide reason — m-unit-work since M4 (the backbone
+# review's partition red-check), and m-navigate/m-deep-fetch/m-snapshot-read/
+# m-value-object/m-inheritance since COR-3 Phase 7 increment 6b flipped their
+# blanket "lands with Phase 7" buckets to reasoned, case-scoped entries.
+_BUCKET_FREE_MODULES: frozenset[str] = frozenset(
+    {
+        "m-unit-work",
+        "m-navigate",
+        "m-deep-fetch",
+        "m-snapshot-read",
+        "m-value-object",
+        "m-inheritance",
+    }
+)
+
+
 def test_registry_classifies_every_active_module_without_stale_entries() -> None:
     # The committed registries are reconciled against the live corpus: every
-    # active module is covered by the module registry EXCEPT m-unit-work, whose
-    # cases are individually exercised or case-scoped (no broad bucket — so a
-    # dropped example fails the partition instead of inheriting a reason), and
-    # no entry names nothing.
+    # active module is covered by the module registry except the bucket-free
+    # modules above, and no entry names nothing.
     active = api_suite.active_slice()
     modules = {case.primary_module for case in active}
-    assert modules - set(api_suite.SKIP_REASONS) == {"m-unit-work"}
+    assert modules - set(api_suite.SKIP_REASONS) == _BUCKET_FREE_MODULES
     exercised = {example.case_id for example in api_suite.EXAMPLES}
     for case in active:
-        if case.primary_module == "m-unit-work":
+        if case.primary_module in _BUCKET_FREE_MODULES:
             assert case.case_id in exercised or case.case_id in api_suite.CASE_SKIP_REASONS, (
                 case.case_id
             )

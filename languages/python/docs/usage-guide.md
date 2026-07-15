@@ -6,6 +6,197 @@ Idiomatic public-API usage, generated from the API Conformance Suite's
 examples. Each example mirrors a compatibility-corpus case, so the guide
 cannot drift from graded behavior.
 
+## Table-per-hierarchy concrete-target read
+
+Corpus case: `m-inheritance-001`
+
+```python
+op = CardPayment.where()
+```
+
+## Table-per-hierarchy abstract-root read (familyVariant)
+
+Corpus case: `m-inheritance-003`
+
+```python
+op = Payment.where()
+```
+
+## Table-per-concrete-subtype concrete read
+
+Corpus case: `m-inheritance-005`
+
+```python
+op = Invoice.where()
+```
+
+## The `Entity.narrow(...)` constructor, narrowed to one concrete subtype
+
+Corpus case: `m-inheritance-012`
+
+```python
+op = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))
+```
+
+## The statement-level `.narrow(...)` clause
+
+Corpus case: `m-inheritance-013`
+
+```python
+op = Animal.where().narrow(Pet)
+```
+
+## An OR of two narrowed branches
+
+Corpus case: `m-inheritance-015`
+
+```python
+op = Animal.where(
+    Animal.narrow(Dog, where=Dog.bark_volume > 5)
+    | Animal.narrow(Cat, where=Cat.indoor.is_(True))
+)
+```
+
+## A narrow that broadens beyond its position
+
+Corpus case: `m-inheritance-040`
+
+```python
+Animal.where(Pet.narrow(WildBoar))
+# raises OperationRejectedError(rule="narrow-outside-position")
+```
+
+## A concrete-subtype attribute referenced outside a narrow scope
+
+Corpus case: `m-inheritance-041`
+
+```python
+Animal.where(Dog.bark_volume > 5)
+# raises OperationRejectedError(rule="subtype-attribute-outside-narrow-scope")
+```
+
+## A nested narrow that broadens back out of the enclosing position
+
+Corpus case: `m-inheritance-042`
+
+```python
+Animal.where(Pet.narrow(Dog, where=Animal.narrow(Cat)))
+# raises OperationRejectedError(rule="narrow-outside-position")
+```
+
+## Table-per-concrete-subtype `.narrow(...)` to an abstract subtype
+
+Corpus case: `m-inheritance-052`
+
+```python
+op = Document.where().narrow(FinancialDocument)
+```
+
+## Polymorphic navigation over table-per-concrete-subtype (grouped OR)
+
+Corpus case: `m-inheritance-070`
+
+```python
+op = Folder.where(Folder.documents.any())
+```
+
+## The same polymorphic navigation, narrowed to one abstract subtype
+
+Corpus case: `m-inheritance-071`
+
+```python
+op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))
+```
+
+## Relationship existence (bare `.any()`)
+
+Corpus case: `m-navigate-002`
+
+```python
+op = Order.where(Order.items.any())
+```
+
+## Relationship absence (bare `.none()`)
+
+Corpus case: `m-navigate-003`
+
+```python
+op = Order.where(Order.items.none())
+```
+
+## Relationship existence with a predicate
+
+Corpus case: `m-navigate-004`
+
+```python
+op = Order.where(Order.items.any(OrderItem.quantity >= 4))
+```
+
+## A navigation filter composed with a scalar predicate
+
+Corpus case: `m-navigate-006`
+
+```python
+op = Order.where(Order.items.none(), Order.active.is_(True))
+```
+
+## Multi-hop relationship existence
+
+Corpus case: `m-navigate-008`
+
+```python
+op = Order.where(
+    Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED"))
+)
+```
+
+## Existence over a to-one (nullable) relationship
+
+Corpus case: `m-navigate-009`
+
+```python
+op = OrderStatus.where(OrderStatus.order_item.any())
+```
+
+## Negated multi-hop relationship existence
+
+Corpus case: `m-navigate-010`
+
+```python
+op = Order.where(Order.items.none(OrderItem.statuses.any()))
+```
+
+## A deep fetch pinned to a past business instant materializes the superseded milestone
+
+Corpus case: `m-navigate-013`
+
+```python
+def pinned_graph_at_a_past_business_instant(db: Database) -> Snapshot[Any]:
+    return db.find(
+        Policy.where()
+        .as_of(business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), processing=LATEST)
+        .include(Policy.coverages)
+    )
+```
+
+## A semi-join across a temporal hop, explicitly pinned to latest
+
+Corpus case: `m-navigate-018`
+
+```python
+op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(
+    processing=LATEST, business=LATEST
+)
+```
+
+## The same semi-join, defaulted to latest (no `.as_of()` at all)
+
+Corpus case: `m-navigate-023`
+
+```python
+op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00))
+```
+
 ## Equality on the primary key
 
 Corpus case: `m-op-algebra-002`
@@ -86,6 +277,63 @@ Corpus case: `m-op-algebra-032`
 op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)
 ```
 
+## Diamond identity: two include paths reaching the same rows share one node
+
+Corpus case: `m-snapshot-read-001`
+
+```python
+def diamond_identity_shares_one_child_node(db: Database) -> Snapshot[Any]:
+    return db.find(Order.where(Order.id == 1).include(Order.items, Order.items_by_ship_date))
+```
+
+## An empty root elides every child statement
+
+Corpus case: `m-snapshot-read-004`
+
+```python
+def empty_root_materializes_no_children(db: Database) -> Snapshot[Any]:
+    return db.find(Order.where(Order.id == 999).include(Order.items.statuses))
+```
+
+## An empty intermediate level short-circuits the grandchild fetch
+
+Corpus case: `m-snapshot-read-005`
+
+```python
+def empty_intermediate_level_short_circuits(db: Database) -> Snapshot[Any]:
+    return db.find(Order.where(Order.id == 4).include(Order.items.statuses))
+```
+
+## Closed-world: an un-included relationship raises with zero SQL
+
+Corpus case: `m-snapshot-read-009`
+
+```python
+def closed_world_unloaded_access_raises_without_sql(db: Database) -> Snapshot[Any]:
+    return db.find(Order.where(Order.id == 1))  # no `.include(...)`: `statuses` stays unloaded
+```
+
+## Mutating a snapshot node never writes back
+
+Corpus case: `m-snapshot-read-010`
+
+```python
+def mutation_has_no_writeback(db: Database) -> tuple[Any, Snapshot[Any]]:
+    order = db.find(Order.where(Order.id == 1)).result()
+    mutated = order.model_copy(update={"name": "Mutant"})  # in-memory only, never DML
+    reread = db.find(Order.where(Order.id == 1))  # still observes the ORIGINAL name
+    return mutated, reread
+```
+
+## A back-reference cycle resolves to the SAME root node (identityChecks)
+
+Corpus case: `m-snapshot-read-011`
+
+```python
+def back_reference_cycle_resolves_to_the_root(db: Database) -> Snapshot[Any]:
+    return db.find(Order.where(Order.id == 1).include(Order.items.order))
+```
+
 ## As-of read at a past instant
 
 Corpus case: `m-temporal-read-003`
@@ -93,10 +341,6 @@ Corpus case: `m-temporal-read-003`
 ```python
 op = Balance.where().as_of(processing=datetime(2024, 4, 1, tzinfo=UTC))
 ```
-
-## Transactions — a provisional surface (ledger D-16)
-
-> The transaction examples below use the **neutral, provisional** write surface: `tx.insert` / `tx.update` / `tx.delete` take an entity **name** and a plain row document, and `tx.find` returns plain rows. These spellings are the deliberate M4 staging of the spec §5 transaction surface; they graduate to entity-instance signatures (`insert(instance)`, sparse `update(edited_copy)`, materialized finds) when the Phase-7 instance model lands (deferred-work ledger D-16).
 
 ## Insert, then read your own write
 
@@ -285,4 +529,74 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Row]:
         db.transact(doomed)
     # The aborted delete was discarded: account 3 still stands.
     return _as_rows(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))))
+```
+
+## Nested value-object field equality
+
+Corpus case: `m-value-object-001`
+
+```python
+op = Customer.where(Customer.address.city == "Oslo")
+```
+
+## A deeply nested value-object field
+
+Corpus case: `m-value-object-002`
+
+```python
+op = Customer.where(Customer.address.geo.country == "US")
+```
+
+## A nested value-object presence test (`.is_null()`)
+
+Corpus case: `m-value-object-007`
+
+```python
+op = Customer.where(Customer.address.city.is_null())
+```
+
+## A to-many value-object member's presence (`.any()`)
+
+Corpus case: `m-value-object-015`
+
+```python
+op = Customer.where(Customer.address.phones.any())
+```
+
+## A to-many value-object member's absence (`.none()`)
+
+Corpus case: `m-value-object-016`
+
+```python
+op = Customer.where(Customer.address.phones.none())
+```
+
+## A flat any-element predicate through a to-many value-object member
+
+Corpus case: `m-value-object-017`
+
+```python
+op = Customer.where(Customer.address.phones.type == "home")
+```
+
+## A scoped same-element `.any(...)` over a to-many value-object member
+
+Corpus case: `m-value-object-019`
+
+```python
+op = Customer.where(
+    Customer.address.phones.any(
+        Phone.type == "home",
+        Phone.number == "555-9999",
+    )
+)
+```
+
+## A nested comparison whose literal type mismatches the declared attribute
+
+Corpus case: `m-value-object-038`
+
+```python
+Customer.where(Customer.address.city == 42)
+# raises OperationRejectedError(rule="nested-literal-type-mismatch")
 ```

@@ -407,6 +407,82 @@ self-contained without a system `libpq`.
   (`docs/usage-guide.md`) both regenerated for the new exports. **Next:**
   increment 6b (the example build-out over the graduated instance-native
   surface), then increment 7 (remaining ledger closures).
+- **Phase 7 increment 6b COMPLETE — API-suite build-out, coverage partition
+  flip, guide regeneration. PHASE 7 COMPLETE.** The five Phase-7 module skip
+  buckets (`m-navigate`/`m-deep-fetch`/`m-snapshot-read`/`m-value-object`/
+  `m-inheritance`) retired from `SKIP_REASONS`; every active-slice case under
+  them is now either an idiomatic example or a reasoned, case-scoped
+  `CASE_SKIP_REASONS` entry — 57 exercised examples total (up from 26), 242
+  case-scoped reasoned skips, partition exact (`exercised ∪ reasoned-skipped
+  == active slice`, 299 cases, no stale ids, no empty reasons). Per-module
+  split (exercised / reasoned-skip of active): `m-navigate` 12/20,
+  `m-deep-fetch` 0/4, `m-snapshot-read` 6/8, `m-value-object` 8/38,
+  `m-inheritance` 10/45. New idiomatic examples cover: navigate predicates
+  (`.any()`/`.none()`, multi-hop, to-one, per-hop temporal propagation);
+  inheritance TPH/TPCS reads (abstract/concrete/tag, `Entity.narrow(...)`,
+  the statement `.narrow(...)` clause, an OR of narrowed branches,
+  polymorphic navigation); value-object traversal (nested equality,
+  `.is_null()`, to-many `.any()`/`.none()`, flat any-element, scoped
+  same-element); and 4 build-time rejected-case proofs
+  (`m-value-object-038`, `m-inheritance-040/041/042`) sharing the SAME
+  `validate_operation` the corpus's own rejected lane grades. Seven executable
+  graph stories (`parallax.conformance.graph_stories`, run against real
+  Postgres through `parallax.snapshot.connect` + `PostgresAdapter` in
+  `test_story_run.py`) prove developer-facing guarantees a wire grade cannot
+  see: diamond identity sharing one child node across two include paths
+  (`m-snapshot-read-001`), a back-reference cycle resolving to the SAME root
+  node via Python reference identity (`m-snapshot-read-011`), closed-world
+  unloaded access raising `UnloadedRelationshipError` with zero SQL
+  (`m-snapshot-read-009`, this suite's official grader for its
+  `lane: api-conformance` field), an empty root/empty intermediate level
+  eliding child statements (`m-snapshot-read-004/-005`), a deep fetch pinned
+  to a past business instant with `snapshot.pin`/`edge_of` on the
+  materialized node (`m-navigate-013`), and mutation-no-writeback via
+  `model_copy` (`m-snapshot-read-010`). Fixing the diamond-identity story
+  surfaced a real wrap-time bug: `parallax.snapshot.wrap` previously deduped
+  by the neutral `Node`'s own python identity, but the assembler
+  deliberately does NOT dedupe across sibling include paths (each attach
+  position keeps its own freshly decoded `Node`, per m-snapshot-read-012's
+  own per-view wire contract) — so two `Node`s for the SAME logical row never
+  wrapped to the same frozen instance. Fixed to dedupe by the LOGICAL identity
+  triple (family-normalized name + primary key, `materialize.identity_key`),
+  closing cycles/diamonds at the correct layer without disturbing the
+  wire-level per-view rendering. The D-16 staged-realization notice retired
+  from `render_usage_guide` (plain removal, not a replacement banner — every
+  rendered transaction example already uses the graduated
+  `tx.insert(instance)`/`tx.update(edited_copy)`/`tx.delete(node)`/
+  `tx.find(...) -> Snapshot[T]` surface, so there is nothing left to warn
+  about). Of the 10 read-side rejected cases (COR-3 Phase 7 increment 1), 4
+  reproduce build-time through the idiomatic surface; the other 6
+  (`m-value-object-034/035/036/037`, `m-inheritance-064/072`) are honestly
+  case-scoped skips — each empirically confirmed to have NO idiomatic
+  spelling reaching `validate_operation` with the corpus's own invalid shape
+  (an unknown attribute, a type the `.include()`/`.where()` API structurally
+  refuses, or — for the two `narrow-outside-relationship-target` cases — the
+  `models/animal.yaml` owner's real name `Person` colliding with
+  `mirrored_models.Person` in the single global entity registry, the same
+  reachability constraint `snapshot_models`'s own `AnimalOwner` rename
+  documents). That SAME Person/AnimalOwner collision (and an analogous
+  Customer-registry collision for customer.yaml's own VO graph/write cases)
+  blocks a handful of other cases from a real executable story today
+  (`m-snapshot-read-007/-012`, `m-inheritance-065/066/067`,
+  `m-deep-fetch-018`, `m-value-object-023/024/025/026/027`) — recorded
+  case-scoped, not silently absorbed; closing it (a registry/naming
+  refactor) is future work, not this increment's scope.
+  `tests/unit/test_api_suite.py`'s two backbone-review reconciliation tests
+  (hardcoded to `m-unit-work` as the only bucket-free module) generalized to
+  the actual bucket-free set. Updated counts (measured): unit lane 1543
+  passed / 77 skipped (100% branch coverage, 100% diff coverage against
+  `origin/main` — the wrap.py identity-key fix needed one added unit test to
+  stay covered), compile sweep unchanged at 164 passed / 67 skipped (231
+  total — no read-path regression), the combined Docker database lane
+  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 271
+  passed / 10 skipped (up from 224 — the 47 new passes are exactly the
+  flipped examples/stories), the rejected sweep 25 passed / 10 skipped
+  (`when.write` cases, Phase 8). `just python-static` and `just python-verify`
+  both green; `uv run gen-usage-guide --check` passes (the regenerated guide
+  gained every new example/story, lost the D-16 notice). **Phase 7 (the
+  snapshot branch) is COMPLETE.** **Next:** Phase 8 (writes and correctness).
 
 ## Blockers
 

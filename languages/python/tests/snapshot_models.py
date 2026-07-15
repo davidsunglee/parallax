@@ -7,13 +7,25 @@ narrowed views) closely enough to drive ``parallax.snapshot.wrap`` against
 corpus-shaped rows, but under class names distinct from the corpus's own
 (``SnapOrder`` / ``AnimalOwner`` rather than ``Order`` / ``Person``) — the
 class registry is a single GLOBAL process-wide namespace
-(``parallax.core.entity.entity_registry()``), and ``example_models.Order`` /
-``mirrored_models.Person`` already claim those names for their own no-drift
-guards. Assembled into a self-contained :class:`~parallax.core.descriptor.Metamodel`
-via ``parallax.core.entity.metamodel(...)`` rather than corpus YAML ingestion,
-so these tests never depend on (or collide with) any other module's registered
+(``parallax.core.entity.entity_registry()``), and
+``parallax.conformance.story_models.Order`` / ``mirrored_models.Person``
+already claim those names for their own no-drift guards. Assembled into a
+self-contained :class:`~parallax.core.descriptor.Metamodel` via
+``parallax.core.entity.metamodel(...)`` rather than corpus YAML ingestion, so
+these tests never depend on (or collide with) any other module's registered
 classes. This module deliberately avoids ``from __future__ import annotations``
 so the metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
+
+Lives at the top level of ``tests/`` (moved from ``tests/unit/`` in increment
+6b): ``Animal``/``Pet``/``Dog``/``Cat``/``WildBoar`` (declared with their real
+corpus names, unlike the renamed ``SnapOrder``/``AnimalOwner`` siblings) are
+reused by the API Conformance Suite's animal-family inheritance/narrow examples
+that never reference the polymorphic owner. Reaching the owner side
+(``models/animal.yaml``'s own ``Person``) is NOT reproducible from the suite
+today: it would collide with ``mirrored_models.Person`` (``models/person.yaml``)
+in the same shared registry, so the owner-relationship cases stay
+case-scoped-skipped (`api_suite.CASE_SKIP_REASONS`) rather than silently
+mis-resolving whichever "Person" a dict happened to keep.
 """
 
 import datetime as dt

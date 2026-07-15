@@ -8,10 +8,21 @@ Construction goes through Pydantic's ``model_construct`` (skips validation —
 the rows already passed through the database) plus the implementation-private
 ``object.__setattr__`` backdoor (spec §3's own wording) so:
 
-- a back-reference cycle can be closed by reusing the already-wrapped ancestor
-  instance rather than re-validating or re-building it (graph-local identity,
-  keyed by the neutral :class:`~parallax.snapshot.materialize.Node`'s own
-  python identity — the SAME node the assembler already deduplicated);
+- **graph-local identity is resolved HERE, at the developer-facing wrap, keyed
+  by the LOGICAL identity triple** (``~parallax.snapshot.materialize.identity_key``:
+  family-normalized name + primary key — coordinate-omitted, safe within one
+  graph's single pin, m-snapshot-read "Graph-local identity resolution"), never
+  by a neutral :class:`~parallax.snapshot.materialize.Node`'s own python
+  identity. The assembler deliberately does NOT dedupe across sibling levels —
+  each attach position keeps its own freshly decoded ``Node`` so the WIRE
+  `then.graph` rendering stays per-view (m-snapshot-read-012's own
+  diamond-position contract: two views of one row may carry different fetched
+  projections) — so two *different* ``Node`` objects sharing one logical key
+  (a back-reference, or two sibling include paths reaching the same row,
+  m-snapshot-read-001) still wrap to the SAME frozen instance here, closing the
+  cycle or the diamond without re-validating or re-building it. A node whose
+  (resolved) entity declares no primary key at all falls back to the ``Node``'s
+  own python identity (defensive; every corpus entity declares one);
 - a relationship outside the include set is set to the private ``UNLOADED``
   sentinel, which the ``Rel`` descriptor's instance access translates into
   :class:`~parallax.core.entity.expressions.UnloadedRelationshipError`;
@@ -65,7 +76,7 @@ def wrap_graph(
     reachable through them) into frozen instances of the caller's registered
     entity classes, attaching the SAME whole-graph ``pin`` to every temporal
     node reached."""
-    cache: dict[int, object] = {}
+    cache: dict[object, object] = {}
     return tuple(_wrap(node, root_entity, meta, pin, cache) for node in nodes)
 
 
@@ -95,19 +106,28 @@ def _family_relationships(meta: Metamodel, entity: Entity) -> tuple[Relationship
     return tuple(collected)
 
 
+def _identity_cache_key(node: materialize.Node, concrete_name: str, meta: Metamodel) -> object:
+    """The wrap-time dedup key: the LOGICAL identity triple (family-normalized
+    name + primary key) when the (resolved) entity declares one, else the
+    ``Node``'s own python identity — the same defensive fallback
+    ``~parallax.snapshot.materialize.identity_key`` documents for an entity
+    with no declared primary key (none exists in the corpus today)."""
+    return materialize.identity_key(meta, concrete_name, node.fields) or id(node)
+
+
 def _wrap(
     node: materialize.Node,
     default_entity: str,
     meta: Metamodel,
     pin: Pin,
-    cache: dict[int, object],
+    cache: dict[object, object],
 ) -> object:
-    key = id(node)
+    concrete_name = _concrete_entity_name(node, default_entity)
+    key = _identity_cache_key(node, concrete_name, meta)
     cached = cache.get(key)
     if cached is not None:
         return cached
 
-    concrete_name = _concrete_entity_name(node, default_entity)
     registry = entity_registry()
     cls = registry.get(concrete_name)
     if cls is None:
@@ -163,7 +183,7 @@ def _wrap(
 
 
 def _wrap_related(
-    value: object, default_entity: str, meta: Metamodel, pin: Pin, cache: dict[int, object]
+    value: object, default_entity: str, meta: Metamodel, pin: Pin, cache: dict[object, object]
 ) -> object:
     if value is None:
         return None

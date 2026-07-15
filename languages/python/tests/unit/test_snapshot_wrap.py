@@ -7,16 +7,19 @@ introspection (``is_loaded`` / ``narrowed`` / ``UnloadedRelationshipError``).
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from decimal import Decimal
 from typing import cast
 
 import pytest
-import snapshot_models as sm
 
 import mirrored_models  # noqa: F401  # pyright: ignore[reportUnusedImport] - registers Balance
+import snapshot_models as sm
 from parallax.conformance import models
 from parallax.core import is_loaded, narrowed
+from parallax.core.descriptor import Entity as EntityDescriptor
+from parallax.core.descriptor import Inheritance
 from parallax.core.entity import metamodel
 from parallax.core.entity.expressions import UnloadedRelationshipError
 from parallax.core.temporal_read import Pin, edge_of, pin_of
@@ -28,6 +31,25 @@ pytestmark = pytest.mark.unit
 
 _ORDERS = metamodel([sm.SnapOrder, sm.SnapOrderItem, sm.SnapOrderStatus])
 _ANIMAL = metamodel([sm.Animal, sm.Pet, sm.Dog, sm.Cat, sm.WildBoar, sm.AnimalOwner])
+# A metamodel the corpus/database DOES declare a concrete "Iguana" family member
+# for (a legitimate descriptor entity, resolvable through `family_root`), but
+# for which no Python class was ever registered — the exact defensive scenario
+# `wrap._wrap`'s own `LookupError` guards, distinct from `identity_key`'s
+# unrelated (and differently-worded) `meta.entity(...)` `KeyError` for a name
+# the METAMODEL itself does not know at all.
+_ANIMAL_WITH_UNREGISTERED_CONCRETE = dataclasses.replace(
+    _ANIMAL,
+    entities=(
+        *_ANIMAL.entities,
+        EntityDescriptor(
+            name="Iguana",
+            namespace="parallax.compatibility",
+            table="animal",
+            mutability="transactional",
+            inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="iguana"),
+        ),
+    ),
+)
 _BALANCE = models.load_models()["balance"]
 
 
@@ -227,7 +249,7 @@ def test_wrap_raises_lookup_error_for_an_unregistered_concrete_class() -> None:
         pk_columns=("id",),
     )
     with pytest.raises(LookupError, match="Iguana"):
-        wrap.wrap_graph((owner,), "AnimalOwner", _ANIMAL, Pin())
+        wrap.wrap_graph((owner,), "AnimalOwner", _ANIMAL_WITH_UNREGISTERED_CONCRETE, Pin())
 
 
 def _iguana() -> Node:

@@ -1,13 +1,23 @@
-"""Idiomatic entity classes the API-suite write stories construct instances of.
+"""Idiomatic entity classes the API-suite stories construct instances of.
 
-Mirrors ``models/account.yaml`` and the ``Order`` / ``OrderItem`` scalar
-surface of ``models/orders.yaml``. Owned by ``parallax.conformance`` (not the
-test-suite's own ``mirrored_models`` / ``example_models``, which live under
-``tests/`` and are unreachable from an installed ``parallax-conformance``
-distribution) since ``stories.py`` — a real dev-only package module, exercised
-by both the fake-port write no-drift guard and the real-Postgres story-run
-suite — needs classes resolvable at ordinary import time, not only under
-pytest's test-path magic. This module deliberately avoids
+Mirrors ``models/account.yaml`` and the FULL ``models/orders.yaml`` family
+(``Order`` / ``OrderItem`` / ``OrderStatus`` / ``OrderTag``, every declared
+relationship included). Owned by ``parallax.conformance`` (not the
+test-suite's own ``mirrored_models``, which lives under ``tests/`` and is
+unreachable from an installed ``parallax-conformance`` distribution) since
+``stories.py`` / ``graph_stories.py`` — real dev-only package modules,
+exercised by the fake-port write no-drift guard and the real-Postgres
+story-run suite alike — need classes resolvable at ordinary import time, not
+only under pytest's test-path magic.
+
+``Order`` / ``OrderItem`` started (M4) as the write stories' scalar-only
+surface; COR-3 Phase 7 increment 6b widens them to the family's full
+relationship set (plus the two sibling entities orders.yaml itself declares,
+``OrderStatus`` / ``OrderTag``) so the SAME classes also serve the API
+Conformance Suite's navigate / deep-fetch / snapshot-graph examples and
+stories — one "Order" per process (the entity class registry is a single
+global namespace keyed by canonical name), never a second, differently-scoped
+mirror racing it. This module deliberately avoids
 ``from __future__ import annotations`` so the metaclass reads the live
 ``Attr[T]`` objects and infers each attribute's neutral type from ``T``.
 """
@@ -15,11 +25,11 @@ pytest's test-path magic. This module deliberately avoids
 import datetime as dt
 from decimal import Decimal
 
-from parallax.core import Attr, Entity, EntityConfig, Field
+from parallax.core import Attr, Entity, EntityConfig, Field, OrderByTerm, Rel, Relationship
 
 _NS = "parallax.compatibility"
 
-__all__ = ["Account", "Order", "OrderItem"]
+__all__ = ["Account", "Order", "OrderItem", "OrderStatus", "OrderTag"]
 
 
 class Account(Entity, frozen=True):
@@ -34,7 +44,9 @@ class Account(Entity, frozen=True):
 
 
 class Order(Entity, frozen=True):
-    """Mirror of the ``Order`` scalar surface of ``models/orders.yaml``."""
+    """Mirror of the ``Order`` entity of ``models/orders.yaml`` (the full
+    relationship set: to-many ``items``/``statuses``/``tags`` plus the
+    alternate-ordering ``itemsByShipDate`` path over the same join)."""
 
     __parallax__ = EntityConfig(table="orders", namespace=_NS, mutability="transactional")
 
@@ -45,10 +57,46 @@ class Order(Entity, frozen=True):
     price: Attr[Decimal] = Field(type="decimal(18,2)")
     active: Attr[bool] = Field(default=False)
     ordered_on: Attr[dt.date] = Field(column="ordered_on")
+    items: Rel[tuple["OrderItem", ...]] = Relationship(
+        cardinality="one-to-many",
+        join="this.id = OrderItem.orderId",
+        related_entity="OrderItem",
+        reverse_name="order",
+        dependent=True,
+        foreign_key="order_id",
+        order_by=[OrderByTerm(attr="id", direction="desc")],
+    )
+    statuses: Rel[tuple["OrderStatus", ...]] = Relationship(
+        cardinality="one-to-many",
+        join="this.id = OrderStatus.orderId",
+        related_entity="OrderStatus",
+        reverse_name="order",
+        dependent=True,
+        foreign_key="order_id",
+    )
+    tags: Rel[tuple["OrderTag", ...]] = Relationship(
+        cardinality="one-to-many",
+        join="this.id = OrderTag.orderId",
+        related_entity="OrderTag",
+        reverse_name="order",
+        foreign_key="order_id",
+        order_by=[
+            OrderByTerm(attr="priority", direction="desc"),
+            OrderByTerm(attr="label", direction="asc"),
+        ],
+    )
+    items_by_ship_date: Rel[tuple["OrderItem", ...]] = Relationship(
+        cardinality="one-to-many",
+        join="this.id = OrderItem.orderId",
+        related_entity="OrderItem",
+        foreign_key="order_id",
+        order_by=[OrderByTerm(attr="shippedOn", direction="asc")],
+    )
 
 
 class OrderItem(Entity, frozen=True):
-    """Mirror of the ``OrderItem`` scalar surface of ``models/orders.yaml``."""
+    """Mirror of the ``OrderItem`` entity of ``models/orders.yaml`` (the
+    to-one ``order`` back-reference and the item-level ``statuses`` hop)."""
 
     __parallax__ = EntityConfig(table="order_item", namespace=_NS, mutability="transactional")
 
@@ -58,4 +106,67 @@ class OrderItem(Entity, frozen=True):
     quantity: Attr[int] = Field(type="int32")
     shipped_on: Attr[dt.date | None] = Field(
         type="date", column="shipped_on", nullable=True, default=None
+    )
+    order: Rel["Order"] = Relationship(
+        cardinality="many-to-one",
+        join="this.orderId = Order.id",
+        related_entity="Order",
+        reverse_name="items",
+        foreign_key="order_id",
+    )
+    statuses: Rel[tuple["OrderStatus", ...]] = Relationship(
+        cardinality="one-to-many",
+        join="this.id = OrderStatus.orderItemId",
+        related_entity="OrderStatus",
+        reverse_name="orderItem",
+        dependent=True,
+        foreign_key="order_item_id",
+        order_by=[OrderByTerm(attr="code", direction="asc")],
+    )
+
+
+class OrderStatus(Entity, frozen=True):
+    """Mirror of the ``OrderStatus`` entity of ``models/orders.yaml``: each
+    status belongs to an ``Order`` and OPTIONALLY to a specific ``OrderItem``
+    (a nullable many-to-one — the to-one navigate/deep-fetch nullable shape)."""
+
+    __parallax__ = EntityConfig(table="order_status", namespace=_NS, mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    order_id: Attr[int] = Field(column="order_id", type="int64")
+    order_item_id: Attr[int | None] = Field(
+        type="int64", column="order_item_id", nullable=True, default=None
+    )
+    code: Attr[str] = Field(max_length=16)
+    order: Rel["Order"] = Relationship(
+        cardinality="many-to-one",
+        join="this.orderId = Order.id",
+        related_entity="Order",
+        reverse_name="statuses",
+        foreign_key="order_id",
+    )
+    order_item: Rel["OrderItem"] = Relationship(
+        cardinality="many-to-one",
+        join="this.orderItemId = OrderItem.id",
+        related_entity="OrderItem",
+        reverse_name="statuses",
+        foreign_key="order_item_id",
+    )
+
+
+class OrderTag(Entity, frozen=True):
+    """Mirror of the ``OrderTag`` entity of ``models/orders.yaml``."""
+
+    __parallax__ = EntityConfig(table="order_tag", namespace=_NS, mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    order_id: Attr[int] = Field(column="order_id", type="int64")
+    label: Attr[str] = Field(max_length=32)
+    priority: Attr[int] = Field(type="int32")
+    order: Rel["Order"] = Relationship(
+        cardinality="many-to-one",
+        join="this.orderId = Order.id",
+        related_entity="Order",
+        reverse_name="tags",
+        foreign_key="order_id",
     )

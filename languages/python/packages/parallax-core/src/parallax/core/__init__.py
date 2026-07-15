@@ -47,6 +47,7 @@ from parallax.core.entity import (
     meta,
     narrowed,
 )
+from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.temporal_read import (
     LATEST,
     Edge,
@@ -71,6 +72,7 @@ __all__ = [
     "Field",
     "ModelCopyError",
     "NameCollisionError",
+    "OperationRejectedError",
     "OrderByTerm",
     "Pin",
     "Predicate",

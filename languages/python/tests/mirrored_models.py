@@ -18,6 +18,7 @@ import datetime as dt
 from decimal import Decimal
 from typing import Any
 
+import inheritance_models as _im
 from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, Rel, Relationship
 
 _NS = "parallax.compatibility"
@@ -104,11 +105,26 @@ class Balance(Entity, frozen=True):
 
 
 # corpus model stem -> the idiomatic classes assembled into that descriptor.
+#
+# "animal" and "customer" are deliberately ABSENT: animal.yaml's own polymorphic
+# owner entity is ALSO named "Person" — the same literal canonical name
+# `person.yaml`'s own Person/Passport pair above already claims in this shared,
+# single, process-wide class registry — so a full descriptor mirror of
+# animal.yaml cannot coexist with this module's own Person; see
+# `snapshot_models`'s module docstring. customer.yaml's own descriptor spans
+# three entities (Customer, Location, Depot); `value_object_models.Customer`
+# mirrors only the first (no example needs Location/Depot), so a full-model
+# entry would fail this proof by omission, not drift.
 MIRRORED: list[tuple[str, list[type]]] = [
     ("account", [Account]),
     ("pk-max", [Attendee]),
     ("person", [Person, Passport]),
     ("balance", [Balance]),
+    ("payment", [_im.Payment, _im.CardPayment, _im.CashPayment]),
+    (
+        "document",
+        [_im.Document, _im.FinancialDocument, _im.Invoice, _im.Receipt, _im.Memo, _im.Folder],
+    ),
 ]
 
 

@@ -6,6 +6,15 @@ an intermediate abstract subtype and a polymorphic owner: ``Document`` /
 ``FinancialDocument`` / ``Invoice`` / ``Receipt`` / ``Memo`` / ``Folder``).
 This module deliberately avoids ``from __future__ import annotations`` so the
 metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
+
+Lives at the top level of ``tests/`` (moved from ``tests/unit/`` in increment
+6b) rather than lane-local: the unit lane's frontend/no-drift tests AND the API
+Conformance Suite's descriptor no-drift guard / idiomatic read examples both
+need the SAME classes (one compiled entity per corpus name — the class
+registry is a single process-wide namespace, so a second, differently-scoped
+copy would silently race it), and only a module directly on
+``pythonpath = ["tools", "tests"]`` resolves reliably regardless of which
+lane's files pytest collects first.
 """
 
 from decimal import Decimal
