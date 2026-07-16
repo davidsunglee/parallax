@@ -36,6 +36,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
+from parallax.core import inheritance
 from parallax.core.descriptor import Metamodel
 from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
 
@@ -74,10 +75,23 @@ class Observation:
 @dataclass(frozen=True, slots=True)
 class PlannedWrite:
     """One execution-ordered item of the neutral flush plan: a (coalesced) write
-    instruction and its bound observation (``None`` when none was recorded)."""
+    instruction, its bound observation (``None`` when none was recorded), and
+    its affected-rows expectation (m-opt-lock).
+
+    ``expected_affected`` is ``1`` for every keyed ``update``/``delete`` whose
+    bound observation carries a version (a versioned row this unit of work
+    observed) — the composition layer's shell compares the port's own
+    ``execute_write`` count against it, raising the optimistic-lock conflict on
+    a mismatch and aborting the whole unit of work (`parallax.core.opt_lock`).
+    ``None`` for every other write (an unversioned write, or one whose row
+    carries its version as plain caller-authored data rather than a recorded
+    observation — the M4-era corpus witnesses this plan-level expectation
+    never touches, since they never populate an observation for that key).
+    """
 
     instruction: WriteInstruction
     observation: Observation | None = None
+    expected_affected: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,14 +134,23 @@ def plan_flush(
 def object_key(instruction: WriteInstruction, meta: Metamodel) -> ObjectKey | None:
     """The identity of the single object a keyed write targets, or ``None``.
 
-    ``None`` when the instruction is not a single-row keyed write, or when the row
+    ``None`` when the instruction is not a single-row keyed write, when the row
     does not carry every primary-key attribute (a pk-generated insert whose key is
-    DB-computed) — an unidentifiable write is never coalesced nor observation-bound.
+    entirely DB-computed), or when a carried primary-key VALUE is itself a
+    DB-computed marker (`m-pk-gen`'s `{computed: ...}` / `{increment: ...}` — a
+    marker-shaped pk value has no coalescing identity, exactly like an absent
+    one) — an unidentifiable write is never coalesced nor observation-bound.
+
+    Primary-key resolution is FAMILY-EFFECTIVE
+    (`inheritance.family_primary_key`): an inheritance participant's key is
+    declared on the root alone (m-inheritance "Inherited members"), so the
+    bare per-entity ``Entity.primary_key`` view is wrongly empty for a
+    concrete subtype — every corpus family's own keyed writes.
     """
     if not isinstance(instruction, KeyedWrite) or len(instruction.rows) != 1:
         return None
     entity = meta.entity(instruction.entity)
-    pk_names = [attr.name for attr in entity.primary_key]
+    pk_names = [attr.name for attr in inheritance.family_primary_key(meta, entity)]
     if not pk_names:
         return None
     row = instruction.rows[0]
@@ -135,7 +158,10 @@ def object_key(instruction: WriteInstruction, meta: Metamodel) -> ObjectKey | No
     for name in pk_names:
         if name not in row:
             return None
-        pairs.append((name, row[name]))
+        value = row[name]
+        if isinstance(value, Mapping):
+            return None
+        pairs.append((name, value))
     return (instruction.entity, tuple(pairs))
 
 
@@ -290,4 +316,32 @@ def _attach_observation(
 ) -> PlannedWrite:
     key = object_key(instruction, meta)
     observation = observations.get(key) if key is not None else None
-    return PlannedWrite(instruction=instruction, observation=observation)
+    return PlannedWrite(
+        instruction=instruction,
+        observation=observation,
+        expected_affected=_expected_affected(instruction, observation),
+    )
+
+
+def _expected_affected(
+    instruction: WriteInstruction, observation: Observation | None
+) -> int | None:
+    """The affected-rows expectation `m-opt-lock` attaches at flush.
+
+    ``1`` for a keyed ``update``/``delete`` whose bound observation carries a
+    version (a versioned row this unit of work observed) — in EITHER
+    concurrency mode, so a vanished row is caught even under a locking-mode
+    write the version gate never guards. Nothing else ever carries a version
+    observation (a non-versioned entity's row, or an M4-era write whose row
+    carries its version as plain caller-authored data rather than a recorded
+    observation), so this reduces to the single check below without a
+    metamodel lookup of its own.
+    """
+    if not isinstance(instruction, KeyedWrite) or instruction.mutation not in (
+        *_UPDATE_VERBS,
+        *_DELETE_VERBS,
+    ):
+        return None
+    if observation is None or observation.version is None:
+        return None
+    return 1

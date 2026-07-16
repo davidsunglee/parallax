@@ -32,6 +32,8 @@ _BALANCE = _MODELS["balance"]
 _POSITION = _MODELS["position"]
 _ORDERS = _MODELS["orders"]
 _PERSON = _MODELS["person"]
+_PAYMENT = _MODELS["payment"]
+_PK_MAX = _MODELS["pk-max"]
 
 _B1 = "2024-01-01T00:00:00+00:00"
 
@@ -231,6 +233,31 @@ def test_object_key_is_none_for_a_keyless_entity() -> None:
     assert object_key(KeyedWrite("delete", "Blob", ({"data": "x"},)), meta) is None
 
 
+def test_object_key_resolves_the_family_effective_primary_key() -> None:
+    # `CardPayment`'s own compiled record carries no `id` attribute at all (it
+    # is declared on the family root `Payment` alone, m-inheritance "Inherited
+    # members") -- a bare `Entity.primary_key` view would wrongly see no key,
+    # making every inheritance-family keyed write unidentifiable (COR-3 Phase
+    # 8 increment 3).
+    key = object_key(KeyedWrite("update", "CardPayment", ({"id": 1, "amount": 5.00},)), _PAYMENT)
+    assert key == ("CardPayment", (("id", 1),))
+
+
+def test_object_key_is_none_for_a_marker_shaped_primary_key_value() -> None:
+    # A pk-gen `max` insert's row carries a DB-computed marker for the id, not
+    # a real value (`{computed: "maxPlusOne"}`, `m-pk-gen`): it has no
+    # coalescing identity, exactly like an absent pk (kills the planner's own
+    # `TypeError: unhashable type: 'dict'` crash, COR-3 Phase 8 increment 3).
+    marker_insert = KeyedWrite(
+        "insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},)
+    )
+    assert object_key(marker_insert, _PK_MAX) is None
+    # And it must not crash the planner stages that coalesce/attach on it.
+    plan = plan_flush([marker_insert], {}, None, _PK_MAX)
+    assert len(plan.writes) == 1
+    assert plan.writes[0].observation is None
+
+
 def test_recorded_observation_binds_to_its_planned_write() -> None:
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},))
     other = KeyedWrite("update", "Account", ({"id": 2, "balance": 0.00},))
@@ -252,3 +279,40 @@ def test_tx_instant_flows_through_as_plan_context() -> None:
         [KeyedWrite("insert", "Account", ({"id": 1},))], {}, "2024-06-01T00:00:00+00:00", _ACCOUNT
     )
     assert plan.tx_instant == "2024-06-01T00:00:00+00:00"
+
+
+# --------------------------------------------------------------------------- #
+# Affected-rows expectation (m-opt-lock, COR-3 Phase 8 increment 3).           #
+# --------------------------------------------------------------------------- #
+def test_expected_affected_is_one_for_a_versioned_update_carrying_an_observation() -> None:
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},))
+    key = object_key(update, _ACCOUNT)
+    assert key is not None
+    plan = plan_flush([update], {key: Observation(version=3)}, None, _ACCOUNT)
+    assert plan.writes[0].expected_affected == 1
+
+
+def test_expected_affected_is_one_for_a_versioned_delete_carrying_an_observation() -> None:
+    delete = KeyedWrite("delete", "Account", ({"id": 1},))
+    key = object_key(delete, _ACCOUNT)
+    assert key is not None
+    plan = plan_flush([delete], {key: Observation(version=3)}, None, _ACCOUNT)
+    assert plan.writes[0].expected_affected == 1
+
+
+def test_expected_affected_is_none_without_a_recorded_observation() -> None:
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},))
+    plan = plan_flush([update], {}, None, _ACCOUNT)
+    assert plan.writes[0].expected_affected is None
+
+
+def test_expected_affected_is_none_for_an_insert_even_with_a_recorded_observation() -> None:
+    # An observation is only ever attached (and only ever significant) for a
+    # keyed update/delete; a matching insert -- structurally impossible since
+    # `object_key` never resolves an insert against a PRE-EXISTING observation
+    # in practice -- still carries no expectation defensively.
+    insert = KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": 0.00},))
+    key = object_key(insert, _ACCOUNT)
+    assert key is not None
+    plan = plan_flush([insert], {key: Observation(version=3)}, None, _ACCOUNT)
+    assert plan.writes[0].expected_affected is None
