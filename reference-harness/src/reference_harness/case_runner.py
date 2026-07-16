@@ -1168,6 +1168,37 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
     return materialized
 
 
+def _narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Narrow each row of an INSTANCE-FORM abstract-target read to its own concrete
+    variant's declared columns (m-case-format "Read targeting", the instance-form
+    per-variant node shape, COR-3 Phase 8 part C).
+
+    A materialized instance carries only its own branch's members — its inherited
+    chain plus its own declared attributes — never a sibling branch's null-padded
+    column: a `Dog` node has no `indoor` key to be null. Row-form (`then.rows`)
+    keeps the full concrete-superset row unchanged (:func:`_materialize_family_variant`
+    alone); this ADDITIONAL narrowing applies only where a row already carries a
+    materialized ``familyVariant`` (a no-op for a concrete-target read, or a
+    non-inheritance entity, whose rows carry none).
+    """
+    entity_defs = case.model.entity_defs
+    narrowed: list[dict[str, Any]] = []
+    for row in rows:
+        variant = row.get("familyVariant")
+        if not isinstance(variant, str):
+            narrowed.append(row)
+            continue
+        own_columns = set(concrete_superset_columns(entity_defs, [variant]))
+        narrowed.append(
+            {
+                key: value
+                for key, value in row.items()
+                if key == "familyVariant" or key in own_columns
+            }
+        )
+    return narrowed
+
+
 # The projected output column that carries the table-per-concrete-subtype
 # `familyVariant` literal per `union all` branch (the settled TPCS asymmetry,
 # m-sql): unlike table-per-hierarchy — which projects the RAW tag column and
@@ -2022,6 +2053,14 @@ def _assert_value_object_graph(case: Case, db: DatabaseProvider) -> None:
     is unspecified (m-value-object), so a reordered ``phones`` array still matches
     while element multiplicity is still enforced.
 
+    An abstract-target inheritance read (m-inheritance / m-case-format "Read
+    targeting", COR-3 Phase 8 part C) additionally materializes ``familyVariant``
+    (:func:`_materialize_family_variant`, the SAME oracle the row-form path uses)
+    and then narrows each node to its own concrete variant's declared columns
+    (:func:`_narrow_to_variant_columns`) — the instance-form per-variant node
+    shape, distinct from row-form's unnarrowed superset. A no-op for a
+    non-inheritance / concrete-target read.
+
     When a ``referenceSql`` oracle is present it independently pins the matched
     row SET (identity columns only, the value-object columns stripped), so the
     filter that selected the owners is checked by a different formulation without
@@ -2031,8 +2070,18 @@ def _assert_value_object_graph(case: Case, db: DatabaseProvider) -> None:
     (golden,) = case.golden_statements(dialect)
     entity = case.model.root_entity
 
+    validate_operation_inheritance(
+        case.model.entity_defs, case.operation, position=case.when.get("targetEntity")
+    )
+
     rows = _query_rows(db, golden, case.statement_binds(0, dialect))
-    assembled = {entity.name: [_materialize_owner_node(entity, row) for row in rows]}
+    # `familyVariant` materialization happens on the RAW rows (also what a
+    # referenceSql identity check below compares against — the matched ROW SET,
+    # unrelated to per-variant field narrowing); the per-variant COLUMN narrowing
+    # is a separate, graph-assembly-only step.
+    rows = _materialize_family_variant(case, rows)
+    narrowed_rows = _narrow_to_variant_columns(case, rows)
+    assembled = {entity.name: [_materialize_owner_node(entity, row) for row in narrowed_rows]}
 
     expected = case.expected_graph or {}
     if not _graphs_equal(assembled, expected):
@@ -2048,7 +2097,11 @@ def _assert_value_object_graph(case: Case, db: DatabaseProvider) -> None:
         identity_rows = [
             {key: value for key, value in row.items() if key not in vo_columns} for row in rows
         ]
-        reference_rows = db.query(reference_sql)
+        # An abstract-target inheritance read's naive reference SQL projects the
+        # RAW tag column too (it is an independently-formulated but otherwise
+        # equivalent selection); materialize familyVariant on it the same way,
+        # so this identity check compares apples to apples (m-inheritance).
+        reference_rows = _materialize_family_variant(case, db.query(reference_sql))
         if not _rows_equal(reference_rows, identity_rows, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != golden owner rows (identity).\n"
@@ -3099,9 +3152,18 @@ def _conflict_temporal_entity(case: Case) -> Entity | None:
     A temporal / bitemporal conflict close (``m-temporal-read-009`` through
     ``m-temporal-read-012`` / ``m-bitemp-write-004`` / ``m-bitemp-write-005``) carries no
     version column; it locks via the observed processing-from (``in_z``),
-    so the target is the first entity with a processing as-of axis.
+    so the target is the first CONCRETE (row-owning) entity with a processing
+    as-of axis. An inheritance family's abstract root (m-inheritance) resolves
+    the SAME family-wide axis (`resolve_effective_definition` flattens it onto
+    every descendant), but is tableless and rowless — a conflict case's golden
+    UPDATE always targets the concrete subtype that owns the row
+    (``m-inheritance-105``, the composed temporal x inheritance x optimistic
+    conflict witness), so an abstract node is skipped even when it is the
+    first entity in the descriptor to carry the axis.
     """
     for entity in case.model.entities:
+        if entity.is_abstract:
+            continue
         if any(a["axis"] == "processing" for a in entity.as_of_attributes):
             return entity
     return None
@@ -3248,10 +3310,18 @@ def _assert_temporal_conflict_close(
 
     A close sets ``out_z = at`` keyed on the still-open current row
     (``pk and out_z = infinity``); an optimistic close adds the ``and in_z = ?`` gate
-    bound to ``observedInZ``. A bitemporal close inserts the business discriminator's
-    VALUE (the classified ``set`` coordinate, e.g. ``from_z``) between ``out_z`` and
-    ``in_z`` in model column order, so the derived binds are
-    ``[at, pk, infinity, …businessCoords, (observedInZ if gated)]``.
+    bound to ``observedInZ``. A TABLE-PER-HIERARCHY concrete subtype's close ALSO
+    carries the tag GUARD among the identity predicates, immediately after the
+    primary key and before the current-row predicate — the SAME composition a
+    keyed update follows (m-inheritance x m-opt-lock "Optimistic locking composes
+    with inheritance", resolved Q9), extended to a temporal close
+    (``m-inheritance-105``): the tag guard rides the identity predicates, the
+    observed-in_z gate still binds LAST. A bitemporal close inserts the business
+    discriminator's VALUE (the classified ``set`` coordinate, e.g. ``from_z``)
+    between ``out_z`` and ``in_z`` in model column order, so the derived binds are
+    ``[at, pk, (tagValue), infinity, …businessCoords, (observedInZ if gated)]`` —
+    the tag slots right after the pk (a no-op, ``None`` skipped, for a
+    non-inheritance or table-per-concrete-subtype entity).
     """
     if write is None:
         raise CaseFailure(
@@ -3275,7 +3345,9 @@ def _assert_temporal_conflict_close(
     # A bitemporal close's business discriminator (e.g. from_z) slots between out_z
     # and in_z in model column order; a processing-only close has none.
     business_coords = [set_cols[column] for column in column_order(entity) if column in set_cols]
-    expected = [at, pk, infinity, *business_coords]
+    tag = _tag(entity)
+    tag_binds = [tag[1]] if tag is not None else []
+    expected = [at, pk, *tag_binds, infinity, *business_coords]
     if gated:
         if observed_in_z is None:
             raise CaseFailure(
@@ -3285,6 +3357,7 @@ def _assert_temporal_conflict_close(
             )
         expected.append(observed_in_z)  # the optimistic in_z gate bind
     _assert_write_values(case, expected, binds, statements[0])
+    _assert_inheritance_write_routing(case, entity, statements, [binds])
 
 
 def _read_table(db: DatabaseProvider, entity: Entity) -> list[dict[str, Any]]:

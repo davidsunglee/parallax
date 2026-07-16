@@ -45,7 +45,11 @@ trail. Key invariants the suite pins down:
   discriminator too, to inactivate exactly the observed rectangle:
   `… and out_z = ? and from_z = ? and in_z = ?`. The observed `in_z` is the
   version analogue (`m-opt-lock`, `m-opt-lock --> m-temporal-read`); the chained
-  `head` / `middle` / `tail` rows are ungated `INSERT`s at the fresh `in_z`.
+  `head` / `middle` / `tail` rows are ungated `INSERT`s at the fresh `in_z`. On a
+  table-per-hierarchy concrete subtype the tag guard joins the identity
+  predicates immediately after the primary key, before this composed order,
+  exactly as it does for an audit-only close (`m-audit-write` "Composed predicate
+  order under optimistic mode") — the observed-`in_z` gate still binds last.
 
 This mirrors `GenericBiTemporalDirector.updateUntil` / `splitTailEnd`
 (research §6, the bitemporal rectangle split). The same multi-row physical primary

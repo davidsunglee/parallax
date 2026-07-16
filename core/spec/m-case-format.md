@@ -259,19 +259,56 @@ to the pre-inheritance "equal".
 
 An abstract-target read (an abstract `targetEntity`, or an abstract position
 `narrow`ed with `m-op-algebra`'s `narrow` node) materializes complete concrete
-instances. Its `then.rows` / `then.graph` leaves carry a **`familyVariant`** key —
-the **concrete subtype name** of each row (`Dog`, `Cat`, …). `familyVariant` is
-**not projected as SQL**: under `table-per-hierarchy` the golden SQL projects the
-**raw tag column** (`m-sql`, resolved Q6) and the harness materializes
-`familyVariant` from the tag metadata map (`tagValue` -> subtype name) — an
-independent, metadata-derived recomputation like the as-of and PK-allocation
-oracles. The row also carries the full **concrete-superset** columns (inherited
-first, then each concrete subtype's own columns), with non-applicable subtype
-columns `null`. A **concrete-target** read carries no `familyVariant` (the caller
-already knows the variant) and projects only that concrete instance's columns. A
-`narrow` node inside `when.operation` is validated pre-SQL against the family's
-effective concrete-subtype set (`m-op-algebra`); an invalid narrow is a `rejected`
-case (see the narrow rules in *Rejected cases*).
+instances. Every leaf — a `then.rows` entry or a `then.graph` node — carries a
+**`familyVariant`** key — the **concrete subtype name** of that row (`Dog`,
+`Cat`, …). `familyVariant` is **not projected as SQL**: under
+`table-per-hierarchy` the golden SQL projects the **raw tag column** (`m-sql`,
+resolved Q6) and the harness materializes `familyVariant` from the tag metadata
+map (`tagValue` -> subtype name) — an independent, metadata-derived
+recomputation like the as-of and PK-allocation oracles. A **concrete-target**
+read carries no `familyVariant` (the caller already knows the variant) and
+projects only that concrete instance's columns in either lane. A `narrow` node
+inside `when.operation` is validated pre-SQL against the family's effective
+concrete-subtype set (`m-op-algebra`); an invalid narrow is a `rejected` case
+(see the narrow rules in *Rejected cases*).
+
+**A "complete concrete instance" means something different in each result
+form** (*Read result form*, below), so what ELSE a leaf carries beyond
+`familyVariant` diverges by lane — a divergence beyond the value-object slot-4
+split that section otherwise fixes:
+
+- **Row-form** (`then.rows`) is the flat SQL projection observed unfiltered:
+  every leaf carries the full **concrete-superset** columns (inherited first,
+  then each concrete subtype's own columns, canonical alphabetical sibling
+  order), with non-applicable subtype columns `null` — the values lane reports
+  the query's own fixed-superset `select` list exactly as it comes back
+  (`m-sql` *Read projection*, slots 1-3, unconditional on result form).
+- **Instance-form**, at a **top-level read case's own `then.graph` /
+  `then.graphs` leaves** (a `shape: read` case with no `deepFetch`), is the
+  **per-variant node shape**: each node carries **only its own branch's
+  members** — its inherited chain plus its own declared attributes — and
+  **omits every sibling branch's column entirely**, with **no null sibling
+  padding** — a materialized `Dog` node has no `indoor` key to be null, exactly
+  as an ordinary (non-inheritance) instance never carries an undeclared member.
+  This is a **materialization-time** narrowing, not a projection change: the
+  golden SQL is unaffected (`m-sql` *Read projection* fixes the `select` list
+  as a function of the target position alone, independent of result form,
+  slots 1-3), so both lanes read the identical superset row from the database
+  and only the graph-assembly step — never the `select` list — narrows it to
+  the variant's own declared shape. `m-inheritance-003`/`-013`/`-015`/`-052`
+  (row-form) and their `then.graph` siblings `m-inheritance-106`/`-107`/
+  `-108`/`-109` (instance-form) are this divergence's own result-form pair
+  (like the supplier form-divergence witness, *Read result form*, below): the
+  row-form original stays the values-lane witness, its sibling the
+  instance-form (developer-surface) witness.
+
+This per-variant node shape is scoped, for now, to a read case's own top-level
+`then.graph` leaves — the shape a `db.find` on an abstract multi-concrete
+position returns. A **deep-fetch or snapshot CHILD level**'s graph node shape
+(`m-snapshot-read-012`'s narrowed-vs-broad diamond, for example) is a distinct,
+already-established convention this decision does not touch; reconciling the
+two — whether a child level's polymorphic relationship set should narrow the
+same way — is left open for a follow-up.
 
 A **deep-fetch `then.graph`** keys each eager-fetched related set under the
 **relationship name** — or, for a **narrowed polymorphic hop** (`m-deep-fetch`,
@@ -962,8 +999,9 @@ invariants per-entity schema validation cannot express, carried inline under
 `inheritance-abstract-node-with-table`, `inheritance-abstract-node-fixture-rows`,
 `inheritance-strategy-redeclared`, `inheritance-missing-tag-value`,
 `inheritance-duplicate-tag-value`, `inheritance-inconsistent-hierarchy-table`,
-`inheritance-tag-on-concrete-subtype-strategy`, and
-`inheritance-temporal-axes-not-root-owned` (see `m-inheritance` for each
+`inheritance-tag-on-concrete-subtype-strategy`,
+`inheritance-temporal-axes-not-root-owned`, and
+`inheritance-optimistic-locking-not-root-owned` (see `m-inheritance` for each
 invariant). A `when.model` case carries an **inline** model descriptor — an
 instance of `metamodel.schema.json` whose *family* is invalid — kept inside the
 case rather than in the shared `models/` registry, so an invalid family cannot

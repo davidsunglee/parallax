@@ -44,6 +44,22 @@ unchanged. Routing and tag guards are physical, owned by `m-inheritance` / `m-sq
 not restated here. The corpus proves audit terminate composed with both strategies
 (`m-inheritance-090` / `-091`).
 
+**Composed predicate order under optimistic mode.** A temporal close on a
+table-per-hierarchy concrete subtype composes the tag guard with the observed-`in_z`
+gate below, the direct extension of `m-opt-lock`'s gate-last invariant (*Optimistic
+locking composes with inheritance*) to a milestone close: the tag guard rides the
+**identity predicates** — immediately after the primary key, before the
+current-row predicate — and the observed-`in_z` gate still binds **last**:
+
+```text
+update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+binds: [<txInstant>, <pk>, <tagValue>, <infinity>, <observedInZ>]
+```
+
+There is no inheritance exception to *the gate binds last* for a temporal close
+either — one absolute ordering holds whether the write is a keyed update or a
+milestone close. The corpus pins this composed order (`m-inheritance-105`).
+
 ## Affected-row conflict contract for closes
 
 The close `UPDATE` **MUST** affect exactly **one** row. A close that affects
@@ -64,7 +80,11 @@ The observed `in_z` is the optimistic-lock **version analogue** for a temporal
 entity, which carries no version column (the `m-opt-lock` composition,
 `m-opt-lock --> m-temporal-read`). A zero-row gated close is a **retriable
 conflict** (`updatedRows != 1`); a zero-row *ungated* (locking-mode) close is a
-distinct **non-retriable** stale/consistency error. On **success** the gate applies
+distinct **non-retriable** stale/consistency error — a categorically different
+outcome from the gated conflict, but not a new `m-db-error` category: `then`
+carries no `errorClass` for either shape, since a conflict (gated or ungated) is
+proven the same way every optimistic-lock conflict is, by the affected-row count
+(`then.affectedRows`), never by a database error code. On **success** the gate applies
 **per closed/inactivated current row** — one gated `UPDATE` per such row, each
 binding *that row's* observed `in_z`, each affecting exactly one row — while the
 chained replacement rows are plain ungated `INSERT`s whose fresh `in_z = txInstant`

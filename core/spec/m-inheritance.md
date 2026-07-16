@@ -133,6 +133,33 @@ first-class abstract-root reads, family-normalized identity, whole-graph pins, a
 relationship propagation all need one uniform per-family coordinate system, so the
 root is made the family's single temporal-schema owner.
 
+**Optimistic-locking version attributes are root-owned in exactly the same way.**
+The version attribute (`optimisticLocking: true`, `m-descriptor` "attribute") is
+likewise family-level metadata, not an ordinary inherited member. Only the family
+**root** may declare it; every abstract and concrete descendant **inherits the
+root's version column unchanged**, and a descendant **MUST NOT** redeclare it, add
+a second version attribute of its own, or leave the family's version column
+undeclared while carrying one of its own — inheritance is never selective here
+(see *Family invariants*, below, for the rejection rule). A family is therefore
+either **entirely non-versioned** (the root declares no `optimisticLocking`
+attribute, and no descendant may declare one) or **entirely versioned together**
+(the root declares exactly one, and every descendant advances — and, in optimistic
+mode, gates on — that same inherited column, `m-opt-lock`). Physically this needs
+no new machinery: table-per-hierarchy already lands the root's version column in
+the one shared table every concrete subtype's rows occupy, and table-per-concrete-
+subtype's ancestry-derived column chain (*Physical mapping*, below) already
+replicates the root's version column onto every concrete subtype's own table — the
+same mechanism that already threads the primary key and every ordinary inherited
+attribute. Combining an explicit `optimisticLocking` attribute with
+`asOfAttributes` on one entity remains invalid regardless (`m-descriptor`); a
+temporal family's root therefore derives its optimistic key from the processing
+axis (`m-opt-lock` "Temporal entities derive the version from the processing
+axis") rather than declaring a version attribute of its own, so a temporal family
+is never also an explicitly-versioned one. Unlike the temporal-axis narrowing
+above, this is not a simplification relative to a Reladomo feature Parallax
+declines to support as broadly: Reladomo has no considered design for optimistic
+locking composed with inheritance at all (ADR 0027).
+
 ## Physical mapping
 
 **Table-per-hierarchy.** The whole family maps to **one shared table** owned by
@@ -150,6 +177,26 @@ no shared table and no tag exist. A concrete read is an ordinary single-table re
 of that subtype's table — the subtype is selected by *which table* is queried.
 Each concrete table **physically contains columns for the full inherited attribute
 chain** plus the concrete subtype's own attributes, derived from the ancestry.
+
+## Abstract-position reads
+
+A read targeting an abstract position (the root or an abstract subtype,
+optionally `narrow`ed) is a **discriminated-union read**: it returns every
+concrete variant the position resolves to, each tagged by `familyVariant` (the
+concrete subtype name, materialized from the tag metadata — never an authored
+column, `m-sql` / `m-case-format`). What each returned leaf carries **beyond**
+that tag depends on the read's result form (`m-case-format` *Read result
+form*): a **row-form** (values lane) leaf is the flat SQL superset row (every
+branch's columns, non-applicable ones `null`); an **instance-form** (object
+lane) leaf, at a read case's own top-level leaves, is a **complete concrete
+instance** in the ordinary sense — only its own branch's inherited-plus-own
+members, never a sibling's null-padded column. Both forms read the **identical**
+superset SQL row (`m-sql` *Read projection* fixes the projected column list as a
+function of the target position alone, independent of result form); only the
+instance-form materialization step narrows it to the variant's own declared
+shape — the SQL itself never changes. This is the read-side counterpart of
+*Concrete-subtype writes*, below: a discriminated union at both boundaries, with
+the object lane's shape divergence confined to materialization, never SQL.
 
 ## Concrete-subtype writes
 
@@ -277,6 +324,14 @@ pins each as a portable `rejected` / `when.model` case with a
   a temporal root whose descendant redeclares, adds, removes, overrides, or
   shadows an axis. Only the root may ever carry `asOfAttributes` (*Inherited
   members*, above).
+- **Optimistic locking is root-owned** — an `abstract-subtype` or
+  `concrete-subtype` declares no `optimisticLocking` attribute of its own,
+  regardless of whether the root itself declares one
+  (`inheritance-optimistic-locking-not-root-owned`). This holds for BOTH
+  malformed shapes: a non-versioned root with a descendant that declares a
+  version attribute, and a versioned root whose descendant redeclares or adds a
+  second version attribute. Only the root may ever carry an `optimisticLocking`
+  attribute (*Inherited members*, above).
 
 ## Prior art (Reladomo)
 

@@ -81,6 +81,16 @@ Reladomo's transaction behavior remains prior art for the materializing branch:
 it reads under a lock or gates on an observed optimistic version, not a Java bulk
 API template. Parallax applies that runtime rule through the owning modules above.
 
+A readless statement that **matches zero rows succeeds with zero affected rows —
+never an error.** Ordinary SQL set semantics already make `update … where
+<predicate>` and `delete … where <predicate>` no-ops when nothing matches; a
+predicate-selected write that matches nothing simply wrote nothing, the same way
+a materializing verb's resolving read matching zero rows emits zero keyed writes
+and succeeds (`m-opt-lock`). This is categorically distinct from the zero-row
+**conflict** error a *gated* per-row write raises (`m-opt-lock` / `m-audit-write`):
+that error fires when a row the caller **did** match and observe was concurrently
+changed underneath it — matching nothing is never that.
+
 ## What the suite pins down
 
 The existing `m-batch-write-001`–`-004` cases prove only **buffered tracked-row

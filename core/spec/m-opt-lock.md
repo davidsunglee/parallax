@@ -27,7 +27,13 @@ holding a lock across the edit is undesirable or impossible.
 ## The version column
 
 An entity names its version column by marking exactly one attribute
-`optimisticLocking: true` (`m-descriptor`). That attribute is the **version**: an
+`optimisticLocking: true` (`m-descriptor`). For an inheritance participant
+(`m-inheritance`), the version column is **family-level metadata declared only
+by the root**: every abstract and concrete descendant inherits it unchanged, and
+a descendant declaring its own `optimisticLocking` attribute is rejected
+pre-SQL regardless of whether the root itself is versioned
+(`inheritance-optimistic-locking-not-root-owned`) — a family is versioned
+together or not at all. That attribute is the **version**: an
 integer an implementation **MUST**:
 
 - **project** alongside the row on every read of a versioned entity (the reader

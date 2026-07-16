@@ -76,6 +76,11 @@ INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY = "inheritance-tag-on-concrete-subt
 # an `abstract-subtype` or `concrete-subtype` that declares its own — whether
 # the root is itself non-temporal or temporal — is rejected.
 INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED = "inheritance-temporal-axes-not-root-owned"
+# Optimistic locking is likewise a family-wide property (D-25 / ADR 0027): only
+# the root may declare an `optimisticLocking` attribute; an `abstract-subtype`
+# or `concrete-subtype` that declares its own — whether the root is itself
+# versioned or not — is rejected. A family is versioned together or not at all.
+INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED = "inheritance-optimistic-locking-not-root-owned"
 
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
@@ -92,6 +97,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_INCONSISTENT_HIERARCHY_TABLE,
         INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
         INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
+        INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
     }
 )
 
@@ -552,6 +558,28 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
                 f"non-root {definition['name']!r} declares its own as-of axes; temporal axes "
                 f"are family-wide and MUST be declared only on the root",
+            )
+
+    # 4b. A non-root participant MUST NOT declare its own `optimisticLocking`
+    #     attribute (D-25 / ADR 0027): the version attribute is family-wide, so
+    #     only the root may declare one, regardless of whether the root itself
+    #     is versioned. Fires for BOTH malformed shapes (a non-versioned root
+    #     with a version-declaring descendant, and a versioned root whose
+    #     descendant redeclares or adds a second version attribute) — the check
+    #     is structural per-entity and does not care what the root declares.
+    for definition in participants:
+        if role_of(definition) == ROLE_ROOT:
+            continue
+        attributes = definition.get("attributes", []) or []
+        if any(
+            isinstance(attribute, dict) and attribute.get("optimisticLocking")
+            for attribute in attributes
+        ):
+            raise RejectionError(
+                INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
+                f"non-root {definition['name']!r} declares its own optimisticLocking "
+                f"attribute; the version attribute is family-wide and MUST be declared "
+                f"only on the root",
             )
 
     # 5. An abstract node (root / abstract-subtype) is tableless.

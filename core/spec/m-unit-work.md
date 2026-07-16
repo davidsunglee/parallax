@@ -174,6 +174,20 @@ instructions themselves are the canonical `write-instruction.schema.json` shapes
 an adapter exercises coalescing from the requested operations, never from the golden
 SQL.
 
+**Materialized predicate writes are an atomic planned unit, exempt from
+coalescing.** A predicate-selected write that materializes (`m-opt-lock`, ADR
+0014 — a versioned or temporal target with no single-statement template) becomes
+an **ordered, atomic planned unit** in the buffer at its call position: its
+per-row keyed writes flush together, in the resolving read's **resolved-row
+order**, with each row's close-and-chain staying **adjacent** (never split apart
+or regrouped by statement kind). This planned unit is **exempt** from the
+same-object coalescing rule above (its rows are never folded with an
+unrelated buffered instruction) and from cross-unit reordering (the planner's
+FK-ordering pass moves it as one block, never reordering its internal rows). A
+zero-row gate encountered while flushing the unit aborts the **whole** unit of
+work (`m-opt-lock` "Predicate-selected writes materialize when observations are
+needed").
+
 ## Strategy selection — the per-unit-of-work participation mode
 
 A unit of work selects, per transaction, **how** its read-then-writes are made

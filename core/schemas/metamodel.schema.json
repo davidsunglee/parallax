@@ -128,6 +128,19 @@
           "$comment": "Conditional `attributes` requirement (m-inheritance / m-descriptor, resolved Q5): a non-inheritance entity MUST declare its own `attributes`. An inheritance participant MAY omit `attributes` — a concrete subtype that declares only inherited attributes has none of its own, and validation/lowering derives the full inherited chain from the ancestry. When `attributes` IS present it is still non-empty (the array schema).",
           "if": { "not": { "required": ["inheritance"] } },
           "then": { "required": ["attributes"] }
+        },
+        {
+          "$comment": "At most one optimisticLocking attribute per entity (m-descriptor `attribute` / m-opt-lock \"The version column\"): the entity's OWN `attributes` array may CONTAIN at most one item with `optimisticLocking: true` (2020-12 `contains`/`minContains`/`maxContains`). `minContains: 0` is REQUIRED alongside `maxContains` — `contains` alone implies at least one match, which would wrongly force every entity to declare a version attribute; `minContains: 0` restores the flag's true optionality, so 0 or 1 both satisfy this, never more. This is a PER-ENTITY structural rule; the family-wide root-ownership rule (at most one across an inheritance family, declared only at the root) is the semantic `inheritance-optimistic-locking-not-root-owned` invariant a model-aware validator enforces (m-inheritance), not expressible here.",
+          "properties": {
+            "attributes": {
+              "contains": {
+                "required": ["optimisticLocking"],
+                "properties": { "optimisticLocking": { "const": true } }
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
         }
       ]
     },

@@ -148,6 +148,18 @@ time. The composition contract is `m-opt-lock` (which owns the derived key and t
 conflict contract) over the temporal write shapes (`m-audit-write` /
 `m-bitemp-write`).
 
+**Composition with inheritance (declaration site).** For an inheritance
+participant (`m-inheritance`), `optimisticLocking: true` is family-level
+metadata like a temporal axis, not an ordinary per-entity flag: only the family
+**root** may declare it, and every abstract and concrete descendant inherits the
+root's version column unchanged. A descendant **MUST NOT** declare its own
+`optimisticLocking` attribute — not even to redeclare the root's own verbatim, or
+to add a second version attribute under a different name — regardless of whether
+the root itself is versioned (`inheritance-optimistic-locking-not-root-owned`,
+`m-inheritance` "Family invariants"). The at-most-one-per-entity rule above
+therefore composes family-wide for a participant: at most one `optimisticLocking`
+attribute across the whole family, declared only at the root.
+
 ## `relationship` — a navigable association
 
 A `relationship` is a **named, navigable association** from its owning entity to
