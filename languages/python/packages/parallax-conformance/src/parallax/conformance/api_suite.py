@@ -173,8 +173,12 @@ SKIP_REASONS: Final[dict[str, str]] = {
     "m-temporal-read": (
         "the representative as-of spelling is exercised as an idiomatic example (the D-7 "
         "class-frontend axis declaration landed in M4); the remaining temporal-read cases "
-        "are graded through the compile/run conformance lanes and land as examples "
-        "incrementally"
+        "— including the optimistic-lock temporal-close conflict/retry witnesses "
+        "(`m-temporal-read-009`..`-012`: gated success, stale-`in_z` conflict, the "
+        "`when.attempts` 0-then-1 retry, and the locking-mode non-retriable stale close, "
+        "COR-3 Phase 8 increment 4) — are graded end-to-end by the compile/run "
+        "conformance lanes now; no idiomatic TYPED-verb example exists yet, landing with "
+        "the instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
     ),
     "m-db-error": (
         "the m-db-error corpus cases are graded end-to-end by the M4 run lanes — the "
@@ -209,8 +213,25 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "gate/advance/conflict forms landed in increment 3, each its own case-scoped "
         "entry below"
     ),
-    "m-audit-write": "audit (close-and-chain) writes land with the write family (COR-3 Phase 8)",
-    "m-bitemp-write": "bitemporal writes land with the write family (COR-3 Phase 8)",
+    "m-audit-write": (
+        "the milestone-chaining write forms (insert / close-and-chain update / "
+        "terminate, plus the TPH/TPCS and value-object compositions) landed in COR-3 "
+        "Phase 8 increment 4 — graded end-to-end by the compile/run conformance lanes "
+        "now; no idiomatic TYPED-verb example exists yet, landing with the "
+        "instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23). "
+        "The remaining materializing predicate-write scenarios (`m-audit-write-007`/"
+        "`-009`) land with a later Phase 8 increment (increment 5)"
+    ),
+    "m-bitemp-write": (
+        "the rectangle-split write forms (insert / updateUntil / terminateUntil / "
+        "plain update / plain terminate, the optimistic business-discriminator gate, "
+        "and the TPH/TPCS compositions) landed in COR-3 Phase 8 increment 4 — graded "
+        "end-to-end by the compile/run conformance lanes now; no idiomatic TYPED-verb "
+        "example exists yet, landing with the instance-native API story build-out "
+        "(COR-3 Phase 8 increment 7, ledger D-23). The remaining materializing "
+        "predicate-write scenarios (`m-bitemp-write-010`..`-013`) land with a later "
+        "Phase 8 increment (increment 5)"
+    ),
     "m-batch-write": "batched and set-based writes land with the write family (COR-3 Phase 8)",
 }
 
@@ -349,17 +370,21 @@ _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON: Final[str] = (
 
 # Temporal inheritance-family writes: COR-3 Phase 8 increment 3 lifted
 # `lower_write`'s (`parallax.snapshot.handle`) blanket inheritance-family
-# refusal — the 11 NON-temporal inheritance writes below now carry their own,
-# honest, `_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON` entry — but every
-# TEMPORAL inheritance-family write (an audit/bitemporal close or chain over a
-# table-per-hierarchy or table-per-concrete-subtype family) is still refused,
-# unchanged, naming the temporal write path (COR-3 Phase 8 increment 4).
+# refusal for the 11 NON-temporal inheritance writes below
+# (`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`); increment 4 lifts the
+# remaining TEMPORAL inheritance-family refusal too (an audit/bitemporal
+# close or chain over a table-per-hierarchy or table-per-concrete-subtype
+# family) — both groups are now graded end-to-end by the compile/run
+# conformance lanes, and share the SAME instance-native-story deferral.
 _INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
     "a TEMPORAL inheritance-family write (an audit/bitemporal milestone close or chain "
-    "over a table-per-hierarchy or table-per-concrete-subtype family): `lower_write` "
-    "explicitly refuses any instruction whose entity is temporal, naming the temporal "
-    "write path (COR-3 Phase 8 increment 4) — the non-temporal inheritance-family write "
-    "forms landed in increment 3 (`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
+    "over a table-per-hierarchy or table-per-concrete-subtype family): graded "
+    "end-to-end by the compile/run conformance lanes now (COR-3 Phase 8 increment 4) — "
+    "no idiomatic TYPED-verb example exists yet in the production-reachable "
+    "`parallax.conformance` surface (`read_models.py`); landing with the "
+    "instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23), the "
+    "SAME deferral the non-temporal inheritance-family write forms carry "
+    "(`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`, landed in increment 3)"
 )
 # The 11 NON-temporal inheritance-family keyed writes COR-3 Phase 8 increment 3
 # landed (TPH/TPCS insert/update/delete, the deep-chain and sibling-branch
@@ -389,14 +414,21 @@ _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "surface (`read_models.py`); landing with the instance-native API story build-out "
     "(COR-3 Phase 8 increment 7, ledger D-23)"
 )
-# `m-pk-gen-014` (a `sequence`-strategy insert on a temporal entity) is the
-# sole pk-gen case COR-3 Phase 8 increment 3 leaves deferred — every other
-# pk-gen case's write-side allocation landed (the module-bucket reason above).
+# `m-pk-gen-014` (a `sequence`-strategy insert on a temporal entity) was the
+# sole pk-gen case COR-3 Phase 8 increment 3 left deferred — every other
+# pk-gen case's write-side allocation landed there (the module-bucket reason
+# above). Increment 4 lands this composition (a non-temporal `sequence`
+# registry UPDATE plus an audit-only INSERT, one writeSequence, two
+# post-re-route transactions) — graded end-to-end now, still no idiomatic
+# story.
 _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
-    "a `sequence`-strategy primary-key allocation on a TEMPORAL entity: pk-gen's "
+    "a `sequence`-strategy primary-key allocation on a TEMPORAL entity (a non-temporal "
+    "registry UPDATE composed with an audit-only INSERT in one writeSequence): pk-gen's "
     "non-temporal insert forms landed in COR-3 Phase 8 increment 3 (the module-bucket "
-    "reason above); this composition needs the temporal write path, landing with "
-    "COR-3 Phase 8 increment 4"
+    "reason above), and this temporal composition landed in increment 4 — graded "
+    "end-to-end by the compile/run conformance lanes now; no idiomatic TYPED-verb "
+    "example exists yet, landing with the instance-native API story build-out "
+    "(COR-3 Phase 8 increment 7, ledger D-23)"
 )
 ####################################################################################
 # Subtype-write payload-shape rejects (COR-3 Phase 8 increment 2, `validate_write`  #
@@ -613,10 +645,13 @@ _VO_TEMPORAL_GRAPH_DEFERRED_REASON: Final[str] = (
     "not a structural block; a future increment can add the mirror and story"
 )
 _VO_TEMPORAL_WRITE_PHASE8_REASON: Final[str] = (
-    "an audit-write / bitemp-write temporal write over a value-object-bearing entity — "
-    "the write family's temporal milestone lowering (COR-3 Phase 8; m-audit-write / "
-    "m-bitemp-write), matching this registry's own m-audit-write/m-bitemp-write bucket "
-    "reasons"
+    "an audit-write / bitemp-write temporal write over a value-object-bearing entity "
+    "(the document rides every chained/split row whole, at its columnOrder slot, "
+    "absent from every close): graded end-to-end by the compile/run conformance lanes "
+    "now (COR-3 Phase 8 increment 4) — no idiomatic TYPED-verb example exists yet, "
+    "landing with the instance-native API story build-out (COR-3 Phase 8 increment 7, "
+    "ledger D-23), matching this registry's own m-audit-write/m-bitemp-write bucket "
+    "reason"
 )
 
 # Value-object STRUCTURE rejects: each empirically confirmed (a REPL probe
@@ -677,8 +712,13 @@ _VO_BATCH_WRITE_REASON: Final[str] = (
     "bucket reason"
 )
 _VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
-    "a versioned write under an optimistic-lock gate — lands with the write family "
-    "(COR-3 Phase 8; m-opt-lock), matching this registry's own m-opt-lock bucket reason"
+    "a versioned write under an optimistic-lock gate over a value-object-bearing "
+    "entity: the m-opt-lock keyed-write machinery landed in COR-3 Phase 8 increment 3, "
+    "and this case joins the exercised conflict set in increment 4 (already "
+    "tag-reachable) — graded end-to-end by the compile/run conformance lanes now; no "
+    "idiomatic TYPED-verb example exists yet, landing with the instance-native API "
+    "story build-out (COR-3 Phase 8 increment 7, ledger D-23), matching this "
+    "registry's own m-opt-lock bucket reason"
 )
 _VO_SCENARIO_COMBO_REASON: Final[str] = (
     "a scenario combining a managed find, a materialized-predicate-write resolving "

@@ -225,8 +225,52 @@ _WRITE_SEQUENCES: Final[frozenset[str]] = (
 # existing port-capture grading, proving the mutate step's own zero round trips
 # left the re-read observing the UNCHANGED original row (no write-back).
 _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-010"})
+# COR-3 Phase 8 increment 4's 22 compile-eligible temporal keyed-write flips
+# (`m-audit-write` / `m-bitemp-write`, the DQ4 `db.transact` re-route): audit-only
+# insert/close-and-chain-update/terminate (001-005), the full-bitemporal rectangle
+# split and its plain/bounded-insert degenerates (001-003/006-009), the TPH/TPCS
+# audit and bitemporal composition (090/091/094-097), and the value-object
+# carry-through witnesses (m-value-object-032/033). The materializing predicate
+# forms (m-audit-write-007/009, m-bitemp-write-010-013), the conflict-shape
+# close-only witnesses (run-only, graded by `test_run_sweep.py`), and
+# m-value-object-047 (materializing) stay reasoned-skipped toward increment 5.
+_TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
+    {
+        "m-audit-write-001",
+        "m-audit-write-002",
+        "m-audit-write-003",
+        "m-audit-write-004",
+        "m-audit-write-005",
+        "m-bitemp-write-001",
+        "m-bitemp-write-002",
+        "m-bitemp-write-003",
+        "m-bitemp-write-006",
+        "m-bitemp-write-007",
+        "m-bitemp-write-008",
+        "m-bitemp-write-009",
+        "m-inheritance-090",
+        "m-inheritance-091",
+        "m-inheritance-094",
+        "m-inheritance-095",
+        "m-inheritance-096",
+        "m-inheritance-097",
+        "m-value-object-032",
+        "m-value-object-033",
+    }
+)
+# The two same-transaction coalescing SCENARIO witnesses (m-unit-work-008's
+# temporal siblings): an insert+update buffer of one new object folds to a
+# single final-value INSERT, no close/chain — proven byte-exact the SAME way
+# `_WRITE_SCENARIOS` proves the non-temporal coalescing case.
+_TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
+    {"m-audit-write-008", "m-bitemp-write-014"}
+)
 WRITE_EXERCISED: Final[frozenset[str]] = (
-    _WRITE_SCENARIOS | _WRITE_SEQUENCES | _SNAPSHOT_MUTATE_SCENARIOS
+    _WRITE_SCENARIOS
+    | _WRITE_SEQUENCES
+    | _SNAPSHOT_MUTATE_SCENARIOS
+    | _TEMPORAL_WRITE_SEQUENCES
+    | _TEMPORAL_COALESCING_SCENARIOS
 )
 
 _REACHABLE = sweep.reachable_cases()

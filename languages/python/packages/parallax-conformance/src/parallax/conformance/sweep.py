@@ -27,7 +27,14 @@ inheritance-family keyed writes, and the pk-gen ``max``/``sequence``
 write-side allocation) — the 30-case flip enumerated in the increment's own
 implementer prompt; the deferred m-opt-lock forms (predicate-write
 materialization, the auto-retry boundary runner, temporal composition) stay
-honestly reasoned-skipped toward increments 4-6.
+honestly reasoned-skipped toward increments 4-6. Phase 8 increment 4 adds
+``m-audit-write`` / ``m-bitemp-write`` (the temporal keyed write family:
+audit-only close-and-chain, the full-bitemporal rectangle split, the
+observed-``in_z``/business-discriminator gate, and the DQ4 ``db.transact``
+re-route) — the 32-case flip enumerated in that increment's own implementer
+prompt; the deferred forms (materializing predicate temporal writes,
+auto-retry, two-session choreography) stay honestly reasoned-skipped toward
+increments 5-6.
 """
 
 from __future__ import annotations
@@ -71,6 +78,8 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-deep-fetch",
         "m-snapshot-read",
         "m-opt-lock",
+        "m-audit-write",
+        "m-bitemp-write",
         # `m-batch-write-004` (the versioned per-key delete materialize) tags
         # BOTH `m-batch-write` and `m-opt-lock` — the sweep's own "every tagged
         # module must be online" rule needs this module online too for that

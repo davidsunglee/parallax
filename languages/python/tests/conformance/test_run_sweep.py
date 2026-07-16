@@ -294,15 +294,35 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Conflict — the optimistic-lock run lane (m-opt-lock, COR-3 Phase 8           #
-# increment 3). Every reachable conflict case declares `compileEligibility:    #
-# run-only` (single-connection concurrency intent), so `run` is the ONLY lane  #
-# that ever grades it — mirroring the pk-gen `sequence` run-only set below,    #
-# neither joins `WRITE_EXERCISED` (that set couples compile AND run grading;   #
-# a run-only case would fail `test_compile_sweep`'s `status == "ok"` assert).  #
+# Conflict — the optimistic-lock run lane (m-opt-lock / m-audit-write /        #
+# m-bitemp-write, COR-3 Phase 8 increments 3-4). Every reachable conflict      #
+# case declares `compileEligibility: run-only` (single-connection concurrency  #
+# intent), so `run` is the ONLY lane that ever grades it — mirroring the       #
+# pk-gen `sequence` run-only set below, neither joins `WRITE_EXERCISED` (that  #
+# set couples compile AND run grading; a run-only case would fail             #
+# `test_compile_sweep`'s `status == "ok"` assert). Increment 4 adds the        #
+# temporal close-only conflict witnesses: the non-inheritance audit-only and   #
+# bitemporal gate/success/conflict pairs, the locking-mode zero-row-close      #
+# (StaleWriteError) case, the TPH composed conflict, and the non-temporal      #
+# value-object write under an optimistic gate (already tag-reachable, now      #
+# exercised).                                                                  #
 # --------------------------------------------------------------------------- #
 _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
-    {"m-opt-lock-005", "m-opt-lock-006", "m-opt-lock-007", "m-opt-lock-013"}
+    {
+        "m-opt-lock-005",
+        "m-opt-lock-006",
+        "m-opt-lock-007",
+        "m-opt-lock-013",
+        "m-temporal-read-009",
+        "m-temporal-read-010",
+        "m-temporal-read-011",
+        "m-temporal-read-012",
+        "m-audit-write-006",
+        "m-bitemp-write-004",
+        "m-bitemp-write-005",
+        "m-inheritance-105",
+        "m-value-object-046",
+    }
 )
 
 
@@ -385,9 +405,14 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # increment 3): declared `compileEligibility: run-only` (query-result-        #
 # dependent — the registry-read-derived allocated ids), so `run` is the ONLY  #
 # lane that ever grades them, same reasoning as the conflict cases above.     #
+# `m-pk-gen-014` (increment 4: a sequence-strategy registry advance composed   #
+# with a temporal audit-only insert in ONE writeSequence, two transactions     #
+# post the DQ4 re-route) joins for the same query-result-dependent reason —    #
+# NOT `m-pk-gen-013` (already compile-eligible, `test_compile_sweep`'s own     #
+# `_OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES`).                                     #
 # --------------------------------------------------------------------------- #
 _RUN_ONLY_WRITE_SEQUENCES_EXERCISED: Final[frozenset[str]] = frozenset(
-    f"m-pk-gen-{n:03d}" for n in range(4, 13)
+    {*(f"m-pk-gen-{n:03d}" for n in range(4, 13)), "m-pk-gen-014"}
 )
 
 
