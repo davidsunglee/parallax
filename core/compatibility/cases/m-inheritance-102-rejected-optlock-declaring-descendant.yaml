@@ -1,0 +1,42 @@
+# Negative (m-inheritance, D-25 / ADR 0027): a NON-VERSIONED table-per-hierarchy
+# root with an INTERMEDIATE abstract subtype that declares its own
+# `optimisticLocking` attribute.
+#
+# Optimistic locking is a family-wide property, exactly like a temporal axis
+# (`m-inheritance-098`'s sibling witness): only the family ROOT may declare the
+# version attribute, and every descendant inherits exactly that — when the root
+# declares none, no descendant may declare one either (a family is versioned
+# together or not at all). `Animal` (root) declares NO `optimisticLocking`
+# attribute; `Pet` (abstract-subtype) declares its own `revision` version column
+# — a model-aware validator MUST reject the family before any SQL, exactly as
+# the sibling `inheritance-temporal-axes-not-root-owned` invariant does.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, m-opt-lock, rejected, negative, table-per-hierarchy, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+      - name: Pet
+        inheritance:
+          role: abstract-subtype
+          parent: Animal
+        attributes:
+          - { name: licenseId, type: string, column: license_id, nullable: true }
+          - { name: revision, type: int32, column: revision, optimisticLocking: true }
+      - name: Dog
+        table: animal
+        inheritance:
+          role: concrete-subtype
+          parent: Pet
+          tagValue: dog
+        attributes:
+          - { name: barkVolume, type: int32, column: bark_volume, nullable: true }
+then:
+  rejectedRule: inheritance-optimistic-locking-not-root-owned

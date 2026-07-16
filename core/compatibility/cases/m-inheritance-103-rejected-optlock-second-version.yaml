@@ -1,0 +1,38 @@
+# Negative (m-inheritance, D-25 / ADR 0027): a VERSIONED table-per-concrete-subtype
+# root whose CONCRETE subtype adds a second `optimisticLocking` attribute of its
+# own.
+#
+# Optimistic locking is a family-wide property: the root ALONE declares the
+# family's version attribute, and every descendant inherits EXACTLY that one — a
+# descendant MUST NOT redeclare, or add a second version attribute, even when the
+# root itself is already versioned (mirrors `m-inheritance-099`'s sibling
+# temporal-axis witness). `Rate` (root) declares `version`; `DepositRate`
+# (concrete) additionally declares its own `revision` version column — a
+# model-aware validator MUST reject the family before any SQL. Different physical
+# strategy than the sibling witness (`m-inheritance-102`, table-per-hierarchy):
+# this one is table-per-concrete-subtype, so both strategies exercise the same
+# invariant.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, m-opt-lock, rejected, negative, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Rate
+        inheritance:
+          strategy: table-per-concrete-subtype
+          role: root
+        attributes:
+          - { name: id, type: int64, column: id, primaryKey: true }
+          - { name: amount, type: decimal(18,2), column: amount }
+          - { name: version, type: int32, column: version, optimisticLocking: true }
+      - name: DepositRate
+        table: deposit_rate
+        inheritance:
+          role: concrete-subtype
+          parent: Rate
+        attributes:
+          - { name: grade, type: string, column: grade, nullable: true }
+          - { name: revision, type: int32, column: revision, optimisticLocking: true }
+then:
+  rejectedRule: inheritance-optimistic-locking-not-root-owned

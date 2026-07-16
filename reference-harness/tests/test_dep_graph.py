@@ -742,10 +742,30 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
         # m-inheritance-101, a TPH Bond read pinning its ROOT-inherited `businessDate`,
         # composing with the tag predicate). All four are tagged slice-snapshot-1 +
         # slice-managed-1 ONLY (never slice-mvp-1), so both counts rise by 4:
-        # 299 -> 303, 321 -> 325; slice-mvp-1 is unchanged. Final counts: 197 / 303 / 325.
+        # 299 -> 303, 321 -> 325; slice-mvp-1 is unchanged. Counts at that stage:
+        # 197 / 303 / 325.
+        #
+        # COR-3 Phase 8 increment 1 (the core-amendment bundle: D-25 root-owned
+        # optimistic locking, the DQ2 spec-gap riders, and DQ7b's instance-form corpus
+        # support) authors EIGHT new inheritance cases, all tagged slice-snapshot-1 +
+        # slice-managed-1 ONLY (never slice-mvp-1): two `when.model` rejected witnesses
+        # for `inheritance-optimistic-locking-not-root-owned` (m-inheritance-102, a
+        # non-versioned TPH root whose abstract-subtype declares its own version
+        # attribute; m-inheritance-103, a versioned TPCS root whose concrete subtype adds
+        # a second one) mirroring the -098/-099 crossing; the TPCS versioned-write
+        # positive witness (m-inheritance-104, the TPCS analogue of m-inheritance-084 over
+        # the new dedicated `appliance` model); the composed temporal x inheritance x
+        # optimistic-lock conflict witness (m-inheritance-105, pinning the tag-guard-
+        # rides-the-identity-predicates / gate-binds-last composed order over the
+        # `reading` model); and FOUR instance-form (`then.graph`) siblings of the
+        # existing row-form multi-concrete abstract reads (m-inheritance-106/-107/-108/
+        # -109, siblings of -003/-013/-015/-052 respectively), pinning the per-variant
+        # node shape DQ7b's Option C decision defines. All eight raise slice-snapshot-1
+        # and slice-managed-1 by 8 each: 303 -> 311, 325 -> 333; slice-mvp-1 is
+        # unchanged. Final counts: 197 / 311 / 333.
         ("slice-mvp-1", 197),
-        ("slice-snapshot-1", 303),
-        ("slice-managed-1", 325),
+        ("slice-snapshot-1", 311),
+        ("slice-managed-1", 333),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

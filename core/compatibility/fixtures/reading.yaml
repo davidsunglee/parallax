@@ -1,0 +1,16 @@
+# Fixture rows for the audit-only table-per-hierarchy Reading family
+# (models/reading.yaml).
+#
+# One persisted MeterReading milestone, open at in_z 2024-01-01, so the
+# composed temporal x inheritance x optimistic-lock conflict witness
+# (m-inheritance-105) can observe it, be raced by a concurrent close+chain
+# (`given.apply`), and gate its own close on the now-stale in_z. The `kind`
+# tag is DERIVED from the subtype's tagValue (m-inheritance), never authored
+# here.
+#
+#   id 1 MeterReading  celsius 20.00  in_z 2024-01-01  out_z infinity  (kind=meter, derived)
+MeterReading:
+  - id: 1
+    celsius: 20.00
+    processingFrom: "2024-01-01T00:00:00+00:00"
+    processingTo: infinity

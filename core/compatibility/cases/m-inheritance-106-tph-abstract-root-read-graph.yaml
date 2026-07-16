@@ -1,0 +1,28 @@
+# Table-per-hierarchy ABSTRACT-ROOT read, INSTANCE-FORM sibling: the developer-surface
+# per-variant node shape (m-inheritance, m-case-format, m-sql — COR-3 Phase 8 part C).
+#
+# Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
+# (`m-inheritance-003`) — Payment declares no value objects, so the instance-form
+# slot-4 delta is empty (m-sql *Read projection*). The two lanes diverge only in what
+# `then.graph` asserts: each node carries ONLY its own branch's members (inherited +
+# own) plus `familyVariant`, never a sibling's null-padded column — a materialized
+# CardPayment instance has no `tendered` key to be null, and a CashPayment instance
+# has no `card_network` key. `m-inheritance-003` remains the values-lane witness (the
+# flat superset row); this is the object-lane (developer-surface `db.find`) witness.
+model: models/payment.yaml
+tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Payment
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.amount, t0.card_network, t0.tendered, t0.kind from payment t0
+  graph:
+    Payment:
+      - { id: 1, amount: 100.00, card_network: Visa, familyVariant: CardPayment }
+      - { id: 2, amount: 50.00, card_network: Amex, familyVariant: CardPayment }
+      - { id: 3, amount: 20.00, tendered: 25.00, familyVariant: CashPayment }
+  roundTrips: 1

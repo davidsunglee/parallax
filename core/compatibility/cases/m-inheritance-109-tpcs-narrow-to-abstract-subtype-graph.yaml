@@ -1,0 +1,35 @@
+# Table-per-concrete-subtype narrow to an ABSTRACT SUBTYPE, INSTANCE-FORM sibling:
+# the developer-surface per-variant node shape (m-inheritance, m-op-algebra,
+# m-case-format, m-sql — COR-3 Phase 8 part C).
+#
+# Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
+# (`m-inheritance-052`) — Document declares no value objects, so the instance-form
+# slot-4 delta is empty (the `union all` branches project the same columns either
+# way, verified against m-sql's *Read projection* rule during authoring). `then.graph`
+# asserts the per-variant node shape: the two Invoice nodes carry NO `paid_amount`
+# key; the Receipt node carries NO `amount_due` key. `m-inheritance-052` remains the
+# values-lane witness; the TPCS instance-form `db.find` refusal this new golden
+# exposes (`SqlGenError` over a 2+-concrete union-all read) is COR-3 Phase 8
+# increment 7 (ledger D-22).
+model: models/document.yaml
+tags: [m-inheritance, m-op-algebra, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Document
+  operation:
+    narrow:
+      entity: Document
+      to: [FinancialDocument]
+      operand:
+        all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, 'Receipt' family_variant from receipt t0
+        mariadb: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as decimal(18, 2)) paid_amount, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, t0.paid_amount, 'Receipt' family_variant from receipt t0
+  graph:
+    Document:
+      - { id: 1, title: Invoice-A, folder_id: 100, currency: USD, amount_due: 120.00, familyVariant: Invoice }
+      - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: 80.00, familyVariant: Invoice }
+      - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, paid_amount: 120.00, familyVariant: Receipt }
+  roundTrips: 1

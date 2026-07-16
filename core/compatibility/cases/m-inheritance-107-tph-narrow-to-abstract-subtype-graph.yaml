@@ -1,0 +1,33 @@
+# Table-per-hierarchy narrow to an ABSTRACT subtype, INSTANCE-FORM sibling: the
+# developer-surface per-variant node shape (m-inheritance, m-op-algebra,
+# m-case-format, m-sql — COR-3 Phase 8 part C).
+#
+# Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
+# (`m-inheritance-013`) — Animal declares no value objects, so the instance-form
+# slot-4 delta is empty. `then.graph` asserts the per-variant node shape: Rex and
+# Fido (Dog) carry NO `indoor` key; Whiskers (Cat) carries NO `bark_volume` key —
+# each node is a complete concrete instance of its own declared shape, never padded
+# with a sibling's null column. `m-inheritance-013` remains the values-lane witness.
+model: models/animal.yaml
+tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Animal
+  operation:
+    narrow:
+      entity: Animal
+      to: [Pet]
+      operand:
+        all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.kind from animal t0 where t0.kind in (?, ?)
+      binds: [cat, dog]
+  referenceSql: select id, name, owner_id, license_id, indoor, bark_volume, kind from animal where kind in ('cat', 'dog')
+  graph:
+    Animal:
+      - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, familyVariant: Dog }
+      - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, familyVariant: Dog }
+      - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, indoor: true, familyVariant: Cat }
+  roundTrips: 1

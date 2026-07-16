@@ -17,7 +17,12 @@
 # current-on-processing milestone with the tag GUARD among the identity predicates
 # (`… where id = ? and kind = ? and out_z = ?`) — the standalone m-audit-write close,
 # routed to the shared table. The write-sequence case builds its milestone history
-# from ordered DML, so this family needs no fixtures.
+# from ordered DML.
+#
+# The composed temporal x inheritance x optimistic-lock conflict witness
+# (m-inheritance-105, COR-3 Phase 8 DQ2 rider 1) additionally needs a persisted
+# CURRENT milestone to observe and race, so this family now carries one fixture
+# row (sibling fixtures/reading.yaml).
 entities:
   - name: Reading
     namespace: parallax.compatibility

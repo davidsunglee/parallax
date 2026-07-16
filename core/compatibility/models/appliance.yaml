@@ -1,0 +1,72 @@
+# Appliance: a VERSIONED TABLE-PER-CONCRETE-SUBTYPE inheritance model
+# (m-inheritance x m-opt-lock — COR-3 Phase 8 DQ1, the TPCS versioned-write
+# positive witness).
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is a
+# small dedicated family for the ONE Phase-8 witness where optimistic locking
+# composes with a table-per-concrete-subtype write end to end
+# (m-inheritance-104): the abstract root carries an `optimisticLocking` version
+# column inherited by every concrete subtype, so a concrete-subtype gated
+# UPDATE shows the resolved bind order `[set values…, pk, observed-version]` —
+# its OWN table, no tag guard (no shared table exists under this strategy), and
+# the opt-lock version gate still binding LAST. This is the TPCS analogue of
+# `models/vehicle.yaml` (the table-per-hierarchy witness, `m-inheritance-084`).
+#
+# It is a DEDICATED model rather than the existing `document` / `rate` TPCS
+# families because adding a version column to either would ripple their own
+# established Phase 4/6/7 goldens, which this slice keeps untouched.
+#
+#   Appliance (root, ABSTRACT)     — strategy; owns id + name + version
+#     Fridge  (concrete-subtype)   — its own `fridge` table; adds capacityLiters
+#     Oven    (concrete-subtype)   — its own `oven` table;   adds wattage
+#
+# Row data lives in the sibling fixtures/appliance.yaml, keyed per concrete
+# subtype.
+entities:
+  - name: Appliance
+    namespace: parallax.compatibility
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: root
+      strategy: table-per-concrete-subtype
+    attributes:
+      - name: id
+        type: int64
+        column: id
+        primaryKey: true
+        pkGenerator: none
+      - name: name
+        type: string
+        column: name
+        maxLength: 32
+      - name: version
+        type: int32
+        column: version
+        optimisticLocking: true
+  - name: Fridge
+    namespace: parallax.compatibility
+    table: fridge
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: concrete-subtype
+      parent: Appliance
+    attributes:
+      - name: capacityLiters
+        type: int32
+        column: capacity_liters
+        nullable: true
+  - name: Oven
+    namespace: parallax.compatibility
+    table: oven
+    mutability: transactional
+    temporal: non-temporal
+    inheritance:
+      role: concrete-subtype
+      parent: Appliance
+    attributes:
+      - name: wattage
+        type: int32
+        column: wattage
+        nullable: true

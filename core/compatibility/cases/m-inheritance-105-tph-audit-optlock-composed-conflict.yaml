@@ -1,0 +1,46 @@
+# Composed temporal x inheritance x optimistic-lock CONFLICT: the tag guard
+# rides the identity predicates, the observed-in_z gate binds LAST (m-inheritance
+# x m-audit-write x m-opt-lock — COR-3 Phase 8 DQ2 rider 1).
+#
+# MeterReading 1 is read open at in_z 2024-01-01. Before our close flushes, a
+# concurrent transaction closes that milestone (out_z 2024-06-01) and chains a
+# fresh current row (celsius 25.00, in_z 2024-06-01) — `given.apply`. Our golden
+# close still gates on the STALE observed in_z (2024-01-01), composing the
+# table-per-hierarchy tag guard with the temporal gate in the canonical order:
+#
+#   update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+#   binds: [2024-09-01, 1, meter, infinity, 2024-01-01]
+#
+# — the tag guard (`and kind = ?`) joins the identity predicates right after the
+# pk, exactly as a keyed update composes it (m-opt-lock "Optimistic locking
+# composes with inheritance"); the observed-in_z gate still binds LAST. The
+# stale gate matches no row (a fresh current row exists, but at a DIFFERENT
+# in_z), so the close affects ZERO rows — `updatedRows != 1`, the same conflict
+# signal a non-inheritance temporal close proves (m-temporal-read-010).
+model: models/reading.yaml
+tags: [m-inheritance, m-audit-write, m-opt-lock, m-sql, table-per-hierarchy, tag, temporal, audit-only, conflict, slice-snapshot-1, slice-managed-1]
+shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
+given:
+  apply:
+    - sql: update reading set out_z = '2024-06-01T00:00:00+00:00' where id = 1 and kind = 'meter' and out_z = 'infinity'
+    - sql: insert into reading(id, kind, celsius, in_z, out_z) values (1, 'meter', 25.00, '2024-06-01T00:00:00+00:00', 'infinity')
+when:
+  uow:
+    concurrency: optimistic
+  write: { id: 1 }
+  at: "2024-09-01T00:00:00+00:00"
+  observedInZ: "2024-01-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+      binds: ["2024-09-01T00:00:00+00:00", 1, meter, infinity, "2024-01-01T00:00:00+00:00"]
+  affectedRows: 0
+  tableState:
+    reading:
+      - { id: 1, kind: meter, celsius: 20.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+      - { id: 1, kind: meter, celsius: 25.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }

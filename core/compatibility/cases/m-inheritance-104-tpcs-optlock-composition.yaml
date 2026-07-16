@@ -1,0 +1,40 @@
+# Optimistic locking composed with a table-per-concrete-subtype write: no tag guard,
+# own table, gate binds last (m-inheritance x m-opt-lock, m-sql — the TPCS analogue
+# of m-inheritance-084).
+#
+# Fridge 1 (a concrete subtype of the versioned Appliance family) is observed at
+# version 5 and renamed under OPTIMISTIC concurrency. Table-per-concrete-subtype has
+# no shared table and no tag (m-inheritance), so the golden UPDATE targets Fridge's
+# OWN table with just the two identity/version predicates — the version gate still
+# binds LAST:
+#
+#   update fridge set name = ?, version = ? where id = ? and version = ?
+#   binds: [Chill, 6, 1, 5] = [set values…, pk, observed-version]
+#
+# The version advances once (observed 5 -> 6); with no concurrent writer the fresh
+# gate matches exactly one row. The harness loads the version-5 fixture, applies the
+# gated UPDATE, and asserts the resulting row.
+model: models/appliance.yaml
+tags: [m-inheritance, m-opt-lock, m-sql, table-per-concrete-subtype, write-sequence, update, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  writeSequence:
+    - mutation: update
+      entity: Fridge
+      statements: 1
+      note: rename Fridge 1 under an optimistic gate; own table, no tag, gate binds last
+      rows:
+        - { id: 1, name: Chill, observedVersion: 5 }
+then:
+  statements:
+    - sql:
+        postgres: update fridge set name = ?, version = ? where id = ? and version = ?
+      binds: [Chill, 6, 1, 5]
+  tableState:
+    fridge:
+      - { id: 1, name: Chill, version: 6, capacity_liters: 300 }
+  roundTrips: 1

@@ -1,0 +1,38 @@
+# Table-per-hierarchy OR across two concrete-subtype branches, INSTANCE-FORM sibling:
+# the developer-surface per-variant node shape (m-inheritance, m-op-algebra,
+# m-case-format, m-sql — COR-3 Phase 8 part C).
+#
+# Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
+# (`m-inheritance-015`) — Animal declares no value objects, so the instance-form
+# slot-4 delta is empty. `then.graph` asserts the per-variant node shape: Rex (Dog)
+# carries NO `indoor` / `tusk_length` keys; Whiskers (Cat) carries NO `bark_volume` /
+# `tusk_length` keys. `m-inheritance-015` remains the values-lane witness.
+model: models/animal.yaml
+tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Animal
+  operation:
+    or:
+      operands:
+        - narrow:
+            entity: Animal
+            to: [Dog]
+            operand:
+              greaterThan: { attr: Dog.barkVolume, value: 5 }
+        - narrow:
+            entity: Animal
+            to: [Cat]
+            operand:
+              eq: { attr: Cat.indoor, value: true }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length, t0.kind from animal t0 where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
+      binds: [5, dog, true, cat]
+  referenceSql: select id, name, owner_id, license_id, indoor, bark_volume, tusk_length, kind from animal where (bark_volume > 5 and kind = 'dog') or (indoor = true and kind = 'cat')
+  graph:
+    Animal:
+      - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, familyVariant: Dog }
+      - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, indoor: true, familyVariant: Cat }
+  roundTrips: 1

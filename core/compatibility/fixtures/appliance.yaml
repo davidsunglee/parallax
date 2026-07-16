@@ -1,0 +1,14 @@
+# Fixture rows for the versioned Appliance table-per-concrete-subtype model
+# (models/appliance.yaml).
+#
+# One persisted Fridge at version 5, so the TPCS opt-lock composition case
+# (m-inheritance-104) can observe version 5, gate on it, and advance to 6.
+# There is no tag column under this strategy (m-inheritance); the Oven subtype
+# owns no rows.
+#
+#   id 1 Fridge  name Cold-1  capacityLiters 300  version 5
+Fridge:
+  - id: 1
+    name: Cold-1
+    capacityLiters: 300
+    version: 5
