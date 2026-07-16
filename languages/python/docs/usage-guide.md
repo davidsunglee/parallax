@@ -400,12 +400,9 @@ Corpus case: `m-unit-work-005`
 
 ```python
 def keyed_update_observed_in_transaction(db: Database) -> list[Row]:
-    edited = _known_account(id=1, owner="Ada", balance="100.00", version=1).model_copy(
-        update={"balance": Decimal("175.00")}
-    )
-
     def fn(tx: Transaction) -> list[Row]:
-        tx.update(edited)
+        current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
+        tx.update(current.model_copy(update={"balance": Decimal("175.00")}))
         return _as_rows(tx.find(Account.where(Account.id == 1)))
 
     return db.transact(fn)
@@ -468,17 +465,14 @@ Corpus case: `m-unit-work-009`
 
 ```python
 def one_flush_combined_mixed_verb_order(db: Database) -> list[Row]:
-    edited = _known_account(id=1, owner="Ada", balance="100.00", version=1).model_copy(
-        update={"balance": Decimal("20.00")}
-    )
-
     def fn(tx: Transaction) -> list[Row]:
+        current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00"), version=1))
-        tx.update(edited)
+        tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
         tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
         return _as_rows(tx.find(Account.where(Account.balance < 50.00)))
 
-    return db.transact(fn)  # one flush: insert, update, delete — then the find
+    return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find
 ```
 
 ## An aborted insert never becomes durable

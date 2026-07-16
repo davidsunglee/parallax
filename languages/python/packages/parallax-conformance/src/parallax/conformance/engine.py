@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.conformance import case_format, models
-from parallax.core import inheritance, navigate
+from parallax.core import inheritance, navigate, opt_lock
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
@@ -39,7 +39,16 @@ from parallax.core.sql_gen import (
     family_variant_plan,
 )
 from parallax.core.temporal_read import TemporalReadError, inject_as_of, resolve_pinned_instants
-from parallax.core.unit_work import WriteRejectedError, instructions, plan_flush, validate_write
+from parallax.core.unit_work import (
+    Concurrency,
+    ObjectKey,
+    Observation,
+    WriteRejectedError,
+    instructions,
+    object_key,
+    plan_flush,
+    validate_write,
+)
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.snapshot import materialize
 from parallax.snapshot.handle import WriteLoweringError, find, find_history, lower_write
@@ -54,6 +63,7 @@ __all__ = [
     "eligibility",
     "load_case_metamodel",
     "read_table_state",
+    "run_conflict_case",
     "run_error_case",
     "run_graph_case",
     "run_graphs_case",
@@ -417,10 +427,17 @@ def _resolve_graph_pointer(
 
 # The lowering failures the write lanes convert to a neutral :class:`EngineError`,
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer
-# exception type across the conformance seam.
+# exception type across the conformance seam. `opt_lock.UnobservedVersionError` /
+# `.HistoricalObservationError` are m-opt-lock's own forward-error posture (COR-3
+# Phase 8 increment 3): a deferred m-opt-lock witness (the materializing / auto-
+# retry-boundary forms, increments 5/6) that reaches this engine-local write path
+# without a recorded observation must degrade to a reasoned `EngineError`, never
+# an uncaught crash of the sweep.
 _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     instructions.WriteInstructionError,
     WriteLoweringError,
+    opt_lock.UnobservedVersionError,
+    opt_lock.HistoricalObservationError,
     OperationError,
     SqlGenError,
     TemporalReadError,
@@ -464,29 +481,112 @@ def _write_sequence_entries(case: case_format.Case) -> list[Mapping[str, object]
     return [cast("Mapping[str, object]", entry) for entry in cast("list[object]", entries)]
 
 
-def _build_instruction(entry: Mapping[str, object], meta: Metamodel) -> WriteInstruction:
-    """Build one canonical keyed write instruction from a case write entry.
+def _concurrency(case: case_format.Case) -> Concurrency:
+    """The case's declared unit-of-work participation mode (`when.uow.concurrency`;
+    `m-opt-lock`), defaulting to `locking` when the case declares none — the SAME
+    default `m-unit-work.TransactionSettings` resolves."""
+    when = case.document.get("when")
+    if isinstance(when, Mapping):
+        uow = cast("Mapping[str, object]", when).get("uow")
+        if isinstance(uow, Mapping):
+            value = cast("Mapping[str, object]", uow).get("concurrency")
+            if value == "optimistic":
+                return "optimistic"
+    return "locking"
 
-    A write entry carries the instruction triple (``mutation`` / ``entity`` / ``rows``)
-    beside case-authoring keys (``note`` / ``statements`` / ``roundTrips`` / ``rollback``);
-    only the triple is handed to the ``m-unit-work`` deserializer, then member-name
-    validated against the metamodel.
+
+def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Observation | None]:
+    """Strip a case writeRow's reserved ``observedVersion`` / ``observedInZ``
+    control keys (`m-opt-lock`; ADR 0013), returning the DURABLE row (never
+    carrying them — the write-instruction schema forbids both,
+    `instructions.deserialize` enforces it) and the :class:`Observation` they
+    describe (``None`` when the row carries neither — an unobserved / non-
+    versioned write, or the M4-era plain-column-data shape some existing
+    corpus witnesses still carry via a literal, non-reserved ``version`` key,
+    which this function leaves untouched)."""
+    clean = dict(row)
+    version = clean.pop("observedVersion", None)
+    in_z = clean.pop("observedInZ", None)
+    if version is None and in_z is None:
+        return clean, None
+    return clean, Observation(
+        version=cast("int", version) if version is not None else None,
+        in_z=cast("str", in_z) if in_z is not None else None,
+    )
+
+
+def _build_instructions(
+    entry: Mapping[str, object], meta: Metamodel
+) -> list[tuple[WriteInstruction, ObjectKey | None, Observation | None]]:
+    """One case write entry -> one or more canonical keyed write instructions.
+
+    A write entry carries the instruction triple (``mutation`` / ``entity`` /
+    ``rows``) beside case-authoring keys (``note`` / ``statements`` /
+    ``roundTrips`` / ``rollback``). ``rows`` MAY batch several logical
+    per-object writes into one entry (the write-instruction schema's "one or
+    more rows" vocabulary). The entry's OWN authored ``statements`` count is
+    the case author's declared choreography, so it decides which of two
+    shapes applies:
+
+    - ``statements == len(rows)``: each row is its OWN independent physical
+      statement (mirroring what that many separate `Transaction.insert`/
+      `.update`/`.delete` calls would buffer) — this splits each row into its
+      OWN single-row instruction and strips its reserved observation control
+      keys into an :class:`Observation`, keyed by that row's OWN object key
+      (`m-opt-lock`; ADR 0013), never threaded onto the durable instruction.
+      Every corpus witness this decomposition serves — the versioned
+      per-key delete materialize (`m-batch-write-004`) and the pk-gen
+      `sequence` strategy's per-id inserts (`m-pk-gen-004`-`012`) — declares
+      exactly this shape.
+    - Otherwise (fewer statements than rows, e.g. `statements: 1` for a
+      3-row insert): a genuine buffered-batch COLLAPSE intent (m-batch-write
+      "Set-based flush" — a multi-row `INSERT` or an `id in (...)` batched
+      `UPDATE`). The set-based flush collapse itself lands with the write
+      path (COR-3 Phase 8 increment 5), so the WHOLE row list passes through
+      as ONE multi-row instruction — `lower_write`'s own multi-row refusal
+      names that deferral, rather than this seam silently decomposing into N
+      independent per-row statements no golden this shape authors.
     """
-    doc = {"mutation": entry["mutation"], "entity": entry["entity"], "rows": entry["rows"]}
-    instruction = instructions.deserialize(doc)
-    instructions.validate_instruction(instruction, meta)
-    return instruction
+    mutation = entry["mutation"]
+    entity_name = entry["entity"]
+    raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
+    if entry.get("statements") != len(raw_rows):
+        clean_rows = [_strip_observation(raw_row)[0] for raw_row in raw_rows]
+        instruction = instructions.deserialize(
+            {"mutation": mutation, "entity": entity_name, "rows": clean_rows}
+        )
+        instructions.validate_instruction(instruction, meta)
+        return [(instruction, None, None)]
+    out: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
+    for raw_row in raw_rows:
+        clean_row, observation = _strip_observation(raw_row)
+        instruction = instructions.deserialize(
+            {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
+        )
+        instructions.validate_instruction(instruction, meta)
+        key = object_key(instruction, meta) if observation is not None else None
+        out.append((instruction, key, observation))
+    return out
 
 
 def _lower_writes(
-    entries: Sequence[Mapping[str, object]], meta: Metamodel, dialect: Dialect
+    entries: Sequence[Mapping[str, object]],
+    meta: Metamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
 ) -> tuple[Statement, ...]:
     """Plan one write buffer (coalesce / FK-order / elide) and lower each survivor."""
-    buffer = [_build_instruction(entry, meta) for entry in entries]
-    plan = plan_flush(buffer, {}, None, meta)
+    buffer: list[WriteInstruction] = []
+    observations: dict[ObjectKey, Observation] = {}
+    for entry in entries:
+        for instruction, key, observation in _build_instructions(entry, meta):
+            buffer.append(instruction)
+            if key is not None and observation is not None:
+                observations[key] = observation
+    plan = plan_flush(buffer, observations, None, meta)
     statements: list[Statement] = []
     for planned in plan.writes:
-        statements.extend(lower_write(planned, meta, dialect))
+        statements.extend(lower_write(planned, meta, dialect, concurrency))
     return tuple(statements)
 
 
@@ -512,12 +612,13 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     """Lower every scenario step to its pointer + DML — pure (no database)."""
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
+    concurrency = _concurrency(case)
     lowered: list[_LoweredStep] = []
     try:
         for index, step in enumerate(_scenario_steps(case)):
             if "write" in step:
                 entries = cast("Sequence[Mapping[str, object]]", step["write"])
-                statements = _lower_writes(entries, meta, dialect)
+                statements = _lower_writes(entries, meta, dialect, concurrency)
                 rollback = step.get("rollback") is True
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
             else:
@@ -534,9 +635,10 @@ def _write_sequence_lowered(
     """Lower each writeSequence entry independently to ``(pointer, statements)`` — pure."""
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
+    concurrency = _concurrency(case)
     try:
         return [
-            (f"/writeSequence/{index}", _lower_writes([entry], meta, dialect))
+            (f"/writeSequence/{index}", _lower_writes([entry], meta, dialect, concurrency))
             for index, entry in enumerate(_write_sequence_entries(case))
         ]
     except _LOWERING_ERRORS as exc:
@@ -727,20 +829,71 @@ def run_write_sequence_case(
 def read_table_state(port: DbPort, meta: Metamodel, dialect: Dialect) -> dict[str, list[Row]]:
     """The committed contents of every model table, in canonical wire form.
 
-    Each row-owning table is read back with every physical column in descriptor
-    ``columnOrder`` (a shared table is read once), so the observation reports
-    exactly the state ``then.tableState`` asserts — derived from the metamodel,
-    never from the case's expectations.
+    Each row-owning table is read back with every physical column in FAMILY
+    columnOrder (`_table_column_order` — a shared table is read once), so the
+    observation reports exactly the state ``then.tableState`` asserts — derived
+    from the metamodel, never from the case's expectations.
     """
     state: dict[str, list[Row]] = {}
     for entity in meta.entities:
         if entity.table is None or entity.table in state:
             continue
-        columns = ", ".join(dialect.quote(column) for column in column_order(entity))
-        sql = f"select {columns} from {dialect.quote(entity.table)}"
+        table = entity.table
+        columns = ", ".join(
+            dialect.quote(column) for column in _table_column_order(meta, entity, table)
+        )
+        sql = f"select {columns} from {dialect.quote(table)}"
         rows = port.execute(dialect.to_driver_sql(sql), [])
-        state[entity.table] = [wire_row(row) for row in rows]
+        state[table] = [wire_row(row) for row in rows]
     return state
+
+
+def _table_column_order(meta: Metamodel, entity: Entity, table: str) -> list[str]:
+    """``table``'s FULL physical columns in canonical order (m-sql
+    ``column_order``'s own rule — primary key first, then the inheritance tag,
+    then the remaining scalars, then value-object documents).
+
+    For a plain entity this is its own bare view (`column_order`). For an
+    inheritance-family table it is EVERY entity mapped to it, unioned
+    family-wide: a table-per-hierarchy shared table carries every sibling
+    concrete's own columns (`then.tableState` asserts the WHOLE row, e.g.
+    `m-inheritance-007`'s inserted `CardPayment` row still reports the
+    cash-only `tendered` column as `null`), and a table-per-concrete-subtype
+    table is one concrete's own ancestry chain. `column_order`'s own docstring
+    defers exactly this "full inherited chain" resolution to "above this
+    per-entity view" — the read-back analogue of
+    `parallax.snapshot.handle`'s write-emission `_family_column_order`
+    (a sibling resolution, not reused directly: write emission touches only
+    ONE participant's own columns, this touches every participant SHARING
+    the physical table).
+    """
+    if entity.inheritance is None:
+        return list(column_order(entity))
+    members = sorted(
+        (e for e in meta.entities if e.inheritance is not None and e.table == table),
+        key=lambda e: e.name,
+    )
+    root = inheritance.family_root(meta, entity)
+    assert root.inheritance is not None  # a resolved family root always carries one
+    pk_columns = [attr.column for attr in root.attributes if attr.primary_key]
+    tag_columns = [root.inheritance.tag_column] if root.inheritance.tag_column is not None else []
+    chain = (*inheritance.ancestor_chain(meta, tuple(member.name for member in members)), *members)
+    rest_columns: list[str] = []
+    document_columns: list[str] = []
+    seen_rest: set[str] = set()
+    seen_docs: set[str] = set()
+    for member in chain:
+        for attribute in member.attributes:
+            if attribute.primary_key or attribute.column in seen_rest:
+                continue
+            seen_rest.add(attribute.column)
+            rest_columns.append(attribute.column)
+        for vo in member.value_objects:  # pragma: no cover - no reachable family model
+            if vo.column in seen_docs:  # declares a value object yet (defensive dedup)
+                continue
+            seen_docs.add(vo.column)
+            document_columns.append(vo.column)
+    return [*pk_columns, *tag_columns, *rest_columns, *document_columns]
 
 
 def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statement]) -> None:
@@ -767,6 +920,174 @@ def _execute_writes(
 
     with contextlib.suppress(_RollbackStep):
         port.transaction(body)
+
+
+# --------------------------------------------------------------------------- #
+# Conflict — the optimistic-lock run lane (m-opt-lock, COR-3 Phase 8           #
+# increment 3). Single-attempt (`when.write`) and retry (`when.attempts`)      #
+# forms both drive the engine-local write path (`plan_flush` / `lower_write`,  #
+# the SAME seam the writeSequence/scenario lanes reuse — ledger D-18's         #
+# db.transact re-route is a later increment): only the versioned UPDATE the    #
+# non-temporal scope owns this increment; a temporal-close conflict form       #
+# lands with the temporal write path (COR-3 Phase 8 increment 4).              #
+# --------------------------------------------------------------------------- #
+def _apply_given_apply(case: case_format.Case, dialect: Dialect, port: DbPort) -> None:
+    """Apply a conflict case's out-of-band ``given.apply`` naive statements
+    VERBATIM, immediately (never inside our own transaction) — they simulate a
+    CONCURRENT transaction that already committed, so they must survive our
+    own unit of work's eventual rollback (a stale-version conflict)."""
+    given = case.document.get("given")
+    if not isinstance(given, Mapping):
+        return
+    entries = cast("Mapping[str, object]", given).get("apply")
+    if not isinstance(entries, list):
+        return
+    for entry in cast("list[Mapping[str, object]]", entries):
+        sql = cast("str", entry["sql"])
+        binds = cast("list[object]", entry.get("binds", []))
+        port.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
+
+
+def _lower_conflict_write(
+    meta: Metamodel,
+    dialect: Dialect,
+    target: str,
+    concurrency: Concurrency,
+    write_row: Mapping[str, object],
+) -> tuple[Statement, ...]:
+    """Lower one conflict attempt's ``write`` row through the SAME engine-local
+    write path the writeSequence/scenario lanes use: strip its reserved
+    ``observedVersion`` into an :class:`Observation` (`m-opt-lock`; ADR 0013),
+    plan the single-instruction buffer, and lower it. A conflict case's own
+    write is always a versioned keyed UPDATE this non-temporal scope owns
+    (`m-case-format`: "an optimistic-lock UPDATE" — a temporal close's own
+    conflict form is a distinct, increment-4 shape)."""
+    clean_row, observation = _strip_observation(write_row)
+    instruction = instructions.deserialize(
+        {"mutation": "update", "entity": target, "rows": [clean_row]}
+    )
+    instructions.validate_instruction(instruction, meta)
+    observations: dict[ObjectKey, Observation] = {}
+    if observation is not None:
+        key = object_key(instruction, meta)
+        if key is not None:
+            observations[key] = observation
+    plan = plan_flush([instruction], observations, None, meta)
+    statements: list[Statement] = []
+    for planned in plan.writes:
+        statements.extend(lower_write(planned, meta, dialect, concurrency))
+    return tuple(statements)
+
+
+def _run_conflict_write(
+    port: DbPort,
+    dialect: Dialect,
+    meta: Metamodel,
+    target: str,
+    concurrency: Concurrency,
+    write_row: Mapping[str, object],
+) -> tuple[tuple[Statement, ...], int]:
+    """Lower and execute one conflict attempt's write, inside its own scripted
+    transaction, returning its statements and the port's own reported
+    affected-row count — never a row-returning clause weakening the emitted
+    SQL to derive it (`m-conformance-adapter`)."""
+    statements = _lower_conflict_write(meta, dialect, target, concurrency, write_row)
+
+    def body(tx: DbPort) -> int:
+        affected = 0
+        for statement in statements:
+            affected = tx.execute_write(
+                dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds)
+            )
+        return affected
+
+    affected = port.transaction(body)
+    return statements, affected
+
+
+def _refuse_temporal_conflict(case: case_format.Case, when: Mapping[str, object]) -> None:
+    """Refuse a TEMPORAL / bitemporal optimistic conflict CLOSE loudly.
+
+    A temporal close conflict's write row carries only the milestone pk (no
+    ``observedVersion``); its close instant and observed gate ride the
+    root-level ``when.at`` / ``when.observedInZ`` (single-attempt) or each
+    attempt's OWN ``at`` / ``observedInZ`` (retry form) — a shape this
+    non-temporal-only lane must never silently mishandle (a temporal target's
+    row-only write would otherwise elide to an empty-change-set no-op instead
+    of raising, per `m-unit-work`'s own no-op rule, and this lane would
+    report a spuriously successful `run-only-if-nothing-else-goes-wrong`
+    envelope). This composition lands with the temporal write path (COR-3
+    Phase 8 increment 4); this lane grades the non-temporal versioned UPDATE
+    conflict form only.
+    """
+    attempts = when.get("attempts")
+    carries_at = "at" in when or (
+        isinstance(attempts, list)
+        and any(isinstance(a, Mapping) and "at" in a for a in cast("list[object]", attempts))
+    )
+    if carries_at:
+        raise EngineError(
+            f"{case.path.name}: a temporal / bitemporal optimistic-lock CLOSE conflict "
+            "(the observed in_z gate) lands with the temporal write path (COR-3 Phase 8 "
+            "increment 4); this lane grades the non-temporal versioned UPDATE conflict "
+            "form only"
+        )
+
+
+def run_conflict_case(
+    case: case_format.Case, dialect_name: str, port: DbPort
+) -> tuple[list[Emission], int, dict[str, list[Row]] | None]:
+    """Run a `conflict` case (m-opt-lock): the single-attempt form
+    (`when.write`), or the `when.attempts` retry sequence — each attempt its
+    own scripted transaction, in order, each with its own statements / write /
+    affected-row count (the case's own `0`-then-`1` retry-contract witness).
+
+    Loads no fixtures itself (the caller's own lifecycle does, per
+    `m-case-format`'s conflict-shape default); applies `given.apply` verbatim
+    and out-of-band FIRST (the concurrent writer, `_apply_given_apply`), THEN
+    lowers and runs the write(s) through the engine-local write path. Returns
+    the ordered emissions, the FINAL (single-attempt or last-retry) affected-
+    row count — the schema's one `affectedRows` slot, `m-conformance-adapter`
+    — and the resulting table state when the case authors `then.tableState`
+    (present on every reachable case this increment: the single-attempt
+    witnesses always author it; a retry case that omitted it would report
+    nothing to compare, never a database round trip the case does not ask for).
+    """
+    meta = load_case_metamodel(case)
+    dialect = dialect_for(dialect_name)
+    when = _when(case)
+    _refuse_temporal_conflict(case, when)
+    concurrency = _concurrency(case)
+    target = _rejected_target(meta)
+    emissions: list[Emission] = []
+    affected = 0
+    try:
+        _apply_given_apply(case, dialect, port)
+        attempts = when.get("attempts")
+        if isinstance(attempts, list):
+            for index, attempt in enumerate(cast("list[Mapping[str, object]]", attempts)):
+                write_row = cast("Mapping[str, object]", attempt["write"])
+                statements, affected = _run_conflict_write(
+                    port, dialect, meta, target, concurrency, write_row
+                )
+                emissions.extend(
+                    Emission(f"/when/attempts/{index}/write", s.sql, s.binds) for s in statements
+                )
+        else:
+            write_row = cast("Mapping[str, object]", when["write"])
+            statements, affected = _run_conflict_write(
+                port, dialect, meta, target, concurrency, write_row
+            )
+            emissions.extend(Emission("/when/write", s.sql, s.binds) for s in statements)
+    except _LOWERING_ERRORS as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    then = case.document.get("then")
+    table_state = (
+        read_table_state(port, meta, dialect)
+        if isinstance(then, Mapping) and "tableState" in then
+        else None
+    )
+    return emissions, affected, table_state
 
 
 # --------------------------------------------------------------------------- #

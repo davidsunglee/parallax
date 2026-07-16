@@ -59,6 +59,15 @@ def _case(case_id: str) -> case_format.Case:
     return case
 
 
+def _load_case(case_id: str) -> case_format.Case:
+    # Loads by id directly from the corpus, independent of `sweep.
+    # IMPLEMENTED_MODULES` reachability: these engine-function-level tests
+    # exercise `run_conflict_case` on its own terms, never gated on whether
+    # the case has ALSO been flipped visible in the sweep.
+    (case,) = [c for c in case_format.load_cases() if c.case_id == case_id]
+    return case
+
+
 def test_compile_read_case_matches_golden() -> None:
     emissions, round_trips = engine.compile_read_case(_case("m-value-object-001"), "postgres")
     assert round_trips == 1
@@ -376,6 +385,76 @@ def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> No
         engine.compile_write_sequence_case(bad, "postgres")
 
 
+# --------------------------------------------------------------------------- #
+# Conflict — the optimistic-lock run lane (m-opt-lock, COR-3 Phase 8           #
+# increment 3): single-attempt, given.apply, and when.attempts forms, each     #
+# driven against the fake in-memory port (no Docker; the real conflict/retry   #
+# semantics against a reset database are the Docker-gated pg-full proof,       #
+# `tests/conformance/test_run_sweep.py::test_conflict_run_sweep`).             #
+# --------------------------------------------------------------------------- #
+def test_run_conflict_case_single_attempt() -> None:
+    port = FakeWritePort()
+    emissions, affected, table_state = engine.run_conflict_case(
+        _load_case("m-opt-lock-006"), "postgres", port
+    )
+    assert [e.case_pointer for e in emissions] == ["/when/write"]
+    assert affected == 1
+    assert len(port.writes) == 1
+    assert table_state is not None and "account" in table_state
+
+
+def test_run_conflict_case_applies_given_apply_out_of_band_first() -> None:
+    port = FakeWritePort()
+    emissions, affected, table_state = engine.run_conflict_case(
+        _load_case("m-opt-lock-005"), "postgres", port
+    )
+    assert [e.case_pointer for e in emissions] == ["/when/write"]
+    # given.apply's naive out-of-band bump, THEN the gated update.
+    assert len(port.writes) == 2
+    assert affected == 1  # the fake port always reports 1; the real 0-row
+    # conflict proof runs against a reset database (test_conflict_run_sweep).
+    assert table_state is not None
+
+
+def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:
+    port = FakeWritePort()
+    emissions, affected, table_state = engine.run_conflict_case(
+        _load_case("m-opt-lock-007"), "postgres", port
+    )
+    assert [e.case_pointer for e in emissions] == [
+        "/when/attempts/0/write",
+        "/when/attempts/1/write",
+    ]
+    assert len(port.writes) == 3  # given.apply + two independent scripted attempts
+    assert affected == 1
+    assert table_state is not None
+
+
+def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None:
+    from parallax.core.dialect import POSTGRES
+
+    case = _synthetic_write("conflict", {"given": {"fixtures": True}})
+    port = FakeWritePort()
+    engine._apply_given_apply(case, POSTGRES, port)  # pyright: ignore[reportPrivateUsage]
+    assert port.writes == []
+
+
+def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
+    case = _synthetic_write("conflict", {"when": {"write": {"id": 1, "bogus": True}}})
+    with pytest.raises(engine.EngineError, match="undeclared member"):
+        engine.run_conflict_case(case, "postgres", FakeWritePort())
+
+
+def test_run_conflict_case_refuses_a_temporal_close_form() -> None:
+    # m-audit-write-006: a temporal / bitemporal optimistic-lock CLOSE conflict
+    # (`when.at` / `when.observedInZ`) lands with the temporal write path
+    # (COR-3 Phase 8 increment 4) — this lane refuses it loudly rather than
+    # silently mishandling the milestone-pk-only row.
+    (case,) = [c for c in case_format.load_cases() if c.case_id == "m-audit-write-006"]
+    with pytest.raises(engine.EngineError, match="temporal write path"):
+        engine.run_conflict_case(case, "postgres", FakeWritePort())
+
+
 def test_scenario_case_without_when_is_rejected() -> None:
     with pytest.raises(engine.EngineError, match="has no `when`"):
         engine.compile_scenario_case(_synthetic_write("scenario", {}), "postgres")
@@ -546,6 +625,21 @@ def test_read_table_state_reads_each_physical_table_once() -> None:
     state = engine.read_table_state(port, meta, POSTGRES)
     assert set(state) == {"payment"}
     assert len(port.reads) == 1
+
+
+def test_read_table_state_projects_value_object_document_columns() -> None:
+    # `_table_column_order`'s family-wide column resolution includes each
+    # value-object's own document column last (m-sql `column_order`), even for
+    # a plain (non-inheritance) entity — the customer model's `address`.
+    from parallax.conformance import models
+    from parallax.core.dialect import POSTGRES
+
+    port = FakeWritePort()
+    meta = models.load_models()["customer"]
+    state = engine.read_table_state(port, meta, POSTGRES)
+    assert "customer" in state
+    sql, _ = port.reads[0]
+    assert "address" in sql
 
 
 # --------------------------------------------------------------------------- #

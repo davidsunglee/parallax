@@ -4,8 +4,13 @@ The primary-key generation strategy model: ``none`` (caller-supplied), ``max``
 (``max(col) + 1`` folded into the INSERT's SQL), and ``sequence`` (a simulated
 sequence registry table hands out reserved blocks). This scope carries the pure
 strategy classification and the block-allocation arithmetic; the actual DML
-(the ``max`` INSERT, the registry ``UPDATE``) is lowered when writes come online
-(COR-3 Phase 6). ``m-pk-gen`` depends only on ``m-descriptor``.
+(the ``max`` INSERT's ``coalesce(max(...), ?) + ?`` fragment, the registry
+``update ... set next_val = next_val + ?``) is lowered at the write seam
+(``parallax.snapshot.handle.lower_write``, COR-3 Phase 8 increment 3) from the
+neutral ``{computed: "maxPlusOne"}`` / ``{increment: n}`` DB-computed markers a
+write row carries; :func:`allocate_block` is the block arithmetic the
+``sequence`` strategy's registry choreography derives its ids from.
+``m-pk-gen`` depends only on ``m-descriptor``.
 """
 
 from __future__ import annotations

@@ -164,8 +164,13 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
 
     The scenario and writeSequence lanes emit the keyed unit-of-work DML (and, for a
     scenario, the read-lock reads); an error case has no compile artifact (a
-    lane-honest ``EngineError`` names the run lane that grades it); any other shape
-    falls through to the read compiler, which raises the loud non-read
+    lane-honest ``EngineError`` names the run lane that grades it); every reachable
+    conflict case declares ``compileEligibility: run-only`` (m-opt-lock's own
+    single-connection concurrency intent — `compile_case` already answers the
+    defined ``run-only`` envelope before ever reaching here), so a conflict case
+    reaching this dispatch is mis-declared, named loudly rather than silently
+    falling through to the read compiler's unrelated ``EngineError``; any other
+    shape falls through to the read compiler, which raises the loud non-read
     ``EngineError`` the caller renders as an ``error``.
     """
     if _is_scenario_lane_dispatched(case):
@@ -181,6 +186,12 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
         raise engine.EngineError(
             f"{case.path.name}: an error case's trigger DML is authored, not compiled "
             "(m-case-format); `run` grades the single-connection trigger"
+        )
+    if case.shape == "conflict":
+        raise engine.EngineError(
+            f"{case.path.name}: a conflict case's single-connection concurrency intent "
+            "(m-opt-lock) is always declared `compileEligibility: run-only`; a reachable "
+            "conflict case missing that declaration is mis-declared, not compilable"
         )
     return engine.compile_read_case(case, dialect)
 
@@ -218,13 +229,16 @@ def _run(
     A read run records its observed ``rows`` / ``graph`` / ``graphs``
     (:func:`_read_observations`); a writeSequence run records the committed
     ``tableState`` read back from the model tables (the `m-conformance-adapter`
-    write-sequence observation); an error run records the raised failure's
-    classification (``errorClass`` / ``nativeCode``). A scenario run reports the
-    contract observations (``roundTrips``); its per-step find rows are
-    observable at the injected port seam, where the run sweep grades them
-    against each step's ``expectRows``. A rejected run touches no database and
-    no port: it reports the classified ``rejectedRule`` with ``roundTrips: 0``
-    (m-conformance-adapter, resolved DQ3/DQ8).
+    write-sequence observation); a conflict run (m-opt-lock) records the FINAL
+    ``affectedRows`` (single-attempt, or the last of a ``when.attempts`` retry
+    sequence) and, when the case authors it, the resulting ``tableState``; an
+    error run records the raised failure's classification (``errorClass`` /
+    ``nativeCode``). A scenario run reports the contract observations
+    (``roundTrips``); its per-step find rows are observable at the injected
+    port seam, where the run sweep grades them against each step's
+    ``expectRows``. A rejected run touches no database and no port: it reports
+    the classified ``rejectedRule`` with ``roundTrips: 0`` (m-conformance-
+    adapter, resolved DQ3/DQ8).
     """
     if _is_scenario_lane_dispatched(case):
         raise _scenario_lane_error(case)
@@ -234,6 +248,12 @@ def _run(
     if case.shape == "writeSequence":
         emissions, table_state, round_trips = engine.run_write_sequence_case(case, dialect, port)
         return emissions, {"tableState": table_state, "roundTrips": round_trips}
+    if case.shape == "conflict":
+        emissions, affected_rows, table_state = engine.run_conflict_case(case, dialect, port)
+        observations: dict[str, Any] = {"affectedRows": affected_rows, "roundTrips": len(emissions)}
+        if table_state is not None:
+            observations["tableState"] = table_state
+        return emissions, observations
     if case.shape == "error":
         emissions, error_class, native_code, round_trips = engine.run_error_case(
             case, dialect, port

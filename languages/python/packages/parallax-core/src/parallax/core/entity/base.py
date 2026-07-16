@@ -78,7 +78,6 @@ __all__ = [
     "entity_record_of",
     "entity_records",
     "entity_registry",
-    "framework_owned_advance",
     "full_row",
     "primary_key_row",
     "snake_to_camel",
@@ -366,24 +365,6 @@ def effective_change_set(copy: object) -> dict[str, object]:
         py_name: getattr(copy, py_name)
         for py_name, original in changes.items()
         if getattr(copy, py_name) != original
-    }
-
-
-def framework_owned_advance(instance: object) -> dict[str, object]:
-    """The provisional (COR-3 Phase 7) framework-owned version advance for a
-    sparse ``tx.update`` row: ``{canonical name: current + 1}`` for each
-    ``optimistic_locking`` attribute the entity declares, read from the edited
-    copy's own (untouched — ``model_copy`` forbids assigning it) current
-    value. This is NOT ``m-opt-lock``'s observation-gated advance (COR-3 Phase
-    8: no transaction-scoped-observation requirement, no ``and version = ?``
-    gate) — it reproduces the corpus's own "locking mode: no gate, version
-    advances" M4-era goldens (e.g. ``m-unit-work-005``) until the write path
-    lands; ``lower_write`` still refuses any write an OBSERVATION actually
-    gates (COR-3 Phase 8; ledger unaffected)."""
-    names = wire_names_of(type(instance))
-    return {
-        names.py_to_name[py_name]: cast("int", getattr(instance, py_name)) + 1
-        for py_name in names.framework_owned_py
     }
 
 

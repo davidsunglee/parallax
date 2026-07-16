@@ -21,12 +21,18 @@ snippets. They use the D-16 **graduated, full** transaction verbs (COR-3 Phase 7
 increment 6a): ``tx.insert(instance)`` (the Create Payload), ``tx.update(copy)``
 (an edited copy carrying a Change Record — ``model_copy(update={...})``),
 ``tx.delete(node_or_instance)``, and ``tx.find(statement)`` returning
-``Snapshot[T]``. A handful of stories construct their edited copy's PROVENANCE
-instance from a value already known outside the writing transaction (the
-corpus choreography buffers the update as the transaction's first operation,
-with no preceding fetch) — a legitimate D-16 shape until the Phase-8
-observation-gating rule lands; every story that already fetches inside the
-SAME transaction derives its edited copy from that fetch instead.
+``Snapshot[T]``. The Phase-8 observation-gating rule landed in COR-3 Phase 8
+increment 3 (`m-opt-lock`): a versioned keyed update now REQUIRES the edited
+copy's provenance to derive from a `tx.find` this SAME transaction ran (the
+framework never issues an implicit resolving read on a keyed write), so every
+story updating a versioned row fetches it first — `keyed_update_observed_in_
+transaction` / `one_flush_combined_mixed_verb_order` add that observing fetch
+ahead of their mirrored case's own scenario, which is graded (`test_write_
+no_drift.py`) against the case's own statements PLUS that leading read. A
+versioned keyed DELETE stays opportunistic (`m-opt-lock`: never a hard
+requirement), so `keyed_delete_observed_in_transaction` and every OTHER
+story's `tx.delete` calls still construct their provenance instance from a
+value known outside the writing transaction (`_known_account`), unchanged.
 """
 
 from __future__ import annotations
@@ -145,12 +151,9 @@ def callback_value_withheld_on_abort(db: Database) -> list[Row]:
 
 
 def keyed_update_observed_in_transaction(db: Database) -> list[Row]:
-    edited = _known_account(id=1, owner="Ada", balance="100.00", version=1).model_copy(
-        update={"balance": Decimal("175.00")}
-    )
-
     def fn(tx: Transaction) -> list[Row]:
-        tx.update(edited)
+        current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
+        tx.update(current.model_copy(update={"balance": Decimal("175.00")}))
         return _as_rows(tx.find(Account.where(Account.id == 1)))
 
     return db.transact(fn)
@@ -198,17 +201,14 @@ def create_then_delete_a_parent_child_pair(db: Database) -> None:
 
 
 def one_flush_combined_mixed_verb_order(db: Database) -> list[Row]:
-    edited = _known_account(id=1, owner="Ada", balance="100.00", version=1).model_copy(
-        update={"balance": Decimal("20.00")}
-    )
-
     def fn(tx: Transaction) -> list[Row]:
+        current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00"), version=1))
-        tx.update(edited)
+        tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
         tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
         return _as_rows(tx.find(Account.where(Account.balance < 50.00)))
 
-    return db.transact(fn)  # one flush: insert, update, delete — then the find
+    return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find
 
 
 def aborted_insert_never_becomes_durable(db: Database) -> list[Row]:

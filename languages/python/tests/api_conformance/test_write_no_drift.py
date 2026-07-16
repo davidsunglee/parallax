@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
@@ -88,6 +88,26 @@ def _driver_goldens(entries: list[dict[str, Any]]) -> list[tuple[str, list[objec
     return out
 
 
+# `keyed_update_observed_in_transaction` (m-unit-work-005) and
+# `one_flush_combined_mixed_verb_order` (m-unit-work-009) update a VERSIONED
+# row through the graduated `tx.update(copy)` verb, which now (COR-3 Phase 8
+# increment 3, `m-opt-lock`) requires the edited copy's provenance to derive
+# from a `tx.find` this SAME transaction ran — so both stories add a leading
+# observing find their mirrored case's OWN scenario never authors (the case
+# is an M4-era witness of the version carried as plain row data, a shape the
+# graduated verb surface cannot produce — `parallax.core.entity.base.
+# framework_owned_advance` retired with it). The wire-golden proof here is
+# the case's own statements PLUS that leading read, not a corpus edit.
+_OBSERVE_ACCOUNT_1_GOLDEN: Final[tuple[str, list[object]]] = (
+    POSTGRES.to_driver_sql(
+        "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? "
+        "for share of t0"
+    ),
+    [1],
+)
+_OBSERVES_ACCOUNT_1_FIRST: Final[frozenset[str]] = frozenset({"m-unit-work-005", "m-unit-work-009"})
+
+
 def _scenario_goldens(
     case_id: str, *, skip_rollback: bool = False
 ) -> list[tuple[str, list[object]]]:
@@ -100,6 +120,8 @@ def _scenario_goldens(
         if skip_rollback and step.get("rollback") is True:
             continue
         out.extend(_driver_goldens(cast("list[dict[str, Any]]", step["statements"])))
+    if case_id in _OBSERVES_ACCOUNT_1_FIRST:
+        out = [_OBSERVE_ACCOUNT_1_GOLDEN, *out]
     return out
 
 

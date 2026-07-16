@@ -147,6 +147,17 @@ def test_compile_case_run_only_for_a_declared_run_only_case() -> None:
     assert envelope["diagnostics"][0]["code"] == "compile-run-only"
 
 
+def test_compile_dispatch_refuses_a_conflict_case_missing_its_run_only_declaration() -> None:
+    # Every reachable conflict case declares `compileEligibility: run-only`
+    # (m-opt-lock's single-connection intent), so `compile_case` short-
+    # circuits before `_compile` ever runs; a hypothetically mis-declared one
+    # reaching the internal dispatch is refused loudly by its own conflict
+    # branch, never silently falling through to the read compiler.
+    case = _case(shape="conflict", tags=("m-opt-lock", "slice-snapshot-1"))
+    with pytest.raises(engine.EngineError, match="always declared"):
+        adapter._compile(case, "postgres")  # pyright: ignore[reportPrivateUsage]
+
+
 def test_run_case_ok_through_a_fake_port() -> None:
     envelope = adapter.run_case(_VO_READ_CASE, "postgres", _FakePort())
     jsonschema.validate(envelope, _SCHEMA)
@@ -166,6 +177,19 @@ class _WritePort:
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:
         return body(self)
+
+
+def test_run_case_conflict_reports_affected_rows_and_table_state() -> None:
+    # m-opt-lock's run-only conflict shape (COR-3 Phase 8 increment 3): the
+    # adapter's own `run` dispatch wraps `engine.run_conflict_case`'s tuple
+    # into the schema's one `affectedRows` observation slot, plus
+    # `tableState` when the case authors it.
+    case_path = case_format.default_cases_dir() / "m-opt-lock-006-success.yaml"
+    envelope = adapter.run_case(case_path, "postgres", _WritePort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+    assert envelope["observations"]["affectedRows"] == 1
+    assert "account" in envelope["observations"]["tableState"]
 
 
 _SCENARIO_CASE = case_format.default_cases_dir() / "m-unit-work-001-read-your-own-writes.yaml"
@@ -253,7 +277,12 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
 
 
 def test_run_case_error_on_an_engine_gap() -> None:
-    # A run-only conflict case has no read operation, so the read engine refuses it.
+    # `_RUN_ONLY_CASE` (m-audit-write-006) is a TEMPORAL optimistic-lock CLOSE
+    # conflict (`when.at` / `when.observedInZ`): the non-temporal conflict run
+    # lane (COR-3 Phase 8 increment 3) refuses it loudly rather than silently
+    # mishandling the row-only write (which would otherwise elide to an
+    # empty-change-set no-op and report a spurious `ok`) — this composition
+    # lands with the temporal write path (increment 4).
     envelope = adapter.run_case(_RUN_ONLY_CASE, "postgres", _FakePort())
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "error"
@@ -601,17 +630,37 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
     assert json.loads(json.dumps(envelope)) == envelope
 
 
-def test_run_case_refuses_unsupported_write_forms_before_execution() -> None:
-    # m-pk-gen-008: a reachable claimed writeSequence whose rows carry a DB-computed
-    # marker ({increment: 3}) and a multi-row insert. The backbone review caught the
-    # shipped run binding the marker literally and dropping the second row (a false
-    # ok on a permissive port; an uncaught driver error on a real one). The lowering
-    # now refuses BEFORE execution: an `error` envelope naming the deferral, and the
-    # port never sees a statement.
-    case_path = case_format.default_cases_dir() / "m-pk-gen-008-sequence-batch-partial.yaml"
+def test_run_case_refuses_a_genuine_batch_collapse_write_before_execution() -> None:
+    # m-batch-write-001: a reachable claimed writeSequence whose FIRST entry
+    # buffers three inserts collapsing into ONE multi-row INSERT (`statements:
+    # 1` for 3 rows — the case author's own declared batch-COLLAPSE intent,
+    # `m-batch-write` "Set-based flush"). The set-based flush collapse lands
+    # with the write path (COR-3 Phase 8 increment 5): the engine passes the
+    # whole row list through as one multi-row instruction (never silently
+    # decomposing it into per-row statements no golden this shape authors),
+    # and `lower_write`'s own multi-row refusal fires BEFORE execution — an
+    # `error` envelope naming the deferral, and the port never sees a
+    # statement.
+    case_path = case_format.default_cases_dir() / "m-batch-write-001-set-based-flush.yaml"
     port = _TriggerPort(raise_on=None)
     envelope = adapter.run_case(case_path, "postgres", port)
     assert envelope["status"] == "error"
     # The refusal names its landing phase explicitly (forward-error posture).
-    assert "COR-3 Phase 8; m-pk-gen" in envelope["diagnostics"][0]["message"]
+    assert "COR-3 Phase 8 increment 5; m-batch-write" in envelope["diagnostics"][0]["message"]
     assert port.writes == 0  # refused pre-execution — nothing reached the port
+
+
+def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> None:
+    # m-pk-gen-008: a reachable claimed writeSequence whose SECOND entry hands
+    # out 2 of a reserved 3-id block — `statements: 2` for 2 rows (the case
+    # author's own declared per-row DECOMPOSE intent, distinct from the
+    # collapse-intent case above), so the engine splits it into two
+    # independent single-row INSERTs (COR-3 Phase 8 increment 3, m-pk-gen)
+    # rather than refusing. The registry UPDATE's `{increment: 3}` marker
+    # folds into a self-referential `next_val = next_val + ?` SET.
+    case_path = case_format.default_cases_dir() / "m-pk-gen-008-sequence-batch-partial.yaml"
+    envelope = adapter.run_case(case_path, "postgres", _WritePort())
+    assert envelope["status"] == "ok", envelope
+    # The registry UPDATE + two independent Pass INSERTs (never one collapsed
+    # multi-row INSERT — the id list is derived, not authored).
+    assert len(envelope["emissions"]) == 3, envelope["emissions"]

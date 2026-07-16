@@ -22,6 +22,7 @@ import pytest
 import inheritance_models as im
 import mirrored_models as mm
 from parallax.conformance import models
+from parallax.core import opt_lock
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.descriptor import Metamodel
@@ -58,13 +59,6 @@ def _new_account() -> mm.Account:
     return mm.Account(id=7, owner="Newton", balance=Decimal("5.00"), version=1)
 
 
-def _edited_balance(balance: str) -> mm.Account:
-    # A "fetched" Ada (id=1, balance=100.00, version=1), then an edited copy
-    # touching only `balance` — the Change Record `tx.update` reads.
-    fetched = mm.Account(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
-    return fetched.model_copy(update={"balance": Decimal(balance)})
-
-
 def _grace() -> mm.Account:
     return mm.Account(id=3, owner="Grace", balance=Decimal("10.00"), version=1)
 
@@ -93,9 +87,10 @@ class _RecordingPort:
     next ``execute`` calls (a failure inside the transaction body).
     """
 
-    def __init__(self, *, rows: Sequence[Row] = ()) -> None:
+    def __init__(self, *, rows: Sequence[Row] = (), write_affected: int = 1) -> None:
         self.ops: list[tuple[object, ...]] = []
         self.rows = list(rows)
+        self.write_affected = write_affected
         self.txn_faults: list[DatabaseError] = []
         self.read_faults: list[DatabaseError] = []
 
@@ -107,7 +102,7 @@ class _RecordingPort:
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.ops.append(("write", sql, tuple(binds)))
-        return 1
+        return self.write_affected
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:
         self.ops.append(("begin",))
@@ -156,17 +151,26 @@ def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
 
 
 def test_update_and_delete_lower_to_their_keyed_dml() -> None:
-    # m-unit-work-005 / -006: a keyed update (SET the non-PK members, WHERE the
-    # key) and a keyed delete, flushed in the canonical mixed-op order.
-    port = _RecordingPort()
+    # m-unit-work-005 / -006, migrated to the m-opt-lock observation flow
+    # (COR-3 Phase 8 increment 3): a keyed update (SET the non-PK members,
+    # WHERE the key, version advanced from THIS unit of work's own recorded
+    # observation) and a keyed (unobserved, ungated — delete's opt-lock
+    # participation is opportunistic) delete, flushed in the canonical
+    # mixed-op order. The edited copy is built from a row `tx.find` fetches
+    # INSIDE this transaction — a versioned update requires a prior
+    # observation; an edited copy fetched outside the writing transaction
+    # cannot be updated directly (python.md §5).
+    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
 
     def fn(tx: Transaction) -> None:
-        tx.update(_edited_balance("175.00"))
+        fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
         tx.delete(_grace())
 
     _db(port).transact(fn)
     assert port.ops == [
         ("begin",),
+        ("read", _FIND_SQL, (1,)),
         (
             "write",
             POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?"),
@@ -175,6 +179,42 @@ def test_update_and_delete_lower_to_their_keyed_dml() -> None:
         ("write", POSTGRES.to_driver_sql("delete from account where id = ?"), (3,)),
         ("commit",),
     ]
+
+
+def test_find_on_a_non_versioned_entity_records_no_observation() -> None:
+    # `Transaction.find`'s observation recording is defensive: a materialized
+    # node whose entity declares no `optimisticLocking` version column (every
+    # Payment-family member) is skipped, never raising and never observing
+    # anything a later write could consult.
+    port = _RecordingPort(rows=[{"id": 1, "amount": 100.00, "card_network": "Visa"}])
+
+    def fn(tx: Transaction) -> None:
+        tx.find(im.CardPayment.where(im.CardPayment.id == 1)).result()
+
+    _db_for(_PAYMENT, port).transact(fn)
+    kinds = [op[0] for op in port.ops]
+    assert kinds == ["begin", "read", "commit"]
+
+
+def test_versioned_update_conflict_aborts_the_whole_unit_of_work() -> None:
+    # m-opt-lock's `updatedRows != 1` conflict signal, at the production
+    # developer surface: the gated UPDATE's port-reported affected count (0,
+    # simulating a concurrent writer) disagrees with the flush plan's
+    # exactly-one expectation, so `OptimisticLockConflictError` raises and the
+    # whole unit of work rolls back.
+    port = _RecordingPort(
+        rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}], write_affected=0
+    )
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
+
+    with pytest.raises(opt_lock.OptimisticLockConflictError, match="Account"):
+        _db(port).transact(fn)
+    assert ("rollback",) in port.ops
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 1  # the gated update, attempted once, then aborted
 
 
 def test_find_force_flushes_pending_writes_first() -> None:

@@ -1,7 +1,10 @@
 """D-16 full graduation (DQ1, COR-3 Phase 7 increment 6a): the validating
 ``model_copy`` override and its Change Record — ``changed_fields`` /
 ``effective_change_set`` / ``full_row`` / ``primary_key_row`` /
-``canonical_row`` / ``framework_owned_advance`` (spec §3/§5).
+``canonical_row`` (spec §3/§5). The version column's own advance is
+framework-owned end to end at the write seam (`m-opt-lock`, COR-3 Phase 8
+increment 3) — ``framework_owned_advance`` retired with the provisional M4-era
+shape it reproduced; see ``test_write_lowering.py`` / ``test_opt_lock.py``.
 """
 
 from __future__ import annotations
@@ -9,10 +12,10 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-import snapshot_models as sm
-import value_object_models as vm
 
 import mirrored_models as mm
+import snapshot_models as sm
+import value_object_models as vm
 from parallax.core.entity import (
     EntityDefinitionError,
     ModelCopyError,
@@ -20,7 +23,6 @@ from parallax.core.entity import (
     canonical_row,
     changed_fields,
     effective_change_set,
-    framework_owned_advance,
     full_row,
     primary_key_row,
     wire_names_of,
@@ -137,16 +139,6 @@ def test_primary_key_row_projects_only_the_declared_keys() -> None:
 def test_canonical_row_translates_python_names_to_canonical_names() -> None:
     account = _account()
     assert canonical_row(account, {"balance": Decimal("9.99")}) == {"balance": Decimal("9.99")}
-
-
-def test_framework_owned_advance_bumps_the_optimistic_locking_column() -> None:
-    account = _account(version=1)
-    assert framework_owned_advance(account) == {"version": 2}
-
-
-def test_framework_owned_advance_is_empty_when_the_entity_declares_no_version() -> None:
-    passport = mm.Passport(id=1, person_id=1, number="X1")
-    assert framework_owned_advance(passport) == {}
 
 
 def test_full_row_serializes_a_value_object_member_to_its_canonical_document() -> None:

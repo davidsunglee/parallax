@@ -45,10 +45,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
-from parallax.core import deep_fetch, inheritance, op_algebra
+from parallax.core import deep_fetch, inheritance, op_algebra, opt_lock
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.descriptor import Entity, Metamodel, column_order
+from parallax.core.descriptor import Attribute, Entity, Metamodel, column_order
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import Statement as EntityStatement
@@ -56,7 +56,6 @@ from parallax.core.entity import (
     canonical_row,
     effective_change_set,
     entity_record_of,
-    framework_owned_advance,
     full_row,
     primary_key_row,
 )
@@ -68,6 +67,8 @@ from parallax.core.unit_work import (
     FlushExecutor,
     FlushPlan,
     KeyedWrite,
+    ObjectKey,
+    Observation,
     PlannedWrite,
     PredicateWrite,
     SystemClock,
@@ -76,6 +77,7 @@ from parallax.core.unit_work import (
     UnitOfWorkError,
     active_unit_of_work,
     instructions,
+    object_key,
     run_unit_of_work,
     validate_write,
 )
@@ -100,178 +102,412 @@ __all__ = [
     "lower_write",
 ]
 
-# The keyed mutation verbs M4 lowers (the non-temporal write triad). The temporal
-# `*Until` / `terminate` verbs open / split / close milestones and land with the
-# write path (Phase 8).
+# The keyed mutation verbs the write seam lowers (the non-temporal write
+# triad). The temporal `*Until` / `terminate` verbs open / split / close
+# milestones and land with the temporal write path (COR-3 Phase 8 increment 4).
 _NON_TEMPORAL_VERBS: Final[frozenset[str]] = frozenset({"insert", "update", "delete"})
+
+# A scalar cell's recognized DB-computed marker kinds (`m-pk-gen`;
+# `write-instruction.schema.json#/$defs/writeComputedMarker`): `computed` (the
+# `max` strategy's `coalesce(max(col), ?) + ?` INSERT fold) and `increment`
+# (a self-referential `col = col + ?` SET advance, e.g. a sequence registry's
+# `next_val`). Each is legal only at the mutation that can render it.
+_MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
 
 
 class WriteLoweringError(ValueError):
-    """A planned write cannot be lowered to DML by the M4 (non-temporal keyed) path."""
+    """A planned write cannot be lowered to DML by the non-temporal keyed write
+    seam (the deferred forms — temporal milestoning, predicate-selected /
+    set-based, multi-row batch collapse — raise here, never a wrong emission)."""
 
 
-def lower_write(planned: PlannedWrite, meta: Metamodel, dialect: Dialect) -> list[Statement]:
+def lower_write(
+    planned: PlannedWrite, meta: Metamodel, dialect: Dialect, concurrency: Concurrency
+) -> list[Statement]:
     """Lower one planned write to its ordered DML statements (m-sql write DML).
 
     ``planned`` is one execution-ordered item of a :class:`FlushPlan`: a (coalesced,
-    FK-ordered, elided) write instruction plus its bound transaction observation.
-    Returns the ordered statements the write emits — one for a keyed non-temporal
-    write, more once the temporal / rectangle-split forms land (Phase 8). The
-    temporal forms will additionally consume the flush's Clock-supplied processing
-    instant (``FlushPlan.tx_instant``, bound as ``in_z`` / the close instant); the
-    non-temporal forms M4 lowers do not, so it is threaded in with those forms.
+    FK-ordered, elided) write instruction plus its bound transaction observation and
+    affected-rows expectation. ``concurrency`` is the owning unit of work's
+    participation mode (m-opt-lock: whether a versioned UPDATE's version gate is
+    emitted). Returns the ordered statements the write emits — one for every
+    non-temporal keyed form this seam lowers (insert / update / delete, plain or
+    inheritance-family, versioned or not, pk-generated or not), more once the
+    temporal / rectangle-split forms land (COR-3 Phase 8 increment 4). The temporal
+    forms will additionally consume the flush's Clock-supplied processing instant
+    (``FlushPlan.tx_instant``, bound as ``in_z`` / the close instant); the
+    non-temporal forms this seam lowers do not, so it is threaded in with those forms.
     """
     instruction = planned.instruction
     if isinstance(instruction, PredicateWrite):
         raise WriteLoweringError(
             f"predicate-selected (set-based) write on {instruction.target.entity!r}: "
-            "materialize-then-lower lands with the write path (COR-3 Phase 8; m-batch-write / "
-            "m-opt-lock)"
-        )
-    observation = planned.observation
-    if observation is not None and (
-        observation.version is not None or observation.in_z is not None
-    ):
-        raise WriteLoweringError(
-            f"optimistic-lock gated write on {instruction.entity!r}: the version gate / advance "
-            "lands with the write path (COR-3 Phase 8; m-opt-lock)"
+            "materialize-then-lower lands with the write path (COR-3 Phase 8 increment 5; "
+            "m-batch-write / m-opt-lock)"
         )
     entity = meta.entity(instruction.entity)
     # Temporal classification MUST be the family-EFFECTIVE one (ADR 0026): an
     # inheritance participant declares its as-of axes on the root alone, so
     # `entity.is_temporal` (a bare, non-flattening LOCAL view) would silently
     # miss a temporal-family concrete's own write here — it would still be
-    # refused just below (any inheritance participant is out of scope for
-    # M4), but with the wrong reason and the wrong classification printed.
+    # refused just below (every temporal write, family or not, is out of
+    # scope this increment), but with the wrong reason and the wrong
+    # classification printed.
     declaring = inheritance.declaring_entity(meta, entity)
     if declaring.is_temporal:
         raise WriteLoweringError(
             f"temporal write on {entity.name!r} ({declaring.temporal}): milestone lowering "
-            "(close-and-chain / rectangle split) lands with the write path (COR-3 Phase 8; "
-            "m-audit-write / m-bitemp-write)"
-        )
-    if entity.inheritance is not None:
-        raise WriteLoweringError(
-            f"inheritance-family write on {entity.name!r}: tag / concrete-subtype DML lands with "
-            "the write path (COR-3 Phase 8; m-inheritance)"
+            "(close-and-chain / rectangle split) lands with the write path (COR-3 Phase 8 "
+            "increment 4; m-audit-write / m-bitemp-write)"
         )
     if instruction.business_from is not None or instruction.business_to is not None:
         raise WriteLoweringError(
             f"{instruction.mutation!r} on the non-temporal entity {entity.name!r} carries a "
-            "business bound; bounded writes are temporal (COR-3 Phase 8)"
+            "business bound; bounded writes are temporal (COR-3 Phase 8 increment 4)"
         )
     if instruction.mutation not in _NON_TEMPORAL_VERBS:
         raise WriteLoweringError(
             f"{instruction.mutation!r} is a temporal milestone verb; its lowering lands with the "
-            "write path (COR-3 Phase 8)"
+            "write path (COR-3 Phase 8 increment 4)"
         )
     if len(instruction.rows) != 1:
         raise WriteLoweringError(
             f"multi-row keyed {instruction.mutation!r} on {entity.name!r} "
             f"({len(instruction.rows)} rows): the set-based collapse lands with the write path "
-            "(COR-3 Phase 8; m-batch-write) — M4 lowers single-row keyed writes only"
+            "(COR-3 Phase 8 increment 5; m-batch-write) — this seam lowers single-row keyed "
+            "writes only"
         )
-    _refuse_computed_markers(entity, instruction)
+    version_attr = _version_attribute(declaring)
     if instruction.mutation == "insert":
-        return [_lower_insert(entity, instruction, dialect)]
+        return [_lower_insert(entity, instruction, dialect, meta, declaring, version_attr)]
     if instruction.mutation == "update":
-        return [_lower_update(entity, instruction, dialect)]
-    return [_lower_delete(entity, instruction, dialect)]
-
-
-def _refuse_computed_markers(entity: Entity, instruction: KeyedWrite) -> None:
-    """Refuse a row whose scalar-attribute value is a DB-computed marker.
-
-    The write-instruction schema classifies a row value by the member's metamodel
-    role, not its shape: a value-object member legitimately carries a whole
-    document, but a **scalar** attribute carrying a mapping (e.g. the pk-gen
-    ``{increment: n}`` / ``{computed: …}`` marker) means the database derives the
-    value, so the generating implementation must emit the strategy's SQL fragment
-    — a lowering M4 does not have. Refusing here (before any plan executes) keeps
-    the forward-error posture: never a wrong emission, never a literally-bound
-    marker document.
-    """
-    members = _members(entity)
-    for name, value in instruction.rows[0].items():
-        _column, is_value_object = members[name]
-        if not is_value_object and isinstance(value, Mapping):
-            raise WriteLoweringError(
-                f"DB-computed marker on {entity.name!r}.{name}: computed-column emission "
-                "(the pk-gen registry strategies and friends) lands with the write path "
-                "(COR-3 Phase 8; m-pk-gen)"
+        return [
+            _lower_update(
+                entity,
+                instruction,
+                dialect,
+                meta,
+                declaring,
+                version_attr,
+                planned.observation,
+                concurrency,
             )
+        ]
+    return [
+        _lower_delete(
+            entity, instruction, dialect, meta, declaring, version_attr, planned.observation
+        )
+    ]
 
 
-def _lower_insert(entity: Entity, instruction: KeyedWrite, dialect: Dialect) -> Statement:
-    """`insert into <table>(<present columns in columnOrder>) values (?, …)`.
+def _version_attribute(declaring: Entity) -> Attribute | None:
+    """``declaring``'s own ``optimisticLocking`` version attribute, if any.
+
+    ``declaring`` is already the FAMILY-EFFECTIVE declaring entity (the root for
+    an inheritance participant, `inheritance.declaring_entity` — the version
+    column is family-wide metadata declared only there, `m-opt-lock` "The
+    version column"; ADR 0027), so a plain local scan of its own attributes is
+    correct without a further family walk.
+    """
+    return next((attr for attr in declaring.attributes if attr.optimistic_locking), None)
+
+
+def _marker_kind(value: object) -> str | None:
+    """A scalar cell's DB-computed marker kind (``computed`` / ``increment``),
+    or ``None`` for an ordinary literal — classified by SHAPE (a one-key
+    mapping naming a recognized marker key), never by the member's declared
+    role: a value-object document is wrapped in :class:`JsonDocument` before
+    this ever runs, so it is never mistaken for a marker (m-value-object
+    "Writing" marker disambiguation)."""
+    if isinstance(value, Mapping):
+        marker = cast("Mapping[str, object]", value)
+        if len(marker) == 1 and (key := next(iter(marker))) in _MARKER_KEYS:
+            return key
+    return None
+
+
+def _refuse_unrecognized_marker(entity: Entity, column: str, value: object, context: str) -> None:
+    """Refuse a marker this ``context`` (``insert`` / ``update``) lowering does
+    not render — e.g. an ``increment`` marker reaching an INSERT's value list,
+    or a ``computed`` marker reaching an UPDATE's `set` clause. Never fires for
+    an ordinary literal or a value-object document (already excluded by
+    :func:`_marker_kind`'s shape classification)."""
+    kind = _marker_kind(value)
+    if kind is not None:
+        raise WriteLoweringError(
+            f"unsupported DB-computed marker on {entity.name!r}.{column}: a {kind!r} marker is "
+            f"not recognized for {context} lowering (COR-3 Phase 8; m-pk-gen)"
+        )
+
+
+def _lower_insert(
+    entity: Entity,
+    instruction: KeyedWrite,
+    dialect: Dialect,
+    meta: Metamodel,
+    declaring: Entity,
+    version_attr: Attribute | None,
+) -> Statement:
+    """`insert into <table>(<present columns in family columnOrder>) values (?, …)`,
+    or the pk-gen `max` INSERT…SELECT form when a scalar cell carries the
+    `{computed: "maxPlusOne"}` marker (`m-pk-gen`).
 
     Only the columns the write input names are emitted — a row omitting a nullable
     column produces a narrower `INSERT` (never an explicit `NULL` bind), matching the
-    corpus (`m-unit-work-003` inserts 4 of OrderItem's 5 columns).
+    corpus (`m-unit-work-003` inserts 4 of OrderItem's 5 columns). A versioned entity's
+    row derives the INITIAL version (`m-opt-lock.INITIAL_VERSION`) at the version
+    column's family columnOrder position, ignoring any row-carried value; an
+    inheritance-family (table-per-hierarchy) concrete additionally derives the tag
+    column from its own `tagValue`, slotted right after the primary key
+    (`m-inheritance` / `m-sql` "Table-per-hierarchy DML") — neither is ever authored
+    in the neutral write input.
     """
-    cells = _ordered_cells(entity, instruction.rows[0])
-    columns = ", ".join(dialect.quote(column) for _, column, _ in cells)
-    holes = ", ".join("?" for _ in cells)
-    binds = tuple(bind for _, _, bind in cells)
-    return Statement(f"insert into {entity.table}({columns}) values ({holes})", binds)
+    row = dict(instruction.rows[0])
+    if version_attr is not None:
+        row[version_attr.name] = opt_lock.INITIAL_VERSION
+    cells = _ordered_cells(meta, entity, row, _tag_insert_column(entity, declaring))
+    columns = ", ".join(dialect.quote(column) for column, _ in cells)
+    has_computed = any(_marker_kind(value) == "computed" for _, value in cells)
+    if not has_computed:
+        binds: list[object] = []
+        for column, value in cells:
+            _refuse_unrecognized_marker(entity, column, value, "insert")
+            binds.append(value)
+        holes = ", ".join("?" for _ in cells)
+        return Statement(f"insert into {entity.table}({columns}) values ({holes})", tuple(binds))
+    select_parts: list[str] = []
+    binds = []
+    for column, value in cells:
+        if _marker_kind(value) == "computed":
+            _require_max_plus_one(entity, column, value)
+            select_parts.append(f"coalesce(max(t0.{dialect.quote(column)}), ?) + ?")
+            binds.extend([0, 1])
+        else:
+            _refuse_unrecognized_marker(entity, column, value, "insert")
+            select_parts.append("?")
+            binds.append(value)
+    select_list = ", ".join(select_parts)
+    return Statement(
+        f"insert into {entity.table}({columns}) select {select_list} from {entity.table} t0",
+        tuple(binds),
+    )
 
 
-def _lower_update(entity: Entity, instruction: KeyedWrite, dialect: Dialect) -> Statement:
-    """`update <table> set <non-pk columns in columnOrder> = ? where <pk> = ?`.
+def _require_max_plus_one(entity: Entity, column: str, value: object) -> None:
+    marker = cast("Mapping[str, object]", value)
+    if marker.get("computed") != "maxPlusOne":
+        raise WriteLoweringError(
+            f"unsupported DB-computed marker on {entity.name!r}.{column}: "
+            f"{marker.get('computed')!r} is not a recognized `computed` strategy (m-pk-gen)"
+        )
 
-    The `SET` columns follow descriptor `columnOrder` (not the row's data order); the
-    `WHERE` keys on the primary key. Binds are the set values then the key values.
+
+def _tag_insert_column(entity: Entity, declaring: Entity) -> dict[str, object]:
+    """The framework-derived `{tag column: tagValue}` an inheritance-family
+    concrete's INSERT carries — empty for a non-participant, a table-per-
+    concrete-subtype participant (no shared table, no tag column), or the
+    abstract root itself (never a write target)."""
+    if entity.inheritance is None or declaring.inheritance is None:
+        return {}
+    tag_column = declaring.inheritance.tag_column
+    tag_value = entity.inheritance.tag_value
+    if tag_column is None or tag_value is None:
+        return {}
+    return {tag_column: tag_value}
+
+
+def _lower_update(
+    entity: Entity,
+    instruction: KeyedWrite,
+    dialect: Dialect,
+    meta: Metamodel,
+    declaring: Entity,
+    version_attr: Attribute | None,
+    observation: Observation | None,
+    concurrency: Concurrency,
+) -> Statement:
+    """`update <table> set <non-pk columns in family columnOrder> = ? where <pk> =
+    ? [and <tag.column> = ?] [and <version> = ?]`.
+
+    The `SET` columns follow the family columnOrder (not the row's data order); the
+    `WHERE` keys on the (family-effective) primary key, then an inheritance-family
+    tag guard (`m-inheritance` / `m-sql` "Opt-lock composition" — the tag guard
+    joins the identity predicates, immediately after the pk), then — LAST, no
+    exception — the optimistic-lock version gate (`m-opt-lock` "the version gate
+    binds last").
+
+    A versioned row whose SET already carries an EXPLICIT value for the version
+    attribute (the M4-era plain-column-data shape some existing corpus witnesses
+    carry, e.g. `m-unit-work-005`) passes it through unchanged: no observation is
+    required, no advance is computed, no gate is emitted — exactly the pre-COR-3-
+    Phase-8-increment-3 behavior. Every OTHER versioned row's SET derives the
+    advance from this unit of work's own recorded observation
+    (`m-opt-lock.require_observed` / `.advance`), raising before any DML if this
+    unit of work never observed the row's version, and gates on it in optimistic
+    mode only (`m-opt-lock.gates`).
     """
-    pk_columns = {attr.column for attr in entity.primary_key}
-    set_cells = [
-        cell for cell in _ordered_cells(entity, instruction.rows[0]) if cell[1] not in pk_columns
-    ]
-    assignments = ", ".join(f"{dialect.quote(column)} = ?" for _, column, _ in set_cells)
-    where_sql, key_binds = _key_predicate(entity, instruction.rows[0], dialect)
-    binds = (*(bind for _, _, bind in set_cells), *key_binds)
-    return Statement(f"update {entity.table} set {assignments} where {where_sql}", binds)
+    row = dict(instruction.rows[0])
+    pk_columns = {attr.column for attr in inheritance.family_primary_key(meta, entity)}
+    carries_version = version_attr is not None and version_attr.name in row
+    observed_version: int | None = None
+    if version_attr is not None and not carries_version:
+        observed_version = opt_lock.require_observed(entity.name, observation)
+        opt_lock.check_locking_license(concurrency, latest_pinned=True)
+        row[version_attr.name] = opt_lock.advance(observed_version)
+    set_cells = [cell for cell in _ordered_cells(meta, entity, row) if cell[0] not in pk_columns]
+    assignment_parts: list[str] = []
+    binds: list[object] = []
+    for column, value in set_cells:
+        amount = _increment_amount(value)
+        quoted = dialect.quote(column)
+        if amount is not None:
+            assignment_parts.append(f"{quoted} = {quoted} + ?")
+            binds.append(amount)
+        else:
+            _refuse_unrecognized_marker(entity, column, value, "update")
+            assignment_parts.append(f"{quoted} = ?")
+            binds.append(value)
+    where_sql, key_binds = _key_predicate(meta, entity, row, dialect, declaring)
+    if version_attr is not None and not carries_version and opt_lock.gates(concurrency):
+        assert observed_version is not None  # derived above whenever not carries_version
+        where_sql = f"{where_sql} and {dialect.quote(version_attr.column)} = ?"
+        key_binds = (*key_binds, observed_version)
+    assignments = ", ".join(assignment_parts)
+    return Statement(
+        f"update {entity.table} set {assignments} where {where_sql}", (*binds, *key_binds)
+    )
 
 
-def _lower_delete(entity: Entity, instruction: KeyedWrite, dialect: Dialect) -> Statement:
-    """`delete from <table> where <pk> = ?` — keyed by the primary key."""
-    where_sql, key_binds = _key_predicate(entity, instruction.rows[0], dialect)
+def _increment_amount(value: object) -> int | None:
+    if _marker_kind(value) == "increment":
+        return cast("int", cast("Mapping[str, object]", value)["increment"])
+    return None
+
+
+def _lower_delete(
+    entity: Entity,
+    instruction: KeyedWrite,
+    dialect: Dialect,
+    meta: Metamodel,
+    declaring: Entity,
+    version_attr: Attribute | None,
+    observation: Observation | None,
+) -> Statement:
+    """`delete from <table> where <pk> = ? [and <tag.column> = ?] [and <version> =
+    ?]` — keyed by the (family-effective) primary key, tag-guarded for an
+    inheritance-family concrete.
+
+    A keyed DELETE of a versioned row binds the observed version WHENEVER this
+    unit of work recorded one for it — in EITHER concurrency mode (`m-opt-lock`;
+    `m-batch-write-004`'s own default-mode witness) — never a hard requirement:
+    a delete with no recorded observation at all (the M4-era shape some existing
+    corpus witnesses carry, e.g. `m-unit-work-006`) stays the plain keyed form,
+    exactly the pre-COR-3-Phase-8-increment-3 behavior.
+    """
+    row = instruction.rows[0]
+    where_sql, key_binds = _key_predicate(meta, entity, row, dialect, declaring)
+    if version_attr is not None and observation is not None and observation.version is not None:
+        where_sql = f"{where_sql} and {dialect.quote(version_attr.column)} = ?"
+        key_binds = (*key_binds, observation.version)
     return Statement(f"delete from {entity.table} where {where_sql}", key_binds)
 
 
-def _ordered_cells(entity: Entity, row: Mapping[str, object]) -> list[tuple[int, str, object]]:
-    """The row's present members as `(columnOrder index, column, bind)`, ordered.
+def _ordered_cells(
+    meta: Metamodel,
+    entity: Entity,
+    row: Mapping[str, object],
+    extra_columns: Mapping[str, object] | None = None,
+) -> list[tuple[str, object]]:
+    """The row's present members (plus any framework-derived ``extra_columns``,
+    e.g. an inheritance tag) as `(column, bind)` pairs, in family columnOrder.
 
-    Each row key names a declared scalar attribute or a value object; a value-object
-    member binds as one :class:`JsonDocument` in its `columnOrder` position (the
-    whole document — the write never decomposes it), a scalar binds its value.
+    Each row key names a declared scalar attribute or a value object, resolved
+    FAMILY-WIDE (`_members`) so an inheritance participant's inherited members
+    lower correctly; a value-object member binds as one :class:`JsonDocument` in
+    its columnOrder position (the whole document — the write never decomposes
+    it), a scalar binds its value (or its DB-computed marker document verbatim,
+    classified by the caller).
     """
-    members = _members(entity)
-    order = {column: index for index, column in enumerate(column_order(entity))}
+    members = _members(meta, entity)
+    order = {column: index for index, column in enumerate(_family_column_order(meta, entity))}
     cells: list[tuple[int, str, object]] = []
     for name, value in row.items():
         column, is_value_object = members[name]
         bind = JsonDocument(value) if is_value_object else value
         cells.append((order[column], column, bind))
+    if extra_columns:
+        for column, value in extra_columns.items():
+            cells.append((order[column], column, value))
     cells.sort(key=lambda cell: cell[0])
-    return cells
+    return [(column, bind) for _, column, bind in cells]
+
+
+def _family_column_order(meta: Metamodel, entity: Entity) -> list[str]:
+    """``entity``'s FULL physical columns in canonical order (m-sql
+    `column_order`'s own rule — primary key first, then the inheritance tag,
+    then the remaining scalars, then value-object documents — resolved across
+    the WHOLE inheritance family for a participant).
+
+    `~parallax.core.descriptor.column_order` is deliberately a bare PER-ENTITY
+    view whose own docstring defers the full inherited chain to "above this
+    per-entity view" (m-inheritance): a concrete subtype's OWN compiled record
+    carries only its own locally-declared attributes (its ancestry-inherited
+    members, including the primary key itself, live on the root's record
+    alone), so calling it directly on a family participant would silently
+    drop every inherited column from a write's emission. This is that
+    "above" resolution, mirroring the ancestry-chain walk
+    `~parallax.conformance.provision._fixture_columns` already performs for
+    fixture loading (a sibling provisioning concern, not reused directly: DDL/
+    fixture column order is an unasserted provisioning choice, m-case-format,
+    so it need not — and does not — match this WRITE-EMISSION order byte for
+    byte).
+    """
+    if entity.inheritance is None:
+        return list(column_order(entity))
+    chain = (*inheritance.ancestor_chain(meta, (entity.name,)), entity)
+    pk_columns: list[str] = []
+    rest_columns: list[str] = []
+    for member in chain:
+        for attribute in member.attributes:
+            (pk_columns if attribute.primary_key else rest_columns).append(attribute.column)
+    root = inheritance.family_root(meta, entity)
+    assert root.inheritance is not None  # a resolved family root always carries one
+    tag_columns = [root.inheritance.tag_column] if root.inheritance.tag_column is not None else []
+    document_columns = [vo.column for member in chain for vo in member.value_objects]
+    return [*pk_columns, *tag_columns, *rest_columns, *document_columns]
 
 
 def _key_predicate(
-    entity: Entity, row: Mapping[str, object], dialect: Dialect
+    meta: Metamodel, entity: Entity, row: Mapping[str, object], dialect: Dialect, declaring: Entity
 ) -> tuple[str, tuple[object, ...]]:
-    """The `<pk1> = ? [and <pk2> = ?]` predicate and its ordered key binds."""
-    keys = entity.primary_key
+    """The `<pk1> = ? [and <pk2> = ?] [and <tag.column> = ?]` identity predicate
+    and its ordered binds — the primary key (family-effective,
+    `inheritance.family_primary_key`), then an inheritance-family
+    table-per-hierarchy concrete's own tag guard, joining the identity
+    predicates immediately after the pk (`m-inheritance` / `m-sql` resolved
+    Q9) — never present for a table-per-concrete-subtype participant (no
+    shared table, no tag) or a non-participant.
+    """
+    keys = inheritance.family_primary_key(meta, entity)
     predicate = " and ".join(f"{dialect.quote(attr.column)} = ?" for attr in keys)
-    binds = tuple(row[attr.name] for attr in keys)
+    binds: tuple[object, ...] = tuple(row[attr.name] for attr in keys)
+    if entity.inheritance is not None and declaring.inheritance is not None:
+        tag_column = declaring.inheritance.tag_column
+        tag_value = entity.inheritance.tag_value
+        if tag_column is not None and tag_value is not None:
+            predicate = f"{predicate} and {dialect.quote(tag_column)} = ?"
+            binds = (*binds, tag_value)
     return predicate, binds
 
 
-def _members(entity: Entity) -> dict[str, tuple[str, bool]]:
-    """Map each writable member name to `(column, is_value_object)`."""
+def _members(meta: Metamodel, entity: Entity) -> dict[str, tuple[str, bool]]:
+    """Map each writable member name to `(column, is_value_object)`, FAMILY-WIDE
+    (`inheritance.family_attributes` / `.superset_value_objects` — both already
+    degrade to ``entity``'s own declarations for a non-participant)."""
     members: dict[str, tuple[str, bool]] = {
-        attr.name: (attr.column, False) for attr in entity.attributes
+        attr.name: (attr.column, False) for attr in inheritance.family_attributes(meta, entity)
     }
-    for value_object in entity.value_objects:
+    for value_object in inheritance.superset_value_objects(meta, (entity.name,)):
         members[value_object.name] = (value_object.column, True)
     return members
 
@@ -391,10 +627,20 @@ class Snapshot[T]:
 
 @dataclass(frozen=True, slots=True)
 class FindResult:
-    """A single-graph find's root nodes plus its execution record."""
+    """A single-graph find's root nodes plus its execution record.
+
+    ``all_nodes`` is EVERY node this find materialized — root and every
+    attached deep-fetch level — paired with its OWN target entity name (the
+    same name a subsequent keyed write on that row would carry, `m-unit-work`
+    `KeyedWrite.entity`): the seam :meth:`Transaction.find` walks to record a
+    versioned row's observed version (`m-opt-lock`), since ``Node`` itself
+    carries no entity identity of its own (m-snapshot-read: a neutral,
+    class-free field dict).
+    """
 
     nodes: tuple[materialize.Node, ...]
     execution: Execution
+    all_nodes: tuple[tuple[str, materialize.Node], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,6 +703,7 @@ def find(
 
     assembler = materialize.Assembler(meta=meta)
     root_nodes = assembler.materialize_root(target, root_rows)
+    all_nodes: list[tuple[str, materialize.Node]] = [(target, node) for node in root_nodes]
 
     level_rows: list[Sequence[Row]] = []
     level_nodes: list[list[materialize.Node]] = []
@@ -491,8 +738,11 @@ def find(
         nodes = assembler.attach_level(level, parent_nodes, parent_rows, rows)
         level_rows.append(rows)
         level_nodes.append(nodes)
+        all_nodes.extend((child_target, node) for node in nodes)
 
-    return FindResult(nodes=tuple(root_nodes), execution=Execution(tuple(statements)))
+    return FindResult(
+        nodes=tuple(root_nodes), execution=Execution(tuple(statements)), all_nodes=tuple(all_nodes)
+    )
 
 
 def find_history(
@@ -684,16 +934,21 @@ class Transaction:
         """Buffer a sparse keyed ``update``: primary key + the effective change
         set of an edited copy (touched fields whose current value differs from
         the recorded original, spec §3/§5). An EMPTY effective change set
-        issues no DML at all (zero round trips, the net-zero-chain no-op rule).
-        Raises :class:`~parallax.core.entity.ProvenanceError` for a
-        provenance-less instance (never produced via ``model_copy``)."""
+        issues no DML at all (zero round trips, the net-zero-chain no-op rule
+        — the no-op-first ordering `m-opt-lock` fixes: dropped before any
+        observation or locking concern). Raises
+        :class:`~parallax.core.entity.ProvenanceError` for a provenance-less
+        instance (never produced via ``model_copy``). The version column, if
+        any, is never authored here — it is framework-owned end to end
+        (`m-opt-lock`; ADR 0013): the write seam derives its advance from this
+        unit of work's own recorded observation at lowering
+        (`parallax.snapshot.handle.lower_write`), never from the edited copy."""
         record = _entity_record_of_instance(copy)
         effective = effective_change_set(copy)
         if not effective:
             return
         row: dict[str, object] = primary_key_row(copy)
         row.update(canonical_row(copy, effective))
-        row.update(framework_owned_advance(copy))
         self._buffer("update", record.name, row)
 
     def delete(self, node_or_instance: EntityBase) -> None:
@@ -713,6 +968,13 @@ class Transaction:
         the concrete root type is resolved only at runtime (from the
         statement's own target), so callers annotate their own binding
         (``snapshot: Snapshot[Order] = tx.find(...)``) for static typing.
+
+        Every materialized node of a VERSIONED entity — root and included
+        (deep-fetch) alike — records its observed version on this unit of work
+        (`m-opt-lock`; ADR 0013), in EITHER concurrency mode: a later keyed
+        update/delete of that SAME object derives its version advance (and,
+        under optimistic concurrency, its gate) from THIS observation, never
+        from an implicit resolving read at write time.
         """
         target = statement.target
         op = statement.operation()
@@ -727,6 +989,7 @@ class Transaction:
         find_result = self._uow.read(
             lambda: find(op, self._meta, self._dialect, target, self._conn, lock=lock)
         )
+        _record_observations(self._uow, self._meta, find_result)
         return _snapshot_from_find_result(find_result, target, self._meta, pin)
 
     def _buffer(self, mutation: str, entity: str, row: Mapping[str, object]) -> None:
@@ -748,6 +1011,38 @@ class Transaction:
         validate_write(self._meta.entity(entity), row, self._meta, mutation=mutation)
         instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(instruction)
+
+
+def _record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult) -> None:
+    """Record this unit of work's observed version for every VERSIONED node
+    :func:`find` materialized (`m-opt-lock`; ADR 0013).
+
+    Keyed by the SAME ``(entity name, ordered pk pairs)`` shape a subsequent
+    keyed write's own :func:`~parallax.core.unit_work.object_key` computes —
+    ``entity_name`` here is the node's OWN queried/attached target (never
+    family-normalized to the root), matching `KeyedWrite.entity`'s own
+    convention (a developer's later ``tx.update(copy)`` names its instance's
+    OWN class). A node whose (family-effective) primary key or version column
+    is absent from its own materialized fields is defensively skipped — never
+    reachable for a well-formed corpus model, but this seam takes no data on
+    faith.
+    """
+    for entity_name, node in result.all_nodes:
+        entity = meta.entity(entity_name)
+        declaring = inheritance.declaring_entity(meta, entity)
+        version_attr = _version_attribute(declaring)
+        if version_attr is None or version_attr.column not in node.fields:
+            continue
+        pk_attrs = declaring.primary_key
+        if not pk_attrs or any(  # pragma: no cover - defends a malformed model/projection
+            attr.column not in node.fields for attr in pk_attrs
+        ):
+            continue
+        key: ObjectKey = (
+            entity_name,
+            tuple((attr.name, node.fields[attr.column]) for attr in pk_attrs),
+        )
+        uow.observe(key, Observation(version=cast("int", node.fields[version_attr.column])))
 
 
 def _entity_record_of_instance(instance: EntityBase) -> Entity:
@@ -939,7 +1234,9 @@ class Database:
                     settings=TransactionSettings(concurrency=options.concurrency),
                     clock=self._clock,
                     meta=self._meta,
-                    flush_executor=_flush_executor(conn, self._meta, self._dialect),
+                    flush_executor=_flush_executor(
+                        conn, self._meta, self._dialect, options.concurrency
+                    ),
                 )
 
             return self._port.transaction(in_txn)
@@ -975,17 +1272,45 @@ def _refuse_conflict(name: str, explicit: object | None, active_value: object) -
         )
 
 
-def _flush_executor(conn: DbPort, meta: Metamodel, dialect: Dialect) -> FlushExecutor:
-    """The unit of work's injected flush sink: lower each planned write, execute it.
+def _flush_executor(
+    conn: DbPort, meta: Metamodel, dialect: Dialect, concurrency: Concurrency
+) -> FlushExecutor:
+    """The unit of work's injected flush sink: lower each planned write, execute
+    it, and enforce its affected-rows expectation (`m-opt-lock`).
 
     The single write-lowering seam (:func:`lower_write`) run on the transaction's
     own connection, inside the still-open ``port.transaction`` scope — so an
-    abort rolls back force-flushed writes with everything else.
+    abort rolls back force-flushed writes with everything else. A planned write
+    carrying an ``expected_affected`` count (every versioned keyed update/delete
+    this unit of work observed) whose LAST lowered statement's own affected-row
+    count disagrees raises :class:`~parallax.core.opt_lock.OptimisticLockConflictError`
+    and aborts the whole unit of work — nothing after the failed write executes
+    (the non-temporal forms this seam lowers emit exactly one statement per
+    planned write, so "last" and "only" coincide; a future multi-statement
+    temporal form's own gated close is what its own expectation targets).
     """
 
     def execute(plan: FlushPlan) -> None:
         for planned in plan.writes:
-            for statement in lower_write(planned, meta, dialect):
-                conn.execute_write(dialect.to_driver_sql(statement.sql), list(statement.binds))
+            affected: int | None = None
+            for statement in lower_write(planned, meta, dialect, concurrency):
+                affected = conn.execute_write(
+                    dialect.to_driver_sql(statement.sql), list(statement.binds)
+                )
+            if planned.expected_affected is not None and affected != planned.expected_affected:
+                raise _conflict_error(planned, meta, affected)
 
     return execute
+
+
+def _conflict_error(
+    planned: PlannedWrite, meta: Metamodel, actual: int | None
+) -> opt_lock.OptimisticLockConflictError:
+    instruction = planned.instruction
+    assert isinstance(instruction, KeyedWrite)  # only a keyed update/delete ever carries one
+    key = object_key(instruction, meta)
+    assert key is not None  # an expectation is attached only alongside a resolved object key
+    assert planned.expected_affected is not None  # the caller's own guard
+    return opt_lock.OptimisticLockConflictError(
+        instruction.entity, key[1], planned.expected_affected, actual if actual is not None else 0
+    )
