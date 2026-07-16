@@ -441,6 +441,30 @@ self-contained without a system `libpq`.
   down 3 exercised, up 3 reasoned-skip: the three guide-only stories above);
   `just python-static` exit 0 (diff-cover 100%, Pyright/coverage clean);
   `gen-usage-guide --check` exit 0.
+- **Confirmation-pass residual remediation.** Closed the two residuals the
+  Phase-8 mid-phase review's confirmation pass surfaced. `m-unit-work-012`'s
+  story constructed its delete's provenance outside the transaction and raised
+  its own deliberate abort before ever flushing, so it coincidentally passed
+  while no longer mirroring the corpus's own force-flushed-then-rolled-back
+  DELETE choreography (`_lower_delete`'s prior-observation gate, per the round
+  above); the corrected idiom (observe, force-flush the delete for real, then
+  let the deliberate abort roll it back) joins the guide-only set
+  (`api_suite.GUIDE_ONLY_WRITE_STORY_IDS`) with the same case-scoped reasoned
+  skip treatment as `m-unit-work-005`/`-006`/`-009`. The predicate-write
+  refusal wording duplicated between `parallax.snapshot.handle.lower_write`
+  and `parallax.conformance.engine`'s structural pre-check now shares one
+  source, `handle.predicate_write_refusal` (the same move as
+  `opt_lock.classify_mismatch`, increment above). Measured post-round: unit
+  lane (`pytest -m unit`) 1822 passed / 92 skipped (unchanged); compile-sweep
+  module (`pytest -m compile_sweep`) 211 passed / 92 skipped (unchanged);
+  combined Docker lane (`conformance`/`provider_contract`/`adapter_smoke`/
+  `api_conformance`) 387 passed / 0 skipped (unchanged — `m-unit-work-012`
+  keeps running under `test_story_run.py`); rejected sweep
+  (`test_rejected_sweep.py`) 39 passed / 0 skipped (unchanged); API-suite
+  partition exact over 311 active cases (44 exercised / 267 reasoned-skip —
+  down 1 exercised, up 1 reasoned-skip: `m-unit-work-012` joining the
+  guide-only set); `just python-static` exit 0 (diff-cover 100%,
+  Pyright/coverage clean); `gen-usage-guide --check` exit 0.
 
 ## Blockers
 

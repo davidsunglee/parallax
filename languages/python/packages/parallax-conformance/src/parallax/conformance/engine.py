@@ -54,7 +54,13 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.snapshot import handle, materialize
-from parallax.snapshot.handle import WriteLoweringError, find, find_history, lower_write
+from parallax.snapshot.handle import (
+    WriteLoweringError,
+    find,
+    find_history,
+    lower_write,
+    predicate_write_refusal,
+)
 
 __all__ = [
     "Emission",
@@ -661,20 +667,20 @@ def _refuse_predicate_write_shape(entry: Mapping[str, object]) -> None:
     """Refuse a STRUCTURED PREDICATE-write instruction (`mutation` / `target` /
     optional `assignments` — `m-case-format`'s predicate-selected shape,
     e.g. ``m-batch-write-005``/``-006``) reaching the keyed-write engine seam
-    — loudly, before any row indexing, mirroring `lower_write`'s own
-    predicate-write refusal wording (`parallax.snapshot.handle`). A predicate
-    write's `target` names its entity/predicate; a keyed write never carries
-    that key at all (`entity` + `rows` instead), so `target`'s presence (or
-    `entity`'s absence) is the SHAPE signal — never inferred from a `KeyError`.
+    — loudly, before any row indexing, deferring to `lower_write`'s own
+    predicate-write refusal wording
+    (`parallax.snapshot.handle.predicate_write_refusal` — the single shared
+    source of truth both this pre-check and `lower_write` raise through, the
+    same move as `opt_lock.classify_mismatch`). A predicate write's `target`
+    names its entity/predicate; a keyed write never carries that key at all
+    (`entity` + `rows` instead), so `target`'s presence (or `entity`'s
+    absence) is the SHAPE signal — never inferred from a `KeyError`.
     """
     target = entry.get("target")
     entity_name = (
         cast("Mapping[str, object]", target).get("entity") if isinstance(target, Mapping) else None
     )
-    raise WriteLoweringError(
-        f"predicate-selected (set-based) write on {entity_name!r}: materialize-then-lower "
-        "lands with the write path (COR-3 Phase 8 increment 5; m-batch-write / m-opt-lock)"
-    )
+    raise predicate_write_refusal(entity_name)
 
 
 def _write_entries(raw_write: object) -> Sequence[Mapping[str, object]]:

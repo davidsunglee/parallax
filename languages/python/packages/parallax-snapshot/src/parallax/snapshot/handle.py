@@ -106,6 +106,7 @@ __all__ = [
     "find_history",
     "lower_temporal_close",
     "lower_write",
+    "predicate_write_refusal",
 ]
 
 # The keyed mutation verbs the write seam lowers (the non-temporal write
@@ -125,6 +126,27 @@ class WriteLoweringError(ValueError):
     """A planned write cannot be lowered to DML by the keyed write seam (the
     deferred forms — predicate-selected / set-based, multi-row batch collapse —
     raise here, never a wrong emission)."""
+
+
+def predicate_write_refusal(entity_name: object) -> WriteLoweringError:
+    """The :class:`WriteLoweringError` a predicate-selected (set-based) write
+    raises wherever it reaches the keyed-write engine seam.
+
+    The single shared source of truth for this refusal's wording (the same
+    move as :func:`~parallax.core.opt_lock.classify_mismatch`): this module's
+    own :func:`lower_write` (a real, typed ``PredicateWrite.target.entity``)
+    and the conformance engine's structural pre-check
+    (``parallax.conformance.engine._write_entries``, a raw, possibly-malformed
+    ``target.entity`` parsed straight off an untyped scenario document) both
+    defer to it, so the two callers can never drift on the wording.
+    ``entity_name`` is rendered with ``!r`` exactly as given, whatever its
+    shape (a real entity name, or ``None`` when the raw entry names none at
+    all).
+    """
+    return WriteLoweringError(
+        f"predicate-selected (set-based) write on {entity_name!r}: materialize-then-lower "
+        "lands with the write path (COR-3 Phase 8 increment 5; m-batch-write / m-opt-lock)"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,11 +213,7 @@ def lower_write(
     """
     instruction = planned.instruction
     if isinstance(instruction, PredicateWrite):
-        raise WriteLoweringError(
-            f"predicate-selected (set-based) write on {instruction.target.entity!r}: "
-            "materialize-then-lower lands with the write path (COR-3 Phase 8 increment 5; "
-            "m-batch-write / m-opt-lock)"
-        )
+        raise predicate_write_refusal(instruction.target.entity)
     entity = meta.entity(instruction.entity)
     # Temporal classification MUST be the family-EFFECTIVE one (ADR 0026) — see the
     # docstring above.
