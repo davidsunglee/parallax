@@ -73,3 +73,29 @@ def test_optimistic_lock_conflict_error_carries_its_context() -> None:
     assert error.actual == 0
     assert "Account" in str(error)
     assert "concurrent write changed the version first" in str(error)
+
+
+class TestClassifyMismatch:
+    """The single mismatch-to-error classification both render-seam call sites
+    (`parallax.snapshot.handle`'s flush executor,
+    `parallax.conformance.engine`'s standalone conflict-close probe) share."""
+
+    def test_gated_mismatch_is_the_retriable_conflict(self) -> None:
+        key = (("id", 2),)
+        error = opt_lock.classify_mismatch("Account", key, 1, 0, stale_error=False)
+        assert isinstance(error, opt_lock.OptimisticLockConflictError)
+        assert error.entity == "Account"
+        assert error.key == key
+        assert error.expected == 1
+        assert error.actual == 0
+
+    def test_ungated_mismatch_is_the_non_retriable_stale_write(self) -> None:
+        key = (("id", 2),)
+        error = opt_lock.classify_mismatch("Balance", key, 1, 0, stale_error=True)
+        assert isinstance(error, opt_lock.StaleWriteError)
+        assert error.entity == "Balance"
+        assert error.key == key
+
+    def test_a_none_actual_count_normalizes_to_zero(self) -> None:
+        error = opt_lock.classify_mismatch("Account", (("id", 1),), 1, None, stale_error=False)
+        assert error.actual == 0

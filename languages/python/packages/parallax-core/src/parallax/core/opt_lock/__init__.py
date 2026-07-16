@@ -76,6 +76,7 @@ __all__ = [
     "UnobservedVersionError",
     "advance",
     "check_locking_license",
+    "classify_mismatch",
     "gates",
     "require_observed",
 ]
@@ -219,6 +220,34 @@ def gates(concurrency: Concurrency) -> bool:
     is what makes an ungated write correct.
     """
     return concurrency == "optimistic"
+
+
+def classify_mismatch(
+    entity: str,
+    key: tuple[tuple[str, object], ...],
+    expected: int,
+    actual: int | None,
+    *,
+    stale_error: bool,
+) -> OptimisticLockConflictError | StaleWriteError:
+    """The affected-row-mismatch error for one lowered statement whose actual
+    ``execute_write`` count disagreed with its ``expected_affected`` count.
+
+    The single classification both render-seam call sites share: the render
+    seam's flush executor (``parallax.snapshot.handle._flush_executor``, every
+    non-temporal expectation and every gated temporal close) and the
+    conformance engine's standalone conflict-close probe
+    (``parallax.conformance.engine._run_conflict_close``, the one caller
+    outside production that renders a close directly, never through a
+    ``FlushPlan``) — so the two error CLASSES this scope owns (the retriable
+    :class:`OptimisticLockConflictError` for a GATED mismatch, the
+    non-retriable :class:`StaleWriteError` for an UNGATED temporal close's
+    mismatch) can never drift between the two callers. ``actual`` is ``None``
+    exactly when the underlying port reported no count at all — normalized to
+    ``0`` (a mismatch either way, since ``expected`` is always positive).
+    """
+    error_cls = StaleWriteError if stale_error else OptimisticLockConflictError
+    return error_cls(entity, key, expected, actual if actual is not None else 0)
 
 
 def check_locking_license(concurrency: Concurrency, *, latest_pinned: bool) -> None:

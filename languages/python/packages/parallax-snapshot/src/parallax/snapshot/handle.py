@@ -1607,15 +1607,20 @@ def _conflict_error(
 ) -> opt_lock.OptimisticLockConflictError | opt_lock.StaleWriteError:
     """The affected-row-mismatch error for one lowered statement — the retriable
     gated conflict, or (``lowered.stale_error``) the non-retriable ungated
-    temporal-close outcome (`m-audit-write` / `m-bitemp-write`)."""
+    temporal-close outcome (`m-audit-write` / `m-bitemp-write`). Resolves this
+    seam's own identifying context (the instruction's object key) and defers
+    the actual classification to :func:`~parallax.core.opt_lock.classify_mismatch`
+    — the one place that decision is made, shared with the conformance
+    engine's standalone conflict-close probe."""
     instruction = planned.instruction
     assert isinstance(instruction, KeyedWrite)  # only a keyed write ever carries an expectation
     key = object_key(instruction, meta)
     assert key is not None  # an expectation is attached only alongside a resolved object key
     assert lowered.expected_affected is not None  # the caller's own guard
-    error_cls = (
-        opt_lock.StaleWriteError if lowered.stale_error else opt_lock.OptimisticLockConflictError
-    )
-    return error_cls(
-        instruction.entity, key[1], lowered.expected_affected, actual if actual is not None else 0
+    return opt_lock.classify_mismatch(
+        instruction.entity,
+        key[1],
+        lowered.expected_affected,
+        actual,
+        stale_error=lowered.stale_error,
     )

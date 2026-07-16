@@ -1535,13 +1535,16 @@ def _run_conflict_close(
             dialect.to_driver_sql(lowered.statement.sql), list(lowered.statement.binds)
         )
         if lowered.expected_affected is not None and affected != lowered.expected_affected:
-            error_cls = (
-                opt_lock.StaleWriteError
-                if lowered.stale_error
-                else opt_lock.OptimisticLockConflictError
-            )
-            raise error_cls(
-                target, _identity_key(meta, target, row), lowered.expected_affected, affected
+            # Shared classification (`parallax.core.opt_lock.classify_mismatch`):
+            # the SAME gate/mode-driven decision `parallax.snapshot.handle`'s own
+            # flush executor applies, so the two callers can never disagree on
+            # which error class a mismatch raises.
+            raise opt_lock.classify_mismatch(
+                target,
+                _identity_key(meta, target, row),
+                lowered.expected_affected,
+                affected,
+                stale_error=lowered.stale_error,
             )
         return affected
 
