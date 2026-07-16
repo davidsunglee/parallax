@@ -276,9 +276,15 @@ _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
 # `sql_gen.compile._compile_tpcs_read`) — a genuine engine gap. Distinct from
 # every other inheritance reasoned-skip above: those are spelling repeats of an
 # executed mechanism; these cannot be executed through the shipped surface at
-# all yet. Deferred: ledger D-22 (an instance-form grading convention for
-# abstract-target reads, or an explicit row-form-only statement, is a Phase 8
-# design pass or Phase-9 sweep item).
+# all yet. Ledger D-22 is now RESOLVED at the core level (COR-3 Phase 8
+# increment 1, DQ7b Option C): the instance-form oracle for an abstract
+# multi-concrete read is defined (m-case-format "Read targeting", the
+# per-variant node shape) and witnessed by `then.graph` siblings
+# (m-inheritance-106/-107/-108/-109, own reasoned skips below,
+# `_INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON`). These four
+# ROW-FORM cases remain unreachable through `db.find` for the reason above —
+# `db.find` is instance-form, not row-form — and stay the values-lane
+# witnesses; the D-22 Python half (typed per-variant `db.find`) is increment 7.
 _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "a multi-concrete polymorphic PROJECTING read (an abstract-root read, or a narrow "
     "resolving to 2+ concretes) — genuinely unreachable through `db.find` today: a "
@@ -289,6 +295,34 @@ _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "table-per-concrete-subtype instance-form projection over 2+ resolved concretes has "
     "no goldened lowering at all yet (`SqlGenError`) — a genuine engine gap, not a "
     "partition-honesty concern to grade around"
+)
+
+# The four NEW instance-form (`then.graph`) siblings of the row-form multi-
+# concrete reads just above (m-inheritance-106/-107/-108 siblings of -003/
+# -013/-015; m-inheritance-109 sibling of -052): COR-3 Phase 8 part C authors
+# the corpus-level oracle these pin, but `db.find` does not yet MATERIALIZE it.
+# Table-per-hierarchy (106/107/108): the find executor's row decoding
+# (`parallax.snapshot.materialize.decode_row`) still passes every projected
+# column through unchanged — the SAME padded-superset shape a row-form read
+# carries, never narrowed to the variant's own declared columns (compile
+# already emits the correct, byte-identical golden SQL; only the RUN-time
+# graph assembly is unimplemented, `test_run_sweep.py`'s own carve-out).
+# Table-per-concrete-subtype (109): `_compile_tpcs_union_read` unconditionally
+# refuses instance-form with `SqlGenError` over a 2+-concrete union-all read —
+# a genuine engine gap, not model-specific. COR-3 Phase 8 increment 7 (ledger
+# D-22) implements the per-variant narrowing and lifts the TPCS refusal;
+# until then this is a forward-looking, honestly-reasoned skip, not the
+# permanent posture the descriptor-rejection group above carries.
+_INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON: Final[str] = (
+    "the then.graph instance-form oracle for a multi-concrete polymorphic read (the "
+    "per-variant node shape: own-branch members only, no null sibling padding, plus "
+    "familyVariant) — db.find on an abstract multi-concrete position does not yet "
+    "materialize typed per-variant instances (table-per-hierarchy: the find executor's "
+    "row decoding still passes the padded superset through unchanged; table-per-"
+    "concrete-subtype: instance-form projection over 2+ resolved concretes has no "
+    "goldened lowering at all yet, SqlGenError) — COR-3 Phase 8 increment 7 (ledger "
+    "D-22) implements the narrowing and lifts the TPCS refusal; the row-form siblings "
+    "(m-inheritance-003/-013/-015/-052) remain the values-lane witnesses"
 )
 
 # Inheritance-family / temporal writes: `lower_write` (parallax.snapshot.handle)
@@ -314,8 +348,9 @@ _INHERITANCE_WRITE_REJECT_PHASE8_REASON: Final[str] = (
 )
 
 # `when.model` descriptor-shape rejects (m-inheritance-020..032, plus the
-# residual-finding root-ownership witnesses 098/099): a DIFFERENT validation
-# surface than the operation-level rejected lane increment 1 built.
+# residual-finding root-ownership witnesses 098/099, plus the D-25 optimistic-
+# locking root-ownership witnesses 102/103): a DIFFERENT validation surface
+# than the operation-level rejected lane increment 1 built.
 # `parallax.core.inheritance.validate` classifies these exact rules, but the
 # class metaclass never calls it (grep-verified) — DQ2's hierarchy-derived
 # `parent`/`role` obsoletes most of what it checks. Most of these malformed
@@ -327,24 +362,30 @@ _INHERITANCE_WRITE_REJECT_PHASE8_REASON: Final[str] = (
 # frontend's own, DIFFERENT, unclassified error (`test_inheritance_frontend.py`
 # "tableless and rowless"), not by `InheritanceError.rule`. A descendant
 # declaring `EntityConfig(as_of=...)` (098/099's own rule,
-# `inheritance-temporal-axes-not-root-owned`) is ALSO independently
-# authorable, and NOW likewise rejected by the class frontend's own,
+# `inheritance-temporal-axes-not-root-owned`) or its own `optimisticLocking`
+# attribute (102/103's own rule,
+# `inheritance-optimistic-locking-not-root-owned`, D-25 / ADR 0027) is ALSO
+# independently authorable, and likewise rejected by the class frontend's own,
 # DIFFERENT, unclassified error (`test_inheritance_frontend.py`
-# "family SUBCLASS cannot declare EntityConfig(as_of...)"), joining the
-# table-placement rules in the same posture — so no case in this whole group
-# reproduces `then.rejectedRule` through today's public surface.
+# "family SUBCLASS cannot declare EntityConfig(as_of..." /
+# "only the inheritance family root may declare"), joining the table-placement
+# rules in the same posture — so no case in this whole group reproduces
+# `then.rejectedRule` through today's public surface. This gap is PERMANENT
+# (the metaclass-never-calls-`inheritance.validate` posture pre-dates and
+# outlives this phase), not a forward promise.
 _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "a `when.model` raw-descriptor invariant `parallax.core.inheritance.validate` "
-    "classifies (parent/root/cycle/strategy/tag/temporal-axis-ownership shape) — the "
-    "class metaclass never calls this validator (DQ2: `parent`/`role` are DERIVED from "
-    "the live Python class hierarchy, never separately authored, so most of these "
-    "malformed shapes — an unknown parent, a cycle, multiple roots, a missing root, a "
-    "redeclared strategy, a duplicate/misplaced tag — have no idiomatic spelling at "
-    "all); the table-placement rules AND a descendant's own `as_of` ARE independently "
-    "authorable, but the class frontend's own existing checks raise a different, "
-    "unclassified error in each case, not `InheritanceError.rule` — wiring an idiomatic "
-    "path to the classified vocabulary is unbuilt infrastructure, not a Phase-7 "
-    "capability gap"
+    "classifies (parent/root/cycle/strategy/tag/temporal-axis-ownership/optimistic-"
+    "locking-ownership shape) — the class metaclass never calls this validator (DQ2: "
+    "`parent`/`role` are DERIVED from the live Python class hierarchy, never separately "
+    "authored, so most of these malformed shapes — an unknown parent, a cycle, multiple "
+    "roots, a missing root, a redeclared strategy, a duplicate/misplaced tag — have no "
+    "idiomatic spelling at all); the table-placement rules AND a descendant's own "
+    "`as_of` / `optimisticLocking` ARE independently authorable, but the class "
+    "frontend's own existing checks raise a different, unclassified error in each case, "
+    "not `InheritanceError.rule` — wiring an idiomatic path to the classified "
+    "vocabulary is unbuilt infrastructure, not a capability gap this phase closes "
+    "(permanent, pre-dating and outliving Phase 7/8)"
 )
 
 # `navigate`-tagged corpus siblings: a deliberate spelling redundancy for the
@@ -577,6 +618,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-013": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-015": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-052": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
+    # -- m-inheritance: instance-form (`then.graph`) multi-concrete siblings — #
+    # COR-3 Phase 8 part C authors the oracle; increment 7 implements it ----- #
+    "m-inheritance-106": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
+    "m-inheritance-107": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
+    "m-inheritance-108": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
+    "m-inheritance-109": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
     # -- m-inheritance: write family (COR-3 Phase 8) ------------------------- #
     "m-inheritance-007": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-008": _INHERITANCE_WRITE_PHASE8_REASON,
@@ -594,6 +641,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-095": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-096": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-097": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-104": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-105": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-086": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
     "m-inheritance-087": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
     "m-inheritance-088": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
@@ -614,6 +663,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-032": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-098": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-099": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-102": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-103": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-inheritance / m-navigate: the Person/AnimalOwner collision -------- #
     "m-inheritance-064": _ANIMAL_OWNER_COLLISION_REASON,
     "m-inheritance-072": _ANIMAL_OWNER_COLLISION_REASON,

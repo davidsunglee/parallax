@@ -13,7 +13,7 @@ gated; a skip is reported, never silent (spec §6).
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import jsonschema
 import pytest
@@ -36,6 +36,21 @@ from parallax.conformance import adapter, case_format, engine
 
 pytestmark = pytest.mark.conformance
 
+# Multi-concrete polymorphic instance-form reads (COR-3 Phase 8 part C, DQ7b):
+# m-inheritance-106/-107/-108 compile byte-identical to their row-form siblings
+# (`test_compile_sweep.py` adds them to `COMPILE_EXERCISED`), but the per-variant
+# `then.graph` narrowing they pin is NOT yet implemented by the find executor
+# (`parallax.snapshot.materialize.decode_row` passes every projected column
+# through unchanged — the same padded-superset shape a row-form read carries,
+# never narrowed to the variant's own declared columns). COR-3 Phase 8
+# increment 7 (ledger D-22) implements the narrowing and joins these to
+# `RUN_EXERCISED`; carving them out here (rather than compiling them) keeps
+# this sweep from running them against a materialization the golden `then.graph`
+# does not yet match, honestly deferring the RUN half while COMPILE stays green.
+_INSTANCE_FORM_GRAPH_RUN_DEFERRED: Final[frozenset[str]] = frozenset(
+    {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108"}
+)
+
 # The reachable read cases whose fixtures + observation this phase runs end-to-
 # end: every compile-exercised read (COR-3 Phase 7 increment 5 closes the
 # instance-form-graph run deferral this set once carried — m-value-object-023/
@@ -44,8 +59,9 @@ pytestmark = pytest.mark.conformance
 # `compileEligibility: run-only` (D-10's query-result-dependent deep-fetch tail:
 # `compile` can never emit their query-result-dependent child binds, so `run` is
 # the ONLY lane that ever grades them — derived from the corpus declaration at
-# collection time, never a hard-coded id list, m-conformance-adapter).
-RUN_EXERCISED = frozenset(COMPILE_EXERCISED)
+# collection time, never a hard-coded id list, m-conformance-adapter), MINUS the
+# instance-form graph reads whose RUN half is still increment 7 territory.
+RUN_EXERCISED = frozenset(COMPILE_EXERCISED) - _INSTANCE_FORM_GRAPH_RUN_DEFERRED
 
 
 def _reachable_run_cases() -> list[case_format.Case]:

@@ -277,6 +277,40 @@ self-contained without a system `libpq`.
   exit 0 (diff-cover 100%, Pyright 0/0/0); `just lint` exit 0, including the
   new `m-case-format.md` <-> `compatibility-case.schema.json` `rejectedRule`
   vocabulary drift guard (`reference_harness.case_format_vocab_check`).
+- **Phase 8 increment 1 COMPLETE — core-amendment bundle (D-25 root-owned
+  optimistic locking, the DQ2 spec-gap riders, DQ7b's instance-form corpus
+  support; core commits `83649ad`/`f62e7d1`).** Design in
+  [ADR 0027](../../docs/adr/0027-inheritance-family-optimistic-locking-is-declared-only-by-the-root.md)
+  and `core/spec/m-inheritance.md` ("Optimistic locking is root-owned",
+  "Abstract-position reads"); this entry is status only.
+  `validate_optimistic_locking_root_owned` (generalizing the retired
+  `validate_temporal_optimistic_locking`) and the class frontend
+  (`EntityMeta.__new__`) both reject a family descendant's own
+  `optimisticLocking` attribute regardless of root versioning;
+  `parallax.core.inheritance.validate` gained the matching
+  `inheritance-optimistic-locking-not-root-owned` invariant so
+  `m-inheritance-102`/`-103` grade through the existing rejected lane.
+  Eight new corpus cases join the reachable sweep: `m-inheritance-102`/`-103`
+  (rejected), `-104` (TPCS opt-lock composition, unreachable — `m-opt-lock`
+  not yet implemented), `-105` (composed temporal x inheritance x opt-lock
+  conflict, unreachable, same reason), `-106`/`-107`/`-108` (TPH instance-form
+  `then.graph` siblings — compile byte-identical to their row-form originals,
+  reasoned-skipped from the RUN sweep and the API-suite partition pending
+  increment 7's per-variant graph narrowing), `-109` (the TPCS sibling,
+  reasoned-skipped at compile too — `SqlGenError`, a pre-existing engine gap
+  increment 7 also closes). Measured post-round: unit lane (`pytest -m unit`)
+  1611 passed / 78 skipped; compile-sweep module (`pytest -m compile_sweep`)
+  171 passed / 68 skipped; combined Docker lane
+  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 314
+  passed / 10 skipped; rejected sweep (`test_rejected_sweep.py`) 27 passed /
+  10 skipped; API-suite partition exact over 311 active cases (47 exercised /
+  264 reasoned-skip); `just python-static` / `just python-verify` exit 0
+  (diff-cover 100%, Pyright/coverage clean); `just lint` exit 0; reference-harness
+  `just oracle-test` 1447 passed dual-dialect; slice tag counts
+  `slice-mvp-1`/`slice-snapshot-1`/`slice-managed-1` = 197 / 311 / 333
+  (`just core-dep-graph` profile gate). No `validate_write`, version-gate
+  lowering, instance-form Python lowering, or boundary runner in this
+  increment (increments 2+).
 
 ## Blockers
 

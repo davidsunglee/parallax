@@ -194,19 +194,79 @@ def test_abstract_subtype_declaring_its_own_as_of_is_rejected() -> None:
 
 
 def test_concrete_subtype_declaring_an_optimistic_locking_attr_is_rejected() -> None:
-    # Review remediation (Spec 1, class-frontend audit gap): a temporal-family
-    # CONCRETE subtype declares no `as_of` of its own (only the root does, the
-    # test above), but the SAME family-wide temporal composition rule
-    # (m-descriptor x m-opt-lock) forbids it from carrying its own
-    # `optimisticLocking` attribute too — resolved through the FAMILY-EFFECTIVE
-    # classification (`im.Rate` is bitemporal), never the subclass's own local,
-    # always-empty `as_of_attributes` (which would wrongly accept it).
+    # D-25 / ADR 0027 (subsuming the old ADR-0026-era composition check): a
+    # temporal-family CONCRETE subtype declares no `as_of` of its own (only the
+    # root does, the test above), and the GENERAL root-ownership rule (D-25)
+    # forbids it from carrying its own `optimisticLocking` attribute too — a
+    # non-root may never declare its own version attribute at all, temporal or
+    # not (`im.Rate` is bitemporal; the rule fires the same way for a
+    # non-temporal family, the tests below).
     from parallax.core import Attr, EntityConfig, Field
     from parallax.core.entity.base import Concrete
 
-    with pytest.raises(Exception, match="must not also declare an optimisticLocking"):
+    with pytest.raises(Exception, match="only the inheritance family root may declare"):
 
         class BadVersionedConcrete(im.Rate, frozen=True):  # pyright: ignore[reportUnusedClass]
             __parallax__ = EntityConfig(inheritance=Concrete())
 
             version: Attr[int] = Field(type="int64", optimistic_locking=True)
+
+
+# --------------------------------------------------------------------------- #
+# D-25 / ADR 0027: optimistic locking is root-owned and family-uniform — the  #
+# class-frontend gate (EntityMeta.__new__) rejects a family subclass          #
+# declaring its own `optimisticLocking` attribute, regardless of what the     #
+# root declares, mirroring `parallax.core.inheritance.validate`'s             #
+# `inheritance-optimistic-locking-not-root-owned` descriptor invariant.       #
+# --------------------------------------------------------------------------- #
+def test_root_declared_optimistic_locking_is_accepted() -> None:
+    from parallax.core import Attr, Entity, EntityConfig, Field
+    from parallax.core.entity.base import Concrete, FamilyRoot
+
+    class _VersionedApplianceRoot(Entity, frozen=True):
+        __parallax__ = EntityConfig(inheritance=FamilyRoot(strategy="table-per-concrete-subtype"))
+        id: Attr[int] = Field(primary_key=True, type="int64")
+        version: Attr[int] = Field(type="int64", optimistic_locking=True)
+
+    class _VersionedApplianceLeaf(  # pyright: ignore[reportUnusedClass]
+        _VersionedApplianceRoot, frozen=True
+    ):
+        __parallax__ = EntityConfig(inheritance=Concrete())
+        capacity: Attr[int | None] = Field(type="int32", nullable=True, default=None)
+
+    # no raise — the root alone declares the version column
+
+
+def test_descendant_only_optimistic_locking_is_rejected() -> None:
+    from parallax.core import Attr, Entity, EntityConfig, Field
+    from parallax.core.entity.base import Concrete, FamilyRoot
+
+    class _UnversionedApplianceRoot(Entity, frozen=True):
+        __parallax__ = EntityConfig(inheritance=FamilyRoot(strategy="table-per-concrete-subtype"))
+        id: Attr[int] = Field(primary_key=True, type="int64")
+
+    with pytest.raises(Exception, match="only the inheritance family root may declare"):
+
+        class _BadUnversionedLeaf(  # pyright: ignore[reportUnusedClass]
+            _UnversionedApplianceRoot, frozen=True
+        ):
+            __parallax__ = EntityConfig(inheritance=Concrete())
+            version: Attr[int] = Field(type="int64", optimistic_locking=True)
+
+
+def test_root_and_different_descendant_attribute_is_rejected() -> None:
+    from parallax.core import Attr, Entity, EntityConfig, Field
+    from parallax.core.entity.base import Concrete, FamilyRoot
+
+    class _VersionedOvenRoot(Entity, frozen=True):
+        __parallax__ = EntityConfig(inheritance=FamilyRoot(strategy="table-per-concrete-subtype"))
+        id: Attr[int] = Field(primary_key=True, type="int64")
+        version: Attr[int] = Field(type="int64", optimistic_locking=True)
+
+    with pytest.raises(Exception, match="only the inheritance family root may declare"):
+
+        class _BadSecondVersionLeaf(  # pyright: ignore[reportUnusedClass]
+            _VersionedOvenRoot, frozen=True
+        ):
+            __parallax__ = EntityConfig(inheritance=Concrete())
+            revision: Attr[int] = Field(type="int64", optimistic_locking=True)

@@ -139,12 +139,14 @@ def test_temporal_entity_with_optimistic_locking_attr_is_rejected() -> None:
 
 
 def test_temporal_family_descendant_with_optimistic_locking_attr_is_rejected() -> None:
-    # ADR 0026 / review remediation: a temporal-family CONCRETE descendant
-    # declares no `asOfAttributes` of its own (only the root does), so the
-    # per-entity `validate_entity` check alone (LOCAL as-of) would silently
-    # ACCEPT an `optimisticLocking` attribute it declares — `validate_metamodel`
-    # must still reject it, resolving the FAMILY-EFFECTIVE classification
-    # (`DepositRate`'s family root `Rate` is bitemporal, models/rate.yaml).
+    # D-25 / ADR 0027 (subsuming the old ADR-0026-era composition check): a
+    # temporal-family CONCRETE descendant declares no `asOfAttributes` of its
+    # own (only the root does), so the per-entity `validate_entity` check alone
+    # (LOCAL as-of) would silently ACCEPT an `optimisticLocking` attribute it
+    # declares — `validate_metamodel` must still reject it, via the GENERAL
+    # root-ownership rule (a non-root may never declare its own version
+    # attribute, temporal or not; `DepositRate`'s family root `Rate` is
+    # bitemporal, models/rate.yaml).
     rate = _MODELS["rate"]
     deposit = rate.entity("DepositRate")
     mutated_deposit = dataclasses.replace(
@@ -159,8 +161,81 @@ def test_temporal_family_descendant_with_optimistic_locking_attr_is_rejected() -
             mutated_deposit if entity.name == "DepositRate" else entity for entity in rate.entities
         )
     )
-    with pytest.raises(DescriptorError, match="must not also declare an optimisticLocking"):
+    with pytest.raises(DescriptorError, match="only the inheritance family root may declare"):
         validate_metamodel(mutated)
+
+
+# --------------------------------------------------------------------------- #
+# D-25 / ADR 0027: optimistic locking is root-owned and family-uniform — the  #
+# empirical shapes `validate_optimistic_locking_root_owned` (via             #
+# `validate_metamodel`) must accept / reject.                                #
+# --------------------------------------------------------------------------- #
+def _versioned_root_and_subtype(
+    *, root_versioned: bool = True, extra_subtype_attr: Attribute | None = None
+) -> Metamodel:
+    root_attrs: tuple[Attribute, ...] = (_attr(),)
+    if root_versioned:
+        root_attrs = (
+            *root_attrs,
+            Attribute(name="version", type="int64", column="version", optimistic_locking=True),
+        )
+    root = Entity(
+        name="Appliance",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=root_attrs,
+    )
+    subtype_attrs: tuple[Attribute, ...] = ()
+    if extra_subtype_attr is not None:
+        subtype_attrs = (extra_subtype_attr,)
+    subtype = Entity(
+        name="Fridge",
+        table="fridge",
+        inheritance=Inheritance(role="concrete-subtype", parent="Appliance"),
+        attributes=subtype_attrs,
+    )
+    return Metamodel(entities=(root, subtype))
+
+
+def test_root_only_optimistic_locking_is_accepted() -> None:
+    validate_metamodel(_versioned_root_and_subtype())  # no raise
+
+
+def test_descendant_only_optimistic_locking_is_rejected() -> None:
+    # The root declares NO version attribute; the descendant declares its own.
+    family = _versioned_root_and_subtype(
+        root_versioned=False,
+        extra_subtype_attr=Attribute(
+            name="version", type="int64", column="version", optimistic_locking=True
+        ),
+    )
+    with pytest.raises(DescriptorError, match="only the inheritance family root may declare"):
+        validate_metamodel(family)
+
+
+def test_root_and_different_descendant_attribute_is_rejected() -> None:
+    # The root declares its own version column; the descendant ALSO declares
+    # one, under a DIFFERENT name — a second version attribute is still
+    # rejected, family-uniform versioning admits exactly one, at the root.
+    family = _versioned_root_and_subtype(
+        root_versioned=True,
+        extra_subtype_attr=Attribute(
+            name="revision", type="int64", column="revision", optimistic_locking=True
+        ),
+    )
+    with pytest.raises(DescriptorError, match="only the inheritance family root may declare"):
+        validate_metamodel(family)
+
+
+def test_two_optimistic_locking_attributes_on_one_entity_is_rejected() -> None:
+    entity = _entity(
+        attributes=(
+            _attr(),
+            Attribute(name="version", type="int64", column="version", optimistic_locking=True),
+            Attribute(name="revision", type="int64", column="revision", optimistic_locking=True),
+        )
+    )
+    with pytest.raises(DescriptorError, match="at most one attribute may declare"):
+        validate_entity(entity)
 
 
 def test_non_identifier_attribute_name_is_rejected() -> None:

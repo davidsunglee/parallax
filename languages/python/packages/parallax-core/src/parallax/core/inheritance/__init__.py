@@ -253,8 +253,9 @@ def validate(metamodel: Metamodel) -> None:
 
     The check order pins each corpus ``rejectedRule``: parent resolution, then
     acyclicity, tableless-abstract nodes, strategy locality, temporal-axis root
-    ownership, strategy-vs-tag coherence, ancestry-reaches-a-root, root
-    cardinality, and the table-per-hierarchy tag rules.
+    ownership, optimistic-locking root ownership, strategy-vs-tag coherence,
+    ancestry-reaches-a-root, root cardinality, and the table-per-hierarchy tag
+    rules.
     """
     participants = _participants(metamodel)
     if not participants:
@@ -267,6 +268,7 @@ def validate(metamodel: Metamodel) -> None:
     _reject_abstract_with_table(participants)
     _reject_strategy_redeclared(participants)
     _reject_descendant_temporal_axes(participants)
+    _reject_descendant_optimistic_locking(participants)
     _reject_tag_under_tpcs(roots, participants)
     _reject_concrete_without_root(participants, by_name)
     _reject_root_cardinality(roots)
@@ -342,6 +344,31 @@ def _reject_descendant_temporal_axes(participants: tuple[Entity, ...]) -> None:
                 "inheritance-temporal-axes-not-root-owned",
                 f"non-root {entity.name} declares its own as-of axes; temporal axes are a "
                 "family-wide property and MUST be declared only on the root",
+                entity=entity.name,
+            )
+
+
+def _reject_descendant_optimistic_locking(participants: tuple[Entity, ...]) -> None:
+    """Reject any ``abstract-subtype`` or ``concrete-subtype`` that declares its
+    own ``optimisticLocking`` attribute.
+
+    The version attribute is a family-wide property (D-25, ADR 0027): only the
+    family ROOT may declare it, and every descendant inherits exactly that
+    column — regardless of whether the root itself is versioned. This is
+    structural per-entity (it does not need to look at the root's own
+    attributes), so it fires uniformly for both malformed shapes: a
+    non-versioned root with a version-declaring descendant, and a versioned
+    root whose descendant redeclares or adds a second version attribute.
+    """
+    for entity in participants:
+        if _inh(entity).role == "root":
+            continue
+        if any(attribute.optimistic_locking for attribute in entity.attributes):
+            raise InheritanceError(
+                "inheritance-optimistic-locking-not-root-owned",
+                f"non-root {entity.name} declares its own optimisticLocking attribute; "
+                "the version attribute is family-wide and MUST be declared only on the "
+                "root",
                 entity=entity.name,
             )
 

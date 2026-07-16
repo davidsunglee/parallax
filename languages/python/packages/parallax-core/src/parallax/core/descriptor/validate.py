@@ -23,10 +23,9 @@ from parallax.core.descriptor.records import (
     Metamodel,
     PkGenerator,
     Relationship,
-    effective_as_of_attributes,
 )
 
-__all__ = ["validate_entity", "validate_metamodel", "validate_temporal_optimistic_locking"]
+__all__ = ["validate_entity", "validate_metamodel", "validate_optimistic_locking_root_owned"]
 
 # The metamodel.schema.json `identifier` and `neutralType` patterns, verbatim.
 _IDENTIFIER = re.compile(r"^[a-z][a-zA-Z0-9]*$")
@@ -55,19 +54,21 @@ def validate_metamodel(metamodel: Metamodel) -> None:
                 f"entity {entity.name!r}: declares no attributes, directly or inherited"
             )
     for entity in metamodel.entities:
-        validate_temporal_optimistic_locking(metamodel, entity)
+        validate_optimistic_locking_root_owned(metamodel, entity)
 
 
 def validate_entity(entity: Entity) -> None:
     """Validate one compiled entity record against the schema's domain rules.
 
-    A single-entity view: the optimistic-lock/temporal composition check here
-    reads only ``entity``'s own LOCAL ``as_of_attributes``, so it is exact for
-    a non-participant (local IS effective there) and for a family root (whose
-    local axes ARE the family's), but blind to a descendant whose family is
-    temporal through the root alone — :func:`validate_metamodel` closes that
-    gap with :func:`validate_temporal_optimistic_locking` once sibling records
-    are available to resolve the family-EFFECTIVE axes (ADR 0026).
+    A single-entity view: the family-cross-entity root-ownership rule
+    (:func:`validate_optimistic_locking_root_owned`) needs sibling records this
+    function does not have, so :func:`validate_metamodel` runs it separately
+    once the whole family is available (ADR 0027). This function's own
+    ``optimisticLocking`` checks are the two purely LOCAL, single-entity rules:
+    at most one version attribute per entity, and never combined with
+    ``asOfAttributes`` on the same entity (a temporal entity derives its
+    optimistic key from its processing axis instead) — both exact for any
+    entity regardless of family membership.
     """
     if not entity.name:
         raise DescriptorError("entity name must be non-empty")
@@ -79,7 +80,15 @@ def validate_entity(entity: Entity) -> None:
     # which alone has the sibling records to derive the inherited chain.
     if entity.inheritance is None and not entity.attributes:
         raise DescriptorError(f"entity {entity.name!r}: declares no attributes")
-    if entity.as_of_attributes and any(attr.optimistic_locking for attr in entity.attributes):
+    _own_optimistic_locking = [attr for attr in entity.attributes if attr.optimistic_locking]
+    if len(_own_optimistic_locking) > 1:
+        raise DescriptorError(
+            f"entity {entity.name!r}: at most one attribute may declare "
+            f"optimisticLocking: true (the version attribute), found "
+            f"{len(_own_optimistic_locking)}: "
+            f"{[attr.name for attr in _own_optimistic_locking]}"
+        )
+    if entity.as_of_attributes and _own_optimistic_locking:
         raise DescriptorError(
             f"entity {entity.name!r}: a temporal entity derives its optimistic key from its "
             "processing axis and must not also declare an optimisticLocking attribute"
@@ -90,26 +99,40 @@ def validate_entity(entity: Entity) -> None:
         _validate_relationship(entity.name, relationship)
 
 
-def validate_temporal_optimistic_locking(metamodel: Metamodel, entity: Entity) -> None:
-    """The ``m-opt-lock`` x ``m-descriptor`` composition rule, applied
-    FAMILY-EFFECTIVELY (ADR 0026): ``entity`` MUST NOT carry its own
-    ``optimisticLocking`` attribute while its family's EFFECTIVE temporal
-    classification is temporal — even when ``entity``'s own LOCAL
-    ``as_of_attributes`` is empty, which is the normal (and only legal) shape
-    for an inheritance descendant in a temporal family (only the root may
-    declare ``asOfAttributes`` — `m-inheritance` "Inherited members").
-    Resolving from local ``as_of_attributes`` alone (as :func:`validate_entity`
-    does, for a single entity with no sibling context) would silently ACCEPT
-    a descendant's `optimisticLocking` attribute the schema-level rule means
-    to forbid. Idempotent with :func:`validate_entity`'s own local check for a
-    non-participant or a family root (LOCAL == EFFECTIVE there).
+def validate_optimistic_locking_root_owned(metamodel: Metamodel, entity: Entity) -> None:
+    """The ``m-opt-lock`` x ``m-inheritance`` family invariant (D-25, ADR 0027):
+    only an inheritance family's ROOT may declare an ``optimisticLocking``
+    version attribute; every descendant inherits it unchanged (or, for a
+    non-versioned family, declares none of its own either) — a family is
+    versioned together or not at all.
+
+    A non-root ``entity`` (an ``abstract-subtype`` or ``concrete-subtype``)
+    declaring its OWN ``optimisticLocking`` attribute is rejected outright,
+    regardless of what the root declares — this fires for BOTH malformed
+    shapes (a non-versioned root with a version-declaring descendant, and a
+    versioned root whose descendant redeclares or adds a second version
+    attribute of its own). A no-op for a non-participant or the family root
+    (:func:`validate_entity`'s own local checks — at most one per entity,
+    never combined with ``asOfAttributes`` — are exact there; LOCAL ==
+    EFFECTIVE for a root, so a root cannot combine an explicit version with a
+    temporal axis either).
+
+    This SUBSUMES the narrower rule this function used to check (a temporal
+    descendant's own ``optimisticLocking`` attribute, resolved via the
+    family-EFFECTIVE ``asOfAttributes`` — ADR 0026): a non-root can never
+    declare its own version attribute at all now, temporal or not, so the
+    temporal-family shape collapses into this general rule plus
+    :func:`validate_entity`'s own composition check already applied AT the
+    root (only the root ever legitimately carries BOTH a temporal axis and,
+    mutually exclusively, an explicit version).
     """
-    if not any(attr.optimistic_locking for attr in entity.attributes):
+    del metamodel  # no family-effective resolution needed — a pure per-entity check
+    if entity.inheritance is None or entity.inheritance.role == "root":
         return
-    if effective_as_of_attributes(metamodel, entity):
+    if any(attr.optimistic_locking for attr in entity.attributes):
         raise DescriptorError(
-            f"entity {entity.name!r}: a temporal entity derives its optimistic key from its "
-            "processing axis and must not also declare an optimisticLocking attribute"
+            f"entity {entity.name!r}: only the inheritance family root may declare an "
+            "optimisticLocking attribute; a descendant inherits it unchanged"
         )
 
 

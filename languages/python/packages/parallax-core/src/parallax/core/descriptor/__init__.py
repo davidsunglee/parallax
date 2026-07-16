@@ -41,7 +41,7 @@ from parallax.core.descriptor.serde import canonicalize, deserialize, serialize
 from parallax.core.descriptor.validate import (
     validate_entity,
     validate_metamodel,
-    validate_temporal_optimistic_locking,
+    validate_optimistic_locking_root_owned,
 )
 from parallax.core.descriptor.vo_path import (
     VoPathMiss,
@@ -85,5 +85,5 @@ __all__ = [
     "snake_to_camel",
     "validate_entity",
     "validate_metamodel",
-    "validate_temporal_optimistic_locking",
+    "validate_optimistic_locking_root_owned",
 ]

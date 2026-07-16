@@ -29,7 +29,10 @@ _CASES = _REPO / "core" / "compatibility" / "cases"
 
 def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
     found: list[tuple[str, dict[str, Any], str]] = []
-    for path in sorted(_CASES.glob("m-inheritance-0*-rejected-*.yaml")):
+    # `*` (not `0*`): the D-25 root-ownership witnesses (m-inheritance-102/103)
+    # are the first `when.model` cases numbered past 099, so the glob must not
+    # assume every id stays in the 0xx range.
+    for path in sorted(_CASES.glob("m-inheritance-*-rejected-*.yaml")):
         loaded = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         document = cast("dict[str, Any]", loaded)
         when = document.get("when")
@@ -44,9 +47,11 @@ _REJECTIONS = _descriptor_rejection_cases()
 
 
 def test_every_descriptor_rejection_case_is_covered() -> None:
-    # 15 inline-descriptor inheritance rejection cases carry `when.model` (13
-    # original + the two root-ownership witnesses, m-inheritance-098/099).
-    assert len(_REJECTIONS) == 15
+    # 17 inline-descriptor inheritance rejection cases carry `when.model` (13
+    # original + the two temporal-axis root-ownership witnesses,
+    # m-inheritance-098/099, + the two optimistic-locking root-ownership
+    # witnesses, m-inheritance-102/103).
+    assert len(_REJECTIONS) == 17
 
 
 @pytest.mark.parametrize("stem, model, rule", _REJECTIONS, ids=[r[0] for r in _REJECTIONS])
@@ -303,3 +308,65 @@ def test_temporal_root_and_root_owned_axes_still_validate_cleanly() -> None:
     # the new invariant must not reject the corpus's own root-declared families.
     inheritance.validate(_MODELS["rate"])
     inheritance.validate(_MODELS["instrument"])
+
+
+def test_reject_descendant_optimistic_locking_under_a_non_versioned_root() -> None:
+    # D-25 / ADR 0027: a non-versioned TPH root with an abstract-subtype that
+    # declares its own optimisticLocking attribute.
+    root = Entity(
+        name="Animal",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=_minimal_attrs(),
+    )
+    pet = Entity(
+        name="Pet",
+        inheritance=Inheritance(role="abstract-subtype", parent="Animal"),
+        attributes=(
+            Attribute(name="revision", type="int32", column="revision", optimistic_locking=True),
+        ),
+    )
+    dog = Entity(
+        name="Dog",
+        table="animal",
+        inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="dog"),
+        attributes=(Attribute(name="barkVolume", type="int32", column="bark_volume"),),
+    )
+    meta = Metamodel(entities=(root, pet, dog))
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        inheritance.validate(meta)
+    assert caught.value.rule == "inheritance-optimistic-locking-not-root-owned"
+    assert caught.value.entity == "Pet"
+
+
+def test_reject_descendant_optimistic_locking_under_a_versioned_root() -> None:
+    # A versioned TPCS root whose concrete subtype adds a SECOND version
+    # attribute of its own, under a different name.
+    root = Entity(
+        name="Appliance",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(
+            *_minimal_attrs(),
+            Attribute(name="version", type="int32", column="version", optimistic_locking=True),
+        ),
+    )
+    fridge = Entity(
+        name="Fridge",
+        table="fridge",
+        inheritance=Inheritance(role="concrete-subtype", parent="Appliance"),
+        attributes=(
+            Attribute(name="revision", type="int32", column="revision", optimistic_locking=True),
+        ),
+    )
+    meta = Metamodel(entities=(root, fridge))
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        inheritance.validate(meta)
+    assert caught.value.rule == "inheritance-optimistic-locking-not-root-owned"
+    assert caught.value.entity == "Fridge"
+
+
+def test_versioned_root_and_root_owned_version_still_validates_cleanly() -> None:
+    # A well-formed family (the version declared ONLY on the root) passes
+    # validation — the new invariant must not reject the corpus's own
+    # root-declared versioned families.
+    inheritance.validate(_MODELS["vehicle"])
+    inheritance.validate(_MODELS["appliance"])
