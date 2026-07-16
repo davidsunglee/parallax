@@ -16,9 +16,12 @@
 # chains head / middle / tail as in -001.
 #
 # The optimistic gate rides the GOLDEN close directly (no `observedInZ` token on the
-# writeSequence step): the writeSequence `when` is identical to -001's; only the
-# close statement in `then.statements` carries the `and from_z = ? and in_z = ?`
-# gate, whose two trailing binds are drawn from the currently-open row.
+# writeSequence step): the writeSequence steps are identical to -001's, self-
+# describing the optimistic mode via `when.uow.concurrency` (descriptive only —
+# the harness executes the authored golden SQL either way, `compatibility-case.
+# schema.json`); only the close statement in `then.statements` carries the
+# `and from_z = ? and in_z = ?` gate, whose two trailing binds are drawn from the
+# currently-open row.
 #
 # The sequence (self-contained, from an empty table):
 #   step 1 insert      : open the current rectangle, value 100,
@@ -34,6 +37,8 @@ model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
+  uow:
+    concurrency: optimistic
   writeSequence:
     - mutation: insert
       entity: Position

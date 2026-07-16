@@ -3,22 +3,57 @@
 #
 # m-unit-work-002 witnesses the abort contract for UPDATE and m-unit-work-011 for
 # INSERT; this pins the DELETE variant, completing the insert / update / delete triad.
-# The unit of work deletes a pre-existing account 3 (Grace, 10.00), then ROLLS BACK —
-# the delete lands inside the atomic scope the abort discards, so the row survives:
-#   step 0 write : apply a DELETE of the pre-existing account 3, then ROLL BACK
-#                  (rollback: true) — the buffered write executes and is discarded.
-#   step 1 find  : query account 3 — it MUST observe the ORIGINAL row, unchanged;
-#                  the aborted delete never became durable.
-# The teeth: the find is a cache MISS that re-resolves against committed data and MUST
-# see account 3 exactly as the fixture holds it. Both the aborting unit of work and the
-# re-resolve run in the DEFAULT `locking` mode, so the find carries the m-read-lock
-# shared-row-lock suffix (`for share of t0`). roundTrips = 2 (the rolled-back delete,
-# whose DML still executes, + the dependent find).
+# A keyed DELETE of a versioned row requires a PRIOR observation exactly like a keyed
+# UPDATE (`m-opt-lock`), so the unit of work first OBSERVES account 3 (Grace,
+# balance 10.00, version 1), then deletes the observed row and force-flushes it (the
+# mirrored API story, `parallax.conformance.stories.
+# aborted_delete_leaves_the_row_standing`, issues a SECOND find inside the doomed
+# transaction to force the buffered delete onto the wire before the deliberate
+# abort), then ROLLS BACK — the delete lands inside the atomic scope the abort
+# discards, so the row survives. Unlike a keyed UPDATE (whose version gate is
+# optimistic-only), a keyed DELETE of an OBSERVED versioned row gates on that
+# observed version in EITHER concurrency mode (`m-batch-write-004`'s own
+# default-mode witness; `python.md` §5's asymmetric phrasing), so the golden
+# DELETE carries `and version = ?` even in the DEFAULT `locking` mode here:
+#   step 0 find  : observe account 3 (Grace, 10.00, version 1) before the delete,
+#                  1 round trip.
+#   step 1 write : apply a DELETE of the OBSERVED account 3, gated on its
+#                  observed version 1, then ROLL BACK (rollback: true) — the
+#                  buffered, force-flushed write executes and is discarded.
+#   step 2 find  : the SAME find, re-issued — mirrors the story's read-your-own-
+#                  writes forced-flush find that forces the buffered delete onto the
+#                  wire ahead of the deliberate abort. The wire traffic (sql, binds)
+#                  is identical whether this select runs inside the doomed
+#                  transaction (where it observes the deletion, per the forced-flush
+#                  contract, `core/spec/m-unit-work.md` "Abort") or after the abort
+#                  (where it observes the restored row); the reference harness's own
+#                  rollback branch executes every find step strictly AFTER the write
+#                  step's session has already rolled back, so it asserts the
+#                  RESTORED row here — the honest expectation on this connection.
+#   step 3 find  : the dependent post-abort find — account 3 MUST be observed
+#                  unchanged; the aborted delete never became durable.
+# Every find is a cache MISS and, in the DEFAULT `locking` mode, carries the
+# m-read-lock shared-row-lock suffix (`for share of t0`). roundTrips = 4 (the
+# observing find + the rolled-back delete, whose DML still executes, + the two
+# re-resolving finds).
 model: models/account.yaml
 tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
 when:
   scenario:
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 3
+      roundTrips: 1
+      note: observe account 3 (Grace, balance 10.00, version 1) before the delete
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          binds: [3]
+      expectRows:
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
     - write:
         - mutation: delete
           entity: Account
@@ -26,18 +61,31 @@ when:
             - { id: 3 }
       rollback: true
       roundTrips: 1
-      note: apply a delete of the pre-existing account 3, then ROLL BACK — the delete is discarded
+      note: apply a delete of the OBSERVED account 3, gated on its observed version 1, then ROLL BACK — the delete is discarded
       statements:
         - sql:
-            postgres: delete from account where id = ?
-          binds: [3]
+            postgres: delete from account where id = ? and version = ?
+          binds: [3, 1]
     - targetEntity: Account
       find:
         eq:
           attr: Account.id
           value: 3
       roundTrips: 1
-      note: the aborted delete was discarded — the find MUST observe the ORIGINAL account 3
+      note: the SAME find re-issued (mirrors the story's forced-flush find); the rollback already ran, so this observes the RESTORED row
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          binds: [3]
+      expectRows:
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 3
+      roundTrips: 1
+      note: the aborted delete was discarded — the dependent post-abort find MUST observe the ORIGINAL account 3
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
@@ -45,4 +93,4 @@ when:
       expectRows:
         - { id: 3, owner: Grace, balance: 10.00, version: 1 }
 then:
-  roundTrips: 2
+  roundTrips: 4

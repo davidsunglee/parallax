@@ -5,20 +5,21 @@
 # This proves the complementary ABORT contract: a write applied inside a unit of
 # work — even one force-flushed to serve a dependent read — MUST NOT survive the
 # abort. The scenario interleaves an aborted write between two identical finds:
-#   step 0 find  : cache MISS — read account 1 (Ada, balance 100.00), 1 round trip
-#   step 1 write : apply `balance = 999.00` for account 1, then ROLL BACK
-#                  (rollback: true) — the write lands inside the atomic scope the
-#                  abort discards, so it never becomes durable.
+#   step 0 find  : cache MISS — read account 1 (Ada, balance 100.00, version 1), 1 round trip.
+#   step 1 write : apply `balance = 999.00` for the OBSERVED account 1, advancing the
+#                  observed version 1 -> 2, then ROLL BACK (rollback: true) — the
+#                  write lands inside the atomic scope the abort discards, so it
+#                  never becomes durable.
 #   step 2 find  : the SAME find re-resolves (cache MISS) and MUST observe the
 #                  ORIGINAL balance 100.00, never the aborted 999.00.
 # The teeth: step 2 cannot be a cache HIT — a hit would reuse step 0's rows, and
 # the aborted write must leave the row exactly as step 0 read it. The golden UPDATE
-# is the ungated version-advancing form (the m-detach-002 shape) so a later phase's
-# optimistic-mode semantics never re-touch it. Both finds run in the DEFAULT
-# `locking` mode — step 0 inside the aborting unit of work, step 2 as the re-resolve
-# in a fresh default-mode unit of work — so each carries the m-read-lock
-# shared-row-lock suffix (`for share of t0`). roundTrips = 3 (two finds + the
-# rolled-back write, whose DML still executes).
+# is the ungated version-advancing form (locking mode: no gate, `m-opt-lock` "The
+# version column") so a later phase's optimistic-mode semantics never re-touch it.
+# Both finds run in the DEFAULT `locking` mode — step 0 inside the aborting unit of
+# work, step 2 as the re-resolve in a fresh default-mode unit of work — so each
+# carries the m-read-lock shared-row-lock suffix (`for share of t0`). roundTrips = 3
+# (two finds + the rolled-back write, whose DML still executes).
 model: models/account.yaml
 tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -30,7 +31,7 @@ when:
           attr: Account.id
           value: 1
       roundTrips: 1
-      note: cache MISS — read account 1 (balance 100.00) before the aborted write
+      note: cache MISS — read account 1 (balance 100.00, version 1) before the aborted write
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
@@ -41,10 +42,10 @@ when:
         - mutation: update
           entity: Account
           rows:
-            - { id: 1, balance: 999.00, version: 2 }
+            - { id: 1, balance: 999.00 }
       rollback: true
       roundTrips: 1
-      note: apply a new balance for account 1, then ROLL BACK — the write is discarded
+      note: apply a new balance for the OBSERVED account 1, then ROLL BACK — the write is discarded
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?

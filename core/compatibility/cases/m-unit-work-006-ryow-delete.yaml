@@ -2,32 +2,54 @@
 # committed in-transaction DELETE (the row is GONE).
 #
 # m-unit-work-001 proves read-your-own-writes for INSERT and m-unit-work-005 for
-# UPDATE; this pins the DELETE variant. The unit of work commits a DELETE of an
-# existing account, then issues a find that depends on it — the find MUST observe
-# the ABSENCE of the row (zero rows), not the stale fixture. The scenario:
-#   step 0 write : COMMIT a DELETE of account 3 (Grace)
-#   step 1 find  : query account 3 — it MUST observe NO rows (the delete is visible).
-# The find is a cache MISS that costs one round trip (the forced flush precedes it)
-# and, in the DEFAULT `locking` mode, carries the m-read-lock shared-row-lock suffix
+# UPDATE; this pins the DELETE variant. A keyed DELETE of a versioned row requires a
+# PRIOR observation exactly like a keyed UPDATE (`m-opt-lock`) — the unit of work
+# first OBSERVES account 3 (Grace, balance 10.00, version 1), then commits a DELETE
+# of that SAME observed row, then issues a find that depends on it — the find MUST
+# observe the ABSENCE of the row (zero rows), not the stale fixture. Unlike a keyed
+# UPDATE (whose version gate is optimistic-only), a keyed DELETE of an OBSERVED
+# versioned row gates on that observed version in EITHER concurrency mode
+# (`m-batch-write-004`'s own default-mode witness; `python.md` §5's asymmetric
+# phrasing), so the golden DELETE carries `and version = ?` even in the DEFAULT
+# `locking` mode here. The scenario:
+#   step 0 find  : observe account 3 (Grace, 10.00, version 1), 1 round trip.
+#   step 1 write : COMMIT a DELETE of the observed account 3, gated on its
+#                  observed version 1.
+#   step 2 find  : query account 3 — it MUST observe NO rows (the delete is visible).
+# Every find is a cache MISS (the write step's forced flush precedes step 2) and, in
+# the DEFAULT `locking` mode, carries the m-read-lock shared-row-lock suffix
 # (`for share of t0` — locking zero rows is valid SQL); asserting an empty result
 # proves read-your-own-writes for a deletion against real committed data.
-# roundTrips = 2 (the committed delete + the dependent find).
+# roundTrips = 3 (the observing find + the committed delete + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
 when:
   scenario:
+    - targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 3
+      roundTrips: 1
+      note: observe account 3 (Grace, balance 10.00, version 1) before the delete
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          binds: [3]
+      expectRows:
+        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
     - write:
         - mutation: delete
           entity: Account
           rows:
             - { id: 3 }
       roundTrips: 1
-      note: buffer + COMMIT a delete of account 3
+      note: buffer + COMMIT a delete of the observed account 3, gated on its observed version 1
       statements:
         - sql:
-            postgres: delete from account where id = ?
-          binds: [3]
+            postgres: delete from account where id = ? and version = ?
+          binds: [3, 1]
     - targetEntity: Account
       find:
         eq:
@@ -41,4 +63,4 @@ when:
           binds: [3]
       expectRows: []
 then:
-  roundTrips: 2
+  roundTrips: 3

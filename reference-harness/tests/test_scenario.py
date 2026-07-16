@@ -115,16 +115,19 @@ def _scenario_by_id(prefix: str):
 
 
 def test_read_your_own_writes_update_scenario_flushes_before_dependent_find() -> None:
-    # m-unit-work-005: a committed UPDATE followed by a dependent find that MUST observe
-    # the new value (read-your-own-writes for UPDATE).
+    # m-unit-work-005: an OBSERVING find, then a committed UPDATE that advances from
+    # that observation, then a dependent find that MUST observe the new value
+    # (read-your-own-writes for UPDATE; `m-opt-lock`'s prior-observation rule).
     case = _scenario_by_id("m-unit-work-005")
-    write, find = case.scenario
+    observe, write, find = case.scenario
+    assert observe["expectRows"] == [{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}]
     # The write step carries the structured keyed buffer (D-3 migration): a single
-    # keyed UPDATE of account 1, its golden SQL unchanged.
+    # keyed UPDATE of account 1 (no row-carried version — the advance derives from
+    # the observing find), its golden SQL unchanged.
     (instruction,) = write["write"]
     assert instruction["mutation"] == "update"
     assert instruction["entity"] == "Account"
-    assert instruction["rows"] == [{"id": 1, "balance": 175.00, "version": 2}]
+    assert instruction["rows"] == [{"id": 1, "balance": 175.00}]
     update_sql = write["statements"][0]["sql"]["postgres"]
     assert update_sql.startswith("update account set")
     assert "find" in find
@@ -134,17 +137,23 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find() ->
 
 
 def test_read_your_own_writes_delete_scenario_observes_absence() -> None:
-    # m-unit-work-006: a committed DELETE followed by a dependent find that MUST observe
-    # the row's ABSENCE (read-your-own-writes for DELETE).
+    # m-unit-work-006: an OBSERVING find, then a committed DELETE of that observed
+    # row, then a dependent find that MUST observe the row's ABSENCE
+    # (read-your-own-writes for DELETE; `m-opt-lock`'s prior-observation rule).
     case = _scenario_by_id("m-unit-work-006")
-    write, find = case.scenario
+    observe, write, find = case.scenario
+    assert observe["expectRows"] == [{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}]
     # The write step carries the structured keyed buffer (D-3 migration): a single
-    # keyed DELETE of account 3, its golden SQL unchanged.
+    # keyed DELETE of account 3, gated on its observed version (unlike a keyed
+    # UPDATE, a keyed DELETE of an observed versioned row gates in EITHER mode).
     (instruction,) = write["write"]
     assert instruction["mutation"] == "delete"
     assert instruction["entity"] == "Account"
     assert instruction["rows"] == [{"id": 3}]
-    assert write["statements"][0]["sql"]["postgres"] == "delete from account where id = ?"
+    assert (
+        write["statements"][0]["sql"]["postgres"]
+        == "delete from account where id = ? and version = ?"
+    )
     # The dependent find returns ZERO rows — the deletion is visible.
     assert find["expectRows"] == []
     _assert_scenario_count_consistency(case, "postgres")
