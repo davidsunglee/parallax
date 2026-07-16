@@ -558,23 +558,26 @@ def _lower_update(
     exception — the optimistic-lock version gate (`m-opt-lock` "the version gate
     binds last").
 
-    A versioned row whose SET already carries an EXPLICIT value for the version
-    attribute (the M4-era plain-column-data shape some existing corpus witnesses
-    carry, e.g. `m-unit-work-005`) passes it through unchanged, sorted by
-    columnOrder like any other authored field: no observation is required, no
-    advance is computed, no gate is emitted — exactly the pre-COR-3-Phase-8-
-    increment-3 behavior. Every OTHER versioned row's SET derives the advance
-    from this unit of work's own recorded observation (`m-opt-lock.
-    require_observed` / `.advance`), raising before any DML if this unit of work
-    never observed the row's version, and gates on it in optimistic mode only
+    A versioned row's SET carrying an EXPLICIT value for the version attribute
+    is refused outright (`opt_lock.reject_caller_authored_version`) — the
+    M4-era plain-column-data passthrough some corpus witnesses used to carry
+    retired once the corpus amended those witnesses to author an observing
+    find instead (COR-3 Phase 8 core amendment bundle): the version is
+    framework-owned end to end (ADR 0013), never caller data, so a
+    row-carried value is never silently double-assigned against the derived
+    advance. Every versioned row's SET derives the advance from this unit of
+    work's own recorded observation (`m-opt-lock.require_observed` /
+    `.advance`), raising before any DML if this unit of work never observed
+    the row's version, and gates on it in optimistic mode only
     (`m-opt-lock.gates`).
     """
     row = dict(instruction.rows[0])
     pk_columns = {attr.column for attr in inheritance.family_primary_key(meta, entity)}
-    carries_version = version_attr is not None and version_attr.name in row
+    if version_attr is not None and version_attr.name in row:
+        opt_lock.reject_caller_authored_version(entity.name, version_attr.name)
     observed_version: int | None = None
     version_bind: int | None = None
-    if version_attr is not None and not carries_version:
+    if version_attr is not None:
         observed_version = opt_lock.require_observed(entity.name, observation)
         opt_lock.check_locking_license(concurrency, latest_pinned=True)
         version_bind = opt_lock.advance(observed_version)
@@ -596,8 +599,8 @@ def _lower_update(
         assignment_parts.append(f"{dialect.quote(version_attr.column)} = ?")
         binds.append(version_bind)
     where_sql, key_binds = _key_predicate(meta, entity, row, dialect, declaring)
-    if version_attr is not None and not carries_version and opt_lock.gates(concurrency):
-        assert observed_version is not None  # derived above whenever not carries_version
+    if version_attr is not None and opt_lock.gates(concurrency):
+        assert observed_version is not None  # derived above whenever version_attr is not None
         where_sql = f"{where_sql} and {dialect.quote(version_attr.column)} = ?"
         key_binds = (*key_binds, observed_version)
     assignments = ", ".join(assignment_parts)

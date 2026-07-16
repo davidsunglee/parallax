@@ -184,23 +184,17 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
 # `sequence`-strategy writeSequence cases (query-result-dependent, run-only) and the
 # boundary abort case (m-opt-lock-012, deferred to increment 5) are reasoned-skipped.
 #
-# Phase-8 mid-phase review remediation (finding A): `m-opt-lock`'s
-# prior-observation rule now applies uniformly to every keyed DELETE of a
-# versioned row, not just UPDATE (`_lower_delete` no longer lets an
-# unobserved versioned delete through ungated). Three corpus witnesses author
-# a keyed DELETE of the versioned `Account` with NO preceding observation at
-# all — `m-unit-work-006` (a bare read-your-own-writes delete),
-# `m-unit-work-009` (its mixed-op flush's delete leg; its update leg was
-# ALREADY unreachable here for the same M4-era-authoring reason), and
-# `m-unit-work-012` (a `rollback: true` delete step, whose buffered DML is
-# force-flushed for real before the intentional abort, per `m-unit-work`'s own
-# abort contract — so the raise reaches here too, not just a real commit).
-# All three now refuse with the honest `UnobservedVersionError` message
-# through `_skip_reason`'s existing scenario/writeSequence "error" branch —
-# a genuine corpus/spec conflict (`python.md` §5's own unconditional wording),
-# reported upstream, not one this Python-target-only remediation can resolve
-# by editing `core/compatibility`.
-_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n in (1, 2, 5, 11))
+# `m-unit-work-005/006/009/012`: the core amendment bundle (COR-3 Phase 8) closed
+# the corpus/spec conflict the mid-phase review surfaced — each now authors an
+# observing find before its versioned keyed write(s), satisfying `m-opt-lock`'s
+# prior-observation rule (both UPDATE and DELETE), so the engine's find-derived
+# observation seam (`engine._record_find_observations`) resolves them honestly.
+# `-006`/`-009`/`-012` newly join the exercised set; `-005` was already here and
+# now grades through the SAME observation path (its literal-version row shape
+# retired alongside `_lower_update`'s M4-era passthrough).
+_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
+    f"m-unit-work-{n:03d}" for n in (1, 2, 5, 6, 9, 11, 12)
+)
 # COR-3 Phase 8 increment 3's 17 compile-eligible flips: the non-temporal opt-lock
 # versioned advance (m-opt-lock-002), the inheritance-family keyed write family
 # (table-per-hierarchy tag derivation/guard, table-per-concrete-subtype own-table

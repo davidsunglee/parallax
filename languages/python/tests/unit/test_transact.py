@@ -699,16 +699,20 @@ def test_buffer_rejects_an_abstract_write_target() -> None:
 
 
 def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched_field() -> None:
-    # The no-drift guard for CURRENTLY-LEGAL writes: a sparse keyed update (the
-    # corpus's own m-unit-work-005 shape, `{id, balance, version}` omitting the
-    # required `owner`) must NOT be rejected — an absent top-level member is
-    # untouched, never a violation, on any mutation but `insert`.
-    port = _RecordingPort()
-    _db(port).transact(
-        lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
-            "update", "Account", {"id": 1, "balance": 175.00, "version": 2}
+    # The no-drift guard for CURRENTLY-LEGAL writes: a sparse keyed update (an id +
+    # balance row omitting the required `owner`) must NOT be rejected — an absent
+    # top-level member is untouched, never a violation, on any mutation but
+    # `insert`. The version advances from this unit of work's own recorded
+    # observation (`tx.find`), never a row-carried value (`m-opt-lock`).
+    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+
+    def fn(tx: Transaction) -> None:
+        tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        tx._buffer(  # pyright: ignore[reportPrivateUsage]
+            "update", "Account", {"id": 1, "balance": 175.00}
         )
-    )
+
+    _db(port).transact(fn)
     expected = (
         "write",
         POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?"),

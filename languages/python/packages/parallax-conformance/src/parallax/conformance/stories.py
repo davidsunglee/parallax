@@ -21,41 +21,28 @@ snippets. They use the D-16 **graduated, full** transaction verbs (COR-3 Phase 7
 increment 6a): ``tx.insert(instance)`` (the Create Payload), ``tx.update(copy)``
 (an edited copy carrying a Change Record — ``model_copy(update={...})``),
 ``tx.delete(node_or_instance)``, and ``tx.find(statement)`` returning
-``Snapshot[T]``. The Phase-8 observation-gating rule landed in COR-3 Phase 8
-increment 3 (`m-opt-lock`): a versioned keyed update now REQUIRES the edited
-copy's provenance to derive from a `tx.find` this SAME transaction ran (the
-framework never issues an implicit resolving read on a keyed write), so every
-story updating a versioned row fetches it first — `keyed_update_observed_in_
-transaction` / `one_flush_combined_mixed_verb_order` add that observing fetch
-ahead of their mirrored case's own scenario, which is graded (`test_write_
-no_drift.py`) against the case's own statements PLUS that leading read.
-
-A Phase-8 review remediation closed the matching gap for DELETE (`m-opt-lock`;
-`python.md` §5 "a keyed update or delete of a versioned row this unit of work
-never observed raises in either mode" — the prior wording describing delete's
-participation as "opportunistic" mis-stated the spec, which never carried that
-exception): a versioned keyed DELETE now requires the SAME prior observation, so
-`keyed_delete_observed_in_transaction` / `one_flush_combined_mixed_verb_order`
-also fetch the deleted row first. `keyed_delete_observed_in_transaction`
-(m-unit-work-006) and `one_flush_combined_mixed_verb_order` (m-unit-work-009,
-already reasoned-skipped for its update leg) therefore add a leading observing
-fetch their mirrored corpus case does not author — the SAME conflict class
-`api_suite.CASE_SKIP_REASONS` already carries for the update-only cases,
-extended to cover the delete leg; see `api_suite.py`'s own reasons.
-
-A confirmation-pass residual found the SAME gap in
-`aborted_delete_leaves_the_row_standing` (m-unit-work-012): its own corpus case
-authors a keyed DELETE that is force-flushed for real, THEN rolled back
-(`rollback: true`, `roundTrips: 1` for the write step) — not merely buffered
-and discarded unflushed. Reproducing that choreography honestly means forcing
-the flush before the deliberate abort (mirroring `callback_value_withheld_on_
-abort`'s own force-flush-then-abort pattern), and a force-flushed versioned
-delete is now gated exactly like every other keyed delete — so this story also
-fetches the row first, and also joins the guide-only set. The one REMAINING
-`tx.delete` story, `create_then_delete_a_parent_child_pair`, targets a
-non-versioned entity (Order/OrderItem) never re-observed anywhere in that
-transaction's own choreography — no observation is required, so it is
-unaffected.
+``Snapshot[T]``. The `m-opt-lock` observation-gating rule (COR-3 Phase 8
+increment 3 for UPDATE, extended to DELETE by a Phase-8 mid-phase review
+remediation and a confirmation-pass residual — `python.md` §5 "a keyed update
+or delete of a versioned row this unit of work never observed raises in
+either mode"): a versioned keyed update/delete REQUIRES the edited copy's /
+deleted node's provenance to derive from a `tx.find` this SAME transaction ran
+(the framework never issues an implicit resolving read on a keyed write), so
+every story writing a versioned row fetches it first —
+`keyed_update_observed_in_transaction`, `keyed_delete_observed_in_transaction`,
+`one_flush_combined_mixed_verb_order` (both legs), and
+`aborted_delete_leaves_the_row_standing` (whose force-flushed delete, forced
+onto the wire before the deliberate abort exactly like
+`callback_value_withheld_on_abort`'s own force-flush-then-abort pattern, is
+gated exactly like any other keyed delete) each add that observing fetch. The
+core amendment bundle (COR-3 Phase 8) closed the matching corpus gap:
+`m-unit-work-005/006/009/012` now author the SAME observing find(s) before
+their versioned keyed write(s), so every story here grades byte-exact against
+its own mirrored case (`test_write_no_drift.py`) as the plain graded idiom —
+no story is guide-only. The one `tx.delete` story that never observes,
+`create_then_delete_a_parent_child_pair`, targets a non-versioned entity
+(Order/OrderItem) never re-observed anywhere in that transaction's own
+choreography — no observation is required there.
 """
 
 from __future__ import annotations

@@ -40,8 +40,8 @@ second, over ``entity``'s own scalar attributes and value objects.
 SPARSE row (``update`` / ``delete`` / ``terminate`` / ``updateUntil`` /
 ``terminateUntil`` -- an ABSENT top-level member is simply untouched, never a
 violation; the corpus's own sparse keyed-update goldens, e.g.
-``m-unit-work-005``'s ``{id, balance, version}`` omitting the required
-``owner``, are exactly this shape). A value-object document, once PRESENT in
+``m-unit-work-005``'s ``{id, balance}`` omitting the required ``owner``, are
+exactly this shape). A value-object document, once PRESENT in
 the row at any mutation kind, is always validated as a whole (`m-value-object`
 "one atomic document bind" -- there is no sparse write below the document
 boundary): every declared member the document's OWN composite requires must be

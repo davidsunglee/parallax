@@ -21,12 +21,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
 from conftest import case_document, compare_binds
-from parallax.conformance import api_suite, case_format, models
+from parallax.conformance import case_format, models
 from parallax.conformance.read_models import Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.core.db_port import Bind, DbPort, Row
@@ -40,17 +40,39 @@ _MODELS = models.load_models()
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 _STORIES = {story.case_id: story for story in WRITE_STORIES}
 
+# The Account fixture rows every story's own finds may need — id 1 (Ada) and
+# id 3 (Grace), the SAME two rows the corpus's own m-unit-work Account
+# fixtures seed (`core/compatibility/fixtures/account.yaml`). A story reading
+# BOTH in one transaction (e.g. `one_flush_combined_mixed_verb_order`) needs
+# both seeded at once.
+_SEED_ROWS: Final[list[Row]] = [
+    {"id": 1, "owner": "Ada", "balance": 100.00, "version": 1},
+    {"id": 3, "owner": "Grace", "balance": 10.00, "version": 1},
+]
+
 
 class _RecordingPort:
-    """An in-memory ``m-db-port`` recording every call in order (no Docker)."""
+    """An in-memory ``m-db-port`` recording every call in order (no Docker).
+
+    ``rows`` seeds a small keyed row set; each ``execute`` filters it by the
+    query's OWN bind values (a pk-bind-aware selection) so a story finding
+    id 1 vs id 3 — or both, in the SAME transaction — gets the matching
+    seeded row, not a fixed stand-in (the graded binds/versions depend on
+    it: m-unit-work-006/009/012's own delete gates bind the OBSERVED
+    version, which must come from the RIGHT seeded row). A query whose binds
+    match no seeded row (an insert-then-find on a fresh id, or a non-id
+    predicate) falls back to the FIRST seeded row — a type-correct stand-in
+    whose own content the calling story never checks.
+    """
 
     def __init__(self, *, rows: Sequence[Row] = ()) -> None:
         self.ops: list[tuple[object, ...]] = []
-        self.rows = list(rows)
+        self._rows = [dict(row) for row in rows]
 
     def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
         self.ops.append(("read", sql, tuple(binds)))
-        return [dict(row) for row in self.rows]
+        matched = [row for row in self._rows if row.get("id") in binds]
+        return [dict(row) for row in (matched or self._rows[:1])]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.ops.append(("write", sql, tuple(binds)))
@@ -121,31 +143,30 @@ def _db(port: _RecordingPort, story: WriteStory) -> Database:
     return Database.connect(port, _MODELS[story.model])
 
 
-# The no-drift guard grades only EXERCISED stories (`m-api-conformance.md`):
-# `GUIDE_ONLY_WRITE_STORY_IDS` (m-unit-work-005/006/009, plus the
-# confirmation-pass residual m-unit-work-012) add a leading observing read
-# their mirrored corpus case does not author (the m-opt-lock prior-observation
-# rule postdates those cases), so their wire shape cannot reproduce the case's
-# own golden DML byte-exact — they are reasoned-skipped in the coverage
-# partition instead (`api_suite.CASE_SKIP_REASONS`) and stay out of this
-# guard's parametrize sets. `test_story_run.py` still executes them for real,
-# proving the (corrected) idiom itself works.
-_COMMIT_IDS = sorted(
-    s.case_id
-    for s in WRITE_STORIES
-    if s.kind == "commit" and s.case_id not in api_suite.GUIDE_ONLY_WRITE_STORY_IDS
-)
-_ABORT_IDS = sorted(
-    s.case_id
-    for s in WRITE_STORIES
-    if s.kind == "abort" and s.case_id not in api_suite.GUIDE_ONLY_WRITE_STORY_IDS
-)
+# The no-drift guard grades every EXERCISED story (`m-api-conformance.md`) —
+# the core amendment bundle (COR-3 Phase 8) closed the corpus gap that once
+# kept m-unit-work-005/006/009/012 guide-only, so every write story here is
+# the plain graded idiom now.
+_COMMIT_IDS = sorted(s.case_id for s in WRITE_STORIES if s.kind == "commit")
+_ABORT_IDS = sorted(s.case_id for s in WRITE_STORIES if s.kind == "abort")
+
+# Abort stories split into two wire shapes. A PLAIN discard's buffered write
+# never reaches the wire at all (m-unit-work-002/011): the guard asserts
+# `not port.wrote` plus the reads-only goldens. `m-unit-work-012`'s mirrored
+# story instead FORCE-FLUSHES its versioned delete for real (a second find
+# inside the doomed transaction, mirroring `callback_value_withheld_on_
+# abort`'s own force-flush-then-abort pattern) before the deliberate abort
+# rolls it back — the delete DOES reach the wire, so it needs the DIFFERENT
+# graded treatment `test_force_flushed_abort_story_reaches_the_wire_then_
+# rolls_back` below gives it, named here rather than special-cased inline.
+_FORCE_FLUSHED_ABORT_IDS: Final[frozenset[str]] = frozenset({"m-unit-work-012"})
+_PLAIN_DISCARD_ABORT_IDS = sorted(set(_ABORT_IDS) - _FORCE_FLUSHED_ABORT_IDS)
 
 
 @pytest.mark.parametrize("case_id", _COMMIT_IDS, ids=_COMMIT_IDS)
 def test_commit_story_emits_the_golden_dml(case_id: str) -> None:
     story = _STORIES[case_id]
-    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = _RecordingPort(rows=_SEED_ROWS)
     story.run(_db(port, story))
     _assert_statements(port, _scenario_goldens(case_id), case_id)
     assert port.ops[0] == ("begin",)
@@ -153,75 +174,37 @@ def test_commit_story_emits_the_golden_dml(case_id: str) -> None:
     assert ("rollback",) not in port.ops
 
 
-@pytest.mark.parametrize("case_id", _ABORT_IDS, ids=_ABORT_IDS)
+@pytest.mark.parametrize("case_id", _PLAIN_DISCARD_ABORT_IDS, ids=_PLAIN_DISCARD_ABORT_IDS)
 def test_abort_story_discards_the_buffer_and_keeps_the_reads_golden(case_id: str) -> None:
     # The rolled-back step's DML round trip is graded by the conformance run
     # lane (which executes then aborts); through the developer surface the
     # buffered write is discarded before it reaches the wire, so the guard here
     # is the abort CONTRACT: nothing written, the abort rolled back, reads golden.
     story = _STORIES[case_id]
-    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = _RecordingPort(rows=_SEED_ROWS)
     story.run(_db(port, story))
     assert not port.wrote, (case_id, port.ops)
     _assert_statements(port, _scenario_goldens(case_id, skip_rollback=True), case_id)
     assert ("rollback",) in port.ops
 
 
-_GUIDE_ONLY_COMMIT_IDS = sorted(
-    case_id
-    for case_id in api_suite.GUIDE_ONLY_WRITE_STORY_IDS
-    if _STORIES[case_id].kind == "commit"
+@pytest.mark.parametrize(
+    "case_id", sorted(_FORCE_FLUSHED_ABORT_IDS), ids=sorted(_FORCE_FLUSHED_ABORT_IDS)
 )
-
-
-@pytest.mark.parametrize("case_id", _GUIDE_ONLY_COMMIT_IDS, ids=_GUIDE_ONLY_COMMIT_IDS)
-def test_guide_only_story_runs_docker_free_without_grading_against_the_corpus_golden(
-    case_id: str,
-) -> None:
-    """`GUIDE_ONLY_WRITE_STORY_IDS`'s COMMIT-kind members (m-unit-work-005/006/
-    009) add a leading observing read their mirrored corpus case does not
-    author — the no-drift guard grades only EXERCISED stories (`_COMMIT_IDS`
-    above excludes these three), so this asserts only that the corrected idiom
-    runs cleanly through the fake port, never a golden-DML comparison. This is
-    deliberately still this module's job: `test_write_no_drift.py` is "the
-    story bodies' only DB-free driver" (module docstring), and these three
-    guide-only stories are still real, executable Usage-Guide examples that
-    must not silently break. The registry's fourth (ABORT-kind) member,
-    `m-unit-work-012`, gets its own sibling test below — its force-flushed
-    delete means a plain "no rollback" assertion would not hold.
+def test_force_flushed_abort_story_reaches_the_wire_then_rolls_back(case_id: str) -> None:
+    """`m-unit-work-012`'s mirrored story force-flushes its versioned delete for
+    real before the deliberate abort rolls it back, so — unlike a plain
+    discard — the delete DOES reach the wire. This compares the FULL
+    statement sequence (`skip_rollback=False`: the amended 4-step corpus
+    goldens — observe select, delete, forced-flush select, post-abort select
+    — match the story's own wire order exactly) plus the structural abort
+    contract (the rollback fired, something was written, the trailing
+    post-abort find still committed).
     """
     story = _STORIES[case_id]
-    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = _RecordingPort(rows=_SEED_ROWS)
     story.run(_db(port, story))
-    assert port.ops[0] == ("begin",)
-    assert port.ops[-1] == ("commit",)
-    assert ("rollback",) not in port.ops
-
-
-_GUIDE_ONLY_ABORT_IDS = sorted(
-    case_id for case_id in api_suite.GUIDE_ONLY_WRITE_STORY_IDS if _STORIES[case_id].kind == "abort"
-)
-
-
-@pytest.mark.parametrize("case_id", _GUIDE_ONLY_ABORT_IDS, ids=_GUIDE_ONLY_ABORT_IDS)
-def test_guide_only_abort_story_runs_docker_free_without_grading_against_the_corpus_golden(
-    case_id: str,
-) -> None:
-    """`m-unit-work-012` (the confirmation-pass residual joining
-    `GUIDE_ONLY_WRITE_STORY_IDS`) force-flushes its versioned delete for real
-    — mirroring the corpus's own rolled-back-DELETE choreography — before the
-    deliberate abort rolls it back, which now requires a leading observing
-    read the mirrored corpus case does not author (the SAME conflict class
-    the three COMMIT-kind guide-only stories above carry). Unlike a plain
-    abort story (`test_abort_story_discards_the_buffer_and_keeps_the_reads_
-    golden`), its delete DOES reach the wire before the rollback erases it, so
-    this asserts only that the corrected idiom runs cleanly end to end (a
-    rollback, then a fresh committed find), never a golden-DML comparison.
-    """
-    story = _STORIES[case_id]
-    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
-    story.run(_db(port, story))
-    assert port.ops[0] == ("begin",)
+    _assert_statements(port, _scenario_goldens(case_id, skip_rollback=False), case_id)
     assert ("rollback",) in port.ops
     assert port.wrote
     assert port.ops[-1] == ("commit",)
@@ -233,7 +216,7 @@ def test_boundary_story_withholds_the_callback_value() -> None:
     # closure throws. The abort discards even the force-flushed write (the
     # port rolls back) and `transact` raises instead of returning the value.
     story = _STORIES["m-unit-work-004"]
-    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = _RecordingPort(rows=_SEED_ROWS)
     with pytest.raises(RuntimeError, match="abort"):
         story.run(_db(port, story))
     kinds = [op[0] for op in port.ops]

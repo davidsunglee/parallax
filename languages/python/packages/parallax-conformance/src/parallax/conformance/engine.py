@@ -26,7 +26,7 @@ from parallax.core import inheritance, navigate, opt_lock
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.descriptor import DescriptorError, Entity, Metamodel, column_order
+from parallax.core.descriptor import Attribute, DescriptorError, Entity, Metamodel, column_order
 from parallax.core.descriptor import deserialize as deserialize_metamodel
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
@@ -446,17 +446,20 @@ def _resolve_graph_pointer(
 # The lowering failures the write lanes convert to a neutral :class:`EngineError`,
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer
 # exception type across the conformance seam. `opt_lock.UnobservedVersionError` /
-# `.HistoricalObservationError` are m-opt-lock's own forward-error posture (COR-3
-# Phase 8 increment 3); `temporal_state.AmbiguousObservationError` is this
-# increment's own (a shape no reachable case exercises). A deferred witness (the
-# materializing / auto-retry-boundary forms, increments 5/6) that reaches this
-# engine-local write path without a recorded observation must degrade to a
-# reasoned `EngineError`, never an uncaught crash of the sweep.
+# `.HistoricalObservationError` / `.CallerAuthoredVersionError` are m-opt-lock's own
+# forward-error posture (COR-3 Phase 8 increment 3; the core amendment bundle adds
+# the last one once the M4-era literal-version passthrough retires);
+# `temporal_state.AmbiguousObservationError` is this increment's own (a shape no
+# reachable case exercises). A deferred witness (the materializing / auto-retry-
+# boundary forms, increments 5/6) that reaches this engine-local write path without
+# a recorded observation must degrade to a reasoned `EngineError`, never an
+# uncaught crash of the sweep.
 _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     instructions.WriteInstructionError,
     WriteLoweringError,
     opt_lock.UnobservedVersionError,
     opt_lock.HistoricalObservationError,
+    opt_lock.CallerAuthoredVersionError,
     temporal_state.AmbiguousObservationError,
     OperationError,
     SqlGenError,
@@ -507,33 +510,14 @@ def _write_sequence_entries(case: case_format.Case) -> list[Mapping[str, object]
     return [cast("Mapping[str, object]", entry) for entry in cast("list[object]", entries)]
 
 
-# m-bitemp-write-008 is the corpus's SOLE writeSequence-shape case whose golden
-# SQL requires OPTIMISTIC concurrency (the gated close `and from_z = ? and
-# in_z = ?`, m-opt-lock composed with m-bitemp-write) without a
-# `when.uow.concurrency` declaration to name it — `when.uow` is schema-legal on
-# writeSequence shape (`compatibility-case.schema.json`'s `writeSequence`
-# `propertyNames` admits `uow` alongside `writeSequence`), and every OTHER
-# writeSequence case in the corpus that needs a non-default mode simply omits
-# `when.uow` because none of them DO need one (locking is the `m-unit-work`
-# default and matches their goldens) — this is the first, and only, exception.
-# The case's own title ("update-until-optimistic-gated"), docstring, and
-# `m-opt-lock` tag are unambiguous about the intended mode; `core/compatibility`
-# is out of scope for a Python-target implementer to edit (COR-3 Phase 8
-# increment 4's own binding constraint), so this is a narrow, transparently
-# documented, engine-local accommodation for a missing corpus metadata field —
-# never a reinterpretation of the golden SQL itself, which this override makes
-# reachable exactly as authored. See the increment 4 implementation report for
-# the corpus-fix recommendation this is standing in for.
-_CONCURRENCY_OVERRIDES: Final[frozenset[str]] = frozenset({"m-bitemp-write-008"})
-
-
 def _concurrency(case: case_format.Case) -> Concurrency:
     """The case's declared unit-of-work participation mode (`when.uow.concurrency`;
     `m-opt-lock`), defaulting to `locking` when the case declares none — the SAME
-    default `m-unit-work.TransactionSettings` resolves. See
-    :data:`_CONCURRENCY_OVERRIDES` for the one documented exception."""
-    if case.case_id in _CONCURRENCY_OVERRIDES:
-        return "optimistic"
+    default `m-unit-work.TransactionSettings` resolves. Every writeSequence case
+    needing a non-default mode (m-bitemp-write-008 included, since the core
+    amendment bundle) self-describes via `when.uow.concurrency` — `when.uow` is
+    schema-legal on writeSequence shape (`compatibility-case.schema.json`'s
+    writeSequence `propertyNames` admits `uow` alongside `writeSequence`)."""
     when = case.document.get("when")
     if isinstance(when, Mapping):
         uow = cast("Mapping[str, object]", when).get("uow")
@@ -549,10 +533,9 @@ def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Ob
     control keys (`m-opt-lock`; ADR 0013), returning the DURABLE row (never
     carrying them — the write-instruction schema forbids both,
     `instructions.deserialize` enforces it) and the :class:`Observation` they
-    describe (``None`` when the row carries neither — an unobserved / non-
-    versioned write, or the M4-era plain-column-data shape some existing
-    corpus witnesses still carry via a literal, non-reserved ``version`` key,
-    which this function leaves untouched)."""
+    describe (``None`` when the row carries neither — an unobserved write, or
+    one whose observation instead comes from this SAME scenario's own prior
+    find step, consulted separately via :data:`ScenarioObservations`)."""
     clean = dict(row)
     version = clean.pop("observedVersion", None)
     in_z = clean.pop("observedInZ", None)
@@ -562,6 +545,94 @@ def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Ob
         version=cast("int", version) if version is not None else None,
         in_z=cast("str", in_z) if in_z is not None else None,
     )
+
+
+# A per-scenario object-key -> Observation map, populated as a scenario's own
+# find steps execute and consulted by a later keyed write of the SAME object
+# (m-opt-lock; ADR 0013) — the seam a REAL `Transaction.find` builds on the
+# production path (`parallax.snapshot.handle._record_observations` ->
+# `uow.observe`), rebuilt here since the engine's scenario lane never opens a
+# real `UnitOfWork`. Scoped to ONE scenario/writeSequence case (never shared
+# across cases): a writeSequence carries no find steps at all, so its own map
+# stays permanently empty, harmlessly. Reladomo prior art (semantics, not
+# idioms): the transaction records the version at read time ("the shadow
+# value read earlier") and threads it into the UPDATE bind
+# (`docs/research/reladomo/09-transactions-locking.md:55-59`).
+ScenarioObservations = dict[ObjectKey, Observation]
+
+
+def _versioned_non_temporal_version_attribute(
+    meta: Metamodel, entity_name: str
+) -> Attribute | None:
+    """``entity_name``'s own optimistic-lock version ATTRIBUTE, when it is a
+    VERSIONED, NON-TEMPORAL entity (`m-opt-lock`) — ``None`` otherwise (a
+    temporal entity's observation flows through :class:`TemporalShadow`
+    instead, never this map; `_build_temporal_instruction`). Resolved through
+    the FAMILY-declaring entity (`inheritance.declaring_entity`): the version
+    column is family-wide metadata declared only on the root
+    (`m-opt-lock` "The version column")."""
+    declaring = inheritance.declaring_entity(meta, meta.entity(entity_name))
+    if declaring.is_temporal:
+        return None
+    return next((attr for attr in declaring.attributes if attr.optimistic_locking), None)
+
+
+def _row_object_key(
+    meta: Metamodel, entity_name: str, row: Mapping[str, object], *, by_column: bool
+) -> ObjectKey | None:
+    """The SAME identity :func:`~parallax.core.unit_work.object_key` computes for
+    a keyed write, derived from a raw FOUND row instead (a scenario find
+    step's own ``expectRows`` entry, or a real ``port.execute`` row) — so a
+    later write's own key lookup against :data:`ScenarioObservations` matches.
+
+    ``by_column`` selects the row's own field-naming convention: the compile
+    lane's authored ``expectRows`` are ATTRIBUTE-named (`m-case-format`'s flat
+    attribute-named row vocabulary); the run lane's real ``port.execute`` rows
+    are COLUMN-named (the raw driver row — the SAME convention
+    `parallax.snapshot.handle._record_observations` reads via
+    ``node.fields[attr.column]``). ``None`` when the (family-effective)
+    primary key is absent from ``row`` — never reachable for a well-formed
+    corpus find, but this seam takes no data on faith."""
+    entity = meta.entity(entity_name)
+    pk_attrs = inheritance.family_primary_key(meta, entity)
+    if not pk_attrs:  # pragma: no cover - defends a malformed model
+        return None
+    pairs: list[tuple[str, object]] = []
+    for attr in pk_attrs:
+        field = attr.column if by_column else attr.name
+        if field not in row:  # pragma: no cover - defends a malformed row/projection
+            return None
+        pairs.append((attr.name, row[field]))
+    return (entity_name, tuple(pairs))
+
+
+def _record_find_observations(
+    observations: ScenarioObservations,
+    meta: Metamodel,
+    entity_name: str,
+    rows: Sequence[Mapping[str, object]],
+    *,
+    by_column: bool,
+) -> None:
+    """Record this scenario's own OBSERVED version for every row a find step
+    returns, when its target is a VERSIONED NON-TEMPORAL entity — the new
+    engine seam (COR-3 Phase 8 core amendment bundle) a subsequent keyed
+    write of the SAME object consults when its own row carries no
+    ``observedVersion`` (m-unit-work-002/005/006/009/012's versioned Account
+    scenarios: the corpus amendment prepends an observing find before each
+    keyed write that needs one). A no-op for a temporal or unversioned target
+    (:func:`_versioned_non_temporal_version_attribute` returns ``None``) and
+    for any row missing its primary key or version field — never reachable
+    for a well-formed corpus find, but this seam takes no data on faith."""
+    version_attr = _versioned_non_temporal_version_attribute(meta, entity_name)
+    if version_attr is None:
+        return
+    version_field = version_attr.column if by_column else version_attr.name
+    for row in rows:
+        key = _row_object_key(meta, entity_name, row, by_column=by_column)
+        if key is None or version_field not in row:
+            continue
+        observations[key] = Observation(version=cast("int", row[version_field]))
 
 
 def _entry_instant(entry: Mapping[str, object]) -> str:
@@ -816,6 +887,7 @@ def _build_instructions(
     shadow: TemporalShadow,
     tx_instant: str,
     unit_inserted: set[ObjectKey],
+    scenario_observations: ScenarioObservations,
 ) -> list[tuple[WriteInstruction, ObjectKey | None, Observation | None]]:
     """One case write entry -> one or more canonical keyed write instructions.
 
@@ -841,7 +913,12 @@ def _build_instructions(
     stripping its own reserved observation control keys into an
     :class:`Observation`, keyed by that row's OWN object key — `m-opt-lock`;
     ADR 0013) or stay ONE multi-row instruction (reaching `lower_write`'s own
-    multi-row refusal, the honest increment-5 collapse deferral).
+    multi-row refusal, the honest increment-5 collapse deferral). A row whose
+    own control keys yield NO observation falls back to
+    ``scenario_observations`` — this SAME scenario's own prior find step(s)
+    (:func:`_record_find_observations`), keyed consistently with
+    :func:`~parallax.core.unit_work.object_key` — mirroring how a temporal
+    entry falls back to :meth:`TemporalShadow.resolve` above.
     :func:`_check_statement_count_consistency` then verifies the entry's own
     authored ``statements`` count agrees, independently of that decision.
     """
@@ -868,7 +945,11 @@ def _build_instructions(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
         instructions.validate_instruction(instruction, meta)
-        key = object_key(instruction, meta) if observation is not None else None
+        key = object_key(instruction, meta)
+        if observation is None and key is not None:
+            observation = scenario_observations.get(key)
+        if observation is None:
+            key = None
         out.append((instruction, key, observation))
     return out
 
@@ -878,6 +959,7 @@ def _resolve_entries(
     meta: Metamodel,
     shadow: TemporalShadow,
     tx_instant: str,
+    scenario_observations: ScenarioObservations,
 ) -> list[tuple[WriteInstruction, ObjectKey | None, Observation | None]]:
     """Every entry in one choreography unit's buffer -> its resolved
     instructions (advancing ``shadow`` exactly once per temporal instruction) —
@@ -886,11 +968,18 @@ def _resolve_entries(
     consume, so a temporal write's observation is never resolved (or the
     tracker advanced) twice for one unit. ``unit_inserted`` tracks this SAME
     buffer's own same-transaction coalescing candidates (see
-    :func:`_build_temporal_instruction`) across the whole unit."""
+    :func:`_build_temporal_instruction`) across the whole unit.
+    ``scenario_observations`` is the WHOLE scenario's own find-derived map
+    (:data:`ScenarioObservations`) — read-only here, populated by the find
+    steps that ran before this unit."""
     resolved: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
     unit_inserted: set[ObjectKey] = set()
     for entry in entries:
-        resolved.extend(_build_instructions(entry, meta, shadow, tx_instant, unit_inserted))
+        resolved.extend(
+            _build_instructions(
+                entry, meta, shadow, tx_instant, unit_inserted, scenario_observations
+            )
+        )
     return resolved
 
 
@@ -926,13 +1015,14 @@ def _lower_writes(
     concurrency: Concurrency,
     shadow: TemporalShadow,
     tx_instant: str,
+    scenario_observations: ScenarioObservations,
 ) -> tuple[Statement, ...]:
     """Resolve and PURE-lower one write buffer — the COMPILE lane's own
     lowering, and the RUN lane's emissions/round-trips oracle (`_execute_write_unit`
     resolves its own entries via :func:`_resolve_entries` and reuses
     :func:`_lower_resolved` directly, rather than calling this a second time, so
     the shadow tracker advances exactly once per entry)."""
-    resolved = _resolve_entries(entries, meta, shadow, tx_instant)
+    resolved = _resolve_entries(entries, meta, shadow, tx_instant, scenario_observations)
     return _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
 
 
@@ -963,23 +1053,40 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
 
     One :class:`TemporalShadow` spans the whole scenario (COR-3 Phase 8
     increment 4): a later write step's temporal close/chain observes an
-    earlier step's own opened milestone(s), never the database.
+    earlier step's own opened milestone(s), never the database. Likewise, one
+    :data:`ScenarioObservations` map spans the whole scenario (COR-3 Phase 8
+    core amendment bundle): a find step's own authored ``expectRows`` records
+    each versioned non-temporal row's observed version, consulted by a later
+    keyed write of the SAME object.
     """
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
+    scenario_observations: ScenarioObservations = {}
     lowered: list[_LoweredStep] = []
     try:
         for index, step in enumerate(_scenario_steps(case)):
             if "write" in step:
                 entries = _write_entries(step["write"])
                 tx_instant = _entry_instant(entries[0])
-                statements = _lower_writes(entries, meta, dialect, concurrency, shadow, tx_instant)
+                statements = _lower_writes(
+                    entries, meta, dialect, concurrency, shadow, tx_instant, scenario_observations
+                )
                 rollback = step.get("rollback") is True
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
             else:
                 statement = _lower_find(step, meta, dialect, concurrency)
+                target = cast("str", step["targetEntity"])
+                expect_rows = step.get("expectRows")
+                if isinstance(expect_rows, list):
+                    _record_find_observations(
+                        scenario_observations,
+                        meta,
+                        target,
+                        cast("list[Mapping[str, object]]", expect_rows),
+                        by_column=False,
+                    )
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -992,16 +1099,29 @@ def _write_sequence_lowered(
     """Lower each writeSequence entry independently to ``(pointer, statements)`` —
     pure. One :class:`TemporalShadow` spans the whole sequence (COR-3 Phase 8
     increment 4): a later entry's temporal close/chain observes an earlier
-    entry's own opened milestone(s), never the database."""
+    entry's own opened milestone(s), never the database. A writeSequence
+    carries no find steps at all (`m-case-format`), so its own
+    :data:`ScenarioObservations` map stays permanently empty — every keyed
+    write's observation still comes from its row's own ``observedVersion`` /
+    ``observedInZ`` control keys."""
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
+    scenario_observations: ScenarioObservations = {}
     try:
         return [
             (
                 f"/writeSequence/{index}",
-                _lower_writes([entry], meta, dialect, concurrency, shadow, _entry_instant(entry)),
+                _lower_writes(
+                    [entry],
+                    meta,
+                    dialect,
+                    concurrency,
+                    shadow,
+                    _entry_instant(entry),
+                    scenario_observations,
+                ),
             )
             for index, entry in enumerate(_write_sequence_entries(case))
         ]
@@ -1234,6 +1354,7 @@ def run_scenario_case(
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
+    scenario_observations: ScenarioObservations = {}
     lowered: list[_LoweredStep] = []
     try:
         _seed_shadow_from_fixtures(case, meta, shadow)
@@ -1241,7 +1362,9 @@ def run_scenario_case(
             if "write" in step:
                 entries = _write_entries(step["write"])
                 tx_instant = _entry_instant(entries[0])
-                resolved = _resolve_entries(entries, meta, shadow, tx_instant)
+                resolved = _resolve_entries(
+                    entries, meta, shadow, tx_instant, scenario_observations
+                )
                 statements = _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
                 rollback = step.get("rollback") is True
                 _execute_write_unit(
@@ -1250,7 +1373,9 @@ def run_scenario_case(
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
             else:
                 statement = _lower_find(step, meta, dialect, concurrency)
-                _execute_reads(port, dialect, (statement,))
+                rows = _execute_reads(port, dialect, (statement,))
+                target = cast("str", step["targetEntity"])
+                _record_find_observations(scenario_observations, meta, target, rows, by_column=True)
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -1274,12 +1399,13 @@ def run_write_sequence_case(
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
+    scenario_observations: ScenarioObservations = {}
     lowered: list[tuple[str, tuple[Statement, ...]]] = []
     try:
         _seed_shadow_from_fixtures(case, meta, shadow)
         for index, entry in enumerate(_write_sequence_entries(case)):
             tx_instant = _entry_instant(entry)
-            resolved = _resolve_entries([entry], meta, shadow, tx_instant)
+            resolved = _resolve_entries([entry], meta, shadow, tx_instant, scenario_observations)
             statements = _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
             _execute_write_unit(
                 port, meta, dialect, concurrency, resolved, tx_instant, rollback=False
@@ -1362,9 +1488,17 @@ def _table_column_order(meta: Metamodel, entity: Entity, table: str) -> list[str
     return [*pk_columns, *tag_columns, *rest_columns, *document_columns]
 
 
-def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statement]) -> None:
+def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statement]) -> list[Row]:
+    """Execute every statement and return the LAST one's rows — a scenario find
+    step is always single-statement (:func:`_lower_find`), so ``statements`` is
+    always a one-tuple in practice; the raw, COLUMN-keyed rows are the run
+    lane's own source for :func:`_record_find_observations` (mirroring the
+    production ``Transaction.find`` -> ``uow.observe`` seam, `parallax.
+    snapshot.handle._record_observations`)."""
+    rows: list[Row] = []
     for statement in statements:
-        port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
+        rows = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
+    return rows
 
 
 # --------------------------------------------------------------------------- #

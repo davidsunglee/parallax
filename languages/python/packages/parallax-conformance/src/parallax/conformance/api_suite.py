@@ -29,7 +29,6 @@ from parallax.conformance.stories import WRITE_STORIES, story_snippet
 __all__ = [
     "CASE_SKIP_REASONS",
     "EXAMPLES",
-    "GUIDE_ONLY_WRITE_STORY_IDS",
     "SKIP_REASONS",
     "Example",
     "Partition",
@@ -45,22 +44,11 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class Example:
-    """A documented idiomatic public-API example exercising one corpus case.
-
-    ``guide_only`` marks an example whose STORY demonstrates the correct
-    developer idiom and still renders into the Usage Guide, but does NOT count
-    toward the coverage partition's *exercised* set — used when the mirrored
-    corpus case predates a rule the idiomatic surface now correctly requires
-    (the m-unit-work-004 precedent: a hand story survives as a guide-only
-    example when its case can no longer be reproduced round-trip-exact). Such
-    a case is instead covered by its own :data:`CASE_SKIP_REASONS` entry, so
-    the partition classifies it honestly as reasoned-skip.
-    """
+    """A documented idiomatic public-API example exercising one corpus case."""
 
     case_id: str
     title: str
     snippet: str
-    guide_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,24 +72,6 @@ class Partition:
     def ok(self) -> bool:
         return not self.errors
 
-
-# Write stories whose corpus case predates the `m-opt-lock` prior-observation
-# rule (COR-3 Phase 8 increment 3's update gate; the Phase-8 mid-phase review
-# remediation's matching delete gate; a confirmation-pass residual finding
-# extending the delete gate to a FORCE-FLUSHED-then-rolled-back delete,
-# `m-unit-work-012`): the CORRECT idiomatic story adds a transaction-scoped
-# observing read its mirrored case's own scenario never authors, so the story
-# can no longer reproduce that case's round-trip count exactly
-# (`m-api-conformance.md` "exercised cases match corpus round-trip counts").
-# Each stays a registered `Example` (`guide_only=True` — rendered in the Usage
-# Guide, still executed for real by `test_story_run.py`, proving the idiom
-# itself works) but is excluded from the coverage partition's exercised set;
-# see the matching `CASE_SKIP_REASONS` entries below for the reasoned-skip
-# wording. `test_write_no_drift.py`'s fake-port no-drift guard grades only
-# exercised stories, so these four are excluded there too.
-GUIDE_ONLY_WRITE_STORY_IDS: Final[frozenset[str]] = frozenset(
-    {"m-unit-work-005", "m-unit-work-006", "m-unit-work-009", "m-unit-work-012"}
-)
 
 # The registered idiomatic examples. Each mirrors a corpus case and is proven by
 # the operation no-drift guard (its statement serializes to the case's operation).
@@ -127,15 +97,7 @@ EXAMPLES: Final[list[Example]] = [
     # `parallax.snapshot.connect` + `parallax-postgres` (test_story_run), and the
     # fake-port write no-drift guard drives the same function against the golden
     # DML. One source, three consumers: the guide cannot drift from execution.
-    *(
-        Example(
-            story.case_id,
-            story.title,
-            story_snippet(story),
-            guide_only=story.case_id in GUIDE_ONLY_WRITE_STORY_IDS,
-        )
-        for story in WRITE_STORIES
-    ),
+    *(Example(story.case_id, story.title, story_snippet(story)) for story in WRITE_STORIES),
     # Rejected-case build-time proofs (m-op-algebra/m-navigate/m-value-object):
     # the idiomatic surface refuses the SAME invalid input the corpus's own
     # rejected lane grades, through the SAME model-aware validator
@@ -287,73 +249,6 @@ _COALESCING_WITNESS_REASON: Final[str] = (
     "a same-transaction coalescing witness: it buffers an insert+update / insert+delete "
     "pair whose one-statement / zero-statement collapse is m-batch-write behavior "
     "(COR-3 Phase 8); the planner folding is already unit-pinned (test_write_lowering)"
-)
-
-# Phase-8 mid-phase review remediation (finding D; the delete half discovered
-# by the SAME remediation, finding A) plus a confirmation-pass residual
-# (finding 1): `m-opt-lock`'s prior-observation rule now applies uniformly to
-# every keyed update AND delete of a versioned row (`python.md` §5) — but
-# these four corpus cases predate the rule, authoring a keyed update/delete
-# with no preceding observing read at all (the fourth, `m-unit-work-012`,
-# authors a ROLLED-BACK delete rather than a committed one: its story raises
-# the SAME `UnobservedVersionError` when the delete is force-flushed for
-# real, which the corrected idiom now does before the deliberate abort rolls
-# it back — the SAME conflict class, not a new one). The CORRECT idiomatic
-# story adds the observing read (the rule's own developer idiom), so it can no
-# longer reproduce its case's round-trip count exactly; each stays a
-# `guide_only` `Example` (`GUIDE_ONLY_WRITE_STORY_IDS`) — rendered in the
-# Usage Guide and still executed for real by `test_story_run.py` — while the
-# partition classifies it here as reasoned-skip. Resolution for all four is
-# a corpus amendment authoring the observing read (upstream candidate, out of
-# this Python-target's scope) or the D-23 instance-native rework (COR-3 Phase
-# 8 increment 7), which will observe through the typed verb's own return value
-# rather than a separate `tx.find`.
-_UNIT_WORK_UPDATE_OBSERVING_READ_CONFLICT_REASON: Final[str] = (
-    "the typed `update` verb requires a transaction-scoped observing read "
-    "(m-opt-lock's prior-observation rule, COR-3 Phase 8 increment 3) the "
-    "corpus case does not author — 2 authored round trips vs 3 actual; "
-    "resolution is a corpus amendment (upstream candidate, authoring the "
-    "observing read) or the D-23 instance-native rework (COR-3 Phase 8 "
-    "increment 7). The idiomatic story is the CORRECT developer idiom (the "
-    "rule predates the case) and is kept as a Usage-Guide example (the "
-    "m-unit-work-004 precedent: a hand story survives as a guide-only "
-    "example)"
-)
-_UNIT_WORK_DELETE_OBSERVING_READ_CONFLICT_REASON: Final[str] = (
-    "a Phase-8 mid-phase review remediation closed `_lower_delete`'s own gap "
-    "(an unobserved versioned delete silently stayed ungated instead of "
-    "raising, m-opt-lock): the typed `delete` verb now requires the SAME "
-    "transaction-scoped observing read the typed `update` verb already "
-    "required, which the corpus case does not author — 2 authored round "
-    "trips vs 3 actual; resolution is a corpus amendment (upstream "
-    "candidate) or the D-23 instance-native rework (COR-3 Phase 8 increment "
-    "7). The idiomatic story is the CORRECTED developer idiom and is kept "
-    "as a Usage-Guide example (the m-unit-work-004 precedent)"
-)
-_UNIT_WORK_MIXED_VERB_OBSERVING_READ_CONFLICT_REASON: Final[str] = (
-    "the typed `update` AND `delete` verbs both require a transaction-scoped "
-    "observing read (m-opt-lock's prior-observation rule — the delete half "
-    "closed by a Phase-8 mid-phase review remediation) the corpus case does "
-    "not author for either leg — 4 authored round trips vs 6 actual; "
-    "resolution is a corpus amendment (upstream candidate) or the D-23 "
-    "instance-native rework (COR-3 Phase 8 increment 7). The idiomatic story "
-    "is the corrected developer idiom and is kept as a Usage-Guide example "
-    "(the m-unit-work-004 precedent)"
-)
-_UNIT_WORK_ABORTED_DELETE_OBSERVING_READ_CONFLICT_REASON: Final[str] = (
-    "a confirmation-pass residual found the SAME `_lower_delete` gate "
-    "(m-opt-lock's prior-observation rule) also applies here: the corpus "
-    "case's own rolled-back delete is force-flushed for real before the "
-    "abort (`rollback: true`, `roundTrips: 1` for the write step), and a "
-    "force-flushed versioned delete now requires a transaction-scoped "
-    "observing read the corpus case does not author — 2 authored round trips "
-    "vs 4 actual (the observing read, the forced-flush delete, and the "
-    "forced-flush find's own select, plus the corpus's own dependent "
-    "post-abort find); resolution is a corpus amendment (upstream candidate) "
-    "or the D-23 instance-native rework (COR-3 Phase 8 increment 7). The "
-    "idiomatic story is the CORRECTED developer idiom (observe, force-flush "
-    "the delete for real, then let the deliberate failure roll it back) and "
-    "is kept as a Usage-Guide example (the m-unit-work-004 precedent)"
 )
 
 # --------------------------------------------------------------------------- #
@@ -841,13 +736,6 @@ _VO_SCENARIO_COMBO_REASON: Final[str] = (
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
-    # -- m-unit-work: guide-only stories whose corpus case predates the ------ #
-    # m-opt-lock prior-observation rule (Phase-8 mid-phase review remediation; #
-    # m-unit-work-012 added by a later confirmation-pass residual) ---------- #
-    "m-unit-work-005": _UNIT_WORK_UPDATE_OBSERVING_READ_CONFLICT_REASON,
-    "m-unit-work-006": _UNIT_WORK_DELETE_OBSERVING_READ_CONFLICT_REASON,
-    "m-unit-work-009": _UNIT_WORK_MIXED_VERB_OBSERVING_READ_CONFLICT_REASON,
-    "m-unit-work-012": _UNIT_WORK_ABORTED_DELETE_OBSERVING_READ_CONFLICT_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     # (COR-3 Phase 8 increment 3; instance-native examples are increment 7) -- #
     "m-opt-lock-002": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
@@ -1050,13 +938,8 @@ def build_skips(
     uncovered — the partition then flags it as covered by neither, forcing a
     human to classify the newly reachable case rather than letting a broad
     module bucket absorb it.
-
-    A ``guide_only`` example (:attr:`Example.guide_only`) never counts as
-    exercised here — its case still needs (and, by construction, always has)
-    its own reasoned skip, so the guide can keep displaying the correct idiom
-    without the partition silently crediting it as a proven round trip.
     """
-    exercised = {example.case_id for example in examples if not example.guide_only}
+    exercised = {example.case_id for example in examples}
     skips: list[Skip] = []
     for case in active:
         if case.case_id in exercised:
@@ -1079,11 +962,9 @@ def stale_skip_reasons(
     A module entry is stale when its module is absent from the active slice or
     every case it would cover is already exercised (or case-scoped); a
     case-scoped entry is stale when its case is inactive or exercised. Either
-    way the entry produces no skip and is dead weight that must be pruned. A
-    ``guide_only`` example (:attr:`Example.guide_only`) is never "exercised"
-    for this reckoning either, matching :func:`build_skips`.
+    way the entry produces no skip and is dead weight that must be pruned.
     """
-    exercised = {example.case_id for example in examples if not example.guide_only}
+    exercised = {example.case_id for example in examples}
     unexercised = [case for case in active if case.case_id not in exercised]
     covered = {case.primary_module for case in unexercised if case.case_id not in case_reasons}
     stale = [
@@ -1109,11 +990,9 @@ def compute_partition(
 
     Records an error for any stale ID (exercised/skipped outside the slice), any
     empty skip reason, any case both exercised and skipped, and any active case
-    covered by neither. A ``guide_only`` example (:attr:`Example.guide_only`)
-    never counts toward ``exercised_ids`` — its case is always ALSO covered by
-    a reasoned skip (:func:`build_skips`), so the partition classifies it there.
+    covered by neither.
     """
-    exercised_ids = frozenset(example.case_id for example in exercised if not example.guide_only)
+    exercised_ids = frozenset(example.case_id for example in exercised)
     skipped_ids = frozenset(skip.case_id for skip in skips)
     errors: list[str] = []
     for case_id in sorted(exercised_ids - active_ids):

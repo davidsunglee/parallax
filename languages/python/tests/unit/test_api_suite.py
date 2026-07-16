@@ -70,9 +70,9 @@ def test_partition_report_is_a_clean_full_partition() -> None:
     report = api_suite.partition_report()
     assert report.ok, report.errors
     # Phase 5 registers the first idiomatic examples (the op-algebra read spellings).
-    # `guide_only` examples (m-unit-work-005/006/009/012) are deliberately excluded —
-    # they are reasoned-skipped, not exercised (see GUIDE_ONLY_WRITE_STORY_IDS).
-    assert {e.case_id for e in api_suite.EXAMPLES if not e.guide_only} <= report.exercised
+    # Every registered example counts as exercised — the core amendment bundle
+    # (COR-3 Phase 8) retired the guide-only carve-out.
+    assert {e.case_id for e in api_suite.EXAMPLES} <= report.exercised
     assert report.exercised | report.skipped == report.active
 
 
@@ -297,18 +297,3 @@ def test_pk_gen_014_reason_names_its_current_landed_state() -> None:
     assert "landed in increment 4" in reason, reason
     module_reason = api_suite.SKIP_REASONS["m-pk-gen"]
     assert "toward increment 4" not in module_reason, module_reason
-
-
-def test_guide_only_write_stories_are_reasoned_skips_not_exercised() -> None:
-    # Regression guard (finding D, extended by finding A's own delete-side
-    # discovery, and by a later confirmation-pass residual's rolled-back-
-    # delete extension): m-unit-work-005/006/009/012 render as guide-only
-    # examples but are classified reasoned-skip, never exercised, in the
-    # partition.
-    report = api_suite.partition_report()
-    for case_id in api_suite.GUIDE_ONLY_WRITE_STORY_IDS:
-        assert case_id in report.skipped, case_id
-        assert case_id not in report.exercised, case_id
-        assert case_id in api_suite.CASE_SKIP_REASONS, case_id
-        # Still rendered: the guide-only Example survives in EXAMPLES itself.
-        assert any(e.case_id == case_id and e.guide_only for e in api_suite.EXAMPLES), case_id

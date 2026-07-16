@@ -70,6 +70,7 @@ from parallax.core.unit_work import Concurrency, Observation
 
 __all__ = [
     "INITIAL_VERSION",
+    "CallerAuthoredVersionError",
     "HistoricalObservationError",
     "OptimisticLockConflictError",
     "StaleWriteError",
@@ -78,6 +79,7 @@ __all__ = [
     "check_locking_license",
     "classify_mismatch",
     "gates",
+    "reject_caller_authored_version",
     "require_observed",
 ]
 
@@ -86,6 +88,20 @@ __all__ = [
 # `m-sql.md` L871's "derived initial version" — pinned here since no COR-3
 # Phase 8 increment 3 corpus witness inserts a versioned row).
 INITIAL_VERSION: Final[int] = 1
+
+
+class CallerAuthoredVersionError(RuntimeError):
+    """A keyed update's row carries an explicit value for the entity's own
+    optimistic-lock version attribute (`m-opt-lock` "Version values are
+    framework-owned"; ADR 0013).
+
+    The version is framework-owned end to end: the new version is always
+    runtime-computed (``observed + 1``) from this unit of work's own recorded
+    observation, never a value the row carries. A row that still authors the
+    version attribute is refused loudly here — never silently double-assigned
+    against whichever of the two (the row's value, or the derived advance)
+    happened to win.
+    """
 
 
 class UnobservedVersionError(RuntimeError):
@@ -186,11 +202,10 @@ def require_observed(entity: str, observation: Observation | None) -> int:
 
     Raises :class:`UnobservedVersionError` when ``observation`` carries no
     version — this unit of work never observed the row (`m-opt-lock` "Version
-    values are framework-owned"). Never called for a row that carries its
-    version as plain caller-authored data (the M4-era passthrough shape
-    ``parallax.snapshot.handle`` still recognizes byte-for-byte); only the
-    framework-derived path — the one with no row-carried version — reaches
-    here at all.
+    values are framework-owned"). A row that itself carries an explicit
+    version value is refused earlier, by :func:`reject_caller_authored_version`
+    (`parallax.snapshot.handle._lower_update`) — this function's own row is
+    always the framework-derived one, never a caller-authored version.
     """
     if observation is None or observation.version is None:
         raise UnobservedVersionError(
@@ -272,3 +287,23 @@ def check_locking_license(concurrency: Concurrency, *, latest_pinned: bool) -> N
             "read lock would protect the wrong row; re-fetch the current milestone inside "
             "the transaction, or run this write under optimistic concurrency"
         )
+
+
+def reject_caller_authored_version(entity: str, version_attr: str) -> None:
+    """Raise :class:`CallerAuthoredVersionError` for a keyed update row that
+    itself carries an explicit value for ``version_attr`` (`m-opt-lock`
+    "Version values are framework-owned"; ADR 0013).
+
+    Checked BEFORE the observation-required path (:func:`require_observed`)
+    even runs: the version is framework-owned end to end, so a row-carried
+    value is never a legitimate alternative source, observed or not — it is
+    refused outright, never silently preferred over (or overridden by) the
+    unit of work's own recorded observation.
+    """
+    raise CallerAuthoredVersionError(
+        f"{entity}: a keyed update's row carries an explicit value for {version_attr!r} — "
+        "the optimistic-lock version is framework-owned end to end and is never caller "
+        "data; the advance is always derived from this unit of work's own recorded "
+        "observation (a prior transaction-scoped find), never a row-carried value "
+        "(m-opt-lock)"
+    )

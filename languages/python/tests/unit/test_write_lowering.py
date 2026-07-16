@@ -7,13 +7,13 @@ its byte-exact non-temporal keyed emissions against the corpus goldens
 ``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
 M3 planner for the coalescing / mixed-flush / cancellation cases
 (``-008/-009/-010``), pin the ``m-opt-lock`` version gate/advance/conflict policy
-(observation-required for BOTH update and delete, gate-optimistic-only, the
-M4-era literal-version UPDATE passthrough, the derived initial version), the inheritance
-tag derivation/guard/opt-lock composition, and the pk-gen ``max``/``increment``
-marker lowering; the TEMPORAL keyed forms (COR-3 Phase 8 increment 4:
-close-and-chain, the rectangle split, the observed-``in_z``/business-discriminator
-gate, `StaleWriteError` vs `OptimisticLockConflictError`) are pinned in
-``test_temporal_write_lowering.py``. Every remaining not-yet-lowered form
+(observation-required for BOTH update and delete, gate-optimistic-only, a
+row-carried version value refused outright, the derived initial version), the
+inheritance tag derivation/guard/opt-lock composition, and the pk-gen
+``max``/``increment`` marker lowering; the TEMPORAL keyed forms (COR-3 Phase 8
+increment 4: close-and-chain, the rectangle split, the observed-``in_z``/business-
+discriminator gate, `StaleWriteError` vs `OptimisticLockConflictError`) are pinned
+in ``test_temporal_write_lowering.py``. Every remaining not-yet-lowered form
 (predicate-selected, multi-row batch, an unrecognized marker) is refused with a
 loud ``WriteLoweringError`` — never a wrong emission — mirroring the read
 compiler's forward-error posture.
@@ -146,13 +146,12 @@ def test_insert_orders_columns_by_column_order_not_row_order() -> None:
 
 
 def test_update_sets_non_pk_columns_in_column_order_keyed_by_pk() -> None:
-    # m-unit-work-005 step 0 (version carried as plain data — the M4-era literal-
-    # version passthrough this increment keeps byte-identical: no observation
-    # consulted, no advance recomputed, no gate).
+    # m-unit-work-005 step 1: the version advances from this unit of work's own
+    # recorded observation (`m-opt-lock`), never a row-carried value.
     statement = _lower(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00, "version": 2},)),
+        KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},)),
         ACCOUNT,
-        concurrency="optimistic",
+        observation=Observation(version=1),
     )[0]
     assert statement.sql == "update account set balance = ?, version = ? where id = ?"
     assert statement.binds == (175.00, 2, 1)
@@ -211,14 +210,14 @@ def test_versioned_update_gates_on_the_observed_version_optimistic_mode() -> Non
     assert statement.binds == (50.00, 4, 1, 3)
 
 
-def test_versioned_update_carrying_a_literal_version_is_never_observation_gated() -> None:
-    # The M4-era plain-column-data shape (m-unit-work-005/009): an explicit
-    # row-carried version key means no observation is consulted at all — no
-    # requirement, no recomputed advance, no gate — even under optimistic mode.
+def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
+    # A row that still authors the version attribute is refused outright
+    # (`m-opt-lock` "Version values are framework-owned") — the framework-owned
+    # field is never caller data, so it is never silently double-assigned
+    # against the derived advance, EVEN when an observation is also available.
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00, "version": 2},))
-    statement = _lower(update, ACCOUNT, concurrency="optimistic")[0]
-    assert statement.sql == "update account set balance = ?, version = ? where id = ?"
-    assert statement.binds == (175.00, 2, 1)
+    with pytest.raises(opt_lock.CallerAuthoredVersionError, match="framework-owned"):
+        _lower(update, ACCOUNT, observation=Observation(version=1), concurrency="optimistic")
 
 
 def test_versioned_delete_binds_the_observed_version_in_either_mode() -> None:
@@ -421,20 +420,23 @@ def test_insert_then_update_coalesces_to_one_final_value_insert() -> None:
 
 
 def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
-    # m-unit-work-009: three objects, one flush, canonical combined order. The
-    # delete's version (m-opt-lock's own prior-observation requirement, exactly
-    # like the update's) comes from THIS unit of work's own recorded
-    # observation — never a row-carried value.
+    # m-unit-work-009: three objects, one flush, canonical combined order. BOTH
+    # the update's and the delete's version (m-opt-lock's own prior-observation
+    # requirement) come from THIS unit of work's own recorded observation —
+    # never a row-carried value.
     statements = _flush_and_lower(
         [
             KeyedWrite(
                 "insert", "Account", ({"id": 9, "owner": "Noether", "balance": 5.00, "version": 1},)
             ),
-            KeyedWrite("update", "Account", ({"id": 1, "balance": 20.00, "version": 2},)),
+            KeyedWrite("update", "Account", ({"id": 1, "balance": 20.00},)),
             KeyedWrite("delete", "Account", ({"id": 3},)),
         ],
         ACCOUNT,
-        observations={("Account", (("id", 3),)): Observation(version=1)},
+        observations={
+            ("Account", (("id", 1),)): Observation(version=1),
+            ("Account", (("id", 3),)): Observation(version=1),
+        },
     )
     assert [(s.sql, s.binds) for s in statements] == [
         (
