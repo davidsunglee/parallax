@@ -415,7 +415,8 @@ Corpus case: `m-unit-work-006`
 ```python
 def keyed_delete_observed_in_transaction(db: Database) -> list[Row]:
     def fn(tx: Transaction) -> list[Row]:
-        tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
+        current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
+        tx.delete(current)
         return _as_rows(tx.find(Account.where(Account.id == 3)))
 
     return db.transact(fn)  # [] — the dependent find observes the deletion
@@ -467,9 +468,10 @@ Corpus case: `m-unit-work-009`
 def one_flush_combined_mixed_verb_order(db: Database) -> list[Row]:
     def fn(tx: Transaction) -> list[Row]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
+        deleted = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00"), version=1))
         tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
-        tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
+        tx.delete(deleted)
         return _as_rows(tx.find(Account.where(Account.balance < 50.00)))
 
     return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find

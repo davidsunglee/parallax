@@ -70,7 +70,9 @@ def test_partition_report_is_a_clean_full_partition() -> None:
     report = api_suite.partition_report()
     assert report.ok, report.errors
     # Phase 5 registers the first idiomatic examples (the op-algebra read spellings).
-    assert {e.case_id for e in api_suite.EXAMPLES} <= report.exercised
+    # `guide_only` examples (m-unit-work-005/006/009) are deliberately excluded —
+    # they are reasoned-skipped, not exercised (see GUIDE_ONLY_WRITE_STORY_IDS).
+    assert {e.case_id for e in api_suite.EXAMPLES if not e.guide_only} <= report.exercised
     assert report.exercised | report.skipped == report.active
 
 
@@ -275,10 +277,36 @@ def test_dropping_a_write_example_fails_the_partition() -> None:
     # The backbone review's partition red-check, made effective: m-unit-work has
     # no broad module bucket, so a case that loses its example is covered by
     # NEITHER registry and the partition fails — never silently reclassified
-    # under a coalescing-witness reason.
-    slimmed = [example for example in api_suite.EXAMPLES if example.case_id != "m-unit-work-005"]
+    # under a coalescing-witness reason. m-unit-work-001 (unlike -005/-006/-009)
+    # carries no CASE_SKIP_REASONS entry of its own, so dropping IT is the
+    # honest regression probe.
+    slimmed = [example for example in api_suite.EXAMPLES if example.case_id != "m-unit-work-001"]
     report = api_suite.partition_report(examples=slimmed)
     assert not report.ok
     assert any(
-        "covered by neither" in error and "m-unit-work-005" in error for error in report.errors
+        "covered by neither" in error and "m-unit-work-001" in error for error in report.errors
     )
+
+
+def test_pk_gen_014_reason_names_its_current_landed_state() -> None:
+    # Regression guard (Phase-8 mid-phase review remediation, finding F item
+    # 5): `m-pk-gen-014` landed in increment 4 — its reason must say so, never
+    # the stale "toward increment 4" forward-promise wording.
+    reason = api_suite.CASE_SKIP_REASONS["m-pk-gen-014"]
+    assert "toward increment 4" not in reason, reason
+    assert "landed in increment 4" in reason, reason
+    module_reason = api_suite.SKIP_REASONS["m-pk-gen"]
+    assert "toward increment 4" not in module_reason, module_reason
+
+
+def test_guide_only_write_stories_are_reasoned_skips_not_exercised() -> None:
+    # Regression guard (finding D, extended by finding A's own delete-side
+    # discovery): m-unit-work-005/006/009 render as guide-only examples but
+    # are classified reasoned-skip, never exercised, in the partition.
+    report = api_suite.partition_report()
+    for case_id in api_suite.GUIDE_ONLY_WRITE_STORY_IDS:
+        assert case_id in report.skipped, case_id
+        assert case_id not in report.exercised, case_id
+        assert case_id in api_suite.CASE_SKIP_REASONS, case_id
+        # Still rendered: the guide-only Example survives in EXAMPLES itself.
+        assert any(e.case_id == case_id and e.guide_only for e in api_suite.EXAMPLES), case_id

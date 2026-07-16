@@ -28,11 +28,28 @@ framework never issues an implicit resolving read on a keyed write), so every
 story updating a versioned row fetches it first — `keyed_update_observed_in_
 transaction` / `one_flush_combined_mixed_verb_order` add that observing fetch
 ahead of their mirrored case's own scenario, which is graded (`test_write_
-no_drift.py`) against the case's own statements PLUS that leading read. A
-versioned keyed DELETE stays opportunistic (`m-opt-lock`: never a hard
-requirement), so `keyed_delete_observed_in_transaction` and every OTHER
-story's `tx.delete` calls still construct their provenance instance from a
-value known outside the writing transaction (`_known_account`), unchanged.
+no_drift.py`) against the case's own statements PLUS that leading read.
+
+A Phase-8 review remediation closed the matching gap for DELETE (`m-opt-lock`;
+`python.md` §5 "a keyed update or delete of a versioned row this unit of work
+never observed raises in either mode" — the prior wording describing delete's
+participation as "opportunistic" mis-stated the spec, which never carried that
+exception): a versioned keyed DELETE now requires the SAME prior observation, so
+`keyed_delete_observed_in_transaction` / `one_flush_combined_mixed_verb_order`
+also fetch the deleted row first. `keyed_delete_observed_in_transaction`
+(m-unit-work-006) and `one_flush_combined_mixed_verb_order` (m-unit-work-009,
+already reasoned-skipped for its update leg) therefore add a leading observing
+fetch their mirrored corpus case does not author — the SAME conflict class
+`api_suite.CASE_SKIP_REASONS` already carries for the update-only cases,
+extended to cover the delete leg; see `api_suite.py`'s own reasons. Every OTHER
+story's `tx.delete` call still constructs its provenance instance from a value
+known outside the writing transaction (`_known_account`) — either the target is
+never re-observed at all in that transaction's own choreography
+(`create_then_delete_a_parent_child_pair`'s Order/OrderItem targets are not
+versioned, so no observation is required), or the abort discards the buffered
+delete before it is ever lowered (`aborted_delete_leaves_the_row_standing`
+raises immediately after buffering, so `db.transact`'s own discard-unflushed-
+on-abort contract means `lower_write` never runs for it at all).
 """
 
 from __future__ import annotations
@@ -161,7 +178,8 @@ def keyed_update_observed_in_transaction(db: Database) -> list[Row]:
 
 def keyed_delete_observed_in_transaction(db: Database) -> list[Row]:
     def fn(tx: Transaction) -> list[Row]:
-        tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
+        current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
+        tx.delete(current)
         return _as_rows(tx.find(Account.where(Account.id == 3)))
 
     return db.transact(fn)  # [] — the dependent find observes the deletion
@@ -203,9 +221,10 @@ def create_then_delete_a_parent_child_pair(db: Database) -> None:
 def one_flush_combined_mixed_verb_order(db: Database) -> list[Row]:
     def fn(tx: Transaction) -> list[Row]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
+        deleted = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00"), version=1))
         tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
-        tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
+        tx.delete(deleted)
         return _as_rows(tx.find(Account.where(Account.balance < 50.00)))
 
     return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find

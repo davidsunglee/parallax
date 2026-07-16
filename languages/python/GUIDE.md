@@ -343,6 +343,104 @@ self-contained without a system `libpq`.
   `slice-mvp-1`/`slice-snapshot-1`/`slice-managed-1` = 197 / 311 / 333). No
   version-gate lowering, temporal writes, `_where` verbs, or `lower_write`
   changes in this increment (increments 3+).
+- **Phase 8 increment 3 COMPLETE — the `m-opt-lock` version gate, inheritance
+  keyed writes, and pk-gen write-side allocation.** `parallax.core.opt_lock`
+  (the observation-required prior-read rule, the runtime-computed advance,
+  the optimistic-only gate, the `OptimisticLockConflictError`/
+  `HistoricalObservationError` vocabulary) composed at the
+  `parallax.snapshot.handle.lower_write` seam: every non-temporal keyed
+  UPDATE now advances a versioned row's version in both concurrency modes and
+  gates on it (optimistic only); a keyed DELETE binds the observed version
+  when one was recorded (`m-batch-write-004`'s own witness). Inheritance-family
+  keyed writes (table-per-hierarchy tag derivation/guard, table-per-concrete-
+  subtype own-table routing, deep-chain and sibling-branch creates, the
+  opt-lock × inheritance composition pair) and pk-gen write-side allocation
+  (`max` folded into the INSERT, `sequence` registry advance) land in the same
+  seam. The reachability set flips 30 cases. `Transaction.update`/`.delete`
+  gained the observation-required developer idiom (fetch inside the writing
+  transaction first); the API-suite write examples that predate this rule
+  (`m-unit-work-005`/`-009`) keep their pre-existing (then-undetected)
+  round-trip mismatch — closed by a later review remediation, below. Measured
+  post-round: unit lane (`pytest -m unit`) 1748 passed / 78 skipped;
+  compile-sweep module (`pytest -m compile_sweep`) 190 passed / 78 skipped;
+  combined Docker lane (`conformance`/`provider_contract`/`adapter_smoke`/
+  `api_conformance`) 357 passed / 0 skipped; rejected sweep
+  (`test_rejected_sweep.py`) 39 passed / 0 skipped; API-suite partition exact
+  over 311 active cases (48 exercised / 263 reasoned-skip — increment 3's own
+  new cases are conformance-lane-covered reasoned skips, no new idiomatic
+  examples yet); `just python-static` exit 0. Known debt carried forward: the
+  M4-era literal-version passthrough (`_lower_update` recognizes an explicit
+  row-carried `version` field and skips the observation rule entirely,
+  `m-unit-work-005`/`-009`'s own authoring shape) is core corpus debt, not
+  fixed here.
+- **Phase 8 increment 4 COMPLETE — temporal writes: audit-only close-and-chain
+  and full-bitemporal rectangle splits.** `parallax.core.audit_write` /
+  `.bitemp_write` (pure milestone planning: `MilestoneClose`/`MilestoneOpen`
+  steps) composed at the SAME `lower_write` seam with the `m-opt-lock` gate
+  policy: `insert`/`update`/`terminate` and the bounded `insertUntil`/
+  `updateUntil`/`terminateUntil` trio all lower, TPH/TPCS inheritance
+  composition included. The conformance engine's write lanes re-route through
+  the shipped `db.transact` entry point (DQ4, ledger D-18) instead of a
+  bespoke execution path, and gain a case-local `TemporalShadow` translation
+  layer (never production code) standing in for "the observation a real
+  `tx.find` would have supplied." The reachability set flips 32 more cases.
+  Measured post-round: unit lane (`pytest -m unit`) 1803 passed / 90 skipped;
+  compile-sweep module (`pytest -m compile_sweep`) 212 passed / 90 skipped;
+  combined Docker lane (`conformance`/`provider_contract`/`adapter_smoke`/
+  `api_conformance`) 389 passed / 0 skipped; rejected sweep
+  (`test_rejected_sweep.py`) 39 passed / 0 skipped; API-suite partition exact
+  over 311 active cases (48 exercised / 263 reasoned-skip); `just
+  python-static` exit 0. Known debt/gaps carried forward, closed by the
+  Phase-8 mid-phase review remediation below: `_lower_delete` let an
+  unobserved versioned DELETE through ungated instead of raising (the
+  `m-opt-lock` rule this increment's own UPDATE gate already enforced);
+  `Transaction.find`'s observation recording covered only VERSION
+  observations, so a locking-mode temporal write's historical-observation
+  license (`check_locking_license`) was wired but permanently a no-op; the
+  engine's row-decomposition discriminator read the case's own authored
+  `statements` count instead of deriving it semantically; and two structured
+  predicate-write cases (`m-batch-write-005`/`-006`) crashed with a bare
+  `KeyError` instead of refusing loudly. `m-bitemp-write-008` (the sole
+  writeSequence case needing optimistic concurrency with no
+  `when.uow.concurrency` field to declare it) is accommodated by a narrow,
+  documented, engine-local override (`_CONCURRENCY_OVERRIDES`) standing in for
+  a corpus amendment — core debt, not fixed here.
+- **Phase 8 mid-phase review remediation (increments 2–4).** Closed the four
+  gaps increment 4's own entry named above: `_lower_delete` now requires the
+  SAME prior observation a keyed UPDATE does for a versioned row, in either
+  concurrency mode (`m-unit-work-006`/`-009`/`-012`'s own corpus authoring
+  predates the rule and no longer round-trips through the compile/run
+  sweeps — a corpus conflict reported upstream, not resolved by editing
+  `core/compatibility`); `Transaction.find` now records a TEMPORAL
+  observation (observed `in_z` plus pin provenance, and — for a bitemporal
+  entity — the business bounds/payload temporal lowering already consumes),
+  so a locking-mode write after a historical/edge-pinned find genuinely
+  raises `HistoricalObservationError` instead of a permanent no-op; the
+  conformance engine's row-decomposition discriminator is now derived
+  SEMANTICALLY (mutation kind, versioned-ness, per-row observation keys,
+  pk-gen management, update-value uniformity) with `statements` demoted to
+  the count-consistency assertion the schema intends; and a structured
+  predicate-write instruction now refuses loudly, naming increment 5,
+  wherever it reaches the keyed-write engine seam. `m-batch-write-002`
+  (an unversioned per-key update with non-uniform values) turned out to
+  already lower correctly and joined the exercised set. Known debt this round
+  intentionally left untouched (all pre-existing, all core-side or corpus-side):
+  the `m-bitemp-write-008` engine override above; the M4-era literal-version
+  UPDATE passthrough above; and the `m-unit-work-005`/`-009` API-suite
+  round-trip conflict — plus a THIRD instance the delete fix surfaced,
+  `m-unit-work-006` — all three now render as guide-only Usage-Guide examples
+  (`api_suite.GUIDE_ONLY_WRITE_STORY_IDS`) with a case-scoped reasoned skip
+  rather than a claimed exercised round trip; resolution for all three is a
+  corpus amendment or the D-23 instance-native rework (increment 7). Measured
+  post-round: unit lane (`pytest -m unit`) 1822 passed / 92 skipped;
+  compile-sweep module (`pytest -m compile_sweep`) 211 passed / 92 skipped;
+  combined Docker lane (`conformance`/`provider_contract`/`adapter_smoke`/
+  `api_conformance`) 387 passed / 0 skipped; rejected sweep
+  (`test_rejected_sweep.py`) 39 passed / 0 skipped (unchanged); API-suite
+  partition exact over 311 active cases (45 exercised / 266 reasoned-skip —
+  down 3 exercised, up 3 reasoned-skip: the three guide-only stories above);
+  `just python-static` exit 0 (diff-cover 100%, Pyright/coverage clean);
+  `gen-usage-guide --check` exit 0.
 
 ## Blockers
 

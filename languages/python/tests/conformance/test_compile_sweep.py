@@ -183,9 +183,24 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
 # coalescing witnesses (008/010) are unreachable under Option B; the remaining m-pk-gen
 # `sequence`-strategy writeSequence cases (query-result-dependent, run-only) and the
 # boundary abort case (m-opt-lock-012, deferred to increment 5) are reasoned-skipped.
-_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
-    f"m-unit-work-{n:03d}" for n in (1, 2, 5, 6, 9, 11, 12)
-)
+#
+# Phase-8 mid-phase review remediation (finding A): `m-opt-lock`'s
+# prior-observation rule now applies uniformly to every keyed DELETE of a
+# versioned row, not just UPDATE (`_lower_delete` no longer lets an
+# unobserved versioned delete through ungated). Three corpus witnesses author
+# a keyed DELETE of the versioned `Account` with NO preceding observation at
+# all — `m-unit-work-006` (a bare read-your-own-writes delete),
+# `m-unit-work-009` (its mixed-op flush's delete leg; its update leg was
+# ALREADY unreachable here for the same M4-era-authoring reason), and
+# `m-unit-work-012` (a `rollback: true` delete step, whose buffered DML is
+# force-flushed for real before the intentional abort, per `m-unit-work`'s own
+# abort contract — so the raise reaches here too, not just a real commit).
+# All three now refuse with the honest `UnobservedVersionError` message
+# through `_skip_reason`'s existing scenario/writeSequence "error" branch —
+# a genuine corpus/spec conflict (`python.md` §5's own unconditional wording),
+# reported upstream, not one this Python-target-only remediation can resolve
+# by editing `core/compatibility`.
+_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n in (1, 2, 5, 11))
 # COR-3 Phase 8 increment 3's 17 compile-eligible flips: the non-temporal opt-lock
 # versioned advance (m-opt-lock-002), the inheritance-family keyed write family
 # (table-per-hierarchy tag derivation/guard, table-per-concrete-subtype own-table
@@ -213,8 +228,17 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-batch-write-004",
     }
 )
+# `m-batch-write-002` (Phase-8 mid-phase review remediation, finding F item 4):
+# an UNVERSIONED Wallet update whose two rows assign NON-uniform per-key
+# values (`m-batch-write` "Set-based flush": non-uniform values decompose into
+# one UPDATE per distinct key, `_decomposes_per_row`'s own uniform-value
+# check) — genuinely GREEN end to end through this seam already (two
+# independent single-row keyed updates, neither versioned nor pk-gen-managed,
+# so neither needs `lower_write`'s multi-row refusal at all), previously
+# hidden behind the stale M4-era-bucket fallback text.
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
-    frozenset({"m-unit-work-003", "m-unit-work-007"}) | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
+    frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
+    | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
 )
 # The snapshot-read `mutate` scenario (m-snapshot-read-010, COR-3 Phase 7 increment
 # 5): no write DML at all — its 2 `find` steps' emissions/round-trips grade byte-
@@ -325,20 +349,45 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     The read-projection amendment (Phase 5b, ledger D-11) re-goldened every stale
     read to the projection the compiler emits, so every reachable *ok*-status read is
     now exercised (asserted by ``test_every_unexercised_reachable_read_is_refused``).
-    What remains reasoned-skipped is (1) the `error`-shape `m-db-error` cases — a
-    permanent LANE classification, not a forward promise: the single-connection
+    What remains reasoned-skipped is (1) `compileEligibility: run-only` cases of
+    ANY shape — a permanent LANE classification, not a forward promise, classified
+    FIRST (Phase-8 mid-phase review remediation, finding F item 1: a scenario/
+    writeSequence run-only case — the pk-gen `sequence`-strategy batch-reservation
+    writes, the materializing predicate-write forms — must never fall through to
+    the shape-specific fallback text below, which promises a FUTURE increment a
+    run-only case never reaches through `compile` at all), (2) the `error`-shape
+    `m-db-error` cases — also a permanent LANE classification: the single-connection
     trigger is graded end-to-end by the error run lane, the two-connection
-    choreography by the provider proof, (2) the other non-read shapes, whose compile
-    lands with the write path (Phase 6/8), and (3) the reads the compiler still
-    refuses with a loud ``SqlGenError`` — deep fetch, deferred past the
-    single-entity read path to the snapshot branch (ledger D-12). Inheritance-family
-    reads closed out of this ledger entry in Phase 7 increment 2; relationship-
+    choreography by the provider proof, (3) the other non-read shapes, whose compile
+    lands with the write path (Phase 6/8) — each reworded to its OWN honest future
+    increment or permanent lane, never a stale blanket promise, and (4) the reads the
+    compiler still refuses with a loud ``SqlGenError`` — deep fetch, deferred past
+    the single-entity read path to the snapshot branch (ledger D-12). Inheritance-
+    family reads closed out of this ledger entry in Phase 7 increment 2; relationship-
     navigation reads (the correlated-EXISTS semi-join / anti-join, plain and
     polymorphic) closed out in increment 3; to-many value-object array traversal
     (the guarded-unnest `nestedExists`/`nestedNotExists` and flat any-element forms)
     closed out in increment 4 — only the 11 deep-fetch-bearing navigate reads stay
     refused, forward to increment 5.
     """
+    if envelope.get("status") == "run-only":
+        # Declared `compileEligibility: run-only` (D-10's query-result-dependent
+        # read tail; the pk-gen `sequence`-strategy batch-reservation writeSequence
+        # cases; the materializing predicate-write scenario cases —
+        # m-audit-write-007/009, m-bitemp-write-010..-013, m-opt-lock-014/015,
+        # m-value-object-047): `run` (never `compile`) is the ONLY lane that ever
+        # grades these — the m-conformance-adapter envelope already answers
+        # `run-only` without attempting any lowering at all, so this is classified
+        # FIRST, shape-agnostically, BEFORE any shape-specific fallback text below
+        # (Phase-8 mid-phase review remediation, finding F item 1: a run-only
+        # scenario/writeSequence case must never fall through to text promising a
+        # FUTURE increment it never reaches through `compile`). Permanent lane
+        # classification, not a forward promise:
+        # `test_run_only_cases_are_never_compiled` asserts the envelope.
+        reason = envelope.get("diagnostics", [{}])[0].get("message", "")
+        return (
+            f"declared compile-run-only ({reason}); graded by run instead (m-conformance-adapter)"
+        )
     if case.shape == "error":
         # An error case's trigger DML is authored, not compiled (m-case-format), so
         # neither sub-shape ever joins the compile-exercised set: this is a lane
@@ -366,32 +415,28 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
             "on-abort contract is verified by the API Conformance Suite, not by `run`"
         )
     if case.shape in ("scenario", "writeSequence"):
-        # The reachable keyed unit-of-work cases are graded above (WRITE_EXERCISED). The
-        # rest are either REFUSED by the M4 lowering (inheritance-family / temporal /
-        # predicate / opt-lock writes, whose forward-error diagnostic names the phase) or
-        # lowerable but OUTSIDE the reviewed M4 exercised set (the m-core keyed writes, the
-        # m-pk-gen write-side id allocation, the m-value-object document writes) — these
-        # join the exercised set deliberately as the reviewed write corpus grows.
+        # The reachable keyed unit-of-work cases are graded above (WRITE_EXERCISED);
+        # every run-only case is classified above too. The rest are either REFUSED
+        # by the keyed-write lowering (inheritance-family / temporal / predicate /
+        # opt-lock-unobserved writes, whose forward-error diagnostic names its own
+        # deferral or corpus conflict) or lowerable but outside the reviewed
+        # exercised set: the m-core keyed writes and the m-value-object document
+        # writes still land toward increment 5 (m-batch-write's own materialize/
+        # collapse forms), the ONLY forward promise this bucket still honestly
+        # carries — pk-gen's write-side id allocation landed in increment 3
+        # (its own module bucket, `SKIP_REASONS["m-pk-gen"]`) and is never named
+        # here again.
         if envelope.get("status") == "error":
             message = envelope.get("diagnostics", [{}])[0].get("message", "")
-            return f"{case.shape} write refused by the M4 keyed-write lowering: {message}"
+            return f"{case.shape} write refused by the keyed-write lowering: {message}"
         return (
-            f"{case.shape} `{case.primary_module}` write outside the reviewed M4 keyed "
-            "unit-of-work set (the 9 account/orders cases); write-side primary-key "
-            "allocation (m-pk-gen) and value-object document writes (m-value-object) land "
-            "with a later write increment / phase"
+            f"{case.shape} `{case.primary_module}` write outside the reviewed keyed "
+            "unit-of-work set (the 9 account/orders cases); the m-core keyed writes and "
+            "the m-value-object document writes land with a later write increment "
+            "(COR-3 Phase 8 increment 5; m-batch-write's own materialize/collapse forms)"
         )
     if case.shape != "read":
         return f"compile of {case.shape}-shape cases lands with the write path (COR-3 Phase 6/8)"
-    if envelope.get("status") == "run-only":
-        # Declared `compileEligibility: run-only` (D-10's query-result-dependent
-        # tail, enumerated by increment 5's refusing compile lane): permanent, not
-        # a forward promise — `test_run_only_cases_are_never_compiled` asserts the
-        # envelope, and `run` grades the case instead.
-        reason = envelope.get("diagnostics", [{}])[0].get("message", "")
-        return (
-            f"declared compile-run-only ({reason}); graded by run instead (m-conformance-adapter)"
-        )
     message = envelope.get("diagnostics", [{}])[0].get("message", "")
     return f"read lowering deferred past the Phase-5 read path (ledger D-12): {message}"
 
@@ -548,3 +593,40 @@ def test_scenario_lane_dispatch_is_honest() -> None:
         # (a `None` port would raise loudly on any attempted use — it never is).
         run_envelope = adapter.run_case(case.path, "postgres", cast("Any", None))
         assert run_envelope["status"] == "error", (case.case_id, run_envelope)
+
+
+def _skip_text(case_id: str) -> str:
+    (case,) = [c for c in _REACHABLE if c.case_id == case_id]
+    envelope = adapter.compile_case(case.path, "postgres")
+    return _skip_reason(case, envelope)
+
+
+def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
+    """Regression guard (Phase-8 mid-phase review remediation, finding F item
+    5): pin the DISPLAYED skip text for a representative case per stale-wording
+    class, so wording rot (a forward promise that already landed, a bare
+    diagnostic fragment) fails loudly here rather than only being noticed on a
+    manual sweep read.
+    """
+    # A structured predicate-write instruction refuses loudly, naming
+    # increment 5 — never the bare `": 0"` KeyError fragment (finding E).
+    for case_id in ("m-batch-write-005", "m-batch-write-006"):
+        text = _skip_text(case_id)
+        assert "predicate-selected (set-based) write on" in text, (case_id, text)
+        assert "increment 5" in text, (case_id, text)
+        assert text.strip() != ": 0" and not text.endswith(": 0"), (case_id, text)
+    # A materializing predicate-write scenario (query-result-dependent,
+    # run-only) is classified BEFORE the shape fallback — never the stale
+    # "land with a later write increment / phase" M4-era-bucket promise.
+    materializing_text = _skip_text("m-audit-write-007")
+    assert materializing_text.startswith("declared compile-run-only"), materializing_text
+    assert "graded by run instead" in materializing_text, materializing_text
+    assert "land with a later write increment" not in materializing_text, materializing_text
+    # A genuine M4-era-bucket case (a write that lowers `ok` but sits outside
+    # the reviewed keyed set) reworded to its actual current increment —
+    # pk-gen never named here again (it landed in increment 3, its own module
+    # bucket, `SKIP_REASONS["m-pk-gen"]`).
+    bucket_text = _skip_text("m-core-002")
+    assert "outside the reviewed keyed" in bucket_text, bucket_text
+    assert "m-pk-gen" not in bucket_text, bucket_text
+    assert "increment 5" in bucket_text, bucket_text

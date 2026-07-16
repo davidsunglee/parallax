@@ -21,12 +21,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from decimal import Decimal
-from typing import Any, Final, cast
+from typing import Any, cast
 
 import pytest
 
 from conftest import case_document, compare_binds
-from parallax.conformance import case_format, models
+from parallax.conformance import api_suite, case_format, models
 from parallax.conformance.read_models import Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.core.db_port import Bind, DbPort, Row
@@ -88,26 +88,6 @@ def _driver_goldens(entries: list[dict[str, Any]]) -> list[tuple[str, list[objec
     return out
 
 
-# `keyed_update_observed_in_transaction` (m-unit-work-005) and
-# `one_flush_combined_mixed_verb_order` (m-unit-work-009) update a VERSIONED
-# row through the graduated `tx.update(copy)` verb, which now (COR-3 Phase 8
-# increment 3, `m-opt-lock`) requires the edited copy's provenance to derive
-# from a `tx.find` this SAME transaction ran — so both stories add a leading
-# observing find their mirrored case's OWN scenario never authors (the case
-# is an M4-era witness of the version carried as plain row data, a shape the
-# graduated verb surface cannot produce — `parallax.core.entity.base.
-# framework_owned_advance` retired with it). The wire-golden proof here is
-# the case's own statements PLUS that leading read, not a corpus edit.
-_OBSERVE_ACCOUNT_1_GOLDEN: Final[tuple[str, list[object]]] = (
-    POSTGRES.to_driver_sql(
-        "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? "
-        "for share of t0"
-    ),
-    [1],
-)
-_OBSERVES_ACCOUNT_1_FIRST: Final[frozenset[str]] = frozenset({"m-unit-work-005", "m-unit-work-009"})
-
-
 def _scenario_goldens(
     case_id: str, *, skip_rollback: bool = False
 ) -> list[tuple[str, list[object]]]:
@@ -120,8 +100,6 @@ def _scenario_goldens(
         if skip_rollback and step.get("rollback") is True:
             continue
         out.extend(_driver_goldens(cast("list[dict[str, Any]]", step["statements"])))
-    if case_id in _OBSERVES_ACCOUNT_1_FIRST:
-        out = [_OBSERVE_ACCOUNT_1_GOLDEN, *out]
     return out
 
 
@@ -143,7 +121,19 @@ def _db(port: _RecordingPort, story: WriteStory) -> Database:
     return Database.connect(port, _MODELS[story.model])
 
 
-_COMMIT_IDS = sorted(s.case_id for s in WRITE_STORIES if s.kind == "commit")
+# The no-drift guard grades only EXERCISED stories (`m-api-conformance.md`):
+# `GUIDE_ONLY_WRITE_STORY_IDS` (m-unit-work-005/006/009) add a leading
+# observing read their mirrored corpus case does not author (the m-opt-lock
+# prior-observation rule postdates those cases), so their wire shape cannot
+# reproduce the case's own golden DML byte-exact — they are reasoned-skipped
+# in the coverage partition instead (`api_suite.CASE_SKIP_REASONS`) and stay
+# out of this guard's parametrize sets. `test_story_run.py` still executes
+# them for real, proving the (corrected) idiom itself works.
+_COMMIT_IDS = sorted(
+    s.case_id
+    for s in WRITE_STORIES
+    if s.kind == "commit" and s.case_id not in api_suite.GUIDE_ONLY_WRITE_STORY_IDS
+)
 _ABORT_IDS = sorted(s.case_id for s in WRITE_STORIES if s.kind == "abort")
 
 
@@ -170,6 +160,31 @@ def test_abort_story_discards_the_buffer_and_keeps_the_reads_golden(case_id: str
     assert not port.wrote, (case_id, port.ops)
     _assert_statements(port, _scenario_goldens(case_id, skip_rollback=True), case_id)
     assert ("rollback",) in port.ops
+
+
+_GUIDE_ONLY_COMMIT_IDS = sorted(api_suite.GUIDE_ONLY_WRITE_STORY_IDS)
+
+
+@pytest.mark.parametrize("case_id", _GUIDE_ONLY_COMMIT_IDS, ids=_GUIDE_ONLY_COMMIT_IDS)
+def test_guide_only_story_runs_docker_free_without_grading_against_the_corpus_golden(
+    case_id: str,
+) -> None:
+    """`GUIDE_ONLY_WRITE_STORY_IDS` (m-unit-work-005/006/009) add a leading
+    observing read their mirrored corpus case does not author — the no-drift
+    guard grades only EXERCISED stories (`_COMMIT_IDS` above excludes these
+    three), so this asserts only that the corrected idiom runs cleanly
+    through the fake port, never a golden-DML comparison. This is deliberately
+    still this module's job: `test_write_no_drift.py` is "the story bodies'
+    only DB-free driver" (module docstring), and these three guide-only
+    stories are still real, executable Usage-Guide examples that must not
+    silently break.
+    """
+    story = _STORIES[case_id]
+    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    story.run(_db(port, story))
+    assert port.ops[0] == ("begin",)
+    assert port.ops[-1] == ("commit",)
+    assert ("rollback",) not in port.ops
 
 
 def test_boundary_story_withholds_the_callback_value() -> None:
