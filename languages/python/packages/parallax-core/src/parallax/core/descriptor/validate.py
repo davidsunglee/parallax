@@ -67,10 +67,13 @@ def validate_entity(entity: Entity) -> None:
     instead) — both exact for any entity regardless of family membership.
     The family root-ownership rule (:func:`validate_optimistic_locking_root_owned`,
     ADR 0027) is ALSO single-entity (a non-root's own ``attributes`` fully
-    determine it), but stays a separate function reserved for
-    :func:`validate_metamodel` to call across the whole family — the same
+    determine it), but stays a separate function: :func:`validate_metamodel`
+    calls it across a compiled family, and the entity frontend
+    (``EntityMeta.__new__``) calls it directly at class-definition time for an
+    inheritance participant, before any metamodel exists — the same
     organizational split as `validate_metamodel`'s inherited-attributes rule,
-    which genuinely does need sibling records.
+    which genuinely does need sibling records (and so has no frontend
+    counterpart).
     """
     if not entity.name:
         raise DescriptorError("entity name must be non-empty")
