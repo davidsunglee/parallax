@@ -33,9 +33,16 @@ from parallax.core.descriptor.records import (
     ValueObject,
     ValueObjectAttribute,
     column_order,
+    declaring_entity,
+    effective_as_of_attributes,
+    effective_temporal,
 )
 from parallax.core.descriptor.serde import canonicalize, deserialize, serialize
-from parallax.core.descriptor.validate import validate_entity, validate_metamodel
+from parallax.core.descriptor.validate import (
+    validate_entity,
+    validate_metamodel,
+    validate_temporal_optimistic_locking,
+)
 from parallax.core.descriptor.vo_path import (
     VoPathMiss,
     find_value_object,
@@ -66,7 +73,10 @@ __all__ = [
     "VoPathMiss",
     "canonicalize",
     "column_order",
+    "declaring_entity",
     "deserialize",
+    "effective_as_of_attributes",
+    "effective_temporal",
     "find_value_object",
     "find_vo_member",
     "infer_neutral_type",
@@ -75,4 +85,5 @@ __all__ = [
     "snake_to_camel",
     "validate_entity",
     "validate_metamodel",
+    "validate_temporal_optimistic_locking",
 ]

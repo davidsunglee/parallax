@@ -318,6 +318,47 @@ def test_schema_statements_tph_maps_a_value_object_to_jsonb() -> None:
     assert "meta jsonb" in ddl
 
 
+# --------------------------------------------------------------------------- #
+# TPH shared-table DDL derivation through the WHOLE member set (review Spec-3  #
+# fix): `_tph_family_with_a_value_object` above declares its value object on   #
+# the ROOT, which the OLD code (reading `root.value_objects` / `(root,)`      #
+# alone) already handled — it is not regression-sensitive to the chain-wide   #
+# union. This family instead declares a value object AND a unique index on a  #
+# CONCRETE subtype (never the root), the shape the chain-wide fix actually    #
+# closes.                                                                     #
+# --------------------------------------------------------------------------- #
+def _tph_family_with_a_descendant_declared_value_object_and_index() -> Metamodel:
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    leaf = Entity(
+        name="Leaf",
+        table="root_tbl",
+        inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
+        attributes=(
+            Attribute(name="x", type="int32", column="x"),
+            Attribute(name="code", type="string", column="code", max_length=8),
+        ),
+        value_objects=(ValueObject(name="meta", column="meta"),),
+        indices=(Index(name="leaf_code_uq", attributes=("code",), unique=True),),
+    )
+    return Metamodel(entities=(root, leaf))
+
+
+def test_schema_statements_tph_surfaces_a_descendant_declared_value_object_and_index() -> None:
+    # `meta` and the unique index over `code` are declared ONLY on the
+    # concrete subtype `Leaf`, never the root — invisible from `root.
+    # value_objects` / `_unique_constraints((root,), ...)` alone (the
+    # pre-chain-wide-fix code); the shared table's DDL must still carry both.
+    (ddl,) = provision.schema_statements(
+        _tph_family_with_a_descendant_declared_value_object_and_index()
+    )
+    assert "meta jsonb" in ddl
+    assert "unique (code)" in ddl
+
+
 def test_schema_statements_tpcs_maps_a_value_object_to_jsonb() -> None:
     (ddl,) = provision.schema_statements(_tpcs_family_with_a_value_object())
     assert "meta jsonb" in ddl

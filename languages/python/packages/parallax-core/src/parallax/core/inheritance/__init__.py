@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, ValueObject
+from parallax.core.descriptor import declaring_entity as _resolve_declaring_entity
 
 __all__ = [
     "Family",
@@ -120,21 +121,19 @@ def effective_concrete_subtypes(metamodel: Metamodel, position: str) -> tuple[st
 def _root_name(meta: Metamodel, entity: Entity) -> str | None:
     """The name of ``entity``'s family root, or ``None`` if unresolvable.
 
-    Walks the ``parent`` chain rather than assuming a metamodel holds only one
-    family (`family_of` does, which is fine for its own single-family callers but
-    would silently misattribute a multi-family model's ancestry lookups).
+    Composes with the shared ``m-descriptor``-scope ancestry walk
+    (:func:`~parallax.core.descriptor.declaring_entity`) rather than
+    re-deriving it: the descriptor-level resolver already "resolves to what
+    it can reach" for a malformed (cyclic/unresolvable) ancestry, falling back
+    to ``entity`` itself, which is never a root — so this only needs to check
+    the resolved entity's own role, never re-walk ``parent`` links itself.
     """
-    current = entity
-    seen: set[str] = set()
-    while current.inheritance is not None:
-        if current.inheritance.role == "root":
-            return current.name
-        parent = current.inheritance.parent
-        if parent is None or current.name in seen:
-            return None
-        seen.add(current.name)
-        current = meta.entity(parent)
-    return None
+    if entity.inheritance is None:
+        return None
+    resolved = _resolve_declaring_entity(meta, entity)
+    if resolved.inheritance is None or resolved.inheritance.role != "root":
+        return None
+    return resolved.name
 
 
 def family_root(meta: Metamodel, entity: Entity) -> Entity:
@@ -165,10 +164,14 @@ def declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
     resolution (`m-snapshot-read`), per-hop temporal propagation (`m-navigate`),
     frozen-node pin/edge attachment (the snapshot handle's wrap), and
     inheritance-aware DDL derivation (the conformance provisioning path).
+
+    A thin ``m-inheritance``-scope alias over the shared ``m-descriptor``-scope
+    walk (:func:`~parallax.core.descriptor.declaring_entity`) — never re-derived
+    here — kept as its own name in this module because every caller above
+    already depends on ``m-inheritance``, never ``m-descriptor`` directly, for
+    this family-aware resolution.
     """
-    if entity.inheritance is None:
-        return entity
-    return family_root(meta, entity)
+    return _resolve_declaring_entity(meta, entity)
 
 
 def ancestor_chain(meta: Metamodel, effective_concretes: Sequence[str]) -> tuple[Entity, ...]:

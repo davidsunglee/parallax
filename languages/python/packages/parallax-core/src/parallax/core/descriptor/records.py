@@ -37,6 +37,9 @@ __all__ = [
     "ValueObject",
     "ValueObjectAttribute",
     "column_order",
+    "declaring_entity",
+    "effective_as_of_attributes",
+    "effective_temporal",
 ]
 
 Mutability = Literal["read-only", "transactional"]
@@ -211,7 +214,21 @@ class Entity:
 
     @property
     def temporal(self) -> Temporal:
-        """The effective temporal classification, derived from the as-of axes."""
+        """This entity's OWN LOCAL temporal classification, derived from its own
+        ``as_of_attributes`` only.
+
+        For an inheritance participant this is a **structural, non-flattening**
+        view, not necessarily the family's effective one: an abstract-subtype or
+        concrete-subtype legitimately declares no axes of its own even when its
+        family is temporal (only the root may declare ``asOfAttributes`` —
+        `m-inheritance` "Inherited members"). Every consumer that needs the
+        entity's EFFECTIVE classification within its family (introspection,
+        validation, write classification, …) **MUST** use
+        :func:`effective_temporal` instead (`m-descriptor` "the `asOfAttribute`
+        children an entity declares" — ADR 0026); this property alone is not
+        family-aware because a bare :class:`Entity` carries no sibling context to
+        resolve one.
+        """
         axes = {axis.axis for axis in self.as_of_attributes}
         if not axes:
             return "non-temporal"
@@ -223,8 +240,64 @@ class Entity:
 
     @property
     def is_temporal(self) -> bool:
-        """Whether the entity carries any temporal dimension."""
+        """Whether the entity's OWN LOCAL ``as_of_attributes`` is non-empty.
+
+        Same local/structural caveat as :attr:`temporal`: use
+        :func:`effective_as_of_attributes` (or ``bool(...)`` of it) for an
+        inheritance participant's family-effective temporality.
+        """
         return bool(self.as_of_attributes)
+
+
+def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
+    """The entity that actually DECLARES ``entity``'s primary key and temporal
+    (as-of) axes: the family root for an inheritance participant — temporality,
+    like the physical primary key, is a FAMILY-WIDE property declared only on
+    the root and inherited unchanged by every abstract and concrete descendant
+    (`m-inheritance` "Inherited members") — else ``entity`` itself.
+
+    A pure metamodel-RECORD walk over the ``parent`` / ``role`` fields the
+    descriptor already carries: never raises. An ancestry that does not resolve
+    to a root (a cycle, an unresolvable parent) falls back to ``entity``
+    unchanged — the same "resolve to what it can reach" posture
+    `descriptor.validate`'s own inherited-attribute walk takes; ``m-inheritance``
+    ``validate`` is the sole authority on REJECTING a malformed family, not this
+    lookup. ``m-descriptor`` MUST NOT depend on ``m-inheritance``
+    (`core/spec/modules.md` §7 dependency graph), so this is the one place the
+    ancestry-to-root walk is implemented; ``parallax.core.inheritance``'s own
+    ``declaring_entity`` / ``family_root`` compose with this rather than
+    re-deriving it.
+    """
+    inheritance = entity.inheritance
+    if inheritance is None:
+        return entity
+    by_name = metamodel.by_name
+    current = entity
+    seen: set[str] = set()
+    while True:
+        current_inheritance = current.inheritance
+        if current_inheritance is None or current_inheritance.role == "root":
+            return current
+        parent = current_inheritance.parent
+        if parent is None or current.name in seen or parent not in by_name:
+            return entity
+        seen.add(current.name)
+        current = by_name[parent]
+
+
+def effective_as_of_attributes(metamodel: Metamodel, entity: Entity) -> tuple[AsOfAttribute, ...]:
+    """``entity``'s FAMILY-EFFECTIVE as-of axes: the declaring entity's own — the
+    family root's, for an inheritance participant — never re-derived from a
+    possibly-empty LOCAL ``as_of_attributes`` (`m-descriptor` "For an
+    inheritance participant…"; ADR 0026)."""
+    return declaring_entity(metamodel, entity).as_of_attributes
+
+
+def effective_temporal(metamodel: Metamodel, entity: Entity) -> Temporal:
+    """``entity``'s FAMILY-EFFECTIVE ``temporal`` classification — the one every
+    consumer other than a non-flattening structural reader MUST use
+    (`m-descriptor`; ADR 0026)."""
+    return declaring_entity(metamodel, entity).temporal
 
 
 @dataclass(frozen=True, slots=True)

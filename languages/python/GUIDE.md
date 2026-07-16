@@ -240,27 +240,43 @@ self-contained without a system `libpq`.
   sweep unchanged at 164, combined Docker lane 271 passed / 10 skipped,
   rejected sweep 25 passed / 10 skipped. **Phase 7 (the snapshot branch) is
   COMPLETE.** **Next:** Phase 8 (writes and correctness).
-- **Temporal root-ownership remediation round (core amendment, ADR 0026).**
-  Corrected a latent core-spec ambiguity: temporality is now normatively a
-  FAMILY-WIDE property — only the family root may declare `asOfAttributes`;
-  a descendant that redeclares, adds, or shadows an axis is rejected pre-SQL
-  (`inheritance-temporal-axes-not-root-owned`), regardless of the root's own
-  temporal state. `parallax.core.inheritance.validate` and the D-7 class
-  frontend (`EntityConfig(as_of=...)` on a family subclass) both enforce it;
-  every temporal consumer (as-of injection, pin/edge, history/range,
-  identity, propagation, TPH/TPCS DDL) resolves through the family root
-  uniformly. Four corpus cases added (two `when.model` rejected witnesses,
-  two concrete-target temporal reads); the `rate.yaml` fixture gained a
-  second processing milestone sharing one business key, exercising the
-  `(id, from_z, in_z)` temporal physical PK. Measured post-round: unit lane
-  (`pytest -m unit`) 1583 passed / 77 skipped; compile-sweep module
-  (`pytest -m compile_sweep`) 168 passed / 67 skipped; combined Docker lane
+- **Temporal root-ownership remediation round (core amendment).** Landed the
+  binding uniform-family-temporality decision — design in
+  [ADR 0026](../../docs/adr/0026-inheritance-family-temporal-axes-are-declared-only-by-the-root.md)
+  and `core/spec/m-inheritance.md` ("Temporal axes are root-owned") /
+  `core/spec/m-descriptor.md`; this entry is status only. Measured
+  post-round: unit lane (`pytest -m unit`) 1583 passed / 77 skipped;
+  compile-sweep module (`pytest -m compile_sweep`) 168 passed / 67 skipped;
+  combined Docker lane
   (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 312
   passed / 10 skipped; rejected sweep (`test_rejected_sweep.py`) 27 passed /
   10 skipped; API-suite partition exact over 303 active cases (47 exercised
   / 256 reasoned-skip); reference-harness `just oracle-test` 1421 passed
   dual-dialect; slice tag counts `slice-mvp-1`/`slice-snapshot-1`/
   `slice-managed-1` = 197 / 303 / 325 (`just core-dep-graph` profile gate).
+- **Effective-temporality resolver + `m-inheritance-100`/`-101` story review
+  remediation.** Closed a residual gap in the round above: four sites still
+  classified from an inheritance participant's LOCAL `as_of_attributes`
+  instead of the family-effective one (`meta().temporal`, the
+  `optimisticLocking` composition check, `lower_write`'s temporal-write
+  refusal, plus the completed `m-descriptor`-scope resolver
+  `parallax.core.descriptor.declaring_entity` this round's records.py change
+  started); `parallax.core.inheritance.declaring_entity`/`family_root` now
+  compose with it instead of duplicating the ancestry walk; the class
+  frontend (`EntityMeta.__new__`) gained the same family-effective
+  `optimisticLocking` composition gate the descriptor-level validator did.
+  `m-inheritance-100`'s graph story ran `.history()` instead of the case's own
+  as-of point read (moved to a `ReadStory`, `parallax.conformance.read_stories`,
+  graded by the generic runner; the history proof survives as a clearly-named
+  supplemental, non-partition-affecting test). Measured post-round: unit lane
+  (`pytest -m unit`) 1589 passed / 77 skipped; compile-sweep module
+  (`pytest -m compile_sweep`) 168 passed / 67 skipped; combined Docker lane
+  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 314
+  passed / 10 skipped; API-suite partition unchanged at 303 active (47
+  exercised / 256 reasoned-skip); `just python-static` / `just python-verify`
+  exit 0 (diff-cover 100%, Pyright 0/0/0); `just lint` exit 0, including the
+  new `m-case-format.md` <-> `compatibility-case.schema.json` `rejectedRule`
+  vocabulary drift guard (`reference_harness.case_format_vocab_check`).
 
 ## Blockers
 

@@ -23,6 +23,9 @@ from parallax.core import (
     meta,
 )
 from parallax.core.descriptor import (
+    AsOfAttribute as AsOfAttributeRecord,
+)
+from parallax.core.descriptor import (
     Attribute as AttributeRecord,
 )
 from parallax.core.descriptor import (
@@ -425,6 +428,50 @@ def test_family_view_tolerates_unresolved_root() -> None:
     orphan_family = meta_of(descriptor, "Orphan").family  # parent absent from the descriptor
     assert orphan_family is not None
     assert orphan_family.root is None
+
+
+def test_meta_temporal_is_the_family_effective_classification() -> None:
+    # ADR 0026 / review remediation (Spec 1, consequence (a)): a temporal-family
+    # CONCRETE descendant declares NO `asOfAttributes` of its own (only the
+    # root does) — `meta(DepositRate).temporal` must still report the family's
+    # EFFECTIVE classification ("bitemporal"), never the entity's own local,
+    # non-flattening "non-temporal" (the entity/meta.py bug this proves fixed).
+    pk = AttributeRecord(name="id", type="int64", column="id", primary_key=True)
+    root = EntityRecord(
+        name="Rate",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(pk,),
+        as_of_attributes=(
+            AsOfAttributeRecord(
+                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            ),
+            AsOfAttributeRecord(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+    concrete = EntityRecord(
+        name="DepositRate",
+        table="deposit_rate",
+        attributes=(pk,),
+        inheritance=Inheritance(role="concrete-subtype", parent="Rate"),
+    )
+    family = Metamodel(entities=(root, concrete))
+
+    assert meta_of(family, "DepositRate").temporal == "bitemporal"
+    assert meta_of(family, "Rate").temporal == "bitemporal"
+    # The LOCAL structural view (`.as_of`) stays empty for the descendant —
+    # deliberately NOT flattened (`m-descriptor`'s own documented exception).
+    assert meta_of(family, "DepositRate").as_of == ()
+    # The EXPORTED descriptor document stays LOCAL too (never the family-
+    # effective `.temporal`): it is the structural, round-trippable form
+    # (`serialize(deserialize(d)) == d` MUST hold, m-descriptor "Metamodel
+    # serde"). Propagating the effective classification into the export would
+    # produce an internally-inconsistent document — a `temporal: bitemporal`
+    # label with no `asOfAttributes` children — that `deserialize` itself
+    # would then reject as disagreeing with the (empty) local axes.
+    exported = meta_of(family, "DepositRate").descriptor()["entity"]
+    assert "temporal" not in cast("dict[str, object]", exported)
 
 
 def _define_string_plain_field() -> type:

@@ -53,6 +53,7 @@ from parallax.conformance.graph_models import Coverage, Policy
 from parallax.conformance.read_models import (
     Animal,
     CardPayment,
+    DepositRate,
     Document,
     Dog,
     FinancialDocument,
@@ -283,5 +284,12 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "document",
         lambda: Folder.where(Folder.documents.any(Document.narrow(FinancialDocument))),
         "op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))",
+    ),
+    ReadStory(
+        "m-inheritance-100",
+        "Table-per-concrete-subtype concrete-target read pinning an inherited root-owned axis",
+        "rate",
+        lambda: DepositRate.where().as_of(processing=dt.datetime(2024, 1, 15, tzinfo=dt.UTC)),
+        "op = DepositRate.where().as_of(processing=datetime(2024, 1, 15, tzinfo=UTC))",
     ),
 )

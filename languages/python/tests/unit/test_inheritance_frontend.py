@@ -12,9 +12,9 @@ inheritance-family reads through the shipped surface against real Postgres.
 This file also proves the temporal composition's class-frontend spelling —
 ``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL, the root ALONE
 declaring ``EntityConfig(as_of=...)``, COR-3 residual-finding remediation) —
-against the SAME installed ``Rate`` family the ``m-inheritance-100`` graph
-story queries, so its own definition never drifts from the corpus descriptor
-either.
+against the SAME installed ``Rate`` family the ``m-inheritance-100`` `ReadStory`
+(`parallax.conformance.read_stories`) queries, so its own definition never
+drifts from the corpus descriptor either.
 """
 
 from __future__ import annotations
@@ -191,3 +191,22 @@ def test_abstract_subtype_declaring_its_own_as_of_is_rejected() -> None:
             )
 
             extra: Attr[str | None] = Field(type="string", nullable=True, default=None)
+
+
+def test_concrete_subtype_declaring_an_optimistic_locking_attr_is_rejected() -> None:
+    # Review remediation (Spec 1, class-frontend audit gap): a temporal-family
+    # CONCRETE subtype declares no `as_of` of its own (only the root does, the
+    # test above), but the SAME family-wide temporal composition rule
+    # (m-descriptor x m-opt-lock) forbids it from carrying its own
+    # `optimisticLocking` attribute too — resolved through the FAMILY-EFFECTIVE
+    # classification (`im.Rate` is bitemporal), never the subclass's own local,
+    # always-empty `as_of_attributes` (which would wrongly accept it).
+    from parallax.core import Attr, EntityConfig, Field
+    from parallax.core.entity.base import Concrete
+
+    with pytest.raises(Exception, match="must not also declare an optimisticLocking"):
+
+        class BadVersionedConcrete(im.Rate, frozen=True):  # pyright: ignore[reportUnusedClass]
+            __parallax__ = EntityConfig(inheritance=Concrete())
+
+            version: Attr[int] = Field(type="int64", optimistic_locking=True)

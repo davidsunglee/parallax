@@ -136,9 +136,16 @@ def lower_write(planned: PlannedWrite, meta: Metamodel, dialect: Dialect) -> lis
             "lands with the write path (COR-3 Phase 8; m-opt-lock)"
         )
     entity = meta.entity(instruction.entity)
-    if entity.is_temporal:
+    # Temporal classification MUST be the family-EFFECTIVE one (ADR 0026): an
+    # inheritance participant declares its as-of axes on the root alone, so
+    # `entity.is_temporal` (a bare, non-flattening LOCAL view) would silently
+    # miss a temporal-family concrete's own write here — it would still be
+    # refused just below (any inheritance participant is out of scope for
+    # M4), but with the wrong reason and the wrong classification printed.
+    declaring = inheritance.declaring_entity(meta, entity)
+    if declaring.is_temporal:
         raise WriteLoweringError(
-            f"temporal write on {entity.name!r} ({entity.temporal}): milestone lowering "
+            f"temporal write on {entity.name!r} ({declaring.temporal}): milestone lowering "
             "(close-and-chain / rectangle split) lands with the write path (COR-3 Phase 8; "
             "m-audit-write / m-bitemp-write)"
         )
@@ -504,7 +511,13 @@ def find_history(
         raise ValueError(  # pragma: no cover - m-case-format: v1 carries no includes
             "a milestone-set (history / asOfRange) read carries no deep-fetch levels"
         )
-    entity = _temporal_entity(meta, meta.entity(target))
+    # `inheritance.declaring_entity` resolves the entity whose `as_of_attributes`
+    # are this target's FAMILY's actual temporal declaration (the root, for a
+    # participant — temporality is family-wide, `m-inheritance`); every
+    # `~parallax.core.temporal_read` per-entity primitive below (`milestone_edge`,
+    # `_edge_pin`, `_edge_sort_key`) MUST resolve through it rather than the
+    # queried target's own (possibly locally-empty) `as_of_attributes`.
+    entity = inheritance.declaring_entity(meta, meta.entity(target))
     statement = compile_read(plan_.root_operation, meta, dialect, target, result_form="instance")
     statements: list[ExecutedStatement] = []
     rows = _execute(port, dialect, statement, statements)
@@ -526,22 +539,6 @@ def find_history(
         for edge in order
     )
     return HistoryFindResult(graphs=graphs, execution=Execution(tuple(statements)))
-
-
-def _temporal_entity(meta: Metamodel, entity: Entity) -> Entity:
-    """The entity whose ``as_of_attributes`` are ``entity``'s FAMILY's actual
-    temporal declaration: the family root for an inheritance participant
-    (temporality is family-wide, `m-inheritance`) — else ``entity`` itself.
-
-    Every consumer of `~parallax.core.temporal_read`'s per-entity primitives
-    (`milestone_edge`, `statement_pin`, `resolve_pinned_instants`, ...) MUST
-    resolve through this rather than consult a queried entity's own local
-    ``as_of_attributes`` directly: a concrete (or abstract-subtype) position
-    whose family declares its axes on the root carries none of its own, so
-    reading `entity.as_of_attributes` straight would misclassify it
-    non-temporal.
-    """
-    return inheritance.declaring_entity(meta, entity)
 
 
 def _execute(
@@ -718,7 +715,7 @@ class Transaction:
         """
         target = statement.target
         op = statement.operation()
-        entity = _temporal_entity(self._meta, self._meta.entity(target))
+        entity = inheritance.declaring_entity(self._meta, self._meta.entity(target))
         pin = _statement_pin(op, entity)
         lock = self._uow.settings.concurrency
         if _is_milestone_set_op(op):
@@ -798,7 +795,7 @@ def _snapshot_from_find_result(
 def _snapshot_from_history_result(
     result: HistoryFindResult, target: str, meta: Metamodel
 ) -> Snapshot[Any]:
-    entity = _temporal_entity(meta, meta.entity(target))
+    entity = inheritance.declaring_entity(meta, meta.entity(target))
     roots: list[Any] = []
     for graph in result.graphs:
         milestone_pin = _pin_from_milestone(entity, graph.pin)
@@ -854,7 +851,7 @@ class Database:
         """
         target = statement.target
         op = statement.operation()
-        entity = _temporal_entity(self._meta, self._meta.entity(target))
+        entity = inheritance.declaring_entity(self._meta, self._meta.entity(target))
         pin = _statement_pin(op, entity)
         if _is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)

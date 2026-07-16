@@ -32,6 +32,13 @@ can. Two lifecycle observables this module's stories witness —
 `UnloadedRelationshipError` — are the SAME per-language guarantees
 `m-api-conformance` requirement 4 names as needing to be "graded, not
 narrated" here.
+
+A function defined here but NOT listed in ``GRAPH_STORIES`` is a SUPPLEMENTAL
+proof: a public-API-only demonstration ``test_story_run.py`` still executes
+and grades directly (never through the ``GraphStory``/``Example`` machinery),
+proving a capability alongside a case's own exercised example without being
+counted toward that (or any) case's exercised status — see
+`history_of_a_concrete_temporal_node_distinguishes_milestones`.
 """
 
 from __future__ import annotations
@@ -101,14 +108,18 @@ def mutation_has_no_writeback(db: Database) -> tuple[Any, Snapshot[Any]]:
     return mutated, reread
 
 
-def concrete_temporal_node_inherits_the_roots_pin(db: Database) -> Snapshot[Any]:
-    # `DepositRate` declares NO `as_of` of its own (`Rate`, the family root,
-    # does — the binding root-ownership decision); `.history(...)` still
-    # accepts `DepositRate`'s own inherited axis spelling
-    # (`_temporal_as_of_attributes`), and the strengthened fixtures/rate.yaml
-    # milestone history (m-inheritance-100) surfaces the closed historical
-    # correction and the current row as two distinct, edge-pinned nodes
-    # sharing one business key.
+def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -> Snapshot[Any]:
+    """SUPPLEMENTAL — not a registered ``GraphStory`` and not counted toward any
+    case's exercised status (`m-inheritance-100`'s own point read is exercised
+    by its `ReadStory`, `parallax.conformance.read_stories`, graded by
+    ``test_read_story_runs_through_the_shipped_surface``). Proves the separate
+    milestone-HISTORY shape: `DepositRate` declares no `as_of` of its own
+    (`Rate`, the family root, does); `.history(...)` still accepts
+    `DepositRate`'s own inherited axis spelling, and the strengthened
+    ``fixtures/rate.yaml`` milestone history surfaces the closed historical
+    correction and the current row as two distinct, edge-pinned nodes sharing
+    one business key.
+    """
     return db.find(DepositRate.where().history(axis="processing"))
 
 
@@ -154,11 +165,5 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "Mutating a snapshot node never writes back",
         "orders",
         mutation_has_no_writeback,
-    ),
-    GraphStory(
-        "m-inheritance-100",
-        "A concrete TPCS node inherits its root-declared pin/edge across a processing correction",
-        "rate",
-        concrete_temporal_node_inherits_the_roots_pin,
     ),
 )

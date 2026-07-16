@@ -49,7 +49,7 @@ from typing import cast
 
 from parallax.core import inheritance
 from parallax.core.deep_fetch import FetchLevel
-from parallax.core.descriptor import Entity, Metamodel, NestedValueObject, ValueObject
+from parallax.core.descriptor import Metamodel, NestedValueObject, ValueObject
 
 __all__ = [
     "Assembler",
@@ -79,23 +79,6 @@ class Node:
 
     fields: dict[str, object]
     pk_columns: tuple[str, ...]
-
-
-def _pk_declaring_entity(meta: Metamodel, entity: Entity) -> Entity:
-    """The entity that DECLARES ``entity``'s primary key: the family root for
-    an inheritance participant (m-inheritance: the primary key is always
-    declared there and inherited by every descendant) — else ``entity`` itself.
-
-    Primary-key identity and temporal-axis resolution are conceptually
-    distinct questions (`inheritance.declaring_entity` answers the temporal
-    one), but under the family-wide temporal-ownership invariant both resolve
-    to the same entity — the family root. This helper stays a separate,
-    locally-named seam for graph-local IDENTITY specifically (never as-of),
-    calling `inheritance.family_root` directly.
-    """
-    if entity.inheritance is None:
-        return entity
-    return inheritance.family_root(meta, entity)
 
 
 def _resolved_position(
@@ -150,7 +133,14 @@ def identity_key(
     """
     del narrow_to  # resolved position does not affect identity (family + PK only)
     entity = meta.entity(entity_name)
-    declaring = _pk_declaring_entity(meta, entity)
+    # `inheritance.declaring_entity`: the family root for a participant (the
+    # primary key, like the temporal axes, is family-wide metadata declared
+    # only there — m-inheritance "Inherited members") — else `entity` itself.
+    # Graph-identity FAMILY normalization and temporal-coordinate resolution
+    # are conceptually distinct questions, but under the family-wide
+    # root-ownership invariant (ADR 0026) both resolve identically, so this
+    # reuses the ONE shared resolver rather than a second, duplicate walk.
+    declaring = inheritance.declaring_entity(meta, entity)
     if not declaring.primary_key:
         return None
     pk = tuple(row[attr.column] for attr in declaring.primary_key)
@@ -158,7 +148,7 @@ def identity_key(
 
 
 def _pk_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
-    declaring = _pk_declaring_entity(meta, meta.entity(entity_name))
+    declaring = inheritance.declaring_entity(meta, meta.entity(entity_name))
     return tuple(attr.column for attr in declaring.primary_key)
 
 

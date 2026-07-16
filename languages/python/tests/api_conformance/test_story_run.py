@@ -29,7 +29,10 @@ import pytest
 
 from conftest import case_document, case_fixtures, compare_rows, instance_row
 from parallax.conformance import case_format, engine
-from parallax.conformance.graph_stories import GRAPH_STORIES
+from parallax.conformance.graph_stories import (
+    GRAPH_STORIES,
+    history_of_a_concrete_temporal_node_distinguishes_milestones,
+)
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Account
@@ -197,16 +200,19 @@ def test_mutation_has_no_writeback(provisioner: Any) -> None:
     assert reread.result().name == "Ada"  # the re-read never observes it
 
 
-def test_concrete_temporal_node_inherits_the_roots_pin(provisioner: Any) -> None:
-    # m-inheritance-100 (P3/P4 residual-finding remediation): a concrete
-    # TPCS node (DepositRate) whose family's as-of axes are declared on the
-    # root (Rate) alone still gets its own pin/edge attached, and a
+def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisioner: Any) -> None:
+    # SUPPLEMENTAL (Spec-2 remediation) — NOT tied to any case's exercised
+    # status: `m-inheritance-100`'s own point read is graded by its `ReadStory`
+    # below (`test_read_story_runs_through_the_shipped_surface`), through the
+    # generic case-driven runner, exactly like every other read story. This
+    # proves the SEPARATE milestone-HISTORY shape over the SAME fixture: a
+    # concrete TPCS node (DepositRate) whose family's as-of axes are declared
+    # on the root (Rate) alone still gets its own pin/edge attached, and a
     # `.history(...)` milestone-set read's closed historical correction and
     # current row remain distinct identities sharing one business key.
-    story = _GRAPH_STORIES_BY_ID["m-inheritance-100"]
-    meta = _reset_for(story.case_id, provisioner)
+    meta = _reset_for("m-inheritance-100", provisioner)
     db = connect(provisioner.port, meta)
-    snapshot = story.run(db)
+    snapshot = history_of_a_concrete_temporal_node_distinguishes_milestones(db)
     nodes = snapshot.results()
     assert len(nodes) == 2
     by_amount = {node.amount: node for node in nodes}

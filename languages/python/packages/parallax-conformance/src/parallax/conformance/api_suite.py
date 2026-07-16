@@ -248,17 +248,18 @@ _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON: Final[str] = (
 )
 
 # The TPH concrete-target temporal read (m-inheritance-101, Bond): a strategy sibling
-# of the concrete-target root-owned-axis inheritance mechanism the NEW
-# m-inheritance-100 graph story proves for real (through `db.find`, real Postgres) —
-# TPH's own tag-predicate composition is independently proven by m-inheritance-001,
-# and its as-of composition by m-temporal-read-003; the residual-finding binding
-# decision's genuinely new mechanism (a concrete-target read resolves its family's
+# of the concrete-target root-owned-axis inheritance mechanism m-inheritance-100's
+# OWN ReadStory proves for real (through `db.find`, real Postgres, the SAME generic
+# case-driven runner every other read story uses) — TPH's own tag-predicate
+# composition is independently proven by m-inheritance-001, and its as-of
+# composition by m-temporal-read-003; the residual-finding binding decision's
+# genuinely new mechanism (a concrete-target read resolves its family's
 # root-declared axes) is proven once, by the TPCS witness, not twice.
 _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
     "a table-per-hierarchy strategy sibling of the concrete-target root-owned-axis "
-    "inheritance mechanism the executed `m-inheritance-100` graph story proves for real "
-    "(through `db.find`, real Postgres): TPH's own tag-predicate composition is already "
-    "proven by `m-inheritance-001`, its as-of composition by `m-temporal-read-003` — the "
+    "inheritance mechanism `m-inheritance-100`'s own ReadStory proves for real (through "
+    "`db.find`, real Postgres): TPH's own tag-predicate composition is already proven "
+    "by `m-inheritance-001`, its as-of composition by `m-temporal-read-003` — the "
     "genuinely new mechanism (a concrete-target read resolves its family's root-declared "
     "axes) is proven once by the TPCS witness, not twice"
 )

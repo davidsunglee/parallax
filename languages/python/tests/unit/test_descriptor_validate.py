@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from parallax.conformance import case_format
@@ -134,6 +136,31 @@ def test_temporal_entity_with_optimistic_locking_attr_is_rejected() -> None:
     )
     with pytest.raises(DescriptorError, match="must not also declare an optimisticLocking"):
         validate_entity(entity)
+
+
+def test_temporal_family_descendant_with_optimistic_locking_attr_is_rejected() -> None:
+    # ADR 0026 / review remediation: a temporal-family CONCRETE descendant
+    # declares no `asOfAttributes` of its own (only the root does), so the
+    # per-entity `validate_entity` check alone (LOCAL as-of) would silently
+    # ACCEPT an `optimisticLocking` attribute it declares — `validate_metamodel`
+    # must still reject it, resolving the FAMILY-EFFECTIVE classification
+    # (`DepositRate`'s family root `Rate` is bitemporal, models/rate.yaml).
+    rate = _MODELS["rate"]
+    deposit = rate.entity("DepositRate")
+    mutated_deposit = dataclasses.replace(
+        deposit,
+        attributes=(
+            *deposit.attributes,
+            Attribute(name="version", type="int64", column="version", optimistic_locking=True),
+        ),
+    )
+    mutated = Metamodel(
+        entities=tuple(
+            mutated_deposit if entity.name == "DepositRate" else entity for entity in rate.entities
+        )
+    )
+    with pytest.raises(DescriptorError, match="must not also declare an optimisticLocking"):
+        validate_metamodel(mutated)
 
 
 def test_non_identifier_attribute_name_is_rejected() -> None:

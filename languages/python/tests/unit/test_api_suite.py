@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 from parallax.conformance import api_suite, case_format, usage_guide
 from parallax.conformance.api_suite import Example, Skip
+from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
+from parallax.conformance.read_stories import READ_STORIES
 
 pytestmark = pytest.mark.unit
+
+# A leading-underscore identifier (never a legitimate public-API token): the
+# Usage Guide's rendered read/graph story snippets must never expose one (the
+# m-inheritance-100 story once leaked `_temporal_as_of_attributes`, a
+# framework-internal, in a comment). Scoped to the read/graph snippets this
+# remediation touches — the write stories' own local `_as_rows`/
+# `_known_account` helpers are a separate, ledgered cleanup (D-23).
+_PRIVATE_NAME = re.compile(r"(?<![\w.])_[A-Za-z][A-Za-z0-9_]*")
 
 
 def _case(case_id: str, module: str) -> case_format.Case:
@@ -217,6 +228,16 @@ def test_render_usage_guide_is_markdownlint_clean(examples: list[Example]) -> No
     assert text.endswith("\n")
     assert not text.endswith("\n\n")
     assert "\n\n\n" not in text
+
+
+def test_read_and_graph_story_snippets_render_no_private_name() -> None:
+    # Regression guard (COR-3 Spec-2/Standards-3 remediation): a read/graph
+    # story's rendered Usage Guide source is the SAME public surface the suite
+    # executes — it must never leak a framework-internal `_`-prefixed name.
+    for story in READ_STORIES:
+        assert not _PRIVATE_NAME.search(story.snippet), story.case_id
+    for story in GRAPH_STORIES:
+        assert not _PRIVATE_NAME.search(graph_story_snippet(story)), story.case_id
 
 
 def test_generate_matches_render_of_registered_examples() -> None:

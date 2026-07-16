@@ -39,6 +39,7 @@ ORDERS = _MODELS["orders"]
 CUSTOMER = _MODELS["customer"]
 BALANCE = _MODELS["balance"]
 PAYMENT = _MODELS["payment"]
+RATE = _MODELS["rate"]
 
 _B1 = "2024-01-01T00:00:00+00:00"
 
@@ -220,6 +221,19 @@ def test_inheritance_family_write_is_refused() -> None:
     insert = KeyedWrite("insert", "CardPayment", ({"id": 1},))
     with pytest.raises(WriteLoweringError, match="inheritance-family"):
         _lower(insert, PAYMENT)
+
+
+def test_temporal_inheritance_family_write_is_refused_with_the_temporal_message() -> None:
+    # ADR 0026 / review remediation (Spec 1, consequence (c)): `DepositRate`
+    # declares NO `as_of_attributes` of its own (only its family root `Rate`
+    # does), so classifying from `entity.is_temporal` alone would miss it —
+    # the write is still refused either way (every inheritance-family write is
+    # out of scope for M4), but MUST be refused with the byte-stable TEMPORAL
+    # message (`entity.temporal` resolved through the family), never the
+    # generic "inheritance-family" one a local-only check would emit instead.
+    insert = KeyedWrite("insert", "DepositRate", ({"id": 1, "amount": 1.00, "grade": "A"},))
+    with pytest.raises(WriteLoweringError, match=r"temporal write on 'DepositRate' \(bitemporal\)"):
+        _lower(insert, RATE)
 
 
 def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:

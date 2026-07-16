@@ -24,6 +24,7 @@ from parallax.core.descriptor import (
     Relationship,
     Temporal,
     ValueObject,
+    effective_temporal,
     serialize,
 )
 from parallax.core.entity.base import entity_record_of, entity_records, entity_registry
@@ -138,7 +139,16 @@ class EntityMetaView:
 
     @property
     def temporal(self) -> Temporal:
-        return self._entity.temporal
+        """The FAMILY-EFFECTIVE temporal classification (`m-descriptor`; ADR
+        0026): for an inheritance participant, the family root's — an
+        abstract-subtype or concrete-subtype declares no ``asOfAttributes``
+        of its own even when its family is temporal, so `Entity.temporal`
+        alone (a bare, non-flattening structural view) would misreport it
+        ``non-temporal``. Introspection is one of the consumers the spec
+        names as needing the effective classification, so this resolves
+        through the sibling records `_context` carries, never the entity's
+        own local axes directly."""
+        return effective_temporal(Metamodel(entities=self._context), self._entity)
 
     @property
     def attributes(self) -> tuple[Attribute, ...]:
@@ -150,6 +160,11 @@ class EntityMetaView:
 
     @property
     def as_of(self) -> tuple[AsOfAttribute, ...]:
+        """This entity's OWN LOCAL declared as-of axes — a non-flattening
+        structural view (`m-descriptor` "A model-aware reader that does not
+        flatten inheritance… MAY still surface a non-root participant's own,
+        locally-empty asOfAttributes for structural inspection"). Use
+        :attr:`temporal` for the family-EFFECTIVE classification."""
         return self._entity.as_of_attributes
 
     @property

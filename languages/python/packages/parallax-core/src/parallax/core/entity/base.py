@@ -24,7 +24,13 @@ from pydantic import BaseModel, ConfigDict
 from pydantic._internal._model_construction import ModelMetaclass
 
 from parallax.core import inheritance as _inheritance
-from parallax.core.descriptor import UNSET, AsOfAttribute, DescriptorError, validate_entity
+from parallax.core.descriptor import (
+    UNSET,
+    AsOfAttribute,
+    DescriptorError,
+    validate_entity,
+    validate_temporal_optimistic_locking,
+)
 from parallax.core.descriptor import Attribute as AttributeRecord
 from parallax.core.descriptor import Entity as EntityRecord
 from parallax.core.descriptor import Inheritance as InheritanceRecord
@@ -719,6 +725,18 @@ class EntityMeta(ModelMetaclass):
         # time, before the class is registered or ever exported.
         try:
             validate_entity(entity)
+            if entity.inheritance is not None:
+                # `validate_entity`'s own optimistic-lock composition check
+                # reads only LOCAL `as_of_attributes` (correct for a
+                # non-participant, or the root itself) — a family subclass
+                # legitimately declares none of its own even when its family
+                # is temporal, so the same gap `_derive_inheritance` already
+                # closes for `EntityConfig(as_of=...)` above needs closing
+                # here too: resolve the FAMILY-EFFECTIVE classification
+                # (ADR 0026) against every already-registered sibling plus
+                # this not-yet-registered entity.
+                temp_meta = MetamodelRecord(entities=(*entity_records().values(), entity))
+                validate_temporal_optimistic_locking(temp_meta, entity)
         except DescriptorError as exc:
             raise EntityDefinitionError(str(exc)) from exc
 
