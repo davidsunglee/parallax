@@ -150,13 +150,11 @@ def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
     ]
 
 
-def test_update_and_delete_lower_to_their_keyed_dml() -> None:
-    # m-unit-work-005 / -006, migrated to the m-opt-lock observation flow
-    # (COR-3 Phase 8 increment 3): a keyed update (SET the non-PK members,
-    # WHERE the key, version advanced from THIS unit of work's own recorded
-    # observation) and a keyed (unobserved, ungated — delete's opt-lock
-    # participation is opportunistic) delete, flushed in the canonical
-    # mixed-op order. The edited copy is built from a row `tx.find` fetches
+def test_update_lowers_to_its_keyed_dml() -> None:
+    # m-unit-work-005, migrated to the m-opt-lock observation flow (COR-3
+    # Phase 8 increment 3): a keyed update (SET the non-PK members, WHERE the
+    # key, version advanced from THIS unit of work's own recorded
+    # observation). The edited copy is built from a row `tx.find` fetches
     # INSIDE this transaction — a versioned update requires a prior
     # observation; an edited copy fetched outside the writing transaction
     # cannot be updated directly (python.md §5).
@@ -165,7 +163,6 @@ def test_update_and_delete_lower_to_their_keyed_dml() -> None:
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
-        tx.delete(_grace())
 
     _db(port).transact(fn)
     assert port.ops == [
@@ -176,9 +173,49 @@ def test_update_and_delete_lower_to_their_keyed_dml() -> None:
             POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?"),
             (175.00, 2, 1),
         ),
-        ("write", POSTGRES.to_driver_sql("delete from account where id = ?"), (3,)),
         ("commit",),
     ]
+
+
+def test_delete_of_an_observed_versioned_row_gates_on_the_observed_version() -> None:
+    # m-unit-work-006, migrated to the m-opt-lock observation flow (COR-3
+    # Phase 8 review remediation): a keyed DELETE of a versioned row requires
+    # a PRIOR observation exactly like a keyed update (python.md §5) — the
+    # deleted row must be fetched INSIDE this transaction first, and the
+    # lowered DELETE binds that observed version.
+    port = _RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
+        tx.delete(fetched)
+
+    _db(port).transact(fn)
+    assert port.ops == [
+        ("begin",),
+        ("read", _FIND_SQL, (3,)),
+        (
+            "write",
+            POSTGRES.to_driver_sql("delete from account where id = ? and version = ?"),
+            (3, 1),
+        ),
+        ("commit",),
+    ]
+
+
+def test_delete_of_a_versioned_row_never_observed_raises() -> None:
+    # An edited/deleted instance built OUTSIDE the writing transaction (never
+    # fetched via THIS unit of work's own `tx.find`) carries no observation —
+    # the framework never issues an implicit resolving read on behalf of a
+    # keyed write, so the delete raises before any DML, exactly as an
+    # unobserved keyed update does.
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.delete(_grace())
+
+    with pytest.raises(opt_lock.UnobservedVersionError, match="Account"):
+        _db(port).transact(fn)
+    assert not any(op[0] == "write" for op in port.ops)
 
 
 def test_find_on_a_non_versioned_entity_records_no_observation() -> None:

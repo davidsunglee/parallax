@@ -604,18 +604,22 @@ def _lower_delete(
     ?]` — keyed by the (family-effective) primary key, tag-guarded for an
     inheritance-family concrete.
 
-    A keyed DELETE of a versioned row binds the observed version WHENEVER this
-    unit of work recorded one for it — in EITHER concurrency mode (`m-opt-lock`;
-    `m-batch-write-004`'s own default-mode witness) — never a hard requirement:
-    a delete with no recorded observation at all (the M4-era shape some existing
-    corpus witnesses carry, e.g. `m-unit-work-006`) stays the plain keyed form,
-    exactly the pre-COR-3-Phase-8-increment-3 behavior.
+    A keyed DELETE of a VERSIONED row requires a PRIOR observation, exactly as a
+    keyed UPDATE does (`m-opt-lock`; `python.md` §5 "A keyed update or delete of a
+    versioned row this unit of work never observed raises in either mode"): this
+    unit of work never issues an implicit resolving read on behalf of a keyed
+    write, so with no observed version there is nothing to bind. Unobserved raises
+    `UnobservedVersionError` before any DML, in EITHER concurrency mode
+    (`opt_lock.require_observed`); observed binds the observed version
+    (`m-batch-write-004`'s own default-mode witness). Non-versioned deletes never
+    reach this at all (``version_attr is None``).
     """
     row = instruction.rows[0]
     where_sql, key_binds = _key_predicate(meta, entity, row, dialect, declaring)
-    if version_attr is not None and observation is not None and observation.version is not None:
+    if version_attr is not None:
+        observed_version = opt_lock.require_observed(entity.name, observation)
         where_sql = f"{where_sql} and {dialect.quote(version_attr.column)} = ?"
-        key_binds = (*key_binds, observation.version)
+        key_binds = (*key_binds, observed_version)
     return Statement(f"delete from {entity.table} where {where_sql}", key_binds)
 
 

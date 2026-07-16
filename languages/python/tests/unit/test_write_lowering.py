@@ -3,12 +3,12 @@
 ``parallax.snapshot.handle.lower_write`` is the single write-lowering function both
 the developer transaction path and the conformance engine reuse. These tests pin
 its byte-exact non-temporal keyed emissions against the corpus goldens
-(``m-unit-work-001/003/005/006``, ``m-opt-lock-002/005/006/013``,
+(``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
 ``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
 M3 planner for the coalescing / mixed-flush / cancellation cases
 (``-008/-009/-010``), pin the ``m-opt-lock`` version gate/advance/conflict policy
-(observation-required, gate-optimistic-only, delete's opportunistic bind, the
-M4-era literal-version passthrough, the derived initial version), the inheritance
+(observation-required for BOTH update and delete, gate-optimistic-only, the
+M4-era literal-version UPDATE passthrough, the derived initial version), the inheritance
 tag derivation/guard/opt-lock composition, and the pk-gen ``max``/``increment``
 marker lowering; the TEMPORAL keyed forms (COR-3 Phase 8 increment 4:
 close-and-chain, the rectangle split, the observed-``in_z``/business-discriminator
@@ -20,6 +20,8 @@ compiler's forward-error posture.
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 import pytest
 
@@ -33,6 +35,7 @@ from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
+    ObjectKey,
     Observation,
     PlannedWrite,
     PredicateWrite,
@@ -78,9 +81,13 @@ def _lower(
 
 
 def _flush_and_lower(
-    buffer: list[WriteInstruction], meta: Metamodel, *, concurrency: Concurrency = "locking"
+    buffer: list[WriteInstruction],
+    meta: Metamodel,
+    *,
+    concurrency: Concurrency = "locking",
+    observations: Mapping[ObjectKey, Observation] | None = None,
 ) -> list[Statement]:
-    plan = plan_flush(buffer, {}, None, meta)
+    plan = plan_flush(buffer, observations or {}, None, meta)
     return [
         lowered.statement
         for planned in plan.writes
@@ -152,11 +159,12 @@ def test_update_sets_non_pk_columns_in_column_order_keyed_by_pk() -> None:
 
 
 def test_delete_is_keyed_by_the_primary_key() -> None:
-    # m-unit-work-006 step 0 (no recorded observation — delete's opt-lock
-    # participation is opportunistic, never a hard requirement; stays ungated).
-    statement = _lower(KeyedWrite("delete", "Account", ({"id": 3},)), ACCOUNT)[0]
-    assert statement.sql == "delete from account where id = ?"
-    assert statement.binds == (3,)
+    # m-unit-work-007's own delete shape: a NON-versioned entity's keyed delete
+    # is a bare `delete ... where <pk> = ?`, no opt-lock participation at all
+    # (the versioned delete's own observation requirement is pinned below).
+    statement = _lower(KeyedWrite("delete", "OrderItem", ({"id": 200},)), ORDERS)[0]
+    assert statement.sql == "delete from order_item where id = ?"
+    assert statement.binds == (200,)
 
 
 def test_value_object_document_binds_as_one_json_document_in_column_order() -> None:
@@ -226,13 +234,21 @@ def test_versioned_delete_binds_the_observed_version_in_either_mode() -> None:
         assert statement.binds == (3, 1)
 
 
-def test_versioned_delete_without_an_observation_stays_ungated() -> None:
-    # m-unit-work-006: an unobserved delete never raises — delete's opt-lock
-    # participation is opportunistic, not a hard requirement (unlike UPDATE's).
+def test_versioned_delete_without_an_observation_requires_observation() -> None:
+    # A keyed DELETE of a versioned row this unit of work never observed raises
+    # in EITHER mode, exactly as a keyed UPDATE does (m-opt-lock; python.md §5
+    # "A keyed update or delete of a versioned row this unit of work never
+    # observed raises in either mode") — the framework never issues an implicit
+    # resolving read on behalf of a keyed write.
     delete = KeyedWrite("delete", "Account", ({"id": 3},))
-    statement = _lower(delete, ACCOUNT)[0]
-    assert statement.sql == "delete from account where id = ?"
-    assert statement.binds == (3,)
+    with pytest.raises(opt_lock.UnobservedVersionError, match="prior transaction-scoped"):
+        _lower(delete, ACCOUNT, concurrency="optimistic")
+
+
+def test_versioned_delete_without_an_observation_raises_in_locking_mode_too() -> None:
+    delete = KeyedWrite("delete", "Account", ({"id": 3},))
+    with pytest.raises(opt_lock.UnobservedVersionError, match="prior transaction-scoped"):
+        _lower(delete, ACCOUNT, concurrency="locking")
 
 
 def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_value() -> None:
@@ -405,7 +421,10 @@ def test_insert_then_update_coalesces_to_one_final_value_insert() -> None:
 
 
 def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
-    # m-unit-work-009: three objects, one flush, canonical combined order.
+    # m-unit-work-009: three objects, one flush, canonical combined order. The
+    # delete's version (m-opt-lock's own prior-observation requirement, exactly
+    # like the update's) comes from THIS unit of work's own recorded
+    # observation — never a row-carried value.
     statements = _flush_and_lower(
         [
             KeyedWrite(
@@ -415,6 +434,7 @@ def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
             KeyedWrite("delete", "Account", ({"id": 3},)),
         ],
         ACCOUNT,
+        observations={("Account", (("id", 3),)): Observation(version=1)},
     )
     assert [(s.sql, s.binds) for s in statements] == [
         (
@@ -422,7 +442,7 @@ def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
             (9, "Noether", 5.00, 1),
         ),
         ("update account set balance = ?, version = ? where id = ?", (20.00, 2, 1)),
-        ("delete from account where id = ?", (3,)),
+        ("delete from account where id = ? and version = ?", (3, 1)),
     ]
 
 
