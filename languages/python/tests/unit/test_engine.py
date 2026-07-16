@@ -347,7 +347,7 @@ def test_run_write_sequence_case_records_the_temporal_observation_on_the_unit_of
     # would have recorded.
     port = FakeWritePort()
     emissions, table_state, round_trips = engine.run_write_sequence_case(
-        _case("m-audit-write-002"), "postgres", port
+        _load_case("m-audit-write-002"), "postgres", port
     )
     assert round_trips == 3
     assert [e.case_pointer for e in emissions] == [
@@ -366,7 +366,7 @@ def test_run_write_sequence_case_buffers_a_bounded_bitemporal_business_window() 
     # onto the neutral `Transaction._buffer` route unchanged.
     port = FakeWritePort()
     _emissions, table_state, round_trips = engine.run_write_sequence_case(
-        _case("m-bitemp-write-001"), "postgres", port
+        _load_case("m-bitemp-write-001"), "postgres", port
     )
     assert round_trips == 5
     assert len(port.writes) == 5 and port.commits == 2
