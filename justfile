@@ -66,10 +66,13 @@ core-slice-inspect slice:
 core-language-spec-check language_spec:
     cd {{harness}} && uv run python -m reference_harness.language_spec_validate ../{{language_spec}} ../core/spec
 
-# Docker-free tests and canonical-input smoke check for the language-contract diagnostics.
+# Docker-free tests and canonical-input smoke check for the language-contract
+# diagnostics, plus the m-case-format.md <-> compatibility-case.schema.json
+# rejectedRule vocabulary drift guard.
 core-contract-tools:
-    cd {{harness}} && uv run pytest tests/test_slice_inspect.py tests/test_language_spec_validate.py
+    cd {{harness}} && uv run pytest tests/test_slice_inspect.py tests/test_language_spec_validate.py tests/test_case_format_vocab_check.py
     cd {{harness}} && uv run python -m reference_harness.slice_inspect --check-all ../core/spec ../core/compatibility
+    cd {{harness}} && uv run python -m reference_harness.case_format_vocab_check ../core/spec
 
 # ===========================================================================
 # Oracle: the Python reference harness — its own code health, and running it as
