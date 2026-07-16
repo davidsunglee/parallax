@@ -54,21 +54,23 @@ def validate_metamodel(metamodel: Metamodel) -> None:
                 f"entity {entity.name!r}: declares no attributes, directly or inherited"
             )
     for entity in metamodel.entities:
-        validate_optimistic_locking_root_owned(metamodel, entity)
+        validate_optimistic_locking_root_owned(entity)
 
 
 def validate_entity(entity: Entity) -> None:
     """Validate one compiled entity record against the schema's domain rules.
 
-    A single-entity view: the family-cross-entity root-ownership rule
-    (:func:`validate_optimistic_locking_root_owned`) needs sibling records this
-    function does not have, so :func:`validate_metamodel` runs it separately
-    once the whole family is available (ADR 0027). This function's own
-    ``optimisticLocking`` checks are the two purely LOCAL, single-entity rules:
-    at most one version attribute per entity, and never combined with
-    ``asOfAttributes`` on the same entity (a temporal entity derives its
-    optimistic key from its processing axis instead) — both exact for any
-    entity regardless of family membership.
+    A single-entity view: this function's own ``optimisticLocking`` checks are
+    the two purely LOCAL, single-entity rules — at most one version attribute
+    per entity, and never combined with ``asOfAttributes`` on the same entity
+    (a temporal entity derives its optimistic key from its processing axis
+    instead) — both exact for any entity regardless of family membership.
+    The family root-ownership rule (:func:`validate_optimistic_locking_root_owned`,
+    ADR 0027) is ALSO single-entity (a non-root's own ``attributes`` fully
+    determine it), but stays a separate function reserved for
+    :func:`validate_metamodel` to call across the whole family — the same
+    organizational split as `validate_metamodel`'s inherited-attributes rule,
+    which genuinely does need sibling records.
     """
     if not entity.name:
         raise DescriptorError("entity name must be non-empty")
@@ -99,7 +101,7 @@ def validate_entity(entity: Entity) -> None:
         _validate_relationship(entity.name, relationship)
 
 
-def validate_optimistic_locking_root_owned(metamodel: Metamodel, entity: Entity) -> None:
+def validate_optimistic_locking_root_owned(entity: Entity) -> None:
     """The ``m-opt-lock`` x ``m-inheritance`` family invariant (D-25, ADR 0027):
     only an inheritance family's ROOT may declare an ``optimisticLocking``
     version attribute; every descendant inherits it unchanged (or, for a
@@ -111,9 +113,13 @@ def validate_optimistic_locking_root_owned(metamodel: Metamodel, entity: Entity)
     regardless of what the root declares — this fires for BOTH malformed
     shapes (a non-versioned root with a version-declaring descendant, and a
     versioned root whose descendant redeclares or adds a second version
-    attribute of its own). A no-op for a non-participant or the family root
-    (:func:`validate_entity`'s own local checks — at most one per entity,
-    never combined with ``asOfAttributes`` — are exact there; LOCAL ==
+    attribute of its own). Neither shape needs sibling records: a non-root
+    entity's OWN ``attributes`` fully determine the verdict either way, so
+    this is a pure, single-entity check — unlike :func:`validate_metamodel`'s
+    other family-wide rule (`no attributes, directly or inherited`), which
+    genuinely needs the ancestry chain. A no-op for a non-participant or the
+    family root (:func:`validate_entity`'s own local checks — at most one per
+    entity, never combined with ``asOfAttributes`` — are exact there; LOCAL ==
     EFFECTIVE for a root, so a root cannot combine an explicit version with a
     temporal axis either).
 
@@ -126,7 +132,6 @@ def validate_optimistic_locking_root_owned(metamodel: Metamodel, entity: Entity)
     root (only the root ever legitimately carries BOTH a temporal axis and,
     mutually exclusively, an explicit version).
     """
-    del metamodel  # no family-effective resolution needed — a pure per-entity check
     if entity.inheritance is None or entity.inheritance.role == "root":
         return
     if any(attr.optimistic_locking for attr in entity.attributes):

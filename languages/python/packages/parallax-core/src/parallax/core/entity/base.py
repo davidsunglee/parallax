@@ -731,11 +731,10 @@ class EntityMeta(ModelMetaclass):
                 # (D-25, ADR 0027) — the same gap `_derive_inheritance` already
                 # closes for `EntityConfig(as_of=...)` above, closed here for
                 # the version column too. `validate_optimistic_locking_root_owned`
-                # is a pure per-entity structural check (no family-effective
-                # resolution needed since a non-root may never declare one at
-                # all), but keeps the two-arg shape for call-site consistency.
-                temp_meta = MetamodelRecord(entities=(*entity_records().values(), entity))
-                validate_optimistic_locking_root_owned(temp_meta, entity)
+                # is a pure per-entity structural check — a non-root's own
+                # `attributes` fully determine the verdict, so no sibling
+                # records (and no temporary metamodel) are needed here.
+                validate_optimistic_locking_root_owned(entity)
         except DescriptorError as exc:
             raise EntityDefinitionError(str(exc)) from exc
 
