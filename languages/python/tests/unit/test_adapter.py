@@ -27,6 +27,12 @@ _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-r
 _RUN_ONLY_CASE = (
     case_format.default_cases_dir() / "m-audit-write-006-optimistic-gated-chaining-update.yaml"
 )
+# A materializing predicate-write scenario (COR-3 Phase 8 increment 5's own
+# deferral) — still a genuine engine gap post increment 4's DQ4 re-route,
+# unlike `_RUN_ONLY_CASE` (m-audit-write-006), which now succeeds.
+_ENGINE_GAP_CASE = (
+    case_format.default_cases_dir() / "m-audit-write-007-predicate-terminate-materialize.yaml"
+)
 
 
 class _FakePort:
@@ -277,13 +283,12 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
 
 
 def test_run_case_error_on_an_engine_gap() -> None:
-    # `_RUN_ONLY_CASE` (m-audit-write-006) is a TEMPORAL optimistic-lock CLOSE
-    # conflict (`when.at` / `when.observedInZ`): the non-temporal conflict run
-    # lane (COR-3 Phase 8 increment 3) refuses it loudly rather than silently
-    # mishandling the row-only write (which would otherwise elide to an
-    # empty-change-set no-op and report a spurious `ok`) — this composition
-    # lands with the temporal write path (increment 4).
-    envelope = adapter.run_case(_RUN_ONLY_CASE, "postgres", _FakePort())
+    # `_ENGINE_GAP_CASE` (m-audit-write-007) is a materializing predicate-write
+    # scenario (a bare `PredicateWrite` target, `write-instruction.schema.json`
+    # keyed-only buffer) — COR-3 Phase 8 increment 5's own deferral, so this
+    # lane still reports a loud `run-failed` error rather than silently
+    # mishandling it.
+    envelope = adapter.run_case(_ENGINE_GAP_CASE, "postgres", _FakePort())
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "error"
     assert envelope["diagnostics"][0]["code"] == "run-failed"

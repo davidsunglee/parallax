@@ -323,18 +323,54 @@ def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> N
     assert emissions[0].case_pointer == "/scenario/0/write"
 
 
-def test_run_write_sequence_case_executes_the_sequence_in_one_transaction() -> None:
+def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:
+    # COR-3 Phase 8 increment 4 (DQ4 re-route): each writeSequence entry is its
+    # OWN `db.transact` unit — "the whole sequence in one transaction" retires.
     port = FakeWritePort()
     emissions, table_state, round_trips = engine.run_write_sequence_case(
         _case("m-unit-work-003"), "postgres", port
     )
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/writeSequence/0", "/writeSequence/1"]
-    assert len(port.writes) == 2 and port.commits == 1
+    assert len(port.writes) == 2 and port.commits == 2
     # The committed table state is read back for every model table (the
     # m-conformance-adapter write-sequence observation); the read-back is an
     # observation, so it never counts toward the case's round trips.
     assert set(table_state) == {"orders", "order_item", "order_status", "order_tag"}
+
+
+def test_run_write_sequence_case_records_the_temporal_observation_on_the_unit_of_work() -> None:
+    # m-audit-write-002 (COR-3 Phase 8 increment 4): the update entry's shadow-
+    # resolved observation is recorded on THIS unit's own `UnitOfWork` via the
+    # documented neutral seam (`Transaction._buffer` route + `uow.observe`,
+    # `_execute_write_unit`) — exactly what a real caller's own prior find
+    # would have recorded.
+    port = FakeWritePort()
+    emissions, table_state, round_trips = engine.run_write_sequence_case(
+        _case("m-audit-write-002"), "postgres", port
+    )
+    assert round_trips == 3
+    assert [e.case_pointer for e in emissions] == [
+        "/writeSequence/0",
+        "/writeSequence/1",
+        "/writeSequence/1",
+    ]
+    assert len(port.writes) == 3 and port.commits == 2
+    assert table_state is not None and "balance" in table_state
+
+
+def test_run_write_sequence_case_buffers_a_bounded_bitemporal_business_window() -> None:
+    # m-bitemp-write-001 (COR-3 Phase 8 increment 4): the updateUntil entry's
+    # canonical instruction carries BOTH a `businessFrom` and a `businessTo`
+    # (its bounded rectangle-split window) — `_execute_write_unit` threads both
+    # onto the neutral `Transaction._buffer` route unchanged.
+    port = FakeWritePort()
+    _emissions, table_state, round_trips = engine.run_write_sequence_case(
+        _case("m-bitemp-write-001"), "postgres", port
+    )
+    assert round_trips == 5
+    assert len(port.writes) == 5 and port.commits == 2
+    assert table_state is not None and "position" in table_state
 
 
 def test_compile_write_sequence_case_lowers_each_entry_without_cross_entry_coalescing() -> None:
@@ -445,14 +481,55 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
         engine.run_conflict_case(case, "postgres", FakeWritePort())
 
 
-def test_run_conflict_case_refuses_a_temporal_close_form() -> None:
-    # m-audit-write-006: a temporal / bitemporal optimistic-lock CLOSE conflict
-    # (`when.at` / `when.observedInZ`) lands with the temporal write path
-    # (COR-3 Phase 8 increment 4) — this lane refuses it loudly rather than
-    # silently mishandling the milestone-pk-only row.
+def test_run_conflict_case_temporal_close_form_composes_lower_temporal_close() -> None:
+    # m-audit-write-006 (COR-3 Phase 8 increment 4): a temporal optimistic-lock
+    # CLOSE conflict (`when.at` / `when.observedInZ`, no `observedVersion`) is
+    # now driven through `handle.lower_temporal_close`, not the non-temporal
+    # versioned-UPDATE path.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-audit-write-006"]
-    with pytest.raises(engine.EngineError, match="temporal write path"):
-        engine.run_conflict_case(case, "postgres", FakeWritePort())
+    port = FakeWritePort()
+    emissions, affected, table_state = engine.run_conflict_case(case, "postgres", port)
+    assert [e.case_pointer for e in emissions] == ["/when/write"]
+    assert emissions[0].sql == (
+        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+    )
+    assert affected == 1
+    assert len(port.writes) == 1
+    assert table_state is not None and "balance" in table_state
+
+
+def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None:
+    # m-inheritance-105: `when.write` names no entity of its own; for an
+    # inheritance-participant model `_conflict_target` resolves to the family's
+    # SOLE concrete subtype (MeterReading, tag `meter`) — never the abstract
+    # root `_rejected_target` resolves to for the read lane's own default-target
+    # convention.
+    (case,) = [c for c in case_format.load_cases() if c.case_id == "m-inheritance-105"]
+    port = FakeWritePort()
+    emissions, affected, table_state = engine.run_conflict_case(case, "postgres", port)
+    assert [e.case_pointer for e in emissions] == ["/when/write"]
+    assert emissions[0].sql == (
+        "update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
+    )
+    assert affected == 1
+    assert table_state is not None and "reading" in table_state
+
+
+def test_run_conflict_case_temporal_attempts_form_retries_the_gated_close() -> None:
+    # m-temporal-read-011: a TEMPORAL `when.attempts` retry — each attempt its
+    # own `db.transact` unit composing `handle.lower_temporal_close` directly
+    # (the `is_temporal` branch of the attempts loop, distinct from the
+    # non-temporal versioned-UPDATE retry `m-opt-lock-007` already covers).
+    (case,) = [c for c in case_format.load_cases() if c.case_id == "m-temporal-read-011"]
+    port = FakeWritePort()
+    emissions, affected, table_state = engine.run_conflict_case(case, "postgres", port)
+    assert [e.case_pointer for e in emissions] == [
+        "/when/attempts/0/write",
+        "/when/attempts/1/write",
+    ]
+    assert len(port.writes) == 4  # given.apply's two out-of-band statements + two attempts
+    assert affected == 1
+    assert table_state is not None and "balance" in table_state
 
 
 def test_scenario_case_without_when_is_rejected() -> None:
