@@ -28,13 +28,16 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
 4. **Historical-observation licensing** (:func:`check_locking_license`,
    :class:`HistoricalObservationError`): a temporal observation licenses a
    locking-mode write only when its read was latest-pinned on the processing
-   axis; a versioned non-temporal row satisfies this trivially. Its real
-   (non-trivial) consumers are the temporal write path (COR-3 Phase 8
-   increment 4): every engine-supplied temporal observation is latest-pinned
-   by construction, so this stays a no-op for every reachable case this
-   increment, but the wiring is real — a developer-driven historical/edge-
-   pinned locking-mode write (COR-3 Phase 8 increment 7's typed temporal
-   verbs) will trip it.
+   axis; a versioned non-temporal row satisfies this trivially. Every
+   engine-supplied temporal observation is latest-pinned by construction (the
+   conformance engine's case-local shadow tracker only ever tracks the
+   CURRENT milestone), so this stays a no-op there — but a REAL
+   `Transaction.find` observation of a temporal entity threads the read's own
+   processing-axis pin through :attr:`~parallax.core.unit_work.Observation.
+   latest_pinned` (Phase-8 mid-phase review remediation), so a locking-mode
+   write whose only transaction-scoped observation is historical or
+   edge-pinned genuinely raises here today, ahead of the developer-facing
+   typed temporal verbs (COR-3 Phase 8 increment 7).
 5. **Conflict classification** (:class:`OptimisticLockConflictError`,
    :class:`StaleWriteError`): the two zero-row-close outcomes `m-opt-lock` /
    `m-audit-write` / `m-bitemp-write` distinguish. ``OptimisticLockConflictError``

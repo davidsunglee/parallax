@@ -16,6 +16,7 @@ import contextlib
 import datetime as dt
 from collections.abc import Callable, Sequence
 from decimal import Decimal
+from typing import Final, cast
 
 import pytest
 
@@ -331,6 +332,140 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     edge = edge_of(snapshot.result())
     assert edge.processing == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     assert edge.business == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
+# --------------------------------------------------------------------------- #
+# Phase-8 mid-phase review remediation, finding B: `Transaction.find` records #
+# a TEMPORAL observation (not just a versioned one) so a locking-mode write's #
+# historical-observation license (`m-opt-lock`) is REAL, not a permanent      #
+# no-op — wired through `tx._buffer`'s neutral seam (the same route the       #
+# conformance engine uses; the developer-facing typed temporal verbs are      #
+# COR-3 Phase 8 increment 7).                                                 #
+# --------------------------------------------------------------------------- #
+_INFINITY_INSTANT: Final[dt.datetime] = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
+
+
+def _balance_row(*, in_z: dt.datetime, out_z: dt.datetime = _INFINITY_INSTANT) -> Row:
+    return {
+        "bal_id": 1,
+        "acct_num": "A-1",
+        "val": Decimal("5.00"),
+        "in_z": in_z,
+        "out_z": out_z,
+    }
+
+
+def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_observation() -> None:
+    # An as-of (historical/edge-pinned) find is the ONLY transaction-scoped
+    # observation this unit of work has for Balance 1 — a locking-mode close
+    # would have nothing but the shared read lock protecting a milestone that
+    # is not the current one, so it raises before any DML (`m-opt-lock`
+    # "Locking mode additionally requires that the observation be of the
+    # current milestone").
+    port = _RecordingPort(rows=[_balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = _db_for(_BALANCE, port)
+
+    def fn(tx: Transaction) -> None:
+        tx.find(
+            mm.Balance.where(mm.Balance.id == 1).as_of(
+                processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+            )
+        )
+        tx._buffer("terminate", "Balance", {"id": 1})  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
+        db.transact(fn)  # locking is the default concurrency
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in_z() -> None:
+    # The IDENTICAL choreography under optimistic mode is licensed — the
+    # observed-`in_z` gate detects staleness instead of relying on a lock.
+    port = _RecordingPort(rows=[_balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = _db_for(_BALANCE, port)
+
+    def fn(tx: Transaction) -> None:
+        tx.find(
+            mm.Balance.where(mm.Balance.id == 1).as_of(
+                processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+            )
+        )
+        tx._buffer("terminate", "Balance", {"id": 1})  # pyright: ignore[reportPrivateUsage]
+
+    db.transact(fn, concurrency="optimistic")
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 1
+    sql = write_ops[0][1]
+    binds = cast("tuple[object, ...]", write_ops[0][2])
+    assert sql == POSTGRES.to_driver_sql(
+        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+    )
+    assert binds[-1] == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
+def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
+    # An OMITTED axis (the default-latest pin) licenses a locking-mode write:
+    # the read observed the CURRENT milestone, so the shared read lock
+    # genuinely protects the row the ungated close targets.
+    port = _RecordingPort(rows=[_balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = _db_for(_BALANCE, port)
+
+    def fn(tx: Transaction) -> None:
+        tx.find(mm.Balance.where(mm.Balance.id == 1))
+        tx._buffer("terminate", "Balance", {"id": 1})  # pyright: ignore[reportPrivateUsage]
+
+    db.transact(fn)  # locking (default) — must not raise
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 1
+    sql = write_ops[0][1]
+    assert sql == POSTGRES.to_driver_sql(
+        "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    )
+
+
+def test_record_observations_captures_bitemporal_business_bounds_and_payload() -> None:
+    # Finding B's completeness half ("record the observation fields temporal
+    # lowering already consumes ... so a transaction-scoped find -> temporal
+    # write sequence works end-to-end"): a BITEMPORAL node's recorded
+    # observation carries business_from/business_to/payload too — the SAME
+    # fields `bitemp_write.plan` consumes for the head/middle/tail split —
+    # not just the licensing `in_z`/`latest_pinned` pair the audit-only tests
+    # above pin. No idiomatic `Position` mirror class is production-reachable
+    # yet (bitemporal typed verbs are COR-3 Phase 8 increment 7), so this
+    # drives the neutral seam directly, exactly as the conformance engine's
+    # own translation layer does.
+    from parallax.core.temporal_read import Pin
+    from parallax.snapshot import handle, materialize
+
+    position = models.load_models()["position"]
+    node = materialize.Node(
+        fields={
+            "pos_id": 1,
+            "acct_num": "A",
+            "val": Decimal("100.00"),
+            "from_z": "2024-01-01T00:00:00+00:00",
+            "thru_z": "infinity",
+            "in_z": "2024-01-01T00:00:00+00:00",
+            "out_z": "infinity",
+        },
+        pk_columns=("pos_id",),
+    )
+    find_result = handle.FindResult(
+        nodes=(node,), execution=handle.Execution(()), all_nodes=(("Position", node),)
+    )
+    uow = UnitOfWork(
+        settings=TransactionSettings(concurrency="locking"),
+        clock=FixedClock(_FIXED),
+        meta=position,
+        flush_executor=lambda _plan: None,
+    )
+    handle._record_observations(uow, position, find_result, Pin())  # pyright: ignore[reportPrivateUsage]
+    observation = uow._observations[("Position", (("id", 1),))]  # pyright: ignore[reportPrivateUsage]
+    assert observation.in_z == "2024-01-01T00:00:00+00:00"
+    assert observation.business_from == "2024-01-01T00:00:00+00:00"
+    assert observation.business_to == "infinity"
+    assert observation.payload == {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
+    assert observation.latest_pinned is True  # an empty Pin() ⇒ omitted axis ⇒ latest
 
 
 def _balance_history_rows() -> list[Row]:

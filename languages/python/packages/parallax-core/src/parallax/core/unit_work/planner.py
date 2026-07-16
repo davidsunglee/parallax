@@ -83,6 +83,19 @@ class Observation:
     vocabulary, NOT the serialized instruction (ADR 0013 stands): the reserved
     ``observedVersion`` / ``observedInZ`` control keys stay forbidden on a write row;
     an observation attaches per row at flush, never carried on the instruction.
+
+    ``latest_pinned`` (`m-opt-lock` "Locking mode additionally requires that the
+    observation be of the current milestone") is the historical-observation
+    LICENSING bit `~parallax.core.opt_lock.check_locking_license` consumes: a
+    versioned non-temporal observation is trivially latest-pinned (its single
+    row is always current) and every engine-supplied temporal observation is
+    latest-pinned by construction (the conformance engine's case-local shadow
+    tracker only ever tracks the CURRENT milestone) — both default it ``True``
+    without ever setting it explicitly. A REAL `Transaction.find` observation
+    of a TEMPORAL entity sets it from the read's own processing-axis pin
+    (`LATEST` or an omitted axis ⇒ ``True``; an explicit as-of instant ⇒
+    ``False``) — the one caller that can ever observe something other than the
+    current milestone.
     """
 
     version: int | None = None
@@ -90,6 +103,7 @@ class Observation:
     business_from: str | None = None
     business_to: str | None = None
     payload: Mapping[str, object] | None = None
+    latest_pinned: bool = True
 
 
 @dataclass(frozen=True, slots=True)

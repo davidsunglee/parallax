@@ -64,7 +64,7 @@ from parallax.core.entity import (
     primary_key_row,
 )
 from parallax.core.sql_gen import Statement, apply_family_variant, compile_read, family_variant_plan
-from parallax.core.temporal_read import AXIS_ORDER, Edge, Pin, milestone_edge, statement_pin
+from parallax.core.temporal_read import AXIS_ORDER, LATEST, Edge, Pin, milestone_edge, statement_pin
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -285,11 +285,14 @@ def _lower_temporal_write(
     plan_fn = bitemp_write.plan if declaring.temporal == "bitemporal" else audit_write.plan
     milestone_plan = plan_fn(instruction, declaring, tx_instant, observation)
     if observation is not None:
-        # Mirrors the non-temporal versioned-update call site (`_lower_update`
-        # below): every engine-supplied temporal observation is latest-pinned by
-        # construction this increment (a no-op here), the real check arrives with
-        # a developer-driven historical/edge-pinned observation (increment 7).
-        opt_lock.check_locking_license(concurrency, latest_pinned=True)
+        # The REAL licensing check (`m-opt-lock` "Locking mode additionally
+        # requires that the observation be of the current milestone"): every
+        # engine-supplied temporal observation is latest-pinned by
+        # construction (a no-op here), but a real `Transaction.find` observes
+        # `observation.latest_pinned` from the read's own processing-axis pin
+        # — a locking-mode write whose only observation is historical or
+        # edge-pinned raises `HistoricalObservationError` here.
+        opt_lock.check_locking_license(concurrency, latest_pinned=observation.latest_pinned)
     gated = opt_lock.gates(concurrency)
     version_attr = _version_attribute(declaring)  # always None for a temporal entity
     statements: list[LoweredStatement] = []
@@ -1185,7 +1188,15 @@ class Transaction:
         (`m-opt-lock`; ADR 0013), in EITHER concurrency mode: a later keyed
         update/delete of that SAME object derives its version advance (and,
         under optimistic concurrency, its gate) from THIS observation, never
-        from an implicit resolving read at write time.
+        from an implicit resolving read at write time. Every materialized node
+        of a TEMPORAL entity likewise records its observed processing-from
+        (`in_z`) plus PIN PROVENANCE (`Observation.latest_pinned`, derived from
+        this statement's own processing-axis pin below): a later temporal
+        write's close/chain, or a locking-mode write's historical-observation
+        license (`~parallax.core.opt_lock.check_locking_license`), derives from
+        THIS observation, never a shadow lookup or an implicit resolving read
+        (a MILESTONE-SET read — `.history()` / `.as_of_range()` — records
+        nothing here; its own dispatch branch returns before this point).
         """
         target = statement.target
         op = statement.operation()
@@ -1200,7 +1211,7 @@ class Transaction:
         find_result = self._uow.read(
             lambda: find(op, self._meta, self._dialect, target, self._conn, lock=lock)
         )
-        _record_observations(self._uow, self._meta, find_result)
+        _record_observations(self._uow, self._meta, find_result, pin)
         return _snapshot_from_find_result(find_result, target, self._meta, pin)
 
     def _buffer(
@@ -1243,26 +1254,36 @@ class Transaction:
         self._uow.buffer(instruction)
 
 
-def _record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult) -> None:
-    """Record this unit of work's observed version for every VERSIONED node
-    :func:`find` materialized (`m-opt-lock`; ADR 0013).
+def _record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pin: Pin) -> None:
+    """Record this unit of work's observed version/temporal-milestone for
+    every VERSIONED or TEMPORAL node :func:`find` materialized (`m-opt-lock`;
+    ADR 0013; Phase-8 mid-phase review remediation).
 
     Keyed by the SAME ``(entity name, ordered pk pairs)`` shape a subsequent
     keyed write's own :func:`~parallax.core.unit_work.object_key` computes —
     ``entity_name`` here is the node's OWN queried/attached target (never
     family-normalized to the root), matching `KeyedWrite.entity`'s own
     convention (a developer's later ``tx.update(copy)`` names its instance's
-    OWN class). A node whose (family-effective) primary key or version column
-    is absent from its own materialized fields is defensively skipped — never
-    reachable for a well-formed corpus model, but this seam takes no data on
-    faith.
+    OWN class). A node whose (family-effective) primary key, version column,
+    or processing-axis interval is absent from its own materialized fields is
+    defensively skipped — never reachable for a well-formed corpus model, but
+    this seam takes no data on faith. A versioned entity is never also
+    temporal (`m-opt-lock`/`m-descriptor`: the two are mutually exclusive), so
+    each node takes exactly one branch.
+
+    ``pin`` is the STATEMENT's OWN lowered as-of coordinates
+    (``Transaction.find``'s own ``_statement_pin`` call): the whole-graph pin
+    propagates per hop, matched by axis, to every temporal entity in the
+    include tree (spec §3), so this SAME root-level processing-axis pin
+    licenses every attached temporal node's own recorded observation — an
+    omitted axis or an explicit `LATEST` pin is latest-pinned; an explicit
+    as-of instant is not (`~parallax.core.opt_lock.check_locking_license`'s
+    own historical-observation rule).
     """
+    latest_pinned = pin.processing is None or pin.processing is LATEST
     for entity_name, node in result.all_nodes:
         entity = meta.entity(entity_name)
         declaring = inheritance.declaring_entity(meta, entity)
-        version_attr = _version_attribute(declaring)
-        if version_attr is None or version_attr.column not in node.fields:
-            continue
         pk_attrs = declaring.primary_key
         if not pk_attrs or any(  # pragma: no cover - defends a malformed model/projection
             attr.column not in node.fields for attr in pk_attrs
@@ -1272,7 +1293,52 @@ def _record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult) -
             entity_name,
             tuple((attr.name, node.fields[attr.column]) for attr in pk_attrs),
         )
-        uow.observe(key, Observation(version=cast("int", node.fields[version_attr.column])))
+        version_attr = _version_attribute(declaring)
+        if version_attr is not None:
+            if version_attr.column in node.fields:
+                uow.observe(key, Observation(version=cast("int", node.fields[version_attr.column])))
+            continue
+        if not declaring.is_temporal:
+            continue
+        proc = _processing_axis(declaring)
+        if proc.from_column not in node.fields:  # pragma: no cover - malformed model/projection
+            continue
+        uow.observe(key, _temporal_observation(meta, declaring, node, proc, latest_pinned))
+
+
+def _temporal_observation(
+    meta: Metamodel,
+    declaring: Entity,
+    node: materialize.Node,
+    proc: AsOfAttribute,
+    latest_pinned: bool,
+) -> Observation:
+    """The :class:`Observation` a materialized TEMPORAL node licenses: the
+    observed processing-from (``in_z``) plus pin provenance always; the
+    observed business bounds and payload too when ``declaring`` is
+    bitemporal — the same fields temporal lowering (`~parallax.core.
+    bitemp_write.plan`) already consumes, so a transaction-scoped find ->
+    temporal write sequence works end-to-end, not just the licensing check.
+    """
+    in_z = cast("str", node.fields[proc.from_column])
+    if declaring.temporal != "bitemporal":
+        return Observation(in_z=in_z, latest_pinned=latest_pinned)
+    biz = _business_axis(declaring)
+    if biz.from_column not in node.fields or biz.to_column not in node.fields:  # pragma: no cover
+        return Observation(in_z=in_z, latest_pinned=latest_pinned)  # malformed model/projection
+    excluded = {proc.from_column, proc.to_column, biz.from_column, biz.to_column}
+    payload = {
+        name: node.fields[column]
+        for name, (column, _is_value_object) in _members(meta, declaring).items()
+        if column in node.fields and column not in excluded
+    }
+    return Observation(
+        in_z=in_z,
+        business_from=cast("str", node.fields[biz.from_column]),
+        business_to=cast("str", node.fields[biz.to_column]),
+        payload=payload,
+        latest_pinned=latest_pinned,
+    )
 
 
 def _entity_record_of_instance(instance: EntityBase) -> Entity:
