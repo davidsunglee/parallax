@@ -8,6 +8,8 @@
     ".env",
     ".env.local",
     ".env.development.local",
+    "AGENTS.local.md",
+    "CLAUDE.local.md",
     ".claude/settings.local.json",
     ".humanlayer/workspace.local.json"
   ],

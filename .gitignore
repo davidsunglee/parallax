@@ -1,6 +1,12 @@
 # macos system files
 .DS_Store
 
+# Personal agent and workflow configuration
+/AGENTS.local.md
+/CLAUDE.local.md
+/.claude/settings.local.json
+/.humanlayer/workspace.local.json
+
 # Riptide artifacts (cloud-synced)
 .humanlayer/tasks/
 
