@@ -66,10 +66,30 @@ class Observation:
     attached to a planned write at flush and **never** carried on the durable
     instruction. Neutral here: this milestone pairs it onto the plan; lowering the
     version gate / advance into SQL is the composition layer's job (M4 / Phase 8).
+
+    ``business_from`` / ``business_to`` / ``payload`` extend the vocabulary for a
+    TEMPORAL observation (COR-3 Phase 8 increment 4; `m-audit-write` /
+    `m-bitemp-write`): ``business_from`` is the observed rectangle's own business-axis
+    lower bound — the bitemporal optimistic gate's discriminator candidate AND (via
+    :mod:`parallax.core.bitemp_write`'s planning) the business lower bound the head
+    rectangle's upper bound derives from; ``business_to`` is the observed rectangle's
+    own business-axis upper bound — the tail rectangle's own upper bound; ``payload``
+    is the observed row's OTHER business columns (every scalar / value-object member
+    besides the milestone interval bounds), the "prior rectangle" values a bitemporal
+    split's head/tail carry forward (`m-bitemp-write` "Head/tail old values come from
+    the observed prior rectangle"). All three are ``None`` for a non-temporal or
+    audit-only observation (an audit-only chain uses the instruction's own authored
+    full row, never an observed payload, `m-audit-write`). This is Python-internal
+    vocabulary, NOT the serialized instruction (ADR 0013 stands): the reserved
+    ``observedVersion`` / ``observedInZ`` control keys stay forbidden on a write row;
+    an observation attaches per row at flush, never carried on the instruction.
     """
 
     version: int | None = None
     in_z: str | None = None
+    business_from: str | None = None
+    business_to: str | None = None
+    payload: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
