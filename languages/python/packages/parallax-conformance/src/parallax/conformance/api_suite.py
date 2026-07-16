@@ -183,8 +183,11 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "the developer sees is exercised through the transact abort/retry unit tests"
     ),
     "m-pk-gen": (
-        "write-side id allocation (the sequence/max registry reads an insert without an "
-        "authored id needs) lands with the pk-gen write path (a later write increment)"
+        "write-side id allocation (`max`/`sequence`) is graded end-to-end by the "
+        "compile/run conformance lanes now (COR-3 Phase 8 increment 3) — no idiomatic "
+        "TYPED-verb example exists yet; landing with the instance-native API story "
+        "build-out (COR-3 Phase 8 increment 7, ledger D-23). `m-pk-gen-014` (a "
+        "temporal pk-generated insert) is its own case-scoped entry toward increment 4"
     ),
     "m-auto-retry": (
         "the bounded retry loop is implemented (parallax.core.auto_retry, M4) and proven "
@@ -199,7 +202,13 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "matrix (projection suppression, two-session behavioral admits/blocks) lands "
         "with the lock path (COR-3 Phase 8)"
     ),
-    "m-opt-lock": "optimistic-lock writes land with the write family (COR-3 Phase 8)",
+    "m-opt-lock": (
+        "the remaining optimistic-lock write forms — predicate-selected / materializing "
+        "writes (COR-3 Phase 8 increment 5) and the auto-retry opt-in / boundary runner "
+        "(increment 6) — land with a later Phase 8 increment; the non-temporal keyed "
+        "gate/advance/conflict forms landed in increment 3, each its own case-scoped "
+        "entry below"
+    ),
     "m-audit-write": "audit (close-and-chain) writes land with the write family (COR-3 Phase 8)",
     "m-bitemp-write": "bitemporal writes land with the write family (COR-3 Phase 8)",
     "m-batch-write": "batched and set-based writes land with the write family (COR-3 Phase 8)",
@@ -338,17 +347,56 @@ _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON: Final[str] = (
     "(m-inheritance-003/-013/-015/-052) remain the values-lane witnesses"
 )
 
-# Inheritance-family / temporal writes: `lower_write` (parallax.snapshot.handle)
-# explicitly refuses any instruction whose entity declares `inheritance` or is
-# temporal, naming COR-3 Phase 8 — a byte-stable existing refusal this phase
-# does not touch (D-16's full graduation, DQ1, changed the verbs' INPUTS, never
-# the supported write classes).
+# Temporal inheritance-family writes: COR-3 Phase 8 increment 3 lifted
+# `lower_write`'s (`parallax.snapshot.handle`) blanket inheritance-family
+# refusal — the 11 NON-temporal inheritance writes below now carry their own,
+# honest, `_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON` entry — but every
+# TEMPORAL inheritance-family write (an audit/bitemporal close or chain over a
+# table-per-hierarchy or table-per-concrete-subtype family) is still refused,
+# unchanged, naming the temporal write path (COR-3 Phase 8 increment 4).
 _INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
-    "an inheritance-family and/or temporal write: `lower_write` explicitly refuses any "
-    "instruction whose entity declares `inheritance` (tag / concrete-subtype DML) or is "
-    "temporal (milestone lowering), naming COR-3 Phase 8 — the existing, byte-stable "
-    "refusal D-16's full graduation (DQ1) left untouched (it changed the verbs' inputs, "
-    "never the supported write classes)"
+    "a TEMPORAL inheritance-family write (an audit/bitemporal milestone close or chain "
+    "over a table-per-hierarchy or table-per-concrete-subtype family): `lower_write` "
+    "explicitly refuses any instruction whose entity is temporal, naming the temporal "
+    "write path (COR-3 Phase 8 increment 4) — the non-temporal inheritance-family write "
+    "forms landed in increment 3 (`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
+)
+# The 11 NON-temporal inheritance-family keyed writes COR-3 Phase 8 increment 3
+# landed (TPH/TPCS insert/update/delete, the deep-chain and sibling-branch
+# create witnesses, and the opt-lock composition pair): graded end-to-end by
+# the compile/run conformance lanes now, but no idiomatic TYPED-verb example
+# exists yet in the production-reachable `parallax.conformance` surface
+# (`read_models.py`) — landing with the instance-native API story build-out
+# (COR-3 Phase 8 increment 7, ledger D-23).
+_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
+    "a non-temporal inheritance-family keyed write (table-per-hierarchy or table-per-"
+    "concrete-subtype insert/update/delete, including the opt-lock composition pair): "
+    "graded end-to-end by the compile/run conformance lanes now (COR-3 Phase 8 "
+    "increment 3) — no idiomatic TYPED-verb example exists yet in the production-"
+    "reachable `parallax.conformance` surface (`read_models.py`); landing with the "
+    "instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+)
+# The non-temporal `m-opt-lock` keyed write family COR-3 Phase 8 increment 3
+# landed (the conflict-shape gate/success/retry witnesses, the versioned
+# locking-mode advance, and the versioned batched-delete materialize-per-key
+# witness): graded end-to-end by the compile/run conformance lanes now, same
+# deferral shape as the inheritance write family just above.
+_OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
+    "a non-temporal optimistic-lock keyed write (the version gate/advance/conflict, or "
+    "a versioned batched delete's per-key materialize): graded end-to-end by the "
+    "compile/run conformance lanes now (COR-3 Phase 8 increment 3) — no idiomatic "
+    "TYPED-verb example exists yet in the production-reachable `parallax.conformance` "
+    "surface (`read_models.py`); landing with the instance-native API story build-out "
+    "(COR-3 Phase 8 increment 7, ledger D-23)"
+)
+# `m-pk-gen-014` (a `sequence`-strategy insert on a temporal entity) is the
+# sole pk-gen case COR-3 Phase 8 increment 3 leaves deferred — every other
+# pk-gen case's write-side allocation landed (the module-bucket reason above).
+_PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
+    "a `sequence`-strategy primary-key allocation on a TEMPORAL entity: pk-gen's "
+    "non-temporal insert forms landed in COR-3 Phase 8 increment 3 (the module-bucket "
+    "reason above); this composition needs the temporal write path, landing with "
+    "COR-3 Phase 8 increment 4"
 )
 ####################################################################################
 # Subtype-write payload-shape rejects (COR-3 Phase 8 increment 2, `validate_write`  #
@@ -643,6 +691,17 @@ _VO_SCENARIO_COMBO_REASON: Final[str] = (
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
+    # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
+    # (COR-3 Phase 8 increment 3; instance-native examples are increment 7) -- #
+    "m-opt-lock-002": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    "m-opt-lock-005": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    "m-opt-lock-006": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    "m-opt-lock-007": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    "m-opt-lock-013": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    # -- m-batch-write: the versioned per-key delete materialize landed ------ #
+    "m-batch-write-004": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    # -- m-pk-gen: the sole case still deferred (temporal composition) ------- #
+    "m-pk-gen-014": _PK_GEN_TEMPORAL_INSERT_REASON,
     # -- m-inheritance: rows-form representative siblings ------------------- #
     "m-inheritance-002": _TPH_ROW_SIBLING_REASON,
     "m-inheritance-004": _TPH_ROW_SIBLING_REASON,
@@ -673,24 +732,26 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-107": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
     "m-inheritance-108": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
     "m-inheritance-109": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
-    # -- m-inheritance: write family (COR-3 Phase 8) ------------------------- #
-    "m-inheritance-007": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-008": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-009": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-010": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-080": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-081": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-082": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-083": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-084": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-085": _INHERITANCE_WRITE_PHASE8_REASON,
+    # -- m-inheritance: non-temporal write family, conformance-lane covered -- #
+    # (COR-3 Phase 8 increment 3; instance-native examples are increment 7) -- #
+    "m-inheritance-007": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-008": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-009": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-010": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-080": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-081": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-082": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-083": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-084": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-085": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-104": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    # -- m-inheritance: temporal write family (COR-3 Phase 8 increment 4) ---- #
     "m-inheritance-090": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-091": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-094": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-095": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-096": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-097": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-104": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-105": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-086": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
     "m-inheritance-087": _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON,

@@ -291,3 +291,145 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     ):
         assert emission["sql"] == golden_sql, (case.case_id, emission)
         assert emission["binds"] == golden_binds, (case.case_id, emission)
+
+
+# --------------------------------------------------------------------------- #
+# Conflict — the optimistic-lock run lane (m-opt-lock, COR-3 Phase 8           #
+# increment 3). Every reachable conflict case declares `compileEligibility:    #
+# run-only` (single-connection concurrency intent), so `run` is the ONLY lane  #
+# that ever grades it — mirroring the pk-gen `sequence` run-only set below,    #
+# neither joins `WRITE_EXERCISED` (that set couples compile AND run grading;   #
+# a run-only case would fail `test_compile_sweep`'s `status == "ok"` assert).  #
+# --------------------------------------------------------------------------- #
+_CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
+    {"m-opt-lock-005", "m-opt-lock-006", "m-opt-lock-007", "m-opt-lock-013"}
+)
+
+
+def _reachable_conflict_cases() -> list[case_format.Case]:
+    from parallax.conformance import sweep
+
+    return [c for c in sweep.reachable_cases() if c.case_id in _CONFLICT_CASES_EXERCISED]
+
+
+_CONFLICT_CASES = _reachable_conflict_cases()
+
+
+def _conflict_golden_statements(then: dict[str, Any]) -> list[tuple[str, list[Any]]]:
+    out: list[tuple[str, list[Any]]] = []
+    for entry in cast("list[dict[str, Any]]", then.get("statements", [])):
+        sql = entry["sql"]
+        text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
+        out.append((cast("str", text), list(cast("list[Any]", entry.get("binds", [])))))
+    return out
+
+
+@pytest.mark.parametrize("case", _CONFLICT_CASES, ids=[c.case_id for c in _CONFLICT_CASES])
+def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+    """Run each `conflict`-shape case (m-opt-lock) against a reset real database.
+
+    The single-attempt form (`m-opt-lock-005/006/013`) grades the golden UPDATE's
+    emissions and `then.affectedRows` — `0` for the stale-version conflict, `1` for
+    a fresh gate. The `when.attempts` retry form (`m-opt-lock-007`) grades each
+    attempt's own statements flattened in order (proving the `0`-then-`1` transition
+    through each attempt's own distinct gate bind) and the FINAL affected-row count.
+    Every case that authors `then.tableState` grades the committed table contents.
+    """
+    meta = engine.load_case_metamodel(case)
+    provisioner.reset(meta, case_fixtures(case))
+
+    envelope = adapter.run_case(case.path, "postgres", provisioner.port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+
+    doc = case_document(case)
+    then = cast("dict[str, Any]", doc.get("then", {}))
+    observations = envelope["observations"]
+    emissions = envelope["emissions"]
+
+    if "affectedRows" in then:
+        golden_statements = _conflict_golden_statements(then)
+        assert len(emissions) == len(golden_statements), (case.case_id, emissions)
+        for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
+            assert emission["sql"] == golden_sql, (case.case_id, emission)
+            assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (
+                case.case_id,
+                emission,
+            )
+        assert observations["affectedRows"] == then["affectedRows"], case.case_id
+    else:
+        attempts = cast("list[dict[str, Any]]", doc["when"]["attempts"])
+        golden_statements = [
+            entry for attempt in attempts for entry in _conflict_golden_statements(attempt)
+        ]
+        assert len(emissions) == len(golden_statements), (case.case_id, emissions)
+        for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
+            assert emission["sql"] == golden_sql, (case.case_id, emission)
+            assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (
+                case.case_id,
+                emission,
+            )
+        assert observations["affectedRows"] == attempts[-1]["affectedRows"], case.case_id
+
+    if "tableState" in then:
+        expected_state = cast("dict[str, list[dict[str, Any]]]", then["tableState"])
+        observed_state = observations.get("tableState")
+        assert observed_state is not None, case.case_id
+        assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
+        for table, expected_rows in expected_state.items():
+            compare_rows(observed_state[table], expected_rows)
+
+
+# --------------------------------------------------------------------------- #
+# The pk-gen `sequence`-strategy writeSequence cases (m-pk-gen, COR-3 Phase 8  #
+# increment 3): declared `compileEligibility: run-only` (query-result-        #
+# dependent — the registry-read-derived allocated ids), so `run` is the ONLY  #
+# lane that ever grades them, same reasoning as the conflict cases above.     #
+# --------------------------------------------------------------------------- #
+_RUN_ONLY_WRITE_SEQUENCES_EXERCISED: Final[frozenset[str]] = frozenset(
+    f"m-pk-gen-{n:03d}" for n in range(4, 13)
+)
+
+
+def _reachable_run_only_write_sequence_cases() -> list[case_format.Case]:
+    from parallax.conformance import sweep
+
+    return [c for c in sweep.reachable_cases() if c.case_id in _RUN_ONLY_WRITE_SEQUENCES_EXERCISED]
+
+
+_RUN_ONLY_WRITE_SEQUENCE_CASES = _reachable_run_only_write_sequence_cases()
+
+
+@pytest.mark.parametrize(
+    "case", _RUN_ONLY_WRITE_SEQUENCE_CASES, ids=[c.case_id for c in _RUN_ONLY_WRITE_SEQUENCE_CASES]
+)
+def test_run_only_write_sequence_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+    """Run each run-only pk-gen `sequence`-strategy writeSequence case end to end
+    against a reset real database — the SAME grading `test_write_run_sweep` applies
+    to a compile-eligible writeSequence case, parametrized separately because a
+    run-only case's compile envelope answers `status: "run-only"`, never `"ok"`
+    (`test_write_run_sweep`'s `WRITE_EXERCISED` set couples compile-time grading in
+    too, which a run-only member would fail)."""
+    meta = engine.load_case_metamodel(case)
+    provisioner.reset(meta, case_fixtures(case))
+
+    port = _ReadCapturePort(provisioner.port)
+    envelope = adapter.run_case(case.path, "postgres", port)
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+
+    golden_statements = write_golden_statements(case)
+    emissions = envelope["emissions"]
+    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
+    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
+        assert emission["sql"] == golden_sql, (case.case_id, emission)
+        assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (case.case_id, emission)
+    assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
+
+    expected_state = cast(
+        "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
+    )
+    observed_state = envelope["observations"]["tableState"]
+    assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
+    for table, expected_rows in expected_state.items():
+        compare_rows(observed_state[table], expected_rows)

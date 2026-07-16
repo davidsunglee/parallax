@@ -175,16 +175,47 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _INHERITANCE_INSTANCE_FORM_GRAPH_READS
 )
 
-# The keyed, non-temporal unit-of-work write cases M4 grades byte-exact (COR-3 Phase 6
-# M4, m-unit-work): scenario read-your-own-writes / rollback / mixed-op flushes, and the
-# FK-ordered writeSequence cases. Each emits its per-step golden DML (a scenario find
-# carries the `for share of t0` read-lock suffix). The m-batch-write coalescing witnesses
-# (008/010) are unreachable under Option B; the newly-reachable m-pk-gen writeSequence
-# cases (write-side id allocation) and the boundary abort case (004) are reasoned-skipped.
+# The keyed, non-temporal unit-of-work write cases the write path grades byte-exact
+# (COR-3 Phase 6 M4 + COR-3 Phase 8 increment 3, m-unit-work / m-opt-lock /
+# m-inheritance / m-pk-gen): scenario read-your-own-writes / rollback / mixed-op
+# flushes, and the FK-ordered writeSequence cases. Each emits its per-step golden DML
+# (a scenario find carries the `for share of t0` read-lock suffix). The m-batch-write
+# coalescing witnesses (008/010) are unreachable under Option B; the remaining m-pk-gen
+# `sequence`-strategy writeSequence cases (query-result-dependent, run-only) and the
+# boundary abort case (m-opt-lock-012, deferred to increment 5) are reasoned-skipped.
 _WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
     f"m-unit-work-{n:03d}" for n in (1, 2, 5, 6, 9, 11, 12)
 )
-_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset({"m-unit-work-003", "m-unit-work-007"})
+# COR-3 Phase 8 increment 3's 17 compile-eligible flips: the non-temporal opt-lock
+# versioned advance (m-opt-lock-002), the inheritance-family keyed write family
+# (table-per-hierarchy tag derivation/guard, table-per-concrete-subtype own-table
+# routing, the deep-chain and sibling-branch create witnesses, the opt-lock x
+# inheritance composition pair), the pk-gen `max` strategy (folded into the INSERT),
+# and the versioned batched-delete per-key materialize.
+_OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
+    {
+        "m-opt-lock-002",
+        "m-inheritance-007",
+        "m-inheritance-008",
+        "m-inheritance-009",
+        "m-inheritance-010",
+        "m-inheritance-080",
+        "m-inheritance-081",
+        "m-inheritance-082",
+        "m-inheritance-083",
+        "m-inheritance-084",
+        "m-inheritance-085",
+        "m-inheritance-104",
+        "m-pk-gen-001",
+        "m-pk-gen-002",
+        "m-pk-gen-003",
+        "m-pk-gen-013",
+        "m-batch-write-004",
+    }
+)
+_WRITE_SEQUENCES: Final[frozenset[str]] = (
+    frozenset({"m-unit-work-003", "m-unit-work-007"}) | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
+)
 # The snapshot-read `mutate` scenario (m-snapshot-read-010, COR-3 Phase 7 increment
 # 5): no write DML at all — its 2 `find` steps' emissions/round-trips grade byte-
 # exact through the SAME per-step emission machinery `_assert_write_emissions`
