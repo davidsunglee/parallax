@@ -500,8 +500,10 @@ Corpus case: `m-unit-work-012`
 ```python
 def aborted_delete_leaves_the_row_standing(db: Database) -> list[Row]:
     def doomed(tx: Transaction) -> None:
-        tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
-        raise RuntimeError("abort")
+        current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
+        tx.delete(current)
+        tx.find(Account.where(Account.id == 3))  # forces the flush of the buffered delete
+        raise RuntimeError("abort")  # even the force-flushed delete is rolled back
 
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)

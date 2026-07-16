@@ -41,15 +41,21 @@ also fetch the deleted row first. `keyed_delete_observed_in_transaction`
 already reasoned-skipped for its update leg) therefore add a leading observing
 fetch their mirrored corpus case does not author — the SAME conflict class
 `api_suite.CASE_SKIP_REASONS` already carries for the update-only cases,
-extended to cover the delete leg; see `api_suite.py`'s own reasons. Every OTHER
-story's `tx.delete` call still constructs its provenance instance from a value
-known outside the writing transaction (`_known_account`) — either the target is
-never re-observed at all in that transaction's own choreography
-(`create_then_delete_a_parent_child_pair`'s Order/OrderItem targets are not
-versioned, so no observation is required), or the abort discards the buffered
-delete before it is ever lowered (`aborted_delete_leaves_the_row_standing`
-raises immediately after buffering, so `db.transact`'s own discard-unflushed-
-on-abort contract means `lower_write` never runs for it at all).
+extended to cover the delete leg; see `api_suite.py`'s own reasons.
+
+A confirmation-pass residual found the SAME gap in
+`aborted_delete_leaves_the_row_standing` (m-unit-work-012): its own corpus case
+authors a keyed DELETE that is force-flushed for real, THEN rolled back
+(`rollback: true`, `roundTrips: 1` for the write step) — not merely buffered
+and discarded unflushed. Reproducing that choreography honestly means forcing
+the flush before the deliberate abort (mirroring `callback_value_withheld_on_
+abort`'s own force-flush-then-abort pattern), and a force-flushed versioned
+delete is now gated exactly like every other keyed delete — so this story also
+fetches the row first, and also joins the guide-only set. The one REMAINING
+`tx.delete` story, `create_then_delete_a_parent_child_pair`, targets a
+non-versioned entity (Order/OrderItem) never re-observed anywhere in that
+transaction's own choreography — no observation is required, so it is
+unaffected.
 """
 
 from __future__ import annotations
@@ -107,14 +113,6 @@ def _as_rows(snapshot: Snapshot[Any]) -> list[Row]:
         py_row = {py_name: getattr(instance, py_name) for py_name in names.py_to_name}
         rows.append(canonical_row(instance, py_row))
     return rows
-
-
-def _known_account(*, id: int, owner: str, balance: str, version: int) -> Account:
-    """A plain Account instance representing a row's KNOWN fixture state,
-    constructed OUTSIDE any transaction — the provenance source for a story
-    whose corpus choreography buffers the update as its FIRST operation, with
-    no preceding in-transaction fetch to derive an edited copy from."""
-    return Account(id=id, owner=owner, balance=Decimal(balance), version=version)
 
 
 def insert_then_read_your_own_write(db: Database) -> list[Row]:
@@ -243,8 +241,10 @@ def aborted_insert_never_becomes_durable(db: Database) -> list[Row]:
 
 def aborted_delete_leaves_the_row_standing(db: Database) -> list[Row]:
     def doomed(tx: Transaction) -> None:
-        tx.delete(_known_account(id=3, owner="Grace", balance="10.00", version=1))
-        raise RuntimeError("abort")
+        current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
+        tx.delete(current)
+        tx.find(Account.where(Account.id == 3))  # forces the flush of the buffered delete
+        raise RuntimeError("abort")  # even the force-flushed delete is rolled back
 
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)

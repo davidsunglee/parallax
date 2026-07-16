@@ -122,19 +122,24 @@ def _db(port: _RecordingPort, story: WriteStory) -> Database:
 
 
 # The no-drift guard grades only EXERCISED stories (`m-api-conformance.md`):
-# `GUIDE_ONLY_WRITE_STORY_IDS` (m-unit-work-005/006/009) add a leading
-# observing read their mirrored corpus case does not author (the m-opt-lock
-# prior-observation rule postdates those cases), so their wire shape cannot
-# reproduce the case's own golden DML byte-exact — they are reasoned-skipped
-# in the coverage partition instead (`api_suite.CASE_SKIP_REASONS`) and stay
-# out of this guard's parametrize sets. `test_story_run.py` still executes
-# them for real, proving the (corrected) idiom itself works.
+# `GUIDE_ONLY_WRITE_STORY_IDS` (m-unit-work-005/006/009, plus the
+# confirmation-pass residual m-unit-work-012) add a leading observing read
+# their mirrored corpus case does not author (the m-opt-lock prior-observation
+# rule postdates those cases), so their wire shape cannot reproduce the case's
+# own golden DML byte-exact — they are reasoned-skipped in the coverage
+# partition instead (`api_suite.CASE_SKIP_REASONS`) and stay out of this
+# guard's parametrize sets. `test_story_run.py` still executes them for real,
+# proving the (corrected) idiom itself works.
 _COMMIT_IDS = sorted(
     s.case_id
     for s in WRITE_STORIES
     if s.kind == "commit" and s.case_id not in api_suite.GUIDE_ONLY_WRITE_STORY_IDS
 )
-_ABORT_IDS = sorted(s.case_id for s in WRITE_STORIES if s.kind == "abort")
+_ABORT_IDS = sorted(
+    s.case_id
+    for s in WRITE_STORIES
+    if s.kind == "abort" and s.case_id not in api_suite.GUIDE_ONLY_WRITE_STORY_IDS
+)
 
 
 @pytest.mark.parametrize("case_id", _COMMIT_IDS, ids=_COMMIT_IDS)
@@ -162,22 +167,28 @@ def test_abort_story_discards_the_buffer_and_keeps_the_reads_golden(case_id: str
     assert ("rollback",) in port.ops
 
 
-_GUIDE_ONLY_COMMIT_IDS = sorted(api_suite.GUIDE_ONLY_WRITE_STORY_IDS)
+_GUIDE_ONLY_COMMIT_IDS = sorted(
+    case_id
+    for case_id in api_suite.GUIDE_ONLY_WRITE_STORY_IDS
+    if _STORIES[case_id].kind == "commit"
+)
 
 
 @pytest.mark.parametrize("case_id", _GUIDE_ONLY_COMMIT_IDS, ids=_GUIDE_ONLY_COMMIT_IDS)
 def test_guide_only_story_runs_docker_free_without_grading_against_the_corpus_golden(
     case_id: str,
 ) -> None:
-    """`GUIDE_ONLY_WRITE_STORY_IDS` (m-unit-work-005/006/009) add a leading
-    observing read their mirrored corpus case does not author — the no-drift
-    guard grades only EXERCISED stories (`_COMMIT_IDS` above excludes these
-    three), so this asserts only that the corrected idiom runs cleanly
-    through the fake port, never a golden-DML comparison. This is deliberately
-    still this module's job: `test_write_no_drift.py` is "the story bodies'
-    only DB-free driver" (module docstring), and these three guide-only
-    stories are still real, executable Usage-Guide examples that must not
-    silently break.
+    """`GUIDE_ONLY_WRITE_STORY_IDS`'s COMMIT-kind members (m-unit-work-005/006/
+    009) add a leading observing read their mirrored corpus case does not
+    author — the no-drift guard grades only EXERCISED stories (`_COMMIT_IDS`
+    above excludes these three), so this asserts only that the corrected idiom
+    runs cleanly through the fake port, never a golden-DML comparison. This is
+    deliberately still this module's job: `test_write_no_drift.py` is "the
+    story bodies' only DB-free driver" (module docstring), and these three
+    guide-only stories are still real, executable Usage-Guide examples that
+    must not silently break. The registry's fourth (ABORT-kind) member,
+    `m-unit-work-012`, gets its own sibling test below — its force-flushed
+    delete means a plain "no rollback" assertion would not hold.
     """
     story = _STORIES[case_id]
     port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
@@ -185,6 +196,35 @@ def test_guide_only_story_runs_docker_free_without_grading_against_the_corpus_go
     assert port.ops[0] == ("begin",)
     assert port.ops[-1] == ("commit",)
     assert ("rollback",) not in port.ops
+
+
+_GUIDE_ONLY_ABORT_IDS = sorted(
+    case_id for case_id in api_suite.GUIDE_ONLY_WRITE_STORY_IDS if _STORIES[case_id].kind == "abort"
+)
+
+
+@pytest.mark.parametrize("case_id", _GUIDE_ONLY_ABORT_IDS, ids=_GUIDE_ONLY_ABORT_IDS)
+def test_guide_only_abort_story_runs_docker_free_without_grading_against_the_corpus_golden(
+    case_id: str,
+) -> None:
+    """`m-unit-work-012` (the confirmation-pass residual joining
+    `GUIDE_ONLY_WRITE_STORY_IDS`) force-flushes its versioned delete for real
+    — mirroring the corpus's own rolled-back-DELETE choreography — before the
+    deliberate abort rolls it back, which now requires a leading observing
+    read the mirrored corpus case does not author (the SAME conflict class
+    the three COMMIT-kind guide-only stories above carry). Unlike a plain
+    abort story (`test_abort_story_discards_the_buffer_and_keeps_the_reads_
+    golden`), its delete DOES reach the wire before the rollback erases it, so
+    this asserts only that the corrected idiom runs cleanly end to end (a
+    rollback, then a fresh committed find), never a golden-DML comparison.
+    """
+    story = _STORIES[case_id]
+    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    story.run(_db(port, story))
+    assert port.ops[0] == ("begin",)
+    assert ("rollback",) in port.ops
+    assert port.wrote
+    assert port.ops[-1] == ("commit",)
 
 
 def test_boundary_story_withholds_the_callback_value() -> None:

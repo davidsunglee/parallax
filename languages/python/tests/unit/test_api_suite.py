@@ -18,8 +18,8 @@ pytestmark = pytest.mark.unit
 # Usage Guide's rendered read/graph story snippets must never expose one (the
 # m-inheritance-100 story once leaked `_temporal_as_of_attributes`, a
 # framework-internal, in a comment). Scoped to the read/graph snippets this
-# remediation touches — the write stories' own local `_as_rows`/
-# `_known_account` helpers are a separate, ledgered cleanup (D-23).
+# remediation touches — the write stories' own local `_as_rows` helper is a
+# separate, ledgered cleanup (D-23).
 _PRIVATE_NAME = re.compile(r"(?<![\w.])_[A-Za-z][A-Za-z0-9_]*")
 
 
@@ -70,7 +70,7 @@ def test_partition_report_is_a_clean_full_partition() -> None:
     report = api_suite.partition_report()
     assert report.ok, report.errors
     # Phase 5 registers the first idiomatic examples (the op-algebra read spellings).
-    # `guide_only` examples (m-unit-work-005/006/009) are deliberately excluded —
+    # `guide_only` examples (m-unit-work-005/006/009/012) are deliberately excluded —
     # they are reasoned-skipped, not exercised (see GUIDE_ONLY_WRITE_STORY_IDS).
     assert {e.case_id for e in api_suite.EXAMPLES if not e.guide_only} <= report.exercised
     assert report.exercised | report.skipped == report.active
@@ -301,8 +301,10 @@ def test_pk_gen_014_reason_names_its_current_landed_state() -> None:
 
 def test_guide_only_write_stories_are_reasoned_skips_not_exercised() -> None:
     # Regression guard (finding D, extended by finding A's own delete-side
-    # discovery): m-unit-work-005/006/009 render as guide-only examples but
-    # are classified reasoned-skip, never exercised, in the partition.
+    # discovery, and by a later confirmation-pass residual's rolled-back-
+    # delete extension): m-unit-work-005/006/009/012 render as guide-only
+    # examples but are classified reasoned-skip, never exercised, in the
+    # partition.
     report = api_suite.partition_report()
     for case_id in api_suite.GUIDE_ONLY_WRITE_STORY_IDS:
         assert case_id in report.skipped, case_id
