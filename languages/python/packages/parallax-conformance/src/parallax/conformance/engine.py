@@ -654,6 +654,156 @@ def _build_temporal_instruction(
     return instruction, key, observation
 
 
+_OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedInZ"})
+
+
+def _refuse_predicate_write_shape(entry: Mapping[str, object]) -> None:
+    """Refuse a STRUCTURED PREDICATE-write instruction (`mutation` / `target` /
+    optional `assignments` — `m-case-format`'s predicate-selected shape,
+    e.g. ``m-batch-write-005``/``-006``) reaching the keyed-write engine seam
+    — loudly, before any row indexing, mirroring `lower_write`'s own
+    predicate-write refusal wording (`parallax.snapshot.handle`). A predicate
+    write's `target` names its entity/predicate; a keyed write never carries
+    that key at all (`entity` + `rows` instead), so `target`'s presence (or
+    `entity`'s absence) is the SHAPE signal — never inferred from a `KeyError`.
+    """
+    target = entry.get("target")
+    entity_name = (
+        cast("Mapping[str, object]", target).get("entity") if isinstance(target, Mapping) else None
+    )
+    raise WriteLoweringError(
+        f"predicate-selected (set-based) write on {entity_name!r}: materialize-then-lower "
+        "lands with the write path (COR-3 Phase 8 increment 5; m-batch-write / m-opt-lock)"
+    )
+
+
+def _write_entries(raw_write: object) -> Sequence[Mapping[str, object]]:
+    """A scenario write step's own ``write`` field, normalized to its entry
+    LIST — refusing loudly (:func:`_refuse_predicate_write_shape`), before any
+    row indexing, when it is a single STRUCTURED PREDICATE-write instruction
+    (a bare mapping, `m-case-format`'s ``target``/``predicate`` shape) rather
+    than the keyed-write entry list this engine lowers. Never a bare
+    ``KeyError`` from indexing a mapping as if it were a sequence — the
+    reachability gap the Phase-8 mid-phase review's finding E closed
+    (``m-batch-write-005``/``-006``, previously the bare ``": 0"`` skip text).
+    """
+    if isinstance(raw_write, Mapping):
+        _refuse_predicate_write_shape(cast("Mapping[str, object]", raw_write))
+    return cast("Sequence[Mapping[str, object]]", raw_write)
+
+
+def _is_versioned_entity(meta: Metamodel, entity_name: str) -> bool:
+    declaring = inheritance.declaring_entity(meta, meta.entity(entity_name))
+    return any(attr.optimistic_locking for attr in declaring.attributes)
+
+
+def _is_pk_gen_managed(meta: Metamodel, entity_name: str) -> bool:
+    """Whether ``entity_name``'s (family-effective) primary key is allocated by
+    a `pkGenerator` strategy other than ``none`` (`m-pk-gen`).
+
+    A row targeting such an entity decomposes per row regardless of ITS OWN
+    shape — a literal, already-resolved id from a prior registry read (the
+    `sequence` strategy's own `batchSize > 1` block reservation,
+    `m-pk-gen-008`..`-012`, whose rows carry plain integers, never a
+    `{computed: ...}` marker) or an actual `{computed: ...}` marker (the `max`
+    strategy) — because each row's own key allocation is independent and this
+    seam lowers single-row keyed writes only.
+    """
+    entity = meta.entity(entity_name)
+    pk_attrs = inheritance.family_primary_key(meta, entity)
+    return any(
+        attr.pk_generator is not None and attr.pk_generator.strategy != "none" for attr in pk_attrs
+    )
+
+
+def _rows_carry_observation_keys(raw_rows: Sequence[Mapping[str, object]]) -> bool:
+    return any(_OBSERVATION_CONTROL_KEYS & row.keys() for row in raw_rows)
+
+
+def _uniform_update_values(
+    pk_names: frozenset[str], raw_rows: Sequence[Mapping[str, object]]
+) -> bool:
+    """Whether every row assigns the IDENTICAL values to its non-key columns
+    (`m-batch-write` "Set-based flush": "executed once per distinct key, or as
+    a single statement with an IN predicate when the new value is uniform
+    across the keys") — the uniform update entry of ``m-batch-write-001``
+    collapses; the non-uniform, per-distinct-key form of ``m-batch-write-002``
+    decomposes (see :func:`_decomposes_per_row`).
+    """
+    excluded = pk_names | _OBSERVATION_CONTROL_KEYS
+    assigned = [{k: v for k, v in row.items() if k not in excluded} for row in raw_rows]
+    first = assigned[0]
+    return all(candidate == first for candidate in assigned[1:])
+
+
+def _decomposes_per_row(
+    meta: Metamodel, entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
+) -> bool:
+    """Whether a non-temporal write entry's rows decompose into independent
+    single-row instructions (mirroring what that many separate
+    `Transaction.insert`/`.update`/`.delete` calls would buffer) rather than
+    collapsing into ONE multi-row instruction (`m-batch-write`'s set-based
+    flush collapse — the set-based lowering itself lands with a later write
+    increment, so a collapsed entry reaches `lower_write`'s own multi-row
+    refusal, the honest increment-5 deferral).
+
+    Derived SEMANTICALLY from the instruction and model — mutation kind,
+    versioned-ness, presence of per-row observations, and computed/allocated
+    primary keys — never from the case's own authored ``statements`` count,
+    which is a count-consistency ASSERTION only (`compatibility-case.schema.
+    json`), never a semantics discriminator (the review finding this closes):
+
+    - a single row is always its own instruction (no ambiguity);
+    - a VERSIONED target's row carries per-row framework concerns (the
+      version gate/advance) no single collapsed statement can express — every
+      mutation kind decomposes (``m-batch-write-004``'s versioned per-key
+      delete materialize);
+    - any row authoring a reserved ``observedVersion``/``observedInZ`` control
+      key is an explicit per-row-observation signal (`m-opt-lock`; ADR 0013);
+    - a pk-gen-MANAGED target's INSERT decomposes — each row's own key
+      allocation is independent (`m-pk-gen`'s `sequence`/`max` strategies,
+      ``m-pk-gen-001``..`-012`);
+    - an UPDATE whose rows assign NON-uniform values per key decomposes into
+      one UPDATE per distinct key (``m-batch-write-002``); uniform values
+      collapse into one `IN`-predicate statement instead
+      (``m-batch-write-001``'s own update entry).
+
+    Every other shape (unversioned, non-pk-gen-managed, no per-row observation
+    keys, and — for update — uniform values) stays ONE multi-row instruction
+    (``m-batch-write-001``/``-003``, ``m-value-object-045``).
+    """
+    if len(raw_rows) == 1:
+        return True
+    if _is_versioned_entity(meta, entity_name):
+        return True
+    if _rows_carry_observation_keys(raw_rows):
+        return True
+    if mutation == "insert":
+        return _is_pk_gen_managed(meta, entity_name)
+    if mutation == "update":
+        entity = meta.entity(entity_name)
+        pk_names = frozenset(attr.name for attr in inheritance.family_primary_key(meta, entity))
+        return not _uniform_update_values(pk_names, raw_rows)
+    return False  # delete / terminate: an unversioned target collapses to one IN-list statement
+
+
+def _check_statement_count_consistency(entry: Mapping[str, object], decomposed_count: int) -> None:
+    """``statements`` is a count-CONSISTENCY assertion the schema intends
+    (`compatibility-case.schema.json`), never a semantics discriminator — verify
+    the entry's OWN authored count against this seam's independently DERIVED
+    instruction count and fail loudly on a mismatch (an authoring error),
+    rather than silently trusting either number.
+    """
+    declared = entry.get("statements")
+    if declared is not None and declared != decomposed_count:
+        raise EngineError(
+            f"{entry.get('entity')!r} {entry.get('mutation')!r}: authored `statements: "
+            f"{declared!r}` does not match the {decomposed_count} instruction(s) this entry "
+            "decomposes into (m-case-format: `statements` is a count-consistency assertion, "
+            "not a semantics discriminator)"
+        )
+
+
 def _build_instructions(
     entry: Mapping[str, object],
     meta: Metamodel,
@@ -663,51 +813,48 @@ def _build_instructions(
 ) -> list[tuple[WriteInstruction, ObjectKey | None, Observation | None]]:
     """One case write entry -> one or more canonical keyed write instructions.
 
+    A STRUCTURED PREDICATE-write entry (`target`/`predicate` shaped, no
+    `entity` key at all) refuses loudly here too
+    (:func:`_refuse_predicate_write_shape`) — defensive coverage for the
+    writeSequence path, which shares this function with every scenario write
+    entry (the scenario `write`-field-is-itself-a-mapping shape is caught one
+    layer up, by :func:`_write_entries`).
+
     A TEMPORAL entity's entry dispatches to :func:`_build_temporal_instruction`
     (COR-3 Phase 8 increment 4): its authored ``statements`` count is the DML
-    STATEMENT count (a close plus zero-to-three chained opens), unrelated to
-    the row-decomposition discriminator below, which assumes non-temporal
-    semantics.
+    STATEMENT count (a close plus zero-to-three chained opens), a DIFFERENT
+    accounting from the row-decomposition below, which assumes non-temporal
+    semantics and is never applied to a temporal entry's entry.
 
     Otherwise, a write entry carries the instruction triple (``mutation`` /
     ``entity`` / ``rows``) beside case-authoring keys (``note`` / ``statements``
     / ``roundTrips`` / ``rollback``). ``rows`` MAY batch several logical
     per-object writes into one entry (the write-instruction schema's "one or
-    more rows" vocabulary). The entry's OWN authored ``statements`` count is
-    the case author's declared choreography, so it decides which of two
-    shapes applies:
-
-    - ``statements == len(rows)``: each row is its OWN independent physical
-      statement (mirroring what that many separate `Transaction.insert`/
-      `.update`/`.delete` calls would buffer) — this splits each row into its
-      OWN single-row instruction and strips its reserved observation control
-      keys into an :class:`Observation`, keyed by that row's OWN object key
-      (`m-opt-lock`; ADR 0013), never threaded onto the durable instruction.
-      Every corpus witness this decomposition serves — the versioned
-      per-key delete materialize (`m-batch-write-004`) and the pk-gen
-      `sequence` strategy's per-id inserts (`m-pk-gen-004`-`012`) — declares
-      exactly this shape.
-    - Otherwise (fewer statements than rows, e.g. `statements: 1` for a
-      3-row insert): a genuine buffered-batch COLLAPSE intent (m-batch-write
-      "Set-based flush" — a multi-row `INSERT` or an `id in (...)` batched
-      `UPDATE`). The set-based flush collapse itself lands with the write
-      path (COR-3 Phase 8 increment 5), so the WHOLE row list passes through
-      as ONE multi-row instruction — `lower_write`'s own multi-row refusal
-      names that deferral, rather than this seam silently decomposing into N
-      independent per-row statements no golden this shape authors.
+    more rows" vocabulary); :func:`_decomposes_per_row` derives SEMANTICALLY
+    whether they decompose into N independent single-row instructions (each
+    stripping its own reserved observation control keys into an
+    :class:`Observation`, keyed by that row's OWN object key — `m-opt-lock`;
+    ADR 0013) or stay ONE multi-row instruction (reaching `lower_write`'s own
+    multi-row refusal, the honest increment-5 collapse deferral).
+    :func:`_check_statement_count_consistency` then verifies the entry's own
+    authored ``statements`` count agrees, independently of that decision.
     """
+    if "entity" not in entry:
+        _refuse_predicate_write_shape(entry)
     entity_name = cast("str", entry["entity"])
     if _is_temporal_entity(meta, entity_name):
         return [_build_temporal_instruction(entry, meta, shadow, tx_instant, unit_inserted)]
-    mutation = entry["mutation"]
+    mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    if entry.get("statements") != len(raw_rows):
+    if not _decomposes_per_row(meta, entity_name, mutation, raw_rows):
+        _check_statement_count_consistency(entry, 1)
         clean_rows = [_strip_observation(raw_row)[0] for raw_row in raw_rows]
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": clean_rows}
         )
         instructions.validate_instruction(instruction, meta)
         return [(instruction, None, None)]
+    _check_statement_count_consistency(entry, len(raw_rows))
     out: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
     for raw_row in raw_rows:
         clean_row, observation = _strip_observation(raw_row)
@@ -820,7 +967,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     try:
         for index, step in enumerate(_scenario_steps(case)):
             if "write" in step:
-                entries = cast("Sequence[Mapping[str, object]]", step["write"])
+                entries = _write_entries(step["write"])
                 tx_instant = _entry_instant(entries[0])
                 statements = _lower_writes(entries, meta, dialect, concurrency, shadow, tx_instant)
                 rollback = step.get("rollback") is True
@@ -1086,7 +1233,7 @@ def run_scenario_case(
         _seed_shadow_from_fixtures(case, meta, shadow)
         for index, step in enumerate(steps):
             if "write" in step:
-                entries = cast("Sequence[Mapping[str, object]]", step["write"])
+                entries = _write_entries(step["write"])
                 tx_instant = _entry_instant(entries[0])
                 resolved = _resolve_entries(entries, meta, shadow, tx_instant)
                 statements = _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
