@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, cast
 
-from parallax.core import op_algebra
+from parallax.core import inheritance, op_algebra
 from parallax.core.descriptor import Entity, Metamodel
 from parallax.core.op_algebra import Operation
 
@@ -400,14 +400,26 @@ def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None
     """Validate an instruction's member names against the metamodel (D-1).
 
     A keyed write row key must name a declared attribute or value object of the
-    entity; a predicate write's assignment `attr` must name a `target.entity`
-    member. This is the member-name honesty gate — the flush-time refusing compile
-    port (M4) is the structural enforcer of the remaining typed / columnOrder
+    entity — for an inheritance-family participant, ANCESTRY-EFFECTIVE: every
+    member declared anywhere in the family (`inheritance.family_attributes` /
+    `inheritance.superset_value_objects`), never just the target's own LOCAL
+    declarations, else a well-formed concrete-subtype write naming a root- or
+    abstract-subtype-inherited member (`CardPayment`'s inherited `id`/`amount`)
+    would be wrongly rejected as "undeclared" (a family participant's own
+    compiled record carries only its OWN attributes — m-inheritance "Inherited
+    members"). Sibling-branch and framework-owned-metadata fields are already
+    caught more specifically, and FIRST, by `validate_write`'s subtype rules
+    (COR-3 Phase 8 increment 2) — this gate only ever sees whatever THAT pass
+    left unexamined, so widening it to the whole family never re-opens a hole
+    the more specific check already closes. A predicate write's assignment
+    `attr` must name a `target.entity` member, same family-effective set. This
+    is the member-name honesty gate — the flush-time refusing compile port (M4)
+    is the structural enforcer of the remaining typed / columnOrder
     classification, mirroring the predicate-write materialization split.
     """
     if isinstance(instruction, KeyedWrite):
         entity = _entity(meta, instruction.entity)
-        members = _declared_members(entity)
+        members = _declared_members(entity, meta)
         for row in instruction.rows:
             unknown = sorted(key for key in row if key not in members)
             if unknown:
@@ -416,7 +428,7 @@ def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None
                 )
     else:
         entity = _entity(meta, instruction.target.entity)
-        members = _declared_members(entity)
+        members = _declared_members(entity, meta)
         for assignment in instruction.assignments:
             owner, _, member = assignment.attr.partition(".")
             if owner != entity.name or member not in members:
@@ -432,9 +444,12 @@ def _entity(meta: Metamodel, name: str) -> Entity:
         raise WriteInstructionError(f"unknown entity {name!r}") from None
 
 
-def _declared_members(entity: Entity) -> frozenset[str]:
+def _declared_members(entity: Entity, meta: Metamodel) -> frozenset[str]:
     """The declared attribute + value-object names a write may reference (business
-    names, never physical columns)."""
-    return frozenset(
-        {attr.name for attr in entity.attributes} | {vo.name for vo in entity.value_objects}
-    )
+    names, never physical columns) — ``entity``'s whole inheritance FAMILY for a
+    participant, its own declarations otherwise (`inheritance.family_attributes`
+    / `inheritance.superset_value_objects` already degrade to the plain
+    single-entity view for a non-participant, so no branch is needed here)."""
+    attrs = inheritance.family_attributes(meta, entity)
+    value_objects = inheritance.superset_value_objects(meta, (entity.name,))
+    return frozenset({attr.name for attr in attrs} | {vo.name for vo in value_objects})

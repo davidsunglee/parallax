@@ -25,6 +25,7 @@ __all__ = [
     "effective_concrete_subtypes",
     "family_attributes",
     "family_of",
+    "family_primary_key",
     "family_root",
     "superset_value_objects",
     "validate",
@@ -226,6 +227,21 @@ def family_attributes(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
         if candidate.inheritance is not None and _root_name(meta, candidate) == root_name:
             attrs.extend(candidate.attributes)
     return tuple(attrs)
+
+
+def family_primary_key(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
+    """``entity``'s FAMILY-EFFECTIVE primary key (m-inheritance "Inherited
+    members"): declared on the root alone and inherited unchanged by every
+    abstract and concrete descendant — exactly the temporal-axis and
+    optimistic-locking root-ownership rules, applied to the identity key
+    itself. ``Entity.primary_key`` is a bare LOCAL view (``self.attributes``
+    filtered): for a concrete subtype whose key is declared on an ancestor
+    (every corpus family), that view is wrongly EMPTY, which would silently
+    make a keyed write / observation / coalescing lookup unidentifiable
+    (`m-unit-work` object identity, `m-sql` keyed DML). Composes with
+    :func:`family_attributes` rather than re-deriving the family walk.
+    """
+    return tuple(attr for attr in family_attributes(meta, entity) if attr.primary_key)
 
 
 def superset_value_objects(meta: Metamodel, position: Sequence[str]) -> list[ValueObject]:

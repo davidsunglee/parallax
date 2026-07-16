@@ -33,6 +33,7 @@ _validate = cast("Callable[[object, object], None]", jsonschema.validate)
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
+_PAYMENT = _MODELS["payment"]
 _BALANCE = _MODELS["balance"]
 _POSITION = _MODELS["position"]
 
@@ -416,6 +417,34 @@ def test_member_name_honesty_rejects_undeclared_row_member() -> None:
     )
     with pytest.raises(wi.WriteInstructionError, match="undeclared member"):
         wi.validate_instruction(keyed, _ACCOUNT)
+
+
+def test_member_name_honesty_accepts_a_family_participants_inherited_members() -> None:
+    # A concrete-subtype keyed write naming a ROOT-declared inherited member
+    # (`id` / `amount`, Payment's own) alongside its OWN declared member
+    # (`cardNetwork`) is well-formed (m-inheritance "Inherited members") — the
+    # ancestry-effective member set, not CardPayment's bare local declarations
+    # (`family_attributes`), decides honesty (COR-3 Phase 8 increment 3).
+    keyed = wi.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "CardPayment",
+            "rows": [{"id": 1, "amount": 200.00, "cardNetwork": "Visa"}],
+        }
+    )
+    wi.validate_instruction(keyed, _PAYMENT)
+
+
+def test_member_name_honesty_still_rejects_a_genuinely_undeclared_family_member() -> None:
+    keyed = wi.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "CardPayment",
+            "rows": [{"id": 1, "amount": 200.00, "nonsense": True}],
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="undeclared member"):
+        wi.validate_instruction(keyed, _PAYMENT)
 
 
 def test_member_name_honesty_rejects_foreign_assignment_owner() -> None:
