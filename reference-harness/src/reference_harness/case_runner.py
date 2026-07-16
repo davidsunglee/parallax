@@ -1945,7 +1945,7 @@ def _graphs_equal(
     return equal_value(left, right)
 
 
-# --- value-object materialization (m-value-object graph read) ---------------
+# --- value-object + inheritance single-statement graph read (m-value-object, m-inheritance) ---
 
 
 def _decode_document(raw: Any) -> Any:
@@ -2068,7 +2068,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
 
     When a ``referenceSql`` oracle is present it independently pins the matched
     row SET (identity columns only, the value-object columns stripped), so the
-    filter that selected the owners is checked by a different formulation without
+    filter that selected the rows is checked by a different formulation without
     routing the JSON document through row comparison.
     """
     dialect = db.dialect
@@ -2109,7 +2109,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
         reference_rows = _materialize_family_variant(case, db.query(reference_sql))
         if not _rows_equal(reference_rows, identity_rows, case.tolerance):
             raise CaseFailure(
-                f"{case.path.name}: referenceSql rows != golden owner rows (identity).\n"
+                f"{case.path.name}: referenceSql rows != golden rows (identity).\n"
                 f"  reference: {reference_rows!r}\n"
                 f"  expected:  {identity_rows!r}"
             )
