@@ -10,13 +10,16 @@ lowering function; both the developer transaction path (the injected
 ``FlushExecutor``) and the conformance engine reuse it (the conformance family is
 the import-side DAG exemption), so there is exactly one write-lowering seam.
 
-M4 lowers the **non-temporal keyed** write forms (`insert` / `update` / `delete` on
-a non-temporal, non-inheritance entity, version carried as plain column data). The
-temporal milestone forms (close-and-chain, rectangle splits), the optimistic-lock
-version gate/advance, predicate-selected (set-based) writes, and inheritance-family
-DML land with the write path (COR-3 Phase 8); reaching one raises a loud
-:class:`WriteLoweringError` naming the deferral, never a wrong emission — mirroring
-the read compiler's forward-error posture.
+M4 lowered the non-temporal keyed write forms; COR-3 Phase 8 increment 3 added the
+``m-opt-lock`` version gate/advance and inheritance-family DML; increment 4 adds the
+**temporal** milestone forms — audit-only close-and-chain and full-bitemporal
+rectangle splits (``insert`` / ``update`` / ``terminate`` and the bounded ``*Until``
+trio), composing `parallax.core.audit_write` / `.bitemp_write`'s neutral milestone
+planning with the ``m-opt-lock`` gate policy this seam already owns. Predicate-
+selected (set-based) writes and multi-row batch collapse still land with a later
+write increment; reaching one raises a loud :class:`WriteLoweringError` naming the
+deferral, never a wrong emission — mirroring the read compiler's forward-error
+posture.
 
 The **developer transaction surface** (spec §5) also composes here:
 :meth:`Database.connect` wires a concrete ``m-db-port`` adapter to a metamodel,
@@ -45,10 +48,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
-from parallax.core import deep_fetch, inheritance, op_algebra, opt_lock
+from parallax.core import audit_write, bitemp_write, deep_fetch, inheritance, op_algebra, opt_lock
 from parallax.core.auto_retry import run_with_retry
+from parallax.core.base import INFINITY_LITERAL
 from parallax.core.db_port import DbPort, JsonDocument, Row
-from parallax.core.descriptor import Attribute, Entity, Metamodel, column_order
+from parallax.core.descriptor import AsOfAttribute, Attribute, Entity, Metamodel, column_order
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import Statement as EntityStatement
@@ -89,6 +93,7 @@ __all__ = [
     "Execution",
     "FindResult",
     "HistoryFindResult",
+    "LoweredStatement",
     "MilestoneGraph",
     "NoResultFound",
     "Snapshot",
@@ -99,6 +104,7 @@ __all__ = [
     "connect",
     "find",
     "find_history",
+    "lower_temporal_close",
     "lower_write",
 ]
 
@@ -116,27 +122,72 @@ _MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
 
 
 class WriteLoweringError(ValueError):
-    """A planned write cannot be lowered to DML by the non-temporal keyed write
-    seam (the deferred forms — temporal milestoning, predicate-selected /
-    set-based, multi-row batch collapse — raise here, never a wrong emission)."""
+    """A planned write cannot be lowered to DML by the keyed write seam (the
+    deferred forms — predicate-selected / set-based, multi-row batch collapse —
+    raise here, never a wrong emission)."""
+
+
+@dataclass(frozen=True, slots=True)
+class LoweredStatement:
+    """One lowered DML statement plus its optimistic-lock affected-row EXPECTATION.
+
+    ``expected_affected`` is the count the caller MUST see this ``statement`` affect
+    (``None`` means no expectation — an insert, an unversioned/unobserved write, or a
+    chained/opened temporal row: `m-audit-write` "Chained INSERTs carry no
+    expectation"). A non-temporal keyed write lowers to exactly ONE statement, so its
+    own expectation (unchanged from increment 3, `~parallax.core.unit_work.PlannedWrite.
+    expected_affected`) rides here too. A temporal write lowers to MULTIPLE statements
+    (a close, then zero-to-three chained opens) — only the close carries an
+    expectation (always ``1``, `m-audit-write` "The close UPDATE MUST affect exactly
+    one row" — unconditional on gating), never the whole planned write, since a
+    chained INSERT's own affected-row count is meaningless as a conflict signal.
+
+    ``stale_error`` distinguishes the TWO zero-row-close outcomes on a mismatch: a
+    GATED (optimistic) mismatch is the retriable ``m-opt-lock`` conflict
+    (:class:`~parallax.core.opt_lock.OptimisticLockConflictError`, unchanged from
+    increment 3 — every non-temporal expectation and every gated temporal close sets
+    this ``False``); an UNGATED (locking-mode) temporal close's mismatch is the
+    distinct NON-retriable :class:`~parallax.core.opt_lock.StaleWriteError`
+    (``stale_error=True`` — the shared read lock, not a gate, was supposed to make it
+    correct, so a zero-row outcome is a consistency violation, not a detected lost
+    update).
+    """
+
+    statement: Statement
+    expected_affected: int | None = None
+    stale_error: bool = False
 
 
 def lower_write(
-    planned: PlannedWrite, meta: Metamodel, dialect: Dialect, concurrency: Concurrency
-) -> list[Statement]:
+    planned: PlannedWrite,
+    meta: Metamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    tx_instant: str | None = None,
+) -> list[LoweredStatement]:
     """Lower one planned write to its ordered DML statements (m-sql write DML).
 
     ``planned`` is one execution-ordered item of a :class:`FlushPlan`: a (coalesced,
     FK-ordered, elided) write instruction plus its bound transaction observation and
     affected-rows expectation. ``concurrency`` is the owning unit of work's
-    participation mode (m-opt-lock: whether a versioned UPDATE's version gate is
-    emitted). Returns the ordered statements the write emits — one for every
-    non-temporal keyed form this seam lowers (insert / update / delete, plain or
-    inheritance-family, versioned or not, pk-generated or not), more once the
-    temporal / rectangle-split forms land (COR-3 Phase 8 increment 4). The temporal
-    forms will additionally consume the flush's Clock-supplied processing instant
-    (``FlushPlan.tx_instant``, bound as ``in_z`` / the close instant); the
-    non-temporal forms this seam lowers do not, so it is threaded in with those forms.
+    participation mode (m-opt-lock: whether a versioned UPDATE's version gate, or a
+    temporal close's observed-in_z/business-discriminator gate, is emitted).
+    ``tx_instant`` is the flush's Clock-supplied processing instant
+    (``FlushPlan.tx_instant``) — REQUIRED for a temporal write (bound as the close's
+    new ``out_z`` and every chained row's fresh ``in_z``), unused by the non-temporal
+    forms.
+
+    Dispatches on the entity's FAMILY-EFFECTIVE temporal classification (ADR 0026:
+    an inheritance participant declares its as-of axes on the root alone, so
+    `entity.is_temporal` — a bare, non-flattening LOCAL view — would silently miss a
+    temporal-family concrete's own write). A temporal entity's write composes
+    `parallax.core.audit_write` / `parallax.core.bitemp_write`'s neutral milestone
+    plan with the `m-opt-lock` gate policy and this seam's existing descriptor-driven
+    column/tag machinery (reused unchanged for every chained INSERT — value objects,
+    inheritance tag derivation, pk-gen markers all compose exactly as a non-temporal
+    insert's do, since a chained row is structurally an ordinary full-row insert). A
+    non-temporal entity's write is unchanged from increment 3 (insert / update /
+    delete, plain or inheritance-family, versioned or not, pk-generated or not).
     """
     instruction = planned.instruction
     if isinstance(instruction, PredicateWrite):
@@ -146,30 +197,9 @@ def lower_write(
             "m-batch-write / m-opt-lock)"
         )
     entity = meta.entity(instruction.entity)
-    # Temporal classification MUST be the family-EFFECTIVE one (ADR 0026): an
-    # inheritance participant declares its as-of axes on the root alone, so
-    # `entity.is_temporal` (a bare, non-flattening LOCAL view) would silently
-    # miss a temporal-family concrete's own write here — it would still be
-    # refused just below (every temporal write, family or not, is out of
-    # scope this increment), but with the wrong reason and the wrong
-    # classification printed.
+    # Temporal classification MUST be the family-EFFECTIVE one (ADR 0026) — see the
+    # docstring above.
     declaring = inheritance.declaring_entity(meta, entity)
-    if declaring.is_temporal:
-        raise WriteLoweringError(
-            f"temporal write on {entity.name!r} ({declaring.temporal}): milestone lowering "
-            "(close-and-chain / rectangle split) lands with the write path (COR-3 Phase 8 "
-            "increment 4; m-audit-write / m-bitemp-write)"
-        )
-    if instruction.business_from is not None or instruction.business_to is not None:
-        raise WriteLoweringError(
-            f"{instruction.mutation!r} on the non-temporal entity {entity.name!r} carries a "
-            "business bound; bounded writes are temporal (COR-3 Phase 8 increment 4)"
-        )
-    if instruction.mutation not in _NON_TEMPORAL_VERBS:
-        raise WriteLoweringError(
-            f"{instruction.mutation!r} is a temporal milestone verb; its lowering lands with the "
-            "write path (COR-3 Phase 8 increment 4)"
-        )
     if len(instruction.rows) != 1:
         raise WriteLoweringError(
             f"multi-row keyed {instruction.mutation!r} on {entity.name!r} "
@@ -177,27 +207,190 @@ def lower_write(
             "(COR-3 Phase 8 increment 5; m-batch-write) — this seam lowers single-row keyed "
             "writes only"
         )
+    if declaring.is_temporal:
+        if tx_instant is None:  # pragma: no cover - defends a caller that skips the Clock
+            raise WriteLoweringError(
+                f"temporal write on {entity.name!r}: no transaction instant supplied "
+                "(FlushPlan.tx_instant) — a temporal write cannot lower without one"
+            )
+        return _lower_temporal_write(
+            entity,
+            declaring,
+            instruction,
+            dialect,
+            meta,
+            concurrency,
+            planned.observation,
+            tx_instant,
+        )
+    if instruction.mutation not in _NON_TEMPORAL_VERBS:
+        raise WriteLoweringError(
+            f"{instruction.mutation!r} is a temporal milestone verb; its lowering lands with the "
+            f"write path (COR-3 Phase 8 increment 4) — {entity.name!r} is not a temporal entity"
+        )
     version_attr = _version_attribute(declaring)
     if instruction.mutation == "insert":
-        return [_lower_insert(entity, instruction, dialect, meta, declaring, version_attr)]
+        return [
+            LoweredStatement(
+                _lower_insert(entity, instruction, dialect, meta, declaring, version_attr)
+            )
+        ]
     if instruction.mutation == "update":
         return [
-            _lower_update(
-                entity,
-                instruction,
-                dialect,
-                meta,
-                declaring,
-                version_attr,
-                planned.observation,
-                concurrency,
+            LoweredStatement(
+                _lower_update(
+                    entity,
+                    instruction,
+                    dialect,
+                    meta,
+                    declaring,
+                    version_attr,
+                    planned.observation,
+                    concurrency,
+                ),
+                expected_affected=planned.expected_affected,
             )
         ]
     return [
-        _lower_delete(
-            entity, instruction, dialect, meta, declaring, version_attr, planned.observation
+        LoweredStatement(
+            _lower_delete(
+                entity, instruction, dialect, meta, declaring, version_attr, planned.observation
+            ),
+            expected_affected=planned.expected_affected,
         )
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Temporal (audit-only / bitemporal) keyed writes (COR-3 Phase 8 increment 4). #
+# The MILESTONE PLANNING (which rows close, which chain, split arithmetic) is  #
+# `parallax.core.audit_write` / `.bitemp_write`'s job — pure functions the     #
+# scopes themselves never render SQL with. This seam composes their neutral    #
+# `MilestonePlan` with the `m-opt-lock` gate policy and RENDERS the SQL,       #
+# reusing the non-temporal helpers below (`_key_predicate` for a close's       #
+# identity predicate, `_lower_insert` unchanged for every chained/opened row — #
+# value objects, inheritance tag derivation, and pk-gen markers all compose    #
+# exactly as they do for an ordinary insert, since a chained row IS one).      #
+# --------------------------------------------------------------------------- #
+def _lower_temporal_write(
+    entity: Entity,
+    declaring: Entity,
+    instruction: KeyedWrite,
+    dialect: Dialect,
+    meta: Metamodel,
+    concurrency: Concurrency,
+    observation: Observation | None,
+    tx_instant: str,
+) -> list[LoweredStatement]:
+    plan_fn = bitemp_write.plan if declaring.temporal == "bitemporal" else audit_write.plan
+    milestone_plan = plan_fn(instruction, declaring, tx_instant, observation)
+    if observation is not None:
+        # Mirrors the non-temporal versioned-update call site (`_lower_update`
+        # below): every engine-supplied temporal observation is latest-pinned by
+        # construction this increment (a no-op here), the real check arrives with
+        # a developer-driven historical/edge-pinned observation (increment 7).
+        opt_lock.check_locking_license(concurrency, latest_pinned=True)
+    gated = opt_lock.gates(concurrency)
+    version_attr = _version_attribute(declaring)  # always None for a temporal entity
+    statements: list[LoweredStatement] = []
+    for step in milestone_plan.steps:
+        if isinstance(step, audit_write.MilestoneClose):
+            statements.append(
+                _render_close(step, entity, declaring, dialect, meta, tx_instant, gated)
+            )
+        else:
+            synthetic = KeyedWrite(mutation="insert", entity=entity.name, rows=(step.row,))
+            statements.append(
+                LoweredStatement(
+                    _lower_insert(entity, synthetic, dialect, meta, declaring, version_attr)
+                )
+            )
+    return statements
+
+
+def _render_close(
+    step: audit_write.MilestoneClose,
+    entity: Entity,
+    declaring: Entity,
+    dialect: Dialect,
+    meta: Metamodel,
+    tx_instant: str,
+    gated: bool,
+) -> LoweredStatement:
+    """`update <table> set <out_col> = ? where <pk> [and <tag.column> = ?] and
+    <out_col> = infinity [and <business.from_col> = ? and <in_col> = ?]`.
+
+    The current-row predicate (``<out_col> = infinity``) and, when gated, the
+    business discriminator then the observed-``in_z`` gate — LAST, no exception,
+    the direct extension of `m-opt-lock`'s "the gate binds last" to a milestone
+    close (`m-audit-write` "Composed predicate order under optimistic mode"). The
+    identity predicate (pk, inheritance tag guard) reuses `_key_predicate`
+    unchanged. Ungated (locking mode) renders neither the business discriminator
+    nor the ``in_z`` gate, regardless of whether ``step`` carries candidates for
+    them — gating is concurrency-driven, never data-driven (`m-bitemp-write`
+    "Locking-mode closes are UNGATED").
+    """
+    proc = _processing_axis(declaring)
+    where_sql, key_binds = _key_predicate(meta, entity, step.identity, dialect, declaring)
+    where_sql = f"{where_sql} and {dialect.quote(proc.to_column)} = ?"
+    key_binds = (*key_binds, INFINITY_LITERAL)
+    if gated and step.gate_from_z is not None:
+        biz = _business_axis(declaring)
+        where_sql = f"{where_sql} and {dialect.quote(biz.from_column)} = ?"
+        key_binds = (*key_binds, step.gate_from_z)
+    if gated and step.gate_in_z is not None:
+        where_sql = f"{where_sql} and {dialect.quote(proc.from_column)} = ?"
+        key_binds = (*key_binds, step.gate_in_z)
+    statement = Statement(
+        f"update {entity.table} set {dialect.quote(proc.to_column)} = ? where {where_sql}",
+        (tx_instant, *key_binds),
+    )
+    return LoweredStatement(statement, expected_affected=1, stale_error=not gated)
+
+
+def _processing_axis(declaring: Entity) -> AsOfAttribute:
+    return next(aoa for aoa in declaring.as_of_attributes if aoa.axis == "processing")
+
+
+def _business_axis(declaring: Entity) -> AsOfAttribute:
+    return next(aoa for aoa in declaring.as_of_attributes if aoa.axis == "business")
+
+
+def lower_temporal_close(
+    identity: Mapping[str, object],
+    entity_name: str,
+    meta: Metamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    tx_instant: str,
+    observed_in_z: str | None,
+    observed_business_from: str | None = None,
+) -> LoweredStatement:
+    """Lower a STANDALONE temporal milestone close — the `m-opt-lock` CONFLICT
+    lane's own shape (`m-audit-write` / `m-bitemp-write`: "a conflict case runs
+    only that single gated close, not the replacement INSERT(s) a full write
+    would go on to emit"). Every REAL temporal mutation (`audit_write.plan` /
+    `bitemp_write.plan`) chains at least one row for a close-bearing verb — the
+    conflict lane's own probe is not one of those verbs, so this composes the
+    SAME close-rendering seam (:func:`_render_close`) directly from an
+    :class:`~parallax.core.audit_write.MilestoneClose`, never through the
+    plan dispatch.
+
+    ``identity`` is the (at minimum, primary-key) row the close's identity
+    predicate keys on; ``observed_in_z`` / ``observed_business_from`` are the
+    gate candidates a conflict case authors EXPLICITLY (``when.observedInZ`` /
+    the write row's own ``businessFrom``) — never a shadow-tracker lookup, a
+    conflict case tests a KNOWN stale-or-fresh value.
+    """
+    entity = meta.entity(entity_name)
+    declaring = inheritance.declaring_entity(meta, entity)
+    if observed_in_z is not None or observed_business_from is not None:
+        opt_lock.check_locking_license(concurrency, latest_pinned=True)
+    step = audit_write.MilestoneClose(
+        identity=identity, gate_in_z=observed_in_z, gate_from_z=observed_business_from
+    )
+    gated = opt_lock.gates(concurrency)
+    return _render_close(step, entity, declaring, dialect, meta, tx_instant, gated)
 
 
 def _version_attribute(declaring: Entity) -> Attribute | None:
@@ -326,34 +519,44 @@ def _lower_update(
     observation: Observation | None,
     concurrency: Concurrency,
 ) -> Statement:
-    """`update <table> set <non-pk columns in family columnOrder> = ? where <pk> =
-    ? [and <tag.column> = ?] [and <version> = ?]`.
+    """`update <table> set <non-pk columns in family columnOrder> = ?, <version> = ?
+    where <pk> = ? [and <tag.column> = ?] [and <version> = ?]`.
 
-    The `SET` columns follow the family columnOrder (not the row's data order); the
-    `WHERE` keys on the (family-effective) primary key, then an inheritance-family
-    tag guard (`m-inheritance` / `m-sql` "Opt-lock composition" — the tag guard
+    The domain `SET` columns follow the family columnOrder (not the row's data
+    order); the FRAMEWORK-DERIVED version advance is NEVER one of them — it is
+    appended LAST, after every domain column, unconditionally (`m-value-object-046`:
+    a value-object document column sorts AFTER every scalar in columnOrder
+    (`m-value-object` "One column"), including the version attribute, so
+    threading the derived advance through the SAME columnOrder sort would
+    wrongly render it BEFORE the document; the version SET position is a
+    framework-owned rendering decision, not a columnOrder fact, mirroring the
+    version GATE's own "binds last" rule one clause family over). The `WHERE`
+    keys on the (family-effective) primary key, then an inheritance-family tag
+    guard (`m-inheritance` / `m-sql` "Opt-lock composition" — the tag guard
     joins the identity predicates, immediately after the pk), then — LAST, no
     exception — the optimistic-lock version gate (`m-opt-lock` "the version gate
     binds last").
 
     A versioned row whose SET already carries an EXPLICIT value for the version
     attribute (the M4-era plain-column-data shape some existing corpus witnesses
-    carry, e.g. `m-unit-work-005`) passes it through unchanged: no observation is
-    required, no advance is computed, no gate is emitted — exactly the pre-COR-3-
-    Phase-8-increment-3 behavior. Every OTHER versioned row's SET derives the
-    advance from this unit of work's own recorded observation
-    (`m-opt-lock.require_observed` / `.advance`), raising before any DML if this
-    unit of work never observed the row's version, and gates on it in optimistic
-    mode only (`m-opt-lock.gates`).
+    carry, e.g. `m-unit-work-005`) passes it through unchanged, sorted by
+    columnOrder like any other authored field: no observation is required, no
+    advance is computed, no gate is emitted — exactly the pre-COR-3-Phase-8-
+    increment-3 behavior. Every OTHER versioned row's SET derives the advance
+    from this unit of work's own recorded observation (`m-opt-lock.
+    require_observed` / `.advance`), raising before any DML if this unit of work
+    never observed the row's version, and gates on it in optimistic mode only
+    (`m-opt-lock.gates`).
     """
     row = dict(instruction.rows[0])
     pk_columns = {attr.column for attr in inheritance.family_primary_key(meta, entity)}
     carries_version = version_attr is not None and version_attr.name in row
     observed_version: int | None = None
+    version_bind: int | None = None
     if version_attr is not None and not carries_version:
         observed_version = opt_lock.require_observed(entity.name, observation)
         opt_lock.check_locking_license(concurrency, latest_pinned=True)
-        row[version_attr.name] = opt_lock.advance(observed_version)
+        version_bind = opt_lock.advance(observed_version)
     set_cells = [cell for cell in _ordered_cells(meta, entity, row) if cell[0] not in pk_columns]
     assignment_parts: list[str] = []
     binds: list[object] = []
@@ -367,6 +570,10 @@ def _lower_update(
             _refuse_unrecognized_marker(entity, column, value, "update")
             assignment_parts.append(f"{quoted} = ?")
             binds.append(value)
+    if version_bind is not None:
+        assert version_attr is not None  # derived above whenever version_bind is set
+        assignment_parts.append(f"{dialect.quote(version_attr.column)} = ?")
+        binds.append(version_bind)
     where_sql, key_binds = _key_predicate(meta, entity, row, dialect, declaring)
     if version_attr is not None and not carries_version and opt_lock.gates(concurrency):
         assert observed_version is not None  # derived above whenever not carries_version
@@ -992,7 +1199,15 @@ class Transaction:
         _record_observations(self._uow, self._meta, find_result)
         return _snapshot_from_find_result(find_result, target, self._meta, pin)
 
-    def _buffer(self, mutation: str, entity: str, row: Mapping[str, object]) -> None:
+    def _buffer(
+        self,
+        mutation: str,
+        entity: str,
+        row: Mapping[str, object],
+        *,
+        business_from: str | None = None,
+        business_to: str | None = None,
+    ) -> None:
         # The document route buys the IR's structural validation (no `at` alias,
         # no observation keys) first (`deserialize`), then the model-aware
         # `validate_write` (the SAME validator the conformance engine's
@@ -1005,9 +1220,20 @@ class Transaction:
         # first — member-name honesty (`validate_instruction`) still catches
         # any OTHERWISE-unknown member a validate_write pass left unexamined
         # (it walks only DECLARED members, never flags a stray key itself).
-        instruction = instructions.deserialize(
-            {"mutation": mutation, "entity": entity, "rows": [dict(row)]}
-        )
+        #
+        # `business_from` / `business_to` extend this neutral seam for a TEMPORAL
+        # keyed write (COR-3 Phase 8 increment 4): the typed verbs above never
+        # pass them (temporal developer verbs are COR-3 Phase 8 increment 7), so
+        # every existing call site is unaffected; the conformance engine's own
+        # temporal write translation is the sole caller that does (`m-audit-write`
+        # / `m-bitemp-write` — the axis-explicit `businessFrom` / `businessTo`
+        # instruction fields, never smuggled onto `row`, ADR 0010/0013).
+        doc: dict[str, object] = {"mutation": mutation, "entity": entity, "rows": [dict(row)]}
+        if business_from is not None:
+            doc["businessFrom"] = business_from
+        if business_to is not None:
+            doc["businessTo"] = business_to
+        instruction = instructions.deserialize(doc)
         validate_write(self._meta.entity(entity), row, self._meta, mutation=mutation)
         instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(instruction)
@@ -1276,41 +1502,50 @@ def _flush_executor(
     conn: DbPort, meta: Metamodel, dialect: Dialect, concurrency: Concurrency
 ) -> FlushExecutor:
     """The unit of work's injected flush sink: lower each planned write, execute
-    it, and enforce its affected-rows expectation (`m-opt-lock`).
+    every lowered statement in order, and enforce each STATEMENT's own
+    affected-rows expectation (`m-opt-lock`; `m-audit-write`; `m-bitemp-write`).
 
     The single write-lowering seam (:func:`lower_write`) run on the transaction's
     own connection, inside the still-open ``port.transaction`` scope — so an
-    abort rolls back force-flushed writes with everything else. A planned write
-    carrying an ``expected_affected`` count (every versioned keyed update/delete
-    this unit of work observed) whose LAST lowered statement's own affected-row
-    count disagrees raises :class:`~parallax.core.opt_lock.OptimisticLockConflictError`
-    and aborts the whole unit of work — nothing after the failed write executes
-    (the non-temporal forms this seam lowers emit exactly one statement per
-    planned write, so "last" and "only" coincide; a future multi-statement
-    temporal form's own gated close is what its own expectation targets).
+    abort rolls back force-flushed writes with everything else. Checking is
+    PER-STATEMENT, not per-planned-write: a non-temporal keyed write lowers to
+    exactly one statement (its own expectation, unchanged from increment 3), while
+    a temporal write lowers to a close then zero-to-three chained opens — only the
+    close carries an expectation (always ``1``), so a mismatch there raises and
+    ABORTS BEFORE the chained rows ever execute (`m-audit-write` "MUST NOT silently
+    succeed and proceed to chain"). ``LoweredStatement.stale_error`` picks the raised
+    class: the retriable :class:`~parallax.core.opt_lock.OptimisticLockConflictError`
+    for a gated mismatch (every non-temporal expectation, and a gated temporal
+    close), the non-retriable :class:`~parallax.core.opt_lock.StaleWriteError` for an
+    ungated (locking-mode) temporal close's mismatch.
     """
 
     def execute(plan: FlushPlan) -> None:
         for planned in plan.writes:
-            affected: int | None = None
-            for statement in lower_write(planned, meta, dialect, concurrency):
+            for lowered in lower_write(planned, meta, dialect, concurrency, plan.tx_instant):
                 affected = conn.execute_write(
-                    dialect.to_driver_sql(statement.sql), list(statement.binds)
+                    dialect.to_driver_sql(lowered.statement.sql), list(lowered.statement.binds)
                 )
-            if planned.expected_affected is not None and affected != planned.expected_affected:
-                raise _conflict_error(planned, meta, affected)
+                if lowered.expected_affected is not None and affected != lowered.expected_affected:
+                    raise _conflict_error(planned, meta, affected, lowered)
 
     return execute
 
 
 def _conflict_error(
-    planned: PlannedWrite, meta: Metamodel, actual: int | None
-) -> opt_lock.OptimisticLockConflictError:
+    planned: PlannedWrite, meta: Metamodel, actual: int | None, lowered: LoweredStatement
+) -> opt_lock.OptimisticLockConflictError | opt_lock.StaleWriteError:
+    """The affected-row-mismatch error for one lowered statement — the retriable
+    gated conflict, or (``lowered.stale_error``) the non-retriable ungated
+    temporal-close outcome (`m-audit-write` / `m-bitemp-write`)."""
     instruction = planned.instruction
-    assert isinstance(instruction, KeyedWrite)  # only a keyed update/delete ever carries one
+    assert isinstance(instruction, KeyedWrite)  # only a keyed write ever carries an expectation
     key = object_key(instruction, meta)
     assert key is not None  # an expectation is attached only alongside a resolved object key
-    assert planned.expected_affected is not None  # the caller's own guard
-    return opt_lock.OptimisticLockConflictError(
-        instruction.entity, key[1], planned.expected_affected, actual if actual is not None else 0
+    assert lowered.expected_affected is not None  # the caller's own guard
+    error_cls = (
+        opt_lock.StaleWriteError if lowered.stale_error else opt_lock.OptimisticLockConflictError
+    )
+    return error_cls(
+        instruction.entity, key[1], lowered.expected_affected, actual if actual is not None else 0
     )

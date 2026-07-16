@@ -107,6 +107,29 @@ class WriteRejectedError(ValueError):
         self.rule = rule
 
 
+def _temporal_axis_columns(entity: Entity) -> frozenset[str]:
+    """The physical columns ``entity``'s OWN declared as-of axes govern (the
+    milestone interval bounds) — excluded from the required/type walk below,
+    since they are NEVER part of the neutral write input (`m-unit-work` "the
+    instant surface is axis-explicit"; ADR 0010: the processing instant is
+    Clock-supplied flush context, never an instruction field; the business
+    bounds are axis-explicit INSTRUCTION fields, ``businessFrom`` /
+    ``businessTo``, never row members, COR-3 Phase 8 increment 4).
+
+    Bare LOCAL axes, never family-resolved: an inheritance participant's own
+    declared attributes never include an INHERITED axis's governing columns
+    anyway (temporal axes are root-owned metadata a descendant MUST NOT
+    redeclare, `m-inheritance` "Inherited members"), so this reduces correctly
+    to a no-op for a concrete-subtype ``entity`` — its own bare
+    ``as_of_attributes`` is already empty in that case.
+    """
+    columns: set[str] = set()
+    for aoa in entity.as_of_attributes:
+        columns.add(aoa.from_column)
+        columns.add(aoa.to_column)
+    return frozenset(columns)
+
+
 def validate_write(
     entity: Entity,
     row: Mapping[str, object],
@@ -124,7 +147,10 @@ def validate_write(
     except inheritance.InheritanceError as exc:
         raise WriteRejectedError(exc.rule, str(exc)) from exc
     full_document = mutation in _FULL_DOCUMENT_MUTATIONS
+    axis_columns = _temporal_axis_columns(entity)
     for attribute in entity.attributes:
+        if attribute.column in axis_columns:
+            continue
         _check_entity_attribute(row, attribute, required=full_document, owner=entity.name)
     for vo in entity.value_objects:
         _check_value_object_member(row, vo, required=full_document, owner=entity.name)

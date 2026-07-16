@@ -10,10 +10,13 @@ M3 planner for the coalescing / mixed-flush / cancellation cases
 (observation-required, gate-optimistic-only, delete's opportunistic bind, the
 M4-era literal-version passthrough, the derived initial version), the inheritance
 tag derivation/guard/opt-lock composition, and the pk-gen ``max``/``increment``
-marker lowering — and assert every not-yet-lowered form (temporal, predicate-
-selected, multi-row batch, an unrecognized marker) is refused with a loud
-``WriteLoweringError`` — never a wrong emission — mirroring the read compiler's
-forward-error posture.
+marker lowering; the TEMPORAL keyed forms (COR-3 Phase 8 increment 4:
+close-and-chain, the rectangle split, the observed-``in_z``/business-discriminator
+gate, `StaleWriteError` vs `OptimisticLockConflictError`) are pinned in
+``test_temporal_write_lowering.py``. Every remaining not-yet-lowered form
+(predicate-selected, multi-row batch, an unrecognized marker) is refused with a
+loud ``WriteLoweringError`` — never a wrong emission — mirroring the read
+compiler's forward-error posture.
 """
 
 from __future__ import annotations
@@ -45,16 +48,12 @@ _MODELS = models.load_models()
 ACCOUNT = _MODELS["account"]
 ORDERS = _MODELS["orders"]
 CUSTOMER = _MODELS["customer"]
-BALANCE = _MODELS["balance"]
 PAYMENT = _MODELS["payment"]
-RATE = _MODELS["rate"]
 VEHICLE = _MODELS["vehicle"]
 APPLIANCE = _MODELS["appliance"]
 DOCUMENT = _MODELS["document"]
 PK_MAX = _MODELS["pk-max"]
 PK_SEQUENCE = _MODELS["pk-sequence"]
-
-_B1 = "2024-01-01T00:00:00+00:00"
 
 
 def _lower(
@@ -64,10 +63,18 @@ def _lower(
     observation: Observation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
+    tx_instant: str | None = None,
 ) -> list[Statement]:
-    return lower_write(
-        PlannedWrite(instruction=instruction, observation=observation), meta, dialect, concurrency
-    )
+    return [
+        lowered.statement
+        for lowered in lower_write(
+            PlannedWrite(instruction=instruction, observation=observation),
+            meta,
+            dialect,
+            concurrency,
+            tx_instant,
+        )
+    ]
 
 
 def _flush_and_lower(
@@ -75,9 +82,9 @@ def _flush_and_lower(
 ) -> list[Statement]:
     plan = plan_flush(buffer, {}, None, meta)
     return [
-        stmt
+        lowered.statement
         for planned in plan.writes
-        for stmt in lower_write(planned, meta, POSTGRES, concurrency)
+        for lowered in lower_write(planned, meta, POSTGRES, concurrency)
     ]
 
 
@@ -440,35 +447,13 @@ def test_predicate_selected_write_is_refused() -> None:
         _lower(predicate, ACCOUNT)
 
 
-def test_temporal_entity_write_is_refused() -> None:
-    insert = KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 100.00},))
-    with pytest.raises(WriteLoweringError, match="temporal write"):
-        _lower(insert, BALANCE)
-
-
-def test_temporal_inheritance_family_write_is_refused_with_the_temporal_message() -> None:
-    # ADR 0026 / review remediation (Spec 1, consequence (c)): `DepositRate`
-    # declares NO `as_of_attributes` of its own (only its family root `Rate`
-    # does), so classifying from `entity.is_temporal` alone would miss it —
-    # the write is still refused (temporal writes stay out of scope this
-    # increment; only NON-temporal inheritance writes landed), but MUST be
-    # refused with the byte-stable TEMPORAL message (`entity.temporal`
-    # resolved through the family), never a generic inheritance-family one a
-    # local-only check would emit instead.
-    insert = KeyedWrite("insert", "DepositRate", ({"id": 1, "amount": 1.00, "grade": "A"},))
-    with pytest.raises(WriteLoweringError, match=r"temporal write on 'DepositRate' \(bitemporal\)"):
-        _lower(insert, RATE)
-
-
 def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
+    # The temporal milestone verb set (terminate / *Until) stays refused on a
+    # NON-temporal entity (COR-3 Phase 8 increment 4 lifts the blanket temporal-
+    # entity refusal, but a milestone verb aimed at a non-temporal entity is
+    # still nonsensical — `Account` has no processing/business axis to close).
     with pytest.raises(WriteLoweringError, match="temporal milestone verb"):
         _lower(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
-
-
-def test_business_bound_on_a_non_temporal_entity_is_refused() -> None:
-    insert = KeyedWrite("insert", "Account", ({"id": 1, "balance": 1.00},), business_from=_B1)
-    with pytest.raises(WriteLoweringError, match="business bound"):
-        _lower(insert, ACCOUNT)
 
 
 def test_multi_row_keyed_write_is_refused() -> None:

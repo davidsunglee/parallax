@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from parallax.core.descriptor import (
+    AsOfAttribute,
     Attribute,
     Entity,
     Metamodel,
@@ -261,3 +262,45 @@ def test_type_matches_the_full_neutral_type_vocabulary(field: str, value: Any, v
 def test_type_matches_string_accepts_string_and_rejects_others() -> None:
     validate_write(_WIDGET, _row(label="x"), _META, mutation="insert")
     assert _rejects(_row(label=5)).rule == "write-value-type-mismatch"
+
+
+# --------------------------------------------------------------------------- #
+# Temporal axis columns (COR-3 Phase 8 increment 4): the milestone interval    #
+# bounds a temporal write never authors — excluded from the required/type     #
+# walk regardless of mutation kind, since they are Clock-supplied / axis-     #
+# explicit instruction-level context, never a neutral write-row member        #
+# (`m-unit-work` "the instant surface is axis-explicit"; ADR 0010).           #
+# --------------------------------------------------------------------------- #
+_GAUGE = Entity(
+    name="Gauge",
+    table="gauge",
+    mutability="transactional",
+    attributes=(
+        Attribute(name="id", type="int64", column="id", primary_key=True),
+        Attribute(name="reading", type="decimal(18,2)", column="reading"),
+        Attribute(name="processingFrom", type="timestamp", column="in_z"),
+        Attribute(name="processingTo", type="timestamp", column="out_z"),
+    ),
+    as_of_attributes=(
+        AsOfAttribute(
+            name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+        ),
+    ),
+)
+_TEMPORAL_META = Metamodel(entities=(_GAUGE,))
+
+
+def test_temporal_axis_columns_are_never_required_on_a_full_document_insert() -> None:
+    # A full-document (insert) row omitting `processingFrom` / `processingTo`
+    # entirely is still valid: the milestone bounds are Clock-supplied /
+    # instruction-level, never authored on the neutral write row.
+    row = {"id": 1, "reading": 20.00}
+    validate_write(_GAUGE, row, _TEMPORAL_META, mutation="insert")  # no raise
+
+
+def test_temporal_axis_columns_are_never_type_checked_even_when_present() -> None:
+    # A stray, wrongly-typed axis column value is silently ignored (excluded
+    # before the type walk ever sees it) — the lowering seam is what would
+    # reject an actually-authored one, not this pre-SQL structural validator.
+    row = {"id": 1, "reading": 20.00, "processingFrom": 12345}
+    validate_write(_GAUGE, row, _TEMPORAL_META, mutation="insert")  # no raise

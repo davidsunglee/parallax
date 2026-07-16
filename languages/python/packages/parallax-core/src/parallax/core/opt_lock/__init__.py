@@ -28,17 +28,29 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
 4. **Historical-observation licensing** (:func:`check_locking_license`,
    :class:`HistoricalObservationError`): a temporal observation licenses a
    locking-mode write only when its read was latest-pinned on the processing
-   axis; a versioned non-temporal row satisfies this trivially. Landed here
-   now, unit-test-pinned; its real (non-trivial) consumers arrive with the
-   temporal write path (COR-3 Phase 8 increment 4) — this increment's own
-   callers only ever pass the trivial ``latest_pinned=True``.
-5. **Conflict classification** (:class:`OptimisticLockConflictError`): the
-   retriable-when-opted-in conflict an ``updatedRows != 1`` gated write raises.
-   ``!= 1`` is the ONE conflict outcome (a PK-keyed statement structurally
-   cannot affect more than one row) — Reladomo's separate corruption class for
-   ``> 1`` is deliberately not mirrored. Not wired to ``m-auto-retry``'s
-   retriability predicate yet (the opt-in joins the retriable set once a later
-   increment's boundary runner exists, COR-3 Phase 8 increment 6).
+   axis; a versioned non-temporal row satisfies this trivially. Its real
+   (non-trivial) consumers are the temporal write path (COR-3 Phase 8
+   increment 4): every engine-supplied temporal observation is latest-pinned
+   by construction, so this stays a no-op for every reachable case this
+   increment, but the wiring is real — a developer-driven historical/edge-
+   pinned locking-mode write (COR-3 Phase 8 increment 7's typed temporal
+   verbs) will trip it.
+5. **Conflict classification** (:class:`OptimisticLockConflictError`,
+   :class:`StaleWriteError`): the two zero-row-close outcomes `m-opt-lock` /
+   `m-audit-write` / `m-bitemp-write` distinguish. ``OptimisticLockConflictError``
+   is the retriable-when-opted-in conflict an ``updatedRows != 1`` GATED write
+   raises (a versioned keyed write in either mode, or a temporal close under
+   optimistic concurrency). ``StaleWriteError`` is the distinct NON-retriable
+   sibling a zero-row UNGATED temporal close raises (locking mode, where the
+   shared read lock — not a gate — was supposed to make the write correct):
+   the current-row predicate alone is not a gate, so an ungated mismatch is a
+   consistency violation, not a detected-and-retriable conflict. Neither
+   ``!= 1`` shape ever exceeds 1 (a PK-keyed or milestone-current-row
+   statement structurally cannot affect more than one row) — Reladomo's
+   separate corruption class for ``> 1`` is deliberately not mirrored. Not
+   wired to ``m-auto-retry``'s retriability predicate yet (the opt-in joins
+   the retriable set once a later increment's boundary runner exists, COR-3
+   Phase 8 increment 6).
 
 Prior art (Reladomo; semantics, not idioms): the gate plus the
 ``updatedRows != 1`` conflict mirrors ``MithraAbstractDatabaseObject.
@@ -57,6 +69,7 @@ __all__ = [
     "INITIAL_VERSION",
     "HistoricalObservationError",
     "OptimisticLockConflictError",
+    "StaleWriteError",
     "UnobservedVersionError",
     "advance",
     "check_locking_license",
@@ -128,6 +141,42 @@ class OptimisticLockConflictError(RuntimeError):
         )
 
 
+class StaleWriteError(RuntimeError):
+    """The ``updatedRows != 1`` outcome on an UNGATED (locking-mode) temporal close
+    (`m-audit-write` "Affected-row conflict contract for closes"; `m-bitemp-write`).
+
+    A zero-row temporal close is an error in ANY mode, never silent. Under optimistic
+    concurrency the observed-``in_z`` gate (and, bitemporal, the business discriminator)
+    makes a stale close a detectable, retriable :class:`OptimisticLockConflictError` —
+    but under locking concurrency the close carries no gate at all (the shared read
+    lock is supposed to make it correct), so a zero-row locking-mode close is a
+    categorically DIFFERENT, NON-retriable outcome: a consistency violation the current-
+    row predicate alone (``pk and out_z = infinity``) could not have prevented, not a
+    lost-update conflict a retry could resolve by re-reading. Carries the SAME context
+    fields as :class:`OptimisticLockConflictError` (``entity`` / ``key`` / ``expected`` /
+    ``actual``) so a caller renders the SAME ``affectedRows`` observation either way;
+    the sibling class is what distinguishes the two outcomes.
+    """
+
+    def __init__(
+        self,
+        entity: str,
+        key: tuple[tuple[str, object], ...],
+        expected: int,
+        actual: int,
+    ) -> None:
+        self.entity = entity
+        self.key = key
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"{entity}: locking-mode (ungated) temporal close affected {actual} row(s), "
+            f"expected {expected} (key={dict(key)!r}) — a non-retriable stale/consistency "
+            "outcome, distinct from a gated optimistic-lock conflict (m-audit-write / "
+            "m-bitemp-write affected-row conflict contract)"
+        )
+
+
 def require_observed(entity: str, observation: Observation | None) -> int:
     """The version a keyed update/delete of a versioned row advances from.
 
@@ -175,11 +224,14 @@ def check_locking_license(concurrency: Concurrency, *, latest_pinned: bool) -> N
 
     A no-op in optimistic mode (the observed gate detects staleness instead)
     and for a trivially latest-pinned observation (``latest_pinned=True`` —
-    every versioned non-temporal row, this increment's only caller). The
-    temporal case that can genuinely fail this check — a locking-mode write
-    whose sole transaction-scoped observation is historical or edge-pinned —
-    arrives with the temporal write path (COR-3 Phase 8 increment 4), which
-    threads a real ``latest_pinned`` computed from the observed milestone.
+    every versioned non-temporal row, and every ENGINE-supplied temporal
+    observation this increment, which is latest-pinned by construction: the
+    conformance engine's case-local temporal tracker only ever tracks the
+    CURRENT milestone, never a historical or edge-pinned one). A genuinely
+    non-latest-pinned observation reaching a locking-mode write — a
+    developer-driven historical/edge-pinned read (COR-3 Phase 8 increment 7's
+    typed temporal verbs) — is the case this check exists to catch; this
+    increment's own callers never construct one.
     """
     if concurrency == "locking" and not latest_pinned:
         raise HistoricalObservationError(
