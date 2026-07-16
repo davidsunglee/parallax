@@ -24,6 +24,7 @@ import mirrored_models as mm
 from parallax.conformance import models
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
     EscapedTransactionError,
@@ -34,7 +35,9 @@ from parallax.core.unit_work import (
     UnitOfWork,
     UnitOfWorkError,
     WriteInstructionError,
+    WriteRejectedError,
     run_unit_of_work,
+    validate_write,
 )
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction, TransactionOptionConflictError
@@ -43,6 +46,9 @@ pytestmark = pytest.mark.unit
 
 _ACCOUNT = models.load_models()["account"]
 _BALANCE = models.load_models()["balance"]
+_CONTACT = models.load_models()["contact"]
+_SHIPMENT = models.load_models()["shipment"]
+_PAYMENT = models.load_models()["payment"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 _NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
@@ -125,6 +131,10 @@ def _db(port: _RecordingPort) -> Database:
     # The spec §8 module-level `connect` is the classmethod's alias, so this
     # covers both spellings.
     return connect(port, _ACCOUNT, clock=FixedClock(_FIXED))
+
+
+def _db_for(meta: Metamodel, port: _RecordingPort) -> Database:
+    return Database.connect(port, meta, clock=FixedClock(_FIXED))
 
 
 # --------------------------------------------------------------------------- #
@@ -331,15 +341,168 @@ def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
     # The instance-graduated verbs build their row from the compiled entity's
     # OWN declared members, so an undeclared member can no longer be smuggled
     # in through `tx.insert`; the member-name honesty gate still protects the
-    # lower-level neutral document route directly (`Transaction._buffer`).
+    # lower-level neutral document route directly (`Transaction._buffer`). An
+    # otherwise-COMPLETE row isolates this defect from `validate_write` (which
+    # runs first, COR-3 Phase 8 increment 2, and only ever walks Account's OWN
+    # declared members — it never itself notices a stray extra key).
     port = _RecordingPort()
     with pytest.raises(WriteInstructionError, match="shoe_size"):
         _db(port).transact(
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
-                "insert", "Account", {"id": 1, "shoe_size": 9}
+                "insert",
+                "Account",
+                {"id": 1, "owner": "Newton", "balance": 5.00, "version": 1, "shoe_size": 9},
             )
         )
     assert ("write", _INSERT_SQL, (1, 9)) not in port.ops
+
+
+# --------------------------------------------------------------------------- #
+# validate_write (COR-3 Phase 8 increment 2, m-value-object write validation  #
+# x m-inheritance concrete-subtype write protocol): the SAME model-aware      #
+# validator the conformance engine's rejected lane calls for the corpus's     #
+# `when.write` cases (m-value-object-039..044 / m-inheritance-086..089) — one #
+# validator, two callers (design 37 "Patterns to follow"), pinned per rule at #
+# this seam. It runs BEFORE `validate_instruction` (see `_buffer`'s own       #
+# comment): its inheritance payload-shape rules classify a framework-owned    #
+# metadata key or a cross-branch field more specifically than the generic     #
+# member-name-honesty gate ever could.                                       #
+# --------------------------------------------------------------------------- #
+def test_engine_and_transaction_buffer_share_the_identical_write_validator() -> None:
+    # Neither caller forks its own copy of the shared validator, so a rule
+    # dropped from the ONE implementation fails both lanes identically.
+    from parallax.conformance import engine as engine_module
+    from parallax.snapshot import handle as handle_module
+
+    assert engine_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage]
+    assert handle_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage]
+
+
+def test_buffer_rejects_a_required_attribute_missing_at_any_depth() -> None:
+    # m-value-object-039's own payload: `address.street` (depth 1) absent.
+    port = _RecordingPort()
+    with pytest.raises(WriteRejectedError) as exc_info:
+        _db_for(_CONTACT, port).transact(
+            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                "insert",
+                "Contact",
+                {
+                    "id": 1,
+                    "name": "Acme",
+                    "address": {
+                        "city": "Oslo",
+                        "geo": {"country": "NO", "point": {"lat": 59.9, "lon": 10.7}},
+                    },
+                },
+            )
+        )
+    assert exc_info.value.rule == "write-required-attribute-missing"
+
+
+def test_buffer_rejects_a_required_value_object_missing() -> None:
+    # m-value-object-044's own payload: the required top-level `destination`
+    # value object is entirely absent.
+    port = _RecordingPort()
+    with pytest.raises(WriteRejectedError) as exc_info:
+        _db_for(_SHIPMENT, port).transact(
+            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                "insert", "Shipment", {"id": 5, "name": "Express"}
+            )
+        )
+    assert exc_info.value.rule == "write-required-value-object-missing"
+
+
+def test_buffer_rejects_a_value_type_mismatch() -> None:
+    # m-value-object-043's own payload: `address.street` bound the number 42.
+    port = _RecordingPort()
+    with pytest.raises(WriteRejectedError) as exc_info:
+        _db_for(_CONTACT, port).transact(
+            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                "insert",
+                "Contact",
+                {
+                    "id": 5,
+                    "name": "Echo",
+                    "address": {
+                        "street": 42,
+                        "city": "Oslo",
+                        "geo": {"country": "NO", "point": {"lat": 59.9, "lon": 10.7}},
+                    },
+                },
+            )
+        )
+    assert exc_info.value.rule == "write-value-type-mismatch"
+
+
+def test_buffer_rejects_a_keyless_inheritance_write() -> None:
+    # m-inheritance-089's own payload: no primary-key attribute at all.
+    port = _RecordingPort()
+    with pytest.raises(WriteRejectedError) as exc_info:
+        _db_for(_PAYMENT, port).transact(
+            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                "insert", "CardPayment", {"amount": 200.00, "cardNetwork": "Visa"}
+            )
+        )
+    assert exc_info.value.rule == "subtype-write-set-based-unsupported"
+
+
+def test_buffer_rejects_framework_owned_metadata() -> None:
+    # m-inheritance-087's own payload: an authored `tagValue`.
+    port = _RecordingPort()
+    with pytest.raises(WriteRejectedError) as exc_info:
+        _db_for(_PAYMENT, port).transact(
+            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                "insert", "CardPayment", {"id": 10, "amount": 200.00, "tagValue": "card"}
+            )
+        )
+    assert exc_info.value.rule == "subtype-write-metadata-field"
+
+
+def test_buffer_rejects_a_sibling_branch_attribute() -> None:
+    # m-inheritance-086's own payload: both CardPayment's and CashPayment's
+    # own columns, so no single concrete subtype accepts every field.
+    port = _RecordingPort()
+    with pytest.raises(WriteRejectedError) as exc_info:
+        _db_for(_PAYMENT, port).transact(
+            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                "insert",
+                "Payment",
+                {"id": 10, "amount": 200.00, "cardNetwork": "Visa", "tendered": 25.00},
+            )
+        )
+    assert exc_info.value.rule == "subtype-write-sibling-attribute"
+
+
+def test_buffer_rejects_an_abstract_write_target() -> None:
+    # m-inheritance-088's own payload: a well-formed CardPayment-shaped write
+    # aimed at the abstract root `Payment`.
+    port = _RecordingPort()
+    with pytest.raises(WriteRejectedError) as exc_info:
+        _db_for(_PAYMENT, port).transact(
+            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                "insert", "Payment", {"id": 10, "amount": 200.00, "cardNetwork": "Visa"}
+            )
+        )
+    assert exc_info.value.rule == "abstract-write-target"
+
+
+def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched_field() -> None:
+    # The no-drift guard for CURRENTLY-LEGAL writes: a sparse keyed update (the
+    # corpus's own m-unit-work-005 shape, `{id, balance, version}` omitting the
+    # required `owner`) must NOT be rejected — an absent top-level member is
+    # untouched, never a violation, on any mutation but `insert`.
+    port = _RecordingPort()
+    _db(port).transact(
+        lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage]
+            "update", "Account", {"id": 1, "balance": 175.00, "version": 2}
+        )
+    )
+    expected = (
+        "write",
+        POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?"),
+        (175.00, 2, 1),
+    )
+    assert expected in port.ops
 
 
 def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:

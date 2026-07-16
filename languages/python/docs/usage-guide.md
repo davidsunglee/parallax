@@ -73,6 +73,15 @@ Corpus case: `m-inheritance-071`
 op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))
 ```
 
+## A keyed write aimed at an abstract inheritance position
+
+Corpus case: `m-inheritance-088`
+
+```python
+db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))
+# raises WriteRejectedError(rule="abstract-write-target")
+```
+
 ## Table-per-concrete-subtype concrete-target read pinning an inherited root-owned axis
 
 Corpus case: `m-inheritance-100`

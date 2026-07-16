@@ -39,7 +39,7 @@ from parallax.core.sql_gen import (
     family_variant_plan,
 )
 from parallax.core.temporal_read import TemporalReadError, inject_as_of, resolve_pinned_instants
-from parallax.core.unit_work import instructions, plan_flush
+from parallax.core.unit_work import WriteRejectedError, instructions, plan_flush, validate_write
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.snapshot import materialize
 from parallax.snapshot.handle import WriteLoweringError, find, find_history, lower_write
@@ -842,15 +842,20 @@ def run_error_case(
 # Phase 7 increment 1: resolved DQ3/DQ8).                                      #
 # --------------------------------------------------------------------------- #
 def _rejected_target(meta: Metamodel) -> str:
-    """The queried root a `rejected` operation case's `when` omits.
+    """The queried/written root a `rejected` case's `when` omits.
 
-    A `rejected` case never authors `targetEntity` (m-case-format schema): the
-    model-aware default `m-op-algebra` "the four-step validation rule" fixes is
-    the inheritance family root when the model declares one, else the model's
-    own first entity. This seeds `validate_operation`'s narrow / subtype-
-    attribute position tracking only; the value-object structural rules
-    resolve their own entity from each node's own `Class.member` reference and
-    do not otherwise depend on it.
+    A `rejected` case never authors `targetEntity` (m-case-format schema), and a
+    `when.write` input carries no explicit handle either: the model-aware
+    default `m-op-algebra` "the four-step validation rule" fixes is the
+    inheritance family root when the model declares one, else the model's own
+    first entity. For a `when.operation` case this seeds `validate_operation`'s
+    narrow / subtype-attribute position tracking only (the value-object
+    structural rules resolve their own entity from each node's own
+    `Class.member` reference and do not otherwise depend on it); for a
+    `when.write` case it is the entity `validate_write` checks the payload
+    against — the same "no explicit handle, so resolve the model's default
+    write/read root" convention, reused rather than restated (COR-3 Phase 8
+    increment 2).
     """
     root = inheritance.family_of(meta).root
     if root is not None:
@@ -893,10 +898,15 @@ def run_rejected_case(case: case_format.Case) -> str:
     (`m-op-algebra` / `m-navigate` / `m-value-object`) — the same validator an
     idiomatic statement frontend calls at build time, so the two paths cannot
     drift. A `model` input reuses the Phase-3 `m-inheritance` family-invariant
-    validator unchanged. A `write` input is Phase-8 territory (ledger D-12): it
-    raises a lane-honest :class:`EngineError` naming the deferral so the case
-    stays reasoned-skipped rather than silently graded wrong. Raises
-    :class:`EngineError` if the input is unexpectedly accepted (no rule
+    validator unchanged. A `write` input (COR-3 Phase 8 increment 2) is
+    resolved against the model's default entity (`_rejected_target`'s own
+    convention, reused here — the family root when the model declares one,
+    else the model's single entity, since a rejected `when.write` carries no
+    explicit handle) and checked by the shared `validate_write`
+    (`m-value-object` write validation x `m-inheritance` concrete-subtype
+    write protocol) — the SAME validator the developer transaction verbs call
+    at buffer time (`Transaction._buffer`), so the two paths cannot drift.
+    Raises :class:`EngineError` if the input is unexpectedly accepted (no rule
     violation detected) — the caller compares the returned rule against the
     case's `then.rejectedRule`.
     """
@@ -931,11 +941,15 @@ def run_rejected_case(case: case_format.Case) -> str:
             f"{case.path.name}: the model-aware validator accepted an inline inheritance "
             "family the case expects rejected pre-SQL"
         )
+    row = cast("Mapping[str, object]", when["write"])
+    target = meta.entity(_rejected_target(meta))
+    try:
+        validate_write(target, row, meta)
+    except WriteRejectedError as exc:
+        return exc.rule
     raise EngineError(
-        f"{case.path.name}: write-validation rejected cases (m-value-object "
-        "required-attribute / type-mismatch checks, m-inheritance subtype-write "
-        "protocol checks) are Phase 8 territory (COR-3 Phase 7; ledger D-12); the "
-        "read-side rejected lane does not grade `when.write` inputs yet"
+        f"{case.path.name}: the model-aware validator accepted a write the case expects "
+        "rejected pre-SQL"
     )
 
 

@@ -49,6 +49,7 @@ from parallax.core.unit_work.uow import (
     active_unit_of_work,
     run_unit_of_work,
 )
+from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
 
 __all__ = [
     "Clock",
@@ -72,6 +73,7 @@ __all__ = [
     "WriteAssignment",
     "WriteInstruction",
     "WriteInstructionError",
+    "WriteRejectedError",
     "WriteTarget",
     "active_unit_of_work",
     "deserialize",
@@ -81,4 +83,5 @@ __all__ = [
     "run_unit_of_work",
     "serialize",
     "validate_instruction",
+    "validate_write",
 ]

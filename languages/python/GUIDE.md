@@ -311,6 +311,38 @@ self-contained without a system `libpq`.
   (`just core-dep-graph` profile gate). No `validate_write`, version-gate
   lowering, instance-form Python lowering, or boundary runner in this
   increment (increments 2+).
+- **Phase 8 increment 2 COMPLETE — write validation + the rejected lane.**
+  The model-aware `validate_write` (`parallax.core.unit_work.write_validate`):
+  the declared-composite walk (required-attribute / required-value-object /
+  value-type-mismatch, any depth, mutation-aware sparse-update leniency, the
+  DB-computed-marker and declared-`default` exemptions) plus
+  `parallax.core.inheritance.validate_subtype_write` (the payload-shape
+  pipeline: keyless → metadata → sibling → abstract-target) — one validator,
+  two callers, shared verbatim by `engine.run_rejected_case`'s new `write`
+  branch and `Transaction._buffer` (which now runs it before
+  `validate_instruction`). All 10 `when.write` rejected cases flip; the
+  sweep's hard-skip is gone. `m-inheritance-088` (abstract-write-target) gets
+  an idiomatic buffer-time proof through `tx.insert` (`Payment`/`CardPayment`/
+  `CashPayment` already have a production-reachable mirror); the other nine
+  stay honest, case-scoped reasoned skips — three m-inheritance shapes
+  (sibling/metadata/keyless) have no idiomatic spelling through the typed
+  verb surface today (each empirically verified: Pydantic's `extra='ignore'`
+  silently drops a sibling field, `tagValue` is never a per-instance field,
+  and the keyless shape's honest developer trigger is the unbuilt `_where`
+  verb family, increment 5), and the six m-value-object shapes need a
+  `Contact`/`Shipment` mirror that does not exist yet (ledger D-21, increment
+  7). No core change. Measured post-round: unit lane (`pytest -m unit`) 1682
+  passed / 68 skipped; compile-sweep module (`pytest -m compile_sweep`) 171
+  passed / 68 skipped (byte-identical, unchanged); combined Docker lane
+  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 325
+  passed / 0 skipped; rejected sweep (`test_rejected_sweep.py`) 37 passed / 0
+  skipped; API-suite partition exact over 311 active cases (48 exercised /
+  263 reasoned-skip); `just python-static` exit 0 (diff-cover 100%,
+  Pyright/coverage clean); `gen-usage-guide --check` exit 0; `just lint` /
+  `just core-dep-graph` unchanged-green (slice tag counts
+  `slice-mvp-1`/`slice-snapshot-1`/`slice-managed-1` = 197 / 311 / 333). No
+  version-gate lowering, temporal writes, `_where` verbs, or `lower_write`
+  changes in this increment (increments 3+).
 
 ## Blockers
 

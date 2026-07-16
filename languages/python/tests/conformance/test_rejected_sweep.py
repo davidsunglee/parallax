@@ -5,14 +5,12 @@ A rejected case executes no SQL and touches no database (m-case-format "Rejected
 cases"): grading its `run` envelope needs no provisioner, so — unlike
 `test_run_sweep.py`, whose every test function threads the Testcontainers
 `provisioner` fixture — this sweep runs entirely in-process. `when.operation` /
-`when.model` inputs are exercised end-to-end: the classified `rejectedRule`
-observation is compared against the case's own `then.rejectedRule`, and a
-:class:`_RefusingPort` proves the "no database" contract structurally, the same
-way the compile lane's refusing port proves query-result-independence.
-`when.write` inputs are Phase-8 territory (ledger D-12, `m-value-object`
-required-field/type-mismatch checks and `m-inheritance` subtype-write protocol
-checks) and get a reasoned, forward-looking skip naming the deferral — never a
-silent gap.
+`when.model` / `when.write` inputs are all exercised end-to-end (COR-3 Phase 8
+increment 2 landed the `when.write` half, `validate_write`): the classified
+`rejectedRule` observation is compared against the case's own
+`then.rejectedRule`, and a :class:`_RefusingPort` proves the "no database"
+contract structurally, the same way the compile lane's refusing port proves
+query-result-independence.
 
 Marked `unit` as well as `conformance` (the `tests/api_conformance/
 test_write_no_drift.py` dual-marking precedent): it is pure, Docker-free,
@@ -66,14 +64,6 @@ def test_rejected_sweep(case: case_format.Case) -> None:
     envelope = adapter.run_case(case.path, "postgres", _RefusingPort())
     jsonschema.validate(envelope, _SCHEMA)
 
-    if _when_kind(case) == "write":
-        # Phase 8 territory (ledger D-12): the read-side rejected lane does not
-        # grade `when.write` inputs yet — a reasoned, forward-looking skip.
-        assert envelope["status"] == "error", envelope
-        message = envelope["diagnostics"][0]["message"]
-        assert "Phase 8" in message, message
-        pytest.skip(f"when.write rejected case deferred to Phase 8: {message}")
-
     assert envelope["status"] == "ok", envelope
     assert envelope["emissions"] == []
     observations = envelope["observations"]
@@ -86,8 +76,8 @@ def test_reachable_rejected_population_is_non_empty() -> None:
 
 
 def test_reachable_rejected_population_spans_every_when_kind() -> None:
-    # `operation` / `model` inputs are exercised above; `write` inputs are the
-    # reasoned Phase-8 skip. All three kinds should be present in the reachable
-    # set so neither dispatch arm silently goes untested.
+    # `operation` / `model` / `write` inputs are all exercised above. All three
+    # kinds should be present in the reachable set so no dispatch arm silently
+    # goes untested.
     kinds = {_when_kind(case) for case in _REACHABLE_REJECTED}
     assert kinds == {"operation", "model", "write"}, kinds

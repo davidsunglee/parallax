@@ -439,10 +439,14 @@ def test_run_rejected_case_model_dispatch_reuses_the_phase_3_validator() -> None
     assert engine.run_rejected_case(case) == "inheritance-unknown-parent"
 
 
-def test_run_rejected_case_write_dispatch_names_phase_8() -> None:
+def test_run_rejected_case_write_dispatch_classifies_the_rule() -> None:
     case = _rejected_case("m-value-object-039")
-    with pytest.raises(engine.EngineError, match="Phase 8"):
-        engine.run_rejected_case(case)
+    assert engine.run_rejected_case(case) == "write-required-attribute-missing"
+
+
+def test_run_rejected_case_write_dispatch_over_an_inheritance_model() -> None:
+    case = _rejected_case("m-inheritance-088")
+    assert engine.run_rejected_case(case) == "abstract-write-target"
 
 
 def test_run_rejected_case_raises_when_operation_unexpectedly_accepted() -> None:
@@ -467,6 +471,29 @@ def test_run_rejected_case_raises_when_model_unexpectedly_accepted() -> None:
     }
     with pytest.raises(engine.EngineError, match="accepted an inline inheritance family"):
         engine.run_rejected_case(_synthetic_rejected(valid_model))
+
+
+def test_run_rejected_case_raises_when_write_unexpectedly_accepted() -> None:
+    from pathlib import Path
+
+    valid_write: dict[str, object] = {
+        "write": {"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}
+    }
+    document: dict[str, object] = {
+        "model": "models/account.yaml",
+        "when": valid_write,
+        "then": {"rejectedRule": "x"},
+    }
+    case = case_format.Case(
+        path=Path("m-unit-work-998-synthetic-rejected.yaml"),
+        case_id="m-unit-work-998",
+        shape="rejected",
+        tags=("m-unit-work", "rejected", "slice-snapshot-1"),
+        model="models/account.yaml",
+        document=document,
+    )
+    with pytest.raises(engine.EngineError, match="accepted a write"):
+        engine.run_rejected_case(case)
 
 
 def test_run_rejected_case_raises_for_a_malformed_operation() -> None:

@@ -11,7 +11,7 @@ descriptor-rejection validator whose ordering pins each corpus ``rejectedRule``.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, ValueObject
@@ -28,6 +28,7 @@ __all__ = [
     "family_root",
     "superset_value_objects",
     "validate",
+    "validate_subtype_write",
 ]
 
 
@@ -460,3 +461,96 @@ def _reject_tph_tag_values(roots: list[Entity], participants: tuple[Entity, ...]
             "inheritance-inconsistent-hierarchy-table",
             f"table-per-hierarchy concrete subtypes map to different tables: {sorted(seen_tables)}",
         )
+
+
+# --------------------------------------------------------------------------- #
+# Concrete-subtype write protocol (m-inheritance "Concrete-subtype writes",   #
+# COR-3 Phase 8 increment 2): the payload-shape rules a model-aware write     #
+# validator MUST enforce before the target-validity rule, pre-SQL. `entity`   #
+# is the write's resolved target (a concrete subtype for an idiomatic keyed   #
+# verb; the family root by the rejected lane's own "no explicit handle"       #
+# default, `m-op-algebra`'s target-resolution convention reused for writes)   #
+# -- an abstract `entity` is itself the LAST-checked defect, never short-     #
+# circuited ahead of the more specific payload-shape rules.                   #
+# --------------------------------------------------------------------------- #
+_FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", "familyVariant"})
+
+
+def validate_subtype_write(meta: Metamodel, entity: Entity, row: Mapping[str, object]) -> None:
+    """Validate a concrete-subtype write payload's SHAPE, raising :class:`InheritanceError`.
+
+    A no-op for a non-participant ``entity`` (every entity outside an inheritance
+    family accepts any well-formed row shape here). For a participant, checks in
+    the normative order (m-inheritance "A validator checks these payload-shape
+    rules... before the target-validity rule"): **keyless**
+    (``subtype-write-set-based-unsupported`` -- ``row`` carries none of the
+    family's root-owned primary-key attributes, denoting an unsupported
+    set-based write), **metadata** (``subtype-write-metadata-field`` -- ``row``
+    carries the framework-owned tag column / ``tag`` / ``tagValue`` /
+    ``familyVariant``), **sibling** (``subtype-write-sibling-attribute`` -- no
+    single concrete subtype in ``entity``'s effective set accepts every field
+    ``row`` carries), then **target-validity**
+    (``abstract-write-target`` -- ``entity`` itself is not a concrete subtype).
+    A payload tripping more than one defect pins the earliest, most specific one.
+    """
+    if entity.inheritance is None:
+        return
+    root = family_root(meta, entity)
+    pk_names = frozenset(attribute.name for attribute in root.attributes if attribute.primary_key)
+    if not pk_names & row.keys():
+        raise InheritanceError(
+            "subtype-write-set-based-unsupported",
+            f"{entity.name}: write carries none of the family's primary-key attribute(s) "
+            f"{sorted(pk_names)} -- a keyless payload denotes an unsupported set-based "
+            "inheritance write",
+            entity=entity.name,
+        )
+    forbidden = _FORBIDDEN_METADATA_KEYS
+    if root.inheritance is not None and root.inheritance.tag_column is not None:
+        forbidden = forbidden | {root.inheritance.tag_column}
+    carried_metadata = sorted(forbidden & row.keys())
+    if carried_metadata:
+        raise InheritanceError(
+            "subtype-write-metadata-field",
+            f"{entity.name}: write carries framework-owned metadata field(s) "
+            f"{carried_metadata} -- the tag / tagValue / familyVariant are derived, never "
+            "authored",
+            entity=entity.name,
+        )
+    effective = effective_concrete_subtypes(meta, entity.name)
+    accepted = _concrete_accepted_field_names(meta, effective)
+    candidate_fields = frozenset(row)
+    if not any(candidate_fields <= names for names in accepted.values()):
+        raise InheritanceError(
+            "subtype-write-sibling-attribute",
+            f"{entity.name}: no single concrete subtype in the effective set {sorted(effective)} "
+            f"accepts every field {sorted(candidate_fields)} -- the accepted fields are exactly "
+            "the target's own ancestry chain",
+            entity=entity.name,
+        )
+    if entity.inheritance.role != "concrete-subtype":
+        raise InheritanceError(
+            "abstract-write-target",
+            f"{entity.name}: a create/update/delete/terminate handle MUST name a concrete "
+            f"subtype, not the abstract {entity.inheritance.role}",
+            entity=entity.name,
+        )
+
+
+def _concrete_accepted_field_names(
+    meta: Metamodel, effective: Sequence[str]
+) -> dict[str, frozenset[str]]:
+    """Each concrete subtype in ``effective`` mapped to its OWN accepted field set: the
+    union of every abstract ancestor's declared attributes/value-objects (ancestry
+    order irrelevant here -- only membership matters) plus the concrete's own."""
+    result: dict[str, frozenset[str]] = {}
+    for name in effective:
+        concrete = meta.entity(name)
+        names: set[str] = set()
+        for ancestor in ancestor_chain(meta, [name]):
+            names |= {attribute.name for attribute in ancestor.attributes}
+            names |= {vo.name for vo in ancestor.value_objects}
+        names |= {attribute.name for attribute in concrete.attributes}
+        names |= {vo.name for vo in concrete.value_objects}
+        result[name] = frozenset(names)
+    return result

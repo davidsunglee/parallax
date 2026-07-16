@@ -444,11 +444,15 @@ def test_run_case_rejected_model_reports_the_classified_rule() -> None:
     }
 
 
-def test_run_case_rejected_write_is_a_reasoned_error() -> None:
+def test_run_case_rejected_write_reports_the_classified_rule() -> None:
     envelope = adapter.run_case(_REJECTED_WRITE_CASE, "postgres", _NeverCalledPort())
     jsonschema.validate(envelope, _SCHEMA)
-    assert envelope["status"] == "error"
-    assert "Phase 8" in envelope["diagnostics"][0]["message"]
+    assert envelope["status"] == "ok"
+    assert envelope["emissions"] == []
+    assert envelope["observations"] == {
+        "rejectedRule": "write-required-attribute-missing",
+        "roundTrips": 0,
+    }
 
 
 # --------------------------------------------------------------------------- #

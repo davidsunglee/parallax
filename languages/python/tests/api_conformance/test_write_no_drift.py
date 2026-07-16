@@ -20,15 +20,18 @@ to the unit-lane branch-coverage gate — the story bodies' only DB-free driver.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from decimal import Decimal
 from typing import Any, cast
 
 import pytest
 
 from conftest import case_document, compare_binds
 from parallax.conformance import case_format, models
+from parallax.conformance.read_models import Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.unit_work import WriteRejectedError
 from parallax.snapshot.handle import Database
 
 pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
@@ -168,3 +171,24 @@ def test_every_write_story_mirrors_an_active_case_exactly_once() -> None:
         assert story.case_id in _CASES, story.case_id
         model_ref = str(case_document(_CASES[story.case_id])["model"])
         assert story.model == model_ref.removeprefix("models/").removesuffix(".yaml"), story.case_id
+
+
+# --------------------------------------------------------------------------- #
+# Rejected-case build/buffer-time proof (m-inheritance, COR-3 Phase 8         #
+# increment 2): the write-side counterpart of                                 #
+# `test_operation_no_drift.test_idiomatic_statement_build_rejects_the_corpus_rule` #
+# — `tx.insert` refuses the SAME invalid write the corpus's own rejected      #
+# lane grades (`engine.run_rejected_case`), through the SAME model-aware      #
+# `validate_write` (`Transaction._buffer`), naming the SAME classified rule.  #
+# No golden DML: a rejected write never reaches the port (`api_suite.EXAMPLES`'#
+# own `m-inheritance-088` entry is this exact snippet).                       #
+# --------------------------------------------------------------------------- #
+def test_idiomatic_write_build_rejects_the_corpus_rule() -> None:
+    case = _CASES["m-inheritance-088"]
+    expected_rule = case_document(case)["then"]["rejectedRule"]
+    port = _RecordingPort()
+    db = Database.connect(port, _MODELS["payment"])
+    with pytest.raises(WriteRejectedError) as exc_info:
+        db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))
+    assert exc_info.value.rule == expected_rule
+    assert not port.wrote

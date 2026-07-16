@@ -77,6 +77,7 @@ from parallax.core.unit_work import (
     active_unit_of_work,
     instructions,
     run_unit_of_work,
+    validate_write,
 )
 from parallax.snapshot import materialize, wrap
 
@@ -730,10 +731,21 @@ class Transaction:
 
     def _buffer(self, mutation: str, entity: str, row: Mapping[str, object]) -> None:
         # The document route buys the IR's structural validation (no `at` alias,
-        # no observation keys) before member-name honesty against the metamodel.
+        # no observation keys) first (`deserialize`), then the model-aware
+        # `validate_write` (the SAME validator the conformance engine's
+        # rejected lane calls, COR-3 Phase 8 increment 2 — one validator, two
+        # callers): its inheritance payload-shape checks
+        # (`subtype-write-metadata-field` / `-sibling-attribute` /
+        # `-set-based-unsupported`, m-inheritance) classify a framework-owned
+        # metadata key or a cross-branch field MORE SPECIFICALLY than the
+        # generic member-name-honesty gate below ever could, so it runs
+        # first — member-name honesty (`validate_instruction`) still catches
+        # any OTHERWISE-unknown member a validate_write pass left unexamined
+        # (it walks only DECLARED members, never flags a stray key itself).
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity, "rows": [dict(row)]}
         )
+        validate_write(self._meta.entity(entity), row, self._meta, mutation=mutation)
         instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(instruction)
 

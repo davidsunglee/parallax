@@ -127,6 +127,19 @@ EXAMPLES: Final[list[Example]] = [
         "Animal.where(Pet.narrow(Dog, where=Animal.narrow(Cat)))\n"
         '# raises OperationRejectedError(rule="narrow-outside-position")',
     ),
+    # Rejected-case build/buffer-time proof (m-inheritance, COR-3 Phase 8
+    # increment 2): the write-side counterpart of the read-side proofs above —
+    # `tx.insert` refuses the SAME invalid write the corpus's own rejected
+    # lane grades, through the SAME model-aware `validate_write`
+    # (`Transaction._buffer`), naming the SAME classified rule — proven by
+    # `test_idiomatic_write_build_rejects_the_corpus_rule`
+    # (`tests/api_conformance/test_write_no_drift.py`).
+    Example(
+        "m-inheritance-088",
+        "A keyed write aimed at an abstract inheritance position",
+        'db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))\n'
+        '# raises WriteRejectedError(rule="abstract-write-target")',
+    ),
     # Snapshot/graph semantics (m-snapshot-read, m-navigate x m-temporal-read):
     # each example IS an executable graph story
     # (`parallax.conformance.graph_stories`) — the snippet is the story's own
@@ -337,14 +350,42 @@ _INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
     "refusal D-16's full graduation (DQ1) left untouched (it changed the verbs' inputs, "
     "never the supported write classes)"
 )
-_INHERITANCE_WRITE_REJECT_PHASE8_REASON: Final[str] = (
-    "a write-PAYLOAD validation rule (subtype-write sibling/metadata/abstract-target/"
-    "set-based attribute checks) — the write-side portion of D-12's third bullet, "
-    "explicitly deferred to the write family (COR-3 Phase 8) alongside "
-    "`write-required-attribute-missing` and its siblings (test_rejected_sweep.py already "
-    "grades every `when.write` rejected case this way at the conformance-adapter layer); "
-    "the read-side rejected lane (COR-3 Phase 7 increment 1) grades only `when.operation` "
-    "inputs"
+####################################################################################
+# Subtype-write payload-shape rejects (COR-3 Phase 8 increment 2, `validate_write`  #
+# / `parallax.core.inheritance.validate_subtype_write`): the rejected sweep now     #
+# grades all four (m-inheritance-086..089) through the SAME shared validator        #
+# `Transaction._buffer` calls (`test_transact.py`'s own per-rule unit tests exercise#
+# it directly at the neutral seam) — `m-inheritance-088` (abstract-write-target)    #
+# gets an idiomatic build/buffer-time proof below (`Payment`/`CardPayment`/         #
+# `CashPayment` already have a production-reachable mirror, `read_models.py`); the  #
+# other three payload SHAPES have no idiomatic spelling through the TYPED verb      #
+# surface, each for a DIFFERENT, empirically-verified reason.                       #
+####################################################################################
+_INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
+    "a payload combining two SIBLING branches' own columns (CardPayment's `cardNetwork` AND "
+    "CashPayment's `tendered`) has no idiomatic spelling: each concrete mirror class declares "
+    "only its OWN branch's fields, and Pydantic's default `extra='ignore'` policy SILENTLY "
+    "DROPS a field the target class does not declare (empirically verified: "
+    "`CardPayment(..., tendered=...)` constructs successfully but never carries `tendered`), "
+    "so no single typed instance can reproduce this payload's cross-branch shape to drive "
+    "`tx.insert`/`tx.update` through it — `test_transact.py`'s own unit test exercises the "
+    "classified rule directly at the neutral seam (`Transaction._buffer`) instead"
+)
+_INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
+    "an authored `tagValue` has no idiomatic spelling: it is framework-owned metadata "
+    '(m-inheritance "Metadata is framework-owned, never authored"), derived from '
+    "`EntityConfig(inheritance=Concrete(tag_value=...))` at CLASS-DEFINITION time, never a "
+    "per-instance Pydantic field a caller can pass to `tx.insert`/`tx.update` — "
+    "`test_transact.py`'s own unit test exercises the classified rule directly at the neutral "
+    "seam (`Transaction._buffer`) instead"
+)
+_INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
+    "a keyless (no primary-key attribute) payload has no idiomatic spelling YET: "
+    "`subtype-write-set-based-unsupported`'s natural developer-facing trigger is a set-based "
+    "`_where` verb (`tx.update_where` / `tx.delete_where`) targeting an inheritance family "
+    "(python.md §5), which lands with the `_where` verb family (COR-3 Phase 8 increment 5) — "
+    "`test_transact.py`'s own unit test exercises the classified rule directly at the neutral "
+    "seam (`Transaction._buffer`) today"
 )
 
 # `when.model` descriptor-shape rejects (m-inheritance-020..032, plus the
@@ -560,16 +601,24 @@ _VO_FIND_ROOT_REASON: Final[str] = (
     "itself prevents rooting a find at a value object"
 )
 
-# Value-object write-input validation rejects (m-value-object-039..044): the
-# write-side portion of D-12's third bullet, explicitly Phase 8 — the SAME
-# reasoning `test_rejected_sweep.py` already applies to every `when.write`
-# rejected case at the conformance-adapter layer.
-_VO_WRITE_VALIDATION_PHASE8_REASON: Final[str] = (
-    "a write-INPUT validation rule (required-attribute-missing at depth 1/2/3, a "
-    "missing required value object, a value-type mismatch, a non-nullable top-level "
-    "null) — the write-side portion of D-12's third bullet, explicitly deferred to the "
-    "write family (COR-3 Phase 8); `test_rejected_sweep.py` already grades every "
-    "`when.write` rejected case this way at the conformance-adapter layer"
+# Value-object write-input validation rejects (m-value-object-039..044,
+# COR-3 Phase 8 increment 2): `validate_write` now grades every one of these
+# through the rejected sweep AND through `Transaction._buffer`'s own unit
+# tests (`test_transact.py`, driven over `Contact`/`Shipment` loaded directly
+# from `core/compatibility/models/` — no Python mirror needed for a plain
+# `_buffer` call) — but no `Contact` / `Shipment` mirror CLASS exists yet in
+# the production-reachable `parallax.conformance` surface (`read_models.py`)
+# to drive an idiomatic `tx.insert` proof through, the SAME missing-mirror
+# deferral this registry's own Supplier/Branch entries already carry.
+_VO_WRITE_VALIDATION_MIRROR_MISSING_REASON: Final[str] = (
+    "a write-INPUT validation rule (required-attribute-missing at depth 1/2/3, a missing "
+    "required value object, a value-type mismatch, a non-nullable top-level null) is now "
+    "graded end-to-end by the rejected sweep (`validate_write`, COR-3 Phase 8 increment 2) "
+    "and by `Transaction._buffer`'s own unit tests at the neutral seam — but no `Contact` / "
+    "`Shipment` mirror class exists yet in the production-reachable `parallax.conformance` "
+    "surface (`read_models.py`) to drive an idiomatic `tx.insert` proof through: ledger D-21 "
+    "(the SAME missing-mirror deferral this registry's Supplier/Branch entries already carry), "
+    "landing with increment 7's mirror build-out"
 )
 
 # The three remaining m-value-object write-family siblings, each a DIFFERENT
@@ -643,10 +692,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-097": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-104": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-105": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-086": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
-    "m-inheritance-087": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
-    "m-inheritance-088": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
-    "m-inheritance-089": _INHERITANCE_WRITE_REJECT_PHASE8_REASON,
+    "m-inheritance-086": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
+    "m-inheritance-087": _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON,
+    "m-inheritance-089": _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON,
     # -- m-inheritance: `when.model` descriptor rejects (unreachable) -------- #
     "m-inheritance-020": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-021": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
@@ -740,12 +788,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-036": _VO_NAVIGATE_TARGET_REASON,
     "m-value-object-037": _VO_FIND_ROOT_REASON,
     # -- m-value-object: write-input validation rejects (COR-3 Phase 8) ------ #
-    "m-value-object-039": _VO_WRITE_VALIDATION_PHASE8_REASON,
-    "m-value-object-040": _VO_WRITE_VALIDATION_PHASE8_REASON,
-    "m-value-object-041": _VO_WRITE_VALIDATION_PHASE8_REASON,
-    "m-value-object-042": _VO_WRITE_VALIDATION_PHASE8_REASON,
-    "m-value-object-043": _VO_WRITE_VALIDATION_PHASE8_REASON,
-    "m-value-object-044": _VO_WRITE_VALIDATION_PHASE8_REASON,
+    "m-value-object-039": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
+    "m-value-object-040": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
+    "m-value-object-041": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
+    "m-value-object-042": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
+    "m-value-object-043": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
+    "m-value-object-044": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
     # -- m-value-object: the remaining write-family siblings (COR-3 Phase 8) - #
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,
