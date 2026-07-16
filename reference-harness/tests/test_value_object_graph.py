@@ -26,7 +26,7 @@ import pytest
 from reference_harness.case import load_case, load_model
 from reference_harness.case_runner import (
     CaseFailure,
-    _assert_value_object_graph,
+    _assert_single_statement_graph,
     _decode_document,
     _project_value_object,
 )
@@ -84,14 +84,14 @@ def test_full_composite_materializes_the_authored_graph(dialect: str) -> None:
     # The whole nested composite (to-one geo -> point, to-many phones) plus every
     # absence-collapse state must materialize from the ONE document column and equal
     # case 023's authored then.graph — on both dialects, from a single statement.
-    _assert_value_object_graph(_load(_CASE_023), _CustomerDocDb(dialect, list(range(1, 11))))
+    _assert_single_statement_graph(_load(_CASE_023), _CustomerDocDb(dialect, list(range(1, 11))))
 
 
 @pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
 def test_filtered_materialization_matches_the_authored_graph(dialect: str) -> None:
     # A filtered read still materializes the matched owners' full composite in one
     # round trip (case 024: Oslo -> ids 1, 2).
-    _assert_value_object_graph(_load(_CASE_024), _CustomerDocDb(dialect, [1, 2]))
+    _assert_single_statement_graph(_load(_CASE_024), _CustomerDocDb(dialect, [1, 2]))
 
 
 def test_a_mismatched_document_fails_the_graph() -> None:
@@ -113,7 +113,7 @@ def test_a_mismatched_document_fails_the_graph() -> None:
             return rows
 
     with pytest.raises(CaseFailure):
-        _assert_value_object_graph(case, _Corrupt("postgres", list(range(1, 11))))
+        _assert_single_statement_graph(case, _Corrupt("postgres", list(range(1, 11))))
 
 
 def test_reference_oracle_identity_mismatch_fails() -> None:
@@ -129,7 +129,7 @@ def test_reference_oracle_identity_mismatch_fails() -> None:
             return rows
 
     with pytest.raises(CaseFailure):
-        _assert_value_object_graph(case, _DropOracleRow("postgres", [1, 2]))
+        _assert_single_statement_graph(case, _DropOracleRow("postgres", [1, 2]))
 
 
 def test_projection_drops_undeclared_keys_and_collapses_absence() -> None:

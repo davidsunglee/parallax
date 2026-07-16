@@ -283,8 +283,8 @@ split that section otherwise fixes:
   order), with non-applicable subtype columns `null` — the values lane reports
   the query's own fixed-superset `select` list exactly as it comes back
   (`m-sql` *Read projection*, slots 1-3, unconditional on result form).
-- **Instance-form**, at a **top-level read case's own `then.graph` /
-  `then.graphs` leaves** (a `shape: read` case with no `deepFetch`), is the
+- **Instance-form**, at a **top-level read case's own `then.graph` leaves**
+  (a `shape: read` case with no `deepFetch`), is the
   **per-variant node shape**: each node carries **only its own branch's
   members** — its inherited chain plus its own declared attributes — and
   **omits every sibling branch's column entirely**, with **no null sibling
@@ -374,9 +374,14 @@ Row-form is **not a developer surface** — the idiomatic find API is instance-f
 results — `m-agg`; a `distinct` / grouped concurrency-witness read is likewise a
 projection over the values lane, `m-sql`). The form is **structural intent** an adapter's
 `compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
-no case edit. The supplier result-form witness is the **sole** place the two result
-FORMS **diverge** — a scenario whose managed find projects the `address` document
-(instance-form) while its predicate-write resolving read omits it (row-form). It is **no
+no case edit. The supplier result-form witness is the **sole slot-4 / value-object
+projection** place the two result FORMS **diverge** — a scenario whose managed find
+projects the `address` document (instance-form) while its predicate-write resolving
+read omits it (row-form). It is not the forms' only divergence overall: the
+abstract-target per-variant materialization narrowing established above (*Read
+targeting*, `then.graph`'s per-variant node shape vs `then.rows`'s concrete-superset
+row) is the other — a slots-1-3 graph-assembly-time shape difference, not a slot-4
+projection one. It is **no
 longer the sole value-object-bearing step read**, now that the lifecycle-action
 `load` / first-`access` witnesses carry value-object-bearing instance-form step reads
 (each projecting its read entity's own `address` document at slot 4). Every other entity

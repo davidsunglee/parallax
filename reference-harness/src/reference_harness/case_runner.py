@@ -2035,31 +2035,36 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
     return node
 
 
-def _assert_value_object_graph(case: Case, db: DatabaseProvider) -> None:
-    """Assert a value object materializes WITH its owner in one round trip.
+def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
+    """Assert a top-level ``then.graph`` read (no ``deepFetch``, no milestone set)
+    materializes from its ONE golden statement, with no child statement.
 
-    A value-object graph read carries a single golden statement (``roundTrips: 1``
-    — enforced by :func:`_assert_round_trip_count`) that projects the owning
-    entity including its structured-document column(s); there is **no** child
-    statement. The harness executes that one statement, decodes each row's
-    value-object column into its declared nested to-one / to-many projection, and
-    asserts the assembled ``{Class: [node, …]}`` graph equals ``then.graph`` — the
-    proof that nested values arrive with the owner, never via a deep fetch
-    (m-value-object, "Materialization and navigation contract").
+    This is the non-deep-fetch, single-instant ``then.graph`` grader — the dispatch
+    counterpart of :func:`_assert_deep_fetch` and :func:`_assert_graphs`
+    (`m-case-format` *Read result form*). Two, independently-conditional kinds of
+    case route here, and either, both, or neither may apply to a given case:
 
-    The comparison reuses :func:`_graphs_equal`, whose list comparison is
+    * **A value-object graph read** (m-value-object): the single golden statement
+      (``roundTrips: 1`` — enforced by :func:`_assert_round_trip_count`) projects
+      the owning entity including its structured-document column(s); the harness
+      decodes each row's value-object column into its declared nested to-one /
+      to-many projection (:func:`_materialize_owner_node`) — the proof that nested
+      values arrive with the owner, never via a deep fetch ("Materialization and
+      navigation contract"). A no-op for an entity that declares no value objects.
+    * **An abstract-target inheritance read** (m-inheritance / m-case-format "Read
+      targeting", COR-3 Phase 8 part C): additionally materializes ``familyVariant``
+      (:func:`_materialize_family_variant`, the SAME oracle the row-form path uses)
+      and then narrows each node to its own concrete variant's declared columns
+      (:func:`_narrow_to_variant_columns`) — the instance-form per-variant node
+      shape, distinct from row-form's unnarrowed superset. A no-op for a
+      non-inheritance / concrete-target read.
+
+    Either way the assembled ``{Class: [node, …]}`` graph is compared against
+    ``then.graph`` via :func:`_graphs_equal`, whose list comparison is
     order-insensitive (a multiset compare). For value-object ``many`` members that
     reuse is INTENTIONAL, not an oversight: element order within a ``many`` member
     is unspecified (m-value-object), so a reordered ``phones`` array still matches
     while element multiplicity is still enforced.
-
-    An abstract-target inheritance read (m-inheritance / m-case-format "Read
-    targeting", COR-3 Phase 8 part C) additionally materializes ``familyVariant``
-    (:func:`_materialize_family_variant`, the SAME oracle the row-form path uses)
-    and then narrows each node to its own concrete variant's declared columns
-    (:func:`_narrow_to_variant_columns`) — the instance-form per-variant node
-    shape, distinct from row-form's unnarrowed superset. A no-op for a
-    non-inheritance / concrete-target read.
 
     When a ``referenceSql`` oracle is present it independently pins the matched
     row SET (identity columns only, the value-object columns stripped), so the
@@ -2086,7 +2091,7 @@ def _assert_value_object_graph(case: Case, db: DatabaseProvider) -> None:
     expected = case.expected_graph or {}
     if not _graphs_equal(assembled, expected):
         raise CaseFailure(
-            f"{case.path.name}: materialized value-object graph != then.graph.\n"
+            f"{case.path.name}: materialized graph != then.graph.\n"
             f"  assembled: {assembled!r}\n"
             f"  expected:  {expected!r}"
         )
@@ -4737,9 +4742,11 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         # milestone, asserted from `then.graphs`.
         _assert_graphs(case, db)  # layer 2 + 5 (per-milestone graphs)
     elif case.expected_graph is not None:
-        # A value-object materialization read (m-value-object): the single owner
-        # statement carries the document column; nested values are decoded from it
-        # (no deep-fetch child statement).
-        _assert_value_object_graph(case, db)  # layer 2 + 5 (graph)
+        # A top-level, single-instant `then.graph` read (no deepFetch): the single
+        # golden statement materializes into the graph with no child statement.
+        # Value-object decoding (m-value-object) and inheritance per-variant
+        # narrowing (COR-3 Phase 8 part C) are each a conditional step inside —
+        # a no-op for a case that carries neither.
+        _assert_single_statement_graph(case, db)  # layer 2 + 5 (graph)
     else:
         _assert_flat_equivalence(case, db)  # layer 2

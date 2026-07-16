@@ -374,6 +374,38 @@ def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
     )
 
 
+# --- negative: at-most-one optimisticLocking attribute per entity (schema level) ---
+
+
+def test_schema_rejects_two_optimistic_locking_attributes_on_one_entity() -> None:
+    """An entity's OWN `attributes` array may CONTAIN at most one item with
+    `optimisticLocking: true` (m-descriptor `attribute` / m-opt-lock "The version
+    column"; `metamodel.schema.json`'s 2020-12 `contains`/`minContains: 0`/
+    `maxContains: 1`). A SCHEMA-level regression pin for that constraint itself:
+    without `maxContains: 1`, this two-flag shape passes `just core-schemas` and
+    only the language-level descriptor validator (`validate_entity`) would catch
+    it — reproduced red (the block temporarily removed) before this test was
+    authored.
+    """
+    model = load_model(COMPATIBILITY_ROOT, "models/wallet.yaml")
+    descriptor = copy.deepcopy(model.descriptor)
+    # Wallet is plain (non-inheritance, non-temporal): inject TWO int64 attributes
+    # each declaring `optimisticLocking: true`, so the ONLY violated rule is
+    # "at most one" — not the int32/int64 type restriction (m-opt-lock/DQ8b,
+    # already satisfied) or the temporal-composition rule (Wallet declares no
+    # `asOfAttributes`, covered separately above).
+    descriptor["entity"]["attributes"].append(
+        {"name": "version", "type": "int64", "column": "version", "optimisticLocking": True}
+    )
+    descriptor["entity"]["attributes"].append(
+        {"name": "revision", "type": "int64", "column": "revision", "optimisticLocking": True}
+    )
+    assert not _is_valid(descriptor), (
+        "an entity declaring two optimisticLocking attributes must be rejected "
+        "at the schema level (maxContains: 1)"
+    )
+
+
 # --- the authored 09xx cases self-describe -----------------------------------
 
 
