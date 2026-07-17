@@ -12,9 +12,10 @@ from __future__ import annotations
 import pytest
 
 from parallax.conformance import models
-from parallax.core import op_algebra
+from parallax.core import batch_write, op_algebra
 from parallax.core.descriptor import Attribute, Entity, Metamodel, Relationship
 from parallax.core.unit_work import (
+    AtomicUnit,
     FlushPlan,
     KeyedWrite,
     Observation,
@@ -34,6 +35,7 @@ _ORDERS = _MODELS["orders"]
 _PERSON = _MODELS["person"]
 _PAYMENT = _MODELS["payment"]
 _PK_MAX = _MODELS["pk-max"]
+_WALLET = _MODELS["wallet"]
 
 _B1 = "2024-01-01T00:00:00+00:00"
 
@@ -316,3 +318,195 @@ def test_expected_affected_is_none_for_an_insert_even_with_a_recorded_observatio
     assert key is not None
     plan = plan_flush([insert], {key: Observation(version=3)}, None, _ACCOUNT)
     assert plan.writes[0].expected_affected is None
+
+
+# --------------------------------------------------------------------------- #
+# Collapse (m-batch-write's injected vocabulary, COR-3 Phase 8 increment 5).   #
+# --------------------------------------------------------------------------- #
+def test_collapse_is_a_noop_when_no_policy_is_injected() -> None:
+    buffer = [
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": 1.00},)),
+        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": 2.00},)),
+    ]
+    plan = plan_flush(buffer, {}, None, _WALLET)  # no `collapse=` kwarg at all
+    assert len(plan.writes) == 2
+
+
+def test_collapse_merges_adjacent_same_entity_same_mutation_inserts() -> None:
+    buffer = [
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": 1.00},)),
+        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": 2.00},)),
+        KeyedWrite("insert", "Wallet", ({"id": 3, "owner": "Cy", "balance": 3.00},)),
+    ]
+    plan = plan_flush(buffer, {}, None, _WALLET, collapse=batch_write.collapses)
+    assert len(plan.writes) == 1
+    only = plan.writes[0].instruction
+    assert isinstance(only, KeyedWrite)
+    assert [dict(row) for row in only.rows] == [
+        {"id": 1, "owner": "Ada", "balance": 1.00},
+        {"id": 2, "owner": "Bo", "balance": 2.00},
+        {"id": 3, "owner": "Cy", "balance": 3.00},
+    ]
+
+
+def test_collapse_merges_uniform_updates_but_not_a_lone_row() -> None:
+    buffer = [KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},))]
+    plan = plan_flush(buffer, {}, None, _WALLET, collapse=batch_write.collapses)
+    assert len(plan.writes) == 1
+    assert isinstance(plan.writes[0].instruction, KeyedWrite)
+    assert len(plan.writes[0].instruction.rows) == 1  # a single row is never a "run"
+
+
+def test_collapse_declines_a_non_uniform_update_run_leaving_rows_separate() -> None:
+    buffer = [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": 111.00},)),
+        KeyedWrite("update", "Wallet", ({"id": 2, "balance": 222.00},)),
+    ]
+    plan = plan_flush(buffer, {}, None, _WALLET, collapse=batch_write.collapses)
+    assert len(plan.writes) == 2  # `batch_write.update_collapses` declines: not uniform
+
+
+def test_collapse_never_regroups_across_an_intervening_different_entity() -> None:
+    buffer = [
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": 1.00},)),
+        KeyedWrite("insert", "Person", ({"id": 99},)),
+        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": 2.00},)),
+    ]
+    meta = Metamodel(entities=(*_WALLET.entities, *_PERSON.entities))
+    plan = plan_flush(buffer, {}, None, meta, collapse=batch_write.collapses)
+    # FK-order groups all inserts together, but the two Wallet rows were NEVER
+    # adjacent in BUFFER order (Person interrupted the run), so they stay two
+    # separate single-row instructions rather than merging into one.
+    wallet_writes = [
+        p
+        for p in plan.writes
+        if isinstance(p.instruction, KeyedWrite) and p.instruction.entity == "Wallet"
+    ]
+    assert len(wallet_writes) == 2
+
+
+def test_collapse_never_merges_a_row_carrying_a_recorded_observation() -> None:
+    # A row explicitly signalled as separately-observed (e.g. an engine
+    # `observedVersion` control key, or a real transaction-scoped
+    # `uow.observe`) is never a merge candidate: a multi-row instruction has
+    # no way to carry a per-row observation forward.
+    row1 = KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},))
+    row2 = KeyedWrite("update", "Wallet", ({"id": 2, "balance": 5.00},))
+    key1 = object_key(row1, _WALLET)
+    assert key1 is not None
+    plan = plan_flush(
+        [row1, row2], {key1: Observation(version=1)}, None, _WALLET, collapse=batch_write.collapses
+    )
+    # Even though the values are uniform (otherwise collapse-eligible), row1's
+    # recorded observation forces both rows to stay separate.
+    assert len(plan.writes) == 2
+
+
+def test_collapse_never_touches_a_predicate_write() -> None:
+    predicate = PredicateWrite(
+        "delete", WriteTarget("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 1.0))
+    )
+    plan = plan_flush([predicate], {}, None, _WALLET, collapse=batch_write.collapses)
+    assert plan.writes[0].instruction is predicate
+
+
+# --------------------------------------------------------------------------- #
+# AtomicUnit (a materialized predicate write's planned unit, COR-3 Phase 8    #
+# increment 5, `m-unit-work` "Materialized predicate writes are an atomic     #
+# planned unit"): exempt from coalescing and from collapse; FK-order moves it #
+# as ONE block, its internal row order untouched; flattened to a plain,       #
+# per-row `PlannedWrite` sequence by the time `plan_flush` returns.            #
+# --------------------------------------------------------------------------- #
+def test_atomic_unit_flattens_to_its_member_writes_in_order() -> None:
+    unit = AtomicUnit(
+        writes=(
+            KeyedWrite("update", "Account", ({"id": 1, "balance": 10.00},)),
+            KeyedWrite("update", "Account", ({"id": 2, "balance": 20.00},)),
+        )
+    )
+    plan = plan_flush([unit], {}, None, _ACCOUNT)
+    assert len(plan.writes) == 2
+    assert _rows(plan) == [{"id": 1, "balance": 10.00}, {"id": 2, "balance": 20.00}]
+
+
+def test_atomic_unit_is_exempt_from_same_object_coalescing() -> None:
+    # An AtomicUnit's own row is never folded with an unrelated buffered
+    # insert of the SAME object identity — it passes through coalesce opaque.
+    insert = KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": 1.00},))
+    unit = AtomicUnit(writes=(KeyedWrite("update", "Account", ({"id": 1, "balance": 2.00},)),))
+    plan = plan_flush([insert, unit], {}, None, _ACCOUNT)
+    assert len(plan.writes) == 2
+    mutations = [
+        planned.instruction.mutation
+        for planned in plan.writes
+        if isinstance(planned.instruction, KeyedWrite)
+    ]
+    assert mutations == ["insert", "update"]  # NOT coalesced into one insert
+
+
+def test_atomic_unit_is_exempt_from_collapse() -> None:
+    # An AtomicUnit's OWN member writes never re-collapse into a multi-row
+    # instruction, even when they would otherwise be eligible (adjacent,
+    # same entity/mutation, uniform values).
+    unit = AtomicUnit(
+        writes=(
+            KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)),
+            KeyedWrite("update", "Wallet", ({"id": 2, "balance": 5.00},)),
+        )
+    )
+    plan = plan_flush([unit], {}, None, _WALLET, collapse=batch_write.collapses)
+    assert len(plan.writes) == 2
+
+
+def test_atomic_unit_moves_as_one_block_under_fk_ordering() -> None:
+    # The unit's own rows (Order, an FK-referenced parent's later rank) stay
+    # ADJACENT and in their OWN resolved-row order, moved as a whole relative
+    # to the OTHER buffered instruction (an OrderItem insert, a child) — FK
+    # order alone would otherwise put child-then-parent updates in a
+    # DIFFERENT relative position than the unit's own internal order.
+    unit = AtomicUnit(
+        writes=(
+            KeyedWrite("update", "Order", ({"id": 2, "name": "Y"},)),
+            KeyedWrite("update", "Order", ({"id": 1, "name": "X"},)),
+        )
+    )
+    other = KeyedWrite("insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "qty": 1},))
+    plan = plan_flush([unit, other], {}, None, _ORDERS)
+    kinds = [
+        (
+            planned.instruction.mutation,
+            planned.instruction.entity if isinstance(planned.instruction, KeyedWrite) else None,
+            dict(planned.instruction.rows[0]).get("id")
+            if isinstance(planned.instruction, KeyedWrite)
+            else None,
+        )
+        for planned in plan.writes
+    ]
+    # inserts (OrderItem) before updates (Order, x2) — the canonical
+    # INSERT -> UPDATE -> DELETE order; the unit's OWN two rows stay adjacent
+    # and in their OWN authored order (2 then 1), never re-sorted by id.
+    assert kinds == [
+        ("insert", "OrderItem", 10),
+        ("update", "Order", 2),
+        ("update", "Order", 1),
+    ]
+
+
+def test_atomic_unit_member_observations_attach_individually() -> None:
+    row1 = KeyedWrite("update", "Account", ({"id": 1, "balance": 1.00},))
+    row2 = KeyedWrite("update", "Account", ({"id": 2, "balance": 2.00},))
+    key1 = object_key(row1, _ACCOUNT)
+    key2 = object_key(row2, _ACCOUNT)
+    assert key1 is not None and key2 is not None
+    unit = AtomicUnit(writes=(row1, row2))
+    observations = {key1: Observation(version=1), key2: Observation(version=5)}
+    plan = plan_flush([unit], observations, None, _ACCOUNT)
+    versions = {
+        dict(planned.instruction.rows[0])["id"]: (
+            planned.observation.version if planned.observation is not None else None
+        )
+        for planned in plan.writes
+        if isinstance(planned.instruction, KeyedWrite)
+    }
+    assert versions == {1: 1, 2: 5}
+    assert all(planned.expected_affected == 1 for planned in plan.writes)

@@ -3,8 +3,9 @@
 Given a unit of work's buffered write instructions, the observations it recorded,
 the Clock-supplied processing instant, and the metamodel, :func:`plan_flush`
 produces a **neutral, execution-ordered intermediate plan** — the coalesced,
-FK-ordered, elision-applied sequence of write instructions with each keyed
-instruction's bound observation attached. It is a **pure** function of its inputs.
+collapsed, FK-ordered, elision-applied sequence of write instructions with each
+keyed instruction's bound observation attached. It is a **pure** function of its
+inputs (an injected ``collapse`` policy included — see below).
 
 **It emits no SQL.** The module DAG pins ``m-unit-work -> m-op-algebra`` and
 ``m-unit-work -> m-db-port`` only — there is deliberately **no** edge to ``m-sql``
@@ -15,16 +16,26 @@ lowers each :class:`PlannedWrite` against :class:`FlushPlan.tx_instant`. This is
 the same seam ``m-temporal-read`` resolved: rewrite into neutral terms here,
 compose SQL above.
 
-The stages, in order (``m-unit-work`` "Same-transaction write coalescing"):
+The stages, in order (``m-unit-work`` "Same-transaction write coalescing" /
+"Buffered, batched, ordered writes"):
 
 - **coalesce** — a same-transaction keyed insert-then-update of one object folds
   the update into the pending insert (a single final-value write, per temporal
   flavor at lowering); a keyed insert-then-delete of one object **cancels** (both
-  annihilate, no DML). The batch **collapse** stage and call-time materialization
-  of versioned/temporal predicate writes are Phase 8, not built here.
+  annihilate, no DML). An :class:`AtomicUnit` (a materialized predicate write's
+  planned unit, COR-3 Phase 8 increment 5) is opaque here — never a coalescing
+  candidate, never folded with an unrelated instruction.
+- **collapse** — same-entity, same-mutation, ADJACENT single-row keyed writes
+  merge into one multi-row instruction when the injected ``collapse`` policy
+  (``m-batch-write``'s vocabulary, supplied by the composition layer — this
+  scope takes no edge to it) says the run collapses; declining or omitted
+  (``collapse=None``) leaves every instruction exactly as coalesce produced it.
+  Deterministic in buffer order: a run never regroups across an intervening,
+  differently-keyed instruction or an :class:`AtomicUnit` boundary.
 - **FK-order** — a topological order over the descriptor foreign-key graph:
   inserts parent-first, deletes child-first, updates between (the canonical
-  INSERT -> UPDATE -> DELETE flush order).
+  INSERT -> UPDATE -> DELETE flush order). An :class:`AtomicUnit` moves as ONE
+  block (ranked by its own target entity), its internal row order untouched.
 - **elide** — a keyed update whose effective change set is empty (a row carrying
   only its primary key) emits no instruction; a net-zero coalescing chain
   (insert-then-delete) already emitted nothing in coalesce.
@@ -32,7 +43,7 @@ The stages, in order (``m-unit-work`` "Same-transaction write coalescing"):
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -41,6 +52,9 @@ from parallax.core.descriptor import Metamodel
 from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
 
 __all__ = [
+    "AtomicUnit",
+    "BufferItem",
+    "CollapsePolicy",
     "FlushPlan",
     "ObjectKey",
     "Observation",
@@ -129,14 +143,57 @@ class PlannedWrite:
 
 
 @dataclass(frozen=True, slots=True)
+class AtomicUnit:
+    """A materialized predicate write's ORDERED, INDIVISIBLE planned unit
+    (`m-unit-work` "Materialized predicate writes are an atomic planned unit",
+    ADR 0014; COR-3 Phase 8 increment 5): the per-row keyed writes a versioned or
+    temporal predicate-selected write materializes to, in the resolving read's
+    OWN resolved-row order.
+
+    Buffered as ONE opaque item at the call position (never split, never
+    reordered internally) — EXEMPT from same-object coalescing (its rows are
+    never folded with an unrelated buffered instruction: a materializing
+    resolve only ever matches EXISTING rows, which read-your-own-writes has
+    already flushed past any pending same-key insert, so no coalescing
+    candidate can structurally arise) and from cross-unit reordering (FK-order
+    moves it as ONE block, ranked by its own target entity, never reordering
+    its internal rows — `_fk_order`, below). Each member write's own observation
+    still flows through the SAME ``uow.observe`` seam as any other keyed write
+    (never carried on this wrapper), so :func:`_attach_observation` binds it
+    exactly as it would a lone keyed write — the "atomic" property is CONFINED
+    to coalesce/collapse/FK-order; a flattened :class:`FlushPlan.writes` never
+    carries this type at all.
+    """
+
+    writes: tuple[KeyedWrite, ...]
+
+
+# One buffer item: an ordinary write instruction, or a materialized predicate
+# write's atomic planned unit.
+BufferItem = WriteInstruction | AtomicUnit
+
+# The injected `m-batch-write` collapse-eligibility policy (`meta, entity_name,
+# mutation, rows) -> collapses`): this scope takes no edge to `m-batch-write`
+# (the `m-unit-work ↮ m-batch-write` contract), so `plan_flush` accepts it as
+# an OPTIONAL parameter the composition layer supplies (`parallax.snapshot.handle`
+# for production, the conformance compile lane identically) — omitted (`None`)
+# is a pure no-op collapse stage, never a behavior a caller must opt into just to
+# keep today's per-instruction lowering.
+CollapsePolicy = Callable[[Metamodel, str, str, Sequence[Mapping[str, object]]], bool]
+
+
+@dataclass(frozen=True, slots=True)
 class FlushPlan:
     """The neutral, execution-ordered intermediate flush plan (m-unit-work).
 
-    ``writes`` is the coalesced, FK-ordered, elision-applied sequence. ``tx_instant``
-    is the Clock-supplied processing instant carried as flush **context** — never an
-    instruction field — that the composition layer binds as ``in_z`` when it lowers
-    a temporal write. The composition layer (M4) lowers this plan to DML SQL through
-    ``m-sql`` / ``m-dialect``; this scope neither takes a dialect nor emits SQL.
+    ``writes`` is the coalesced, collapsed, FK-ordered, elision-applied
+    sequence — always FLAT (an :class:`AtomicUnit` never survives past
+    FK-ordering; its member writes are inlined, adjacent, in their own
+    resolved-row order). ``tx_instant`` is the Clock-supplied processing
+    instant carried as flush **context** — never an instruction field — that
+    the composition layer binds as ``in_z`` when it lowers a temporal write.
+    The composition layer (M4) lowers this plan to DML SQL through ``m-sql`` /
+    ``m-dialect``; this scope neither takes a dialect nor emits SQL.
     """
 
     writes: tuple[PlannedWrite, ...] = ()
@@ -144,19 +201,24 @@ class FlushPlan:
 
 
 def plan_flush(
-    buffer: Sequence[WriteInstruction],
+    buffer: Sequence[BufferItem],
     observations: Mapping[ObjectKey, Observation],
     tx_instant: str | None,
     meta: Metamodel,
+    *,
+    collapse: CollapsePolicy | None = None,
 ) -> FlushPlan:
-    """Plan a flush: coalesce -> FK-order -> elide, then attach observations.
+    """Plan a flush: coalesce -> collapse -> FK-order -> elide, then attach
+    observations.
 
     Pure. Returns the neutral :class:`FlushPlan` the composition layer lowers to
     DML; this function renders no SQL and takes no dialect (the ``m-unit-work``
-    seam is DML-neutral by DAG design).
+    seam is DML-neutral by DAG design). ``collapse`` is the injected
+    ``m-batch-write`` vocabulary (omitted: the collapse stage is a no-op).
     """
     coalesced = _coalesce(buffer, meta)
-    ordered = _fk_order(coalesced, meta)
+    collapsed = _collapse(coalesced, meta, collapse, observations)
+    ordered = _fk_order(collapsed, meta)
     elided = _elide(ordered, meta)
     writes = tuple(_attach_observation(instr, observations, meta) for instr in elided)
     return FlushPlan(writes=writes, tx_instant=tx_instant)
@@ -202,20 +264,26 @@ def object_key(instruction: WriteInstruction, meta: Metamodel) -> ObjectKey | No
 # --------------------------------------------------------------------------- #
 # Coalesce (same-transaction insert-then-update / insert-then-delete).         #
 # --------------------------------------------------------------------------- #
-def _coalesce(buffer: Sequence[WriteInstruction], meta: Metamodel) -> list[WriteInstruction]:
+def _coalesce(buffer: Sequence[BufferItem], meta: Metamodel) -> list[BufferItem]:
     """Fold each same-transaction insert-then-X of one object (m-unit-work).
 
     A keyed single-row insert opens a pending insert for its object; a subsequent
     keyed update of that same object folds its non-key fields into the pending
     insert's row (one final-value write, no intermediate milestone); a subsequent
     keyed delete of that same object cancels the pending insert (both annihilate).
-    Every other instruction passes through in order. The pair scope is exactly the
-    coalescing witnesses'; a general ordered buffer and predicate-selected buffered
-    writes are deferred (D-3).
+    Every other instruction — a predicate write, a multi-row instruction, or an
+    :class:`AtomicUnit` (a materialized predicate write's planned unit, EXEMPT
+    from coalescing by construction) — passes through in order. The pair scope
+    is exactly the coalescing witnesses'; a general ordered buffer and
+    predicate-selected buffered writes are deferred (D-3).
     """
-    result: list[WriteInstruction | None] = []
+    result: list[BufferItem | None] = []
     pending_insert: dict[ObjectKey, int] = {}
-    for instruction in buffer:
+    for item in buffer:
+        if isinstance(item, AtomicUnit):
+            result.append(item)
+            continue
+        instruction = item
         key = object_key(instruction, meta)
         if not isinstance(instruction, KeyedWrite) or key is None:
             # A predicate write or an unidentifiable keyed write never coalesces.
@@ -235,7 +303,7 @@ def _coalesce(buffer: Sequence[WriteInstruction], meta: Metamodel) -> list[Write
             result[pending_insert.pop(key)] = None
         else:
             result.append(instruction)
-    return [instruction for instruction in result if instruction is not None]
+    return [item for item in result if item is not None]
 
 
 def _merge_update_into_insert(
@@ -262,22 +330,128 @@ def _merge_update_into_insert(
 
 
 # --------------------------------------------------------------------------- #
+# Collapse (m-batch-write's injected vocabulary: same-entity, same-mutation,   #
+# ADJACENT single-row keyed writes merge into one multi-row instruction).      #
+# --------------------------------------------------------------------------- #
+def _collapse(
+    buffer: Sequence[BufferItem],
+    meta: Metamodel,
+    collapse: CollapsePolicy | None,
+    observations: Mapping[ObjectKey, Observation],
+) -> list[BufferItem]:
+    """Merge each ADJACENT run of same-entity, same-mutation, single-row keyed
+    writes into one multi-row instruction, per the injected ``collapse`` policy.
+
+    Deterministic in BUFFER order: a run starts the moment a single-row keyed
+    write's entity+mutation first appears (or changes from the prior run) and
+    ends the moment a non-matching item interrupts it — a differently-keyed
+    instruction, a :class:`PredicateWrite`, an already-multi-row instruction, or
+    an :class:`AtomicUnit` — so a run NEVER regroups across one of these
+    boundaries, and an :class:`AtomicUnit` is never a merge candidate itself
+    (opaque, exactly as coalesce treats it). A row whose
+    :func:`object_key` is already present in ``observations`` is likewise
+    NEVER a merge candidate: a recorded per-row observation (an engine
+    `observedVersion`/`observedInZ` signal, or a real transaction-scoped
+    ``uow.observe``) is an explicit "keep this row separately identifiable"
+    signal a merged multi-row instruction has no way to carry forward — a
+    multi-row `KeyedWrite` never attaches a per-row observation at all
+    (`object_key` returns ``None`` for one, so :func:`_attach_observation`
+    could never re-discover it after merging). ``collapse is None`` (no
+    ``m-batch-write`` vocabulary injected) is a pure no-op: every instruction
+    survives exactly as coalesce produced it.
+    """
+    if collapse is None:
+        return list(buffer)
+    result: list[BufferItem] = []
+    run: list[KeyedWrite] = []
+
+    def flush_run() -> None:
+        if not run:
+            return
+        if len(run) == 1:
+            result.append(run[0])
+        elif collapse(meta, run[0].entity, run[0].mutation, [row for w in run for row in w.rows]):
+            result.append(_merge_rows(run))
+        else:
+            result.extend(run)
+        run.clear()
+
+    def observed(item: KeyedWrite) -> bool:
+        key = object_key(item, meta)
+        return key is not None and key in observations
+
+    for item in buffer:
+        if (
+            isinstance(item, KeyedWrite)
+            and len(item.rows) == 1
+            and not observed(item)
+            and run
+            and run[-1].entity == item.entity
+            and run[-1].mutation == item.mutation
+            and run[-1].business_from == item.business_from
+            and run[-1].business_to == item.business_to
+        ):
+            run.append(item)
+            continue
+        flush_run()
+        if isinstance(item, KeyedWrite) and len(item.rows) == 1 and not observed(item):
+            run.append(item)
+        else:
+            result.append(item)
+    flush_run()
+    return result
+
+
+def _merge_rows(run: Sequence[KeyedWrite]) -> KeyedWrite:
+    """One multi-row :class:`KeyedWrite` carrying every row of ``run``'s single-row
+    instructions, in run (buffer) order — the same entity/mutation/business bounds
+    every member of the run already shares (`_collapse`'s own adjacency test)."""
+    first = run[0]
+    return KeyedWrite(
+        mutation=first.mutation,
+        entity=first.entity,
+        rows=tuple(row for w in run for row in w.rows),
+        business_from=first.business_from,
+        business_to=first.business_to,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # FK-order (topological over the descriptor foreign-key graph).                #
 # --------------------------------------------------------------------------- #
-def _fk_order(instructions: Sequence[WriteInstruction], meta: Metamodel) -> list[WriteInstruction]:
+def _fk_order(items: Sequence[BufferItem], meta: Metamodel) -> list[WriteInstruction]:
     """Order writes so a parent row inserts before a child that references it and
-    deletes after: inserts parent-first, deletes child-first, updates between."""
+    deletes after: inserts parent-first, deletes child-first, updates between.
+
+    An :class:`AtomicUnit` participates as ONE pseudo-instruction — ranked and
+    bucketed by its own first member write (every member shares the SAME
+    mutation and target entity, since a predicate write's materialization is
+    single-verb/single-entity by construction) — then FLATTENED back into its
+    member writes, in their own resolved-row order, once the bucket sort has
+    fixed its position: this is how it "moves as one block."
+    """
     ranks = _fk_ranks(meta)
 
-    def rank(instruction: WriteInstruction) -> int:
-        return ranks.get(_instruction_entity(instruction), 0)
+    def representative(item: BufferItem) -> WriteInstruction:
+        return item.writes[0] if isinstance(item, AtomicUnit) else item
 
-    inserts = [i for i in instructions if i.mutation in _INSERT_VERBS]
-    updates = [i for i in instructions if i.mutation in _UPDATE_VERBS]
-    deletes = [i for i in instructions if i.mutation in _DELETE_VERBS]
+    def rank(item: BufferItem) -> int:
+        return ranks.get(_instruction_entity(representative(item)), 0)
+
+    def mutation(item: BufferItem) -> str:
+        return representative(item).mutation
+
+    inserts = [i for i in items if mutation(i) in _INSERT_VERBS]
+    updates = [i for i in items if mutation(i) in _UPDATE_VERBS]
+    deletes = [i for i in items if mutation(i) in _DELETE_VERBS]
     inserts.sort(key=rank)  # ascending rank: referenced entities (parents) first
     deletes.sort(key=lambda i: -rank(i))  # descending rank: referencing entities (children) first
-    return [*inserts, *updates, *deletes]
+    ordered: list[BufferItem] = [*inserts, *updates, *deletes]
+    return [
+        write
+        for item in ordered
+        for write in (item.writes if isinstance(item, AtomicUnit) else (item,))
+    ]
 
 
 def _fk_ranks(meta: Metamodel) -> dict[str, int]:

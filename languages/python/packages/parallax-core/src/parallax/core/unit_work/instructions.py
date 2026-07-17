@@ -429,12 +429,19 @@ def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None
     else:
         entity = _entity(meta, instruction.target.entity)
         members = _declared_members(entity, meta)
+        seen: set[str] = set()
         for assignment in instruction.assignments:
             owner, _, member = assignment.attr.partition(".")
             if owner != entity.name or member not in members:
                 raise WriteInstructionError(
                     f"{entity.name}: assignment {assignment.attr!r} does not name a declared member"
                 )
+            if member in seen:
+                raise WriteInstructionError(
+                    f"{entity.name}: assignment {assignment.attr!r} is duplicated — each field "
+                    "may be assigned at most once (python.md §5)"
+                )
+            seen.add(member)
 
 
 def _entity(meta: Metamodel, name: str) -> Entity:

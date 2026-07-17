@@ -30,7 +30,15 @@ from typing import Literal
 from parallax.core.descriptor import Metamodel
 from parallax.core.unit_work.clock import Clock, instant_literal
 from parallax.core.unit_work.instructions import WriteInstruction
-from parallax.core.unit_work.planner import FlushPlan, ObjectKey, Observation, plan_flush
+from parallax.core.unit_work.planner import (
+    AtomicUnit,
+    BufferItem,
+    CollapsePolicy,
+    FlushPlan,
+    ObjectKey,
+    Observation,
+    plan_flush,
+)
 
 __all__ = [
     "Concurrency",
@@ -88,6 +96,7 @@ class UnitOfWork:
     __slots__ = (
         "_buffer",
         "_closed",
+        "_collapse_policy",
         "_frame_depth",
         "_observations",
         "_processing_instant",
@@ -107,18 +116,25 @@ class UnitOfWork:
         clock: Clock,
         meta: Metamodel,
         flush_executor: FlushExecutor,
+        collapse_policy: CollapsePolicy | None = None,
     ) -> None:
         self.settings = settings
         self.clock = clock
         self.meta = meta
         self.flush_executor = flush_executor
+        # The injected `m-batch-write` collapse vocabulary (`plan_flush`'s own
+        # optional parameter) — this scope takes no edge to `m-batch-write`
+        # itself, so the composition layer (`parallax.snapshot.handle.Database.
+        # transact`) supplies it here, identically for production and the
+        # conformance engine (both drive writes through this SAME shell).
+        self._collapse_policy = collapse_policy
         # An opaque demarcation-layer companion (the `db.transact` transaction
         # facade), published for the scope's duration so a joining call recovers
         # it via `active_unit_of_work()`. The shell never reads it, and it needs
         # no cleanup of its own: it is reachable only through the per-thread
         # active binding, which `run_outermost` already clears on every exit.
         self.companion: object | None = None
-        self._buffer: list[WriteInstruction] = []
+        self._buffer: list[BufferItem] = []
         self._observations: dict[ObjectKey, Observation] = {}
         self._frame_depth = 0
         self._rollback_only = False
@@ -127,8 +143,10 @@ class UnitOfWork:
         self._closed = False
 
     # --- caller surface --------------------------------------------------- #
-    def buffer(self, instruction: WriteInstruction) -> None:
-        """Buffer a write instruction for flush at the unit-of-work boundary."""
+    def buffer(self, instruction: WriteInstruction | AtomicUnit) -> None:
+        """Buffer a write instruction (or a materialized predicate write's
+        :class:`~parallax.core.unit_work.planner.AtomicUnit`) for flush at the
+        unit-of-work boundary."""
         self._ensure_open()
         self._buffer.append(instruction)
 
@@ -156,7 +174,11 @@ class UnitOfWork:
         if not self._buffer:
             return
         plan = plan_flush(
-            tuple(self._buffer), self._observations, self._processing_instant_literal(), self.meta
+            tuple(self._buffer),
+            self._observations,
+            self._processing_instant_literal(),
+            self.meta,
+            collapse=self._collapse_policy,
         )
         self._buffer.clear()
         self.flush_executor(plan)
@@ -273,19 +295,28 @@ def run_unit_of_work[T](
     clock: Clock,
     meta: Metamodel,
     flush_executor: FlushExecutor,
+    collapse_policy: CollapsePolicy | None = None,
 ) -> T:
     """Run ``body`` in a unit of work — joining the active one or opening a new frame.
 
     A call while a transaction is active on the current thread **joins** it: the
     body receives the same unit of work and its return value is returned
     immediately (commit and abort belong to the outermost frame), and the passed
-    ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` are ignored in favor of
-    the active transaction's (M4's ``db.transact`` performs the option-conflict
-    check before calling). Otherwise a new outermost frame is opened, and its value
-    is returned only after a durable flush; an abort withholds it.
+    ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` / ``collapse_policy``
+    are ignored in favor of the active transaction's (M4's ``db.transact`` performs
+    the option-conflict check before calling). Otherwise a new outermost frame is
+    opened, and its value is returned only after a durable flush; an abort
+    withholds it. ``collapse_policy`` is the injected ``m-batch-write`` vocabulary
+    (COR-3 Phase 8 increment 5) a new outermost frame's own flushes consult.
     """
     active = active_unit_of_work()
     if active is not None:
         return active.run_joined(body)
-    uow = UnitOfWork(settings=settings, clock=clock, meta=meta, flush_executor=flush_executor)
+    uow = UnitOfWork(
+        settings=settings,
+        clock=clock,
+        meta=meta,
+        flush_executor=flush_executor,
+        collapse_policy=collapse_policy,
+    )
     return uow.run_outermost(body)

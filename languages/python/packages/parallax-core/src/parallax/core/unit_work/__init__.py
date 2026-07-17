@@ -31,6 +31,9 @@ from parallax.core.unit_work.instructions import (
     validate_instruction,
 )
 from parallax.core.unit_work.planner import (
+    AtomicUnit,
+    BufferItem,
+    CollapsePolicy,
     FlushPlan,
     ObjectKey,
     Observation,
@@ -52,7 +55,10 @@ from parallax.core.unit_work.uow import (
 from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
 
 __all__ = [
+    "AtomicUnit",
+    "BufferItem",
     "Clock",
+    "CollapsePolicy",
     "Concurrency",
     "EscapedTransactionError",
     "FixedClock",

@@ -459,6 +459,24 @@ def test_member_name_honesty_rejects_foreign_assignment_owner() -> None:
         wi.validate_instruction(predicate, _ACCOUNT)
 
 
+def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
+    # COR-3 Phase 8 increment 5 (python.md §5 "each field may be assigned at
+    # most once"): the SAME member assigned twice raises, even though each
+    # individual assignment is otherwise well-formed.
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "assignments": [
+                {"attr": "Account.balance", "value": 1.00},
+                {"attr": "Account.balance", "value": 2.00},
+            ],
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="is duplicated"):
+        wi.validate_instruction(predicate, _ACCOUNT)
+
+
 def test_member_name_honesty_rejects_unknown_entity() -> None:
     keyed = wi.deserialize({"mutation": "delete", "entity": "Ghost", "rows": [{"id": 1}]})
     with pytest.raises(wi.WriteInstructionError, match="unknown entity"):
