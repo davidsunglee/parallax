@@ -39,6 +39,7 @@ from parallax.core.unit_work import (
     Observation,
     PlannedWrite,
     PredicateWrite,
+    WriteAssignment,
     WriteInstruction,
     WriteTarget,
     plan_flush,
@@ -57,6 +58,7 @@ APPLIANCE = _MODELS["appliance"]
 DOCUMENT = _MODELS["document"]
 PK_MAX = _MODELS["pk-max"]
 PK_SEQUENCE = _MODELS["pk-sequence"]
+WALLET = _MODELS["wallet"]
 
 
 def _lower(
@@ -463,38 +465,127 @@ def test_insert_then_delete_cancels_to_no_dml() -> None:
 # --------------------------------------------------------------------------- #
 # Forward-error posture — every not-yet-lowered form refused loudly.           #
 # --------------------------------------------------------------------------- #
-def test_predicate_selected_write_is_refused() -> None:
+def test_materializing_predicate_write_reaching_lower_write_is_refused() -> None:
+    # A predicate write on a VERSIONED (or temporal) target never reaches
+    # `lower_write` directly in production — materialization decomposes it to
+    # per-row keyed writes at BUFFER time (`Transaction._buffer_predicate`,
+    # ADR 0014), before it is ever planned. Reaching here with one is a
+    # caller wiring defect this seam still refuses loudly, never mis-emits.
     predicate = PredicateWrite("delete", WriteTarget("Account", oa.All()))
-    with pytest.raises(WriteLoweringError, match="predicate-selected"):
+    with pytest.raises(WriteLoweringError, match="materialize to keyed writes"):
         _lower(predicate, ACCOUNT)
 
 
 def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     # The temporal milestone verb set (terminate / *Until) stays refused on a
-    # NON-temporal entity (COR-3 Phase 8 increment 4 lifts the blanket temporal-
-    # entity refusal, but a milestone verb aimed at a non-temporal entity is
-    # still nonsensical — `Account` has no processing/business axis to close).
+    # NON-temporal entity — permanently: `Account` has no processing/business
+    # axis to close, so a milestone verb aimed at it is never sensible,
+    # regardless of which increment implements temporal writes.
     with pytest.raises(WriteLoweringError, match="temporal milestone verb"):
         _lower(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
 
-def test_multi_row_keyed_write_is_refused() -> None:
-    # This seam lowers single-row keyed writes only; a multi-row instruction's
-    # set-based collapse is m-batch-write (increment 5). Refusing loudly
-    # prevents the silent rows[0]-only lowering the backbone review caught
-    # (dropped later rows). The conformance engine never constructs one
-    # (COR-3 Phase 8 increment 3 splits a case's batched `rows` into separate
-    # single-row instructions before this seam ever sees them).
+def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None:
+    # m-batch-write-001's own insert entry: the multi-row INSERT collapse
+    # renders ONE statement with one value tuple per row, in row order —
+    # `_lower_multi_insert`'s own m-batch-write set-based flush.
+    insert = KeyedWrite(
+        "insert",
+        "Wallet",
+        (
+            {"id": 10, "owner": "Mira", "balance": 100.00},
+            {"id": 11, "owner": "Omar", "balance": 20.00},
+        ),
+    )
+    statement = _lower(insert, WALLET)[0]
+    assert statement.sql == "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?)"
+    assert statement.binds == (10, "Mira", 100.00, 11, "Omar", 20.00)
+
+
+def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row() -> None:
+    # `_lower_multi_insert`'s versioned-entity branch mirrors `_lower_insert`'s
+    # single-row one (`handle.py:506-507`): every collapsed row derives the SAME
+    # `opt_lock.INITIAL_VERSION` at the version column's family columnOrder
+    # position, ignoring any row-carried value — a batched insert is exactly as
+    # safe as a single-row one because the initial version is a constant, never
+    # observed. No corpus witness collapses a multi-row insert on a versioned
+    # entity (Wallet/Customer, m-batch-write-001/m-value-object-045, are both
+    # non-versioned), so this is a unit-level pin.
     insert = KeyedWrite(
         "insert",
         "Account",
         (
-            {"id": 8, "owner": "Ada", "balance": 1.00, "version": 1},
-            {"id": 9, "owner": "Grace", "balance": 2.00, "version": 1},
+            {"id": 20, "owner": "Curie", "balance": 10.00},
+            {"id": 21, "owner": "Bohr", "balance": 20.00, "version": 99},
         ),
     )
-    with pytest.raises(WriteLoweringError, match=r"multi-row keyed 'insert'.*m-batch-write"):
-        _lower(insert, ACCOUNT)
+    statement = _lower(insert, ACCOUNT)[0]
+    assert (
+        statement.sql
+        == "insert into account(id, owner, balance, version) values (?, ?, ?, ?), (?, ?, ?, ?)"
+    )
+    assert statement.binds == (
+        20,
+        "Curie",
+        10.00,
+        opt_lock.INITIAL_VERSION,
+        21,
+        "Bohr",
+        20.00,
+        opt_lock.INITIAL_VERSION,
+    )
+
+
+def test_batched_update_collapses_to_one_in_list_statement() -> None:
+    # m-batch-write-001's own update entry: a UNIFORM-value multi-row UPDATE
+    # collapses to one `set ... where id in (...)` statement.
+    update = KeyedWrite(
+        "update",
+        "Wallet",
+        ({"id": 10, "balance": 500.00}, {"id": 11, "balance": 500.00}),
+    )
+    statement = _lower(update, WALLET)[0]
+    assert statement.sql == "update wallet set balance = ? where id in (?, ?)"
+    assert statement.binds == (500.00, 10, 11)
+
+
+def test_multi_row_delete_collapses_to_one_in_list_statement() -> None:
+    # m-batch-write-003: a non-versioned target's multi-row DELETE collapses
+    # to one `delete ... where id in (...)` statement.
+    delete = KeyedWrite("delete", "Wallet", ({"id": 1}, {"id": 2}, {"id": 3}))
+    statement = _lower(delete, WALLET)[0]
+    assert statement.sql == "delete from wallet where id in (?, ?, ?)"
+    assert statement.binds == (1, 2, 3)
+
+
+def test_readless_predicate_delete_lowers_to_one_statement() -> None:
+    # m-batch-write-005: an unversioned, non-temporal target's predicate
+    # delete is readless — one statement, no materialization, unaliased
+    # predicate rendering (contrast the resolving read's `t0`-aliased form).
+    predicate = PredicateWrite(
+        "delete",
+        WriteTarget("Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)),
+    )
+    statement = _lower(predicate, WALLET)[0]
+    assert statement.sql == "delete from wallet where balance < ?"
+    assert statement.binds == (200.00,)
+
+
+def test_readless_predicate_update_follows_declared_column_order() -> None:
+    # m-batch-write-006: reversed authored assignments (balance then owner)
+    # still emit descriptor DECLARED column order (owner then balance) —
+    # assignment binds in emitted column order, predicate binds after.
+    predicate = PredicateWrite(
+        "update",
+        WriteTarget("Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)),
+        assignments=(
+            WriteAssignment(attr="Wallet.balance", value=150.00),
+            WriteAssignment(attr="Wallet.owner", value="Updated"),
+        ),
+    )
+    statement = _lower(predicate, WALLET)[0]
+    assert statement.sql == "update wallet set owner = ?, balance = ? where balance < ?"
+    assert statement.binds == ("Updated", 150.00, 200.00)
 
 
 def test_value_object_document_is_not_mistaken_for_a_marker() -> None:

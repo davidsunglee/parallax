@@ -16,6 +16,7 @@ from parallax.core.sql_gen.compile import (
     Statement,
     apply_family_variant,
     compile_read,
+    compile_write_predicate,
     family_variant_plan,
 )
 
@@ -26,5 +27,6 @@ __all__ = [
     "Statement",
     "apply_family_variant",
     "compile_read",
+    "compile_write_predicate",
     "family_variant_plan",
 ]

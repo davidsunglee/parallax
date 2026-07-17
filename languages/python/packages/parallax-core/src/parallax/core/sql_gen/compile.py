@@ -113,6 +113,7 @@ __all__ = [
     "Statement",
     "apply_family_variant",
     "compile_read",
+    "compile_write_predicate",
     "family_variant_plan",
 ]
 
@@ -176,9 +177,17 @@ class _Ctx:
     alias: str = "t0"
     binds: list[object] = field(default_factory=_new_binds)
     alias_seq: list[int] = field(default_factory=_new_alias_seq)
+    # A write-appropriate column formatter (m-batch-write readless predicate
+    # lowering, `m-batch-write.md` "Predicate-selected readless forms"): a
+    # write's rendered predicate is UNALIASED (`where balance < ?`), contrasting
+    # the resolving read's aliased `t0.balance < ?` form. ``False`` (the read
+    # compiler's own default) for every ordinary read context.
+    unaliased: bool = False
 
     def column_of(self, attr_ref: str) -> str:
         attribute = self.entity_attribute(attr_ref)
+        if self.unaliased:
+            return self.dialect.quote(attribute.column)
         return self.dialect.qualified(self.alias, attribute.column)
 
     def next_alias(self) -> str:
@@ -339,6 +348,29 @@ def compile_read(
     _append_result_shape(parts, ctx, distinct, order_keys, limit, lock, relationship_order)
 
     return _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+
+
+def compile_write_predicate(
+    op: Operation, meta: Metamodel, dialect: Dialect, target: str
+) -> tuple[str, tuple[object, ...]]:
+    """Render a BARE write predicate (`m-batch-write.md` "Predicate-selected
+    readless forms"): the UNALIASED where-clause SQL and its ordered binds —
+    `balance < ?`, never the resolving read's aliased `t0.balance < ?`.
+
+    Reuses the op-algebra predicate lowering (:func:`_lower_predicate`) with an
+    unaliased column formatter (:attr:`_Ctx.unaliased`) rather than forking SQL
+    text assembly — the same `And`/`Or`/`Group`/`Comparison`/... dispatch a read's
+    `where` clause lowers through, so a write's rendered predicate can never drift
+    from the read compiler's own operator vocabulary. ``op`` MUST be a bare
+    predicate (no result-shaping directive survives here — a set-based write
+    target is validated bare upstream, `m-unit-work` write-instruction vocabulary
+    / `python.md` §5 bare-statement guard); a directive reaching this raises
+    :class:`SqlGenError` exactly as it would inside an ordinary read's predicate.
+    """
+    entity = meta.entity(target)
+    ctx = _Ctx(meta=meta, dialect=dialect, entity=entity, unaliased=True)
+    where_sql = _lower_predicate(op, ctx)
+    return where_sql, tuple(ctx.binds)
 
 
 def _append_result_shape(

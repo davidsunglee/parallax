@@ -43,12 +43,21 @@ read-your-own-writes, the transaction's own lock suffix) by running the shared
 
 from __future__ import annotations
 
+import datetime as dt
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
-from parallax.core import audit_write, bitemp_write, deep_fetch, inheritance, op_algebra, opt_lock
+from parallax.core import (
+    audit_write,
+    batch_write,
+    bitemp_write,
+    deep_fetch,
+    inheritance,
+    op_algebra,
+    opt_lock,
+)
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.db_port import DbPort, JsonDocument, Row
@@ -63,9 +72,17 @@ from parallax.core.entity import (
     full_row,
     primary_key_row,
 )
-from parallax.core.sql_gen import Statement, apply_family_variant, compile_read, family_variant_plan
+from parallax.core.entity.expressions import AttributeAssignment
+from parallax.core.sql_gen import (
+    Statement,
+    apply_family_variant,
+    compile_read,
+    compile_write_predicate,
+    family_variant_plan,
+)
 from parallax.core.temporal_read import AXIS_ORDER, LATEST, Edge, Pin, milestone_edge, statement_pin
 from parallax.core.unit_work import (
+    AtomicUnit,
     Clock,
     Concurrency,
     FlushExecutor,
@@ -80,6 +97,7 @@ from parallax.core.unit_work import (
     UnitOfWork,
     UnitOfWorkError,
     active_unit_of_work,
+    instant_literal,
     instructions,
     object_key,
     run_unit_of_work,
@@ -106,7 +124,6 @@ __all__ = [
     "find_history",
     "lower_temporal_close",
     "lower_write",
-    "predicate_write_refusal",
 ]
 
 # The keyed mutation verbs the write seam lowers (the non-temporal write
@@ -123,30 +140,9 @@ _MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
 
 
 class WriteLoweringError(ValueError):
-    """A planned write cannot be lowered to DML by the keyed write seam (the
-    deferred forms — predicate-selected / set-based, multi-row batch collapse —
-    raise here, never a wrong emission)."""
-
-
-def predicate_write_refusal(entity_name: object) -> WriteLoweringError:
-    """The :class:`WriteLoweringError` a predicate-selected (set-based) write
-    raises wherever it reaches the keyed-write engine seam.
-
-    The single shared source of truth for this refusal's wording (the same
-    move as :func:`~parallax.core.opt_lock.classify_mismatch`): this module's
-    own :func:`lower_write` (a real, typed ``PredicateWrite.target.entity``)
-    and the conformance engine's structural pre-check
-    (``parallax.conformance.engine._write_entries``, a raw, possibly-malformed
-    ``target.entity`` parsed straight off an untyped scenario document) both
-    defer to it, so the two callers can never drift on the wording.
-    ``entity_name`` is rendered with ``!r`` exactly as given, whatever its
-    shape (a real entity name, or ``None`` when the raw entry names none at
-    all).
-    """
-    return WriteLoweringError(
-        f"predicate-selected (set-based) write on {entity_name!r}: materialize-then-lower "
-        "lands with the write path (COR-3 Phase 8 increment 5; m-batch-write / m-opt-lock)"
-    )
+    """A planned write cannot be lowered to DML by the write seam (a caller
+    wiring defect this seam still refuses loudly rather than mis-emitting —
+    e.g. a materializing predicate write that reached here un-decomposed)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,24 +204,33 @@ def lower_write(
     column/tag machinery (reused unchanged for every chained INSERT — value objects,
     inheritance tag derivation, pk-gen markers all compose exactly as a non-temporal
     insert's do, since a chained row is structurally an ordinary full-row insert). A
-    non-temporal entity's write is unchanged from increment 3 (insert / update /
-    delete, plain or inheritance-family, versioned or not, pk-generated or not).
+    non-temporal entity's write may be single-row (unchanged since increment 3) or a
+    COLLAPSED multi-row instruction the planner's collapse stage produced
+    (COR-3 Phase 8 increment 5, `m-batch-write`): a multi-row INSERT, a uniform-value
+    IN-list UPDATE, or a non-versioned IN-list DELETE.
+
+    A :class:`~parallax.core.unit_work.PredicateWrite` lowers READLESS
+    (`m-batch-write.md` "Predicate-selected readless forms") when its target is
+    unversioned and non-temporal — the only shape ever reaches here: a versioned
+    or temporal predicate write MATERIALIZES to per-row keyed writes at BUFFER
+    time (`~parallax.snapshot.handle.Transaction`'s ``_where`` verb family;
+    ADR 0014), before ever entering a :class:`FlushPlan`.
     """
     instruction = planned.instruction
     if isinstance(instruction, PredicateWrite):
-        raise predicate_write_refusal(instruction.target.entity)
+        return [LoweredStatement(_lower_predicate_write(instruction, meta, dialect))]
     entity = meta.entity(instruction.entity)
     # Temporal classification MUST be the family-EFFECTIVE one (ADR 0026) — see the
     # docstring above.
     declaring = inheritance.declaring_entity(meta, entity)
-    if len(instruction.rows) != 1:
-        raise WriteLoweringError(
-            f"multi-row keyed {instruction.mutation!r} on {entity.name!r} "
-            f"({len(instruction.rows)} rows): the set-based collapse lands with the write path "
-            "(COR-3 Phase 8 increment 5; m-batch-write) — this seam lowers single-row keyed "
-            "writes only"
-        )
     if declaring.is_temporal:
+        if len(instruction.rows) != 1:  # pragma: no cover - materialization never batches
+            raise WriteLoweringError(
+                f"multi-row temporal {instruction.mutation!r} on {entity.name!r} "
+                f"({len(instruction.rows)} rows): a temporal keyed write lowers one row at a "
+                "time (m-audit-write / m-bitemp-write) — the set-based batch collapse never "
+                "applies to a temporal entity's own milestone chain (m-batch-write)"
+            )
         if tx_instant is None:  # pragma: no cover - defends a caller that skips the Clock
             raise WriteLoweringError(
                 f"temporal write on {entity.name!r}: no transaction instant supplied "
@@ -243,17 +248,32 @@ def lower_write(
         )
     if instruction.mutation not in _NON_TEMPORAL_VERBS:
         raise WriteLoweringError(
-            f"{instruction.mutation!r} is a temporal milestone verb; its lowering lands with the "
-            f"write path (COR-3 Phase 8 increment 4) — {entity.name!r} is not a temporal entity"
+            f"{instruction.mutation!r} is a temporal milestone verb, and {entity.name!r} "
+            "declares no processing/business axis — a milestone verb never applies to a "
+            "non-temporal entity (m-audit-write / m-bitemp-write)"
         )
     version_attr = _version_attribute(declaring)
     if instruction.mutation == "insert":
+        if len(instruction.rows) > 1:
+            return [
+                LoweredStatement(
+                    _lower_multi_insert(entity, instruction, dialect, meta, declaring, version_attr)
+                )
+            ]
         return [
             LoweredStatement(
                 _lower_insert(entity, instruction, dialect, meta, declaring, version_attr)
             )
         ]
     if instruction.mutation == "update":
+        if len(instruction.rows) > 1:
+            return [
+                LoweredStatement(
+                    _lower_batched_update(
+                        entity, instruction, dialect, meta, declaring, version_attr
+                    )
+                )
+            ]
         return [
             LoweredStatement(
                 _lower_update(
@@ -267,6 +287,12 @@ def lower_write(
                     concurrency,
                 ),
                 expected_affected=planned.expected_affected,
+            )
+        ]
+    if len(instruction.rows) > 1:
+        return [
+            LoweredStatement(
+                _lower_multi_delete(entity, instruction, dialect, meta, declaring, version_attr)
             )
         ]
     return [
@@ -645,6 +671,222 @@ def _lower_delete(
         where_sql = f"{where_sql} and {dialect.quote(version_attr.column)} = ?"
         key_binds = (*key_binds, observed_version)
     return Statement(f"delete from {entity.table} where {where_sql}", key_binds)
+
+
+# --------------------------------------------------------------------------- #
+# Set-based collapse lowering (COR-3 Phase 8 increment 5; m-batch-write "Set- #
+# based flush"). `parallax.core.batch_write` decides WHETHER a run of rows    #
+# collapses (the planner's own collapse stage, injected via `Database.        #
+# transact`'s `collapse_policy`); everything here renders the ALREADY-        #
+# collapsed multi-row `KeyedWrite` this seam receives. Reuses `_ordered_cells` #
+# / `_key_predicate` / `_tag_guard` exactly as the single-row forms do — no    #
+# reinvented column-order or bind discipline.                                 #
+# --------------------------------------------------------------------------- #
+def _lower_multi_insert(
+    entity: Entity,
+    instruction: KeyedWrite,
+    dialect: Dialect,
+    meta: Metamodel,
+    declaring: Entity,
+    version_attr: Attribute | None,
+) -> Statement:
+    """`insert into <table>(<cols>) values (?, …), (?, …), …` — the multi-row
+    INSERT collapse (`m-batch-write.md` L17-19): every row's cells in the SAME
+    family columnOrder (`_ordered_cells`, unchanged), one value tuple per row,
+    in buffer order. A versioned entity's row derives the SAME
+    `opt_lock.INITIAL_VERSION` at its columnOrder position as the single-row
+    form — the initial version is a constant, never observed, so it is exactly
+    as safe to batch as any other column (`m-opt-lock`).
+    """
+    tag = _tag_insert_column(entity, declaring)
+    columns: list[str] | None = None
+    rows_cells: list[list[tuple[str, object]]] = []
+    for raw_row in instruction.rows:
+        row = dict(raw_row)
+        if version_attr is not None:
+            row[version_attr.name] = opt_lock.INITIAL_VERSION
+        cells = _ordered_cells(meta, entity, row, tag)
+        row_columns = [column for column, _ in cells]
+        if columns is None:
+            columns = row_columns
+        elif row_columns != columns:  # pragma: no cover - a well-formed collapse never mixes shapes
+            raise WriteLoweringError(
+                f"multi-row insert on {entity.name!r}: row column sets differ within one "
+                f"collapsed instruction ({columns} vs {row_columns}) — a batch collapse "
+                "requires every row to carry the same members"
+            )
+        rows_cells.append(cells)
+    assert columns is not None  # `instruction.rows` is schema-required non-empty
+    quoted_columns = ", ".join(dialect.quote(column) for column in columns)
+    binds: list[object] = []
+    value_groups: list[str] = []
+    for cells in rows_cells:
+        holes: list[str] = []
+        for column, value in cells:
+            _refuse_unrecognized_marker(entity, column, value, "insert")
+            holes.append("?")
+            binds.append(value)
+        value_groups.append(f"({', '.join(holes)})")
+    return Statement(
+        f"insert into {entity.table}({quoted_columns}) values {', '.join(value_groups)}",
+        tuple(binds),
+    )
+
+
+def _lower_batched_update(
+    entity: Entity,
+    instruction: KeyedWrite,
+    dialect: Dialect,
+    meta: Metamodel,
+    declaring: Entity,
+    version_attr: Attribute | None,
+) -> Statement:
+    """`update <table> set <cols> = ?, … where <pk> in (?, …) [and <tag.column> =
+    ?]` — the uniform-value batched UPDATE collapse (`m-batch-write.md` L20-22):
+    every row assigns the IDENTICAL non-key values (the injected
+    `m-batch-write` eligibility check already verified this), so ONE `SET`
+    clause (the first row's own cells, family columnOrder) applies to every
+    key in the `IN`-list, in row order. A VERSIONED entity's update never
+    reaches here — `m-batch-write` never collapses one (the per-row gate binds
+    a per-row observed version no shared statement can carry).
+    """
+    assert version_attr is None, (  # pragma: no cover - m-batch-write.update_collapses excludes it
+        "a versioned entity's update never collapses (m-batch-write)"
+    )
+    pk_attrs = inheritance.family_primary_key(meta, entity)
+    pk_names = {attr.name for attr in pk_attrs}
+    first_row = dict(instruction.rows[0])
+    set_cells = [
+        cell for cell in _ordered_cells(meta, entity, first_row) if cell[0] not in pk_names
+    ]
+    assignment_parts: list[str] = []
+    binds: list[object] = []
+    for column, value in set_cells:
+        _refuse_unrecognized_marker(entity, column, value, "update")
+        assignment_parts.append(f"{dialect.quote(column)} = ?")
+        binds.append(value)
+    in_sql, in_binds = _keys_in_list(pk_attrs, instruction.rows, dialect)
+    tag_sql, tag_binds = _tag_guard(entity, declaring, dialect)
+    assignments_sql = ", ".join(assignment_parts)
+    return Statement(
+        f"update {entity.table} set {assignments_sql} where {in_sql}{tag_sql}",
+        (*binds, *in_binds, *tag_binds),
+    )
+
+
+def _lower_multi_delete(
+    entity: Entity,
+    instruction: KeyedWrite,
+    dialect: Dialect,
+    meta: Metamodel,
+    declaring: Entity,
+    version_attr: Attribute | None,
+) -> Statement:
+    """`delete from <table> where <pk> in (?, …) [and <tag.column> = ?]` — the
+    IN-list DELETE collapse (`m-batch-write.md` L23-26, "the delete analogue
+    of the multi-row INSERT"). A VERSIONED entity's delete never reaches here —
+    `m-batch-write` never collapses one (each row must be removed under its
+    own observed version, `m-batch-write-004`).
+    """
+    assert version_attr is None, (  # pragma: no cover - m-batch-write.delete_collapses excludes it
+        "a versioned entity's delete never collapses (m-batch-write)"
+    )
+    pk_attrs = inheritance.family_primary_key(meta, entity)
+    in_sql, in_binds = _keys_in_list(pk_attrs, instruction.rows, dialect)
+    tag_sql, tag_binds = _tag_guard(entity, declaring, dialect)
+    return Statement(f"delete from {entity.table} where {in_sql}{tag_sql}", (*in_binds, *tag_binds))
+
+
+def _keys_in_list(
+    pk_attrs: Sequence[Attribute], rows: Sequence[Mapping[str, object]], dialect: Dialect
+) -> tuple[str, tuple[object, ...]]:
+    """``<pk> in (?, …)`` (a single-column key) or ``(<pk1>, <pk2>) in ((?, ?),
+    …)`` (a composite key), one entry per row, in row order."""
+    pk_columns = [attr.column for attr in pk_attrs]
+    if len(pk_columns) == 1:
+        keys_sql = dialect.quote(pk_columns[0])
+        holes = ", ".join("?" for _ in rows)
+        binds = tuple(row[pk_attrs[0].name] for row in rows)
+        return f"{keys_sql} in ({holes})", binds
+    keys_sql = f"({', '.join(dialect.quote(column) for column in pk_columns)})"
+    row_hole = f"({', '.join('?' for _ in pk_columns)})"
+    holes = ", ".join(row_hole for _ in rows)
+    binds = tuple(row[attr.name] for row in rows for attr in pk_attrs)
+    return f"{keys_sql} in ({holes})", binds
+
+
+def _tag_guard(
+    entity: Entity, declaring: Entity, dialect: Dialect
+) -> tuple[str, tuple[object, ...]]:
+    """`` and <tag.column> = ?`` plus its bind — the SAME inheritance-family
+    tag guard `_key_predicate` adds to a single-row identity predicate, reused
+    for a collapsed multi-row statement's shared `IN`-list (every row of one
+    collapsed instruction is the SAME concrete subtype, so the tag value is
+    constant); ``("", ())`` for a non-participant or a table-per-concrete-
+    subtype one (no shared table, no tag)."""
+    if entity.inheritance is None or declaring.inheritance is None:
+        return "", ()
+    tag_column = declaring.inheritance.tag_column
+    tag_value = entity.inheritance.tag_value
+    if tag_column is None or tag_value is None:
+        return "", ()
+    return f" and {dialect.quote(tag_column)} = ?", (tag_value,)
+
+
+# --------------------------------------------------------------------------- #
+# Readless predicate-write lowering (COR-3 Phase 8 increment 5; ADR 0014's    #
+# unversioned/non-temporal exception, `m-batch-write.md` "Predicate-selected  #
+# readless forms"). A MATERIALIZING predicate write (versioned or temporal    #
+# target) never reaches here — `Transaction`'s `_where` verb family           #
+# decomposes it to per-row keyed writes at BUFFER time, before it is ever     #
+# planned; the defensive check below only ever catches a caller wiring       #
+# defect, never a legal readless write.                                       #
+# --------------------------------------------------------------------------- #
+def _lower_predicate_write(
+    instruction: PredicateWrite, meta: Metamodel, dialect: Dialect
+) -> Statement:
+    """`update <table> set <col> = ?, … where <predicate>` / `delete from
+    <table> where <predicate>` — one readless statement, no materialization,
+    no equality-elimination pass (`m-batch-write.md` L59-92). The `SET`
+    columns and their binds follow descriptor DECLARED column order
+    (`_ordered_cells`, reused unchanged), never the authored assignment order;
+    predicate binds come AFTER assignment binds. The rendered predicate is
+    UNALIASED (`compile_write_predicate`), contrasting the resolving read's
+    `t0`-aliased form.
+    """
+    entity = meta.entity(instruction.target.entity)
+    declaring = inheritance.declaring_entity(meta, entity)
+    if declaring.is_temporal or _version_attribute(declaring) is not None:
+        raise WriteLoweringError(  # pragma: no cover - materialization always intercepts this
+            f"{instruction.target.entity!r}: a predicate write on a versioned or temporal "
+            "target has no readless template — it must materialize to keyed writes before "
+            "reaching lower_write (m-opt-lock; ADR 0014); this is a caller wiring defect"
+        )
+    where_sql, predicate_binds = compile_write_predicate(
+        instruction.target.predicate, meta, dialect, instruction.target.entity
+    )
+    if instruction.mutation == "delete":
+        return Statement(f"delete from {entity.table} where {where_sql}", predicate_binds)
+    assignment_row = {
+        _assignment_member(assignment.attr): assignment.value
+        for assignment in instruction.assignments
+    }
+    cells = _ordered_cells(meta, entity, assignment_row)
+    assignment_parts: list[str] = []
+    binds: list[object] = []
+    for column, value in cells:
+        assignment_parts.append(f"{dialect.quote(column)} = ?")
+        binds.append(value)
+    assignments_sql = ", ".join(assignment_parts)
+    return Statement(
+        f"update {entity.table} set {assignments_sql} where {where_sql}", (*binds, *predicate_binds)
+    )
+
+
+def _assignment_member(attr: str) -> str:
+    """The declared member name of an assignment's ``Class.member`` reference."""
+    _, _, member = attr.partition(".")
+    return member
 
 
 def _ordered_cells(
@@ -1139,8 +1381,14 @@ class Transaction:
     no-op, zero round trips), :meth:`delete` a node or instance (keys off its
     primary key). :meth:`find` runs a participating read and returns
     ``Snapshot[T]`` (DQ6): force-flush + the transaction's own lock suffix,
-    otherwise identical to :meth:`Database.find`. A reference used after its
-    owning scope ends raises
+    otherwise identical to :meth:`Database.find`. The predicate-selected
+    ``_where`` verb family (COR-3 Phase 8 increment 5; `python.md` §5) —
+    :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where`,
+    :meth:`update_until_where`, :meth:`terminate_until_where` — mirrors the
+    keyed surface over a bare predicate: readless for an unversioned,
+    non-temporal target, materializing to per-row keyed writes otherwise
+    (:meth:`_materialize_predicate_write`, ADR 0014). A reference used after
+    its owning scope ends raises
     :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
     delegates to the unit of work, which fences use-after-scope).
     """
@@ -1274,6 +1522,232 @@ class Transaction:
         instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(instruction)
 
+    # --- set-based write verbs (python.md §5; COR-3 Phase 8 increment 5) -- #
+    def update_where(
+        self,
+        statement: EntityStatement,
+        *assignments: AttributeAssignment,
+        business_from: dt.datetime | None = None,
+    ) -> None:
+        """A predicate-selected ``update`` (`python.md` §5): ``statement`` MUST
+        be a bare statement (nothing but a predicate); ``assignments`` are
+        ``Attr.set(value)`` calls, non-empty, no duplicate field. Readless
+        (one statement) for an unversioned, non-temporal target; a versioned
+        or temporal target MATERIALIZES (`m-opt-lock`, ADR 0014) — see
+        :meth:`_buffer_predicate`, the neutral seam this and every other
+        ``_where`` verb share."""
+        self._buffer_predicate("update", statement, assignments, business_from=business_from)
+
+    def delete_where(self, statement: EntityStatement) -> None:
+        """A predicate-selected ``delete`` over a NON-temporal target
+        (`python.md` §5): readless for an unversioned target; a versioned one
+        MATERIALIZES to one gated per-row delete per resolved row (no
+        no-op elimination — a delete changes a row's existence, never a value,
+        `m-opt-lock`)."""
+        self._buffer_predicate("delete", statement, (), business_from=None)
+
+    def terminate_where(
+        self, statement: EntityStatement, *, business_from: dt.datetime | None = None
+    ) -> None:
+        """A predicate-selected ``terminate`` over a TEMPORAL target
+        (`python.md` §5): audit-only takes no ``business_from`` (no business
+        axis to bound); bitemporal REQUIRES it (the plain terminate's own
+        business instant ``B``). Always materializes — a temporal predicate
+        write has no readless template."""
+        self._buffer_predicate("terminate", statement, (), business_from=business_from)
+
+    def update_until_where(
+        self,
+        statement: EntityStatement,
+        *assignments: AttributeAssignment,
+        business_from: dt.datetime,
+        until: dt.datetime,
+    ) -> None:
+        """A predicate-selected, business-window-BOUNDED ``updateUntil`` over a
+        bitemporal target (`python.md` §5; `m-bitemp-write` "The rectangle
+        split"): always materializes to a close plus head/middle/tail."""
+        self._buffer_predicate(
+            "updateUntil", statement, assignments, business_from=business_from, until=until
+        )
+
+    def terminate_until_where(
+        self, statement: EntityStatement, *, business_from: dt.datetime, until: dt.datetime
+    ) -> None:
+        """A predicate-selected, business-window-BOUNDED ``terminateUntil`` over
+        a bitemporal target (`python.md` §5): always materializes to a close
+        plus head/tail (no middle — the window becomes a hole in business
+        time)."""
+        self._buffer_predicate(
+            "terminateUntil", statement, (), business_from=business_from, until=until
+        )
+
+    def _buffer_predicate(
+        self,
+        mutation: str,
+        statement: EntityStatement,
+        assignments: Sequence[AttributeAssignment],
+        *,
+        business_from: dt.datetime | None,
+        until: dt.datetime | None = None,
+    ) -> None:
+        """The neutral seam every ``_where`` verb shares — the SAME seam the
+        conformance engine's predicate-write translation drives (COR-3 Phase 8
+        increment 5), so the developer-facing verbs and the corpus-driven
+        engine path can never diverge in behavior.
+
+        1. **Bare-statement guard** (`python.md` §5 "A statement becomes a
+           write target only as a bare statement") — one carrying nothing but
+           a predicate; every other clause is rejected (`EntityStatement.
+           is_bare`, subsuming ``.distinct()``).
+        2. **Inheritance rejection** (`m-inheritance` "Per-object writes are
+           keyed; set-based inheritance writes are out of scope") — BEFORE any
+           SQL, the SAME ``subtype-write-set-based-unsupported`` classification
+           a keyless keyed write raises.
+        3. **Business-bound validation** — a bitemporal target REQUIRES
+           ``business_from`` (its own business instant); an audit-only or
+           non-temporal target takes none (no business axis to bound); the
+           ``*Until`` forms additionally require ``until``.
+        4. **Build + validate the canonical instruction** (the SAME
+           deserialize/`validate_instruction` round trip a keyed write buys in
+           :meth:`_buffer` — non-empty/no-duplicate assignments are the schema's
+           own check).
+        5. **Dispatch**: an unversioned, non-temporal target buffers READLESS
+           (one statement, `m-batch-write`); a versioned or temporal one
+           MATERIALIZES (:meth:`_materialize_predicate_write`, ADR 0014).
+        """
+        if not statement.is_bare():
+            raise ValueError(
+                f"{statement.target}: a set-based write target must be a bare statement "
+                "(nothing but a predicate) — order_by / limit / distinct / as_of / history / "
+                "as_of_range / narrow / include are all rejected on a write target (python.md §5)"
+            )
+        entity = self._meta.entity(statement.target)
+        inheritance.reject_predicate_write(entity)
+        declaring = inheritance.declaring_entity(self._meta, entity)
+        business_from_literal = _validate_business_from(declaring, mutation, business_from)
+        until_literal = instant_literal(until) if until is not None else None
+
+        doc: dict[str, object] = {
+            "mutation": mutation,
+            "target": {
+                "entity": statement.target,
+                "predicate": op_algebra.serialize(statement.predicate),
+            },
+        }
+        if assignments:
+            doc["assignments"] = [{"attr": str(a.attr), "value": a.value} for a in assignments]
+        if business_from_literal is not None:
+            doc["businessFrom"] = business_from_literal
+        if until_literal is not None:
+            doc["businessTo"] = until_literal
+        instruction = instructions.deserialize(doc)
+        assert isinstance(
+            instruction, PredicateWrite
+        )  # this seam always builds the predicate shape
+        instructions.validate_instruction(instruction, self._meta)
+        self._buffer_predicate_instruction(instruction)
+
+    def _buffer_predicate_instruction(self, instruction: PredicateWrite) -> None:
+        """The neutral seam UNDERLYING every ``_where`` verb and the
+        conformance engine's own predicate-write translation (COR-3 Phase 8
+        increment 5; `m-case-format` "predicate-shaped case entries deserialize
+        to PredicateWrite through the existing serde and buffer through
+        Transaction's own seam"): given an ALREADY-BUILT, already-validated
+        :class:`~parallax.core.unit_work.PredicateWrite` instruction, reject an
+        inheritance-family target (`m-inheritance`), then dispatch READLESS
+        (`m-batch-write`) or MATERIALIZE (`m-opt-lock`, ADR 0014). The typed
+        ``_where`` verbs (:meth:`_buffer_predicate`) build ``instruction`` from
+        a bare :class:`~parallax.core.entity.Statement` plus typed
+        ``Attr.set(...)`` assignments first; the engine builds it directly
+        from the case's own canonical write-instruction document — both
+        converge HERE, so the two callers can never diverge in behavior.
+        """
+        entity = self._meta.entity(instruction.target.entity)
+        inheritance.reject_predicate_write(entity)
+        declaring = inheritance.declaring_entity(self._meta, entity)
+        version_attr = _version_attribute(declaring)
+        if not declaring.is_temporal and version_attr is None:
+            # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
+            # one statement, no materialization, no equality-elimination pass.
+            self._uow.buffer(instruction)
+            return
+        self._materialize_predicate_write(instruction, entity, declaring, version_attr)
+
+    def _materialize_predicate_write(
+        self,
+        instruction: PredicateWrite,
+        entity: Entity,
+        declaring: Entity,
+        version_attr: Attribute | None,
+    ) -> None:
+        """Materialize a predicate write on a VERSIONED or TEMPORAL target
+        (`m-opt-lock` "Predicate-selected writes materialize when observations
+        are needed"; ADR 0014): resolve the predicate through a MINIMAL
+        row-form read on THIS transaction's own connection (never instance-form
+        — the resolve constructs no object, `m-value-object-047`), record each
+        matched row's observation through ``uow.observe`` (the SAME
+        transaction-scoped seam a real :meth:`find` uses — never an engine-side
+        map), then buffer one keyed per-row write per row the verb WRITES (the
+        per-row no-op elimination below) as an ORDERED ATOMIC PLANNED UNIT
+        (`m-unit-work`, :class:`AtomicUnit`) at the call position. Zero
+        resolved rows -> zero keyed writes, success (no unit buffered at all).
+        The lock suffix on the resolve derives from the transaction's own
+        concurrency mode (``locking`` ⇒ the shared read lock, ``optimistic`` ⇒
+        none) — the SAME rule a real ``Transaction.find`` applies.
+
+        A TEMPORAL target's raw predicate carries no as-of wrapper (a bare
+        statement forbids ``.as_of()``/``.history()``, python.md §5) — exactly
+        like an ordinary find's omitted axis, it must still default every
+        declared axis to its CURRENT milestone (`m-temporal-read` "default-
+        latest"), so the resolve routes through the SAME
+        :func:`~parallax.core.deep_fetch.plan` root-canonicalization every
+        other read uses (:func:`find`, above) rather than compiling the raw
+        predicate directly — otherwise a temporal target's resolve would match
+        every historical milestone too, not just the open one(s).
+        """
+        lock: LockMode | None = self._uow.settings.concurrency
+        plan_ = deep_fetch.plan(instruction.target.entity, instruction.target.predicate, self._meta)
+        statement = compile_read(
+            plan_.root_operation,
+            self._meta,
+            self._dialect,
+            instruction.target.entity,
+            result_form="row",
+            lock=lock,
+        )
+        rows = self._uow.read(lambda: self._resolve_rows(statement))
+        assignments = {
+            _assignment_member(assignment.attr): assignment.value
+            for assignment in instruction.assignments
+        }
+        writes: list[KeyedWrite] = []
+        pending: list[tuple[ObjectKey, Observation | None]] = []
+        for row in rows:
+            key, observation, new_row = _materialize_row(
+                self._meta, entity, declaring, version_attr, instruction.mutation, assignments, row
+            )
+            if new_row is None:
+                continue  # per-row no-op elimination (assignment-bearing verbs only)
+            writes.append(
+                KeyedWrite(
+                    mutation=cast("Any", instruction.mutation),
+                    entity=instruction.target.entity,
+                    rows=(new_row,),
+                    business_from=instruction.business_from,
+                    business_to=instruction.business_to,
+                )
+            )
+            pending.append((key, observation))
+        if not writes:
+            return
+        for key, observation in pending:
+            if observation is not None:
+                self._uow.observe(key, observation)
+        self._uow.buffer(AtomicUnit(writes=tuple(writes)))
+
+    def _resolve_rows(self, statement: Statement) -> list[Row]:
+        return self._conn.execute(self._dialect.to_driver_sql(statement.sql), list(statement.binds))
+
 
 def _record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pin: Pin) -> None:
     """Record this unit of work's observed version/temporal-milestone for
@@ -1324,42 +1798,198 @@ def _record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, p
         proc = _processing_axis(declaring)
         if proc.from_column not in node.fields:  # pragma: no cover - malformed model/projection
             continue
-        uow.observe(key, _temporal_observation(meta, declaring, node, proc, latest_pinned))
+        uow.observe(key, _temporal_observation(meta, declaring, node.fields, proc, latest_pinned))
 
 
 def _temporal_observation(
     meta: Metamodel,
     declaring: Entity,
-    node: materialize.Node,
+    fields: Mapping[str, object],
     proc: AsOfAttribute,
     latest_pinned: bool,
 ) -> Observation:
-    """The :class:`Observation` a materialized TEMPORAL node licenses: the
+    """The :class:`Observation` a materialized TEMPORAL row licenses: the
     observed processing-from (``in_z``) plus pin provenance always; the
     observed business bounds and payload too when ``declaring`` is
     bitemporal — the same fields temporal lowering (`~parallax.core.
     bitemp_write.plan`) already consumes, so a transaction-scoped find ->
     temporal write sequence works end-to-end, not just the licensing check.
+
+    ``fields`` is a plain column-keyed mapping — a materialized
+    :class:`~parallax.snapshot.materialize.Node`'s own ``.fields`` (a real
+    ``Transaction.find``), or a raw driver row (COR-3 Phase 8 increment 5's
+    materializing predicate-write resolve, :func:`_materialize_row`) — so both
+    callers share the SAME payload-extraction logic rather than duplicating it.
+    Every extracted value passes through EXACTLY as the port returned it (a
+    real ``timestamptz`` column may be a driver-native ``datetime.datetime``
+    or the native-infinity sentinel, never pre-rendered to a wire string here)
+    — the SAME driver-native-passthrough contract every other temporal bind in
+    this seam already carries (`test_transact.py::
+    test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in_z`);
+    wire-rendering for REPORTING is the conformance ADAPTER's own boundary
+    concern (`parallax.conformance.engine._json_bind`), never this seam's.
     """
-    in_z = cast("str", node.fields[proc.from_column])
+    in_z = cast("str", fields[proc.from_column])
     if declaring.temporal != "bitemporal":
         return Observation(in_z=in_z, latest_pinned=latest_pinned)
     biz = _business_axis(declaring)
-    if biz.from_column not in node.fields or biz.to_column not in node.fields:  # pragma: no cover
+    if biz.from_column not in fields or biz.to_column not in fields:  # pragma: no cover
         return Observation(in_z=in_z, latest_pinned=latest_pinned)  # malformed model/projection
     excluded = {proc.from_column, proc.to_column, biz.from_column, biz.to_column}
-    payload = {
-        name: node.fields[column]
-        for name, (column, _is_value_object) in _members(meta, declaring).items()
-        if column in node.fields and column not in excluded
-    }
+    payload = _row_payload(meta, declaring, fields, excluded)
     return Observation(
         in_z=in_z,
-        business_from=cast("str", node.fields[biz.from_column]),
-        business_to=cast("str", node.fields[biz.to_column]),
+        business_from=cast("str", fields[biz.from_column]),
+        business_to=cast("str", fields[biz.to_column]),
         payload=payload,
         latest_pinned=latest_pinned,
     )
+
+
+def _row_payload(
+    meta: Metamodel, declaring: Entity, fields: Mapping[str, object], excluded: set[str]
+) -> dict[str, object]:
+    """``fields``'s own SCALAR payload (every declared member besides
+    ``excluded`` axis-bound columns), value-object columns OMITTED (row-form
+    never projects one, `m-value-object-047`) — the observed-payload source
+    both a real bitemporal find's :class:`Observation` (above) and an
+    audit-only materializing resolve's CHAINED full row
+    (:func:`_materialize_row`) share."""
+    return {
+        name: fields[column]
+        for name, (column, is_value_object) in _members(meta, declaring).items()
+        if not is_value_object and column in fields and column not in excluded
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Predicate-write materialization (COR-3 Phase 8 increment 5; m-opt-lock      #
+# "Predicate-selected writes materialize when observations are needed";       #
+# ADR 0014). Pure functions the SOLE caller (`Transaction.                    #
+# _materialize_predicate_write`) drives against its OWN resolved rows — never #
+# an implicit read of their own.                                              #
+# --------------------------------------------------------------------------- #
+def _validate_business_from(
+    declaring: Entity, mutation: str, business_from: dt.datetime | None
+) -> str | None:
+    """Validate + render a ``_where`` verb's ``business_from`` (`python.md` §5):
+    a BITEMPORAL target REQUIRES it (the mutation's own business instant
+    ``B``, `m-bitemp-write` "Plain (unbounded) bitemporal writes"); a
+    non-temporal or audit-only (single processing axis) target takes NONE —
+    neither has a business axis to bound."""
+    if declaring.temporal == "bitemporal":
+        if business_from is None:
+            raise ValueError(
+                f"{declaring.name}: a bitemporal {mutation!r} requires business_from "
+                "(the mutation's own business instant)"
+            )
+        return instant_literal(business_from)
+    if business_from is not None:
+        axis = "an audit-only" if declaring.is_temporal else "a non-temporal"
+        raise ValueError(
+            f"{declaring.name}: {axis} {mutation!r} takes no business_from "
+            f"({declaring.name!r} declares no business axis to bound)"
+        )
+    return None
+
+
+def _materialize_row(
+    meta: Metamodel,
+    entity: Entity,
+    declaring: Entity,
+    version_attr: Attribute | None,
+    mutation: str,
+    assignments: Mapping[str, object],
+    row: Row,
+) -> tuple[ObjectKey, Observation | None, dict[str, object] | None]:
+    """One resolved row's materialized keyed write: its
+    :class:`~parallax.core.unit_work.ObjectKey`, its recorded
+    :class:`Observation` (``None`` for an AUDIT-ONLY plain ``terminate`` — see
+    below), and the new row a keyed write of ``mutation`` carries — ``None``
+    for the new row when every assignment already equals the row's own value
+    (`m-opt-lock` "For assignment-bearing mutations, no-op elimination is per
+    resolved row"; `delete` / `terminate` / `terminateUntil` always write
+    every resolved row, no assignments to compare). ``row`` is the resolve's
+    OWN row-form row (never an implicit second read).
+    """
+    pk_attrs = inheritance.family_primary_key(meta, entity)
+    pk_row = {attr.name: row[attr.column] for attr in pk_attrs}
+    key: ObjectKey = (entity.name, tuple(pk_row.items()))
+    assignment_bearing = mutation in ("update", "updateUntil")
+
+    if version_attr is not None:
+        observation = Observation(version=cast("int", row[version_attr.column]))
+        if not assignment_bearing:
+            return key, observation, dict(pk_row)
+        new_row, changed = _apply_assignments(meta, entity, pk_row, row, assignments)
+        return key, observation, (new_row if changed else None)
+
+    proc = _processing_axis(declaring)
+    in_z = cast("str", row[proc.from_column])
+    if declaring.temporal == "bitemporal":
+        # A SPARSE new row: `bitemp_write.plan` merges it onto the observed
+        # payload itself (`_merged_payload`), the bitemporal analogue of an
+        # edited copy's effective change set.
+        observation = _temporal_observation(meta, declaring, row, proc, latest_pinned=True)
+        if not assignment_bearing:
+            return key, observation, dict(pk_row)
+        new_row, changed = _apply_assignments(meta, declaring, pk_row, row, assignments)
+        return key, observation, (new_row if changed else None)
+
+    # Audit-only: `audit_write.plan` chains the instruction's OWN authored
+    # FULL row verbatim (never a separate observed payload), so the full
+    # merge happens HERE — the resolved row's own scalar payload (VO
+    # documents omitted; row-form never projects one) with the assignments
+    # overlaid.
+    if not assignment_bearing:
+        # A plain (chain-free) audit-only `terminate` records NO observation
+        # at all (`m-value-object-047`'s own witness): unlike a CHAINING
+        # close, whose optimistic `and in_z = ?` gate protects the chained
+        # INSERT from carrying stale merged data forward
+        # (`m-audit-write-006`), a bare terminate's predicate (`pk and
+        # out_z = infinity`) already matches — and correctly closes —
+        # whichever row is CURRENTLY open, achieving the SAME intended end
+        # state (no row left open) regardless of which exact milestone a
+        # concurrent writer may have chained in between; gating buys no
+        # additional protection, so `audit_write.plan` receives no
+        # observation to build a `gate_in_z` candidate from at all (contrast
+        # a BITEMPORAL plain terminate, `m-bitemp-write-011`, whose close
+        # gates unconditionally — its own head re-insert STRUCTURALLY needs
+        # the observed rectangle regardless of gating, so the gate composes
+        # as a side effect there, never a deliberate per-mutation choice).
+        return key, None, dict(pk_row)
+    observation = Observation(in_z=in_z, latest_pinned=True)
+    full_row: dict[str, object] = {
+        **pk_row,
+        **_row_payload(meta, declaring, row, {proc.from_column, proc.to_column}),
+    }
+    new_row, changed = _apply_assignments(meta, declaring, full_row, row, assignments)
+    return key, observation, (new_row if changed else None)
+
+
+def _apply_assignments(
+    meta: Metamodel,
+    entity: Entity,
+    base_row: Mapping[str, object],
+    row: Row,
+    assignments: Mapping[str, object],
+) -> tuple[dict[str, object], bool]:
+    """Overlay ``assignments`` (declared member name -> new value) onto
+    ``base_row``, reporting whether at least one assigned member's value
+    genuinely DIFFERS from ``row``'s own resolved value (`m-opt-lock` per-row
+    no-op elimination — structural equality, the SAME comparison a keyed
+    no-op's effective-change-set test uses). ``row`` is the row-form RESOLVED
+    row the comparison reads from; ``base_row`` is what the eventual keyed
+    write carries."""
+    members = _members(meta, entity)
+    new_row = dict(base_row)
+    changed = False
+    for member, value in assignments.items():
+        column = members[member][0]
+        if value != row.get(column):
+            changed = True
+        new_row[member] = value
+    return new_row, changed
 
 
 def _entity_record_of_instance(instance: EntityBase) -> Entity:
@@ -1554,6 +2184,13 @@ class Database:
                     flush_executor=_flush_executor(
                         conn, self._meta, self._dialect, options.concurrency
                     ),
+                    # The injected `m-batch-write` collapse vocabulary (COR-3
+                    # Phase 8 increment 5) — `parallax.snapshot.handle` is the
+                    # sole module cleared to import both `batch_write` and
+                    # `m-unit-work`, so it supplies the SAME policy the
+                    # conformance compile lane injects into its own direct
+                    # `plan_flush` calls (`parallax.conformance.engine`).
+                    collapse_policy=batch_write.collapses,
                 )
 
             return self._port.transaction(in_txn)

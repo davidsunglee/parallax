@@ -23,11 +23,12 @@ import pytest
 import inheritance_models as im
 import mirrored_models as mm
 from parallax.conformance import models
-from parallax.core import opt_lock
+from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, inheritance, opt_lock
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity import metamodel
 from parallax.core.unit_work import (
     EscapedTransactionError,
     FixedClock,
@@ -51,7 +52,38 @@ _BALANCE = models.load_models()["balance"]
 _CONTACT = models.load_models()["contact"]
 _SHIPMENT = models.load_models()["shipment"]
 _PAYMENT = models.load_models()["payment"]
+_PERSON = models.load_models()["person"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+
+
+# A LOCAL bitemporal entity (no shared mirror exists for `models/position.yaml`
+# yet) — the `_where`-verb materialization tests' own bounded/plain rectangle-
+# split fixture.
+class WherePosition(Entity, frozen=True):
+    __parallax__ = EntityConfig(
+        table="where_position",
+        namespace="parallax.compatibility",
+        mutability="transactional",
+        as_of=(
+            AsOfAttribute(
+                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            ),
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    acct_num: Attr[str] = Field(max_length=32)
+    value: Attr[Decimal] = Field(type="decimal(18,2)")
+    business_from: Attr[dt.datetime] = Field(column="from_z")
+    business_to: Attr[dt.datetime] = Field(column="thru_z")
+    processing_from: Attr[dt.datetime] = Field(column="in_z")
+    processing_to: Attr[dt.datetime] = Field(column="out_z")
+
+
+_WHERE_POSITION_META = metamodel([WherePosition])
 
 _NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
 
@@ -913,3 +945,292 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 
     assert db.transact(outer) == "caught"
     assert port.begins == 2
+
+
+# --------------------------------------------------------------------------- #
+# Predicate-selected `_where` verb family (COR-3 Phase 8 increment 5;          #
+# python.md §5): the bare-statement guard, inheritance rejection, business-    #
+# bound validation, readless dispatch, and materialization (resolve + per-row #
+# no-op elimination + the atomic-unit buffering, ADR 0014).                    #
+# --------------------------------------------------------------------------- #
+def test_readless_update_where_buffers_one_statement_no_read() -> None:
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
+
+    Database.connect(port, _PERSON, clock=FixedClock(_FIXED)).transact(fn)
+    assert port.ops == [
+        ("begin",),
+        ("write", POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Ada", 1)),
+        ("commit",),
+    ]
+
+
+def test_readless_delete_where_buffers_one_statement_no_read() -> None:
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.delete_where(mm.Person.where(mm.Person.id == 1))
+
+    Database.connect(port, _PERSON, clock=FixedClock(_FIXED)).transact(fn)
+    assert port.ops == [
+        ("begin",),
+        ("write", POSTGRES.to_driver_sql("delete from person where id = ?"), (1,)),
+        ("commit",),
+    ]
+
+
+def test_where_verb_rejects_a_non_bare_statement() -> None:
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
+
+    with pytest.raises(ValueError, match="bare statement"):
+        Database.connect(port, _PERSON, clock=FixedClock(_FIXED)).transact(fn)
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_where_verb_rejects_an_inheritance_family_target() -> None:
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            im.CardPayment.where(im.CardPayment.id == 1), im.CardPayment.amount.set(Decimal("1.00"))
+        )
+
+    with pytest.raises(inheritance.InheritanceError, match="subtype-write-set-based-unsupported"):
+        Database.connect(port, _PAYMENT, clock=FixedClock(_FIXED)).transact(fn)
+    assert not any(op[0] in ("read", "write") for op in port.ops)
+
+
+def test_bitemporal_where_verb_requires_business_from() -> None:
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WherePosition.where(WherePosition.id == 1), WherePosition.value.set(Decimal("1.00"))
+        )
+
+    with pytest.raises(ValueError, match="requires business_from"):
+        Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(fn)
+
+
+def test_audit_only_where_verb_forbids_business_from() -> None:
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_where(mm.Balance.where(mm.Balance.id == 1), business_from=_FIXED)
+
+    with pytest.raises(ValueError, match="takes no business_from"):
+        Database.connect(port, _BALANCE, clock=FixedClock(_FIXED)).transact(fn)
+
+
+def test_non_temporal_where_verb_forbids_business_from() -> None:
+    port = _RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"), business_from=_FIXED
+        )
+
+    with pytest.raises(ValueError, match="takes no business_from"):
+        Database.connect(port, _PERSON, clock=FixedClock(_FIXED)).transact(fn)
+
+
+def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest() -> None:
+    # m-opt-lock-014's own shape: TWO resolved rows, one already equal to the
+    # assigned value (skipped: no DML, no version advance), one genuinely
+    # changed (one gated per-row UPDATE).
+    port = _RecordingPort(
+        rows=[
+            {"id": 1, "owner": "Ada", "balance": 100.00, "version": 1},
+            {"id": 3, "owner": "Grace", "balance": 10.00, "version": 1},
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            mm.Account.where(mm.Account.balance < 200), mm.Account.balance.set(Decimal("100.00"))
+        )
+
+    _db(port).transact(fn, concurrency="optimistic")
+    kinds = [op[0] for op in port.ops]
+    assert kinds == ["begin", "read", "write", "commit"]
+    write_sql, write_binds = port.ops[2][1], port.ops[2][2]
+    assert write_sql == POSTGRES.to_driver_sql(
+        "update account set balance = ?, version = ? where id = ? and version = ?"
+    )
+    assert write_binds == (100.00, 2, 3, 1)  # account 1's no-op row never wrote
+
+
+def test_materializing_delete_where_writes_every_resolved_row() -> None:
+    # m-opt-lock-015's own shape: delete has no assignment equality to test,
+    # so every resolved row writes — N always equals the resolved-row count.
+    port = _RecordingPort(
+        rows=[
+            {"id": 1, "owner": "Ada", "balance": 100.00, "version": 1},
+            {"id": 3, "owner": "Grace", "balance": 10.00, "version": 1},
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.delete_where(mm.Account.where(mm.Account.balance < 200))
+
+    _db(port).transact(fn, concurrency="optimistic")
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 2
+    assert writes[0][2] == (1, 1)
+    assert writes[1][2] == (3, 1)
+
+
+def test_materializing_write_with_zero_resolved_rows_writes_nothing() -> None:
+    # DQ2 rider 4 / m-batch-write.md "Zero resolved rows -> zero keyed writes,
+    # success" — a materializing write that resolves nothing still commits
+    # cleanly, with no keyed writes at all.
+    port = _RecordingPort(rows=[])
+
+    def fn(tx: Transaction) -> None:
+        tx.delete_where(mm.Account.where(mm.Account.balance < 0))
+
+    _db(port).transact(fn)
+    assert port.ops == [("begin",), ("read", port.ops[1][1], port.ops[1][2]), ("commit",)]
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_materializing_terminate_where_over_an_audit_only_target() -> None:
+    port = _RecordingPort(
+        rows=[
+            {
+                "bal_id": 1,
+                "acct_num": "A",
+                "val": 150.00,
+                "in_z": "2024-01-01T00:00:00+00:00",
+                "out_z": "infinity",
+            }
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
+
+    Database.connect(port, _BALANCE, clock=FixedClock(_FIXED)).transact(fn)
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 1  # a processing-only close, no chain
+    assert writes[0][1] == POSTGRES.to_driver_sql(
+        "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    )
+    assert writes[0][2] == ("2024-06-01T00:00:00+00:00", 1, "infinity")
+
+
+def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
+    # `audit_write.plan` chains the instruction's OWN authored FULL row —
+    # never a separate observed payload — so materialization must merge the
+    # resolved row's own unassigned scalar payload (acct_num) forward itself.
+    port = _RecordingPort(
+        rows=[
+            {
+                "bal_id": 1,
+                "acct_num": "A",
+                "val": 150.00,
+                "in_z": "2024-01-01T00:00:00+00:00",
+                "out_z": "infinity",
+            }
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            mm.Balance.where(mm.Balance.value < 200), mm.Balance.value.set(Decimal("175.00"))
+        )
+
+    Database.connect(port, _BALANCE, clock=FixedClock(_FIXED)).transact(fn)
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 2  # close then chain
+    chain_sql, chain_binds = writes[1][1], writes[1][2]
+    assert chain_sql == POSTGRES.to_driver_sql(
+        "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
+    )
+    assert chain_binds == (1, "A", 175.00, "2024-06-01T00:00:00+00:00", "infinity")
+
+
+def _position_row() -> Row:
+    return {
+        "id": 1,
+        "acct_num": "A",
+        "value": 200.00,
+        "from_z": "2024-01-01T00:00:00+00:00",
+        "thru_z": "infinity",
+        "in_z": "2024-01-01T00:00:00+00:00",
+        "out_z": "infinity",
+    }
+
+
+def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
+    port = _RecordingPort(rows=[_position_row()])
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WherePosition.where(WherePosition.id == 1),
+            WherePosition.value.set(Decimal("300.00")),
+            business_from=business_from,
+        )
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 3  # close + head (old) + new tail
+
+
+def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
+    port = _RecordingPort(rows=[_position_row()])
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_where(WherePosition.where(WherePosition.id == 1), business_from=business_from)
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 2  # close + head only (no tail)
+
+
+def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
+    port = _RecordingPort(rows=[_position_row()])
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.update_until_where(
+            WherePosition.where(WherePosition.id == 1),
+            WherePosition.value.set(Decimal("300.00")),
+            business_from=business_from,
+            until=until,
+        )
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 4  # close + head + middle + tail
+
+
+def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
+    port = _RecordingPort(rows=[_position_row()])
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_until_where(
+            WherePosition.where(WherePosition.id == 1), business_from=business_from, until=until
+        )
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 3  # close + head + tail (no middle)
