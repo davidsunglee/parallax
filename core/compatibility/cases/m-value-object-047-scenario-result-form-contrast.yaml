@@ -22,13 +22,21 @@
 #   2  terminate (predicate = name Nordic Foods) : closes the resolved current row
 #      (out_z = at). A processing-only close copies no payload, so no document rides a
 #      read here; a reassigned document would ride the write instruction, not the read.
-#   3  find (Nordic Foods, out_z = the close instant) : verify — INSTANCE-FORM managed
-#      find, the SAME form as step 0 (slot 4 present, projects `address`). It reads the
-#      now-CLOSED milestone (out_z was infinity, is now the terminate instant
-#      2024-10-01), a NON-EMPTY result that BOTH proves the terminate landed (out_z set to
-#      the close instant, so it is no longer open) AND exercises the instance-form slot-4
-#      `address` projection with real data — so dropping `address` from this golden /
-#      referenceSql now FAILS (a regression-sensitive read, not a vacuous empty one).
+#   3  find (Nordic Foods, asOf processingDate = 2024-08-01) : verify — INSTANCE-FORM
+#      managed find, the SAME form as step 0 (slot 4 present, projects `address`).
+#      asOf-pins the processing axis strictly INSIDE the now-closed window
+#      [2024-06-01, 2024-10-01), so the containment predicate (`in_z <= ? and
+#      out_z > ?`) resolves the superseded milestone rather than defaulting to the
+#      current-row form. The RETURNED row's own out_z column (expectRows, graded by
+#      exact scalar equality regardless of the selecting predicate) is what proves
+#      the terminate landed at exactly 2024-10-01 — a NON-EMPTY read that ALSO
+#      exercises the instance-form slot-4 `address` projection with real data, so
+#      dropping `address` from this golden / referenceSql now FAILS (a
+#      regression-sensitive read, not a vacuous empty one). A plain (non-asOf) find
+#      defaults to the current-row predicate and can never render this golden —
+#      NOTHING lowers `out_z = <finite instant>`, only `out_z = infinity` for
+#      latest — so the asOf form is the only vocabulary that reaches a closed
+#      milestone by its own finite instant.
 #
 # The instance-form goldens (the managed finds, steps 0 and 3) project `address`; the
 # row-form goldens (the predicate-write resolving read, step 1) do not. The harness
@@ -97,15 +105,27 @@ when:
           binds: ["2024-10-01T00:00:00+00:00", 1, infinity]
     - targetEntity: Supplier
       find:
-        eq: { attr: Supplier.name, value: Nordic Foods }
+        asOf:
+          operand:
+            eq: { attr: Supplier.name, value: Nordic Foods }
+          asOfAttr: Supplier.processingDate
+          date: "2024-08-01T00:00:00+00:00"
       roundTrips: 1
-      note: verify (INSTANCE-FORM managed find, same form as step 0, slot 4 present) — reads the now-CLOSED milestone (out_z = the terminate instant), a NON-EMPTY read that proves the terminate landed AND exercises the slot-4 address projection
+      note: >-
+        verify (INSTANCE-FORM managed find, same form as step 0, slot 4 present) —
+        asOf-pins the processing axis strictly INSIDE the now-closed window
+        [2024-06-01, 2024-10-01), so the containment predicate resolves the
+        superseded milestone rather than defaulting to the current row; the
+        RETURNED row's own out_z column (expectRows, graded by exact scalar
+        equality regardless of the selecting predicate) is what proves the
+        terminate landed at exactly 2024-10-01. A NON-EMPTY read that also
+        exercises the instance-form slot-4 address projection with real data.
       statements:
         - sql:
-            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
-            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.out_z = ?
-          binds: [Nordic Foods, "2024-10-01T00:00:00+00:00"]
-      referenceSql: select sup_id, name, in_z, out_z, address from supplier where name = 'Nordic Foods' and out_z = '2024-10-01T00:00:00+00:00'
+            postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.in_z <= ? and t0.out_z > ?
+            mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.name = ? and t0.in_z <= ? and t0.out_z > ?
+          binds: [Nordic Foods, "2024-08-01T00:00:00+00:00", "2024-08-01T00:00:00+00:00"]
+      referenceSql: select sup_id, name, in_z, out_z, address from supplier where name = 'Nordic Foods' and in_z <= '2024-08-01T00:00:00+00:00' and out_z > '2024-08-01T00:00:00+00:00'
       expectRows:
         - sup_id: 1
           name: Nordic Foods

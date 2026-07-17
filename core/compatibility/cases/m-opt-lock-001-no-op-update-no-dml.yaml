@@ -1,59 +1,87 @@
-# No-op update issues no DML (m-opt-lock): a versioned update that changes no attribute
-# emits NO statement — zero round trips.
+# Single-transaction no-op update issues no DML (m-opt-lock): a versioned update
+# whose effective change set is empty emits NO statement — zero round trips —
+# inside the SAME unit of work as its observing find and its dependent verify
+# read (m-unit-work `uow` step grouping).
 #
 # The old always-write rule (removed with case 0707) had a versioned UPDATE bump
 # the version even when no domain field changed. That rule is replaced: the
 # version advances on every UPDATE an implementation ISSUES, but an update whose
-# `set` changes NO attribute issues no DML at all. A no-domain-change write does
-# not need to bump the version — a concurrent editor advances it itself — so the
-# only effect the old rule had was overhead writes and spurious conflicts.
+# effective change set is empty issues no DML at all — the PK-only sparse row
+# (`{ id: 2 }`, no attribute keys) is the honest instruction-level encoding of a
+# same-value developer update. A concurrent editor advances the version itself,
+# so a no-domain-change write does not need to bump it — the only effect the old
+# rule had was overhead writes and spurious conflicts.
 #
-# The scenario proves the observable: a no-op write step costs ZERO round trips
-# and lists no golden SQL (mirroring a cache-hit read step). Because nothing was
-# written, the cache is not invalidated, so the follow-up find is a cache HIT that
-# reuses the first find's rows — the row is unchanged (balance 250.00, version 1).
-#   step 0 find  : cache MISS — read account 2 (Linus, 250.00, version 1), 1 round trip
-#   step 1 write : a versioned update whose set changes nothing ⇒ NO DML, 0 round trips
-#   step 2 find  : cache HIT (0 round trips) — the SAME row, unchanged
-# The unit of work runs in the DEFAULT `locking` mode, so the step-0 object find
-# carries the m-read-lock shared-row-lock suffix (`for share of t0`); the step-2
-# cache HIT stays lock-correct because step 0's shared lock is held for the
-# transaction's duration. roundTrips = 1 (the single find; the no-op write and the
-# hit cost nothing).
+# The intent was always single-transaction (the shared lock is "held for the
+# transaction's duration"), but the case predates the `uow` step-grouping
+# vocabulary and was never retrofitted until now. All three steps share ONE
+# `uow` group (`observe-noop-verify`): the observing find, the no-op write, and
+# the dependent verify find run inside the SAME held transaction — the SAME
+# shape `m-unit-work-005` proves for an OBSERVED update, specialized to the
+# no-op case. That grouping is what makes the shared-row-lock claim true, and
+# licenses the write's PK-only elision: with no version bind to derive, the
+# write's compile eligibility derives from the group's own observing find, a
+# QUERY RESULT — `compileEligibility: run-only` (query-result-dependent).
+#   step 0 find  : observe account 2 (Linus, 250.00, version 1), 1 round trip.
+#   step 1 write : a versioned update whose effective change set is empty
+#                  (PK-only row) ⇒ NO DML, 0 round trips, no version advance.
+#   step 2 find  : a REAL dependent read (no query cache exists —
+#                  `m-identity-map` "the identity map is not a query cache") that
+#                  observes the SAME unchanged row (balance 250.00, version 1)
+#                  through the group's own held transaction, 1 round trip. The
+#                  group COMMITS after this, its last step.
+# The unit of work runs in the DEFAULT `locking` mode, so both finds carry the
+# m-read-lock shared-row-lock suffix (`for share of t0`) — step 0's shared lock
+# is held for the WHOLE group's duration, which is what makes step 2's read
+# lock-correct. The zero-round-trip repeated-find / query-cache claim this case
+# used to pin belongs to `m-process-cache-001` (deferred module) — a real read
+# here instead directly proves the version-unchanged regression. roundTrips = 2
+# (the observing find + the dependent verify find; the no-op write costs
+# nothing).
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, no-op, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the no-op write's licensing derives from the group's own observing find - a query result (m-opt-lock, m-unit-work uow grouping)"
 when:
   scenario:
-    - targetEntity: Account
+    - uow: observe-noop-verify
+      targetEntity: Account
       find:
         eq:
           attr: Account.id
           value: 2
       roundTrips: 1
-      note: cache MISS — read account 2 (balance 250.00, version 1)
+      note: observe account 2 (Linus, 250.00, version 1), inside the SAME unit of work as the no-op write and verify find below
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-    - write:
+    - uow: observe-noop-verify
+      write:
         - mutation: update
           entity: Account
           rows:
-            - { id: 2, balance: 250.00 }
+            - { id: 2 }
       roundTrips: 0
-      note: a versioned update whose set changes no attribute issues NO DML (no golden SQL)
-    - targetEntity: Account
+      note: no attribute changes (PK-only sparse row) ⇒ NO DML, no version advance
+    - uow: observe-noop-verify
+      targetEntity: Account
       find:
         eq:
           attr: Account.id
           value: 2
-      roundTrips: 0
-      sameObjectAs: 0
-      note: cache HIT — the no-op did not invalidate the cache; the row is unchanged
+      roundTrips: 1
+      note: a real dependent read (no query cache exists) — observes the SAME unchanged row through the group's own held transaction; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: 250.00, version: 1 }
 then:
-  roundTrips: 1
+  roundTrips: 2
