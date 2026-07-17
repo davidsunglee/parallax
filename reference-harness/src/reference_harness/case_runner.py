@@ -3935,10 +3935,11 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # A lifecycle ACTION step (m-case-format, COR-30): execute its golden SQL
                 # (a load / access relationship query, a flush / mergeBack / commit DML)
                 # and grade its row-level observables; identity / state / error observables
-                # are adapter-delegated (validated, then skipped on the wire lane). Grouped,
-                # it runs on the group's own held session, exactly like a write / find step.
-                reader_writer: Any = session if session is not None else db
-                rows = _run_scenario_action(case, reader_writer, index, step, pairs, results)
+                # are adapter-delegated (validated, then skipped on the wire lane). The
+                # schema forbids `uow` on an action step (it routes through the
+                # lifecycle-object engine path, which never observes grouping), so it
+                # always executes on the provider's autocommit connection.
+                rows = _run_scenario_action(case, db, index, step, pairs, results)
                 read_entity = _scenario_step_read_entity(case, step, step_entities)
                 if pairs and read_entity is not None:
                     # A FRESHLY-resolved load / first access materializes the value-object
@@ -3952,7 +3953,6 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 _assert_step_row_observables(
                     case, index, step, rows, results, tolerance, default_identity
                 )
-                _finish_uow_group(case, index, label, group_states)
                 continue
             # Every remaining step is a read (`find`, per the schema's exactly-one-of
             # find/write/action): its read entity resolves through the SAME per-step
