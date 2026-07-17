@@ -130,6 +130,18 @@ def test_placeholder_translation(dialect: Dialect) -> None:
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_from_driver_sql_reverses_placeholder_translation(dialect: Dialect) -> None:
+    # `from_driver_sql` is `to_driver_sql`'s reverse (COR-3 Phase 8 increment 5):
+    # the conformance engine's materializing-predicate-write capture reports
+    # ACTUAL driver SQL it did not itself lower, so it round-trips that text back
+    # to canonical `?`-placeholder form before joining it with every other
+    # (canonically-lowered) emission.
+    canonical = "select t0.id from t where t0.id = ?"
+    assert dialect.from_driver_sql(dialect.to_driver_sql(canonical)) == canonical
+    assert dialect.from_driver_sql("select t0.id from t where t0.id = %s") == canonical
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_error_classification(dialect: Dialect) -> None:
     assert dialect.classify("23505") == "uniqueViolation"
     assert dialect.classify("40P01") == "deadlock"

@@ -27,9 +27,10 @@ _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-r
 _RUN_ONLY_CASE = (
     case_format.default_cases_dir() / "m-audit-write-006-optimistic-gated-chaining-update.yaml"
 )
-# A materializing predicate-write scenario (COR-3 Phase 8 increment 5's own
-# deferral) — still a genuine engine gap post increment 4's DQ4 re-route,
-# unlike `_RUN_ONLY_CASE` (m-audit-write-006), which now succeeds.
+# A materializing predicate-write scenario (COR-3 Phase 8 increment 5 lands
+# support for it against a real port); against `_FakePort` — a wrong-shaped
+# canned row and a write path that always raises — it still surfaces a loud
+# `run-failed` error, exercising this lane's own error-reporting contract.
 _ENGINE_GAP_CASE = (
     case_format.default_cases_dir() / "m-audit-write-007-predicate-terminate-materialize.yaml"
 )
@@ -284,10 +285,12 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
 
 def test_run_case_error_on_an_engine_gap() -> None:
     # `_ENGINE_GAP_CASE` (m-audit-write-007) is a materializing predicate-write
-    # scenario (a bare `PredicateWrite` target, `write-instruction.schema.json`
-    # keyed-only buffer) — COR-3 Phase 8 increment 5's own deferral, so this
-    # lane still reports a loud `run-failed` error rather than silently
-    # mishandling it.
+    # scenario (COR-3 Phase 8 increment 5): its `_FakePort` returns a canned
+    # row shaped for a DIFFERENT model and raises `NotImplementedError` on any
+    # write, so materialization's own internal resolve/write sequence fails —
+    # this lane still reports a loud `run-failed` error rather than silently
+    # mishandling it (a real port drives this case successfully, `test_run_
+    # sweep.py::test_write_run_sweep`, Docker-gated).
     envelope = adapter.run_case(_ENGINE_GAP_CASE, "postgres", _FakePort())
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "error"
@@ -635,24 +638,39 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
     assert json.loads(json.dumps(envelope)) == envelope
 
 
-def test_run_case_refuses_a_genuine_batch_collapse_write_before_execution() -> None:
+class _WriteAndReadBackPort:
+    """A no-Docker port that accepts writes (never raising) and answers every
+    read with empty rows — enough for a writeSequence case's trailing
+    ``read_table_state`` call-back, which this test does not inspect."""
+
+    def __init__(self) -> None:
+        self.writes = 0
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        return []
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.writes += 1
+        return 1
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+
+def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
     # m-batch-write-001: a reachable claimed writeSequence whose FIRST entry
     # buffers three inserts collapsing into ONE multi-row INSERT (`statements:
     # 1` for 3 rows — the case author's own declared batch-COLLAPSE intent,
-    # `m-batch-write` "Set-based flush"). The set-based flush collapse lands
-    # with the write path (COR-3 Phase 8 increment 5): the engine passes the
-    # whole row list through as one multi-row instruction (never silently
-    # decomposing it into per-row statements no golden this shape authors),
-    # and `lower_write`'s own multi-row refusal fires BEFORE execution — an
-    # `error` envelope naming the deferral, and the port never sees a
-    # statement.
+    # `m-batch-write` "Set-based flush") and whose SECOND entry batches a
+    # uniform-value UPDATE over an `IN`-list (COR-3 Phase 8 increment 5): the
+    # engine passes each row list through as one multi-row instruction, and
+    # `lower_write` renders it end to end — two `execute_write` calls total.
     case_path = case_format.default_cases_dir() / "m-batch-write-001-set-based-flush.yaml"
-    port = _TriggerPort(raise_on=None)
+    port = _WriteAndReadBackPort()
     envelope = adapter.run_case(case_path, "postgres", port)
-    assert envelope["status"] == "error"
-    # The refusal names its landing phase explicitly (forward-error posture).
-    assert "COR-3 Phase 8 increment 5; m-batch-write" in envelope["diagnostics"][0]["message"]
-    assert port.writes == 0  # refused pre-execution — nothing reached the port
+    assert envelope["status"] == "ok", envelope
+    assert envelope["observations"]["roundTrips"] == 2
+    assert port.writes == 2
 
 
 def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> None:

@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 import pytest
@@ -650,12 +650,10 @@ def test_rows_carrying_observation_keys_decompose_per_row_even_when_unversioned(
     ]
 
 
-def test_uniform_multi_row_update_collapses_toward_the_increment_5_refusal() -> None:
+def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
     # m-batch-write-001's own update entry: an UNVERSIONED target whose rows
-    # assign the SAME value collapses into ONE multi-row instruction — the
-    # set-based batch collapse itself lands with a later write increment, so
-    # this surfaces as `lower_write`'s own honest multi-row refusal, never a
-    # wrong (silently per-row) emission.
+    # assign the SAME value collapses into ONE multi-row `IN`-list UPDATE
+    # (COR-3 Phase 8 increment 5; m-batch-write "Set-based flush").
     case = _synthetic_write(
         "writeSequence",
         {
@@ -675,8 +673,10 @@ def test_uniform_multi_row_update_collapses_toward_the_increment_5_refusal() -> 
             },
         },
     )
-    with pytest.raises(engine.EngineError, match=r"multi-row keyed 'update'.*increment 5"):
-        engine.compile_write_sequence_case(case, "postgres")
+    emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
+    assert round_trips == 1
+    assert [e.sql for e in emissions] == ["update wallet set balance = ? where id in (?, ?)"]
+    assert emissions[0].binds == (500.00, 10, 11)
 
 
 def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
@@ -772,11 +772,11 @@ def test_authored_statement_count_mismatch_is_rejected() -> None:
         engine.compile_write_sequence_case(case, "postgres")
 
 
-def test_predicate_shaped_scenario_write_refuses_loudly_not_a_keyerror() -> None:
-    # Finding E: a structured PREDICATE-write instruction (`target`/
-    # `predicate`, m-batch-write-005's own shape) reaching this seam refuses
-    # loudly naming increment 5 — never a bare `KeyError` from indexing a
-    # mapping as though it were the keyed-write entry list.
+def test_predicate_shaped_scenario_write_lowers_readless_not_a_keyerror() -> None:
+    # Finding E's own witness (`m-batch-write-005`'s shape): a structured
+    # PREDICATE-write instruction (`target`/`predicate`) reaching the scenario
+    # compile lane is never mistaken for a keyed-write entry list (no bare
+    # `KeyError`) — COR-3 Phase 8 increment 5 lowers it readless end to end.
     case = _synthetic_write(
         "scenario",
         {
@@ -798,15 +798,17 @@ def test_predicate_shaped_scenario_write_refuses_loudly_not_a_keyerror() -> None
             },
         },
     )
-    with pytest.raises(engine.EngineError, match=r"predicate-selected.*increment 5"):
-        engine.compile_scenario_case(case, "postgres")
+    emissions, round_trips = engine.compile_scenario_case(case, "postgres")
+    assert round_trips == 1
+    assert [e.sql for e in emissions] == ["delete from wallet where balance < ?"]
+    assert emissions[0].binds == (200.00,)
 
 
 def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
-    # Defensive coverage for the writeSequence path (no current corpus case
-    # reaches it — every predicate-write witness is `scenario`-shaped — but
-    # `_build_instructions` is shared, so this pins the SAME loud refusal
-    # rather than a bare `KeyError('entity')`.
+    # Defensive coverage for the writeSequence path: the writeSequence entry
+    # vocabulary is keyed-only (`m-case-format`) — a structured predicate
+    # instruction is scenario-write-only, so `_build_instructions` refuses it
+    # loudly rather than a bare `KeyError('entity')`.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -824,8 +826,261 @@ def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
             },
         },
     )
-    with pytest.raises(engine.EngineError, match=r"predicate-selected.*increment 5"):
+    with pytest.raises(engine.EngineError, match=r"scenario-write-only"):
         engine.compile_write_sequence_case(case, "postgres")
+
+
+def test_canonical_predicate_doc_maps_until_to_business_to_and_drops_at() -> None:
+    # `m-case-format`'s own predicate-write authoring aliases: `at` (the
+    # Clock-context processing-instant authoring alias) is dropped — never an
+    # instruction field, ADR 0010; `until` (the businessTo authoring alias)
+    # canonicalizes to the instruction-level `businessTo` field.
+    # `businessFrom` is already axis-explicit and needs no translation.
+    doc = engine._canonical_predicate_doc(  # pyright: ignore[reportPrivateUsage]
+        {
+            "mutation": "terminateUntil",
+            "target": {
+                "entity": "Position",
+                "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+            },
+            "at": "2024-10-01T00:00:00+00:00",
+            "businessFrom": "2024-07-01T00:00:00+00:00",
+            "until": "2024-09-01T00:00:00+00:00",
+        }
+    )
+    assert "at" not in doc
+    assert doc["businessFrom"] == "2024-07-01T00:00:00+00:00"
+    assert doc["businessTo"] == "2024-09-01T00:00:00+00:00"
+
+
+def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
+    # `m-batch-write-005`'s own shape, run end to end (no Docker): an
+    # unversioned, non-temporal target's predicate delete buffers through
+    # `Transaction._buffer_predicate_instruction` and lowers to ONE readless
+    # statement — `_run_readless_predicate_write`'s own production seam.
+    case = _synthetic_write(
+        "scenario",
+        {
+            "model": "models/wallet.yaml",
+            "when": {
+                "scenario": [
+                    {
+                        "write": {
+                            "mutation": "delete",
+                            "target": {
+                                "entity": "Wallet",
+                                "predicate": {
+                                    "lessThan": {"attr": "Wallet.balance", "value": 200.00}
+                                },
+                            },
+                        }
+                    }
+                ]
+            },
+        },
+    )
+    port = FakeWritePort()
+    emissions, round_trips = engine.run_scenario_case(case, "postgres", port)
+    assert round_trips == 1
+    assert emissions[0].case_pointer == "/scenario/0/write"
+    assert emissions[0].sql == "delete from wallet where balance < ?"
+    assert len(port.writes) == 1 and port.commits == 1
+
+
+def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> None:
+    # A VERSIONED target's predicate delete MATERIALIZES (ADR 0014): the
+    # scenario's own preceding find step pairs with it
+    # (`_run_materializing_pair`), resolving through the SAME `FakeWritePort`
+    # connection the subsequent gated per-row delete commits on — no Docker.
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {
+                "scenario": [
+                    {
+                        "targetEntity": "Account",
+                        "find": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                    },
+                    {
+                        "write": {
+                            "mutation": "delete",
+                            "target": {
+                                "entity": "Account",
+                                "predicate": {
+                                    "lessThan": {"attr": "Account.balance", "value": 200.00}
+                                },
+                            },
+                        }
+                    },
+                ]
+            },
+        },
+    )
+    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    emissions, round_trips = engine.run_scenario_case(case, "postgres", port)
+    assert round_trips == 2
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
+    assert emissions[1].sql == "delete from account where id = ? and version = ?"
+    assert len(port.writes) == 1 and len(port.reads) == 1 and port.commits == 1
+
+
+def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_the_round_trip() -> (
+    None
+):
+    # `_run_readless_predicate_write`'s own abort contract mirrors the keyed-
+    # write one (`test_run_scenario_case_rollback_step_aborts_but_counts_the_
+    # round_trip`): the golden DML still executes (and counts its round trip)
+    # before the forced flush + intentional abort discards it.
+    case = _synthetic_write(
+        "scenario",
+        {
+            "model": "models/wallet.yaml",
+            "when": {
+                "scenario": [
+                    {
+                        "write": {
+                            "mutation": "delete",
+                            "target": {
+                                "entity": "Wallet",
+                                "predicate": {
+                                    "lessThan": {"attr": "Wallet.balance", "value": 200.00}
+                                },
+                            },
+                        },
+                        "rollback": True,
+                    }
+                ]
+            },
+        },
+    )
+    port = FakeWritePort()
+    emissions, round_trips = engine.run_scenario_case(case, "postgres", port)
+    assert round_trips == 1
+    assert emissions[0].sql == "delete from wallet where balance < ?"
+    assert len(port.writes) == 1
+    assert port.commits == 0 and port.rollbacks == 1
+
+
+def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip() -> None:
+    # `_run_materializing_pair`'s own abort contract: the resolve AND the
+    # per-row gated DML it licenses still execute (and count their round
+    # trips) before the forced flush + intentional abort discards them —
+    # `_run_uow_group`'s doomed-group behavior, reproduced for a
+    # materializing pair's own single held transaction.
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {
+                "scenario": [
+                    {
+                        "targetEntity": "Account",
+                        "find": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                    },
+                    {
+                        "write": {
+                            "mutation": "delete",
+                            "target": {
+                                "entity": "Account",
+                                "predicate": {
+                                    "lessThan": {"attr": "Account.balance", "value": 200.00}
+                                },
+                            },
+                        },
+                        "rollback": True,
+                    },
+                ]
+            },
+        },
+    )
+    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    emissions, round_trips = engine.run_scenario_case(case, "postgres", port)
+    assert round_trips == 2
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
+    assert emissions[1].sql == "delete from account where id = ? and version = ?"
+    assert len(port.writes) == 1 and len(port.reads) == 1
+    assert port.commits == 0 and port.rollbacks == 1
+
+
+def test_is_materializing_write_step_returns_none_for_a_keyed_write_shape() -> None:
+    # `_is_materializing_write_step`'s SHAPE guard: a keyed-write step's
+    # `write` field is the buffered-entry LIST (`m-case-format`'s
+    # `bufferedWriteSequence` shape) — never a `PredicateWrite` pairing
+    # candidate. Peeked by the scenario run lane's own one-step look-ahead
+    # (`run_scenario_case`); no reachable corpus scenario puts an ungrouped
+    # find immediately before an ungrouped keyed write (every such adjacency
+    # is either `uow`-grouped or predicate-shaped), so this pins the guard
+    # directly at the function level.
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    step: Mapping[str, object] = {
+        "write": [{"mutation": "insert", "entity": "Account", "rows": [{"id": 1}]}]
+    }
+    assert (
+        engine._is_materializing_write_step(step, meta)  # pyright: ignore[reportPrivateUsage]
+        is None
+    )
+
+
+def test_is_materializing_write_step_returns_none_for_a_non_predicate_mapping() -> None:
+    # Defensive coverage: a `write` field that IS a mapping but deserializes
+    # to something other than a `PredicateWrite` (never schema-legal — the
+    # mapping `write` shape is `predicateWrite`-only, `m-case-format`) still
+    # falls through to `None` rather than an assertion failure.
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    step: Mapping[str, object] = {
+        "write": {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 1.0}]}
+    }
+    assert (
+        engine._is_materializing_write_step(step, meta)  # pyright: ignore[reportPrivateUsage]
+        is None
+    )
+
+
+def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> None:
+    # `_run_materializing_pair`'s own internal target-match guard: its SOLE
+    # production caller (`run_scenario_case`'s look-ahead) already verifies
+    # `find_step["targetEntity"] == pairing.target.entity` before ever
+    # calling this function, so the guard is unreachable through the public
+    # entry point — a genuine caller-contract defense, pinned here by
+    # calling the function directly with a manufactured mismatch.
+    from parallax.core.dialect import POSTGRES
+
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    steps: list[Mapping[str, object]] = [
+        {"targetEntity": "Wallet", "find": {"eq": {"attr": "Wallet.id", "value": 1}}},
+        {
+            "write": {
+                "mutation": "delete",
+                "target": {
+                    "entity": "Account",
+                    "predicate": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                },
+            }
+        },
+    ]
+    with pytest.raises(engine.EngineError, match="not preceded by"):
+        engine._run_materializing_pair(  # pyright: ignore[reportPrivateUsage]
+            FakeWritePort(), meta, POSTGRES, "locking", steps, 0
+        )
+
+
+def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
+    # Defensive coverage: a `_LOWERING_ERRORS` member raised anywhere inside
+    # the per-entry loop (here, `instructions.deserialize`'s own unknown-
+    # entity `KeyError`) surfaces as this seam's own `EngineError`, never
+    # propagating a bare driver/stdlib exception.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "when": {
+                "writeSequence": [
+                    {"mutation": "insert", "entity": "Ghost", "statements": 1, "rows": [{"id": 1}]}
+                ]
+            }
+        },
+    )
+    port = FakeWritePort()
+    with pytest.raises(engine.EngineError, match="Ghost"):
+        engine.run_write_sequence_case(case, "postgres", port)
 
 
 # --------------------------------------------------------------------------- #

@@ -208,11 +208,17 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "with the lock path (COR-3 Phase 8)"
     ),
     "m-opt-lock": (
-        "the remaining optimistic-lock write forms — predicate-selected / materializing "
-        "writes (COR-3 Phase 8 increment 5) and the auto-retry opt-in / boundary runner "
-        "(increment 6) — land with a later Phase 8 increment; the non-temporal keyed "
-        "gate/advance/conflict forms landed in increment 3, each its own case-scoped "
-        "entry below"
+        "the predicate-selected / materializing write forms (the readless "
+        "unversioned/non-temporal exception, and the versioned materialize-then-lower "
+        "family) landed in COR-3 Phase 8 increment 5 — graded end-to-end by the "
+        "compile/run conformance lanes now (the readless forms) or the run lane alone "
+        "(the materializing ones, query-result-dependent); no idiomatic TYPED-`_where`-"
+        "verb example exists yet, landing with the instance-native API story build-out "
+        "(COR-3 Phase 8 increment 7, ledger D-23). The auto-retry opt-in / boundary "
+        "runner lands with increment 6; the non-temporal keyed gate/advance/conflict "
+        "forms landed in increment 3 — each its own case-scoped entry below. "
+        "`m-opt-lock-012` (the interleaved two-session optimistic-lock race) stays a "
+        "directed, reasoned deferral to increment 6's own two-session `peer` seam"
     ),
     "m-audit-write": (
         "the milestone-chaining write forms (insert / close-and-chain update / "
@@ -220,8 +226,9 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "Phase 8 increment 4 — graded end-to-end by the compile/run conformance lanes "
         "now; no idiomatic TYPED-verb example exists yet, landing with the "
         "instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23). "
-        "The remaining materializing predicate-write scenarios (`m-audit-write-007`/"
-        "`-009`) land with a later Phase 8 increment (increment 5)"
+        "The materializing predicate-write scenarios (`m-audit-write-007`/`-009`) "
+        "landed in increment 5 — run-lane covered (query-result-dependent), same "
+        "instance-native deferral"
     ),
     "m-bitemp-write": (
         "the rectangle-split write forms (insert / updateUntil / terminateUntil / "
@@ -229,14 +236,17 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "and the TPH/TPCS compositions) landed in COR-3 Phase 8 increment 4 — graded "
         "end-to-end by the compile/run conformance lanes now; no idiomatic TYPED-verb "
         "example exists yet, landing with the instance-native API story build-out "
-        "(COR-3 Phase 8 increment 7, ledger D-23). The remaining materializing "
-        "predicate-write scenarios (`m-bitemp-write-010`..`-013`) land with a later "
-        "Phase 8 increment (increment 5)"
+        "(COR-3 Phase 8 increment 7, ledger D-23). The materializing predicate-write "
+        "scenarios (`m-bitemp-write-010`..`-013`) landed in increment 5 — run-lane "
+        "covered (query-result-dependent), same instance-native deferral"
     ),
     "m-batch-write": (
-        "the set-based materialize / readless collapse forms (predicate-selected "
-        "update/delete/terminate, multi-row batch collapse) land with the write "
-        "family (COR-3 Phase 8 increment 5; m-batch-write / m-opt-lock)"
+        "the set-based collapse / readless / materialize forms (multi-row INSERT "
+        "collapse, batched UPDATE, IN-list DELETE, readless predicate update/delete, "
+        "and the versioned materialize-then-lower family) landed in COR-3 Phase 8 "
+        "increment 5 — graded end-to-end by the compile/run conformance lanes now; no "
+        "idiomatic TYPED-verb example exists yet, landing with the instance-native API "
+        "story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
     ),
 }
 
@@ -247,8 +257,11 @@ SKIP_REASONS: Final[dict[str, str]] = {
 # fails the partition ("covered by neither") instead of inheriting a reason.
 _COALESCING_WITNESS_REASON: Final[str] = (
     "a same-transaction coalescing witness: it buffers an insert+update / insert+delete "
-    "pair whose one-statement / zero-statement collapse is m-batch-write behavior "
-    "(COR-3 Phase 8); the planner folding is already unit-pinned (test_write_lowering)"
+    "pair whose one-statement / zero-statement collapse is m-batch-write behavior — the "
+    "planner folding is unit-pinned (test_write_lowering) and, since COR-3 Phase 8 "
+    "increment 5, graded end-to-end by the compile/run conformance lanes too; no "
+    "idiomatic TYPED-verb example exists yet, landing with the instance-native API "
+    "story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
 )
 
 # --------------------------------------------------------------------------- #
@@ -465,12 +478,16 @@ _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
     "seam (`Transaction._buffer`) instead"
 )
 _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
-    "a keyless (no primary-key attribute) payload has no idiomatic spelling YET: "
-    "`subtype-write-set-based-unsupported`'s natural developer-facing trigger is a set-based "
-    "`_where` verb (`tx.update_where` / `tx.delete_where`) targeting an inheritance family "
-    "(python.md §5), which lands with the `_where` verb family (COR-3 Phase 8 increment 5) — "
-    "`test_transact.py`'s own unit test exercises the classified rule directly at the neutral "
-    "seam (`Transaction._buffer`) today"
+    "the idiomatic spelling now EXISTS: `subtype-write-set-based-unsupported`'s natural "
+    "developer-facing trigger is a set-based `_where` verb (`tx.update_where` / "
+    "`tx.delete_where`) targeting an inheritance family (python.md §5), landed with the "
+    "`_where` verb family (COR-3 Phase 8 increment 5; `inheritance.reject_predicate_write`) — "
+    "`test_transact.py`'s own unit test exercises it directly through `tx.update_where`; the "
+    "rejected-case's OWN keyless-row shape (`m-inheritance-089`) still has no idiomatic keyed "
+    "spelling (no single typed instance construction denotes a payload with no primary key at "
+    "all), so this remains a reasoned skip for the CASE's OWN authored shape, not for the "
+    "classified rule — the instance-native usage-guide STORY for the `_where` family is "
+    "COR-3 Phase 8 increment 7 (ledger D-23)"
 )
 
 # `when.model` descriptor-shape rejects (m-inheritance-020..032, plus the
@@ -712,9 +729,12 @@ _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON: Final[str] = (
 # The three remaining m-value-object write-family siblings, each a DIFFERENT
 # Phase-8 concern already named by an existing module bucket above.
 _VO_BATCH_WRITE_REASON: Final[str] = (
-    "a multi-row (batched) insert — the set-based flush collapse lands with the write "
-    "family (COR-3 Phase 8; m-batch-write), matching this registry's own m-batch-write "
-    "bucket reason"
+    "a multi-row (batched) insert, each row's whole value-object document binding "
+    "atomically in columnOrder position — the set-based flush collapse landed in "
+    "COR-3 Phase 8 increment 5 (m-batch-write) and is graded end-to-end by the "
+    "compile/run conformance lanes now, matching this registry's own m-batch-write "
+    "bucket reason; no idiomatic TYPED-verb example exists yet (instance-native story "
+    "build-out, COR-3 Phase 8 increment 7, ledger D-23)"
 )
 _VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
     "a versioned write under an optimistic-lock gate over a value-object-bearing "
@@ -726,11 +746,15 @@ _VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
     "registry's own m-opt-lock bucket reason"
 )
 _VO_SCENARIO_COMBO_REASON: Final[str] = (
-    "a scenario combining a managed find, a materialized-predicate-write resolving "
-    "read, and an audit-write terminate under an optimistic-lock gate — every step "
-    "beyond the plain managed find is Phase-8 territory (m-audit-write / m-opt-lock / "
-    "m-batch-write's predicate-write materialization); no isolated Phase-7 read facet "
-    "to exercise separately"
+    "a scenario combining a managed (instance-form) find, a MATERIALIZING "
+    "predicate-write resolving read (row-form, the VO document omitted — the "
+    "result-form contrast this case pins), and an audit-write terminate under an "
+    "optimistic-lock gate: the materializing predicate-write machinery landed in "
+    "COR-3 Phase 8 increment 5 (m-audit-write / m-opt-lock / m-batch-write's "
+    "readless/materialize split) and is run-lane covered now (query-result-dependent, "
+    "`compileEligibility: run-only`); no idiomatic TYPED-`_where`-verb example exists "
+    "yet, landing with the instance-native API story build-out (COR-3 Phase 8 "
+    "increment 7, ledger D-23)"
 )
 
 CASE_SKIP_REASONS: Final[dict[str, str]] = {

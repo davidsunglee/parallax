@@ -16,13 +16,13 @@ import contextlib
 import datetime as dt
 import decimal
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.conformance import case_format, models, provision, temporal_state
 from parallax.conformance.temporal_state import TemporalShadow
-from parallax.core import inheritance, navigate, opt_lock
+from parallax.core import batch_write, inheritance, navigate, opt_lock
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
@@ -46,6 +46,7 @@ from parallax.core.unit_work import (
     KeyedWrite,
     ObjectKey,
     Observation,
+    PredicateWrite,
     WriteRejectedError,
     instructions,
     object_key,
@@ -54,13 +55,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.snapshot import handle, materialize
-from parallax.snapshot.handle import (
-    WriteLoweringError,
-    find,
-    find_history,
-    lower_write,
-    predicate_write_refusal,
-)
+from parallax.snapshot.handle import WriteLoweringError, find, find_history, lower_write
 
 __all__ = [
     "Emission",
@@ -109,12 +104,22 @@ def _json_bind(bind: object) -> object:
     """Render one bind to JSON-native form for the emission wire (m-conformance-adapter).
 
     A value-object document write binds the whole document as a :class:`JsonDocument`
-    carrier (m-db-port); on the wire it is its underlying JSON document. Every other keyed
-    bind is already JSON-native (scalars; a date rides as the write-input string).
+    carrier (m-db-port); on the wire it is its underlying JSON document. Every other
+    CASE-AUTHORED keyed bind is already JSON-native (scalars; a date rides as the
+    write-input string) — but a MATERIALIZING predicate write's carried-forward bind
+    (COR-3 Phase 8 increment 5: an observed gate value, or a chained row's payload
+    column) is sourced from a REAL resolved row, so it may be a driver-native
+    ``datetime.datetime`` / the native-infinity :class:`~parallax.core.base.
+    TemporalBound` sentinel / a ``Decimal`` — exactly the shapes production code
+    deliberately passes through UNCHANGED into the write pipeline (never pre-rendered
+    there; that seam's own contract, `parallax.snapshot.handle`). :func:`wire_value`
+    (this module's own read-side wire renderer) already covers every one of those
+    shapes, so it renders the emission wire form here too, rather than a second,
+    divergent conversion.
     """
     if isinstance(bind, JsonDocument):
         return bind.value
-    return bind
+    return wire_value(bind)
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,6 +462,7 @@ def _resolve_graph_pointer(
 _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     instructions.WriteInstructionError,
     WriteLoweringError,
+    inheritance.InheritanceError,
     opt_lock.UnobservedVersionError,
     opt_lock.HistoricalObservationError,
     opt_lock.CallerAuthoredVersionError,
@@ -526,6 +532,28 @@ def _concurrency(case: case_format.Case) -> Concurrency:
             if value == "optimistic":
                 return "optimistic"
     return "locking"
+
+
+def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], meta: Metamodel) -> bool:
+    """Whether a scenario's ORDINARY (non-materializing-paired) find steps
+    carry the case's declared read-lock suffix at all (`m-read-lock`: "an
+    in-transaction object find that INTENDS TO WRITE acquires a shared row
+    lock" — the lock protects an observation a SUBSEQUENT keyed write depends
+    on). ``True`` unless EVERY write step in the scenario is a READLESS
+    predicate write (`m-batch-write-005`/`-006`'s own witness, COR-3 Phase 8
+    increment 5): a readless write establishes no transaction-scoped
+    observation at all, so there is nothing for a lock to protect and the
+    scenario's find steps are plain, non-participating verification reads. A
+    scenario with no write step at all (a pure read narrative) keeps the
+    lock — unaffected, since it never reaches a readless predicate write.
+    """
+    write_steps = [step for step in steps if "write" in step]
+    if not write_steps:
+        return True
+    for step in write_steps:
+        if not _is_predicate_write_step(step["write"]) or _is_materializing_write_step(step, meta):
+            return True
+    return False
 
 
 def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Observation | None]:
@@ -748,39 +776,50 @@ def _build_temporal_instruction(
 _OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedInZ"})
 
 
-def _refuse_predicate_write_shape(entry: Mapping[str, object]) -> None:
-    """Refuse a STRUCTURED PREDICATE-write instruction (`mutation` / `target` /
-    optional `assignments` — `m-case-format`'s predicate-selected shape,
-    e.g. ``m-batch-write-005``/``-006``) reaching the keyed-write engine seam
-    — loudly, before any row indexing, deferring to `lower_write`'s own
-    predicate-write refusal wording
-    (`parallax.snapshot.handle.predicate_write_refusal` — the single shared
-    source of truth both this pre-check and `lower_write` raise through, the
-    same move as `opt_lock.classify_mismatch`). A predicate write's `target`
-    names its entity/predicate; a keyed write never carries that key at all
-    (`entity` + `rows` instead), so `target`'s presence (or `entity`'s
-    absence) is the SHAPE signal — never inferred from a `KeyError`.
+def _is_predicate_write_step(raw_write: object) -> bool:
+    """Whether a scenario write step's own ``write`` field is a single
+    STRUCTURED PREDICATE-write instruction (`mutation` / `target` / optional
+    `assignments` — `m-case-format`'s predicate-selected shape, e.g.
+    ``m-batch-write-005``) rather than the keyed-write entry LIST
+    (`m-case-format`'s buffered-keyed-write shape) this engine's keyed path
+    lowers. A predicate write's `target` names its entity/predicate; a keyed
+    write is a plain list of ``{mutation, entity, rows}`` entries — the SHAPE
+    signal (a bare mapping vs. a list) is structural, never inferred from a
+    ``KeyError`` (the reachability gap the Phase-8 mid-phase review's finding
+    E first closed; COR-3 Phase 8 increment 5 retires the refusal it left
+    behind and routes this shape to the readless/materializing predicate-write
+    translation instead — see :func:`_lower_predicate_write_step` /
+    :func:`_run_materializing_pair`).
     """
-    target = entry.get("target")
-    entity_name = (
-        cast("Mapping[str, object]", target).get("entity") if isinstance(target, Mapping) else None
-    )
-    raise predicate_write_refusal(entity_name)
+    return isinstance(raw_write, Mapping)
 
 
 def _write_entries(raw_write: object) -> Sequence[Mapping[str, object]]:
-    """A scenario write step's own ``write`` field, normalized to its entry
-    LIST — refusing loudly (:func:`_refuse_predicate_write_shape`), before any
-    row indexing, when it is a single STRUCTURED PREDICATE-write instruction
-    (a bare mapping, `m-case-format`'s ``target``/``predicate`` shape) rather
-    than the keyed-write entry list this engine lowers. Never a bare
-    ``KeyError`` from indexing a mapping as if it were a sequence — the
-    reachability gap the Phase-8 mid-phase review's finding E closed
-    (``m-batch-write-005``/``-006``, previously the bare ``": 0"`` skip text).
-    """
-    if isinstance(raw_write, Mapping):
-        _refuse_predicate_write_shape(cast("Mapping[str, object]", raw_write))
+    """A scenario write step's own ``write`` field as its keyed-write entry
+    LIST — callers check :func:`_is_predicate_write_step` FIRST; this is never
+    reached for a structured predicate-write instruction."""
     return cast("Sequence[Mapping[str, object]]", raw_write)
+
+
+def _canonical_predicate_doc(raw_write: Mapping[str, object]) -> dict[str, object]:
+    """A scenario predicate-write step's own ``write`` field, translated to the
+    canonical ``write-instruction.schema.json`` predicate shape
+    (`m-case-format` "Predicate-selected write instruction"): ``at`` (the
+    Clock-context processing-instant authoring alias) is DROPPED — never an
+    instruction field, ADR 0010 — and ``until`` is the corpus's own
+    ``businessTo`` authoring alias; ``businessFrom`` is already axis-explicit
+    (predicate writes were authored axis-explicit from the start, COR-35) and
+    needs no translation. Every caller that hands a raw case document to
+    :func:`~parallax.core.unit_work.instructions.deserialize` routes through
+    this first — the canonical deserializer rejects ``at``/``until`` outright
+    as unexpected keys.
+    """
+    doc = dict(raw_write)
+    doc.pop("at", None)
+    until = doc.pop("until", None)
+    if until is not None:
+        doc["businessTo"] = until
+    return doc
 
 
 def _is_versioned_entity(meta: Metamodel, entity_name: str) -> bool:
@@ -788,43 +827,8 @@ def _is_versioned_entity(meta: Metamodel, entity_name: str) -> bool:
     return any(attr.optimistic_locking for attr in declaring.attributes)
 
 
-def _is_pk_gen_managed(meta: Metamodel, entity_name: str) -> bool:
-    """Whether ``entity_name``'s (family-effective) primary key is allocated by
-    a `pkGenerator` strategy other than ``none`` (`m-pk-gen`).
-
-    A row targeting such an entity decomposes per row regardless of ITS OWN
-    shape — a literal, already-resolved id from a prior registry read (the
-    `sequence` strategy's own `batchSize > 1` block reservation,
-    `m-pk-gen-008`..`-012`, whose rows carry plain integers, never a
-    `{computed: ...}` marker) or an actual `{computed: ...}` marker (the `max`
-    strategy) — because each row's own key allocation is independent and this
-    seam lowers single-row keyed writes only.
-    """
-    entity = meta.entity(entity_name)
-    pk_attrs = inheritance.family_primary_key(meta, entity)
-    return any(
-        attr.pk_generator is not None and attr.pk_generator.strategy != "none" for attr in pk_attrs
-    )
-
-
 def _rows_carry_observation_keys(raw_rows: Sequence[Mapping[str, object]]) -> bool:
     return any(_OBSERVATION_CONTROL_KEYS & row.keys() for row in raw_rows)
-
-
-def _uniform_update_values(
-    pk_names: frozenset[str], raw_rows: Sequence[Mapping[str, object]]
-) -> bool:
-    """Whether every row assigns the IDENTICAL values to its non-key columns
-    (`m-batch-write` "Set-based flush": "executed once per distinct key, or as
-    a single statement with an IN predicate when the new value is uniform
-    across the keys") — the uniform update entry of ``m-batch-write-001``
-    collapses; the non-uniform, per-distinct-key form of ``m-batch-write-002``
-    decomposes (see :func:`_decomposes_per_row`).
-    """
-    excluded = pk_names | _OBSERVATION_CONTROL_KEYS
-    assigned = [{k: v for k, v in row.items() if k not in excluded} for row in raw_rows]
-    first = assigned[0]
-    return all(candidate == first for candidate in assigned[1:])
 
 
 def _decomposes_per_row(
@@ -833,49 +837,48 @@ def _decomposes_per_row(
     """Whether a non-temporal write entry's rows decompose into independent
     single-row instructions (mirroring what that many separate
     `Transaction.insert`/`.update`/`.delete` calls would buffer) rather than
-    collapsing into ONE multi-row instruction (`m-batch-write`'s set-based
-    flush collapse — the set-based lowering itself lands with a later write
-    increment, so a collapsed entry reaches `lower_write`'s own multi-row
-    refusal, the honest increment-5 deferral).
+    collapsing into ONE multi-row instruction — the INVERSE of
+    :func:`~parallax.core.batch_write.collapses`, the injected `m-batch-write`
+    collapse-eligibility vocabulary (COR-3 Phase 8 increment 5) both this
+    engine and the composition layer's own planner collapse stage
+    (:func:`_lower_resolved`, `parallax.snapshot.handle.Database.transact`)
+    consult identically, so the engine's PRE-collapsed multi-row instruction
+    construction below and the PLANNER's own collapse stage can never
+    disagree on eligibility.
 
     Derived SEMANTICALLY from the instruction and model — mutation kind,
     versioned-ness, presence of per-row observations, and computed/allocated
     primary keys — never from the case's own authored ``statements`` count,
     which is a count-consistency ASSERTION only (`compatibility-case.schema.
-    json`), never a semantics discriminator (the review finding this closes):
+    json`), never a semantics discriminator (a prior review finding closed
+    this; ``_check_statement_count_consistency`` stays the assertion-only
+    verifier):
 
     - a single row is always its own instruction (no ambiguity);
-    - a VERSIONED target's row carries per-row framework concerns (the
-      version gate/advance) no single collapsed statement can express — every
-      mutation kind decomposes (``m-batch-write-004``'s versioned per-key
-      delete materialize);
     - any row authoring a reserved ``observedVersion``/``observedInZ`` control
-      key is an explicit per-row-observation signal (`m-opt-lock`; ADR 0013);
-    - a pk-gen-MANAGED target's INSERT decomposes — each row's own key
-      allocation is independent (`m-pk-gen`'s `sequence`/`max` strategies,
-      ``m-pk-gen-001``..`-012`);
-    - an UPDATE whose rows assign NON-uniform values per key decomposes into
-      one UPDATE per distinct key (``m-batch-write-002``); uniform values
-      collapse into one `IN`-predicate statement instead
-      (``m-batch-write-001``'s own update entry).
-
-    Every other shape (unversioned, non-pk-gen-managed, no per-row observation
-    keys, and — for update — uniform values) stays ONE multi-row instruction
-    (``m-batch-write-001``/``-003``, ``m-value-object-045``).
+      key is an explicit per-row-observation signal (`m-opt-lock`; ADR 0013) —
+      an ENGINE-specific pre-check `batch_write.collapses` itself does not
+      make (it has no case-authoring concept), covering insert/delete too
+      (`batch_write.update_collapses` already makes the SAME check for update);
+    - `batch_write.insert_collapses` — an INSERT decomposes only when the
+      target's primary key is pk-gen MANAGED (`m-pk-gen`'s `sequence`/`max`
+      strategies, ``m-pk-gen-001``..`-012``); a VERSIONED insert still
+      collapses (the initial version is a derived constant, never observed);
+    - `batch_write.update_collapses` — a VERSIONED target's update always
+      decomposes (the gate/advance binds a per-row observed version,
+      `m-opt-lock`, ADR 0014); an unversioned target decomposes per distinct
+      key only when its rows assign NON-uniform values (``m-batch-write-002``),
+      collapsing into one `IN`-predicate statement when uniform
+      (``m-batch-write-001``'s own update entry);
+    - `batch_write.delete_collapses` — a VERSIONED target's delete always
+      decomposes (``m-batch-write-004``'s versioned per-key delete
+      materialize); an unversioned one collapses to one `IN`-list statement.
     """
     if len(raw_rows) == 1:
         return True
-    if _is_versioned_entity(meta, entity_name):
-        return True
     if _rows_carry_observation_keys(raw_rows):
         return True
-    if mutation == "insert":
-        return _is_pk_gen_managed(meta, entity_name)
-    if mutation == "update":
-        entity = meta.entity(entity_name)
-        pk_names = frozenset(attr.name for attr in inheritance.family_primary_key(meta, entity))
-        return not _uniform_update_values(pk_names, raw_rows)
-    return False  # delete / terminate: an unversioned target collapses to one IN-list statement
+    return not batch_write.collapses(meta, entity_name, mutation, raw_rows)
 
 
 def _check_statement_count_consistency(entry: Mapping[str, object], decomposed_count: int) -> None:
@@ -895,6 +898,39 @@ def _check_statement_count_consistency(entry: Mapping[str, object], decomposed_c
         )
 
 
+def _seed_insert_version(
+    meta: Metamodel, entity_name: str, mutation: str, row: Mapping[str, object]
+) -> dict[str, object]:
+    """A VERSIONED, non-temporal entity's INSERT row, with the derived initial
+    version seeded when the case-authored row omits it
+    (`opt_lock.INITIAL_VERSION`) — a no-op for every other mutation/entity/row
+    shape.
+
+    `lower_write`'s own `_lower_insert` / `_lower_multi_insert` derive the
+    INITIAL version at the version column's own columnOrder position
+    UNCONDITIONALLY, "ignoring any row-carried value" (their own docstrings)
+    — every reachable insert witness already authors an explicit `version`
+    matching this SAME constant (`m-unit-work-001`/`-008`), coincidentally
+    satisfying `~parallax.core.unit_work.write_validate.validate_write`'s
+    required-attribute check along the way, but a same-transaction coalescing
+    pair whose insert never survives to ANY golden DML
+    (`m-unit-work-010`'s insert-then-delete cancellation) has no golden bind
+    to match and so may omit it. The RUN lane's own translation
+    (`_execute_write_unit`, mirroring "as many separate `Transaction.insert`
+    calls") buffers through `Transaction._buffer`, which DOES run
+    `validate_write` (the COMPILE lane's `_lower_resolved` never does) — so
+    only the run lane needs this seed; since the framework discards whatever
+    the row carries at lowering regardless, seeding the identical constant
+    here changes no compiled emission.
+    """
+    if mutation != "insert":
+        return dict(row)
+    version_attr = _versioned_non_temporal_version_attribute(meta, entity_name)
+    if version_attr is None or version_attr.name in row:
+        return dict(row)
+    return {**row, version_attr.name: opt_lock.INITIAL_VERSION}
+
+
 def _build_instructions(
     entry: Mapping[str, object],
     meta: Metamodel,
@@ -906,11 +942,13 @@ def _build_instructions(
     """One case write entry -> one or more canonical keyed write instructions.
 
     A STRUCTURED PREDICATE-write entry (`target`/`predicate` shaped, no
-    `entity` key at all) refuses loudly here too
-    (:func:`_refuse_predicate_write_shape`) — defensive coverage for the
+    `entity` key at all) refuses loudly here too — defensive coverage for the
     writeSequence path, which shares this function with every scenario write
     entry (the scenario `write`-field-is-itself-a-mapping shape is caught one
-    layer up, by :func:`_write_entries`).
+    layer up, by :func:`_is_predicate_write_step`, and routed to the
+    readless/materializing predicate-write translation instead — a predicate
+    write is never a legal writeSequence entry shape, `m-case-format`'s
+    writeSequence vocabulary is keyed-only).
 
     A TEMPORAL entity's entry dispatches to :func:`_build_temporal_instruction`
     (COR-3 Phase 8 increment 4): its authored ``statements`` count is the DML
@@ -938,7 +976,18 @@ def _build_instructions(
     authored ``statements`` count agrees, independently of that decision.
     """
     if "entity" not in entry:
-        _refuse_predicate_write_shape(entry)
+        target = entry.get("target")
+        target_entity = (
+            cast("Mapping[str, object]", target).get("entity")
+            if isinstance(target, Mapping)
+            else None
+        )
+        raise EngineError(
+            f"a writeSequence entry must be a keyed mutation (`entity` + `rows`) — a "
+            f"structured predicate-selected instruction ({entry.get('mutation')!r} on "
+            f"{target_entity!r}) is scenario-write-only (m-case-format: the writeSequence "
+            "entry vocabulary is keyed-only)"
+        )
     entity_name = cast("str", entry["entity"])
     if _is_temporal_entity(meta, entity_name):
         return [_build_temporal_instruction(entry, meta, shadow, tx_instant, unit_inserted)]
@@ -946,7 +995,10 @@ def _build_instructions(
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
     if not _decomposes_per_row(meta, entity_name, mutation, raw_rows):
         _check_statement_count_consistency(entry, 1)
-        clean_rows = [_strip_observation(raw_row)[0] for raw_row in raw_rows]
+        clean_rows = [
+            _seed_insert_version(meta, entity_name, mutation, _strip_observation(raw_row)[0])
+            for raw_row in raw_rows
+        ]
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": clean_rows}
         )
@@ -956,6 +1008,7 @@ def _build_instructions(
     out: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
     for raw_row in raw_rows:
         clean_row, observation = _strip_observation(raw_row)
+        clean_row = _seed_insert_version(meta, entity_name, mutation, clean_row)
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
@@ -1008,15 +1061,23 @@ def _lower_resolved(
     concurrency: Concurrency,
     tx_instant: str,
 ) -> tuple[Statement, ...]:
-    """Plan one write buffer (coalesce / FK-order / elide) and lower each
-    survivor — PURE, no database."""
+    """Plan one write buffer (coalesce / collapse / FK-order / elide) and lower
+    each survivor — PURE, no database. ``collapse=batch_write.collapses`` is
+    injected identically to the composition layer's own production wiring
+    (`parallax.snapshot.handle.Database.transact`, COR-3 Phase 8 increment 5) —
+    a case's own PRE-collapsed multi-row entry (`_decomposes_per_row`'s "not
+    decomposes" branch) reaches the planner already merged, so the collapse
+    stage is a no-op for it; a case entry the engine decomposed per row instead
+    (`m-batch-write-002`'s non-uniform shape) never re-collapses either, since
+    `batch_write.collapses` answers the SAME eligibility question either way.
+    """
     buffer = [instruction for instruction, _key, _observation in resolved]
     observations: dict[ObjectKey, Observation] = {
         key: observation
         for _instruction, key, observation in resolved
         if key is not None and observation is not None
     }
-    plan = plan_flush(buffer, observations, tx_instant, meta)
+    plan = plan_flush(buffer, observations, tx_instant, meta, collapse=batch_write.collapses)
     statements: list[Statement] = []
     for planned in plan.writes:
         statements.extend(
@@ -1044,8 +1105,42 @@ def _lower_writes(
     return _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
 
 
+def _lower_predicate_write_step(
+    raw_write: Mapping[str, object], meta: Metamodel, dialect: Dialect, concurrency: Concurrency
+) -> Statement:
+    """Lower a READLESS scenario predicate-write step (`m-batch-write-005`/
+    ``-006``) to its ONE statement — PURE, no database. Deserializes +
+    validates the canonical instruction, then reuses the SAME
+    ``plan_flush`` -> ``lower_write`` seam every other write path does
+    (`collapse=batch_write.collapses` injected identically, though the
+    collapse stage is a structural no-op for a lone predicate write).
+
+    A MATERIALIZING predicate write never reaches here: its case carries
+    ``compileEligibility: run-only``, which short-circuits at
+    :func:`eligibility` before the compile lane ever calls this — reaching
+    ``lower_write`` with one is therefore always a caller wiring defect,
+    surfaced as ``lower_write``'s own defensive :class:`WriteLoweringError`.
+    """
+    instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
+    assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
+    instructions.validate_instruction(instruction, meta)
+    plan = plan_flush([instruction], {}, None, meta, collapse=batch_write.collapses)
+    statements = [
+        lowered.statement
+        for planned in plan.writes
+        for lowered in lower_write(planned, meta, dialect, concurrency, None)
+    ]
+    assert len(statements) == 1  # a readless predicate write is always exactly one statement
+    return statements[0]
+
+
 def _lower_find(
-    step: Mapping[str, object], meta: Metamodel, dialect: Dialect, concurrency: Concurrency
+    step: Mapping[str, object],
+    meta: Metamodel,
+    dialect: Dialect,
+    concurrency: Concurrency | None,
+    *,
+    result_form: ResultForm = "instance",
 ) -> Statement:
     """Compile a scenario ``find`` step through the read path with the read-lock suffix.
 
@@ -1056,14 +1151,35 @@ def _lower_find(
     ``self._uow.settings.concurrency``: ``locking`` renders it after every clause;
     ``optimistic`` renders none (an optimistic-mode read takes no lock, COR-3
     Phase 8 increment 4 — the audit-write-008 / bitemp-write-014 coalescing
-    witnesses are the first reachable OPTIMISTIC scenarios).
+    witnesses are the first reachable OPTIMISTIC scenarios). ``None`` ALSO
+    renders none — the caller's own :func:`_scenario_needs_lock` gate (COR-3
+    Phase 8 increment 5): a scenario whose write steps are ALL readless
+    predicate writes (`m-batch-write-005`/`-006`) establishes no
+    transaction-scoped observation at all (`m-read-lock` "an in-transaction
+    object find that intends to write acquires a shared row lock" — a readless
+    write intends nothing an observation could ever protect), so its find
+    steps are plain, non-participating verification reads.
+
+    ``result_form`` defaults to ``instance`` — an ORDINARY (managed) scenario
+    find mirrors production ``Transaction.find`` (`m-sql` *Read projection*,
+    slot 4 included), the SAME projection every scenario find has always
+    compiled to a value-object-free entity (row-form and instance-form are
+    byte-identical there, so this default flip changes no existing golden).
+    A materializing predicate write's OWN internal resolving read is ROW-form
+    (`m-value-object-047` pins the VO-omission contrast) but is compiled by
+    ``Transaction._materialize_predicate_write`` directly
+    (`parallax.snapshot.handle`), never through this function — the RUN lane
+    reports its ACTUAL executed SQL via a capturing port
+    (:func:`_run_materializing_pair`), not a separate pure re-lowering (its
+    binds are query-result-dependent, so no pure oracle exists to compute them
+    from).
     """
     target = step.get("targetEntity")
     find_doc = step.get("find")
     if not isinstance(target, str) or find_doc is None:
         raise EngineError("scenario find step needs `targetEntity` and `find`")
     operation = _canonicalize_read(find_doc, meta.entity(target), meta)
-    return compile_read(operation, meta, dialect, target, result_form="row", lock=concurrency)
+    return compile_read(operation, meta, dialect, target, result_form=result_form, lock=concurrency)
 
 
 def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_LoweredStep]:
@@ -1091,17 +1207,40 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     scenario_observations: ScenarioObservations = {}
     lowered: list[_LoweredStep] = []
     try:
-        for index, step in enumerate(_scenario_steps(case)):
+        steps = _scenario_steps(case)
+        find_lock = concurrency if _scenario_needs_lock(steps, meta) else None
+        for index, step in enumerate(steps):
             if "write" in step:
-                entries = _write_entries(step["write"])
-                tx_instant = _entry_instant(entries[0])
-                statements = _lower_writes(
-                    entries, meta, dialect, concurrency, shadow, tx_instant, scenario_observations
-                )
+                raw_write = step["write"]
                 rollback = step.get("rollback") is True
-                lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
+                if _is_predicate_write_step(raw_write):
+                    # Readless only (`m-batch-write-005`/`-006`) — a
+                    # materializing predicate write never reaches the compile
+                    # lane at all (its case's `compileEligibility: run-only`
+                    # short-circuits before `_scenario_lowered` ever runs).
+                    statement = _lower_predicate_write_step(
+                        cast("Mapping[str, object]", raw_write), meta, dialect, concurrency
+                    )
+                    lowered.append(
+                        _LoweredStep(f"/scenario/{index}/write", (statement,), True, rollback)
+                    )
+                else:
+                    entries = _write_entries(raw_write)
+                    tx_instant = _entry_instant(entries[0])
+                    statements = _lower_writes(
+                        entries,
+                        meta,
+                        dialect,
+                        concurrency,
+                        shadow,
+                        tx_instant,
+                        scenario_observations,
+                    )
+                    lowered.append(
+                        _LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
+                    )
             else:
-                statement = _lower_find(step, meta, dialect, concurrency)
+                statement = _lower_find(step, meta, dialect, find_lock)
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -1314,13 +1453,18 @@ def _execute_write_unit(
     production ``db.transact`` entry point (COR-3 Phase 8 increment 4, DQ4
     re-route, ledger D-18) — ONE transaction, ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
-    override). Buffering goes through the neutral ``Transaction._buffer`` route
-    + ``UnitOfWork.observe`` — never the typed instance verbs (`insert` /
-    `update` / `delete`), which this engine's case-driven metamodel has no
-    compiled Python classes for. A ``rollback: true`` step raises inside the
-    callback (rollback-only, `m-unit-work` abort contract): the buffered DML
-    still executes — and counts its round trips — before the provider rolls the
-    transaction back.
+    override). A single-row instruction buffers through the neutral
+    ``Transaction._buffer`` route + ``UnitOfWork.observe`` — never the typed
+    instance verbs (`insert` / `update` / `delete`), which this engine's
+    case-driven metamodel has no compiled Python classes for. A COLLAPSED
+    multi-row instruction (COR-3 Phase 8 increment 5, `m-batch-write`) buffers
+    directly on the unit of work instead (:func:`_build_instructions`'s "not
+    decomposes" branch already deserialized + `validate_instruction`-ed it, and
+    it carries no per-row observation by construction — `Transaction._buffer`'s
+    own single-row document route cannot carry more than one row). A
+    ``rollback: true`` step raises inside the callback (rollback-only,
+    `m-unit-work` abort contract): the buffered DML still executes — and counts
+    its round trips — before the provider rolls the transaction back.
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
@@ -1333,13 +1477,17 @@ def _execute_write_unit(
             if key is not None and observation is not None:
                 # The documented neutral seam (Transaction._buffer route + uow.observe).
                 tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
-            tx._buffer(  # pyright: ignore[reportPrivateUsage]
-                instruction.mutation,
-                instruction.entity,
-                dict(instruction.rows[0]),
-                business_from=instruction.business_from,
-                business_to=instruction.business_to,
-            )
+            rows = instruction.rows
+            if len(rows) == 1:
+                tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                    instruction.mutation,
+                    instruction.entity,
+                    dict(rows[0]),
+                    business_from=instruction.business_from,
+                    business_to=instruction.business_to,
+                )
+            else:
+                tx._uow.buffer(instruction)  # pyright: ignore[reportPrivateUsage]
         if rollback:
             # Force the buffered DML to execute (and count its round trips)
             # INSIDE the still-open atomic scope before the intentional abort —
@@ -1355,6 +1503,187 @@ def _execute_write_unit(
         database.transact(body, concurrency=concurrency)
 
 
+def _run_readless_predicate_write(
+    port: DbPort,
+    meta: Metamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    raw_write: Mapping[str, object],
+    tx_instant: str,
+    *,
+    rollback: bool,
+) -> None:
+    """Execute a READLESS scenario predicate-write step (`m-batch-write-005`/
+    ``-006``) through the SAME production ``db.transact`` entry point every
+    other write path uses — one transaction, buffering through
+    ``Transaction._buffer_predicate_instruction`` (the neutral seam the typed
+    ``_where`` verbs and this engine translation share, `m-case-format`
+    "predicate-shaped case entries ... buffer through Transaction's own seam,
+    materialization then happens exactly where production does it")."""
+    instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
+    assert isinstance(instruction, PredicateWrite)
+    instructions.validate_instruction(instruction, meta)
+    instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
+    database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+
+    def body(tx: handle.Transaction) -> None:
+        tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage]
+        if rollback:
+            tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
+            raise _RollbackStep
+
+    with contextlib.suppress(_RollbackStep):
+        database.transact(body, concurrency=concurrency)
+
+
+class _CapturingPort:
+    """A pass-through ``m-db-port`` capturing every executed statement (read
+    or write, SQL + binds, in call order) — a MATERIALIZING predicate write's
+    own reporting seam (COR-3 Phase 8 increment 5): its per-row binds are
+    QUERY-RESULT-DEPENDENT, so there is no pure oracle to derive ``emissions``
+    from independently of a real run; :func:`_run_materializing_pair` instead
+    reports exactly what executed. Nested ``transaction()`` wrapping shares
+    the SAME ``captured`` list across the outer port and the inner connection
+    the provider's own ``transaction()`` hands the callback (mirroring
+    ``tests/conformance/test_run_sweep.py``'s ``_ReadCapturePort`` precedent),
+    so a grouped or nested call captures into one single ordered list.
+    """
+
+    def __init__(
+        self, inner: DbPort, captured: list[tuple[str, tuple[object, ...]]] | None = None
+    ) -> None:
+        self._inner = inner
+        self.captured: list[tuple[str, tuple[object, ...]]] = (
+            captured if captured is not None else []
+        )
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        self.captured.append((sql, tuple(binds)))
+        return self._inner.execute(sql, binds)
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.captured.append((sql, tuple(binds)))
+        return self._inner.execute_write(sql, binds)
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        captured = self.captured
+
+        def wrapped(conn: DbPort) -> T:
+            return body(_CapturingPort(conn, captured=captured))
+
+        return self._inner.transaction(wrapped)
+
+
+def _is_materializing_write_step(
+    step: Mapping[str, object] | None, meta: Metamodel
+) -> PredicateWrite | None:
+    """If ``step`` is a write step whose ``write`` field is a structured
+    predicate instruction targeting a VERSIONED or TEMPORAL entity
+    (MATERIALIZES, `m-opt-lock` "Predicate-selected writes materialize when
+    observations are needed", ADR 0014), its deserialized + validated
+    :class:`~parallax.core.unit_work.PredicateWrite` — ``None`` for a keyed
+    write step, a READLESS predicate write, a find step, or ``None`` itself
+    (no such step, e.g. the scenario's last step)."""
+    if step is None or "write" not in step:
+        return None
+    raw_write = step["write"]
+    if not isinstance(raw_write, Mapping):
+        return None
+    instruction = instructions.deserialize(
+        _canonical_predicate_doc(cast("Mapping[str, object]", raw_write))
+    )
+    if not isinstance(instruction, PredicateWrite):
+        return None
+    instructions.validate_instruction(instruction, meta)
+    entity = meta.entity(instruction.target.entity)
+    declaring = inheritance.declaring_entity(meta, entity)
+    if declaring.is_temporal or _is_versioned_entity(meta, instruction.target.entity):
+        return instruction
+    return None
+
+
+def _run_materializing_pair(
+    port: DbPort,
+    meta: Metamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    steps: Sequence[Mapping[str, object]],
+    index: int,
+) -> list[_LoweredStep]:
+    """Execute a MATERIALIZING predicate-write step (``index + 1``) whose
+    IMMEDIATELY PRECEDING step (``index``) is the resolving find that shares
+    its target entity — ONE transaction, `m-case-format` "Materializing
+    cases": "a preceding scenario read resolves the same target predicate ...
+    It is a real resolving read, not a cache hit". Production materialization
+    (``Transaction._buffer_predicate_instruction``) performs its OWN internal
+    resolve using the SAME predicate; with no concurrent writer between the
+    two steps, that resolve observes the IDENTICAL rows the corpus's own
+    preceding find step documents, so pairing them here reproduces the
+    corpus's own ``1 resolve + N per-row writes`` round-trip accounting
+    exactly — the resolve's round trip is charged to the FIND step's pointer
+    (the corpus's own authoring convention), never double-counted against the
+    write step.
+
+    Reports the ACTUAL executed SQL (:class:`_CapturingPort`), never a
+    separate pure re-lowering: the resolve is this pair's first captured
+    statement (materialization always resolves before it writes), and every
+    statement after it is one of the ``N`` per-row keyed writes, in
+    resolved-row order.
+    """
+    find_step = steps[index]
+    write_step = steps[index + 1]
+    instruction = _is_materializing_write_step(write_step, meta)
+    assert instruction is not None  # the caller already established this via the same check
+    target = find_step.get("targetEntity")
+    if target != instruction.target.entity:
+        raise EngineError(
+            f"materializing predicate write at scenario step {index + 1} is not preceded by "
+            f"a resolving find over the SAME target entity (find targets {target!r}, write "
+            f"targets {instruction.target.entity!r} — m-case-format 'Materializing cases' "
+            "requires the prior find to share the write's own target)"
+        )
+    tx_instant = _entry_instant(cast("Mapping[str, object]", write_step["write"]))
+    instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
+    capture = _CapturingPort(port)
+    database = handle.Database(capture, meta, dialect=dialect, clock=FixedClock(instant))
+    rollback = write_step.get("rollback") is True
+
+    def body(tx: handle.Transaction) -> None:
+        tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage]
+        if rollback:
+            tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
+            raise _RollbackStep
+
+    with contextlib.suppress(_RollbackStep):
+        database.transact(body, concurrency=concurrency)
+    if not capture.captured:  # pragma: no cover - zero resolved rows still resolves (1 statement)
+        raise EngineError(
+            f"materializing predicate write at scenario step {index + 1} executed no "
+            "statements at all — even a zero-row resolve issues its own SELECT"
+        )
+    # `capture.captured` holds the ACTUAL DRIVER SQL (each statement already
+    # translated by `dialect.to_driver_sql` before it ever reached the port) —
+    # every OTHER emission this engine reports is canonical `?`-placeholder text
+    # (a pure re-lowering that never touches a driver), so each captured
+    # statement's SQL must round-trip back through `dialect.from_driver_sql`
+    # before joining them; the binds themselves need no translation (the
+    # framework's own pre-adapter values, the same shape a pure re-lowering's
+    # `Statement.binds` already carries).
+    resolve_sql, resolve_binds = capture.captured[0]
+    write_statements = tuple(
+        Statement(dialect.from_driver_sql(sql), binds) for sql, binds in capture.captured[1:]
+    )
+    return [
+        _LoweredStep(
+            f"/scenario/{index}/find",
+            (Statement(dialect.from_driver_sql(resolve_sql), resolve_binds),),
+            False,
+            False,
+        ),
+        _LoweredStep(f"/scenario/{index + 1}/write", write_statements, True, rollback),
+    ]
+
+
 def _scenario_uow_spans(
     case_name: str, steps: Sequence[Mapping[str, object]]
 ) -> dict[str, tuple[int, int]]:
@@ -1363,9 +1692,11 @@ def _scenario_uow_spans(
     `uow` grouping). The Python run lane executes only CONTIGUOUS groups —
     every group it reaches this round is (`m-unit-work-002/005/006/009/012`);
     a genuinely INTERLEAVED group (the optimistic-lock race shape,
-    `m-opt-lock-012`) stays reference-harness-only until the engine gains its
-    own multi-connection seam (a later increment), so this raises loudly
-    rather than silently mis-executing one."""
+    `m-opt-lock-012`) stays reference-harness-only until COR-3 Phase 8
+    increment 6 gives the engine its own two-session `peer` seam (the
+    `when.concurrency` choreography machinery two genuinely concurrent
+    sessions need), so this raises loudly rather than silently mis-executing
+    one."""
     labels = [step.get("uow") if isinstance(step.get("uow"), str) else None for step in steps]
     spans: dict[str, tuple[int, int]] = {}
     for label in {cast("str", entry) for entry in labels if entry is not None}:
@@ -1506,7 +1837,12 @@ def run_scenario_case(
     ``db.transact`` (COR-3 Phase 8 amendment-review remediation,
     :func:`_run_uow_group`): the observing find and the versioned write it
     licenses execute in the SAME unit of work, so the write's version bind is
-    a genuine transaction-scoped observation, never an oracle. Reports the
+    a genuine transaction-scoped observation, never an oracle. A MATERIALIZING
+    predicate-write step (COR-3 Phase 8 increment 5) pairs with its
+    IMMEDIATELY PRECEDING find step (:func:`_run_materializing_pair`) —
+    detected by a one-step LOOK-AHEAD before that find is lowered as an
+    ordinary standalone step, since `m-case-format`'s own "Materializing
+    cases" convention makes the preceding find the resolve. Reports the
     ordered emissions and total round trips."""
     steps = _scenario_steps(case)
     if _has_action_step(steps):
@@ -1514,6 +1850,7 @@ def run_scenario_case(
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
+    find_lock = concurrency if _scenario_needs_lock(steps, meta) else None
     shadow = TemporalShadow()
     spans = _scenario_uow_spans(case.path.name, steps)
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
@@ -1531,20 +1868,55 @@ def run_scenario_case(
                 index = end + 1
                 continue
             step = steps[index]
-            if "write" in step:
-                entries = _write_entries(step["write"])
+            if "write" not in step:
+                next_step = steps[index + 1] if index + 1 < len(steps) else None
+                pairing = _is_materializing_write_step(next_step, meta)
+                if pairing is not None and step.get("targetEntity") == pairing.target.entity:
+                    lowered.extend(
+                        _run_materializing_pair(port, meta, dialect, concurrency, steps, index)
+                    )
+                    index += 2
+                    continue
+                statement = _lower_find(step, meta, dialect, find_lock)
+                _execute_reads(port, dialect, (statement,))
+                lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
+                index += 1
+                continue
+            raw_write = step["write"]
+            rollback = step.get("rollback") is True
+            if _is_predicate_write_step(raw_write):
+                # A materializing write reaching HERE (rather than being
+                # consumed by the look-ahead pairing above) was not preceded
+                # by a matching find — a malformed corpus case per
+                # `m-case-format`'s own validation requirement; `lower_write`'s
+                # defensive refusal surfaces it loudly rather than silently
+                # mishandling it. A READLESS write needs no pairing at all.
+                raw_predicate_write = cast("Mapping[str, object]", raw_write)
+                tx_instant = _entry_instant(raw_predicate_write)
+                statement = _lower_predicate_write_step(
+                    raw_predicate_write, meta, dialect, concurrency
+                )
+                _run_readless_predicate_write(
+                    port,
+                    meta,
+                    dialect,
+                    concurrency,
+                    raw_predicate_write,
+                    tx_instant,
+                    rollback=rollback,
+                )
+                lowered.append(
+                    _LoweredStep(f"/scenario/{index}/write", (statement,), True, rollback)
+                )
+            else:
+                entries = _write_entries(raw_write)
                 tx_instant = _entry_instant(entries[0])
                 resolved = _resolve_entries(entries, meta, shadow, tx_instant, {})
                 statements = _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
-                rollback = step.get("rollback") is True
                 _execute_write_unit(
                     port, meta, dialect, concurrency, resolved, tx_instant, rollback=rollback
                 )
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
-            else:
-                statement = _lower_find(step, meta, dialect, concurrency)
-                _execute_reads(port, dialect, (statement,))
-                lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
             index += 1
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc

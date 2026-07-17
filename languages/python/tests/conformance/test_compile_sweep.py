@@ -179,13 +179,19 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
 # (COR-3 Phase 6 M4 + COR-3 Phase 8 increment 3, m-unit-work / m-opt-lock /
 # m-inheritance / m-pk-gen): scenario read-your-own-writes / rollback / mixed-op
 # flushes, and the FK-ordered writeSequence cases. Each emits its per-step golden DML
-# (a scenario find carries the `for share of t0` read-lock suffix). The m-batch-write
-# coalescing witnesses (008/010) are unreachable under Option B; the remaining m-pk-gen
-# `sequence`-strategy writeSequence cases (query-result-dependent, run-only) and the
-# optimistic-lock conflict-abort scenario (m-opt-lock-012, deferred to increment 5) are
-# reasoned-skipped — the latter now via its OWN declared `compileEligibility: run-only`
-# (query-result-dependent, amendment-review remediation), retiring the prior ugly
-# compile-"error" skip its literal-version rows used to trigger.
+# (a scenario find carries the `for share of t0` read-lock suffix). `m-unit-work-008`/
+# `-010` (the same-transaction insert-then-update / insert-then-delete coalescing
+# witnesses) join here in COR-3 Phase 8 increment 5: both were ALREADY reachable
+# (`m-batch-write` joined `IMPLEMENTED_MODULES` in increment 3 for `m-batch-write-004`'s
+# sake, and both cases tag it alongside `m-unit-work`) but sat reasoned-skipped until
+# the coalescing machinery's own scenario translation was exercised end to end — a
+# stale "unreachable under Option B" comment previously claimed otherwise. The
+# remaining m-pk-gen `sequence`-strategy writeSequence cases (query-result-dependent,
+# run-only) stay reasoned-skipped; the optimistic-lock conflict-abort scenario
+# (m-opt-lock-012) is `uow`-grouped AND INTERLEAVED (two genuinely concurrent
+# sessions), deferred to increment 6's own two-session `peer` seam — see
+# `test_run_sweep.py`'s own `_UOW_GROUPED_RUN_DEFERRED` for the run-lane deferral this
+# mirrors.
 #
 # `m-unit-work-002/005/006/009/012` LEFT this set (amendment-review remediation,
 # COR-3 Phase 8): each now authors its observing find(s) grouped with its
@@ -198,7 +204,17 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
 # grades them (`test_run_sweep.py`'s selector mirrors the read lane's own
 # run-only inclusion for write shapes). `-001`/`-011` stay here: both are
 # insert-only, so neither ever needed an observation.
-_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n in (1, 11))
+_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n in (1, 8, 10, 11))
+# COR-3 Phase 8 increment 5's READLESS predicate-write scenario flips
+# (`m-batch-write.md` "Predicate-selected readless forms"; ADR 0014's
+# unversioned/non-temporal exception): an unversioned, non-temporal target's
+# predicate delete/update lowers to exactly ONE statement — no materializing
+# read, no equality-elimination pass. `m-batch-write-006` additionally pins
+# descriptor-declared column order (SET columns/binds) independent of the
+# authored assignment order.
+_READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
+    {"m-batch-write-005", "m-batch-write-006"}
+)
 # COR-3 Phase 8 increment 3's 17 compile-eligible flips: the non-temporal opt-lock
 # versioned advance (m-opt-lock-002), the inheritance-family keyed write family
 # (table-per-hierarchy tag derivation/guard, table-per-concrete-subtype own-table
@@ -234,9 +250,20 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 # independent single-row keyed updates, neither versioned nor pk-gen-managed,
 # so neither needs `lower_write`'s multi-row refusal at all), previously
 # hidden behind the stale M4-era-bucket fallback text.
+#
+# COR-3 Phase 8 increment 5's own batch-COLLAPSE writeSequence flips
+# (`m-batch-write.md` "Set-based flush"): the multi-row INSERT + uniform-value
+# `IN`-list UPDATE (`m-batch-write-001`), the non-versioned `IN`-list DELETE
+# collapse (`m-batch-write-003`, the delete analogue of the multi-row INSERT),
+# and the value-object multi-row INSERT collapse (`m-value-object-045`, each
+# row's whole `address` document binding atomically in columnOrder position).
+_BATCH_COLLAPSE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
+    {"m-batch-write-001", "m-batch-write-003", "m-value-object-045"}
+)
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
     frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
     | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
+    | _BATCH_COLLAPSE_WRITE_SEQUENCES
 )
 # The snapshot-read `mutate` scenario (m-snapshot-read-010, COR-3 Phase 7 increment
 # 5): no write DML at all — its 2 `find` steps' emissions/round-trips grade byte-
@@ -293,6 +320,7 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
     | _SNAPSHOT_MUTATE_SCENARIOS
     | _TEMPORAL_WRITE_SEQUENCES
     | _TEMPORAL_COALESCING_SCENARIOS
+    | _READLESS_PREDICATE_WRITE_SCENARIOS
 )
 
 _REACHABLE = sweep.reachable_cases()
@@ -415,23 +443,21 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     if case.shape in ("scenario", "writeSequence"):
         # The reachable keyed unit-of-work cases are graded above (WRITE_EXERCISED);
         # every run-only case is classified above too. The rest are either REFUSED
-        # by the keyed-write lowering (inheritance-family / temporal / predicate /
-        # opt-lock-unobserved writes, whose forward-error diagnostic names its own
-        # deferral or corpus conflict) or lowerable but outside the reviewed
-        # exercised set: the m-core keyed writes and the m-value-object document
-        # writes still land toward increment 5 (m-batch-write's own materialize/
-        # collapse forms), the ONLY forward promise this bucket still honestly
-        # carries — pk-gen's write-side id allocation landed in increment 3
-        # (its own module bucket, `SKIP_REASONS["m-pk-gen"]`) and is never named
-        # here again.
+        # by the keyed-write lowering (inheritance-family / temporal / opt-lock-
+        # unobserved writes, whose forward-error diagnostic names its own deferral
+        # or corpus conflict) or lowerable but simply outside the reviewed
+        # exercised set (the 9 account/orders cases plus COR-3 Phase 8 increment
+        # 5's batch/predicate-write flips): a genuine remaining m-core / m-value-
+        # object write this ledger entry has not yet claimed — pk-gen's write-side
+        # id allocation landed in increment 3 (its own module bucket,
+        # `SKIP_REASONS["m-pk-gen"]`) and is never named here again.
         if envelope.get("status") == "error":
             message = envelope.get("diagnostics", [{}])[0].get("message", "")
             return f"{case.shape} write refused by the keyed-write lowering: {message}"
         return (
             f"{case.shape} `{case.primary_module}` write outside the reviewed keyed "
-            "unit-of-work set (the 9 account/orders cases); the m-core keyed writes and "
-            "the m-value-object document writes land with a later write increment "
-            "(COR-3 Phase 8 increment 5; m-batch-write's own materialize/collapse forms)"
+            "unit-of-work set (the 9 account/orders cases plus the COR-3 Phase 8 "
+            "increment 5 batch/predicate-write flips); not yet a reviewed exercised case"
         )
     if case.shape != "read":
         return f"compile of {case.shape}-shape cases lands with the write path (COR-3 Phase 6/8)"
@@ -606,13 +632,12 @@ def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
     diagnostic fragment) fails loudly here rather than only being noticed on a
     manual sweep read.
     """
-    # A structured predicate-write instruction refuses loudly, naming
-    # increment 5 — never the bare `": 0"` KeyError fragment (finding E).
-    for case_id in ("m-batch-write-005", "m-batch-write-006"):
-        text = _skip_text(case_id)
-        assert "predicate-selected (set-based) write on" in text, (case_id, text)
-        assert "increment 5" in text, (case_id, text)
-        assert text.strip() != ": 0" and not text.endswith(": 0"), (case_id, text)
+    # COR-3 Phase 8 increment 5 retires the structured-predicate-write-refusal
+    # stale-wording class entirely: `m-batch-write-005`/`-006` now compile `ok`
+    # and join `WRITE_EXERCISED` (graded by `_assert_write_emissions` in the
+    # main sweep, never by `_skip_text` — a case's exercised-status membership
+    # is asserted directly there, not re-derived from skip text here).
+    assert {"m-batch-write-005", "m-batch-write-006"} <= WRITE_EXERCISED
     # A materializing predicate-write scenario (query-result-dependent,
     # run-only) is classified BEFORE the shape fallback — never the stale
     # "land with a later write increment / phase" M4-era-bucket promise.
@@ -623,8 +648,33 @@ def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
     # A genuine M4-era-bucket case (a write that lowers `ok` but sits outside
     # the reviewed keyed set) reworded to its actual current increment —
     # pk-gen never named here again (it landed in increment 3, its own module
-    # bucket, `SKIP_REASONS["m-pk-gen"]`).
+    # bucket, `SKIP_REASONS["m-pk-gen"]`), and the text never claims a stale
+    # forward promise now that increment 5 has landed.
     bucket_text = _skip_text("m-core-002")
     assert "outside the reviewed keyed" in bucket_text, bucket_text
     assert "m-pk-gen" not in bucket_text, bucket_text
-    assert "increment 5" in bucket_text, bucket_text
+    assert "land with a later write increment" not in bucket_text, bucket_text
+
+
+def test_m_opt_lock_001_stays_a_directed_reasoned_deferral() -> None:
+    """`m-opt-lock-001` (a KEYED no-op scenario: an observing find, a versioned
+    update whose effective change set is empty — no DML — then a
+    ``sameObjectAs`` cache-HIT find graded at `roundTrips: 0`) is
+    compile-eligible by the corpus's own default (it carries no
+    `compileEligibility` block) and its plan-of-record names it an increment-5
+    flip. It stays a DIRECTED, REASONED deferral instead: its three steps are
+    UNGROUPED (no `uow` label), so the engine's `db.transact`-per-step
+    translation runs them as three SEPARATE transactions with no cross-call
+    state — grading its trailing cache-hit find (`roundTrips: 0`, no golden
+    SQL) needs a cross-transaction identity + query cache, `m-process-cache`,
+    which `core/spec/m-unit-work.md` itself names DEFERRED (not this
+    increment's own materialize/collapse/readless scope). Loud, never silent:
+    it stays OUT of `WRITE_EXERCISED`, and the compile lane still answers a
+    real (if incidentally-worded, via the SAME unobserved-version path a
+    genuine caller bug would hit) `error` envelope for it today rather than a
+    silently-passing `ok`.
+    """
+    (case,) = [c for c in _REACHABLE if c.case_id == "m-opt-lock-001"]
+    assert case.case_id not in WRITE_EXERCISED
+    envelope = adapter.compile_case(case.path, "postgres")
+    assert envelope["status"] == "error", envelope

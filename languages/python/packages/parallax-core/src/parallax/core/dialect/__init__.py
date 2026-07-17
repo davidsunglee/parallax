@@ -147,6 +147,22 @@ class Dialect:
         """Translate the canonical `?` placeholders to this driver's form (`%s`)."""
         return canonical_sql.replace("?", "%s")
 
+    def from_driver_sql(self, driver_sql: str) -> str:
+        """The reverse of :meth:`to_driver_sql` — recover canonical `?`-placeholder
+        SQL text from this driver's own form.
+
+        Used only where a caller must REPORT a statement it did not itself lower
+        (the conformance engine's materializing-predicate-write capture, COR-3
+        Phase 8 increment 5: its per-row writes are query-result-dependent, so
+        there is no independent pure re-lowering to draw canonical emission text
+        from — the executed driver SQL is the only source, and every OTHER
+        emission this engine reports is canonical text, so a captured statement
+        must round-trip back before joining them). Production code never calls
+        this — it always starts from canonical text and translates outward, never
+        back.
+        """
+        return driver_sql.replace("%s", "?")
+
     # -- inheritance (m-inheritance / m-sql) -------------------------------- #
     def null_cast(self, neutral_type: str, max_length: int | None) -> str:
         """The ``CAST`` target-type spelling for a ``NULL`` placeholder column in a
