@@ -19,12 +19,17 @@ from here; the declared-composite walk (`m-value-object` "Writing") cannot
 reach its own owning scope's helpers at all, so -- mirroring the established
 `parallax.core.descriptor.vo_path` precedent (`m-op-algebra` / `m-sql` resolve
 value-object paths directly against `m-descriptor` records rather than
-importing `m-value-object`) -- it is implemented directly against
-`parallax.core.descriptor` records here, the one scope every caller already
-depends on. This is the M2 composition-at-the-engine precedent applied to
-writes: pure per-concern rule functions in their owning scopes, ONE shared
-compose function (this module) both callers invoke, so the rule ORDER stays a
-single source of truth regardless of which scope a given rule's logic lives in.
+importing `m-value-object`) -- its STRUCTURAL traversal lives in
+`parallax.core.descriptor.vo_document` (error-neutral, `vo_path`'s own
+pattern), the one scope every caller already depends on; this module renders
+ITS OWN rule vocabulary and message text from the returned violation.
+`parallax.core.inheritance.validate_write_assignment`'s VO-targeted
+assignment-value check (COR-3 Phase 8 confirmation-pass residual P3) reuses
+the SAME shared walk rather than forking it. This is the M2 composition-at-
+the-engine precedent applied to writes: pure per-concern rule functions in
+their owning scopes, ONE shared compose function (this module) both callers
+invoke, so the rule ORDER stays a single source of truth regardless of which
+scope a given rule's logic lives in.
 
 Check order: the inheritance payload-shape/target-validity rules run FIRST,
 unconditionally, whenever ``entity`` participates in a family -- resolving
@@ -63,7 +68,7 @@ that document happens to be shaped like a marker).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Final, cast
 
 from parallax.core import inheritance
@@ -74,7 +79,8 @@ from parallax.core.descriptor import (
     Metamodel,
     NestedValueObject,
     ValueObject,
-    ValueObjectAttribute,
+    VoDocumentViolation,
+    vo_document_violation,
 )
 from parallax.core.descriptor.neutral_type import type_matches as _type_matches
 
@@ -198,59 +204,57 @@ def _check_value_object_member(
                 f"{owner}.{name}: required value object is absent (or null)",
             )
         return
-    _walk_vo_document(vo, value, owner=f"{owner}.{name}")
+    violation = vo_document_violation(vo, value)
+    if violation is not None:
+        raise _rejected_error(violation, base=f"{owner}.{name}")
 
 
-def _walk_vo_document(container: _VoContainer, value: object, *, owner: str) -> None:
-    if container.cardinality == "many":
-        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-            raise WriteRejectedError(
-                "write-value-type-mismatch",
-                f"{owner}: a `many` value object must bind a list of documents, got "
-                f"{type(value).__name__}",
-            )
-        # An empty array is fine (m-value-object: "emptiness is not a nullability
-        # violation") -- each present element is still a whole document.
-        elements = cast("Sequence[object]", value)
-        for index, element in enumerate(elements):
-            _walk_vo_element(container, element, owner=f"{owner}[{index}]")
-        return
-    _walk_vo_element(container, value, owner=owner)
-
-
-def _walk_vo_element(container: _VoContainer, value: object, *, owner: str) -> None:
-    if not isinstance(value, Mapping):
-        raise WriteRejectedError(
+# --------------------------------------------------------------------------- #
+# Renders THIS module's own rule vocabulary / message text from a shared,     #
+# error-neutral `parallax.core.descriptor.vo_document` violation (the         #
+# extracted `vo_path`-precedent walk both this module and                     #
+# `parallax.core.inheritance.validate_write_assignment` reuse) -- the shared  #
+# module owns no text of its own, see its own docstring.                      #
+# --------------------------------------------------------------------------- #
+def _rejected_error(violation: VoDocumentViolation, *, base: str) -> WriteRejectedError:
+    path = _joined(base, violation.path)
+    if violation.reason == "not-a-list":
+        return WriteRejectedError(
             "write-value-type-mismatch",
-            f"{owner}: expected a document (mapping), got {type(value).__name__}",
+            f"{path}: a `many` value object must bind a list of documents, got "
+            f"{type(violation.value).__name__}",
         )
-    document = cast("Mapping[str, object]", value)
-    for attribute in container.attributes:
-        _check_vo_attribute(document, attribute, owner=owner)
-    for nested in container.value_objects:
-        # Always required-if-declared once inside a PRESENT document: there is
-        # no sparse write below the value-object document boundary.
-        _check_value_object_member(document, nested, required=True, owner=owner)
-
-
-def _check_vo_attribute(
-    document: Mapping[str, object], attribute: ValueObjectAttribute, *, owner: str
-) -> None:
-    name = attribute.name
-    present = name in document
-    value = document.get(name)
-    if not present or value is None:
-        if not attribute.nullable:
-            raise WriteRejectedError(
-                "write-required-attribute-missing",
-                f"{owner}.{name}: required attribute is absent (or null)",
-            )
-        return
-    if not _type_matches(value, attribute.type):
-        raise WriteRejectedError(
+    if violation.reason == "not-a-document":
+        return WriteRejectedError(
             "write-value-type-mismatch",
-            f"{owner}.{name}: value {value!r} does not match the declared type {attribute.type!r}",
+            f"{path}: expected a document (mapping), got {type(violation.value).__name__}",
         )
+    if violation.reason == "attribute-missing":
+        return WriteRejectedError(
+            "write-required-attribute-missing", f"{path}: required attribute is absent (or null)"
+        )
+    if violation.reason == "value-object-missing":
+        return WriteRejectedError(
+            "write-required-value-object-missing",
+            f"{path}: required value object is absent (or null)",
+        )
+    return WriteRejectedError(
+        "write-value-type-mismatch",
+        f"{path}: value {violation.value!r} does not match the declared type "
+        f"{violation.declared_type!r}",
+    )
+
+
+def _joined(base: str, path: str) -> str:
+    """``base`` plus a shared-walk violation's own relative ``path`` — a nested
+    member dot-joins, a ``many`` element index attaches bracket-first (no dot,
+    matching this module's OWN pre-extraction owner-string convention, e.g.
+    ``"Supplier.address.phones[0].number"``)."""
+    if not path:
+        return base
+    if path.startswith("["):
+        return f"{base}{path}"
+    return f"{base}.{path}"
 
 
 # --------------------------------------------------------------------------- #

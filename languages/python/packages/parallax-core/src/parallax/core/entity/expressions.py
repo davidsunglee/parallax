@@ -349,18 +349,22 @@ class AttributeExpr:
         binds its WHOLE document, `m-value-object`; there is no sparse write
         below its boundary).
 
-        This BUILD-TIME call applies the SAME shared check the engine/
+        A ``ValueObject`` instance (or a tuple of them, a ``many`` member) is
+        serialized to its canonical document FIRST — the SAME translation
+        ``full_row`` / ``canonical_row`` apply to every other write input —
+        so this BUILD-TIME call then applies the SAME shared check the engine/
         serialized path applies to a case-authored predicate-write assignment
         (`~parallax.core.inheritance.validate_write_assignment`, the "one
         validator, two callers" pattern `python.md:667-676` / `m-case-
-        format.md:700` require): a primary-key or framework-owned (version)
-        target is rejected — the SAME classification `model_copy`'s own
-        assignability guard uses (`~parallax.core.entity.base.
-        _validate_copy_keys`) — and a scalar attribute's value must conform to
-        its declared neutral type. A ``ValueObject`` instance (or a tuple of
-        them, a ``many`` member) is serialized to its canonical document — the
-        SAME translation ``full_row`` / ``canonical_row`` apply to every other
-        write input.
+        format.md:700` require) to the IDENTICAL document-shaped value either
+        caller ever sees: a primary-key or framework-owned (version) target is
+        rejected — the SAME classification ``model_copy``'s own assignability
+        guard uses (`~parallax.core.entity.base._validate_copy_keys`) — a
+        scalar attribute's value must conform to its declared neutral type,
+        and a value-object member's value must be a well-formed document
+        against its declared composite (COR-3 Phase 8 confirmation-pass
+        residual P3) — a non-document value (e.g. ``Customer.address.set(42)``)
+        is rejected with the same wording style, never silently bound.
         """
         if self._path:
             raise TypeError(
@@ -375,13 +379,14 @@ class AttributeExpr:
         )
 
         meta = _current_metamodel()
+        serialized = _serialize_assignment_value(value)
         try:
             inheritance.validate_write_assignment(
-                meta, meta.entity(self._entity), self._head, value
+                meta, meta.entity(self._entity), self._head, serialized
             )
         except inheritance.WriteAssignmentError as exc:
             raise ModelCopyError(str(exc)) from exc
-        return AttributeAssignment(attr=self.ref, value=_serialize_assignment_value(value))
+        return AttributeAssignment(attr=self.ref, value=serialized)
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)

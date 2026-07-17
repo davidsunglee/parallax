@@ -14,7 +14,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, ValueObject
+from parallax.core.descriptor import (
+    Attribute,
+    Entity,
+    Inheritance,
+    Metamodel,
+    ValueObject,
+    VoDocumentViolation,
+    vo_document_violation,
+)
 from parallax.core.descriptor import declaring_entity as _resolve_declaring_entity
 from parallax.core.descriptor.neutral_type import type_matches as _type_matches
 
@@ -624,11 +632,24 @@ def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value:
     type_matches`, the SAME category-level scalar-value policy `write_validate`
     applies to a keyed write row) — a ``None`` value is never itself a type
     mismatch (a nullable attribute's own assignment may always clear it, mirroring
-    `write_validate`'s own null short-circuit). A ``name`` this family declares
-    no SCALAR attribute for (a value-object member, or one `validate_instruction`'s
-    own member-name-honesty gate already rejects as wholly undeclared) is out of
-    this function's scope — it returns silently, leaving that classification to
-    its own owning check.
+    `write_validate`'s own null short-circuit).
+
+    A ``name`` naming a VALUE-OBJECT member instead (FAMILY-EFFECTIVE,
+    `superset_value_objects` — the same family-wide resolution
+    `family_attributes` applies to scalars) is likewise validated: a non-``None``
+    ``value`` MUST be a well-formed document against the member's declared
+    composite (COR-3 Phase 8 confirmation-pass residual P3) — the SAME
+    error-neutral structural walk `write_validate`'s own declared-composite
+    check reuses (`parallax.core.descriptor.vo_document`, the `vo_path`
+    precedent), so a non-document value (e.g. ``Customer.address.set(42)``,
+    typed or the equivalent serialized ``PredicateWrite`` assignment) is
+    rejected with this function's OWN established wording style; a well-formed
+    document is accepted — assigning a value object is not itself rejected
+    (D-26 keeps the combination structurally accepted). A ``name`` this family
+    declares NEITHER a scalar attribute NOR a value object for (one
+    `validate_instruction`'s own member-name-honesty gate already rejects as
+    wholly undeclared) is out of this function's scope — it returns silently,
+    leaving that classification to its own owning check.
     """
     for attribute in family_attributes(meta, entity):
         if attribute.name != name:
@@ -650,6 +671,64 @@ def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value:
                 f"{attribute.type!r}",
             )
         return
+    for value_object in superset_value_objects(meta, (entity.name,)):
+        if value_object.name != name:
+            continue
+        if value is not None:
+            violation = vo_document_violation(value_object, value)
+            if violation is not None:
+                raise _vo_assignment_error(entity.name, name, violation)
+        return
+
+
+def _vo_assignment_error(
+    entity_name: str, name: str, violation: VoDocumentViolation
+) -> WriteAssignmentError:
+    """Render :func:`validate_write_assignment`'s OWN rule vocabulary and
+    message text (the ``"value-type-mismatch"`` rule, the SAME one a scalar
+    mismatch raises — a malformed value-object assignment is, from this
+    function's own vocabulary, just another shape of "the value does not
+    match the declared type") from a shared, error-neutral
+    ``parallax.core.descriptor.vo_document`` violation — that module owns no
+    text of its own, see its own docstring."""
+    path = _joined(f"{entity_name}.{name}", violation.path)
+    if violation.reason == "not-a-list":
+        return WriteAssignmentError(
+            "value-type-mismatch",
+            f"{path}: value {violation.value!r} does not match the declared type — a `many` "
+            "value object must bind a list of documents",
+        )
+    if violation.reason == "not-a-document":
+        return WriteAssignmentError(
+            "value-type-mismatch",
+            f"{path}: value {violation.value!r} does not match the declared type — expected a "
+            "document (mapping)",
+        )
+    if violation.reason == "attribute-missing":
+        return WriteAssignmentError(
+            "value-type-mismatch", f"{path}: required attribute is absent (or null)"
+        )
+    if violation.reason == "value-object-missing":
+        return WriteAssignmentError(
+            "value-type-mismatch", f"{path}: required value object is absent (or null)"
+        )
+    return WriteAssignmentError(
+        "value-type-mismatch",
+        f"{path}: value {violation.value!r} does not match the declared type "
+        f"{violation.declared_type!r}",
+    )
+
+
+def _joined(base: str, path: str) -> str:
+    """``base`` plus a shared-walk violation's own relative ``path`` — a nested
+    member dot-joins, a ``many`` element index attaches bracket-first (no dot,
+    mirroring `write_validate`'s own owner-string convention, e.g.
+    ``"Customer.address.phones[0].number"``)."""
+    if not path:
+        return base
+    if path.startswith("["):
+        return f"{base}{path}"
+    return f"{base}.{path}"
 
 
 def _concrete_accepted_field_names(

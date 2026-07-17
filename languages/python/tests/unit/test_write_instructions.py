@@ -541,3 +541,44 @@ def test_member_name_honesty_rejects_a_scalar_type_mismatched_assignment() -> No
     )
     with pytest.raises(wi.WriteInstructionError, match="does not match the declared type"):
         wi.validate_instruction(predicate, _ACCOUNT)
+
+
+# --------------------------------------------------------------------------- #
+# Confirmation-pass residual P3 -- a VALUE-OBJECT-targeted assignment's VALUE   #
+# is validated against its declared composite too (the prior round's check     #
+# validated only scalar targets, silently accepting `Customer.address.set(42)` #
+# and the equivalent case-authored form): a non-document value is rejected     #
+# with the SAME wording style the scalar branch uses; a well-formed document   #
+# stays structurally accepted (D-26 -- a value-object target is not itself     #
+# rejected). `test_where_verbs.py`'s own `test_set_on_a_...` pins are the      #
+# typed-path half of this SAME shared check.                                   #
+# --------------------------------------------------------------------------- #
+def test_member_name_honesty_rejects_a_non_document_value_object_assignment() -> None:
+    customer = _MODELS["customer"]
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {"entity": "Customer", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Customer.address", "value": 42}],
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="does not match the declared type"):
+        wi.validate_instruction(predicate, customer)
+
+
+def test_member_name_honesty_accepts_a_well_formed_value_object_assignment() -> None:
+    customer = _MODELS["customer"]
+    document: dict[str, object] = {
+        "street": "1 Aurora Ave",
+        "city": "Oslo",
+        "geo": None,
+        "phones": [],
+    }
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {"entity": "Customer", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Customer.address", "value": document}],
+        }
+    )
+    wi.validate_instruction(predicate, customer)  # must not raise

@@ -17,6 +17,9 @@ from parallax.core.descriptor import (
     Entity,
     Inheritance,
     Metamodel,
+    NestedValueObject,
+    ValueObject,
+    ValueObjectAttribute,
     deserialize,
 )
 
@@ -397,3 +400,99 @@ def test_reject_predicate_write_raises_for_the_abstract_root() -> None:
 def test_reject_predicate_write_is_a_no_op_for_a_non_participant() -> None:
     account = _MODELS["account"].entity("Account")
     inheritance.reject_predicate_write(account)  # no raise
+
+
+# --------------------------------------------------------------------------- #
+# `validate_write_assignment`'s VALUE-OBJECT branch (confirmation-pass         #
+# residual P3): the corpus/mirror `Customer.address` shape                     #
+# (`test_where_verbs.py` / `test_write_instructions.py`) pins the four         #
+# residual-mandated shapes (typed/serialized reject/accept) but declares no    #
+# non-nullable NESTED value object or `cardinality: many` member, so this      #
+# synthetic model -- the SAME "hand-built model" convention                    #
+# `test_write_validate.py`'s own `_WIDGET` uses for the sibling scalar walk --  #
+# reaches every remaining shared-walk violation reason (`not-a-list`,          #
+# `attribute-missing`, `value-object-missing`, a nested `many` element's own   #
+# bracket-indexed path) directly against `inheritance.validate_write_          #
+# assignment`, never through the typed/serialized frontends.                   #
+# --------------------------------------------------------------------------- #
+_VO_ENTITY = Entity(
+    name="Gadget",
+    table="gadget",
+    mutability="transactional",
+    attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    value_objects=(
+        ValueObject(
+            name="spec",
+            column="spec",
+            nullable=True,
+            attributes=(ValueObjectAttribute(name="note", type="string"),),
+            value_objects=(
+                NestedValueObject(
+                    name="detail",
+                    nullable=False,
+                    attributes=(ValueObjectAttribute(name="hint", type="string", nullable=True),),
+                ),
+                NestedValueObject(
+                    name="grid",
+                    nullable=True,
+                    cardinality="many",
+                    attributes=(ValueObjectAttribute(name="cell", type="string"),),
+                ),
+            ),
+        ),
+        ValueObject(
+            name="tags",
+            column="tags",
+            cardinality="many",
+            nullable=True,
+            attributes=(ValueObjectAttribute(name="label", type="string"),),
+        ),
+    ),
+)
+_VO_META = Metamodel(entities=(_VO_ENTITY,))
+
+
+def test_validate_write_assignment_accepts_a_well_formed_nested_value_object() -> None:
+    document: dict[str, object] = {
+        "note": "n",
+        "detail": {"hint": "h"},
+        "grid": [{"cell": "a"}],
+    }
+    inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", document)  # no raise
+
+
+def test_validate_write_assignment_rejects_a_many_value_object_non_list() -> None:
+    with pytest.raises(inheritance.WriteAssignmentError, match="must bind a list of documents"):
+        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "tags", "not-a-list")
+
+
+def test_validate_write_assignment_rejects_a_missing_required_attribute() -> None:
+    document: dict[str, object] = {"detail": {"hint": "h"}}
+    with pytest.raises(inheritance.WriteAssignmentError, match="required attribute is absent"):
+        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", document)
+
+
+def test_validate_write_assignment_rejects_a_missing_required_nested_value_object() -> None:
+    document: dict[str, object] = {"note": "n"}
+    with pytest.raises(inheritance.WriteAssignmentError, match="required value object is absent"):
+        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", document)
+
+
+def test_validate_write_assignment_rejects_a_nested_many_element_type_mismatch() -> None:
+    # The offending leaf's path threads through a NESTED `cardinality: many`
+    # member's own bracket-indexed element (`spec.grid[0].cell`) — the shared
+    # walk's (`parallax.core.descriptor.vo_document`) own index-prefixing.
+    document: dict[str, object] = {
+        "note": "n",
+        "detail": {"hint": "h"},
+        "grid": [{"cell": 42}],
+    }
+    with pytest.raises(inheritance.WriteAssignmentError, match=r"spec\.grid\[0\]\.cell"):
+        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", document)
+
+
+def test_validate_write_assignment_rejects_a_top_level_many_element_type_mismatch() -> None:
+    # A TOP-level `cardinality: many` member's own element violation paths
+    # bracket-first, with no leading dot (`Gadget.tags[0].label`).
+    with pytest.raises(inheritance.WriteAssignmentError, match=r"tags\[0\]\.label"):
+        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "tags", [{"label": 42}])

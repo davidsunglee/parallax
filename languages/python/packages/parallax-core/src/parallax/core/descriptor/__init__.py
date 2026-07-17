@@ -43,6 +43,7 @@ from parallax.core.descriptor.validate import (
     validate_metamodel,
     validate_optimistic_locking_root_owned,
 )
+from parallax.core.descriptor.vo_document import VoDocumentViolation, vo_document_violation
 from parallax.core.descriptor.vo_path import (
     VoPathMiss,
     find_value_object,
@@ -70,6 +71,7 @@ __all__ = [
     "Temporal",
     "ValueObject",
     "ValueObjectAttribute",
+    "VoDocumentViolation",
     "VoPathMiss",
     "canonicalize",
     "column_order",
@@ -86,4 +88,5 @@ __all__ = [
     "validate_entity",
     "validate_metamodel",
     "validate_optimistic_locking_root_owned",
+    "vo_document_violation",
 ]

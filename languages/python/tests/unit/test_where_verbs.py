@@ -121,6 +121,36 @@ def test_set_on_a_scalar_with_a_mismatched_type_raises() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Confirmation-pass residual P3 -- a VALUE-OBJECT-targeted `.set(...)`'s VALUE  #
+# is validated against its declared composite too (the prior round's check     #
+# validated only scalar targets, silently accepting `Customer.address.set(42)` #
+# and binding `42` as the document): a non-document value is rejected with the #
+# SAME wording style the scalar branch above uses; a well-formed document      #
+# stays structurally accepted (D-26 -- a value-object target is not itself     #
+# rejected; `test_set_on_a_top_level_value_object_serializes_to_its_document`  #
+# above already pins the well-formed-`ValueObject`-instance shape of this SAME #
+# accept branch). `test_write_instructions.py`'s own `test_member_name_       #
+# honesty_...value_object_assignment` pins are the serialized/engine-path      #
+# half of this SAME shared check.                                              #
+# --------------------------------------------------------------------------- #
+def test_set_on_a_value_object_with_a_non_document_value_raises() -> None:
+    with pytest.raises(ModelCopyError, match="does not match the declared type"):
+        vom.Customer.address.set(42)  # type: ignore[arg-type]
+
+
+def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None:
+    assignment = vom.Customer.address.set(
+        {"street": "1 Aurora Ave", "city": "Oslo", "geo": None, "phones": []}
+    )
+    assert assignment.value == {
+        "street": "1 Aurora Ave",
+        "city": "Oslo",
+        "geo": None,
+        "phones": [],
+    }
+
+
+# --------------------------------------------------------------------------- #
 # `Statement.is_bare()` — the single write-target guard every `_where` verb    #
 # shares (python.md §5). Each non-default clause is tested independently, so  #
 # the guard cannot be satisfied by an accidental combination.                  #
