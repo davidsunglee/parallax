@@ -14,8 +14,12 @@ skips with a recorded reason when Docker is unavailable (never silently), and
 the ``python-database`` CI job fails on any skip. A write story's grading is
 the mirrored case's own oracle: a story returning rows must observe its final
 find's `expectRows`; a writeSequence story must leave exactly `then.tableState`
-behind; the boundary story must raise (the withheld value) and leave the
-pre-transaction state standing. A graph story's grading is bespoke per case
+behind. The one `kind == "boundary"` story (`m-unit-work-004`) is EXCLUDED from
+this file's own grading loop (COR-3 Phase 8 increment 6, DQ5): the D-17
+case-driven boundary runner (`test_boundary_run.py`) grades it — and every
+other boundary-shape case — directly against the corpus now, so the story
+function survives registered only for the Usage Guide and the fake-port wire
+pin (`test_write_no_drift.py`). A graph story's grading is bespoke per case
 (see the section below).
 """
 
@@ -35,7 +39,6 @@ from parallax.conformance.graph_stories import (
 )
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
-from parallax.conformance.story_models import Account
 from parallax.core import LATEST, edge_of, is_loaded, pin_of
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity.expressions import UnloadedRelationshipError
@@ -61,22 +64,23 @@ def _reset_for(case_id: str, provisioner: Any) -> Any:
     return meta
 
 
-_STORY_IDS = [story.case_id for story in WRITE_STORIES]
+# `kind == "boundary"` (m-unit-work-004) is EXCLUDED from execution here (COR-3
+# Phase 8 increment 6, DQ5): the D-17 case-driven boundary runner
+# (`tests/api_conformance/test_boundary_run.py`) now grades it directly
+# against the corpus, case-driven like every other boundary case — the hand
+# story's function stays registered (`stories.WRITE_STORIES`) ONLY so the
+# Usage Guide keeps rendering it (`api_suite.EXAMPLES`) and the fake-port
+# wire pin (`test_write_no_drift.test_boundary_story_withholds_the_callback_
+# value`) keeps proving its own DML shape — this hand-mirrored REAL-DATABASE
+# grading is what retires.
+_EXECUTED_STORIES = [story for story in WRITE_STORIES if story.kind != "boundary"]
+_STORY_IDS = [story.case_id for story in _EXECUTED_STORIES]
 
 
-@pytest.mark.parametrize("story", WRITE_STORIES, ids=_STORY_IDS)
+@pytest.mark.parametrize("story", _EXECUTED_STORIES, ids=_STORY_IDS)
 def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: Any) -> None:
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
-
-    if story.kind == "boundary":
-        # The callback value is withheld: `db.transact` raises, and the abort
-        # discarded even the force-flushed write — the fixture row stands.
-        with pytest.raises(RuntimeError, match="abort"):
-            story.run(db)
-        snapshot = db.transact(lambda tx: tx.find(Account.where(Account.id == 1)))
-        assert snapshot.result().balance == Decimal("100.00"), snapshot.results()
-        return
 
     result = story.run(db)
     if result is not None:
@@ -254,6 +258,15 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 # own oracle rows declare it (an abstract-root inheritance read) — the        #
 # API-suite's own polymorphism observation (`python.md` §4: "observable as    #
 # `type(node)`"), not a field the developer surface itself exposes.           #
+#                                                                              #
+# `story.concurrency` (COR-3 Phase 8 increment 6, the `m-read-lock` matrix)   #
+# opts a story into the TRANSACTIONAL half instead: `tx.find(build())` inside #
+# a `db.transact` of the declared participation mode, still graded against    #
+# the SAME `then.rows` oracle — the runtime proof that the mode actually      #
+# drives whether the emitted SQL carries the shared read-lock suffix          #
+# (unobservable from `then.rows` alone; the compile/run sweeps prove the      #
+# emitted SQL byte-exact, this proves the SAME mode reaches the SAME public   #
+# surface a developer drives).                                                #
 # --------------------------------------------------------------------------- #
 _READ_STORY_IDS = [story.case_id for story in READ_STORIES]
 
@@ -262,7 +275,10 @@ _READ_STORY_IDS = [story.case_id for story in READ_STORIES]
 def test_read_story_runs_through_the_shipped_surface(story: ReadStory, provisioner: Any) -> None:
     meta = _reset_for(story.case_id, provisioner)
     db = connect(provisioner.port, meta)
-    snapshot = db.find(story.build())
+    if story.concurrency is not None:
+        snapshot = db.transact(lambda tx: tx.find(story.build()), concurrency=story.concurrency)
+    else:
+        snapshot = db.find(story.build())
     expected_rows = cast(
         "list[dict[str, Any]]", case_document(_CASES[story.case_id])["then"]["rows"]
     )

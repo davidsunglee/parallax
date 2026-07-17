@@ -158,6 +158,25 @@ _SNAPSHOT_READ_MILESTONE_SET_READS: Final[frozenset[str]] = frozenset(
 _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108"}
 )
+# The read-lock matrix's four IN-SLICE `read`-shape cases (COR-3 Phase 8
+# increment 6, m-read-lock): `m-read-lock-001` is the harness-lane single-
+# connection golden — the module's OWN witness for "the default (locking)
+# in-transaction object find" (`m-read-lock.md`), so its `when.uow`-free read
+# still compiles the locked golden through `engine._read_case_concurrency`'s
+# module-scoped default. `m-read-lock-002`/`-003`/`-005` are the
+# `api-conformance`-lane runtime matrix (an explicit `when.uow.concurrency`
+# locking object-find lock / locking-mode projection-omits-lock / optimistic-
+# mode omits-lock): compile-eligible (no `compileEligibility` declared), so
+# the compile sweep grades their golden SQL byte-exact here — the SAME lane
+# routing precedent `m-snapshot-read-011` already sets (an `api-conformance`-
+# lane read whose wire-level SQL the ordinary compile/run lanes still grade,
+# the API Conformance Suite proving only the ADDITIONAL runtime-observable
+# half no wire comparison can see). `m-read-lock-004` (deep-fetch, tagged
+# `m-op-list`) and `m-read-lock-009` (MariaDB) stay OUT of slice
+# (`slices.md`), never reaching `_REACHABLE` at all.
+_READ_LOCK_READS: Final[frozenset[str]] = frozenset(
+    {"m-read-lock-001", "m-read-lock-002", "m-read-lock-003", "m-read-lock-005"}
+)
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _VALUE_OBJECT_PREDICATE_READS
@@ -173,6 +192,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _NAVIGATE_INHERITANCE_READS
     | _SNAPSHOT_READ_MILESTONE_SET_READS
     | _INHERITANCE_INSTANCE_FORM_GRAPH_READS
+    | _READ_LOCK_READS
 )
 
 # The keyed, non-temporal unit-of-work write cases the write path grades byte-exact
@@ -189,9 +209,13 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
 # remaining m-pk-gen `sequence`-strategy writeSequence cases (query-result-dependent,
 # run-only) stay reasoned-skipped; the optimistic-lock conflict-abort scenario
 # (m-opt-lock-012) is `uow`-grouped AND INTERLEAVED (two genuinely concurrent
-# sessions), deferred to increment 6's own two-session `peer` seam — see
-# `test_run_sweep.py`'s own `_UOW_GROUPED_RUN_DEFERRED` for the run-lane deferral this
-# mirrors.
+# sessions) — it is `compileEligibility: run-only` regardless (its version binds
+# are query-result-dependent, `_skip_reason`'s own run-only branch classifies
+# it, shape-agnostically, before this set is even consulted), and COR-3 Phase 8
+# increment 6 gives it its OWN run-lane entry point over the `Provisioner.peer`
+# seam — see `test_run_sweep.py`'s own `test_interleaved_uow_group_run_sweep`
+# (`engine.run_interleaved_scenario_case`), routed to explicitly rather than
+# through this set or `adapter.run_case`.
 #
 # `m-unit-work-002/005/006/009/012` LEFT this set (amendment-review remediation,
 # COR-3 Phase 8): each now authors its observing find(s) grouped with its
@@ -440,12 +464,15 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
             "end-to-end by the error run lane (test_run_sweep.test_error_run_sweep)"
         )
     if case.shape == "boundary":
-        # The m-unit-work abort-contract case (withheld callback value on rollback) is an
-        # m-api-conformance-lane assertion the wire golden SQL cannot see; the API
-        # Conformance Suite verifies it, not `run`. It emits no golden DML to grade.
+        # Every boundary case (m-auto-retry / m-opt-lock bounded automatic
+        # retry — an injected-fault or loop-configuration loop-mechanics
+        # branch, COR-3 Phase 8 increment 6's D-17 case-driven runner) is a
+        # declared `api-conformance`-lane assertion the wire golden SQL
+        # cannot see (it carries no golden DML at all, m-case-format); the
+        # API Conformance Suite verifies it, not `run`.
         return (
-            "boundary abort-contract case (m-api-conformance lane): the withheld-value-"
-            "on-abort contract is verified by the API Conformance Suite, not by `run`"
+            "boundary loop-mechanics case (m-auto-retry/m-opt-lock, api-conformance lane): "
+            "verified by the API Conformance Suite's case-driven boundary runner, not by `run`"
         )
     if case.shape in ("scenario", "writeSequence"):
         # The reachable keyed unit-of-work cases are graded above (WRITE_EXERCISED);

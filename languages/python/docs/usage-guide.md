@@ -259,6 +259,30 @@ Corpus case: `m-op-algebra-032`
 op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)
 ```
 
+## A locking-mode object find carries the shared read lock
+
+Corpus case: `m-read-lock-002`
+
+```python
+op = Account.where(Account.id == 2)
+```
+
+## A locking-mode projection read omits the shared read lock
+
+Corpus case: `m-read-lock-003`
+
+```python
+op = Account.where().distinct()
+```
+
+## An optimistic-mode read omits the shared read lock
+
+Corpus case: `m-read-lock-005`
+
+```python
+op = Account.where(Account.id == 2)
+```
+
 ## Diamond identity: two include paths reaching the same rows share one node
 
 Corpus case: `m-snapshot-read-001`

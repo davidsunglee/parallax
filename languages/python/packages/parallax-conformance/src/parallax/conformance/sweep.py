@@ -34,7 +34,14 @@ observed-``in_z``/business-discriminator gate, and the DQ4 ``db.transact``
 re-route) — the 32-case flip enumerated in that increment's own implementer
 prompt; the deferred forms (materializing predicate temporal writes,
 auto-retry, two-session choreography) stay honestly reasoned-skipped toward
-increments 5-6.
+increments 5-6. Phase 8 increment 6 adds ``m-read-lock`` (the read-lock case
+matrix: the single-connection shared-suffix witness, the runtime lock/omit
+`api-conformance` reads, and the two-session concurrency proofs over the
+`Provisioner.peer` seam) and ``m-auto-retry`` (the bounded-retry boundary
+cases the case-driven D-17 runner grades, and the optimistic-conflict
+auto-retry conflict-lane witness), closing the correctness modules'
+remaining honest gaps — the 15-case flip enumerated in that increment's own
+implementer prompt.
 """
 
 from __future__ import annotations
@@ -80,6 +87,8 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-opt-lock",
         "m-audit-write",
         "m-bitemp-write",
+        "m-read-lock",
+        "m-auto-retry",
         # `m-batch-write-004` (the versioned per-key delete materialize) tags
         # BOTH `m-batch-write` and `m-opt-lock` — the sweep's own "every tagged
         # module must be online" rule needs this module online too for that

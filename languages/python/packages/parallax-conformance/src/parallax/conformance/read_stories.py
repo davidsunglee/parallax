@@ -61,9 +61,10 @@ from parallax.conformance.read_models import (
     Invoice,
 )
 from parallax.conformance.read_models import Balance as _Balance
-from parallax.conformance.story_models import Order, OrderItem, OrderStatus
+from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
 from parallax.core import Statement
 from parallax.core.temporal_read import LATEST
+from parallax.core.unit_work import Concurrency
 
 __all__ = ["READ_STORIES", "ReadStory"]
 
@@ -75,13 +76,24 @@ class ReadStory:
     ``snippet`` is the Usage Guide's rendered source (a plain ``op = ...``
     reading, matching every other example's presentation) — kept alongside
     ``build`` rather than derived via ``inspect.getsource`` (a lambda's own
-    source line would render the dict-literal/comma noise around it)."""
+    source line would render the dict-literal/comma noise around it).
+
+    ``concurrency`` (COR-3 Phase 8 increment 6, the `m-read-lock` matrix's
+    -002/-003/-005) opts a story into the TRANSACTIONAL read half instead of
+    the default non-transactional one: ``None`` (every other entry, unchanged)
+    runs ``db.find(build())``; a declared mode runs
+    ``db.transact(lambda tx: tx.find(build()), concurrency=...)`` — a
+    participating `tx.find`, whose emitted SQL carries (or, `optimistic`,
+    omits) the dialect's shared read-lock suffix per the SAME `m-read-lock`
+    policy `Transaction.find` derives production-side
+    (`parallax.core.read_lock.mode_for`)."""
 
     case_id: str
     title: str
     model: str
     build: Callable[[], Statement]
     snippet: str
+    concurrency: Concurrency | None = None
 
 
 READ_STORIES: Final[tuple[ReadStory, ...]] = (
@@ -291,5 +303,38 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "rate",
         lambda: DepositRate.where().as_of(processing=dt.datetime(2024, 1, 15, tzinfo=dt.UTC)),
         "op = DepositRate.where().as_of(processing=datetime(2024, 1, 15, tzinfo=UTC))",
+    ),
+    # -- m-read-lock (the runtime lock/omit matrix), models/account.yaml ----- #
+    # (COR-3 Phase 8 increment 6): the `api-conformance`-lane runtime half of
+    # the read-lock matrix — `tx.find` inside a `db.transact` of the declared
+    # mode. `m-read-lock-001` (the harness-lane single-connection golden) and
+    # `-006`/`-007`/`-008` (the two-session behavioral proofs) need no idiomatic
+    # story: they need no `db.transact` participation-mode CONFIGURATION to
+    # demonstrate (the harness proof runs the golden verbatim; the two-session
+    # proofs are a concurrency property this generic single-session runner
+    # cannot hold open) — see `api_suite.CASE_SKIP_REASONS`.
+    ReadStory(
+        "m-read-lock-002",
+        "A locking-mode object find carries the shared read lock",
+        "account",
+        lambda: Account.where(Account.id == 2),
+        "op = Account.where(Account.id == 2)",
+        concurrency="locking",
+    ),
+    ReadStory(
+        "m-read-lock-003",
+        "A locking-mode projection read omits the shared read lock",
+        "account",
+        lambda: Account.where().distinct(),
+        "op = Account.where().distinct()",
+        concurrency="locking",
+    ),
+    ReadStory(
+        "m-read-lock-005",
+        "An optimistic-mode read omits the shared read lock",
+        "account",
+        lambda: Account.where(Account.id == 2),
+        "op = Account.where(Account.id == 2)",
+        concurrency="optimistic",
     ),
 )
