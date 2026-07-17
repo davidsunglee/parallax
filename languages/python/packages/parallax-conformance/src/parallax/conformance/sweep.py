@@ -83,15 +83,18 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         # `m-batch-write-004` (the versioned per-key delete materialize) tags
         # BOTH `m-batch-write` and `m-opt-lock` — the sweep's own "every tagged
         # module must be online" rule needs this module online too for that
-        # ONE witness to reach reachability. Every OTHER m-batch-write case
-        # keeps its own honest fate: a genuine buffered-batch COLLAPSE entry
-        # (`statements` < row count, m-batch-write-001/003) still hits
-        # `lower_write`'s unchanged multi-row refusal (increment 5); a
-        # predicate-selected entry (005/006) still hits the predicate-write
-        # refusal — none of the five newly-reachable non-004 cases join
-        # `WRITE_EXERCISED` (the reviewed, byte-exact set), so they stay
-        # reasoned-skipped exactly like every other unexercised reachable
-        # write case, never silently graded.
+        # ONE witness to reach reachability. Every OTHER m-batch-write case is
+        # ALSO now landed and joins `WRITE_EXERCISED` (the reviewed, byte-exact
+        # set), never merely reasoned-skipped: the buffered-batch COLLAPSE
+        # entries (`statements` < row count, m-batch-write-001/003, plus the
+        # uniform/non-uniform keyed update m-batch-write-002) lower through
+        # `lower_write`'s own multi-row collapse (COR-3 Phase 8 increment 5,
+        # `m-batch-write` "Set-based flush"); the predicate-selected entries
+        # (005/006) lower through the real readless predicate-write path
+        # (increment 5, `m-batch-write` "Predicate-selected readless forms") —
+        # the structured-predicate-write REFUSAL this comment once described
+        # is retired entirely (`test_compile_sweep.py`'s own
+        # `test_displayed_skip_text_stays_honest_for_a_representative_set`).
         "m-batch-write",
     }
 )

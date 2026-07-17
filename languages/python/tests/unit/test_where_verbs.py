@@ -10,7 +10,9 @@ mechanisms every verb shares.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable, Sequence
 from decimal import Decimal
+from typing import cast
 
 import pytest
 
@@ -18,11 +20,16 @@ import mirrored_models as mm
 import snapshot_models as sm
 import value_object_models as vom
 from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field
-from parallax.core.entity import ModelCopyError
+from parallax.core.db_port import DbPort
+from parallax.core.entity import ModelCopyError, metamodel
 from parallax.core.entity.expressions import AttributeAssignment
 from parallax.core.temporal_read import LATEST
+from parallax.core.unit_work import FixedClock
+from parallax.snapshot.handle import Database, Transaction
 
 pytestmark = pytest.mark.unit
+
+_FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
 # A small LOCAL temporal (audit-only) entity, unregistered elsewhere — the
@@ -163,3 +170,48 @@ def test_is_bare_false_with_include() -> None:
 def test_is_bare_false_with_narrow() -> None:
     statement = sm.Animal.where(sm.Animal.name == "Rex").narrow(sm.Dog)
     assert statement.is_bare() is False
+
+
+# --------------------------------------------------------------------------- #
+# The BEHAVIORAL bare-statement rejection, end to end (round-6 confirmation-   #
+# pass strengthening): `is_bare()` returning `False` above is NECESSARY but    #
+# not SUFFICIENT on its own — an actual `tx.update_where` / `tx.delete_where`  #
+# call handed a `.distinct()` statement must itself raise the rejection        #
+# (`Transaction._buffer_predicate`, python.md §5), never merely be provable    #
+# through the predicate alone. A port that raises on any I/O proves the        #
+# guard runs BEFORE the connection is ever touched.                            #
+# --------------------------------------------------------------------------- #
+class _NoIoPort:
+    """A minimal ``DbPort`` that raises if the connection is ever touched."""
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[dict[str, object]]:
+        raise AssertionError("no read expected — the bare-statement guard runs first")
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        raise AssertionError("no write expected — the bare-statement guard runs first")
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        return body(cast("DbPort", self))
+
+
+_PERSON_META = metamodel([mm.Person, mm.Passport])
+
+
+def test_update_where_rejects_a_distinct_statement_end_to_end() -> None:
+    statement = mm.Person.where(mm.Person.id == 1).distinct()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(statement, mm.Person.name.set("Ada"))
+
+    with pytest.raises(ValueError, match="bare statement"):
+        Database.connect(_NoIoPort(), _PERSON_META, clock=FixedClock(_FIXED)).transact(fn)
+
+
+def test_delete_where_rejects_a_distinct_statement_end_to_end() -> None:
+    statement = mm.Person.where(mm.Person.id == 1).distinct()
+
+    def fn(tx: Transaction) -> None:
+        tx.delete_where(statement)
+
+    with pytest.raises(ValueError, match="bare statement"):
+        Database.connect(_NoIoPort(), _PERSON_META, clock=FixedClock(_FIXED)).transact(fn)

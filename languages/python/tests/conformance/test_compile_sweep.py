@@ -282,7 +282,14 @@ _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-
 # carry-through witnesses (m-value-object-032/033). The materializing predicate
 # forms (m-audit-write-007/009, m-bitemp-write-010-013), the conflict-shape
 # close-only witnesses (run-only, graded by `test_run_sweep.py`), and
-# m-value-object-047 (materializing) stay reasoned-skipped toward increment 5.
+# m-value-object-047 stay reasoned-skipped HERE — permanently, not toward any
+# pending increment: each is `compileEligibility: run-only`
+# (query-result-dependent, materializing), so `compile` structurally never
+# grades them. Increment 5 landed their materializing EXECUTION; all of them
+# (m-value-object-047 included — its own trailing verify is an `asOf` read,
+# the same lane every other `asOf` case already lowers) are EXERCISED in the
+# RUN lane instead (`test_run_sweep.py`'s own
+# `_MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED`).
 _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
         "m-audit-write-001",

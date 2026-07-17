@@ -420,8 +420,10 @@ self-contained without a system `libpq`.
   SEMANTICALLY (mutation kind, versioned-ness, per-row observation keys,
   pk-gen management, update-value uniformity) with `statements` demoted to
   the count-consistency assertion the schema intends; and a structured
-  predicate-write instruction now refuses loudly, naming increment 5,
-  wherever it reaches the keyed-write engine seam. `m-batch-write-002`
+  predicate-write instruction refused loudly at this round, naming
+  increment 5 — a stand-in retired once increment 5 landed real
+  predicate-write execution (below); its own `handle.predicate_write_refusal`
+  source (named in that later entry) no longer exists. `m-batch-write-002`
   (an unversioned per-key update with non-uniform values) turned out to
   already lower correctly and joined the exercised set. Known debt this round
   intentionally left untouched (all pre-existing, all core-side or corpus-side):
@@ -452,9 +454,11 @@ self-contained without a system `libpq`.
   (`api_suite.GUIDE_ONLY_WRITE_STORY_IDS`) with the same case-scoped reasoned
   skip treatment as `m-unit-work-005`/`-006`/`-009`. The predicate-write
   refusal wording duplicated between `parallax.snapshot.handle.lower_write`
-  and `parallax.conformance.engine`'s structural pre-check now shares one
+  and `parallax.conformance.engine`'s structural pre-check now shared one
   source, `handle.predicate_write_refusal` (the same move as
-  `opt_lock.classify_mismatch`, increment above). Measured post-round: unit
+  `opt_lock.classify_mismatch`, increment above) — that refusal, and its
+  named source, no longer exist: increment 5 (below) replaced the refusal
+  with real predicate-write execution. Measured post-round: unit
   lane (`pytest -m unit`) 1822 passed / 92 skipped (unchanged); compile-sweep
   module (`pytest -m compile_sweep`) 211 passed / 92 skipped (unchanged);
   combined Docker lane (`conformance`/`provider_contract`/`adapter_smoke`/
@@ -505,6 +509,56 @@ self-contained without a system `libpq`.
   (unchanged); rejected sweep 39 passed / 0 skipped (unchanged); API-suite
   partition unchanged (48 exercised / 263 reasoned-skip); `just
   python-static` exit 0; `gen-usage-guide --check` exit 0.
+- **Phase 8 increment 5 (predicate-selected set-based writes) + corpus
+  fixes.** Landed the `.set(...)` typed assignment DSL and the `_where` verb
+  family (`update_where` / `delete_where` / `terminate_where` /
+  `update_until_where` / `terminate_until_where`, python.md §5): a bare
+  `m-op-algebra` predicate, readless for an unversioned non-temporal target
+  (one statement, `m-batch-write` "Predicate-selected readless forms") and
+  MATERIALIZING otherwise (resolve + per-row observation + gated/no-op-eliminated
+  per-object writes, an atomic planned unit, `m-opt-lock` ADR 0014). The
+  earlier `handle.predicate_write_refusal` stand-in (mid-phase-review-remediation
+  entry above) retired entirely — predicate writes execute for real now, no
+  refusal wording left anywhere in the seam. `m-value-object-047` and
+  `m-opt-lock-001` were re-authored as reachable golden shapes and flipped
+  into the run sweep.
+- **Increment-5 review remediation.** Closed an external review's findings (1
+  blocking, 4 should-fix, 1 nit, 1 confirmation-partial). An OPTIMISTIC
+  audit-only materializing `terminate` was lowering ungated: the resolving
+  read now records every resolved row's observed `in_z` through the same
+  `uow.observe` seam every other materializing verb uses (observations are
+  mode-independent; only the gate is mode-dependent), so the existing
+  gated-close lowering emits `and in_z = ?` under optimistic concurrency and
+  stays ungated under locking — `m-value-object-047`'s own step-2 close golden
+  was re-authored gated to match (`core/compatibility`). The materializing
+  resolving read's projection is now need-sensitive: terminate/delete still
+  omit the value-object document (`m-value-object-047`'s own row-form
+  witness, unchanged), while an assignment-bearing audit-only `update`
+  carries the document forward for its chain. `.set(...)` and a case-authored
+  predicate-write assignment now share one classification
+  (`inheritance.validate_write_assignment`): a primary-key or framework-owned
+  (version) target is rejected, and a scalar value must conform to its
+  declared neutral type, identically on both the typed and engine/serialized
+  paths. The conformance engine's materializing-pair check now compares the
+  preceding find's canonical operation against the write's own target
+  predicate, not just the entity. Stale prose (a "predicate writes await
+  increment 5" framing, and the now-removed `handle.predicate_write_refusal`
+  name) was freshened in `GUIDE.md` itself, `conformance/sweep.py`, and
+  `test_compile_sweep.py`. Round-6 pins strengthened: the bare-statement
+  guard now has a behavioral (not just `is_bare()`) pin, and the
+  materializing-terminate pin covers multiple resolved rows, in order, under
+  both concurrency modes. Measured post-round: `just oracle-test` 1456
+  passed (real Postgres + MariaDB, `m-value-object-047` green); unit lane
+  1928 passed / 87 skipped (+11 new pins); compile-sweep 217 passed / 87
+  skipped (unchanged — the 047 close is run-only, no compile emission
+  changed); combined Docker lane
+  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 409
+  passed / 0 skipped (`m-value-object-047` and `m-opt-lock-001` exercised and
+  green); rejected sweep 39 passed / 0 skipped (unchanged); API-suite
+  partition exact over 311 active cases (48 exercised / 263 reasoned-skip,
+  unchanged); `just python-static` exit 0 (diff-cover 100%,
+  Pyright/coverage clean); `gen-usage-guide --check` exit 0; `just lint`
+  exit 0; `just core-dep-graph` 311/333/197 (unchanged).
 
 ## Blockers
 
