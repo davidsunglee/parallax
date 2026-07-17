@@ -20,8 +20,12 @@
 #      (sup_id, name, in_z, out_z). Slot 4 absent, even though Supplier owns a value
 #      object — the point of the witness.
 #   2  terminate (predicate = name Nordic Foods) : closes the resolved current row
-#      (out_z = at). A processing-only close copies no payload, so no document rides a
-#      read here; a reassigned document would ride the write instruction, not the read.
+#      (out_z = at), GATED on the observed in_z step 1's resolving read returned
+#      (2024-06-01) — an OPTIMISTIC audit-only close binds `and in_z = ?` last, the
+#      same gate-last shape a keyed temporal terminate already carries
+#      (m-audit-write-006, m-opt-lock "the gate binds last"). A processing-only close
+#      copies no payload, so no document rides a read here; a reassigned document
+#      would ride the write instruction, not the read.
 #   3  find (Nordic Foods, asOf processingDate = 2024-08-01) : verify — INSTANCE-FORM
 #      managed find, the SAME form as step 0 (slot 4 present, projects `address`).
 #      asOf-pins the processing axis strictly INSIDE the now-closed window
@@ -97,12 +101,12 @@ when:
             eq: { attr: Supplier.name, value: Nordic Foods }
         at: "2024-10-01T00:00:00+00:00"
       roundTrips: 1
-      note: close the resolved current row (out_z = at); a processing-only close copies no payload, so no document rides this write's read
+      note: close the resolved current row (out_z = at), gated on step 1's observed in_z; a processing-only close copies no payload, so no document rides this write's read
       statements:
         - sql:
-            postgres: update supplier set out_z = ? where sup_id = ? and out_z = ?
-            mariadb: update supplier set out_z = ? where sup_id = ? and out_z = ?
-          binds: ["2024-10-01T00:00:00+00:00", 1, infinity]
+            postgres: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
+            mariadb: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00"]
     - targetEntity: Supplier
       find:
         asOf:
