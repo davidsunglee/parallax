@@ -376,52 +376,311 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     assert port.commits == 0 and port.rollbacks == 1
 
 
-def test_run_scenario_case_rejects_a_noncontiguous_uow_group() -> None:
-    # `_scenario_uow_spans` raises loudly rather than silently mis-executing an
-    # INTERLEAVED group (the optimistic-lock race shape, `m-opt-lock-012`) —
-    # the Python run lane executes only CONTIGUOUS `uow` spans; a genuinely
-    # interleaved one stays reference-harness-only.
+def _two_group_interleave_steps() -> list[dict[str, object]]:
+    return [
+        {
+            "uow": "a",
+            "targetEntity": "Account",
+            "find": {"eq": {"attr": "Account.id", "value": 1}},
+            "roundTrips": 1,
+            "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [1]}],
+        },
+        {
+            "uow": "b",
+            "targetEntity": "Account",
+            "find": {"eq": {"attr": "Account.id", "value": 2}},
+            "roundTrips": 1,
+            "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [2]}],
+        },
+        {
+            "uow": "a",
+            "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 1}]}],
+            "roundTrips": 1,
+            "statements": [
+                {
+                    "sql": {"postgres": "update account set balance = ? where id = ?"},
+                    "binds": [1.0, 1],
+                }
+            ],
+        },
+    ]
+
+
+def test_scenario_uow_spans_signals_the_two_group_interleave_with_none() -> None:
+    # `m-opt-lock-012`'s own shape (two `uow` groups whose steps interleave):
+    # `_scenario_uow_spans` returns `None` rather than raising — the caller
+    # routes to `run_interleaved_scenario_case` instead (COR-3 Phase 8
+    # increment 6), which needs a second, peer-backed connection this
+    # function does not construct.
+    assert (
+        engine._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage]
+            "m-unit-work-999-synthetic.yaml", _two_group_interleave_steps()
+        )
+        is None
+    )
+
+
+def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_scenario_case() -> (
+    None
+):
+    # `run_scenario_case` itself constructs no second connection, so it
+    # refuses loudly and names the entry point that does, rather than
+    # silently mis-executing the interleave (or reference-harness-only
+    # forever, the pre-increment-6 disposition).
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {"scenario": _two_group_interleave_steps()},
+            "then": {"roundTrips": 3},
+        },
+    )
+    with pytest.raises(engine.EngineError, match="run_interleaved_scenario_case"):
+        engine.run_scenario_case(case, "postgres", FakeWritePort())
+
+
+def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() -> None:
+    # Three `uow` groups, one of them non-contiguous: `m-opt-lock-012`'s own
+    # two-group interleave is the ONLY shape `run_interleaved_scenario_case`
+    # supports (pinned semantics #4, "scope honestly") — anything beyond it
+    # raises loudly rather than silently mis-executing a THIRD concurrent
+    # session no seam here provides.
+    steps: list[dict[str, object]] = [
+        {"uow": "a", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
+        {"uow": "b", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 2}}},
+        {"uow": "c", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 3}}},
+        {
+            "uow": "a",
+            "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 1}]}],
+        },
+    ]
+    with pytest.raises(engine.EngineError, match="interleave beyond the one witnessed"):
+        engine._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage]
+            "m-unit-work-999-synthetic.yaml", steps
+        )
+
+
+class _ScriptedPort:
+    """A `DbPort` fake with per-call SCRIPTED read rows / write-affected counts
+    (COR-3 Phase 8 increment 6, `run_interleaved_scenario_case`'s own unit
+    pins) — unlike `FakeWritePort` above (one constant `find_rows` for every
+    `execute`, `write_affected` always `1`), a genuinely two-session
+    choreography's own conflict needs each connection scripted with its OWN,
+    call-ordered sequence to reproduce a real stale-version mismatch
+    deterministically, with no real database involved."""
+
+    def __init__(
+        self,
+        *,
+        read_rows: Sequence[list[Row]] = (),
+        write_affected: Sequence[int] = (),
+        raise_on_read: BaseException | None = None,
+    ) -> None:
+        self._read_rows = [list(rows) for rows in read_rows]
+        self._write_affected = list(write_affected)
+        self._raise_on_read = raise_on_read
+        self.reads: list[tuple[str, tuple[object, ...]]] = []
+        self.writes: list[tuple[str, tuple[object, ...]]] = []
+        self.closed = False
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        if self._raise_on_read is not None:
+            raise self._raise_on_read
+        self.reads.append((sql, tuple(binds)))
+        return self._read_rows.pop(0) if self._read_rows else []
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.writes.append((sql, tuple(binds)))
+        return self._write_affected.pop(0) if self._write_affected else 1
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        return body(self)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abort() -> None:
+    # `m-opt-lock-012` end to end over two SCRIPTED fake connections (never a
+    # real database): the `ours` group's own observing find (step 0) is stale
+    # by the time it flushes (step 3) — the `concurrent` group (steps 1-2)
+    # committed its own gated update first — so the doomed group's SECOND
+    # write (the version-gated update) affects 0 rows, and the group's own
+    # buffered insert (account 9) is discarded with it. The trailing
+    # ungrouped verify find (step 4) observes no rows for it.
+    case = _load_case("m-opt-lock-012")
+    row_v1: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0])
+    peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
+
+    emissions, round_trips, conflict_actual = engine.run_interleaved_scenario_case(
+        case, "postgres", main_port, lambda: peer_port
+    )
+
+    assert round_trips == 6
+    assert len(emissions) == 6
+    assert conflict_actual == 0
+    assert peer_port.closed
+    assert [e.case_pointer for e in emissions] == [
+        "/scenario/0/find",
+        "/scenario/1/find",
+        "/scenario/2/write",
+        "/scenario/3/write",
+        "/scenario/3/write",
+        "/scenario/4/find",
+    ]
+    assert emissions[3].sql.startswith("insert into account")
+    assert emissions[4].sql.startswith("update account set")
+    assert len(main_port.writes) == 2  # the doomed group's insert + gated update
+    assert len(peer_port.writes) == 1  # the concurrent group's own gated update
+
+
+def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_too() -> None:
+    # The conflict-rendering fallback is symmetric: whichever group's own
+    # last write conflicts, its `actual` affected-row count surfaces —
+    # `m-opt-lock-012`'s own corpus witness always dooms the FIRST-labeled
+    # (`ours`) group, but the engine's own logic does not assume that. A
+    # synthetic two-group scenario (never `m-opt-lock-012` itself: its own
+    # fixed step order makes the SECOND group's conflict turnstile-unsafe —
+    # something downstream always waits on its final `advance()`) pins the
+    # fallback: the SECOND group's own last step is also the scenario's
+    # OVERALL last grouped step, so nothing waits on its advance either way.
     case = _synthetic_write(
         "scenario",
         {
             "when": {
+                "uow": {"concurrency": "optimistic"},
                 "scenario": [
                     {
-                        "uow": "a",
-                        "targetEntity": "Account",
-                        "find": {"eq": {"attr": "Account.id", "value": 1}},
-                        "roundTrips": 1,
-                        "statements": [
-                            {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [1]}
-                        ],
-                    },
-                    {
-                        "uow": "b",
+                        "uow": "x",
                         "targetEntity": "Account",
                         "find": {"eq": {"attr": "Account.id", "value": 2}},
-                        "roundTrips": 1,
-                        "statements": [
-                            {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [2]}
-                        ],
                     },
                     {
-                        "uow": "a",
-                        "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 1}]}],
-                        "roundTrips": 1,
-                        "statements": [
+                        "uow": "x",
+                        "write": [
                             {
-                                "sql": {"postgres": "update account set balance = ? where id = ?"},
-                                "binds": [1.0, 1],
+                                "mutation": "update",
+                                "entity": "Account",
+                                "rows": [{"id": 2, "balance": 260.00}],
                             }
                         ],
                     },
-                ]
+                    {
+                        "uow": "y",
+                        "targetEntity": "Account",
+                        "find": {"eq": {"attr": "Account.id", "value": 2}},
+                    },
+                    {
+                        "uow": "y",
+                        "write": [
+                            {
+                                "mutation": "update",
+                                "entity": "Account",
+                                "rows": [{"id": 2, "balance": 270.00}],
+                            }
+                        ],
+                    },
+                ],
             },
-            "then": {"roundTrips": 3},
+            "then": {"roundTrips": 4},
         },
     )
-    with pytest.raises(engine.EngineError, match="not contiguous"):
-        engine.run_scenario_case(case, "postgres", FakeWritePort())
+    row_v1: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    main_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
+    peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[0])
+
+    _emissions, _round_trips, conflict_actual = engine.run_interleaved_scenario_case(
+        case, "postgres", main_port, lambda: peer_port
+    )
+
+    assert conflict_actual == 0
+
+
+def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> None:
+    # A group's own write step that is NOT its last step buffers without
+    # forcing a flush (mirroring `_run_uow_group`'s own per-step buffering
+    # for a contiguous span, `_run_interleaved_group`'s own generalization
+    # of the SAME machinery) — unwitnessed by `m-opt-lock-012` itself (whose
+    # own two groups each carry exactly one write, always last).
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {
+                "uow": {"concurrency": "optimistic"},
+                "scenario": [
+                    {
+                        "uow": "x",
+                        "targetEntity": "Account",
+                        "find": {"eq": {"attr": "Account.id", "value": 2}},
+                    },
+                    {
+                        "uow": "x",
+                        "write": [
+                            {
+                                "mutation": "insert",
+                                "entity": "Account",
+                                "rows": [
+                                    {"id": 90, "owner": "Noether", "balance": 5.00, "version": 1}
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "uow": "x",
+                        "write": [
+                            {
+                                "mutation": "update",
+                                "entity": "Account",
+                                "rows": [{"id": 2, "balance": 260.00}],
+                            }
+                        ],
+                    },
+                    {
+                        "uow": "y",
+                        "targetEntity": "Account",
+                        "find": {"eq": {"attr": "Account.id", "value": 3}},
+                    },
+                ],
+            },
+            "then": {"roundTrips": 4},
+        },
+    )
+    row_v1: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    row3: Row = {"id": 3, "owner": "Ada", "balance": 10.00, "version": 1}
+    main_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 1])
+    peer_port = _ScriptedPort(read_rows=[[row3]])
+
+    emissions, round_trips, conflict_actual = engine.run_interleaved_scenario_case(
+        case, "postgres", main_port, lambda: peer_port
+    )
+
+    assert conflict_actual is None
+    assert round_trips == 4
+    assert len(main_port.writes) == 2  # buffered together, flushed once at the group's last step
+    assert [e.case_pointer for e in emissions] == [
+        "/scenario/0/find",
+        "/scenario/1/write",
+        "/scenario/2/write",
+        "/scenario/3/find",
+    ]
+
+
+def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -> None:
+    # A worker thread's own UNEXPECTED defect (never a witnessed path) must
+    # surface loudly on the main thread rather than hang the choreography —
+    # `_Turnstile.release_all` unsticks the partner thread (blocked on
+    # `wait_for` a later step that now never arrives) so `thread.join()`
+    # itself never hangs either.
+    case = _load_case("m-opt-lock-012")
+    failure = RuntimeError("a worker thread's own unexpected defect")
+    main_port = _ScriptedPort(raise_on_read=failure)
+    peer_port = _ScriptedPort(
+        read_rows=[[{"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}]]
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected defect"):
+        engine.run_interleaved_scenario_case(case, "postgres", main_port, lambda: peer_port)
+    assert peer_port.closed
 
 
 def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:

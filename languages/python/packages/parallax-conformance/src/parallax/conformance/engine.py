@@ -15,10 +15,11 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import decimal
+import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Final, Protocol, cast, runtime_checkable
 
 from parallax.conformance import case_format, models, provision, temporal_state
 from parallax.conformance.temporal_state import TemporalShadow
@@ -71,6 +72,7 @@ __all__ = [
     "run_error_case",
     "run_graph_case",
     "run_graphs_case",
+    "run_interleaved_scenario_case",
     "run_read_case",
     "run_rejected_case",
     "run_scenario_case",
@@ -1740,33 +1742,59 @@ def _run_materializing_pair(
     ]
 
 
+def _scenario_group_step_indices(steps: Sequence[Mapping[str, object]]) -> dict[str, list[int]]:
+    """Every declared `uow` group label's OWN step indices, in authored order
+    (`m-case-format` scenario `uow` grouping) — not necessarily contiguous;
+    the caller (:func:`_scenario_uow_spans` / :func:`run_interleaved_scenario_case`)
+    decides how to execute them."""
+    groups: dict[str, list[int]] = {}
+    for index, step in enumerate(steps):
+        label = step.get("uow")
+        if isinstance(label, str):
+            groups.setdefault(label, []).append(index)
+    return groups
+
+
 def _scenario_uow_spans(
     case_name: str, steps: Sequence[Mapping[str, object]]
-) -> dict[str, tuple[int, int]]:
-    """Every declared `uow` group label's CONTIGUOUS step-index span
-    ``(start, end)`` (inclusive) in this scenario (`m-case-format` scenario
-    `uow` grouping). The Python run lane executes only CONTIGUOUS groups —
-    every group it reaches this round is (`m-unit-work-002/005/006/009/012`);
-    a genuinely INTERLEAVED group (the optimistic-lock race shape,
-    `m-opt-lock-012`) stays reference-harness-only until COR-3 Phase 8
-    increment 6 gives the engine its own two-session `peer` seam (the
-    `when.concurrency` choreography machinery two genuinely concurrent
-    sessions need), so this raises loudly rather than silently mis-executing
-    one."""
-    labels = [step.get("uow") if isinstance(step.get("uow"), str) else None for step in steps]
-    spans: dict[str, tuple[int, int]] = {}
-    for label in {cast("str", entry) for entry in labels if entry is not None}:
-        indices = [i for i, entry in enumerate(labels) if entry == label]
-        start, end = indices[0], indices[-1]
-        if indices != list(range(start, end + 1)):
-            raise EngineError(
-                f"{case_name}: uow group {label!r} is not contiguous — the engine's "
-                "scenario run lane executes only contiguous groups (an interleaved "
-                "group, the optimistic-lock race shape, is reference-harness-only "
-                "today)"
-            )
-        spans[label] = (start, end)
-    return spans
+) -> dict[str, tuple[int, int]] | None:
+    """Every declared `uow` group label's step-index span ``(start, end)``
+    (inclusive) in this scenario (`m-case-format` scenario `uow` grouping).
+
+    Every group whose OWN steps are CONTIGUOUS gets its ordinary span, and
+    :func:`_run_uow_group` runs each on the MAIN connection. Exactly TWO
+    groups whose steps INTERLEAVE (`m-case-format`'s own "two groups MAY
+    interleave" — the classic optimistic-lock race, `m-opt-lock-012`'s own
+    shape) is signaled by returning ``None``: :func:`run_scenario_case`
+    cannot execute that shape itself (no engine function here constructs a
+    connection of its own, and an interleaved race genuinely needs a SECOND,
+    peer-backed session) — the caller routes to
+    :func:`run_interleaved_scenario_case` instead (COR-3 Phase 8 increment
+    6). Anything BEYOND that one witnessed shape — three or more interleaved
+    groups, or a non-contiguous group that is not part of a clean two-group
+    interleave — raises loudly rather than silently mis-executing it (scope
+    honestly: support what `m-opt-lock-012` needs, refuse the rest)."""
+    groups = _scenario_group_step_indices(steps)
+    spans = {label: (indices[0], indices[-1]) for label, indices in groups.items()}
+    noncontiguous = {
+        label
+        for label, indices in groups.items()
+        if indices != list(range(spans[label][0], spans[label][1] + 1))
+    }
+    if not noncontiguous:
+        return spans
+    if len(groups) == 2:
+        (label_a, label_b) = groups
+        span_a, span_b = spans[label_a], spans[label_b]
+        interleaved = span_a[1] >= span_b[0] and span_b[1] >= span_a[0]
+        if interleaved:
+            return None
+    raise EngineError(
+        f"{case_name}: uow group(s) {sorted(noncontiguous)} interleave beyond the one "
+        "witnessed two-group optimistic-lock race shape (m-opt-lock-012, "
+        "run_interleaved_scenario_case) — the engine's scenario run lane supports "
+        "exactly that interleaving, not an arbitrary one"
+    )
 
 
 def _group_tx_instant(steps: Sequence[Mapping[str, object]], start: int, end: int) -> str:
@@ -1883,6 +1911,291 @@ def _run_uow_group(
     return lowered
 
 
+# --------------------------------------------------------------------------- #
+# Interleaved `uow` groups — the two-group optimistic-lock race                #
+# (`m-opt-lock-012`, COR-3 Phase 8 increment 6). `_run_uow_group` above runs   #
+# ONE contiguous group on the main connection; a genuinely interleaved case    #
+# needs TWO groups held open CONCURRENTLY over TWO real sessions (the          #
+# `Provisioner.peer` seam) — a DIFFERENT consumer of that seam than the        #
+# `when.concurrency` rounds runner (`parallax.conformance.concurrency_runner`, #
+# real `db.transact` calls, production routing per D-18/DQ4, not verbatim      #
+# authored statements). :class:`_Turnstile` sequences the two groups' own      #
+# steps in AUTHORED order across two worker threads — deterministic (never a   #
+# genuine race at the Python level) because optimistic mode's own reads take   #
+# no lock and the choreography hands off control explicitly at each step, so   #
+# there is nothing to race.                                                    #
+# --------------------------------------------------------------------------- #
+@runtime_checkable
+class _PeerConnection(DbPort, Protocol):
+    """A `DbPort` peer connection (`Provisioner.peer`) with its own closeable
+    lifecycle: the interleaved-group runner opens a SECOND, independent
+    session for the `concurrent` group and MUST close it itself once the
+    choreography finishes (successfully or not) — this module constructs no
+    connection itself otherwise, so the CALLER threads the factory in
+    explicitly (`run_interleaved_scenario_case`'s own `peer_factory`
+    parameter)."""
+
+    def close(self) -> None: ...
+
+
+class _Turnstile:
+    """A strict, shared step-index cursor two worker threads take turns
+    through (COR-3 Phase 8 increment 6): a thread's own step at index ``i``
+    calls :meth:`wait_for` ``(i)`` before running it (blocking until every
+    EARLIER step, on EITHER thread, has finished) and :meth:`advance` after —
+    so the two groups' steps interleave in EXACTLY authored order, never a
+    genuine Python-level race, matching `m-case-format`'s own "steps execute
+    in authored order" scenario contract even though they run on two
+    independently-held connections.
+    """
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._next = 0
+
+    def wait_for(self, index: int) -> None:
+        with self._condition:
+            while self._next < index:
+                self._condition.wait()
+
+    def advance(self) -> None:
+        with self._condition:
+            self._next += 1
+            self._condition.notify_all()
+
+    def release_all(self) -> None:
+        """Unstick every waiter unconditionally (a worker thread's own
+        UNEXPECTED failure — never a witnessed path, defensive only): without
+        this a partner thread blocked on a LATER index than one extra
+        :meth:`advance` reaches would hang forever, and so would the
+        orchestrator's own `thread.join()`."""
+        with self._condition:
+            self._next = 2**31
+            self._condition.notify_all()
+
+
+@dataclass(slots=True)
+class _InterleavedGroupResult:
+    """One interleaved group's own report: its lowered steps (keyed by
+    scenario step index), the conflict's own `actual` affected-row count
+    when its LAST write step doomed the group via a genuine optimistic-lock
+    conflict (`None` for a group that committed, or that never conflicts),
+    and any OTHER exception the worker thread raised (re-raised on the main
+    thread once both join — never silently swallowed)."""
+
+    lowered: dict[int, _LoweredStep]
+    conflict_actual: int | None = None
+    failure: BaseException | None = None
+
+
+def _run_interleaved_group(
+    database: handle.Database,
+    meta: Metamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    shadow: TemporalShadow,
+    steps: Sequence[Mapping[str, object]],
+    indices: Sequence[int],
+    turnstile: _Turnstile,
+    result: _InterleavedGroupResult,
+) -> None:
+    """Run one interleaved group's OWN steps (``indices``, in authored order,
+    possibly non-contiguous across the WHOLE scenario) inside ONE real
+    ``db.transact`` call on ``database`` — the SAME buffer/observe/flush
+    machinery :func:`_run_uow_group` uses for a contiguous span, generalized
+    to an explicit index list and gated by ``turnstile`` at every step. A
+    write step's lowering is the SAME pure re-lowering every other write path
+    uses (:func:`_lower_resolved`), recorded BEFORE the group's own flush
+    executes it, so a step that later CONFLICTS still reports its own
+    well-formed golden DML (`m-opt-lock` "Conflict detection" — the SQL is
+    correct, the row count is not).
+
+    The group's OWN LAST step forces an explicit flush (never deferred to
+    end-of-scope auto-flush): a WRITE step's flush may itself raise
+    :class:`~parallax.core.opt_lock.OptimisticLockConflictError` (the SAME
+    signal a caller-driven retry catches, `_run_conflict_write`'s own
+    precedent) — caught HERE, its ``actual`` recorded, and the transaction
+    aborts (never retried: `m-opt-lock-012`'s own `when.uow` sets no
+    ``retryOptimisticConflicts`` opt-in, so :func:`~parallax.core.auto_retry.
+    run_with_retry` surfaces it after exactly one attempt). Unlike
+    :func:`_run_uow_group`'s own OWN ``doomed``/``rollback: true`` convention
+    (an authored, EXPLICIT abort signal independent of any real conflict),
+    this lane's ONE witness (`m-opt-lock-012`) authors ``rollback: true``
+    ONLY on the step whose OWN flush already conflicts — the CONFLICT itself
+    is what dooms the group, so no separate explicit-rollback trigger exists
+    here; a genuinely non-conflict-driven interleaved abort is unwitnessed
+    and out of scope (pinned semantics #10, "unwitnessed surfaces stay
+    honest"). The turnstile only ADVANCES past the group's own last step once
+    ``database.transact`` itself RETURNS (a REAL commit — the underlying
+    port's transaction context manager has committed, not merely that this
+    callback's own Python code finished): the OTHER group's next step must
+    observe that commit for real, never a same-process illusion of one.
+
+    ``shadow`` is the SAME single :class:`TemporalShadow` every group shares
+    (`_run_uow_group`'s own convention) — safe here ONLY because
+    `m-opt-lock-012`'s own witnessed model is entirely NON-temporal (the
+    tracker is never mutated for these instructions, so two threads never
+    contend on it); a genuinely temporal interleaved case would need its own
+    per-group tracking discipline, unwitnessed and out of scope.
+    """
+    lowered: dict[int, _LoweredStep] = {}
+    group_observations: ScenarioObservations = {}
+
+    def body(tx: handle.Transaction) -> None:
+        for position, index in enumerate(indices):
+            turnstile.wait_for(index)
+            step = steps[index]
+            is_last = position == len(indices) - 1
+            if "write" in step:
+                entries = _write_entries(step["write"])
+                resolved = _resolve_entries(
+                    entries, meta, shadow, _INERT_CLOCK_INSTANT, group_observations
+                )
+                statements = _lower_resolved(
+                    resolved, meta, dialect, concurrency, _INERT_CLOCK_INSTANT
+                )
+                for instruction, key, observation in resolved:
+                    assert isinstance(
+                        instruction, KeyedWrite
+                    )  # every resolved entry this lane buffers is keyed
+                    if key is not None and observation is not None:
+                        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
+                    tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                        instruction.mutation,
+                        instruction.entity,
+                        dict(instruction.rows[0]),
+                        business_from=instruction.business_from,
+                        business_to=instruction.business_to,
+                    )
+                lowered[index] = _LoweredStep(
+                    f"/scenario/{index}/write", statements, True, step.get("rollback") is True
+                )
+                if is_last:
+                    tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
+            else:
+                statement = _lower_find(step, meta, dialect, concurrency)
+                target = cast("str", step["targetEntity"])
+                conn = tx._conn  # pyright: ignore[reportPrivateUsage]
+                rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage]
+                    lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
+                )
+                _observe_group_find(tx, group_observations, meta, target, rows)
+                lowered[index] = _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
+            if not is_last:
+                turnstile.advance()
+
+    committed = False
+    try:
+        database.transact(body, concurrency=concurrency)
+        committed = True
+    except opt_lock.OptimisticLockConflictError as exc:
+        result.conflict_actual = exc.actual
+    except BaseException as exc:  # re-raised on the main thread below
+        result.failure = exc
+        turnstile.release_all()  # never leave a partner thread hanging on this thread's own defect
+    result.lowered = lowered
+    if committed:
+        turnstile.advance()
+
+
+def run_interleaved_scenario_case(
+    case: case_format.Case,
+    dialect_name: str,
+    port: DbPort,
+    peer_factory: Callable[[], _PeerConnection],
+) -> tuple[list[Emission], int, int | None]:
+    """Run the ONE witnessed interleaved-`uow`-group scenario shape
+    (`m-opt-lock-012`'s two-group optimistic-lock race, COR-3 Phase 8
+    increment 6): the ``ours`` group on the caller's own ``port``, a
+    ``concurrent`` group on a SECOND, peer-backed connection (``peer_factory``
+    — this function constructs no connection itself), each a REAL
+    ``db.transact`` (production routing, D-18/DQ4), steps sequenced across
+    the two in AUTHORED order (:class:`_Turnstile`). Any ungrouped step
+    (`m-opt-lock-012`'s own trailing verify find) runs AFTER both groups have
+    resolved, on the caller's ``port``.
+
+    Reports the ordered emissions, total round trips, and — when a group's
+    own last write step conflicted — the conflict's ``actual`` affected-row
+    count (`then.affectedRows`, the scenario shape's own EXTRA top-level
+    assertion this ONE case authors; ``None`` when no group conflicted).
+    Routed to explicitly by the run sweep (`test_run_sweep.py`) rather than
+    through `run_scenario_case`/`adapter.run_case` — this shape's own peer
+    requirement has no seat in the ordinary shape-dispatched entry points,
+    the SAME reasoning the rounds runner's own dispatch follows.
+    """
+    steps = _scenario_steps(case)
+    meta = load_case_metamodel(case)
+    dialect = dialect_for(dialect_name)
+    concurrency = _concurrency(case)
+    groups = _scenario_group_step_indices(steps)
+    if len(groups) != 2:
+        raise EngineError(  # pragma: no cover - defensive: only m-opt-lock-012 reaches this entry
+            f"{case.path.name}: run_interleaved_scenario_case supports exactly the "
+            "two-group optimistic-lock race shape (m-opt-lock-012), not "
+            f"{len(groups)} uow groups"
+        )
+    ungrouped = [i for i in range(len(steps)) if i not in {j for js in groups.values() for j in js}]
+    (label_a, indices_a), (label_b, indices_b) = groups.items()
+    shadow = TemporalShadow()
+    _seed_shadow_from_fixtures(case, meta, shadow)
+    instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
+    main_db = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+    peer_connection = peer_factory()
+    peer_db = handle.Database(peer_connection, meta, dialect=dialect, clock=FixedClock(instant))
+    turnstile = _Turnstile()
+    result_a = _InterleavedGroupResult(lowered={})
+    result_b = _InterleavedGroupResult(lowered={})
+    thread_a = threading.Thread(
+        target=_run_interleaved_group,
+        args=(main_db, meta, dialect, concurrency, shadow, steps, indices_a, turnstile, result_a),
+        name=f"uow-{label_a}",
+    )
+    thread_b = threading.Thread(
+        target=_run_interleaved_group,
+        args=(peer_db, meta, dialect, concurrency, shadow, steps, indices_b, turnstile, result_b),
+        name=f"uow-{label_b}",
+    )
+    try:
+        thread_a.start()
+        thread_b.start()
+        # A bounded join (the provider-contract deadlock proof's own
+        # precedent): a genuine harness defect (a missing `advance()`
+        # somewhere) must surface as a loud failure, never an indefinitely
+        # hung test session.
+        thread_a.join(timeout=30)
+        thread_b.join(timeout=30)
+        if thread_a.is_alive() or thread_b.is_alive():  # pragma: no cover - defensive
+            raise EngineError(
+                f"{case.path.name}: the interleaved-group choreography did not "
+                "finish within its bound — a turnstile hand-off is missing"
+            )
+    finally:
+        peer_connection.close()
+    for result in (result_a, result_b):
+        if result.failure is not None:
+            raise result.failure
+
+    lowered: dict[int, _LoweredStep] = {**result_a.lowered, **result_b.lowered}
+    for index in ungrouped:
+        step = steps[index]
+        if "write" in step:  # pragma: no cover - no witnessed ungrouped write is doomed-adjacent
+            raise EngineError(
+                f"{case.path.name}: an ungrouped write step ({index}) beside an "
+                "interleaved uow race is unsupported — m-opt-lock-012's own ungrouped "
+                "step is a trailing verify find only"
+            )
+        statement = _lower_find(step, meta, dialect, concurrency)
+        _execute_reads(port, dialect, (statement,))
+        lowered[index] = _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
+
+    ordered = [lowered[index] for index in sorted(lowered)]
+    emissions = _emissions([(step.pointer, step.statements) for step in ordered])
+    conflict_actual = result_a.conflict_actual
+    if conflict_actual is None:
+        conflict_actual = result_b.conflict_actual
+    return emissions, len(emissions), conflict_actual
+
+
 def run_scenario_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], int]:
@@ -1909,6 +2222,12 @@ def run_scenario_case(
     find_lock = concurrency if _scenario_needs_lock(steps, meta) else None
     shadow = TemporalShadow()
     spans = _scenario_uow_spans(case.path.name, steps)
+    if spans is None:
+        raise EngineError(
+            f"{case.path.name}: interleaved uow groups (the two-group optimistic-lock "
+            "race shape, m-opt-lock-012) need a second, peer-backed connection this "
+            "function does not construct — call run_interleaved_scenario_case instead"
+        )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
     lowered: list[_LoweredStep] = []
     try:
@@ -2401,15 +2720,25 @@ def run_error_case(
     category and preserved native code are the observations
     (``errorClass`` / ``nativeCode``). Round trips count every executed trigger
     statement, including the raising one. A ``when.concurrency`` trigger needs
-    two barrier-synchronized sessions the single-connection adapter run cannot
-    drive — the harness's provider choreography (and this target's provider
-    deadlock proof) covers that sub-shape.
+    two barrier-synchronized sessions this single-connection lane cannot drive
+    at all — it is refused here UNCONDITIONALLY, never dispatched to from a
+    caller that owns two sessions (COR-3 Phase 8 increment 6:
+    ``m-read-lock-006`` is graded by the CASE-DRIVEN two-session rounds
+    runner instead, ``parallax.conformance.concurrency_runner`` — this
+    module's own dispatcher (`tests/conformance/test_run_sweep.py`) routes it
+    there and never reaches this function for that case at all; the
+    provider-contract deadlock proof remains the OTHER two-session witness,
+    hand-authored rather than case-driven). The ``m-db-error`` two-connection
+    choreography (deadlock / lock-wait) stays covered by the provider-contract
+    proof alone this increment (see the module's own extensibility note).
     """
     when = case.document.get("when")
     if isinstance(when, Mapping) and "concurrency" in when:
         raise EngineError(
-            f"{case.path.name}: two-connection m-db-error choreography (when.concurrency) is "
-            "driven by the provider contract proof, not the single-connection adapter run"
+            f"{case.path.name}: two-connection when.concurrency choreography needs two "
+            "barrier-synchronized sessions this single-connection lane cannot drive — "
+            "the case-driven rounds runner (parallax.conformance.concurrency_runner) or "
+            "the provider contract proof grades it instead, never this function"
         )
     trigger = _error_trigger(case, dialect_name)
     dialect = dialect_for(dialect_name)
