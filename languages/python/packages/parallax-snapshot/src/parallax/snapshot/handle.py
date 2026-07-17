@@ -1710,18 +1710,22 @@ class Transaction:
         # Need-sensitive projection (`m-case-format.md:727`): terminate/delete
         # never carry the resolved row's own value-object document(s) forward
         # (`m-value-object-047`'s own row-form-omits-slot-4 witness stays
-        # byte-identical) — only an ASSIGNMENT-BEARING verb on an AUDIT-ONLY
-        # temporal target needs them, so its chain can carry forward whichever
-        # documents the caller did NOT itself reassign (`_materialize_row`'s
-        # own audit-only `full_row` merge). A BITEMPORAL target's chain
-        # instead derives its head/tail carry-forward from the observed
-        # payload (`_temporal_observation`), never this read's own row, so it
-        # stays out of this flag's scope.
+        # byte-identical) — only an ASSIGNMENT-BEARING verb (`update` /
+        # `updateUntil`, `_materialize_row`'s own `assignment_bearing` set) on
+        # ANY temporal target needs them (confirmation-pass residual P2: this
+        # gate used to exclude a BITEMPORAL target, but its chain carries
+        # forward the SAME resolved-row documents too — an AUDIT-ONLY target's
+        # own `full_row` merge (`_materialize_row`) reads this read's row
+        # directly, while a BITEMPORAL target's head/middle/tail split
+        # (`bitemp_write.plan`) reads them indirectly, through
+        # `_temporal_observation`'s payload, which now keeps a value-object
+        # document whenever THIS read actually projected it — `m-bitemp-write`
+        # "head/tail old values come from the observed prior rectangle";
+        # `m-value-object` "the document rides every chained/split row whole").
         needs_documents = (
             version_attr is None
             and declaring.is_temporal
-            and declaring.temporal != "bitemporal"
-            and instruction.mutation == "update"
+            and instruction.mutation in ("update", "updateUntil")
         )
         statement = compile_read(
             plan_.root_operation,
@@ -1845,6 +1849,21 @@ def _temporal_observation(
     test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in_z`);
     wire-rendering for REPORTING is the conformance ADAPTER's own boundary
     concern (`parallax.conformance.engine._json_bind`), never this seam's.
+
+    The bitemporal payload KEEPS a value-object document whenever ``fields``
+    carries one (`include_value_objects=True` below; confirmation-pass
+    residual P2): a real ``Transaction.find`` is always INSTANCE-form, which
+    projects every document unconditionally (`m-sql`), so ``fields`` already
+    carries it there; a materializing predicate-write resolve's ROW-form
+    ``fields`` carries one only when its own need-sensitive projection
+    requested it (`Transaction._materialize_predicate_write`'s
+    ``needs_documents``) — ``column in fields`` still gates every member
+    exactly as it does for scalars, so this is a no-op whenever the document
+    was never projected (a terminate/terminateUntil resolve, or a VO-free
+    entity) and never drops one `bitemp_write.plan`'s head/middle/tail split
+    (`_merged_payload` / the old-payload rectangles) needs to carry forward
+    whole (`m-bitemp-write` "head/tail old values"; `m-value-object` "the
+    document rides every chained/split row whole").
     """
     in_z = cast("str", fields[proc.from_column])
     if declaring.temporal != "bitemporal":
@@ -1853,7 +1872,7 @@ def _temporal_observation(
     if biz.from_column not in fields or biz.to_column not in fields:  # pragma: no cover
         return Observation(in_z=in_z, latest_pinned=latest_pinned)  # malformed model/projection
     excluded = {proc.from_column, proc.to_column, biz.from_column, biz.to_column}
-    payload = _row_payload(meta, declaring, fields, excluded)
+    payload = _row_payload(meta, declaring, fields, excluded, include_value_objects=True)
     return Observation(
         in_z=in_z,
         business_from=cast("str", fields[biz.from_column]),
@@ -1873,17 +1892,20 @@ def _row_payload(
 ) -> dict[str, object]:
     """``fields``'s own payload (every declared member besides ``excluded``
     axis-bound columns) — the observed-payload source both a real bitemporal
-    find's :class:`Observation` (above) and an audit-only materializing
-    resolve's CHAINED full row (:func:`_materialize_row`) share.
+    find's :class:`Observation` (`_temporal_observation`, above) and an
+    audit-only materializing resolve's CHAINED full row (:func:`_materialize_row`)
+    share.
 
     Value-object columns are OMITTED by default (row-form never projects one,
     `m-value-object-047`'s own byte-identical row-form witness).
-    ``include_value_objects`` opts in (`m-case-format.md:727`): the ONE caller
-    that sets it — `_materialize_row`'s audit-only chain merge — only reaches
-    here when its own resolving read actually projected the document column(s)
-    (`Transaction._materialize_predicate_write`'s need-sensitive projection),
-    so ``column in fields`` still gates every member exactly as it already does
-    for scalars; a VO-free entity's empty ``value_objects`` makes this flag a
+    ``include_value_objects`` opts in (`m-case-format.md:727`): its TWO
+    callers — `_temporal_observation`'s bitemporal branch (every real
+    ``Transaction.find``, always INSTANCE-form, so ``fields`` always carries
+    one; a bitemporal materializing resolve only when its own need-sensitive
+    projection requested it) and `_materialize_row`'s audit-only chain merge
+    (an audit-only materializing resolve, same gate) — so ``column in
+    fields`` still gates every member exactly as it already does for
+    scalars; a VO-free entity's empty ``value_objects`` makes this flag a
     no-op either way.
     """
     return {

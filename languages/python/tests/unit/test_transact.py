@@ -116,6 +116,42 @@ class WhereLedger(Entity, frozen=True):
 
 _WHERE_LEDGER_META = metamodel([WhereLedger])
 
+
+# A LOCAL bitemporal, value-object-bearing entity — confirmation-pass residual
+# P2's own fixture (`m-case-format.md:727`; no corpus witness exercises a
+# VO-bearing bitemporal predicate update, D-26): combines `WherePosition`'s
+# two axes with `WhereLedger`'s value-object shape.
+class WhereRectangleAddress(ValueObject, frozen=True):
+    city: Attr[str] = VoField(type="string")
+
+
+class WhereRectangle(Entity, frozen=True):
+    __parallax__ = EntityConfig(
+        table="where_rectangle",
+        namespace="parallax.compatibility",
+        mutability="transactional",
+        as_of=(
+            AsOfAttribute(
+                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            ),
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    acct_num: Attr[str] = Field(max_length=32)
+    value: Attr[Decimal] = Field(type="decimal(18,2)")
+    address: Attr[WhereRectangleAddress | None] = Field(nullable=True, default=None)
+    business_from: Attr[dt.datetime] = Field(column="from_z")
+    business_to: Attr[dt.datetime] = Field(column="thru_z")
+    processing_from: Attr[dt.datetime] = Field(column="in_z")
+    processing_to: Attr[dt.datetime] = Field(column="out_z")
+
+
+_WHERE_RECTANGLE_META = metamodel([WhereRectangle])
+
 _NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
 
 
@@ -529,6 +565,56 @@ def test_record_observations_captures_bitemporal_business_bounds_and_payload() -
     assert observation.business_to == "infinity"
     assert observation.payload == {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
     assert observation.latest_pinned is True  # an empty Pin() ⇒ omitted axis ⇒ latest
+
+
+def test_record_observations_keep_the_bitemporal_document_for_keyed_carry_forward() -> None:
+    # Confirmation-pass residual P2, second-caller question: the SAME
+    # `_temporal_observation` `_record_observations` drives for every real
+    # `tx.find` is the one `Transaction._materialize_predicate_write`'s own
+    # materializing resolve reuses (`test_materializing_...bitemporal...`
+    # below) — a production KEYED write (a later `tx.update(copy)`/
+    # `tx.terminate` of a row this SAME unit of work already `tx.find`-
+    # observed) derives its `bitemp_write.plan` head/tail carry-forward from
+    # THIS recorded observation's own payload, so it must not silently drop a
+    # value-object document either. `find`'s own read is always INSTANCE-form
+    # (`m-sql`), which projects every document unconditionally, so `node.
+    # fields` already carries `address` here — proving the gap was
+    # `_temporal_observation` never asking to KEEP it, not a missing
+    # projection (unlike the materializing-resolve half, `needs_documents`).
+    from parallax.core.temporal_read import Pin
+    from parallax.snapshot import handle, materialize
+
+    branch = models.load_models()["branch"]
+    address: dict[str, object] = {
+        "street": "10 Old Road",
+        "city": "Helsinki",
+        "geo": {"country": "FI"},
+        "phones": [],
+    }
+    node = materialize.Node(
+        fields={
+            "br_id": 1,
+            "name": "Central Branch",
+            "address": address,
+            "from_z": "2024-01-01T00:00:00+00:00",
+            "thru_z": "infinity",
+            "in_z": "2024-01-01T00:00:00+00:00",
+            "out_z": "infinity",
+        },
+        pk_columns=("br_id",),
+    )
+    find_result = handle.FindResult(
+        nodes=(node,), execution=handle.Execution(()), all_nodes=(("Branch", node),)
+    )
+    uow = UnitOfWork(
+        settings=TransactionSettings(concurrency="locking"),
+        clock=FixedClock(_FIXED),
+        meta=branch,
+        flush_executor=lambda _plan: None,
+    )
+    handle._record_observations(uow, branch, find_result, Pin())  # pyright: ignore[reportPrivateUsage]
+    observation = uow._observations[("Branch", (("id", 1),))]  # pyright: ignore[reportPrivateUsage]
+    assert observation.payload == {"id": 1, "name": "Central Branch", "address": address}
 
 
 def _balance_history_rows() -> list[Row]:
@@ -1355,3 +1441,106 @@ def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
     )
     writes = [op for op in port.ops if op[0] == "write"]
     assert len(writes) == 3  # close + head + tail (no middle)
+
+
+def _rectangle_row(*, address: dict[str, object] | None) -> Row:
+    return {
+        "id": 1,
+        "acct_num": "A",
+        "value": 200.00,
+        "address": address,
+        "from_z": "2024-01-01T00:00:00+00:00",
+        "thru_z": "infinity",
+        "in_z": "2024-01-01T00:00:00+00:00",
+        "out_z": "infinity",
+    }
+
+
+def test_materializing_bitemporal_update_where_carries_the_unassigned_value_object() -> None:
+    # Confirmation-pass residual P2 (`m-case-format.md:727`): a BITEMPORAL,
+    # value-object-bearing target's assignment-bearing `update_where` must
+    # project the document in its resolving read too (the prior round's gate
+    # covered only an AUDIT-ONLY target) — the resolved row's own `address`
+    # rides head AND the new tail WHOLE when the caller does not itself
+    # reassign it (`m-bitemp-write` "head/tail old values come from the
+    # observed prior rectangle"; `m-value-object` "the document rides every
+    # chained/split row whole" — never decomposed).
+    address: dict[str, object] = {"city": "Helsinki"}
+    port = _RecordingPort(rows=[_rectangle_row(address=address)])
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WhereRectangle.where(WhereRectangle.id == 1),
+            WhereRectangle.value.set(Decimal("300.00")),
+            business_from=business_from,
+        )
+
+    Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    reads = [op for op in port.ops if op[0] == "read"]
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert "t0.address" in cast("str", reads[0][1])  # the need-sensitive projection fired
+    assert len(writes) == 3  # close + head (old) + new tail
+    head_binds = cast("tuple[object, ...]", writes[1][2])
+    tail_binds = cast("tuple[object, ...]", writes[2][2])
+    assert head_binds[-1] == JsonDocument(address)  # head: OLD value, unreassigned document
+    assert tail_binds[-1] == JsonDocument(address)  # new tail: NEW value, SAME document
+    assert tail_binds[2] == Decimal("300.00")  # the assigned scalar column DOES take the new value
+
+
+def test_materializing_update_until_where_bitemporal_carries_the_value_object_on_every_chain() -> (
+    None
+):
+    # The full rectangle split (`m-bitemp-write-010..013`'s own witnessed
+    # shape, VO-free `Position`): every one of head/middle/tail carries the
+    # resolved row's own `address` forward, whole, since the caller reassigns
+    # only `value` — the document is never decomposed at any chain slot.
+    address: dict[str, object] = {"city": "Tampere"}
+    port = _RecordingPort(rows=[_rectangle_row(address=address)])
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.update_until_where(
+            WhereRectangle.where(WhereRectangle.id == 1),
+            WhereRectangle.value.set(Decimal("300.00")),
+            business_from=business_from,
+            until=until,
+        )
+
+    Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 4  # close + head + middle + tail
+    head_binds = cast("tuple[object, ...]", writes[1][2])
+    middle_binds = cast("tuple[object, ...]", writes[2][2])
+    tail_binds = cast("tuple[object, ...]", writes[3][2])
+    assert head_binds[-1] == JsonDocument(address)
+    assert middle_binds[-1] == JsonDocument(address)
+    assert tail_binds[-1] == JsonDocument(address)
+    assert middle_binds[2] == Decimal("300.00")  # middle carries the NEW assigned value
+
+
+def test_materializing_plain_terminate_where_bitemporal_stays_document_free() -> None:
+    # Terminate/delete stay document-free (`m-value-object-047`'s own
+    # row-form-omits-slot-4 witness, unchanged): a non-assignment-bearing verb
+    # never needs the resolved row's document to build its OWN write, so the
+    # resolving read's projection stays row-form-plain regardless of target
+    # temporal kind.
+    address: dict[str, object] = {"city": "Oslo"}
+    port = _RecordingPort(rows=[_rectangle_row(address=address)])
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_where(
+            WhereRectangle.where(WhereRectangle.id == 1), business_from=business_from
+        )
+
+    Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    reads = [op for op in port.ops if op[0] == "read"]
+    assert "t0.address" not in cast("str", reads[0][1])
