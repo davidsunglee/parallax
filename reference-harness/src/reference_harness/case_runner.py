@@ -3754,6 +3754,67 @@ def _assert_step_row_observables(
             )
 
 
+def _scenario_uow_groups(case: Case) -> dict[str, list[int]]:
+    """Every declared `uow` GROUP label -> its step indices, in AUTHORED order
+    (`m-case-format` scenario `uow` grouping). A group's own indices need NOT
+    be contiguous — two groups may interleave (the optimistic-lock race shape,
+    `m-opt-lock-012`: one unit of work's observing find, a CONCURRENT unit of
+    work's own observe-and-commit, then back to the first unit of work's own
+    doomed write)."""
+    groups: dict[str, list[int]] = {}
+    for index, step in enumerate(case.scenario):
+        label = step.get("uow")
+        if isinstance(label, str):
+            groups.setdefault(label, []).append(index)
+    return groups
+
+
+def _uow_group_is_doomed(case: Case, indices: list[int]) -> bool:
+    """Whether a `uow` group ROLLS BACK after its last step: at least one of
+    its OWN write steps declares `rollback: true` — the WHOLE group is then
+    the doomed unit of work (`m-case-format` scenario `uow` grouping), not
+    just that one step; a later step in the SAME group (e.g. a find re-issued
+    to force-flush a pending write) still runs inside the still-open
+    transaction before the eventual rollback."""
+    return any(
+        "write" in case.scenario[i] and case.scenario[i].get("rollback") is True for i in indices
+    )
+
+
+def _finish_uow_group(
+    case: Case,
+    index: int,
+    label: str | None,
+    last_step_of_group: dict[int, str],
+    doomed: dict[str, bool],
+    sessions: dict[str, Any],
+    group_executed: dict[str, list[tuple[str, int]]],
+) -> None:
+    """Close a `uow` group's held session when *index* is its declared LAST
+    step: COMMIT (the default), or — when the group is doomed
+    (:func:`_uow_group_is_doomed`) — assert the conflict-abort proof on the
+    group's own accumulated executed write statements (exactly as the
+    ungrouped single-step rollback branch does for one step) and ROLL BACK.
+    A no-op for a step whose group has not yet reached its last step, or for
+    an ungrouped step (*label* is ``None``)."""
+    if label is None or last_step_of_group.get(index) != label:
+        return
+    session = sessions.pop(label)
+    if doomed[label]:
+        # A group that declares `then.affectedRows` is a conflict-abort group
+        # (m-opt-lock + m-unit-work): the UoW aborts BECAUSE a version-gated
+        # write conflicted. Assert the conflict was actually DETECTED (the
+        # gated write affected `then.affectedRows` rows — `updatedRows != 1`)
+        # BEFORE rolling back, so a rollback that merely discarded a
+        # NON-conflicting write fails the case rather than passing on a
+        # vacuous abort.
+        if case.expected_affected_rows is not None and group_executed[label]:
+            _assert_scenario_conflict_abort(case, index, group_executed[label])
+        session.rollback()
+    else:
+        session.commit()
+
+
 def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
     """Execute the scenario against the provisioned DB and assert its contract.
 
@@ -3761,102 +3822,155 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
     nothing and reuses the prior step's rows), assert ``expectRows`` when
     declared, and check any ``sameObjectAs`` identity assertion (both steps'
     results carry the same primary-key identity — the one-object-per-PK rule).
+
+    A step carrying the OPTIONAL `uow` grouping key (`m-case-format`) executes
+    on a HELD session shared with every other step of the SAME label instead
+    of its own default boundary: a grouped write applies through the session
+    (never committed per-step) and a grouped find reads THROUGH the session
+    (read-your-own-writes, mid-transaction). The group's session commits
+    after its own declared LAST step, or rolls back there instead when the
+    group is doomed (:func:`_uow_group_is_doomed`) — the whole group is then
+    ONE unit of work sharing the abort contract, not each step its own. Two
+    groups MAY interleave (non-contiguous in authored order): each group's
+    own session, once opened, stays open across the OTHER group's steps in
+    between, closing only at ITS OWN last step. An UNGROUPED step (no `uow`
+    key) keeps exactly today's behavior, byte-for-byte: a committed write
+    applies on the provider's autocommit connection, a rolled-back write opens
+    its OWN single-step session, and a find reads on the autocommit
+    connection.
     """
     dialect = db.dialect
     root_entity = _scenario_root_entity(case)
     default_identity = _pk_column(root_entity)
     tolerance = case.tolerance
 
+    groups = _scenario_uow_groups(case)
+    last_step_of_group = {indices[-1]: label for label, indices in groups.items()}
+    doomed = {label: _uow_group_is_doomed(case, indices) for label, indices in groups.items()}
+    sessions: dict[str, Any] = {}
+    group_executed: dict[str, list[tuple[str, int]]] = {label: [] for label in groups}
+
     results: list[list[dict[str, Any]]] = []
     step_entities: list[Entity | None] = []
-    for index, step in enumerate(case.scenario):
-        pairs = _entry_pairs(step.get("statements"), dialect)
-        if "write" in step:
-            if step.get("rollback"):
-                # An ABORTED write (m-unit-work abort contract): apply each DML statement
-                # inside a manual-commit session, then ROLL BACK. The write lands
-                # in the atomic scope the abort discards, so a later find MUST
-                # re-resolve and observe the ORIGINAL rows, never the aborted write.
-                with db.open_session() as session:
-                    executed: list[tuple[str, int]] = []
+    with contextlib.ExitStack() as stack:
+        for index, step in enumerate(case.scenario):
+            pairs = _entry_pairs(step.get("statements"), dialect)
+            raw_label = step.get("uow")
+            label = raw_label if isinstance(raw_label, str) else None
+            session: Any = None
+            if label is not None:
+                session = sessions.get(label)
+                if session is None:
+                    session = stack.enter_context(db.open_session())
+                    sessions[label] = session
+            if "write" in step:
+                if session is not None:
+                    # A GROUPED write: apply on the group's own held session — the
+                    # GROUP commits or rolls back as ONE unit at its last step
+                    # (:func:`_finish_uow_group`), never this step alone.
+                    assert label is not None  # `session` is only ever set alongside `label`
                     for statement, stmt_binds in pairs:
-                        executed.append((statement, session.execute(statement, stmt_binds)))
-                    # A scenario that declares `then.affectedRows` is a conflict-abort
-                    # case (m-opt-lock + m-unit-work): the UoW aborts BECAUSE a
-                    # version-gated write conflicted. Assert the conflict was actually
-                    # DETECTED (the gated write affected `then.affectedRows` rows —
-                    # `updatedRows != 1`) BEFORE rolling back, so a rollback that merely
-                    # discarded a NON-conflicting write fails the case rather than
-                    # passing on a vacuous abort.
-                    if case.expected_affected_rows is not None:
-                        _assert_scenario_conflict_abort(case, index, executed)
-                    session.rollback()
-            else:
-                # A committed write between finds (read-your-own-writes / cache
-                # invalidation): apply and COMMIT each DML statement on the unit of
-                # work's connection. It captures no rows; a later find observes the
-                # committed state.
-                for statement, stmt_binds in pairs:
-                    db.execute(statement, stmt_binds)
-            # The step's index still occupies a slot so `sameObjectAs` references
-            # stay aligned. A write observes no rows, so it reads no entity.
-            results.append([])
-            step_entities.append(None)
-            continue
-        if "action" in step:
-            # A lifecycle ACTION step (m-case-format, COR-30): execute its golden SQL
-            # (a load / access relationship query, a flush / mergeBack / commit DML)
-            # and grade its row-level observables; identity / state / error observables
-            # are adapter-delegated (validated, then skipped on the wire lane).
-            rows = _run_scenario_action(case, db, index, step, pairs, results)
+                        group_executed[label].append(
+                            (statement, session.execute(statement, stmt_binds))
+                        )
+                elif step.get("rollback"):
+                    # An UNGROUPED aborted write (m-unit-work abort contract): apply
+                    # each DML statement inside a manual-commit session, then ROLL
+                    # BACK. The write lands in the atomic scope the abort discards,
+                    # so a later find MUST re-resolve and observe the ORIGINAL rows,
+                    # never the aborted write.
+                    with db.open_session() as rb_session:
+                        executed: list[tuple[str, int]] = []
+                        for statement, stmt_binds in pairs:
+                            executed.append((statement, rb_session.execute(statement, stmt_binds)))
+                        # See the SAME conflict-abort reasoning in
+                        # :func:`_finish_uow_group` — the ungrouped, single-step form.
+                        if case.expected_affected_rows is not None:
+                            _assert_scenario_conflict_abort(case, index, executed)
+                        rb_session.rollback()
+                else:
+                    # A committed write between finds (read-your-own-writes / cache
+                    # invalidation): apply and COMMIT each DML statement on the unit of
+                    # work's connection. It captures no rows; a later find observes the
+                    # committed state.
+                    for statement, stmt_binds in pairs:
+                        db.execute(statement, stmt_binds)
+                # The step's index still occupies a slot so `sameObjectAs` references
+                # stay aligned. A write observes no rows, so it reads no entity.
+                results.append([])
+                step_entities.append(None)
+                _finish_uow_group(
+                    case, index, label, last_step_of_group, doomed, sessions, group_executed
+                )
+                continue
+            if "action" in step:
+                # A lifecycle ACTION step (m-case-format, COR-30): execute its golden SQL
+                # (a load / access relationship query, a flush / mergeBack / commit DML)
+                # and grade its row-level observables; identity / state / error observables
+                # are adapter-delegated (validated, then skipped on the wire lane). Grouped,
+                # it runs on the group's own held session, exactly like a write / find step.
+                reader_writer: Any = session if session is not None else db
+                rows = _run_scenario_action(case, reader_writer, index, step, pairs, results)
+                read_entity = _scenario_step_read_entity(case, step, step_entities)
+                if pairs and read_entity is not None:
+                    # A FRESHLY-resolved load / first access materializes the value-object
+                    # document of the entity it navigated TO (m-sql "Read projection", slot 4;
+                    # m-case-format "Read result form") — resolved per-step, so a value-object-
+                    # bearing child decodes with its OWN composite schema, never the root's. A
+                    # zero-round-trip re-access reuses rows already materialized upstream.
+                    rows = [_materialize_owner_node(read_entity, row) for row in rows]
+                results.append(rows)
+                step_entities.append(read_entity)
+                _assert_step_row_observables(
+                    case, index, step, rows, results, tolerance, default_identity
+                )
+                _finish_uow_group(
+                    case, index, label, last_step_of_group, doomed, sessions, group_executed
+                )
+                continue
+            # Every remaining step is a read (`find`, per the schema's exactly-one-of
+            # find/write/action): its read entity resolves through the SAME per-step
+            # helper the action branch uses (`_scenario_step_read_entity`, the single
+            # source of truth) — for a `find` that is the step's declared `targetEntity`
+            # (m-case-format Q1), so its value-object document is decoded with THAT
+            # entity's composite schema, not the scenario root's.
             read_entity = _scenario_step_read_entity(case, step, step_entities)
-            if pairs and read_entity is not None:
-                # A FRESHLY-resolved load / first access materializes the value-object
-                # document of the entity it navigated TO (m-sql "Read projection", slot 4;
-                # m-case-format "Read result form") — resolved per-step, so a value-object-
-                # bearing child decodes with its OWN composite schema, never the root's. A
-                # zero-round-trip re-access reuses rows already materialized upstream.
+            if read_entity is None:
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}] find step resolved no read entity"
+                )
+            if pairs:
+                # A DB-touching step: m-unit-work finds are single-statement, so the round-trip
+                # count is one; execute it and capture the rows. GROUPED, it reads THROUGH the
+                # group's own held session (read-your-own-writes, mid-transaction); ungrouped,
+                # it reads on the provider's autocommit connection, exactly as before.
+                statement, stmt_binds = pairs[0]
+                reader: Any = session if session is not None else db
+                rows = _query_rows(reader, statement, stmt_binds)
+                _assert_scenario_reference_sql(case, db, index, step, rows)
+                # An INSTANCE-FORM find materializes its owner's value-object document with
+                # the row (m-value-object / m-sql "Read projection", slot 4), so decode +
+                # project each top-level value-object column into its declared composite
+                # before grading expectRows — exactly as the graph-read path does
+                # (`_materialize_owner_node`). A ROW-FORM read (the materialized-predicate-
+                # write resolving find) omits the document column, and a value-object-free
+                # entity (every scenario read but the supplier result-form witness) declares
+                # no value object, so this leaves those rows byte-identical. The referenceSql
+                # oracle above already ran on the raw rows, so the value-object columns never
+                # route through that identity compare.
                 rows = [_materialize_owner_node(read_entity, row) for row in rows]
+            else:
+                # A cache hit (or an m-op-list construction that has not resolved yet): no
+                # statement executes. Reuse the SAME interned objects as the step it hits.
+                rows = _reuse_prior_rows(case, step, index, results)
             results.append(rows)
             step_entities.append(read_entity)
             _assert_step_row_observables(
                 case, index, step, rows, results, tolerance, default_identity
             )
-            continue
-        # Every remaining step is a read (`find`, per the schema's exactly-one-of
-        # find/write/action): its read entity resolves through the SAME per-step
-        # helper the action branch uses (`_scenario_step_read_entity`, the single
-        # source of truth) — for a `find` that is the step's declared `targetEntity`
-        # (m-case-format Q1), so its value-object document is decoded with THAT
-        # entity's composite schema, not the scenario root's.
-        read_entity = _scenario_step_read_entity(case, step, step_entities)
-        if read_entity is None:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] find step resolved no read entity"
+            _finish_uow_group(
+                case, index, label, last_step_of_group, doomed, sessions, group_executed
             )
-        if pairs:
-            # A DB-touching step: m-unit-work finds are single-statement, so the round-trip
-            # count is one; execute it and capture the rows.
-            statement, stmt_binds = pairs[0]
-            rows = _query_rows(db, statement, stmt_binds)
-            _assert_scenario_reference_sql(case, db, index, step, rows)
-            # An INSTANCE-FORM find materializes its owner's value-object document with
-            # the row (m-value-object / m-sql "Read projection", slot 4), so decode +
-            # project each top-level value-object column into its declared composite before
-            # grading expectRows — exactly as the graph-read path does (`_materialize_owner_node`).
-            # A ROW-FORM read (the materialized-predicate-write resolving find) omits the
-            # document column, and a value-object-free entity (every scenario read but the
-            # supplier result-form witness) declares no value object, so this leaves those
-            # rows byte-identical. The referenceSql oracle above already ran on the raw
-            # rows, so the value-object columns never route through that identity compare.
-            rows = [_materialize_owner_node(read_entity, row) for row in rows]
-        else:
-            # A cache hit (or an m-op-list construction that has not resolved yet): no
-            # statement executes. Reuse the SAME interned objects as the step it hits.
-            rows = _reuse_prior_rows(case, step, index, results)
-        results.append(rows)
-        step_entities.append(read_entity)
-        _assert_step_row_observables(case, index, step, rows, results, tolerance, default_identity)
 
 
 def _has_version_gate(statement: str, version_col: str) -> bool:

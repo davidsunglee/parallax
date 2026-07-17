@@ -74,7 +74,16 @@ the abort.
 The suite proves this with a **rollback scenario**: a find, a write step whose
 golden DML is applied and then **rolled back**, and the *same* find re-issued —
 which **MUST** re-resolve and observe the **original** rows, never the aborted
-write.
+write. The canonical proof also has a **grouped** form (`m-case-format`'s
+scenario-step `uow` grouping): the observing find, the doomed write, and a
+find RE-ISSUED INSIDE the still-open transaction all share one unit of work,
+so that re-issued find is the forced-flush read-your-own-writes case above —
+it **MUST** observe the write (the deletion, the new value) *before* the
+group's abort, proving the forced flush lands inside the atomic scope the
+abort discards, not merely that the abort discards a buffered write it never
+served to a reader. A find OUTSIDE the doomed group, issued after the group's
+rollback, is the ungrouped rollback scenario above: it re-resolves and
+observes the original, pre-transaction rows.
 
 ## Buffered, batched, ordered writes
 

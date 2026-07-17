@@ -632,6 +632,35 @@ statements as round trips exactly as a committed write does. The harness asserts
 per-step round-trip / golden-SQL count consistency, executes each step, and checks
 `sameObjectAs` identity assertions; it never compiles an operation to SQL.
 
+#### Grouping steps into one unit of work (`uow`)
+
+A read, write, or action step MAY carry an OPTIONAL **`uow: <label>`** key — a
+string grouping label. Steps sharing one label execute inside **one held
+transaction** (one unit of work, one connection) instead of each step's own
+default boundary; a step carrying no `uow` key keeps **exactly** today's
+semantics (an ungrouped write step is its own commit/rollback boundary, an
+ungrouped find runs on the autocommit connection). This is what lets a story
+whose observing find, versioned write, and dependent find all belong to one
+unit of work (`m-opt-lock`'s prior-observation rule) be authored as the SAME
+unit of work the story runs, rather than three separate ones. Grouping is
+opt-in: it changes the meaning of no existing (unlabeled) case.
+
+Steps execute in **authored order**; a group's own steps need **not** be
+contiguous — two groups MAY interleave, which is how a scenario represents the
+classic optimistic-lock race as two competing units of work: one group's
+observing find, then a second (concurrent) group's own observe-and-commit,
+then back to the first group's doomed write. A group **commits** after its
+LAST step, **unless** one of its write steps declares `rollback: true` — then
+the WHOLE GROUP rolls back after its last step instead, exactly the
+`m-unit-work` **abort contract** applied to the group rather than one step.
+This is what lets a step later in the SAME doomed group (a find re-issued to
+force-flush a pending write) observe the mid-transaction state the eventual
+abort then erases, before any find outside the group re-resolves the restored,
+pre-transaction rows. A **read step inside a group** reads THROUGH the group's
+own transaction (read-your-own-writes): its `expectRows` are what THAT
+connection observes mid-transaction, never the post-commit / post-rollback
+state a later, ungrouped find would see.
+
 #### Predicate-selected write instruction
 
 A scenario write MAY retain the legacy string label, or use the canonical object

@@ -10,15 +10,18 @@ is exercised end-to-end against real Postgres by the compatibility suite.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from reference_harness.case import discover_cases
+from reference_harness.case import Case, discover_cases
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_action_on,
+    _assert_scenario,
     _assert_scenario_count_consistency,
     _assert_scenario_normalization,
     _assert_scenario_reference_sql,
@@ -26,6 +29,8 @@ from reference_harness.case_runner import (
     _relationship_path_target,
     _reuse_prior_rows,
     _scenario_step_read_entity,
+    _scenario_uow_groups,
+    _uow_group_is_doomed,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -394,3 +399,247 @@ def test_scenario_non_read_action_step_reads_no_entity() -> None:
     # resolves no read entity and decodes nothing.
     case = _any_case()
     assert _scenario_step_read_entity(case, {"action": "flush", "roundTrips": 0}, []) is None
+
+
+# --- `uow` scenario-step grouping (amendment-review remediation) ------------
+#
+# The DB-free bookkeeping (:func:`_scenario_uow_groups` / :func:`_uow_group_is_
+# doomed`) is pinned directly on the corpus's own re-authored cases; the
+# EXECUTION semantics (grouped read-your-own-writes visibility, group
+# rollback, interleaved groups) are pinned against a FAKE `DatabaseProvider`
+# whose `open_session()` yields canned, call-recording sessions — no database,
+# but the SAME `_assert_scenario` the real Postgres/MariaDB suite drives. Real
+# in-transaction correctness (the five re-authored `m-unit-work` cases plus
+# `m-opt-lock-012`, on BOTH dialects) is `test_compatibility.py`'s job.
+
+
+def test_scenario_uow_groups_finds_the_five_reauthored_spans() -> None:
+    # Every m-unit-work case the amendment-review remediation grouped: -002's
+    # doomed pair, -005/-006's three-step commit spans, -009's four-step span,
+    # -012's doomed triple (its post-abort find stays UNGROUPED).
+    assert _scenario_uow_groups(_scenario_by_id("m-unit-work-002")) == {"doomed-update": [0, 1]}
+    assert _scenario_uow_groups(_scenario_by_id("m-unit-work-005")) == {
+        "observed-update": [0, 1, 2]
+    }
+    assert _scenario_uow_groups(_scenario_by_id("m-unit-work-006")) == {
+        "observed-delete": [0, 1, 2]
+    }
+    assert _scenario_uow_groups(_scenario_by_id("m-unit-work-009")) == {"mixed-flush": [0, 1, 2, 3]}
+    groups = _scenario_uow_groups(_scenario_by_id("m-unit-work-012"))
+    assert groups == {"doomed-delete": [0, 1, 2]}
+    assert 3 not in groups["doomed-delete"]  # the post-abort find stays ungrouped
+
+
+def test_scenario_uow_groups_ignores_ungrouped_cases() -> None:
+    # A case authoring no `uow` key anywhere (the vast majority) reports no
+    # groups at all — the opt-in guarantee: no existing case's meaning changes.
+    assert _scenario_uow_groups(_scenario_by_id("m-unit-work-001")) == {}
+
+
+def test_scenario_uow_groups_reports_interleaved_labels_non_contiguous() -> None:
+    # m-opt-lock-012's classic optimistic-lock race: `ours` = {0, 3}, `concurrent`
+    # = {1, 2} — genuinely interleaved (not sorted/merged), the shape a grouped
+    # execution must open TWO independent sessions to honor.
+    groups = _scenario_uow_groups(_scenario_by_id("m-opt-lock-012"))
+    assert groups == {"ours": [0, 3], "concurrent": [1, 2]}
+
+
+def test_uow_group_is_doomed_true_only_for_a_rollback_write_in_the_group() -> None:
+    case = _scenario_by_id("m-unit-work-002")
+    assert _uow_group_is_doomed(case, [0, 1]) is True  # step 1 declares rollback: true
+    case5 = _scenario_by_id("m-unit-work-005")
+    assert _uow_group_is_doomed(case5, [0, 1, 2]) is False  # commits; no rollback step
+
+
+class _FakeSession:
+    """A canned, call-recording grouped session — the surface `_PgTxSession` /
+    `_MariaTxSession` expose (`execute` / `query` / `commit` / `rollback`),
+    with pre-programmed `query()` responses so a grouped find's read-your-own-
+    writes visibility is asserted by the TEST, not a real database."""
+
+    def __init__(self, query_responses: Sequence[list[dict[str, Any]]] = ()) -> None:
+        self._query_responses = list(query_responses)
+        self.calls: list[tuple[str, str, list[Any]]] = []
+        self.committed = False
+        self.rolled_back = False
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        self.calls.append(("execute", sql, list(binds)))
+        return 1
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        self.calls.append(("query", sql, list(binds)))
+        return self._query_responses.pop(0) if self._query_responses else []
+
+    def commit(self) -> None:
+        self.committed = True
+
+    def rollback(self) -> None:
+        self.rolled_back = True
+
+
+class _FakeGroupedDb:
+    """A fake `DatabaseProvider` exposing just the surface `_assert_scenario`'s
+    grouped path calls (`dialect`, `open_session`) plus the ungrouped path's
+    top-level `query`/`execute`, so a scenario mixing grouped and ungrouped
+    steps runs end-to-end with NO real database. `open_session()` hands out
+    pre-built :class:`_FakeSession` instances in CALL order — proving groups
+    open independent sessions exactly when the bookkeeping says they should
+    (once per label, on FIRST use; never re-opened for a later step of the
+    SAME label).
+    """
+
+    dialect = "postgres"
+
+    def __init__(
+        self,
+        session_responses: Sequence[Sequence[list[dict[str, Any]]]] = (),
+        top_responses: Sequence[list[dict[str, Any]]] = (),
+    ) -> None:
+        self._session_queue = [_FakeSession(r) for r in session_responses]
+        self.sessions: list[_FakeSession] = []
+        self._top_responses = list(top_responses)
+        self.top_calls: list[tuple[str, str, list[Any]]] = []
+
+    @contextmanager
+    def open_session(self) -> Iterator[_FakeSession]:
+        session = self._session_queue.pop(0)
+        self.sessions.append(session)
+        yield session
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        self.top_calls.append(("execute", sql, list(binds)))
+        return 1
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        self.top_calls.append(("query", sql, list(binds)))
+        return self._top_responses.pop(0) if self._top_responses else []
+
+
+def test_grouped_scenario_reads_and_writes_on_one_session_then_commits() -> None:
+    # m-unit-work-005: one `uow` group spans all three steps (observe find,
+    # versioned write, dependent find). The GROUPED find's read-your-own-writes
+    # visibility is not asserted here (that needs a real DB — `test_
+    # compatibility.py`'s job); this proves the MECHANICS: exactly ONE session
+    # opens for the whole group, every step's SQL runs on IT (never the
+    # top-level `db`), and it COMMITS once, after its own last step.
+    case = _scenario_by_id("m-unit-work-005")
+    observe_rows = [{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}]
+    dependent_rows = [{"id": 1, "owner": "Ada", "balance": 175.00, "version": 2}]
+    db = _FakeGroupedDb(session_responses=[[observe_rows, dependent_rows]])
+
+    _assert_scenario(case, db)  # type: ignore[arg-type]
+
+    assert len(db.sessions) == 1, "the whole group shares ONE session"
+    session = db.sessions[0]
+    assert [call[0] for call in session.calls] == ["query", "execute", "query"]
+    assert session.committed is True
+    assert session.rolled_back is False
+    assert db.top_calls == [], "no step in a fully-grouped scenario touches the top-level db"
+
+
+def test_grouped_scenario_doomed_group_rolls_back_the_shared_session() -> None:
+    # m-unit-work-002: steps 0-1 share the doomed `doomed-update` group (the
+    # write declares `rollback: true`); step 2 (the post-abort find) is
+    # UNGROUPED. Proves: ONE session for the doomed pair, it ROLLS BACK (never
+    # commits), and the ungrouped post-abort find runs on the top-level `db`
+    # instead — a DIFFERENT connection, exactly the abort contract's promise
+    # that the aborted group's own connection never serves the re-resolve.
+    case = _scenario_by_id("m-unit-work-002")
+    observe_rows = [{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}]
+    restored_rows = [{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}]
+    db = _FakeGroupedDb(session_responses=[[observe_rows]], top_responses=[restored_rows])
+
+    _assert_scenario(case, db)  # type: ignore[arg-type]
+
+    assert len(db.sessions) == 1
+    session = db.sessions[0]
+    assert [call[0] for call in session.calls] == ["query", "execute"]
+    assert session.committed is False
+    assert session.rolled_back is True
+    assert [call[0] for call in db.top_calls] == ["query"], "the post-abort find is UNGROUPED"
+
+
+def test_grouped_scenario_interleaved_groups_open_two_independent_sessions() -> None:
+    # A synthetic scenario mirroring m-opt-lock-012's shape (the classic
+    # optimistic-lock race) WITHOUT its conflict-abort assertion (isolating
+    # JUST the interleaving mechanics): group `a` = steps {0, 3}, group `b` =
+    # steps {1, 2} — genuinely interleaved. Proves: TWO sessions open, in the
+    # order their labels are FIRST seen (`a` then `b`); `b`'s session is used
+    # (and closes, committing) entirely BETWEEN `a`'s two steps, while `a`'s
+    # own session stays open across that whole span, closing (rolling back)
+    # only at ITS OWN last step.
+    case = _interleaved_synthetic_case()
+    rows_a = [{"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}]
+    rows_b = [{"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}]
+    db = _FakeGroupedDb(session_responses=[[rows_a], [rows_b]], top_responses=[[]])
+
+    _assert_scenario(case, db)  # type: ignore[arg-type]
+
+    assert len(db.sessions) == 2, "two independent sessions, one per interleaved label"
+    session_a, session_b = db.sessions
+    assert [call[0] for call in session_a.calls] == ["query", "execute"]
+    assert [call[0] for call in session_b.calls] == ["query", "execute"]
+    assert session_b.committed is True and session_b.rolled_back is False
+    assert session_a.committed is False and session_a.rolled_back is True
+    assert [call[0] for call in db.top_calls] == ["query"], "step 4 is ungrouped"
+
+
+def _interleaved_synthetic_case() -> Case:
+    """A minimal scenario case (Account model) whose two `uow` groups
+    interleave — the SAME shape `m-opt-lock-012` authors, stripped of
+    `then.affectedRows` so `_assert_scenario_conflict_abort` never engages:
+    this test isolates the interleaving MECHANICS, not the conflict proof
+    (already pinned end-to-end against real Postgres/MariaDB by `test_
+    compatibility.py`)."""
+    base = _scenario_by_id("m-unit-work-001")
+
+    def find_step(uow: str, value: int) -> dict[str, Any]:
+        return {
+            "uow": uow,
+            "targetEntity": "Account",
+            "find": {"eq": {"attr": "Account.id", "value": value}},
+            "roundTrips": 1,
+            "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [value]}],
+        }
+
+    def write_step(uow: str, *, rollback: bool = False) -> dict[str, Any]:
+        return {
+            "uow": uow,
+            "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 2}]}],
+            "rollback": rollback,
+            "roundTrips": 1,
+            "statements": [
+                {
+                    "sql": {"postgres": "update account set balance = ? where id = ?"},
+                    "binds": [1.0, 2],
+                }
+            ],
+        }
+
+    raw = {
+        "model": "models/account.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "scenario": [
+                find_step("a", 2),
+                find_step("b", 2),
+                write_step("b"),
+                write_step("a", rollback=True),
+                {
+                    "targetEntity": "Account",
+                    "find": {"eq": {"attr": "Account.id", "value": 9}},
+                    "roundTrips": 1,
+                    "statements": [
+                        {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [9]}
+                    ],
+                    "expectRows": [],
+                },
+            ]
+        },
+        "then": {"roundTrips": 5},
+    }
+    return Case(
+        path=base.path.with_name("m-unit-work-999-synthetic.yaml"), raw=raw, model=base.model
+    )

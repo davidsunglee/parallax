@@ -402,7 +402,7 @@
                 "required": ["find", "roundTrips", "targetEntity"]
               },
               {
-                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` the DML is applied and then ROLLED BACK. A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`.",
+                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` the DML is applied and then ROLLED BACK — UNGROUPED, that step's own unit of work; grouped (`uow`), the whole group's (see the sibling `uow` property). A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`.",
                 "required": ["write", "roundTrips"]
               },
               {
@@ -457,8 +457,13 @@
                 ]
               },
               "rollback": {
-                "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the m-unit-work abort contract. The rolled-back DML still executes, so the step's roundTrips count its statements exactly as a committed write does.",
+                "description": "Optional (write steps only). When true, the step's golden DML is applied and then ROLLED BACK instead of committed — the observable form of the m-unit-work abort contract. UNGROUPED, this step's own unit of work rolls back right after it. Grouped (the sibling `uow` key), this declares the WHOLE group doomed: every step sharing the label stays inside the SAME held transaction, which rolls back after the group's LAST step (not necessarily this one) — so a later step in the same group (e.g. a find re-issued to force-flush a pending write) still observes the mid-transaction state before the abort erases it. The rolled-back DML still executes, so the step's roundTrips count its statements exactly as a committed write does.",
                 "type": "boolean"
+              },
+              "uow": {
+                "description": "Optional per-step unit-of-work GROUPING label (m-unit-work; sibling of `find`/`write`/`roundTrips`, legal on a read, write, or action step). Steps sharing the SAME label execute inside ONE held transaction (one unit of work, one connection) instead of each step's own default boundary; steps carrying NO `uow` key keep today's semantics exactly (an ungrouped write step is its own commit/rollback boundary; an ungrouped find runs on the autocommit connection) — grouping is opt-in and changes the meaning of no existing (unlabeled) case. Steps execute in AUTHORED order; a group's own steps need NOT be contiguous — two groups MAY interleave (the classic optimistic-lock race: one unit of work's observing find, then a concurrent unit of work's observe-and-commit, then back to the first unit of work's own doomed write). The group COMMITS after its LAST step, UNLESS one of its write steps declares `rollback: true`, in which case the group ROLLS BACK after its last step instead — the whole group is the doomed unit of work, which is what lets a step later in the SAME group (e.g. a re-issued find) observe a force-flushed write the eventual abort then erases (`core/spec/m-unit-work.md` \"Abort\"). A read (`find`) step inside a group reads THROUGH the group's own transaction (read-your-own-writes): its `expectRows` are what THAT connection observes mid-transaction, not the post-commit / post-rollback state.",
+                "type": "string",
+                "minLength": 1
               },
               "roundTrips": {
                 "description": "How many database round trips this step costs. A READ cache HIT costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's round trips equal the committed DML statements it lists. MUST equal the number of golden SQL statements this step lists for each dialect.",
