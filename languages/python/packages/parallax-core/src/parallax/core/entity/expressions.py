@@ -345,12 +345,22 @@ class AttributeExpr:
         """A set-based ``_where``-verb assignment (``Account.balance.set(0)``,
         python.md §5): only a TOP-LEVEL scalar attribute or value-object member
         is assignable — mirroring ``model_copy``'s own ``assignable_py``
-        allow-list (`~parallax.core.entity.base._validate_copy_keys`), never a
-        NESTED value-object path (a value object always binds its WHOLE
-        document, `m-value-object`; there is no sparse write below its
-        boundary). A ``ValueObject`` instance (or a tuple of them, a ``many``
-        member) is serialized to its canonical document — the SAME translation
-        ``full_row`` / ``canonical_row`` apply to every other write input.
+        allow-list, never a NESTED value-object path (a value object always
+        binds its WHOLE document, `m-value-object`; there is no sparse write
+        below its boundary).
+
+        This BUILD-TIME call applies the SAME shared check the engine/
+        serialized path applies to a case-authored predicate-write assignment
+        (`~parallax.core.inheritance.validate_write_assignment`, the "one
+        validator, two callers" pattern `python.md:667-676` / `m-case-
+        format.md:700` require): a primary-key or framework-owned (version)
+        target is rejected — the SAME classification `model_copy`'s own
+        assignability guard uses (`~parallax.core.entity.base.
+        _validate_copy_keys`) — and a scalar attribute's value must conform to
+        its declared neutral type. A ``ValueObject`` instance (or a tuple of
+        them, a ``many`` member) is serialized to its canonical document — the
+        SAME translation ``full_row`` / ``canonical_row`` apply to every other
+        write input.
         """
         if self._path:
             raise TypeError(
@@ -358,6 +368,19 @@ class AttributeExpr:
                 "assignable via .set(...) — a value object binds its whole document, never "
                 "a nested path (m-value-object)"
             )
+        from parallax.core import inheritance
+        from parallax.core.entity.base import (
+            ModelCopyError,
+            _current_metamodel,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        meta = _current_metamodel()
+        try:
+            inheritance.validate_write_assignment(
+                meta, meta.entity(self._entity), self._head, value
+            )
+        except inheritance.WriteAssignmentError as exc:
+            raise ModelCopyError(str(exc)) from exc
         return AttributeAssignment(attr=self.ref, value=_serialize_assignment_value(value))
 
     def __bool__(self) -> bool:

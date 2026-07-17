@@ -1642,6 +1642,27 @@ def _run_materializing_pair(
             f"targets {instruction.target.entity!r} — m-case-format 'Materializing cases' "
             "requires the prior find to share the write's own target)"
         )
+    # `m-case-format.md:719`: "For every versioned or temporal target, model-
+    # aware validation MUST require that prior find to use the same concrete
+    # `targetEntity` AND CANONICAL OPERATION" — same entity alone is not
+    # enough (a resolving find over a DIFFERENT predicate would silently
+    # observe the wrong rows). Compared BARE (`deserialize`, no as-of
+    # injection / navigate canonicalization): `instruction.target.predicate`
+    # is itself the write's own UN-injected bare predicate
+    # (`instructions.deserialize`), so the find step's own raw operation is
+    # the one apples-to-apples comparison — `_canonicalize_read`'s temporal
+    # as-of injection would make even a genuinely matching pair compare
+    # unequal.
+    find_doc = find_step.get("find")
+    find_operation = deserialize(find_doc) if find_doc is not None else None
+    if find_operation != instruction.target.predicate:
+        raise EngineError(
+            f"materializing predicate write at scenario step {index + 1} is not preceded by "
+            "a resolving find over the SAME canonical operation as the write's own target "
+            f"predicate (find {find_operation!r}, write {instruction.target.predicate!r} — "
+            "m-case-format 'Materializing cases' requires the prior find to use the same "
+            "concrete targetEntity and canonical operation)"
+        )
     tx_instant = _entry_instant(cast("Mapping[str, object]", write_step["write"]))
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     capture = _CapturingPort(port)

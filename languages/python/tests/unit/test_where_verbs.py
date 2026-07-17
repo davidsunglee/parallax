@@ -14,9 +14,11 @@ from decimal import Decimal
 
 import pytest
 
+import mirrored_models as mm
 import snapshot_models as sm
 import value_object_models as vom
 from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field
+from parallax.core.entity import ModelCopyError
 from parallax.core.entity.expressions import AttributeAssignment
 from parallax.core.temporal_read import LATEST
 
@@ -91,6 +93,24 @@ def test_set_on_a_many_value_object_member_serializes_to_a_document_list() -> No
 def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
     assignment = sm.SnapOrderStatus.code.set("X-1")
     assert assignment.value == "X-1"
+
+
+def test_set_on_a_primary_key_attribute_raises() -> None:
+    # Finding 3's own repro: `Person.id.set(2)` must be rejected at `.set()`
+    # BUILD time (`python.md:667-676`), the SAME classification `model_copy`'s
+    # own assignability guard raises for a primary-key `update=` key.
+    with pytest.raises(ModelCopyError, match="primary-key fields may not be assigned"):
+        mm.Person.id.set(2)
+
+
+def test_set_on_a_framework_owned_version_attribute_raises() -> None:
+    with pytest.raises(ModelCopyError, match="framework-owned fields"):
+        mm.Account.version.set(5)
+
+
+def test_set_on_a_scalar_with_a_mismatched_type_raises() -> None:
+    with pytest.raises(ModelCopyError, match="does not match the declared type"):
+        mm.Person.name.set(42)
 
 
 # --------------------------------------------------------------------------- #

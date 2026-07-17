@@ -63,9 +63,6 @@ that document happens to be shaped like a marker).
 
 from __future__ import annotations
 
-import datetime as dt
-import decimal
-import uuid
 from collections.abc import Mapping, Sequence
 from typing import Final, cast
 
@@ -79,6 +76,7 @@ from parallax.core.descriptor import (
     ValueObject,
     ValueObjectAttribute,
 )
+from parallax.core.descriptor.neutral_type import type_matches as _type_matches
 
 __all__ = ["WriteRejectedError", "validate_write"]
 
@@ -257,46 +255,13 @@ def _check_vo_attribute(
 
 # --------------------------------------------------------------------------- #
 # DB-computed write markers (scalar attribute columns only, `m-value-object`   #
-# "Writing" marker disambiguation) and the m-core neutral type check.          #
+# "Writing" marker disambiguation). The m-core neutral type check itself is    #
+# `parallax.core.descriptor.neutral_type.type_matches` (imported above as      #
+# `_type_matches`) -- the ONE scalar-value-policy check this module and        #
+# `parallax.core.inheritance.validate_write_assignment` both apply, so it      #
+# lives in the shared scope both already depend on rather than staying forked. #
 # --------------------------------------------------------------------------- #
 def _is_scalar_write_marker(value: object) -> bool:
     if not isinstance(value, Mapping):
         return False
     return frozenset(cast("Mapping[str, object]", value)) in _MarkerKeys
-
-
-def _type_matches(value: object, neutral_type: str) -> bool:
-    """Whether ``value`` matches ``neutral_type`` -- the m-core neutral scalar
-    vocabulary (python.md §2), accepting BOTH the portable JSON-literal shape a
-    corpus-authored row carries (int/float/str/bool -- YAML's own numeric/date
-    parsing) and the native driver-typed shape a Python entity instance's
-    serialized row carries (`Decimal`/`date`/`time`/`datetime`/`UUID`/`bytes`)
-    -- the write side's counterpart of `m-op-algebra`'s `_literal_matches_type`
-    (a category-level check, not full precision/range/maxLength policing,
-    which stays a separate, unclaimed concern here exactly as it does there).
-    """
-    if isinstance(value, bool):
-        return neutral_type == "boolean"
-    if neutral_type == "boolean":
-        return False
-    if neutral_type in ("int32", "int64"):
-        return isinstance(value, int)
-    if neutral_type in ("float32", "float64"):
-        return isinstance(value, (int, float))
-    if neutral_type.startswith("decimal"):
-        return isinstance(value, (int, float, decimal.Decimal))
-    if neutral_type == "string":
-        return isinstance(value, str)
-    if neutral_type == "bytes":
-        return isinstance(value, (bytes, str))
-    if neutral_type == "date":
-        return isinstance(value, str) or (
-            isinstance(value, dt.date) and not isinstance(value, dt.datetime)
-        )
-    if neutral_type == "time":
-        return isinstance(value, (str, dt.time))
-    if neutral_type == "timestamp":
-        return isinstance(value, (str, dt.datetime))
-    if neutral_type == "uuid":
-        return isinstance(value, (str, uuid.UUID))
-    return True  # pragma: no cover - defensive: every m-core neutral type is covered above

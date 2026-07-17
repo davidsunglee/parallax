@@ -16,10 +16,12 @@ from dataclasses import dataclass
 
 from parallax.core.descriptor import Attribute, Entity, Inheritance, Metamodel, ValueObject
 from parallax.core.descriptor import declaring_entity as _resolve_declaring_entity
+from parallax.core.descriptor.neutral_type import type_matches as _type_matches
 
 __all__ = [
     "Family",
     "InheritanceError",
+    "WriteAssignmentError",
     "ancestor_chain",
     "declaring_entity",
     "effective_concrete_subtypes",
@@ -31,6 +33,7 @@ __all__ = [
     "superset_value_objects",
     "validate",
     "validate_subtype_write",
+    "validate_write_assignment",
 ]
 
 
@@ -584,6 +587,69 @@ def reject_predicate_write(entity: Entity) -> None:
         "writes are out of scope')",
         entity=entity.name,
     )
+
+
+class WriteAssignmentError(ValueError):
+    """A predicate-write assignment (`.set(...)`-built or case-authored) names
+    an unassignable target or an ill-typed value (`python.md:667-676`;
+    `m-case-format.md:700`/`:711` "framework-owned/unassignable assignments").
+    ``rule`` is the shared classification both callers reuse verbatim in their
+    own error text."""
+
+    def __init__(self, rule: str, message: str) -> None:
+        super().__init__(message)
+        self.rule = rule
+
+
+def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value: object) -> None:
+    """The ONE predicate-write assignment check every caller applies to one
+    `{attr, value}` pair (`m-opt-lock` "Version values are framework-owned";
+    `python.md` §5 "each field may be assigned at most once"): mirroring
+    `model_copy`'s own assignability rule (`parallax.core.entity.base.
+    _validate_copy_keys`), a primary-key or optimistic-locking (version)
+    target is rejected outright — a family's version/key columns are declared
+    only on the root (`family_attributes`), so this walk is FAMILY-EFFECTIVE,
+    exactly like every other write-side member-name resolution. Neither
+    `entity.expressions.AttributeExpr.set` (the typed path, `parallax.core.
+    entity`) nor `unit_work.instructions.validate_instruction` (the case-
+    authored engine/serialized path, `parallax.core.unit_work`) may import the
+    other (`core/spec/modules.md` §7 DAG), so this classification lives here,
+    the ONE scope both already depend on — the "one validator, two callers"
+    pattern (`parallax.core.op_algebra.validate_operation` / `parallax.core.
+    unit_work.write_validate.validate_write`'s own precedent) extended across
+    a DAG boundary neither scope alone can bridge.
+
+    For an ordinary scalar attribute, ``value`` MUST also conform to its
+    declared `m-core` neutral type (`parallax.core.descriptor.neutral_type.
+    type_matches`, the SAME category-level scalar-value policy `write_validate`
+    applies to a keyed write row) — a ``None`` value is never itself a type
+    mismatch (a nullable attribute's own assignment may always clear it, mirroring
+    `write_validate`'s own null short-circuit). A ``name`` this family declares
+    no SCALAR attribute for (a value-object member, or one `validate_instruction`'s
+    own member-name-honesty gate already rejects as wholly undeclared) is out of
+    this function's scope — it returns silently, leaving that classification to
+    its own owning check.
+    """
+    for attribute in family_attributes(meta, entity):
+        if attribute.name != name:
+            continue
+        if attribute.primary_key:
+            raise WriteAssignmentError(
+                "primary-key", f"{entity.name}.{name}: primary-key fields may not be assigned"
+            )
+        if attribute.optimistic_locking:
+            raise WriteAssignmentError(
+                "optimistic-locking",
+                f"{entity.name}.{name}: framework-owned fields (the version column) may not "
+                "be assigned",
+            )
+        if value is not None and not _type_matches(value, attribute.type):
+            raise WriteAssignmentError(
+                "value-type-mismatch",
+                f"{entity.name}.{name}: value {value!r} does not match the declared type "
+                f"{attribute.type!r}",
+            )
+        return
 
 
 def _concrete_accepted_field_names(

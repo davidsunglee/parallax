@@ -1063,6 +1063,43 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
         )
 
 
+def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_differs() -> None:
+    # Finding 4 (`m-case-format.md:715`/`:719`): the preceding find must share
+    # the write's own target predicate, not merely its entity — unlike the
+    # entity-mismatch guard above, this IS reachable through the public
+    # `run_scenario_case` entry point: the look-ahead pairing decision
+    # (`run_scenario_case`) checks only `targetEntity`, so a same-entity,
+    # DIFFERENT-predicate pair still routes into `_run_materializing_pair`,
+    # whose own canonical-operation comparison is what catches it.
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {
+                "scenario": [
+                    {
+                        "targetEntity": "Account",
+                        "find": {"eq": {"attr": "Account.balance", "value": 100.00}},
+                    },
+                    {
+                        "write": {
+                            "mutation": "delete",
+                            "target": {
+                                "entity": "Account",
+                                "predicate": {
+                                    "lessThan": {"attr": "Account.balance", "value": 200.00}
+                                },
+                            },
+                        }
+                    },
+                ]
+            },
+        },
+    )
+    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    with pytest.raises(engine.EngineError, match="SAME canonical operation"):
+        engine.run_scenario_case(case, "postgres", port)
+
+
 def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
     # Defensive coverage: a `_LOWERING_ERRORS` member raised anywhere inside
     # the per-entry loop (here, `instructions.deserialize`'s own unknown-

@@ -416,6 +416,15 @@ def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None
     is the member-name honesty gate — the flush-time refusing compile port (M4)
     is the structural enforcer of the remaining typed / columnOrder
     classification, mirroring the predicate-write materialization split.
+
+    Once a predicate-write assignment's `attr` names a genuinely declared
+    member, `inheritance.validate_write_assignment` additionally rejects a
+    primary-key or framework-owned (version) target and any scalar value that
+    does not conform to its declared neutral type
+    (`python.md:667-676`/`m-case-format.md:700` -- the SAME classification a
+    `.set(...)`-built assignment is rejected with at build time,
+    `entity.expressions.AttributeExpr.set`; the "one validator, two callers"
+    pattern neither scope can otherwise share, `core/spec/modules.md` section 7 DAG).
     """
     if isinstance(instruction, KeyedWrite):
         entity = _entity(meta, instruction.entity)
@@ -442,6 +451,10 @@ def validate_instruction(instruction: WriteInstruction, meta: Metamodel) -> None
                     "may be assigned at most once (python.md §5)"
                 )
             seen.add(member)
+            try:
+                inheritance.validate_write_assignment(meta, entity, member, assignment.value)
+            except inheritance.WriteAssignmentError as exc:
+                raise WriteInstructionError(str(exc)) from exc
 
 
 def _entity(meta: Metamodel, name: str) -> Entity:

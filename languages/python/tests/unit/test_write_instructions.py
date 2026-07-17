@@ -495,3 +495,49 @@ def test_member_name_honesty_covers_value_object_members() -> None:
         }
     )
     wi.validate_instruction(keyed, customer)
+
+
+# --------------------------------------------------------------------------- #
+# Finding 3 — the engine/serialized-path half of the shared assignment check   #
+# (`python.md:667-676`; `m-case-format.md:700`): a CASE-AUTHORED PredicateWrite #
+# assignment naming a primary-key or framework-owned (version) column, or       #
+# carrying an ill-typed scalar value, is rejected with the SAME classification  #
+# `entity.expressions.AttributeExpr.set` raises at build time for the typed     #
+# path (`test_where_verbs.py`'s own `test_set_on_a_primary_key_attribute_       #
+# raises` / `..._framework_owned_version_attribute_raises` / `..._a_mismatched_ #
+# type_raises`) — the "one validator, two callers" pattern.                     #
+# --------------------------------------------------------------------------- #
+def test_member_name_honesty_rejects_a_primary_key_assignment() -> None:
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Account.id", "value": 2}],
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="primary-key fields may not be assigned"):
+        wi.validate_instruction(predicate, _ACCOUNT)
+
+
+def test_member_name_honesty_rejects_a_framework_owned_version_assignment() -> None:
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Account.version", "value": 5}],
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="framework-owned fields"):
+        wi.validate_instruction(predicate, _ACCOUNT)
+
+
+def test_member_name_honesty_rejects_a_scalar_type_mismatched_assignment() -> None:
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Account.owner", "value": 42}],
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="does not match the declared type"):
+        wi.validate_instruction(predicate, _ACCOUNT)
