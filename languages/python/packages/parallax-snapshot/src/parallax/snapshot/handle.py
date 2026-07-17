@@ -57,6 +57,7 @@ from parallax.core import (
     inheritance,
     op_algebra,
     opt_lock,
+    read_lock,
 )
 from parallax.core.auto_retry import run_with_retry
 from parallax.core.base import INFINITY_LITERAL
@@ -92,6 +93,7 @@ from parallax.core.unit_work import (
     Observation,
     PlannedWrite,
     PredicateWrite,
+    RollbackOnlyError,
     SystemClock,
     TransactionSettings,
     UnitOfWork,
@@ -1346,10 +1348,12 @@ class _ResolvedOptions:
 
     ``concurrency`` also lives on the core :class:`TransactionSettings`;
     ``retries`` and ``retry_optimistic_conflicts`` are demarcation-level only
-    (the core unit of work never sees them). ``retry_optimistic_conflicts`` is
-    stored for the join/conflict contract but cannot alter retry classification
-    yet — no optimistic-conflict error category exists until ``m-opt-lock``
-    (COR-3 Phase 8; see ``parallax.core.auto_retry``).
+    (the core unit of work never sees them). ``retry_optimistic_conflicts``
+    is stored for the join/conflict contract AND gates
+    :func:`_optimistic_conflict_retriable` — the opt-in-only classification
+    branch :meth:`Database.transact` injects into
+    :func:`~parallax.core.auto_retry.run_with_retry` (COR-3 Phase 8
+    increment 6; `m-opt-lock` "Retry contract").
     """
 
     retries: int
@@ -1471,7 +1475,7 @@ class Transaction:
         op = statement.operation()
         entity = inheritance.declaring_entity(self._meta, self._meta.entity(target))
         pin = _statement_pin(op, entity)
-        lock = self._uow.settings.concurrency
+        lock = read_lock.mode_for(self._uow.settings.concurrency)
         if _is_milestone_set_op(op):
             history_result = self._uow.read(
                 lambda: find_history(op, self._meta, self._dialect, target, self._conn)
@@ -1705,7 +1709,7 @@ class Transaction:
         predicate directly — otherwise a temporal target's resolve would match
         every historical milestone too, not just the open one(s).
         """
-        lock: LockMode | None = self._uow.settings.concurrency
+        lock: LockMode | None = read_lock.mode_for(self._uow.settings.concurrency)
         plan_ = deep_fetch.plan(instruction.target.entity, instruction.target.predicate, self._meta)
         assignments = {
             _assignment_member(assignment.attr): assignment.value
@@ -2301,7 +2305,44 @@ class Database:
 
             return self._port.transaction(in_txn)
 
-        return run_with_retry(attempt, retries=options.retries)
+        return run_with_retry(
+            attempt,
+            retries=options.retries,
+            extra_retriable_types=(opt_lock.OptimisticLockConflictError,),
+            extra_retriable=(
+                _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
+            ),
+        )
+
+
+def _optimistic_conflict_retriable(exc: BaseException) -> bool:
+    """The ``retry_optimistic_conflicts`` opt-in's own retriability verdict
+    (`m-opt-lock` "Retry contract"; `m-auto-retry.md` "Which failures are
+    retriable"; ADR 0008 / `python.md` §5 L622-624) — injected into
+    :func:`~parallax.core.auto_retry.run_with_retry` as its
+    ``extra_retriable`` extension ONLY when the resolved option is set
+    (:meth:`Database.transact`, above).
+
+    ``parallax.core.auto_retry`` may not import ``parallax.core.opt_lock``
+    (the import-linter contract fixes the `m-auto-retry` DAG edges at
+    ``m-unit-work`` / ``m-db-error`` only), so this composed, opt-in-gated
+    branch lives HERE, the one seam that legally sees both — the SAME two
+    raise shapes :func:`~parallax.core.auto_retry._retriable_failure`
+    already distinguishes for a transient database failure: the conflict
+    itself (a direct :class:`~parallax.core.opt_lock.OptimisticLockConflictError`),
+    or the rollback-only refusal whose ``__cause__`` preserves it (the JOIN
+    case — an inner joined scope's own conflict marks the root
+    rollback-only, and the outermost retry loop still applies per the
+    original failure's category, spec §5). :class:`~parallax.core.opt_lock.
+    StaleWriteError` (the distinct, NON-retriable locking-mode sibling,
+    `m-opt-lock` "Conflict classification") is never named here — it stays
+    outside the retriable set unconditionally, opt-in or not.
+    """
+    if isinstance(exc, opt_lock.OptimisticLockConflictError):
+        return True
+    if isinstance(exc, RollbackOnlyError):
+        return isinstance(exc.__cause__, opt_lock.OptimisticLockConflictError)
+    return False
 
 
 # The spec §8 module-level spelling of the composition-root entry point.

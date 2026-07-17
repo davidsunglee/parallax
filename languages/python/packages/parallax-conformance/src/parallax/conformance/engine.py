@@ -22,7 +22,7 @@ from typing import Final, cast
 
 from parallax.conformance import case_format, models, provision, temporal_state
 from parallax.conformance.temporal_state import TemporalShadow
-from parallax.core import batch_write, inheritance, navigate, opt_lock
+from parallax.core import batch_write, inheritance, navigate, opt_lock, read_lock
 from parallax.core.base import INFINITY_LITERAL, TemporalBound, normalize_instant
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
@@ -209,6 +209,37 @@ def _canonicalize_read(operation_doc: object, entity: Entity, meta: Metamodel) -
     return navigate.canonicalize(injected, meta, root_pins)
 
 
+def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
+    """A read-shape case's own unit-of-work participation mode — the
+    read-shape half of the `when.uow` threading COR-3 Phase 8 increment 6
+    adds (no previously reachable read case ever carried it, so no other read
+    case's derivation changes).
+
+    `when.uow.concurrency` when the case declares it (the read-lock matrix's
+    -002/-003/-005, `api-conformance`-lane; any future transactional read
+    case that self-describes its mode the same way). The `m-read-lock`
+    corpus family's OWN harness-lane witnesses (-001/-009) declare no
+    `when.uow` at all — their corpus prose is explicit that the read is "an
+    in-transaction object find" under the module's own DEFAULT mode
+    (`m-read-lock.md` "Automatic read-lock correctness": "the default
+    (`locking`) in-transaction object find acquires a shared row lock") — so
+    a read case whose PRIMARY module is `m-read-lock` defaults to `locking`
+    absent an explicit `when.uow`, the one module-scoped default this seam
+    grants (no other read case's primary module carries this default:
+    every other reachable read models the plain, non-transactional
+    `db.find` surface, `None`).
+    """
+    when = case.document.get("when")
+    uow = cast("Mapping[str, object]", when).get("uow") if isinstance(when, Mapping) else None
+    if isinstance(uow, Mapping):
+        concurrency = cast("Mapping[str, object]", uow).get("concurrency")
+        if concurrency in ("locking", "optimistic"):
+            return concurrency
+    if case.primary_module == "m-read-lock":
+        return "locking"
+    return None
+
+
 def _compile_statement(
     case: case_format.Case, dialect_name: str
 ) -> tuple[str, Statement, Metamodel, Operation]:
@@ -220,9 +251,12 @@ def _compile_statement(
     target, operation_doc = _read_target_and_operation(case)
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
+    lock = read_lock.mode_for(_read_case_concurrency(case))
     try:
         operation = _canonicalize_read(operation_doc, meta.entity(target), meta)
-        statement = compile_read(operation, meta, dialect, target, result_form=_result_form(case))
+        statement = compile_read(
+            operation, meta, dialect, target, result_form=_result_form(case), lock=lock
+        )
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return target, statement, meta, operation
@@ -1179,7 +1213,8 @@ def _lower_find(
     if not isinstance(target, str) or find_doc is None:
         raise EngineError("scenario find step needs `targetEntity` and `find`")
     operation = _canonicalize_read(find_doc, meta.entity(target), meta)
-    return compile_read(operation, meta, dialect, target, result_form=result_form, lock=concurrency)
+    lock = read_lock.mode_for(concurrency)
+    return compile_read(operation, meta, dialect, target, result_form=result_form, lock=lock)
 
 
 def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_LoweredStep]:

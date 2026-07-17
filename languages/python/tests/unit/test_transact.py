@@ -212,12 +212,20 @@ class _RecordingPort:
     ``txn_faults`` raises at the next ``transaction`` entries (a driver failure
     the adapter translated and rolled back); ``read_faults`` raises from the
     next ``execute`` calls (a failure inside the transaction body).
+    ``write_affected_queue`` (COR-3 Phase 8 increment 6) scripts a SEQUENCE of
+    affected-row counts across successive ``execute_write`` calls — an
+    optimistic-lock retry-loop probe's own oracle: attempt 0's gated UPDATE
+    affects ``0`` (the conflict), a retried attempt's affects ``1`` (success) —
+    falling back to the constant ``write_affected`` once exhausted (or when
+    never set, unaffected — every existing single-affected-count caller is
+    unchanged).
     """
 
     def __init__(self, *, rows: Sequence[Row] = (), write_affected: int = 1) -> None:
         self.ops: list[tuple[object, ...]] = []
         self.rows = list(rows)
         self.write_affected = write_affected
+        self.write_affected_queue: list[int] = []
         self.txn_faults: list[DatabaseError] = []
         self.read_faults: list[DatabaseError] = []
 
@@ -229,6 +237,8 @@ class _RecordingPort:
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.ops.append(("write", sql, tuple(binds)))
+        if self.write_affected_queue:
+            return self.write_affected_queue.pop(0)
         return self.write_affected
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:
@@ -1089,6 +1099,96 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 
     assert db.transact(outer) == "caught"
     assert port.begins == 2
+
+
+# --------------------------------------------------------------------------- #
+# Optimistic-lock conflict opt-in (m-opt-lock "Retry contract"; m-auto-retry, #
+# COR-3 Phase 8 increment 6): `retry_optimistic_conflicts` joins             #
+# `OptimisticLockConflictError` to the retriable set — the SAME `0`-then-`1`  #
+# affected-rows transition `m-opt-lock-009` witnesses against real Postgres,  #
+# reproduced here with a scripted `write_affected_queue` fake port.           #
+# --------------------------------------------------------------------------- #
+def _observe_and_update(tx: Transaction) -> None:
+    current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
+    tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
+
+
+def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> None:
+    port = _RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port.write_affected_queue = [0]
+    with pytest.raises(opt_lock.OptimisticLockConflictError):
+        _db(port).transact(_observe_and_update, concurrency="optimistic")
+    assert port.begins == 1
+
+
+def test_optimistic_conflict_is_auto_retried_to_success_with_the_opt_in() -> None:
+    port = _RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port.write_affected_queue = [0, 1]
+    _db(port).transact(
+        _observe_and_update, concurrency="optimistic", retry_optimistic_conflicts=True
+    )
+    assert port.begins == 2  # the conflicting attempt, then the retried (successful) attempt
+
+
+def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
+    port = _RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port.write_affected_queue = [0, 0, 0]  # persistent — every attempt conflicts
+    with pytest.raises(opt_lock.OptimisticLockConflictError) as excinfo:
+        _db(port).transact(
+            _observe_and_update,
+            concurrency="optimistic",
+            retries=2,
+            retry_optimistic_conflicts=True,
+        )
+    assert port.begins == 3
+    assert "3 attempts (retries=2)" in "".join(excinfo.value.__notes__)
+
+
+def test_optimistic_conflict_opt_in_is_inert_for_a_transient_failure() -> None:
+    # The opt-in gates ONLY the conflict classification branch; a transient
+    # database failure is retriable regardless of the flag's value (m-auto-retry
+    # "Which failures are retriable" — transients are always retriable).
+    port = _RecordingPort()
+    port.txn_faults = [_deadlock()]
+    assert _db(port).transact(lambda _tx: "ok", retry_optimistic_conflicts=True) == "ok"
+    assert port.begins == 2
+
+
+def test_optimistic_conflict_opt_in_is_inert_in_locking_mode() -> None:
+    # Locking mode never gates a versioned UPDATE (`m-opt-lock` "the version
+    # column" — the shared read lock, not a version check, is what makes the
+    # write correct), so there is nothing for the opt-in to ever retry: a
+    # single-attempt commit, `retry_optimistic_conflicts` notwithstanding.
+    port = _RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    _db(port).transact(_observe_and_update, concurrency="locking", retry_optimistic_conflicts=True)
+    assert port.begins == 1
+
+
+def _observe_update_then_force_flush(tx: Transaction) -> None:
+    current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
+    tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
+    tx.find(mm.Account.where(mm.Account.id == 3))  # forces the flush inside THIS (joined) scope
+
+
+def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() -> None:
+    # Spec §5's join rule extended to an optimistic-lock conflict (pinned
+    # semantics #5): a JOINED scope's own conflict, discovered by its OWN
+    # forced flush (read-your-own-writes), dooms the ROOT rollback-only; the
+    # outer callback catches it and returns normally, but commit is refused —
+    # the outermost retry loop still applies per the ORIGINAL failure's
+    # category (the conflict, not a `DatabaseError`), retriable here because
+    # the opt-in is set.
+    port = _RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port.write_affected_queue = [0, 1]
+    db = _db(port)
+
+    def outer(_tx: Transaction) -> str:
+        with contextlib.suppress(opt_lock.OptimisticLockConflictError):
+            db.transact(_observe_update_then_force_flush)  # joins; conflicts mid-scope
+        return "caught"
+
+    assert db.transact(outer, concurrency="optimistic", retry_optimistic_conflicts=True) == "caught"
+    assert port.begins == 2  # the conflicting attempt, then the retried (successful) attempt
 
 
 # --------------------------------------------------------------------------- #

@@ -2,8 +2,8 @@
 
 The unit-of-work boundary's **bounded automatic retry** loop. The demarcation
 layer (``db.transact``, `parallax.snapshot.handle`) wraps each transaction
-attempt in :func:`run_with_retry`; this module owns only the loop *policy* —
-which failures are retriable, the re-execution bound, and the diagnosable
+attempt in :func:`run_with_retry`; this module owns the loop *policy* — which
+failures are retriable, the re-execution bound, and the diagnosable
 exhaustion — per its two DAG edges:
 
 - ``m-db-error`` supplies the retriability predicate: the ``deadlock`` category
@@ -23,11 +23,24 @@ state rather than replaying a stale shadow. No cached state exists to
 invalidate in this slice (the identity map lands with a later phase and must
 hook its invalidation here when it does).
 
-Optimistic-lock conflicts are **not** classifiable yet: no optimistic-conflict
-error category exists until ``m-opt-lock`` (COR-3 Phase 8). ``db.transact``
-accepts and stores ``retry_optimistic_conflicts`` for the join/conflict
-contract, but the predicate here deliberately has no parameter for it — the
-opt-in joins the retriable set when the conflict type exists to classify.
+**Optimistic-lock conflicts** (`m-opt-lock`, COR-3 Phase 8 increment 6):
+``OptimisticLockConflictError`` (`parallax.core.opt_lock`) is a plain
+``RuntimeError``, not a :class:`~parallax.core.db_error.DatabaseError` — the
+``updatedRows != 1`` gate mismatch is a STRUCTURALLY different signal from a
+transient database failure, never forced into that hierarchy just to reuse
+one predicate (`m-opt-lock` "Conflict detection"). This module's own DAG edges
+name ``m-db-error`` and ``m-unit-work`` only — never ``m-opt-lock`` (the
+import-linter contract forbids the edge) — so :func:`run_with_retry` cannot
+name that type directly; it instead accepts an OPTIONAL, injected retriability
+extension (``extra_retriable_types`` / ``extra_retriable``) the demarcation
+layer supplies (`parallax.snapshot.handle.Database.transact`, which legally
+imports both this module and ``opt_lock``): a SECOND classification branch
+composed alongside :func:`_retriable_failure`, never an inheritance change to
+:class:`~parallax.core.opt_lock.OptimisticLockConflictError` itself. The
+opt-in (``retry_optimistic_conflicts``) gates the EXTENSION's own verdict —
+this module's transient-failure branch never consults it, so a deadlock or
+serialization failure stays retriable regardless of the flag
+(`m-auto-retry.md` "Which failures are retriable").
 """
 
 from __future__ import annotations
@@ -54,7 +67,13 @@ def _retriable_failure(exc: BaseException) -> bool:
     return isinstance(exc, DatabaseError) and exc.is_retriable
 
 
-def run_with_retry[T](attempt: Callable[[], T], *, retries: int) -> T:
+def run_with_retry[T](
+    attempt: Callable[[], T],
+    *,
+    retries: int,
+    extra_retriable_types: tuple[type[BaseException], ...] = (),
+    extra_retriable: Callable[[BaseException], bool] | None = None,
+) -> T:
     """Run ``attempt`` under the m-auto-retry bounded re-execution loop.
 
     ``retries`` bounds **re-executions** (not total attempts): the default the
@@ -66,16 +85,34 @@ def run_with_retry[T](attempt: Callable[[], T], *, retries: int) -> T:
     the bound re-raises with the attempt count attached as an exception note,
     so the surfaced error is still the failure itself (same type, same
     category) and carries its retry history diagnosably.
+
+    ``extra_retriable_types`` widens the caught set beyond this module's own
+    :class:`DatabaseError` / :class:`RollbackOnlyError` (e.g. the demarcation
+    layer's own :class:`~parallax.core.opt_lock.OptimisticLockConflictError`,
+    a plain ``RuntimeError`` this module may not import — see the module
+    docstring); ``extra_retriable`` is consulted ONLY for an exception this
+    module's own :func:`_retriable_failure` calls non-retriable, so the two
+    predicates compose as an OR, never override one another (a transient
+    database failure's retriability is decided here, unconditionally on the
+    injected extension).
     """
     if retries < 0:
         raise ValueError(f"retries must be >= 0, got {retries}")
+    exception_types: tuple[type[BaseException], ...] = (
+        DatabaseError,
+        RollbackOnlyError,
+        *extra_retriable_types,
+    )
     attempts = 0
     while True:
         attempts += 1
         try:
             return attempt()
-        except (DatabaseError, RollbackOnlyError) as exc:
-            if not _retriable_failure(exc):
+        except exception_types as exc:
+            retriable = _retriable_failure(exc) or (
+                extra_retriable is not None and extra_retriable(exc)
+            )
+            if not retriable:
                 raise
             if attempts > retries:
                 exc.add_note(
