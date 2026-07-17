@@ -2126,10 +2126,50 @@ def _run_interleaved_group(
 _INTERLEAVED_GROUP_JOIN_TIMEOUT: Final[float] = 30.0
 
 
+def _cancel_in_flight_work(connection: object) -> None:
+    """Best-effort, non-destructive interruption of whatever ``connection``
+    is blocked on right now (:func:`_await_interleaved_workers`'s second
+    escalation, a later confirmation pass on review remediation finding 4):
+    a worker parked in REAL driver I/O wakes for neither
+    :meth:`_Turnstile.release_all` (it is not inside ``turnstile.wait_for``)
+    nor closing some OTHER session, so its OWN connection's outstanding
+    operation must be cancelled directly. The concrete adapter
+    (:class:`~parallax.postgres.PostgresAdapter`) is a legal
+    ``parallax-conformance`` dependency (`pyproject.toml`), so a real
+    Postgres connection is cancelled through psycopg's thread-safe,
+    connection-preserving ``Connection.cancel_safe`` — callable from a
+    thread other than the one running the blocked query, and unlike
+    ``close()`` it does not destroy the connection (the caller-owned ``ours``
+    session must survive to be judged unsafe or reused, never torn down
+    here). A fake port (unit lane) legally carries no psycopg connection; it
+    instead exposes its OWN duck-typed ``cancel()`` capability, probed for
+    and invoked when present. Neither path is a guarantee — a cancellation
+    request can itself fail or time out, and a fake's ``cancel()`` is
+    whatever its test author wired — so this is deliberately best-effort;
+    the caller rejoins bounded afterward and reports an honest terminal
+    state either way."""
+    from parallax.postgres import PostgresAdapter
+
+    # The concrete-adapter path needs a real psycopg `Connection`, which the
+    # unit lane (no container/socket I/O) never constructs; exercised only
+    # informally by the Docker-backed conformance lanes, none of which
+    # witness a genuine join timeout (`m-opt-lock-012` itself always
+    # resolves within the bound).
+    if isinstance(connection, PostgresAdapter):  # pragma: no cover
+        with contextlib.suppress(Exception):
+            connection.connection.cancel_safe()
+        return
+    cancel = getattr(connection, "cancel", None)
+    if callable(cancel):
+        with contextlib.suppress(Exception):
+            cancel()
+
+
 def _await_interleaved_workers(
     thread_a: threading.Thread,
     thread_b: threading.Thread,
     turnstile: _Turnstile,
+    main_connection: DbPort,
     peer_connection: _PeerConnection,
     case_name: str,
     *,
@@ -2142,22 +2182,60 @@ def _await_interleaved_workers(
     the SAME defensive unstick a worker's own unexpected failure already
     uses), close ``peer_connection`` so any outstanding database work the
     peer-side worker still holds terminates, THEN rejoin both threads (bounded
-    again, never a second indefinite hang) before raising. No live thread and
-    no open peer connection may outlive this call on any failure path — the
-    caller's own ``finally`` still closes ``peer_connection`` unconditionally
-    (idempotent, `parallax.postgres.PostgresAdapter.close`), so a double close
-    here is harmless."""
+    again, never a second indefinite hang).
+
+    That first escalation cannot reach a worker blocked in REAL database I/O
+    on its OWN session (a later confirmation pass's own residual on this same
+    finding): ``release_all`` only wakes a thread parked in
+    ``turnstile.wait_for``, and closing ``peer_connection`` touches only the
+    ``concurrent`` group's session, never ``main_connection`` (the CALLER's
+    own ``ours``-group port — this function must never close it; only cancel
+    its in-flight work). So any thread STILL alive after that rejoin gets a
+    SECOND escalation: :func:`_cancel_in_flight_work` on its OWN connection
+    (``main_connection`` for ``thread_a``, ``peer_connection`` for
+    ``thread_b``), then one more bounded rejoin of both.
+
+    The terminal state is always honest, never a silent leak: if every
+    worker is now joined (the ordinary outcome, whichever escalation reached
+    it) this raises the SAME timeout error this function has always raised;
+    if a worker is STILL alive even after its own connection's cancellation
+    (genuinely unkillable), this raises a LOUDER, DISTINCT error naming it by
+    thread name and declaring the caller-owned port unsafe to reuse — this
+    function must never raise while it believes no cleanup remains and a
+    worker is in fact alive. The caller's own ``finally`` still closes
+    ``peer_connection`` unconditionally (idempotent, `parallax.postgres.
+    PostgresAdapter.close`), so a double close here is harmless; it never
+    closes ``main_connection`` (the caller's own port, cancelled above but
+    never destroyed)."""
     thread_a.join(timeout=timeout)
     thread_b.join(timeout=timeout)
-    if thread_a.is_alive() or thread_b.is_alive():  # pragma: no cover - defensive
-        turnstile.release_all()
-        peer_connection.close()
+    if not thread_a.is_alive() and not thread_b.is_alive():
+        return
+
+    turnstile.release_all()
+    peer_connection.close()
+    thread_a.join(timeout=timeout)
+    thread_b.join(timeout=timeout)
+
+    workers = ((thread_a, main_connection), (thread_b, peer_connection))
+    survivors = [(thread, connection) for thread, connection in workers if thread.is_alive()]
+    if survivors:
+        for _thread, connection in survivors:
+            _cancel_in_flight_work(connection)
         thread_a.join(timeout=timeout)
         thread_b.join(timeout=timeout)
+
+    if not thread_a.is_alive() and not thread_b.is_alive():
         raise EngineError(
             f"{case_name}: the interleaved-group choreography did not "
             "finish within its bound — a turnstile hand-off is missing"
         )
+    leaked = ", ".join(thread.name for thread, _connection in workers if thread.is_alive())
+    raise EngineError(
+        f"{case_name}: the interleaved-group choreography could not stop "
+        f"{leaked} even after cancelling its in-flight work — the "
+        "caller-owned port must be treated as unsafe to reuse"
+    )
 
 
 def run_interleaved_scenario_case(
@@ -2224,7 +2302,9 @@ def run_interleaved_scenario_case(
     try:
         thread_a.start()
         thread_b.start()
-        _await_interleaved_workers(thread_a, thread_b, turnstile, peer_connection, case.path.name)
+        _await_interleaved_workers(
+            thread_a, thread_b, turnstile, port, peer_connection, case.path.name
+        )
     finally:
         peer_connection.close()
     for result in (result_a, result_b):

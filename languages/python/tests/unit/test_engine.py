@@ -696,8 +696,11 @@ def test_await_interleaved_workers_unsticks_both_on_timeout_then_joins_before_ra
     # them (`_Turnstile.release_all`), close the peer connection, JOIN both
     # threads, and only THEN raise; no live thread and no open peer connection
     # may outlive the call. A tiny `timeout` (never the production 30s bound)
-    # keeps this deterministic and fast.
+    # keeps this deterministic and fast. Neither worker's own connection ever
+    # needs cancelling here (both wake on `release_all`), so a plain
+    # `_ScriptedPort` stands in for `main_connection` too.
     turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
+    main_connection = _ScriptedPort()
     peer = _ScriptedPort()
 
     def stuck(index: int) -> Any:
@@ -716,6 +719,7 @@ def test_await_interleaved_workers_unsticks_both_on_timeout_then_joins_before_ra
             thread_a,
             thread_b,
             turnstile,
+            main_connection,
             peer,
             "m-unit-work-999-synthetic.yaml",
             timeout=0.05,
@@ -724,6 +728,122 @@ def test_await_interleaved_workers_unsticks_both_on_timeout_then_joins_before_ra
     assert not thread_a.is_alive()
     assert not thread_b.is_alive()
     assert peer.closed
+
+
+class _CancellableBlockingConnection:
+    """A fake `DbPort` whose ``execute`` blocks (standing in for a real
+    driver call parked in socket I/O) until its own :meth:`cancel` seam
+    fires — never on `_Turnstile.release_all` (nothing here is parked in
+    `turnstile.wait_for`) and never on some OTHER connection closing (this
+    is not the peer). This is the shape a confirmation pass on review
+    remediation finding 4 found missing: a worker blocked in REAL database
+    I/O on its OWN session, which only :func:`~parallax.conformance.engine.
+    _cancel_in_flight_work`'s duck-typed ``cancel()`` probe can reach — the
+    first escalation (turnstile release + peer close) cannot wake it, and a
+    survivor's OWN connection is exactly what the second escalation targets.
+    """
+
+    def __init__(self) -> None:
+        self._released = threading.Event()
+        self.cancel_calls = 0
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        self._released.wait(timeout=5.0)  # self-bounded even if `cancel` is never called
+        return []
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+    def cancel(self) -> None:
+        self.cancel_calls += 1
+        self._released.set()
+
+
+def test_await_interleaved_workers_cancels_a_survivor_blocked_in_real_io_then_joins() -> None:
+    # Confirmation residual on review remediation finding 4: a worker blocked
+    # in REAL database I/O on its OWN (CALLER-OWNED) connection survives the
+    # first escalation intact — `release_all` has nothing to wake (the
+    # worker is not inside `turnstile.wait_for`) and closing the peer
+    # touches only the OTHER session. The second escalation must cancel that
+    # survivor's OWN connection, rejoin bounded, and — once every worker is
+    # (now) actually joined — raise the SAME ordinary timeout error this
+    # function has always raised, with `is_alive()` false for every worker
+    # before it does.
+    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
+    main_connection = _CancellableBlockingConnection()
+    peer = _ScriptedPort()
+
+    def run_a() -> None:
+        main_connection.execute("select 1", [])
+
+    def run_b() -> None:
+        turnstile.wait_for(100)  # an index this choreography never advances to
+
+    thread_a = threading.Thread(target=run_a, name="uow-ours")
+    thread_b = threading.Thread(target=run_b, name="uow-concurrent")
+    thread_a.start()
+    thread_b.start()
+
+    with pytest.raises(engine.EngineError, match="turnstile hand-off is missing"):
+        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
+            thread_a,
+            thread_b,
+            turnstile,
+            main_connection,
+            peer,
+            "m-unit-work-999-synthetic.yaml",
+            timeout=0.1,
+        )
+
+    assert main_connection.cancel_calls == 1
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+    assert peer.closed
+
+
+def test_await_interleaved_workers_reports_a_genuinely_unkillable_worker_loudly() -> None:
+    # The terminal state stays honest even when the best-effort cancellation
+    # probe finds nothing to call (a fake connection with no `cancel()`
+    # capability at all, `main_connection` here): this function must NEVER
+    # raise the ordinary timeout error while it believes no cleanup remains
+    # and a worker is in fact still alive. It raises a DISTINCT, louder
+    # error instead, naming the leaked worker by thread name and declaring
+    # the caller-owned port unsafe to reuse — never a silent leak.
+    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
+    main_connection = _ScriptedPort()  # no `cancel()` capability at all
+    peer = _ScriptedPort()
+    released = threading.Event()
+
+    def run_a() -> None:
+        released.wait()  # ignores the turnstile, the peer close, and the cancel probe alike
+
+    def run_b() -> None:
+        turnstile.wait_for(100)  # an index this choreography never advances to
+
+    thread_a = threading.Thread(target=run_a, name="uow-ours", daemon=True)
+    thread_b = threading.Thread(target=run_b, name="uow-concurrent", daemon=True)
+    thread_a.start()
+    thread_b.start()
+    try:
+        with pytest.raises(engine.EngineError, match=r"uow-ours.*unsafe to reuse"):
+            engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
+                thread_a,
+                thread_b,
+                turnstile,
+                main_connection,
+                peer,
+                "m-unit-work-999-synthetic.yaml",
+                timeout=0.1,
+            )
+        assert thread_a.is_alive()
+        assert not thread_b.is_alive()
+        assert peer.closed
+    finally:
+        released.set()  # let the daemon thread finish so it never outlives this test
+        thread_a.join(timeout=5.0)
 
 
 def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:
