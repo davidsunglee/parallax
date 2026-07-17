@@ -453,9 +453,12 @@ def test_uow_group_is_doomed_true_only_for_a_rollback_write_in_the_group() -> No
 
 class _FakeSession:
     """A canned, call-recording grouped session — the surface `_PgTxSession` /
-    `_MariaTxSession` expose (`execute` / `query` / `commit` / `rollback`),
-    with pre-programmed `query()` responses so a grouped find's read-your-own-
-    writes visibility is asserted by the TEST, not a real database."""
+    `_MariaTxSession` expose (`dialect` / `execute` / `query` / `commit` /
+    `rollback`), with pre-programmed `query()` responses so a grouped find's
+    read-your-own-writes visibility (and, since Finding 1, its `referenceSql`
+    oracle) is asserted by the TEST, not a real database."""
+
+    dialect = "postgres"
 
     def __init__(self, query_responses: Sequence[list[dict[str, Any]]] = ()) -> None:
         self._query_responses = list(query_responses)
@@ -642,4 +645,70 @@ def _interleaved_synthetic_case() -> Case:
     }
     return Case(
         path=base.path.with_name("m-unit-work-999-synthetic.yaml"), raw=raw, model=base.model
+    )
+
+
+def test_grouped_scenario_reference_sql_oracle_runs_on_the_held_session() -> None:
+    # Confirmation-pass residual (Finding 1): a GROUPED find's `referenceSql`
+    # independent oracle must run on the SAME held session as its golden read,
+    # not the top-level autocommit `db` — after an uncommitted grouped write the
+    # two connections would otherwise observe DIFFERENT states, silently
+    # breaking the "independent-but-equivalent" contract. This group applies an
+    # UNCOMMITTED write, then a mid-group find carrying `referenceSql`: both the
+    # golden read and the oracle draw from the session's OWN queued rows, and
+    # the top-level `db` is never touched.
+    case = _uncommitted_write_then_reference_sql_synthetic_case()
+    rows = [{"id": 2, "owner": "Linus", "balance": 249.00, "version": 1}]
+    db = _FakeGroupedDb(session_responses=[[rows, rows]])
+
+    _assert_scenario(case, db)  # type: ignore[arg-type]
+
+    assert len(db.sessions) == 1
+    session = db.sessions[0]
+    assert [call[0] for call in session.calls] == ["execute", "query", "query"]
+    assert session.committed is True
+    assert session.rolled_back is False
+    assert db.top_calls == [], "the referenceSql oracle must not touch the top-level db"
+
+
+def _uncommitted_write_then_reference_sql_synthetic_case() -> Case:
+    """A minimal scenario case (Account model) whose ONE `uow` group applies an
+    UNCOMMITTED write then a mid-group find carrying `referenceSql` — the
+    read-your-own-writes oracle shape Finding 1 fixes: both the golden read and
+    the independent oracle MUST observe the SAME (uncommitted) in-transaction
+    state, so both MUST run on the group's own held session."""
+    base = _scenario_by_id("m-unit-work-001")
+    raw = {
+        "model": "models/account.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "scenario": [
+                {
+                    "uow": "g",
+                    "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 2}]}],
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {"postgres": "update account set balance = ? where id = ?"},
+                            "binds": [249.00, 2],
+                        }
+                    ],
+                },
+                {
+                    "uow": "g",
+                    "targetEntity": "Account",
+                    "find": {"eq": {"attr": "Account.id", "value": 2}},
+                    "roundTrips": 1,
+                    "statements": [
+                        {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [2]}
+                    ],
+                    "referenceSql": "select * from account where id = 2",
+                },
+            ]
+        },
+        "then": {"roundTrips": 2},
+    }
+    return Case(
+        path=base.path.with_name("m-unit-work-998-synthetic.yaml"), raw=raw, model=base.model
     )

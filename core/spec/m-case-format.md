@@ -634,8 +634,9 @@ per-step round-trip / golden-SQL count consistency, executes each step, and chec
 
 #### Grouping steps into one unit of work (`uow`)
 
-A read, write, or action step MAY carry an OPTIONAL **`uow: <label>`** key — a
-string grouping label. Steps sharing one label execute inside **one held
+A read or write step MAY carry an OPTIONAL **`uow: <label>`** key — a
+string grouping label (an action step MAY NOT: its lifecycle-object engine
+path does not observe grouping). Steps sharing one label execute inside **one held
 transaction** (one unit of work, one connection) instead of each step's own
 default boundary; a step carrying no `uow` key keeps **exactly** today's
 semantics (an ungrouped write step is its own commit/rollback boundary, an

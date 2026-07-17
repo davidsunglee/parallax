@@ -33,7 +33,7 @@ shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the versioned delete's version bind is the framework-owned advance of the version the unit of work's own observing find returned — a query result (m-opt-lock)"
+  note: "the versioned delete's version bind is the OBSERVED version the unit of work's own observing find returned — a DELETE gates on that observation, it never advances it — a query result (m-opt-lock)"
 when:
   scenario:
     - uow: observed-delete

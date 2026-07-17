@@ -141,6 +141,8 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
         [k: string]: unknown;
       } & {
         [k: string]: unknown;
+      } & {
+        [k: string]: unknown;
       } & (
           | {
               [k: string]: unknown;
@@ -164,6 +166,8 @@ export type ParallaxCompatibilityCaseMCaseFormat = {
             }
         ),
       ...({
+        [k: string]: unknown;
+      } & {
         [k: string]: unknown;
       } & {
         [k: string]: unknown;

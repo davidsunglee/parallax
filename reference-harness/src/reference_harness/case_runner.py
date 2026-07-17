@@ -26,6 +26,7 @@ import functools
 import json
 import re
 import threading
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
@@ -3457,16 +3458,23 @@ def _scenario_reference_sql_for(step: dict[str, Any], dialect: str) -> str | Non
 
 def _assert_scenario_reference_sql(
     case: Case,
-    db: DatabaseProvider,
+    reader: DatabaseProvider,
     index: int,
     step: dict[str, Any],
     golden_rows: list[dict[str, Any]],
 ) -> None:
-    """Run a scenario find's independent, bind-free naive SQL oracle."""
-    reference_sql = _scenario_reference_sql_for(step, db.dialect)
+    """Run a scenario find's independent, bind-free naive SQL oracle.
+
+    *reader* MUST be the SAME connection the golden read used — the provider's
+    autocommit connection for an ungrouped find, or the `uow` group's own held
+    session for a grouped one — so a grouped find's mid-transaction (possibly
+    uncommitted) state is what the oracle observes too, never a different
+    connection's committed-only view.
+    """
+    reference_sql = _scenario_reference_sql_for(step, reader.dialect)
     if reference_sql is None:
         return
-    reference_rows = _query_rows(db, reference_sql, [])
+    reference_rows = _query_rows(reader, reference_sql, [])
     if not _rows_equal(reference_rows, golden_rows, case.tolerance):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] referenceSql rows != golden rows.\n"
@@ -3781,14 +3789,30 @@ def _uow_group_is_doomed(case: Case, indices: list[int]) -> bool:
     )
 
 
+@dataclass
+class _UowGroupState:
+    """One `uow` group's coordinated lifecycle (`m-case-format` scenario
+    grouping) — the data clump :func:`_finish_uow_group` used to juggle as
+    four separately-keyed dicts, now one invariant-owning instance per group
+    label: the HELD session every step of the group shares (``None`` until
+    the group's FIRST step lazily opens it), whether the group is DOOMED —
+    rolls back instead of commits at its last step
+    (:func:`_uow_group_is_doomed`) — the write statements it has executed so
+    far (the conflict-abort proof, :func:`_assert_scenario_conflict_abort`),
+    and the step index its LAST step occupies (the boundary
+    :func:`_finish_uow_group` closes the group at)."""
+
+    doomed: bool
+    last_step: int
+    session: Any = None
+    executed: list[tuple[str, int]] = field(default_factory=list)
+
+
 def _finish_uow_group(
     case: Case,
     index: int,
     label: str | None,
-    last_step_of_group: dict[int, str],
-    doomed: dict[str, bool],
-    sessions: dict[str, Any],
-    group_executed: dict[str, list[tuple[str, int]]],
+    group_states: dict[str, _UowGroupState],
 ) -> None:
     """Close a `uow` group's held session when *index* is its declared LAST
     step: COMMIT (the default), or — when the group is doomed
@@ -3797,10 +3821,12 @@ def _finish_uow_group(
     ungrouped single-step rollback branch does for one step) and ROLL BACK.
     A no-op for a step whose group has not yet reached its last step, or for
     an ungrouped step (*label* is ``None``)."""
-    if label is None or last_step_of_group.get(index) != label:
+    if label is None:
         return
-    session = sessions.pop(label)
-    if doomed[label]:
+    state = group_states[label]
+    if index != state.last_step:
+        return
+    if state.doomed:
         # A group that declares `then.affectedRows` is a conflict-abort group
         # (m-opt-lock + m-unit-work): the UoW aborts BECAUSE a version-gated
         # write conflicted. Assert the conflict was actually DETECTED (the
@@ -3808,11 +3834,17 @@ def _finish_uow_group(
         # BEFORE rolling back, so a rollback that merely discarded a
         # NON-conflicting write fails the case rather than passing on a
         # vacuous abort.
-        if case.expected_affected_rows is not None and group_executed[label]:
-            _assert_scenario_conflict_abort(case, index, group_executed[label])
-        session.rollback()
+        if case.expected_affected_rows is not None and state.executed:
+            _assert_scenario_conflict_abort(case, index, state.executed)
+        state.session.rollback()
     else:
-        session.commit()
+        state.session.commit()
+    # The group's own steps are exhausted (this WAS its last step, by
+    # `_scenario_uow_groups`'s own authored-order accounting), so no later
+    # step ever looks the session up again — cleared anyway, so a
+    # (structurally impossible) later step of the SAME label would open a
+    # FRESH session rather than reuse a closed one.
+    state.session = None
 
 
 def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
@@ -3845,10 +3877,10 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
     tolerance = case.tolerance
 
     groups = _scenario_uow_groups(case)
-    last_step_of_group = {indices[-1]: label for label, indices in groups.items()}
-    doomed = {label: _uow_group_is_doomed(case, indices) for label, indices in groups.items()}
-    sessions: dict[str, Any] = {}
-    group_executed: dict[str, list[tuple[str, int]]] = {label: [] for label in groups}
+    group_states: dict[str, _UowGroupState] = {
+        label: _UowGroupState(doomed=_uow_group_is_doomed(case, indices), last_step=indices[-1])
+        for label, indices in groups.items()
+    }
 
     results: list[list[dict[str, Any]]] = []
     step_entities: list[Entity | None] = []
@@ -3857,22 +3889,20 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             pairs = _entry_pairs(step.get("statements"), dialect)
             raw_label = step.get("uow")
             label = raw_label if isinstance(raw_label, str) else None
+            state = group_states.get(label) if label is not None else None
             session: Any = None
-            if label is not None:
-                session = sessions.get(label)
-                if session is None:
-                    session = stack.enter_context(db.open_session())
-                    sessions[label] = session
+            if state is not None:
+                if state.session is None:
+                    state.session = stack.enter_context(db.open_session())
+                session = state.session
             if "write" in step:
                 if session is not None:
                     # A GROUPED write: apply on the group's own held session — the
                     # GROUP commits or rolls back as ONE unit at its last step
                     # (:func:`_finish_uow_group`), never this step alone.
-                    assert label is not None  # `session` is only ever set alongside `label`
+                    assert state is not None  # `session` is only ever set alongside `state`
                     for statement, stmt_binds in pairs:
-                        group_executed[label].append(
-                            (statement, session.execute(statement, stmt_binds))
-                        )
+                        state.executed.append((statement, session.execute(statement, stmt_binds)))
                 elif step.get("rollback"):
                     # An UNGROUPED aborted write (m-unit-work abort contract): apply
                     # each DML statement inside a manual-commit session, then ROLL
@@ -3899,9 +3929,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # stay aligned. A write observes no rows, so it reads no entity.
                 results.append([])
                 step_entities.append(None)
-                _finish_uow_group(
-                    case, index, label, last_step_of_group, doomed, sessions, group_executed
-                )
+                _finish_uow_group(case, index, label, group_states)
                 continue
             if "action" in step:
                 # A lifecycle ACTION step (m-case-format, COR-30): execute its golden SQL
@@ -3924,9 +3952,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 _assert_step_row_observables(
                     case, index, step, rows, results, tolerance, default_identity
                 )
-                _finish_uow_group(
-                    case, index, label, last_step_of_group, doomed, sessions, group_executed
-                )
+                _finish_uow_group(case, index, label, group_states)
                 continue
             # Every remaining step is a read (`find`, per the schema's exactly-one-of
             # find/write/action): its read entity resolves through the SAME per-step
@@ -3947,7 +3973,11 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 statement, stmt_binds = pairs[0]
                 reader: Any = session if session is not None else db
                 rows = _query_rows(reader, statement, stmt_binds)
-                _assert_scenario_reference_sql(case, db, index, step, rows)
+                # GROUPED, the oracle runs on the SAME held session as the golden read
+                # above (`reader`) rather than the top-level `db`: after an uncommitted
+                # grouped write the two connections would otherwise observe DIFFERENT
+                # states, silently breaking the "independent-but-equivalent" contract.
+                _assert_scenario_reference_sql(case, reader, index, step, rows)
                 # An INSTANCE-FORM find materializes its owner's value-object document with
                 # the row (m-value-object / m-sql "Read projection", slot 4), so decode +
                 # project each top-level value-object column into its declared composite
@@ -3968,9 +3998,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
             _assert_step_row_observables(
                 case, index, step, rows, results, tolerance, default_identity
             )
-            _finish_uow_group(
-                case, index, label, last_step_of_group, doomed, sessions, group_executed
-            )
+            _finish_uow_group(case, index, label, group_states)
 
 
 def _has_version_gate(statement: str, version_col: str) -> bool:

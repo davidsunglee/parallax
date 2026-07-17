@@ -43,7 +43,7 @@ shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the versioned update's and delete's version binds are the framework-owned advance of the versions the unit of work's own observing finds returned — a query result (m-opt-lock)"
+  note: "the versioned update's version bind is the framework-owned advance of the version its own observing find returned; the versioned delete's version bind is that SAME observed version, not an advance — a query result (m-opt-lock)"
 given:
   fixtures: true
 when:

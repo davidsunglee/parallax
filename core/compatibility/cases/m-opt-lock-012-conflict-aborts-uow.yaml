@@ -8,8 +8,9 @@
 # buffered in the same UoW is discarded too. The classic optimistic race is authored
 # as TWO INTERLEAVED `uow` groups — OUR unit of work (`ours`) and a CONCURRENT one
 # (`concurrent`) — because `m-opt-lock` forbids a caller-authored version value
-# (`CallerAuthoredVersionError`): every version bind here is instead the
-# framework-owned advance of a version its OWN group's observing find returned.
+# (`CallerAuthoredVersionError`): each UPDATE's SET version bind is instead the
+# framework-owned advance of a version its OWN group's observing find returned,
+# and its WHERE gate binds that SAME observed version, never the advance.
 # The scenario:
 #   step 0 find  : OUR unit of work (group `ours`) observes account 2 (Linus,
 #                  250.00, version 1) — optimistic mode takes no lock.
@@ -50,7 +51,7 @@ shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "every version bind here is the framework-owned advance of the version each unit of work's own observing find returned — a query result (m-opt-lock)"
+  note: "each UPDATE's SET version bind is the framework-owned advance (observed + 1) of the version its own unit of work's observing find returned; its WHERE gate binds that SAME observed version, never the advance — a query result (m-opt-lock)"
 given:
   fixtures: true
 when:

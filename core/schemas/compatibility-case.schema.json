@@ -437,6 +437,11 @@
                 "description": "A scenario-step `referenceSql` is a naive oracle for a read (`find`) only; writes and lifecycle actions do not produce rows to compare.",
                 "if": { "required": ["referenceSql"] },
                 "then": { "required": ["find"] }
+              },
+              {
+                "description": "`uow` step-grouping is legal on a read or write step ONLY. An ACTION step (m-case-format lifecycle vocabulary, COR-30) executes through the lifecycle-object engine path, which does not observe grouping, so `uow` on an action step is invalid.",
+                "if": { "required": ["action"] },
+                "then": { "not": { "required": ["uow"] } }
               }
             ],
             "properties": {
@@ -461,7 +466,7 @@
                 "type": "boolean"
               },
               "uow": {
-                "description": "Optional per-step unit-of-work GROUPING label (m-unit-work; sibling of `find`/`write`/`roundTrips`, legal on a read, write, or action step). Steps sharing the SAME label execute inside ONE held transaction (one unit of work, one connection) instead of each step's own default boundary; steps carrying NO `uow` key keep today's semantics exactly (an ungrouped write step is its own commit/rollback boundary; an ungrouped find runs on the autocommit connection) — grouping is opt-in and changes the meaning of no existing (unlabeled) case. Steps execute in AUTHORED order; a group's own steps need NOT be contiguous — two groups MAY interleave (the classic optimistic-lock race: one unit of work's observing find, then a concurrent unit of work's observe-and-commit, then back to the first unit of work's own doomed write). The group COMMITS after its LAST step, UNLESS one of its write steps declares `rollback: true`, in which case the group ROLLS BACK after its last step instead — the whole group is the doomed unit of work, which is what lets a step later in the SAME group (e.g. a re-issued find) observe a force-flushed write the eventual abort then erases (`core/spec/m-unit-work.md` \"Abort\"). A read (`find`) step inside a group reads THROUGH the group's own transaction (read-your-own-writes): its `expectRows` are what THAT connection observes mid-transaction, not the post-commit / post-rollback state.",
+                "description": "Optional per-step unit-of-work GROUPING label (m-unit-work; sibling of `find`/`write`/`roundTrips`, legal on a read or write step ONLY — the sibling `allOf` conditional forbids it on an action step, whose lifecycle-object engine path does not observe grouping). Steps sharing the SAME label execute inside ONE held transaction (one unit of work, one connection) instead of each step's own default boundary; steps carrying NO `uow` key keep today's semantics exactly (an ungrouped write step is its own commit/rollback boundary; an ungrouped find runs on the autocommit connection) — grouping is opt-in and changes the meaning of no existing (unlabeled) case. Steps execute in AUTHORED order; a group's own steps need NOT be contiguous — two groups MAY interleave (the classic optimistic-lock race: one unit of work's observing find, then a concurrent unit of work's observe-and-commit, then back to the first unit of work's own doomed write). The group COMMITS after its LAST step, UNLESS one of its write steps declares `rollback: true`, in which case the group ROLLS BACK after its last step instead — the whole group is the doomed unit of work, which is what lets a step later in the SAME group (e.g. a re-issued find) observe a force-flushed write the eventual abort then erases (`core/spec/m-unit-work.md` \"Abort\"). A read (`find`) step inside a group reads THROUGH the group's own transaction (read-your-own-writes): its `expectRows` are what THAT connection observes mid-transaction, not the post-commit / post-rollback state.",
                 "type": "string",
                 "minLength": 1
               },
