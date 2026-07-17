@@ -33,7 +33,8 @@ from conftest import (
     compare_rows,
     wire_value_deep,
 )
-from parallax.conformance import adapter, case_format, engine
+from parallax.conformance import adapter, case_format, concurrency_runner, engine
+from parallax.core.dialect import dialect_for
 
 pytestmark = pytest.mark.conformance
 
@@ -157,17 +158,15 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # ALSO uses `uow` grouping (:func:`_case_uses_uow_grouping`), but its two groups
 # INTERLEAVE (the classic optimistic-lock race — one unit of work's observing
 # find, a CONCURRENT unit of work's own observe-and-commit, then back to the
-# first) — the engine's `run_scenario_case` executes only CONTIGUOUS `uow`
+# first) — `run_scenario_case`/`adapter.run_case` execute only CONTIGUOUS `uow`
 # groups (`engine._scenario_uow_spans`; a genuinely interleaved group needs a
-# SECOND, independent connection the engine's single-`DbPort` seam does not
-# expose yet). It stays OUT of this sweep; the reference harness (`just
-# oracle-test`, real Postgres/MariaDB, two independently held sessions) is its
-# green gate until COR-3 Phase 8 increment 6 gives the engine its own
-# two-session `peer` seam (the `when.concurrency` choreography machinery) —
-# the SAME seam a genuinely interleaved `uow` group needs, so this deferral and
-# increment 6's own concurrency-choreography build are one and the same
-# machinery, not two separate promises.
-_UOW_GROUPED_RUN_DEFERRED: Final[frozenset[str]] = frozenset({"m-opt-lock-012"})
+# SECOND, independent connection this test's ordinary single-`DbPort` seam does
+# not hold open). It stays OUT of `_WRITE_CASES`/`test_write_run_sweep`;
+# `test_interleaved_uow_group_run_sweep` below is its own dedicated entry point
+# (COR-3 Phase 8 increment 6: `engine.run_interleaved_scenario_case`, over the
+# `Provisioner.peer` seam) — a routing exclusion, not a deferral, since the
+# case IS run-lane exercised now, just through a different function.
+_INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset({"m-opt-lock-012"})
 
 
 def _case_uses_uow_grouping(case: case_format.Case) -> bool:
@@ -226,7 +225,7 @@ def _reachable_write_cases() -> list[case_format.Case]:
             c.case_id in WRITE_EXERCISED
             or c.case_id in _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED
             or (
-                c.case_id not in _UOW_GROUPED_RUN_DEFERRED
+                c.case_id not in _INTERLEAVED_UOW_GROUP_CASES
                 and engine.eligibility(c) is not None
                 and _case_uses_uow_grouping(c)
             )
@@ -343,6 +342,48 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
             compare_rows(observed_state[table], expected_rows)
 
 
+def _reachable_interleaved_uow_group_cases() -> list[case_format.Case]:
+    from parallax.conformance import sweep
+
+    return [c for c in sweep.reachable_cases() if c.case_id in _INTERLEAVED_UOW_GROUP_CASES]
+
+
+_INTERLEAVED_CASES = _reachable_interleaved_uow_group_cases()
+
+
+@pytest.mark.parametrize("case", _INTERLEAVED_CASES, ids=[c.case_id for c in _INTERLEAVED_CASES])
+def test_interleaved_uow_group_run_sweep(case: case_format.Case, provisioner: Any) -> None:
+    """`m-opt-lock-012`'s own dedicated entry point (COR-3 Phase 8 increment 6):
+    the two-group optimistic-lock race, run over a REAL peer connection
+    (`engine.run_interleaved_scenario_case`), never through `adapter.run_case`
+    (which cannot hold a second session open).
+
+    Grades the SAME three layers `test_write_run_sweep` grades for an
+    ordinary scenario — the ordered per-step golden DML (flattened across
+    both interleaved groups plus the trailing ungrouped verify find, in
+    AUTHORED step order), `then.roundTrips` — PLUS the scenario shape's own
+    extra top-level assertion, `then.affectedRows`: the doomed group's own
+    conflicting write's actual affected-row count (`0`, the stale-version
+    gate mismatch that dooms the whole unit of work).
+    """
+    meta = engine.load_case_metamodel(case)
+    provisioner.reset(meta, case_fixtures(case))
+
+    emissions, round_trips, conflict_actual = engine.run_interleaved_scenario_case(
+        case, "postgres", provisioner.port, lambda: provisioner.peer()
+    )
+
+    golden_statements = write_golden_statements(case)
+    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
+    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
+        assert emission.sql == golden_sql, (case.case_id, emission)
+        compare_binds(list(emission.binds), golden_binds)
+
+    then = case_document(case)["then"]
+    assert round_trips == then["roundTrips"], case.case_id
+    assert conflict_actual == then["affectedRows"], case.case_id
+
+
 def _reachable_error_cases() -> list[case_format.Case]:
     """The single-connection error-shape cases (statement trigger, no choreography)."""
     from parallax.conformance import sweep
@@ -409,13 +450,19 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # bitemporal gate/success/conflict pairs, the locking-mode zero-row-close      #
 # (StaleWriteError) case, the TPH composed conflict, and the non-temporal      #
 # value-object write under an optimistic gate (already tag-reachable, now      #
-# exercised).                                                                  #
+# exercised). Increment 6 admits `m-opt-lock-009` (`retryOptimisticConflicts:  #
+# true` + a two-attempt `0`-then-`1` choreography) — no new machinery, the     #
+# SAME `when.attempts` retry lane `m-opt-lock-007` already exercises (pinned   #
+# semantics #7: the attempts sequence is caller-visible choreography here,    #
+# not the runtime auto-retry loop, which `m-opt-lock-011`'s boundary case      #
+# proves instead).                                                             #
 # --------------------------------------------------------------------------- #
 _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-005",
         "m-opt-lock-006",
         "m-opt-lock-007",
+        "m-opt-lock-009",
         "m-opt-lock-013",
         "m-temporal-read-009",
         "m-temporal-read-010",
@@ -562,3 +609,82 @@ def test_run_only_write_sequence_run_sweep(case: case_format.Case, provisioner: 
     assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
     for table, expected_rows in expected_state.items():
         compare_rows(observed_state[table], expected_rows)
+
+
+# --------------------------------------------------------------------------- #
+# The `when.concurrency` rounds runner (m-read-lock behavioral matrix, COR-3  #
+# Phase 8 increment 6): a case-driven, two-session choreography over the      #
+# `Provisioner.peer` seam (`parallax.conformance.concurrency_runner`) —       #
+# `m-read-lock-006` (error / lockWaitTimeout) and `-007`/`-008`               #
+# (concurrencySuccess). Restricted to `primary_module == "m-read-lock"`:      #
+# `m-db-error`'s own five `when.concurrency` error cases ALSO carry the       #
+# reachable `error` shape today, but stay OUT of this increment's flip (see   #
+# `sweep`'s own module docstring) — the runner could grade them with zero     #
+# extra machinery (the SAME barrier/thread choreography), an observation for #
+# the next increment, not something this filter accidentally admits.         #
+# --------------------------------------------------------------------------- #
+def _reachable_read_lock_concurrency_cases() -> list[case_format.Case]:
+    from parallax.conformance import sweep
+
+    return [
+        c
+        for c in sweep.reachable_cases()
+        if c.primary_module == "m-read-lock" and c.shape in ("error", "concurrencySuccess")
+    ]
+
+
+_CONCURRENCY_CASES = _reachable_read_lock_concurrency_cases()
+
+
+@pytest.mark.parametrize("case", _CONCURRENCY_CASES, ids=[c.case_id for c in _CONCURRENCY_CASES])
+def test_read_lock_concurrency_rounds(case: case_format.Case, provisioner: Any) -> None:
+    """Run one `when.concurrency` case's rounds over two independently-held
+    peer sessions and grade its own shape's assertion.
+
+    An `error`-shape case (`m-read-lock-006`) asserts EXACTLY one raised,
+    classified `DatabaseError` across the whole choreography (`errorClass` /
+    `nativeCode`, the `m-db-error` vocabulary) and that every OTHER present
+    step succeeded — the contention round's own well-formedness guard. A
+    `concurrencySuccess`-shape case (`-007`/`-008`) asserts NO node ever
+    raised, and grades each `kind: "read"` step's observed rows against its
+    own `expectRows` (order-insensitive, `compare_rows`); a `kind: "write"`
+    step asserts only that it reached this point at all (no block/no raise).
+    """
+    meta = engine.load_case_metamodel(case)
+    from parallax.conformance import provision
+
+    provisioner.reset(meta, provision.load_fixtures(str(case_document(case)["model"])))
+
+    rounds = concurrency_runner.parse_rounds(case, "postgres")
+    dialect = dialect_for("postgres")
+    run = concurrency_runner.run_rounds(rounds, dialect, lambda: provisioner.peer(autocommit=False))
+
+    if case.shape == "error":
+        raised = [
+            (index, node, outcome.error)
+            for index, round_outcomes in enumerate(run.rounds)
+            for node, outcome in round_outcomes.items()
+            if outcome.error is not None
+        ]
+        assert len(raised) == 1, (case.case_id, raised)
+        raised_index, raised_node, exc = raised[0]
+        then = case_document(case)["then"]
+        assert exc is not None
+        assert exc.category == then["errorClass"], (case.case_id, exc)
+        assert exc.native_code == then["nativeCode"]["postgres"], (case.case_id, exc)
+        for index, round_outcomes in enumerate(run.rounds):
+            for node, outcome in round_outcomes.items():
+                if (index, node) != (raised_index, raised_node):
+                    assert outcome.error is None, (case.case_id, index, node, outcome.error)
+    else:
+        assert case.shape == "concurrencySuccess"
+        for round_spec, round_outcomes in zip(rounds, run.rounds, strict=True):
+            for node, step in round_spec.items():
+                outcome = round_outcomes[node]
+                assert outcome.error is None, (case.case_id, node, outcome.error)
+                if step.kind == "read":
+                    assert step.expect_rows is not None, (case.case_id, node)
+                    compare_rows(
+                        cast("list[dict[str, Any]]", list(outcome.rows)),
+                        cast("list[dict[str, Any]]", list(step.expect_rows)),
+                    )

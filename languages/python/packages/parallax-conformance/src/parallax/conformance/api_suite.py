@@ -195,17 +195,16 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "case-scoped entry below (`_PK_GEN_TEMPORAL_INSERT_REASON`)"
     ),
     "m-auto-retry": (
-        "the bounded retry loop is implemented (parallax.core.auto_retry, M4) and proven "
-        "by fake-port unit tests of db.transact (test_transact); the boundary cases need "
-        "the case-driven boundary runner (when.boundary / given.fault / then.outcome over "
-        "a fault-injecting port), which lands with the API-suite boundary lane build-out "
-        "(ledger D-17)"
-    ),
-    "m-read-lock": (
-        "the in-transaction shared-read-lock suffix is rendered by every locking-mode "
-        "find (M4 — the write scenarios' golden reads carry it); the m-read-lock case "
-        "matrix (projection suppression, two-session behavioral admits/blocks) lands "
-        "with the lock path (COR-3 Phase 8)"
+        "the bounded retry loop is implemented (parallax.core.auto_retry) and proven "
+        "by fake-port unit tests of db.transact (test_transact), including the "
+        "optimistic-lock opt-in classification (COR-3 Phase 8 increment 6); the five "
+        "boundary-shape cases (transient retry with the opt-in unset/set, the opt-in "
+        "inert in locking mode, `retries: 0` disabling the loop, and bound exhaustion) "
+        "are now graded end-to-end by the D-17 case-driven boundary runner "
+        "(`tests/api_conformance/test_boundary_run.py`, driving the REAL db.transact "
+        "against the provisioned database through a fault-injecting port decorator); "
+        "no idiomatic TYPED-verb example exists yet, landing with the instance-native "
+        "API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
     ),
     "m-opt-lock": (
         "the predicate-selected / materializing write forms (the readless "
@@ -214,11 +213,11 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "compile/run conformance lanes now (the readless forms) or the run lane alone "
         "(the materializing ones, query-result-dependent); no idiomatic TYPED-`_where`-"
         "verb example exists yet, landing with the instance-native API story build-out "
-        "(COR-3 Phase 8 increment 7, ledger D-23). The auto-retry opt-in / boundary "
-        "runner lands with increment 6; the non-temporal keyed gate/advance/conflict "
-        "forms landed in increment 3 — each its own case-scoped entry below. "
-        "`m-opt-lock-012` (the interleaved two-session optimistic-lock race) stays a "
-        "directed, reasoned deferral to increment 6's own two-session `peer` seam"
+        "(COR-3 Phase 8 increment 7, ledger D-23). The non-temporal keyed gate/advance/"
+        "conflict forms landed in increment 3; the auto-retry conflict-lane witness "
+        "(`-009`), the D-17 boundary runner's conflict-opt-in pair (`-010`/`-011`), and "
+        "the interleaved two-session race (`-012`, over the increment 6 `peer` seam) "
+        "each landed in increment 6 — every one its own case-scoped entry below"
     ),
     "m-audit-write": (
         "the milestone-chaining write forms (insert / close-and-chain update / "
@@ -431,6 +430,80 @@ _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "TYPED-verb example exists yet in the production-reachable `parallax.conformance` "
     "surface (`read_models.py`); landing with the instance-native API story build-out "
     "(COR-3 Phase 8 increment 7, ledger D-23)"
+)
+# The auto-retry optimistic-conflict opt-in's OWN conflict-lane witness (COR-3
+# Phase 8 increment 6, `m-opt-lock` "Retry contract"): `retryOptimisticConflicts:
+# true` over a two-attempt, 0-then-1 `when.attempts` choreography — the SAME
+# caller-visible attempts-sequence lane `m-opt-lock-007` already exercises
+# (pinned semantics #7); the runtime auto-retry LOOP itself is `-011`'s own
+# boundary witness, below.
+_OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON: Final[str] = (
+    "the auto-retry optimistic-conflict opt-in's own conflict-lane witness "
+    "(`retryOptimisticConflicts: true` over a two-attempt, 0-then-1 `when.attempts` "
+    "choreography) lands in COR-3 Phase 8 increment 6 — graded end-to-end by the run "
+    "lane now (the SAME caller-visible `when.attempts` choreography `m-opt-lock-007` "
+    "already exercises; the runtime auto-retry loop itself is `m-opt-lock-011`'s own "
+    "boundary witness); no idiomatic TYPED-verb example exists yet, landing with the "
+    "instance-native API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+)
+# The auto-retry optimistic-conflict opt-in's OWN boundary pair (COR-3 Phase 8
+# increment 6, D-17): the conflict surfacing after one attempt without the
+# opt-in (`-010`) / auto-retried to success with it (`-011`) — graded by the
+# SAME case-driven boundary runner the `m-auto-retry` module bucket names.
+_OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
+    "the auto-retry optimistic-conflict opt-in's own boundary witness (the conflict "
+    "surfacing after one attempt without the opt-in, or auto-retried to success with "
+    "it) lands in COR-3 Phase 8 increment 6 — graded end-to-end by the D-17 "
+    "case-driven boundary runner (`tests/api_conformance/test_boundary_run.py`) "
+    "against the real, provisioned database now; no idiomatic TYPED-verb example "
+    "exists yet (the boundary runner's own generic action mapping is deliberately not "
+    "itself an idiomatic developer surface, D-17), landing with the instance-native "
+    "API story build-out (COR-3 Phase 8 increment 7, ledger D-23)"
+)
+# The interleaved two-session optimistic-lock race (COR-3 Phase 8 increment 6,
+# `m-opt-lock-012`, `m-case-format` uow grouping): two concurrently-held
+# `db.transact` units of work over the `Provisioner.peer` seam, sequenced in
+# authored order — `parallax.conformance.engine.run_interleaved_scenario_case`.
+_OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
+    "the interleaved two-session optimistic-lock race (two concurrently-held "
+    "`db.transact` units of work over the `Provisioner.peer` seam, sequenced in "
+    "authored order) lands in COR-3 Phase 8 increment 6 — graded end-to-end by the "
+    "run sweep's own interleaved-group runner now "
+    "(`parallax.conformance.engine.run_interleaved_scenario_case`); no idiomatic "
+    "example exists (a two-connection race has no single-callback developer "
+    "expression) — the reference harness remains its independent behavioral "
+    "cross-check"
+)
+# The read-lock module's OWN harness-lane single-connection golden (COR-3
+# Phase 8 increment 6, `m-read-lock-001`): the default (locking-mode) object
+# find carries the shared read lock, graded end-to-end by the compile AND run
+# sweeps now — no `db.transact` participation-mode configuration to
+# demonstrate beyond the module's own declared default (its api-conformance-
+# lane runtime siblings, `-002`/`-003`/`-005`, are already exercised above).
+_READ_LOCK_HARNESS_GOLDEN_REASON: Final[str] = (
+    "the module's own harness-lane single-connection golden (the default locking-"
+    "mode object find carries the shared read lock) is graded end-to-end by the "
+    "compile AND run sweeps now (COR-3 Phase 8 increment 6); no idiomatic example is "
+    "needed beyond the runtime matrix's own api-conformance siblings "
+    "(`m-read-lock-002`/`-003`/`-005`, exercised as idiomatic read-story examples "
+    "above) — this witness needs no `db.transact` participation-mode configuration, "
+    "only the module's own declared default"
+)
+# The read-lock module's OWN two-session behavioral proofs (COR-3 Phase 8
+# increment 6, `m-read-lock-006`/`-007`/`-008`): a genuine two-connection
+# concurrency property (a shared lock blocking/admitting a writer or a second
+# reader, or a projection's own omission admitting a writer) no single-session
+# idiomatic example can demonstrate — graded by the case-driven `when.concurrency`
+# rounds runner instead.
+_READ_LOCK_TWO_SESSION_REASON: Final[str] = (
+    "the two-session behavioral proof (a locking-mode reader's shared lock "
+    "blocking/admitting a writer or a second reader, or a projection's own omission "
+    "admitting a writer) is graded end-to-end by the case-driven `when.concurrency` "
+    "rounds runner now (COR-3 Phase 8 increment 6, "
+    "`parallax.conformance.concurrency_runner`, "
+    "`test_run_sweep.test_read_lock_concurrency_rounds`) — a genuine two-connection "
+    "concurrency property no single-session idiomatic example can demonstrate; the "
+    "reference harness remains its own independent cross-check"
 )
 # `m-pk-gen-014` (a `sequence`-strategy insert on a temporal entity) was the
 # sole pk-gen case COR-3 Phase 8 increment 3 left deferred — every other
@@ -767,6 +840,15 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-opt-lock-006": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     "m-opt-lock-007": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     "m-opt-lock-013": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    # -- m-opt-lock / m-read-lock: COR-3 Phase 8 increment 6 landings --------- #
+    "m-opt-lock-009": _OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON,
+    "m-opt-lock-010": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
+    "m-opt-lock-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
+    "m-opt-lock-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
+    "m-read-lock-001": _READ_LOCK_HARNESS_GOLDEN_REASON,
+    "m-read-lock-006": _READ_LOCK_TWO_SESSION_REASON,
+    "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,
+    "m-read-lock-008": _READ_LOCK_TWO_SESSION_REASON,
     # -- m-batch-write: the versioned per-key delete materialize landed ------ #
     "m-batch-write-004": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     # -- m-pk-gen: the sole case still deferred (temporal composition) ------- #

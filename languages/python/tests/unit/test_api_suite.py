@@ -111,9 +111,13 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 # Modules with NO broad SKIP_REASONS bucket: every one of their active cases is
 # covered case-scoped only (a real example or its own CASE_SKIP_REASONS entry),
 # never a generic module-wide reason — m-unit-work since M4 (the backbone
-# review's partition red-check), and m-navigate/m-deep-fetch/m-snapshot-read/
+# review's partition red-check), m-navigate/m-deep-fetch/m-snapshot-read/
 # m-value-object/m-inheritance since COR-3 Phase 7 increment 6b flipped their
-# blanket "lands with Phase 7" buckets to reasoned, case-scoped entries.
+# blanket "lands with Phase 7" buckets to reasoned, case-scoped entries, and
+# m-read-lock since COR-3 Phase 8 increment 6 (its runtime matrix siblings
+# -002/-003/-005 are real idiomatic read-story examples; its harness-lane
+# golden and two-session behavioral proofs -001/-006/-007/-008 are case-scoped
+# — no case needs a generic module-wide reason).
 _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
     {
         "m-unit-work",
@@ -122,6 +126,7 @@ _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
         "m-snapshot-read",
         "m-value-object",
         "m-inheritance",
+        "m-read-lock",
     }
 )
 
