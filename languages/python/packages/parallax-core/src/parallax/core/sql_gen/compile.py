@@ -245,7 +245,7 @@ def _projection(
     alias: str,
     result_form: ResultForm,
     *,
-    include_value_objects: bool = False,
+    include_value_objects: bool | frozenset[str] = False,
 ) -> tuple[str, list[object]]:
     """The base read projection (m-sql *Read projection*), a function of the model.
 
@@ -268,11 +268,17 @@ def _projection(
     ``include_value_objects`` opts a **row-form** read into slot 4 too, WITHOUT
     becoming instance-form (`m-case-format.md:727`): a materializing predicate
     write's own internal resolving read stays row-form (it constructs no
-    instance, `m-value-object-047`) but an assignment-bearing verb on a
-    temporal target still needs the raw VO document(s) a chained/carried-forward
-    row must preserve — the caller (`parallax.snapshot.handle.
-    Transaction._materialize_predicate_write`) derives this from the verb's own
-    needs, never from `result_form`.
+    instance, `m-value-object-047`) but an assignment-bearing verb still needs
+    the raw VO document(s) its own no-op comparison or chained/carried-forward
+    row must read (confirmation-pass residual A) — the caller (`parallax.
+    snapshot.handle.Transaction._materialize_predicate_write`) derives this
+    from the verb's own needs, never from `result_form`. ``True`` projects
+    EVERY declared value object (a chain-bearing need, which must carry
+    forward whichever documents the assignments do NOT themselves reassign);
+    a ``frozenset`` of value-object NAMES projects ONLY those (a
+    comparison-only need on a target that never chains — minimal-read
+    discipline, `m-sql`) — in EITHER case the declared value-object order is
+    preserved, never the caller's own set iteration order.
     """
     by_column = {attr.column: attr for attr in entity.attributes}
     exprs: list[str] = []
@@ -285,8 +291,13 @@ def _projection(
         expr, extra = dialect.project(alias, column, attribute.type)
         exprs.append(expr)
         binds.extend(extra)
-    if result_form == "instance" or include_value_objects:
-        exprs.extend(dialect.qualified(alias, vo.column) for vo in entity.value_objects)
+    if result_form == "instance" or include_value_objects is True:
+        projected_vos = entity.value_objects
+    elif include_value_objects:
+        projected_vos = tuple(vo for vo in entity.value_objects if vo.name in include_value_objects)
+    else:
+        projected_vos = ()
+    exprs.extend(dialect.qualified(alias, vo.column) for vo in projected_vos)
     return ", ".join(exprs), binds
 
 
@@ -302,7 +313,7 @@ def compile_read(
     result_form: ResultForm = "row",
     lock: LockMode | None = None,
     relationship_order: bool = False,
-    include_value_objects: bool = False,
+    include_value_objects: bool | frozenset[str] = False,
 ) -> Statement:
     """Compile a read operation to one canonical ``Statement`` for ``dialect``.
 
@@ -317,12 +328,17 @@ def compile_read(
     ``include_value_objects`` opts a **row-form** read into the value-object
     document columns too, independent of ``result_form`` (`m-case-format.md:727`
     — a materializing predicate write's own resolving read projects need-
-    sensitively: terminate/delete never set it; an assignment-bearing verb on a
-    temporal target does, so the resolved row can carry the document(s) forward
-    into its chained/carried write). An inheritance-family target never reaches
-    this flag (a predicate-selected write on a family is rejected before this
-    compiler, `m-inheritance`), so it is not threaded into the inheritance
-    lowering below.
+    sensitively, on EVERY target class, confirmation-pass residual A): ``True``
+    projects every declared document (a temporal target's own chain need,
+    which must carry forward whichever documents an assignment-bearing verb
+    does NOT itself reassign — terminate/delete on a target that never
+    chains still passes plain ``False``); a ``frozenset`` of value-object
+    NAMES projects ONLY those (a non-chaining target's own per-row no-op
+    comparison need — minimal-read discipline, never every declared
+    document). An inheritance-family target never reaches this flag (a
+    predicate-selected write on a family is rejected before this compiler,
+    `m-inheritance`), so it is not threaded into the inheritance lowering
+    below.
 
     ``lock`` renders the transactional read-lock suffix (m-sql *Read-lock suffix*,
     applied through the m-dialect seam): an in-transaction **object find** in

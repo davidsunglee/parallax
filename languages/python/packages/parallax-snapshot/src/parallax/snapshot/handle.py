@@ -1707,34 +1707,68 @@ class Transaction:
         """
         lock: LockMode | None = self._uow.settings.concurrency
         plan_ = deep_fetch.plan(instruction.target.entity, instruction.target.predicate, self._meta)
+        assignments = {
+            _assignment_member(assignment.attr): assignment.value
+            for assignment in instruction.assignments
+        }
         # Need-sensitive projection (`m-case-format.md:727`): the resolving
-        # read projects the resolved row's own value-object document(s) IFF
-        # the verb's OWN milestone plan writes a CHAINED row from them
-        # (confirmation-pass residual P2, now complete). A BITEMPORAL
-        # target's rectangle split (`bitemp_write.plan`) chains on EVERY
-        # close-bearing mutation — update, updateUntil, terminate, AND
-        # terminateUntil alike, since head (and tail, for the `*Until`
-        # forms) always carry the OLD payload forward, not just an
-        # assignment-bearing one (`m-bitemp-write` "head/tail old values
-        # come from the observed prior rectangle"). An AUDIT-ONLY target's
-        # plan (`audit_write.plan`) chains ONLY an ASSIGNMENT-BEARING
-        # `update` (`_materialize_row`'s own `assignment_bearing` set) — its
+        # read projects the resolved row's own value-object document(s) for
+        # TWO independent needs, on EVERY target class — never gated on
+        # temporality alone (confirmation-pass residual A, completing P2).
+        #
+        # CHAIN need: the verb's OWN milestone plan writes a CHAINED row
+        # from the resolved one. A BITEMPORAL target's rectangle split
+        # (`bitemp_write.plan`) chains on EVERY close-bearing mutation —
+        # update, updateUntil, terminate, AND terminateUntil alike, since
+        # head (and tail, for the `*Until` forms) always carry the OLD
+        # payload forward, not just an assignment-bearing one
+        # (`m-bitemp-write` "head/tail old values come from the observed
+        # prior rectangle"). An AUDIT-ONLY target's plan (`audit_write.
+        # plan`) chains ONLY an ASSIGNMENT-BEARING `update`
+        # (`_materialize_row`'s own `assignment_bearing` set) — its
         # `terminate` is close-only, no chained row, so it stays
         # document-free (`m-value-object-047`'s own row-form-omits-slot-4
         # witness stays byte-identical); audit-only never reaches the
-        # `*Until` forms (bitemporal-only, `_validate_business_from`).
-        # Either way, an AUDIT-ONLY target's own `full_row` merge
-        # (`_materialize_row`) reads this read's row directly, while a
-        # BITEMPORAL target's split reads it indirectly, through
-        # `_temporal_observation`'s payload, which keeps a value-object
-        # document whenever THIS read actually projected it
-        # (`m-value-object` "the document rides every chained/split row
-        # whole").
-        needs_documents = (
+        # `*Until` forms (bitemporal-only, `_validate_business_from`). The
+        # chain need projects EVERY declared document, never just the
+        # assigned ones — a chained row must carry forward whichever
+        # documents the assignments do NOT themselves reassign. Either way,
+        # an AUDIT-ONLY target's own `full_row` merge (`_materialize_row`)
+        # reads this read's row directly, while a BITEMPORAL target's split
+        # reads it indirectly, through `_temporal_observation`'s payload,
+        # which keeps a value-object document whenever THIS read actually
+        # projected it (`m-value-object` "the document rides every
+        # chained/split row whole").
+        #
+        # COMPARISON need: an assignment-bearing verb's per-row no-op
+        # elimination (below, `_materialize_row` -> `_apply_assignments`)
+        # compares each assigned member's new value against the resolved
+        # row's own — a value-object member's comparison can only ever see
+        # the STORED document when this read actually projected its column
+        # (`m-opt-lock.md:92-95` "when all assignments already equal that
+        # row's values, it issues no DML, advances no version"). A TEMPORAL
+        # target's chain need above already projects every document
+        # whenever it is assignment-bearing, so this need is a strict no-op
+        # there; a VERSIONED NON-TEMPORAL target never chains (no milestone
+        # to carry a payload across — `m-opt-lock`/`m-descriptor`: versioned
+        # and temporal are mutually exclusive), so it reaches this need
+        # ALONE. Minimal-read discipline (`m-sql`) then projects the
+        # ASSIGNED value-object document(s) only — never every declared
+        # one, matching an ordinary read's own need-driven projection.
+        assignment_bearing = instruction.mutation in ("update", "updateUntil")
+        chain_need = (
             version_attr is None
             and declaring.is_temporal
             and (declaring.temporal == "bitemporal" or instruction.mutation == "update")
         )
+        needs_documents: bool | frozenset[str]
+        if chain_need:
+            needs_documents = True
+        elif assignment_bearing:
+            members = _members(self._meta, entity)
+            needs_documents = frozenset(member for member in assignments if members[member][1])
+        else:
+            needs_documents = False
         statement = compile_read(
             plan_.root_operation,
             self._meta,
@@ -1745,10 +1779,6 @@ class Transaction:
             include_value_objects=needs_documents,
         )
         rows = self._uow.read(lambda: self._resolve_rows(statement))
-        assignments = {
-            _assignment_member(assignment.attr): assignment.value
-            for assignment in instruction.assignments
-        }
         writes: list[KeyedWrite] = []
         pending: list[tuple[ObjectKey, Observation | None]] = []
         for row in rows:

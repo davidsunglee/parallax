@@ -152,6 +152,33 @@ class WhereRectangle(Entity, frozen=True):
 
 _WHERE_RECTANGLE_META = metamodel([WhereRectangle])
 
+
+# A LOCAL versioned NON-TEMPORAL, value-object-bearing entity — mirrors
+# `models/subscriber.yaml`'s own shape (a versioned document owner) —
+# confirmation-pass residual A's own fixture (round 2, `handle.py:1733`): TWO
+# value objects, so a pin can prove minimal-read discipline (the resolving
+# read projects the ASSIGNED document only, never every declared one).
+class WhereSubscriberAddress(ValueObject, frozen=True):
+    city: Attr[str] = VoField(type="string")
+
+
+class WhereSubscriberProfile(ValueObject, frozen=True):
+    bio: Attr[str] = VoField(type="string")
+
+
+class WhereSubscriber(Entity, frozen=True):
+    __parallax__ = EntityConfig(
+        table="where_subscriber", namespace="parallax.compatibility", mutability="transactional"
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    version: Attr[int] = Field(type="int32", optimistic_locking=True)
+    address: Attr[WhereSubscriberAddress | None] = Field(nullable=True, default=None)
+    profile: Attr[WhereSubscriberProfile | None] = Field(nullable=True, default=None)
+
+
+_WHERE_SUBSCRIBER_META = metamodel([WhereSubscriber])
+
 _NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
 
 
@@ -1612,3 +1639,73 @@ def test_materializing_terminate_where_audit_only_stays_document_free() -> None:
     )
     reads = [op for op in port.ops if op[0] == "read"]
     assert "t0.address" not in cast("str", reads[0][1])
+
+
+# --------------------------------------------------------------------------- #
+# Confirmation-pass residual A (round 2, `handle.py:1733`): a VERSIONED       #
+# NON-TEMPORAL VO-bearing target (`WhereSubscriber`, mirroring `models/       #
+# subscriber.yaml`'s own shape) never chains, so the `needs_documents` gate   #
+# used to exclude it categorically -- an assignment-bearing `update_where`    #
+# assigning an UNCHANGED document could never be recognized by per-row        #
+# no-op elimination (the comparison could not see the stored document),       #
+# emitting an unnecessary gated UPDATE (`m-opt-lock.md:92-95`). The fix adds  #
+# a COMPARISON need, projecting the ASSIGNED document(s) only (minimal-read   #
+# discipline) -- `profile` (never assigned by these tests) proves the         #
+# projection stays minimal, not "every declared value object".                #
+# --------------------------------------------------------------------------- #
+def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_row() -> None:
+    port = _RecordingPort(rows=[{"id": 1, "version": 1, "address": {"city": "Bergen"}}])
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WhereSubscriber.where(WhereSubscriber.id == 1),
+            WhereSubscriber.address.set(WhereSubscriberAddress(city="Bergen")),
+        )
+
+    Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    # No DML and no version advance: the reassigned document is IDENTICAL to
+    # the resolved row's own stored value, so the row is eliminated entirely.
+    assert [op[0] for op in port.ops] == ["begin", "read", "commit"]
+
+
+def test_materializing_versioned_update_where_gates_a_changed_value_object_row() -> None:
+    port = _RecordingPort(rows=[{"id": 1, "version": 1, "address": {"city": "Bergen"}}])
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WhereSubscriber.where(WhereSubscriber.id == 1),
+            WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
+        )
+
+    Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 1
+    assert writes[0][1] == POSTGRES.to_driver_sql(
+        "update where_subscriber set address = ?, version = ? where id = ? and version = ?"
+    )
+    assert writes[0][2] == (JsonDocument({"city": "Oslo"}), 2, 1, 1)
+
+
+def test_materializing_versioned_update_where_projects_only_the_assigned_value_object() -> None:
+    # Minimal-read discipline: the resolving read projects the ASSIGNED
+    # document (`address`) only -- never `profile`, the entity's OTHER
+    # declared value object, which this `update_where` never touches.
+    port = _RecordingPort(rows=[{"id": 1, "version": 1, "address": {"city": "Bergen"}}])
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WhereSubscriber.where(WhereSubscriber.id == 1),
+            WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
+        )
+
+    Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    reads = [op for op in port.ops if op[0] == "read"]
+    assert reads[0][1] == POSTGRES.to_driver_sql(
+        "select t0.id, t0.version, t0.address from where_subscriber t0 where t0.id = ?"
+    )
