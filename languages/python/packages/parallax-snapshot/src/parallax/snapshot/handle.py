@@ -1707,25 +1707,33 @@ class Transaction:
         """
         lock: LockMode | None = self._uow.settings.concurrency
         plan_ = deep_fetch.plan(instruction.target.entity, instruction.target.predicate, self._meta)
-        # Need-sensitive projection (`m-case-format.md:727`): terminate/delete
-        # never carry the resolved row's own value-object document(s) forward
-        # (`m-value-object-047`'s own row-form-omits-slot-4 witness stays
-        # byte-identical) — only an ASSIGNMENT-BEARING verb (`update` /
-        # `updateUntil`, `_materialize_row`'s own `assignment_bearing` set) on
-        # ANY temporal target needs them (confirmation-pass residual P2: this
-        # gate used to exclude a BITEMPORAL target, but its chain carries
-        # forward the SAME resolved-row documents too — an AUDIT-ONLY target's
-        # own `full_row` merge (`_materialize_row`) reads this read's row
-        # directly, while a BITEMPORAL target's head/middle/tail split
-        # (`bitemp_write.plan`) reads them indirectly, through
-        # `_temporal_observation`'s payload, which now keeps a value-object
-        # document whenever THIS read actually projected it — `m-bitemp-write`
-        # "head/tail old values come from the observed prior rectangle";
-        # `m-value-object` "the document rides every chained/split row whole").
+        # Need-sensitive projection (`m-case-format.md:727`): the resolving
+        # read projects the resolved row's own value-object document(s) IFF
+        # the verb's OWN milestone plan writes a CHAINED row from them
+        # (confirmation-pass residual P2, now complete). A BITEMPORAL
+        # target's rectangle split (`bitemp_write.plan`) chains on EVERY
+        # close-bearing mutation — update, updateUntil, terminate, AND
+        # terminateUntil alike, since head (and tail, for the `*Until`
+        # forms) always carry the OLD payload forward, not just an
+        # assignment-bearing one (`m-bitemp-write` "head/tail old values
+        # come from the observed prior rectangle"). An AUDIT-ONLY target's
+        # plan (`audit_write.plan`) chains ONLY an ASSIGNMENT-BEARING
+        # `update` (`_materialize_row`'s own `assignment_bearing` set) — its
+        # `terminate` is close-only, no chained row, so it stays
+        # document-free (`m-value-object-047`'s own row-form-omits-slot-4
+        # witness stays byte-identical); audit-only never reaches the
+        # `*Until` forms (bitemporal-only, `_validate_business_from`).
+        # Either way, an AUDIT-ONLY target's own `full_row` merge
+        # (`_materialize_row`) reads this read's row directly, while a
+        # BITEMPORAL target's split reads it indirectly, through
+        # `_temporal_observation`'s payload, which keeps a value-object
+        # document whenever THIS read actually projected it
+        # (`m-value-object` "the document rides every chained/split row
+        # whole").
         needs_documents = (
             version_attr is None
             and declaring.is_temporal
-            and instruction.mutation in ("update", "updateUntil")
+            and (declaring.temporal == "bitemporal" or instruction.mutation == "update")
         )
         statement = compile_read(
             plan_.root_operation,
@@ -1855,15 +1863,17 @@ def _temporal_observation(
     residual P2): a real ``Transaction.find`` is always INSTANCE-form, which
     projects every document unconditionally (`m-sql`), so ``fields`` already
     carries it there; a materializing predicate-write resolve's ROW-form
-    ``fields`` carries one only when its own need-sensitive projection
+    ``fields`` carries one whenever its own need-sensitive projection
     requested it (`Transaction._materialize_predicate_write`'s
-    ``needs_documents``) — ``column in fields`` still gates every member
-    exactly as it does for scalars, so this is a no-op whenever the document
-    was never projected (a terminate/terminateUntil resolve, or a VO-free
-    entity) and never drops one `bitemp_write.plan`'s head/middle/tail split
-    (`_merged_payload` / the old-payload rectangles) needs to carry forward
-    whole (`m-bitemp-write` "head/tail old values"; `m-value-object` "the
-    document rides every chained/split row whole").
+    ``needs_documents``, which — completing residual P2 — requests it for
+    EVERY bitemporal mutation this branch ever sees: update, updateUntil,
+    terminate, terminateUntil alike, since the rectangle split chains all
+    four) — ``column in fields`` still gates every member exactly as it does
+    for scalars, so this is a no-op only for a VO-free entity, and never
+    drops one `bitemp_write.plan`'s head/middle/tail split (`_merged_payload`
+    / the old-payload rectangles) needs to carry forward whole
+    (`m-bitemp-write` "head/tail old values"; `m-value-object` "the document
+    rides every chained/split row whole").
     """
     in_z = cast("str", fields[proc.from_column])
     if declaring.temporal != "bitemporal":

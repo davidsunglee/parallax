@@ -1524,12 +1524,18 @@ def test_materializing_update_until_where_bitemporal_carries_the_value_object_on
     assert middle_binds[2] == Decimal("300.00")  # middle carries the NEW assigned value
 
 
-def test_materializing_plain_terminate_where_bitemporal_stays_document_free() -> None:
-    # Terminate/delete stay document-free (`m-value-object-047`'s own
-    # row-form-omits-slot-4 witness, unchanged): a non-assignment-bearing verb
-    # never needs the resolved row's document to build its OWN write, so the
-    # resolving read's projection stays row-form-plain regardless of target
-    # temporal kind.
+def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -> None:
+    # Confirmation-pass residual P2, COMPLETION (`m-case-format.md:727`): a
+    # BITEMPORAL terminate's own head rectangle chains the resolved row's OLD
+    # payload forward (`bitemp_write.plan`'s terminate branch reads
+    # `observed.payload`), so the resolving read must project the document
+    # too, even though `terminate` carries no assignments — a bitemporal
+    # target's rectangle split ALWAYS chains, unlike an AUDIT-ONLY terminate
+    # (close-only, no chained row,
+    # `test_materializing_terminate_where_audit_only_stays_document_free`,
+    # below). `m-bitemp-write` "head/tail old values come from the observed
+    # prior rectangle"; `m-value-object` "the document rides every
+    # chained/split row whole".
     address: dict[str, object] = {"city": "Oslo"}
     port = _RecordingPort(rows=[_rectangle_row(address=address)])
     business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
@@ -1540,6 +1546,68 @@ def test_materializing_plain_terminate_where_bitemporal_stays_document_free() ->
         )
 
     Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    reads = [op for op in port.ops if op[0] == "read"]
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert "t0.address" in cast("str", reads[0][1])  # the need-sensitive projection fired
+    assert len(writes) == 2  # close + head only (no tail)
+    head_binds = cast("tuple[object, ...]", writes[1][2])
+    assert head_binds[-1] == JsonDocument(address)  # head: the OLD value's document, whole
+
+
+def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_head_and_tail() -> (
+    None
+):
+    # `terminateUntil` opens head AND tail (no middle — the window becomes a
+    # hole in business time, `terminate_until_where`'s own docstring), and
+    # BOTH chain the resolved row's OLD payload forward
+    # (`bitemp_write.plan`), so the document rides both, whole.
+    address: dict[str, object] = {"city": "Tampere"}
+    port = _RecordingPort(rows=[_rectangle_row(address=address)])
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_until_where(
+            WhereRectangle.where(WhereRectangle.id == 1), business_from=business_from, until=until
+        )
+
+    Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    reads = [op for op in port.ops if op[0] == "read"]
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert "t0.address" in cast("str", reads[0][1])  # the need-sensitive projection fired
+    assert len(writes) == 3  # close + head + tail (no middle)
+    head_binds = cast("tuple[object, ...]", writes[1][2])
+    tail_binds = cast("tuple[object, ...]", writes[2][2])
+    assert head_binds[-1] == JsonDocument(address)
+    assert tail_binds[-1] == JsonDocument(address)
+
+
+def test_materializing_terminate_where_audit_only_stays_document_free() -> None:
+    # An AUDIT-ONLY terminate is close-only (`audit_write.plan` — no chained
+    # row, `_materialize_row`'s own `assignment_bearing` set excludes it), so
+    # the resolving read stays document-free even on a VALUE-OBJECT-bearing
+    # target — unlike its BITEMPORAL counterpart, above
+    # (`m-value-object-047`'s own row-form-omits-slot-4 witness, unchanged).
+    port = _RecordingPort(
+        rows=[
+            {
+                "id": 1,
+                "name": "Nordic Foods",
+                "address": {"city": "Bergen"},
+                "in_z": "2024-01-01T00:00:00+00:00",
+                "out_z": "infinity",
+            }
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_where(WhereLedger.where(WhereLedger.id == 1))
+
+    Database.connect(port, _WHERE_LEDGER_META, clock=FixedClock(_FIXED)).transact(
         fn, concurrency="optimistic"
     )
     reads = [op for op in port.ops if op[0] == "read"]
