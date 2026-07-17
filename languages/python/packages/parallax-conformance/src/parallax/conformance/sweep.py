@@ -41,7 +41,13 @@ matrix: the single-connection shared-suffix witness, the runtime lock/omit
 cases the case-driven D-17 runner grades, and the optimistic-conflict
 auto-retry conflict-lane witness), closing the correctness modules'
 remaining honest gaps — the 15-case flip enumerated in that increment's own
-implementer prompt.
+implementer prompt. ``m-db-error``'s own five ``when.concurrency`` error
+cases are NOT part of this flip (deliberately, not an oversight): the SAME
+rounds-runner choreography this increment builds for the m-read-lock
+two-session matrix (``parallax.conformance.concurrency_runner``) could grade
+them with zero extra machinery — a reported observation for the next
+increment (``tests/conformance/test_run_sweep.py``'s own rounds-runner
+dispatch filter), not something this filter accidentally admits.
 """
 
 from __future__ import annotations
