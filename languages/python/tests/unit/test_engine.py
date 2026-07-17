@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
@@ -512,7 +513,7 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0])
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
 
-    emissions, round_trips, conflict_actual = engine.run_interleaved_scenario_case(
+    emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
         case, "postgres", main_port, lambda: peer_port
     )
 
@@ -532,6 +533,10 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     assert emissions[4].sql.startswith("update account set")
     assert len(main_port.writes) == 2  # the doomed group's insert + gated update
     assert len(peer_port.writes) == 1  # the concurrent group's own gated update
+    # review remediation finding 1: every find step's own observed rows, in
+    # scenario step order (0, 1, then the trailing ungrouped verify at 4) —
+    # the doomed group's discarded insert leaves account 9 absent.
+    assert find_rows == [[row_v1], [row_v1], []]
 
 
 def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_too() -> None:
@@ -589,7 +594,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
     main_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[0])
 
-    _emissions, _round_trips, conflict_actual = engine.run_interleaved_scenario_case(
+    _emissions, _round_trips, conflict_actual, _find_rows = engine.run_interleaved_scenario_case(
         case, "postgres", main_port, lambda: peer_port
     )
 
@@ -650,7 +655,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
     main_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 1])
     peer_port = _ScriptedPort(read_rows=[[row3]])
 
-    emissions, round_trips, conflict_actual = engine.run_interleaved_scenario_case(
+    emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
         case, "postgres", main_port, lambda: peer_port
     )
 
@@ -663,6 +668,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
         "/scenario/2/write",
         "/scenario/3/find",
     ]
+    assert find_rows == [[row_v1], [row3]]
 
 
 def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -> None:
@@ -681,6 +687,43 @@ def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -
     with pytest.raises(RuntimeError, match="unexpected defect"):
         engine.run_interleaved_scenario_case(case, "postgres", main_port, lambda: peer_port)
     assert peer_port.closed
+
+
+def test_await_interleaved_workers_unsticks_both_on_timeout_then_joins_before_raising() -> None:
+    # Review remediation finding 4 (the join-timeout path): a genuine harness
+    # defect (a missing turnstile `advance()` somewhere) leaves BOTH workers
+    # blocked in `wait_for` forever — the timeout path must wake every one of
+    # them (`_Turnstile.release_all`), close the peer connection, JOIN both
+    # threads, and only THEN raise; no live thread and no open peer connection
+    # may outlive the call. A tiny `timeout` (never the production 30s bound)
+    # keeps this deterministic and fast.
+    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
+    peer = _ScriptedPort()
+
+    def stuck(index: int) -> Any:
+        def run() -> None:
+            turnstile.wait_for(index)  # an index this choreography never advances to
+
+        return run
+
+    thread_a = threading.Thread(target=stuck(99), name="stuck-a")
+    thread_b = threading.Thread(target=stuck(100), name="stuck-b")
+    thread_a.start()
+    thread_b.start()
+
+    with pytest.raises(engine.EngineError, match="turnstile hand-off is missing"):
+        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
+            thread_a,
+            thread_b,
+            turnstile,
+            peer,
+            "m-unit-work-999-synthetic.yaml",
+            timeout=0.05,
+        )
+
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+    assert peer.closed
 
 
 def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:

@@ -358,18 +358,26 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, provisioner: An
     (`engine.run_interleaved_scenario_case`), never through `adapter.run_case`
     (which cannot hold a second session open).
 
-    Grades the SAME three layers `test_write_run_sweep` grades for an
+    Grades the SAME FOUR layers `test_write_run_sweep` grades for an
     ordinary scenario — the ordered per-step golden DML (flattened across
     both interleaved groups plus the trailing ungrouped verify find, in
-    AUTHORED step order), `then.roundTrips` — PLUS the scenario shape's own
-    extra top-level assertion, `then.affectedRows`: the doomed group's own
-    conflicting write's actual affected-row count (`0`, the stale-version
-    gate mismatch that dooms the whole unit of work).
+    AUTHORED step order), `then.roundTrips`, and every find step's own
+    observed rows against its authored `expectRows` (review remediation
+    finding 1 — grouped steps 0/1's own observing finds AND the trailing
+    ungrouped verify at step 4, the SAME `compare_rows` comparator/
+    canonicalization the ordinary lane uses, never a forked row-equality) —
+    PLUS the scenario shape's own extra top-level assertion,
+    `then.affectedRows`: the doomed group's own conflicting write's actual
+    affected-row count (`0`, the stale-version gate mismatch that dooms the
+    whole unit of work). The `expectRows` grade is the case's own teeth: a
+    broken abort that left the doomed group's buffered insert durable would
+    still emit well-formed DML and a correct `affectedRows`, but step 4's
+    verify find would observe account 9 — this is what catches it.
     """
     meta = engine.load_case_metamodel(case)
     provisioner.reset(meta, case_fixtures(case))
 
-    emissions, round_trips, conflict_actual = engine.run_interleaved_scenario_case(
+    emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
         case, "postgres", provisioner.port, lambda: provisioner.peer()
     )
 
@@ -382,6 +390,12 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, provisioner: An
     then = case_document(case)["then"]
     assert round_trips == then["roundTrips"], case.case_id
     assert conflict_actual == then["affectedRows"], case.case_id
+
+    expected_per_find = _scenario_expect_rows(case)
+    assert len(find_rows) == len(expected_per_find), (case.case_id, find_rows)
+    for observed, expected in zip(find_rows, expected_per_find, strict=True):
+        if expected is not None:
+            compare_rows([engine.wire_row(row) for row in observed], expected)
 
 
 def _reachable_error_cases() -> list[case_format.Case]:

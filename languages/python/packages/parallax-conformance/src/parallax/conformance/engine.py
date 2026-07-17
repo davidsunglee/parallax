@@ -18,7 +18,7 @@ import decimal
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final, Protocol, cast, runtime_checkable
 
 from parallax.conformance import case_format, models, provision, temporal_state
@@ -1974,18 +1974,28 @@ class _Turnstile:
             self._condition.notify_all()
 
 
+def _empty_group_rows() -> dict[int, list[Row]]:
+    return {}
+
+
 @dataclass(slots=True)
 class _InterleavedGroupResult:
     """One interleaved group's own report: its lowered steps (keyed by
     scenario step index), the conflict's own `actual` affected-row count
     when its LAST write step doomed the group via a genuine optimistic-lock
     conflict (`None` for a group that committed, or that never conflicts),
-    and any OTHER exception the worker thread raised (re-raised on the main
-    thread once both join — never silently swallowed)."""
+    any OTHER exception the worker thread raised (re-raised on the main
+    thread once both join — never silently swallowed), and every OWN find
+    step's own observed rows (keyed by scenario step index, review
+    remediation finding 1) — the group's own oracle for `expectRows`, the
+    SAME grade the ordinary scenario run lane (`test_write_run_sweep`'s
+    `_ReadCapturePort`) already gives every OTHER find step; without this the
+    caller has no way to grade a grouped find at all, only its DML shape."""
 
     lowered: dict[int, _LoweredStep]
     conflict_actual: int | None = None
     failure: BaseException | None = None
+    rows: dict[int, list[Row]] = field(default_factory=_empty_group_rows)
 
 
 def _run_interleaved_group(
@@ -2037,6 +2047,13 @@ def _run_interleaved_group(
     tracker is never mutated for these instructions, so two threads never
     contend on it); a genuinely temporal interleaved case would need its own
     per-group tracking discipline, unwitnessed and out of scope.
+
+    Every OWN find step's observed rows land in ``result.rows`` (keyed by
+    scenario step index, review remediation finding 1): the caller's own
+    oracle for that step's authored ``expectRows`` — without this, a grouped
+    find's own DML is graded but its OBSERVATION never is, so a broken abort
+    that left a doomed group's writes durable would report well-formed SQL
+    and still pass.
     """
     lowered: dict[int, _LoweredStep] = {}
     group_observations: ScenarioObservations = {}
@@ -2080,6 +2097,7 @@ def _run_interleaved_group(
                     lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
                 )
                 _observe_group_find(tx, group_observations, meta, target, rows)
+                result.rows[index] = rows
                 lowered[index] = _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
             if not is_last:
                 turnstile.advance()
@@ -2098,12 +2116,56 @@ def _run_interleaved_group(
         turnstile.advance()
 
 
+# The interleaved-group choreography's own bounded join (the provider-
+# contract deadlock proof's own precedent): a genuine harness defect (a
+# missing `advance()` somewhere) must surface as a loud failure, never an
+# indefinitely hung test session. Named so :func:`_await_interleaved_workers`
+# can be exercised directly with a SHRUNK bound (review remediation finding
+# 4) — a real, unstuck-by-`release_all` timeout path in well under a second,
+# rather than the production bound actually elapsing twice.
+_INTERLEAVED_GROUP_JOIN_TIMEOUT: Final[float] = 30.0
+
+
+def _await_interleaved_workers(
+    thread_a: threading.Thread,
+    thread_b: threading.Thread,
+    turnstile: _Turnstile,
+    peer_connection: _PeerConnection,
+    case_name: str,
+    *,
+    timeout: float = _INTERLEAVED_GROUP_JOIN_TIMEOUT,
+) -> None:
+    """Join both interleaved-group worker threads within ``timeout``; on a
+    timeout, cooperatively UNSTICK them before raising rather than raising
+    while they may still be alive (review remediation finding 4): wake every
+    waiter parked in ``turnstile.wait_for`` (:meth:`_Turnstile.release_all` —
+    the SAME defensive unstick a worker's own unexpected failure already
+    uses), close ``peer_connection`` so any outstanding database work the
+    peer-side worker still holds terminates, THEN rejoin both threads (bounded
+    again, never a second indefinite hang) before raising. No live thread and
+    no open peer connection may outlive this call on any failure path — the
+    caller's own ``finally`` still closes ``peer_connection`` unconditionally
+    (idempotent, `parallax.postgres.PostgresAdapter.close`), so a double close
+    here is harmless."""
+    thread_a.join(timeout=timeout)
+    thread_b.join(timeout=timeout)
+    if thread_a.is_alive() or thread_b.is_alive():  # pragma: no cover - defensive
+        turnstile.release_all()
+        peer_connection.close()
+        thread_a.join(timeout=timeout)
+        thread_b.join(timeout=timeout)
+        raise EngineError(
+            f"{case_name}: the interleaved-group choreography did not "
+            "finish within its bound — a turnstile hand-off is missing"
+        )
+
+
 def run_interleaved_scenario_case(
     case: case_format.Case,
     dialect_name: str,
     port: DbPort,
     peer_factory: Callable[[], _PeerConnection],
-) -> tuple[list[Emission], int, int | None]:
+) -> tuple[list[Emission], int, int | None, list[list[Row]]]:
     """Run the ONE witnessed interleaved-`uow`-group scenario shape
     (`m-opt-lock-012`'s two-group optimistic-lock race, COR-3 Phase 8
     increment 6): the ``ours`` group on the caller's own ``port``, a
@@ -2117,11 +2179,15 @@ def run_interleaved_scenario_case(
     Reports the ordered emissions, total round trips, and — when a group's
     own last write step conflicted — the conflict's ``actual`` affected-row
     count (`then.affectedRows`, the scenario shape's own EXTRA top-level
-    assertion this ONE case authors; ``None`` when no group conflicted).
-    Routed to explicitly by the run sweep (`test_run_sweep.py`) rather than
-    through `run_scenario_case`/`adapter.run_case` — this shape's own peer
-    requirement has no seat in the ordinary shape-dispatched entry points,
-    the SAME reasoning the rounds runner's own dispatch follows.
+    assertion this ONE case authors; ``None`` when no group conflicted), and
+    EVERY find step's own observed rows (grouped or ungrouped, in scenario
+    step order — review remediation finding 1): the caller's own oracle for
+    every authored `expectRows`, the SAME observable the ordinary scenario
+    run lane grades for every OTHER find step. Routed to explicitly by the
+    run sweep (`test_run_sweep.py`) rather than through `run_scenario_case`/
+    `adapter.run_case` — this shape's own peer requirement has no seat in the
+    ordinary shape-dispatched entry points, the SAME reasoning the rounds
+    runner's own dispatch follows.
     """
     steps = _scenario_steps(case)
     meta = load_case_metamodel(case)
@@ -2158,17 +2224,7 @@ def run_interleaved_scenario_case(
     try:
         thread_a.start()
         thread_b.start()
-        # A bounded join (the provider-contract deadlock proof's own
-        # precedent): a genuine harness defect (a missing `advance()`
-        # somewhere) must surface as a loud failure, never an indefinitely
-        # hung test session.
-        thread_a.join(timeout=30)
-        thread_b.join(timeout=30)
-        if thread_a.is_alive() or thread_b.is_alive():  # pragma: no cover - defensive
-            raise EngineError(
-                f"{case.path.name}: the interleaved-group choreography did not "
-                "finish within its bound — a turnstile hand-off is missing"
-            )
+        _await_interleaved_workers(thread_a, thread_b, turnstile, peer_connection, case.path.name)
     finally:
         peer_connection.close()
     for result in (result_a, result_b):
@@ -2176,6 +2232,7 @@ def run_interleaved_scenario_case(
             raise result.failure
 
     lowered: dict[int, _LoweredStep] = {**result_a.lowered, **result_b.lowered}
+    rows_by_index: dict[int, list[Row]] = {**result_a.rows, **result_b.rows}
     for index in ungrouped:
         step = steps[index]
         if "write" in step:  # pragma: no cover - no witnessed ungrouped write is doomed-adjacent
@@ -2185,7 +2242,7 @@ def run_interleaved_scenario_case(
                 "step is a trailing verify find only"
             )
         statement = _lower_find(step, meta, dialect, concurrency)
-        _execute_reads(port, dialect, (statement,))
+        rows_by_index[index] = _execute_reads(port, dialect, (statement,))
         lowered[index] = _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
 
     ordered = [lowered[index] for index in sorted(lowered)]
@@ -2193,7 +2250,8 @@ def run_interleaved_scenario_case(
     conflict_actual = result_a.conflict_actual
     if conflict_actual is None:
         conflict_actual = result_b.conflict_actual
-    return emissions, len(emissions), conflict_actual
+    find_rows = [rows_by_index[index] for index in sorted(rows_by_index)]
+    return emissions, len(emissions), conflict_actual, find_rows
 
 
 def run_scenario_case(
