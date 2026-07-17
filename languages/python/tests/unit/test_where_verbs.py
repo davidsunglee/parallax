@@ -23,6 +23,7 @@ from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field
 from parallax.core.db_port import DbPort
 from parallax.core.entity import ModelCopyError, metamodel
 from parallax.core.entity.expressions import AttributeAssignment
+from parallax.core.entity.value_object import ValueObject, VoField
 from parallax.core.temporal_read import LATEST
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot.handle import Database, Transaction
@@ -53,6 +54,29 @@ class _WhereTemporalLedger(Entity, frozen=True):
     amount: Attr[Decimal] = Field(type="decimal(18,2)")
     processing_from: Attr[dt.datetime] = Field(column="in_z")
     processing_to: Attr[dt.datetime] = Field(column="out_z")
+
+
+# A small LOCAL non-temporal entity mirroring `models/shipment.yaml`'s own
+# shape — the "required top-level value object missing" exemplar
+# (`destination` is `nullable: false`, unlike every other value-object owner
+# in the corpus) — confirmation-pass residual B's own typed-path fixture
+# (round 2, `inheritance/__init__.py:667`): no existing mirror class carries
+# a NON-nullable top-level value object. `note` is a nullable scalar, so the
+# SAME fixture also carries the scalar-None accept counterpart.
+class _WhereShipmentDestination(ValueObject, frozen=True):
+    street: Attr[str] = VoField(type="string")
+    city: Attr[str] = VoField(type="string")
+
+
+class _WhereShipment(Entity, frozen=True):
+    __parallax__ = EntityConfig(
+        table="where_shipment", namespace="parallax.compatibility", mutability="transactional"
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    name: Attr[str] = Field(max_length=64)
+    note: Attr[str | None] = Field(type="string", max_length=64, nullable=True, default=None)
+    destination: Attr[_WhereShipmentDestination] = Field()
 
 
 # --------------------------------------------------------------------------- #
@@ -148,6 +172,44 @@ def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None
         "geo": None,
         "phones": [],
     }
+
+
+# --------------------------------------------------------------------------- #
+# Confirmation-pass residual B (round 2, `inheritance/__init__.py:667`): a     #
+# `None` assignment's nullability-aware handling through the TYPED `.set(...)` #
+# path -- `test_write_instructions.py`'s own `test_member_name_honesty_       #
+# ..._of_none` pins are the serialized/engine-path half of this SAME shared    #
+# check.                                                                       #
+# --------------------------------------------------------------------------- #
+def test_set_on_a_non_nullable_value_object_with_none_raises() -> None:
+    # `_WhereShipment.destination` is `nullable: false` (`models/
+    # shipment.yaml`'s own "required top-level value object missing"
+    # exemplar) -- before the fix, the VO branch's `if value is not None:`
+    # guard skipped validation entirely for a `None` assignment, regardless
+    # of nullability.
+    with pytest.raises(ModelCopyError, match="required value object is absent"):
+        _WhereShipment.destination.set(None)
+
+
+def test_set_on_a_nullable_value_object_with_none_is_accepted() -> None:
+    # `vom.Customer.address` is `nullable: true` -- an explicit `None` stays
+    # a legal clearing assignment.
+    assignment = vom.Customer.address.set(None)
+    assert assignment.value is None
+
+
+def test_set_on_a_non_nullable_scalar_with_none_raises() -> None:
+    # The scalar branch's own extension of residual B: a non-nullable
+    # scalar assigned `None` must be rejected too -- before the fix,
+    # `value is not None and not _type_matches(...)` let a `None` value
+    # bypass validation entirely, the SAME class of bug as the VO branch.
+    with pytest.raises(ModelCopyError, match="required attribute is absent"):
+        _WhereShipment.name.set(None)
+
+
+def test_set_on_a_nullable_scalar_with_none_is_accepted() -> None:
+    assignment = _WhereShipment.note.set(None)
+    assert assignment.value is None
 
 
 # --------------------------------------------------------------------------- #

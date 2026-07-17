@@ -582,3 +582,56 @@ def test_member_name_honesty_accepts_a_well_formed_value_object_assignment() -> 
         }
     )
     wi.validate_instruction(predicate, customer)  # must not raise
+
+
+# --------------------------------------------------------------------------- #
+# Confirmation-pass residual B (round 2, `inheritance/__init__.py:667`): a     #
+# `None` assignment's nullability-aware handling through the SERIALIZED/       #
+# case-authored path -- `test_where_verbs.py`'s own `test_set_on_a_..._with_  #
+# none_...` pins are the typed-path half of this SAME shared check.           #
+# --------------------------------------------------------------------------- #
+def test_member_name_honesty_rejects_a_non_nullable_value_object_assignment_of_none() -> None:
+    # `models/shipment.yaml`'s `destination` is `nullable: false` (the corpus's
+    # own "required top-level value object missing" exemplar) -- before the
+    # fix, `if value is not None:` skipped validation entirely for a `None`
+    # assignment, regardless of nullability.
+    shipment = _MODELS["shipment"]
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {"entity": "Shipment", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Shipment.destination", "value": None}],
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="required value object is absent"):
+        wi.validate_instruction(predicate, shipment)
+
+
+def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none() -> None:
+    # `Customer.address` is `nullable: true` -- an explicit `None` stays a
+    # legal clearing assignment.
+    customer = _MODELS["customer"]
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {"entity": "Customer", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Customer.address", "value": None}],
+        }
+    )
+    wi.validate_instruction(predicate, customer)  # must not raise
+
+
+def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() -> None:
+    # The scalar branch's own extension of residual B: `Shipment.name`
+    # declares no `nullable: true` -- an explicit `None` assignment must be
+    # refused too, the SAME class of bug as the value-object branch.
+    shipment = _MODELS["shipment"]
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {"entity": "Shipment", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Shipment.name", "value": None}],
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="required attribute is absent"):
+        wi.validate_instruction(predicate, shipment)

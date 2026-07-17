@@ -414,12 +414,23 @@ def test_reject_predicate_write_is_a_no_op_for_a_non_participant() -> None:
 # `attribute-missing`, `value-object-missing`, a nested `many` element's own   #
 # bracket-indexed path) directly against `inheritance.validate_write_          #
 # assignment`, never through the typed/serialized frontends.                   #
+#                                                                               #
+# `code` (non-nullable scalar), `nickname` (nullable scalar), and `core`       #
+# (non-nullable TOP-level value object -- `spec`/`tags` above are both         #
+# `nullable: true`, so neither exercises a top-level required-VO rejection)    #
+# extend this same synthetic model for confirmation-pass residual B (round 2,  #
+# `inheritance/__init__.py:667`): a `None` assignment's nullability-aware      #
+# handling, pinned directly against the shared check below.                    #
 # --------------------------------------------------------------------------- #
 _VO_ENTITY = Entity(
     name="Gadget",
     table="gadget",
     mutability="transactional",
-    attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    attributes=(
+        Attribute(name="id", type="int64", column="id", primary_key=True),
+        Attribute(name="code", type="string", column="code"),
+        Attribute(name="nickname", type="string", column="nickname", nullable=True),
+    ),
     value_objects=(
         ValueObject(
             name="spec",
@@ -446,6 +457,12 @@ _VO_ENTITY = Entity(
             cardinality="many",
             nullable=True,
             attributes=(ValueObjectAttribute(name="label", type="string"),),
+        ),
+        ValueObject(
+            name="core",
+            column="core",
+            nullable=False,
+            attributes=(ValueObjectAttribute(name="serial", type="string"),),
         ),
     ),
 )
@@ -496,3 +513,40 @@ def test_validate_write_assignment_rejects_a_top_level_many_element_type_mismatc
     # bracket-first, with no leading dot (`Gadget.tags[0].label`).
     with pytest.raises(inheritance.WriteAssignmentError, match=r"tags\[0\]\.label"):
         inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "tags", [{"label": 42}])
+
+
+# --------------------------------------------------------------------------- #
+# Confirmation-pass residual B (round 2, `inheritance/__init__.py:667`): a     #
+# `None` assignment's nullability-aware handling, direct against the shared   #
+# check (`test_where_verbs.py` / `test_write_instructions.py` pin the same    #
+# fix through the typed and serialized callers respectively).                 #
+# --------------------------------------------------------------------------- #
+def test_validate_write_assignment_rejects_none_for_a_non_nullable_value_object() -> None:
+    # `core` is `nullable: false` (unlike `spec`/`tags` above) -- an explicit
+    # `None` assignment must be refused the SAME way a missing required value
+    # object is, reusing `vo_document_violation`'s own `"value-object-
+    # missing"` wording rather than forking new text.
+    with pytest.raises(inheritance.WriteAssignmentError, match="required value object is absent"):
+        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "core", None)
+
+
+def test_validate_write_assignment_accepts_none_for_a_nullable_value_object() -> None:
+    # `spec` is `nullable: true` -- an explicit `None` is a legal clearing
+    # assignment, never itself a structural violation.
+    inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "spec", None)  # no raise
+
+
+def test_validate_write_assignment_rejects_none_for_a_non_nullable_scalar() -> None:
+    # `code` declares no `nullable: true` -- an explicit `None` assignment
+    # must be refused too (the scalar branch's own extension of residual B):
+    # before the fix, `value is not None and not _type_matches(...)` let a
+    # `None` value bypass validation entirely, regardless of nullability.
+    with pytest.raises(inheritance.WriteAssignmentError, match="required attribute is absent"):
+        inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "code", None)
+
+
+def test_validate_write_assignment_accepts_none_for_a_nullable_scalar() -> None:
+    # `nickname` is `nullable: true` -- an explicit `None` is a legal
+    # clearing assignment, mirroring `write_validate`'s own null short-
+    # circuit for a nullable attribute.
+    inheritance.validate_write_assignment(_VO_META, _VO_ENTITY, "nickname", None)  # no raise

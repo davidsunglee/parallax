@@ -627,12 +627,20 @@ def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value:
     unit_work.write_validate.validate_write`'s own precedent) extended across
     a DAG boundary neither scope alone can bridge.
 
-    For an ordinary scalar attribute, ``value`` MUST also conform to its
-    declared `m-core` neutral type (`parallax.core.descriptor.neutral_type.
-    type_matches`, the SAME category-level scalar-value policy `write_validate`
-    applies to a keyed write row) — a ``None`` value is never itself a type
-    mismatch (a nullable attribute's own assignment may always clear it, mirroring
-    `write_validate`'s own null short-circuit).
+    For an ordinary scalar attribute, a non-``None`` ``value`` MUST also
+    conform to its declared `m-core` neutral type (`parallax.core.descriptor.
+    neutral_type.type_matches`, the SAME category-level scalar-value policy
+    `write_validate` applies to a keyed write row). A ``None`` value is a
+    legal CLEARING assignment ONLY when the attribute is declared
+    ``nullable`` (mirroring `write_validate`'s own null short-circuit, which
+    is likewise nullable-gated, `_check_entity_attribute`) — a NON-nullable
+    scalar assigned ``None`` is rejected with the SAME `"required attribute
+    is absent (or null)"` wording `write_validate`'s own required-attribute
+    check uses (COR-3 Phase 8 confirmation-pass residual B: `None` is an
+    explicit clearing attempt here, never an omitted/sparse member the way
+    an absent keyed-write row key is, so this check is UNCONDITIONAL —
+    there is no mutation-aware sparseness concept at the assignment
+    boundary, every named assignment is "present" by construction).
 
     A ``name`` naming a VALUE-OBJECT member instead (FAMILY-EFFECTIVE,
     `superset_value_objects` — the same family-wide resolution
@@ -645,11 +653,19 @@ def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value:
     typed or the equivalent serialized ``PredicateWrite`` assignment) is
     rejected with this function's OWN established wording style; a well-formed
     document is accepted — assigning a value object is not itself rejected
-    (D-26 keeps the combination structurally accepted). A ``name`` this family
-    declares NEITHER a scalar attribute NOR a value object for (one
-    `validate_instruction`'s own member-name-honesty gate already rejects as
-    wholly undeclared) is out of this function's scope — it returns silently,
-    leaving that classification to its own owning check.
+    (D-26 keeps the combination structurally accepted). A ``None`` value is
+    likewise a legal clearing assignment ONLY when the value object is
+    declared ``nullable`` (`m-value-object` "A `nullable: false` value
+    object MUST be present at write time") — a NON-nullable value object
+    assigned ``None`` is rejected reusing `vo_document_violation`'s own
+    ``"value-object-missing"`` rendering (`_vo_assignment_error`, the SAME
+    `"required value object is absent (or null)"` wording a nested
+    required-VO violation already renders, residual B) rather than forking
+    new text. A ``name`` this family declares NEITHER a scalar attribute NOR
+    a value object for (one `validate_instruction`'s own member-name-honesty
+    gate already rejects as wholly undeclared) is out of this function's
+    scope — it returns silently, leaving that classification to its own
+    owning check.
     """
     for attribute in family_attributes(meta, entity):
         if attribute.name != name:
@@ -664,7 +680,14 @@ def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value:
                 f"{entity.name}.{name}: framework-owned fields (the version column) may not "
                 "be assigned",
             )
-        if value is not None and not _type_matches(value, attribute.type):
+        if value is None:
+            if not attribute.nullable:
+                raise WriteAssignmentError(
+                    "value-type-mismatch",
+                    f"{entity.name}.{name}: required attribute is absent (or null)",
+                )
+            return
+        if not _type_matches(value, attribute.type):
             raise WriteAssignmentError(
                 "value-type-mismatch",
                 f"{entity.name}.{name}: value {value!r} does not match the declared type "
@@ -674,10 +697,15 @@ def validate_write_assignment(meta: Metamodel, entity: Entity, name: str, value:
     for value_object in superset_value_objects(meta, (entity.name,)):
         if value_object.name != name:
             continue
-        if value is not None:
-            violation = vo_document_violation(value_object, value)
-            if violation is not None:
-                raise _vo_assignment_error(entity.name, name, violation)
+        if value is None:
+            if not value_object.nullable:
+                raise _vo_assignment_error(
+                    entity.name, name, VoDocumentViolation("", "value-object-missing")
+                )
+            return
+        violation = vo_document_violation(value_object, value)
+        if violation is not None:
+            raise _vo_assignment_error(entity.name, name, violation)
         return
 
 
