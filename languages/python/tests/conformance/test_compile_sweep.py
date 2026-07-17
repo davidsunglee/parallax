@@ -656,25 +656,26 @@ def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
     assert "land with a later write increment" not in bucket_text, bucket_text
 
 
-def test_m_opt_lock_001_stays_a_directed_reasoned_deferral() -> None:
+def test_m_opt_lock_001_is_query_result_dependent_run_only() -> None:
     """`m-opt-lock-001` (a KEYED no-op scenario: an observing find, a versioned
-    update whose effective change set is empty — no DML — then a
-    ``sameObjectAs`` cache-HIT find graded at `roundTrips: 0`) is
-    compile-eligible by the corpus's own default (it carries no
-    `compileEligibility` block) and its plan-of-record names it an increment-5
-    flip. It stays a DIRECTED, REASONED deferral instead: its three steps are
-    UNGROUPED (no `uow` label), so the engine's `db.transact`-per-step
-    translation runs them as three SEPARATE transactions with no cross-call
-    state — grading its trailing cache-hit find (`roundTrips: 0`, no golden
-    SQL) needs a cross-transaction identity + query cache, `m-process-cache`,
-    which `core/spec/m-unit-work.md` itself names DEFERRED (not this
-    increment's own materialize/collapse/readless scope). Loud, never silent:
-    it stays OUT of `WRITE_EXERCISED`, and the compile lane still answers a
-    real (if incidentally-worded, via the SAME unobserved-version path a
-    genuine caller bug would hit) `error` envelope for it today rather than a
-    silently-passing `ok`.
+    update whose effective change set is empty — no DML — then a real
+    dependent find under the SAME held lock) was always single-transaction
+    intent (the case's own docstring: the shared lock is "held for the
+    transaction's duration"), but predated the `uow` step-grouping vocabulary
+    and was never retrofitted. The corpus amendment groups its three steps
+    into ONE `uow` and declares `compileEligibility: run-only`
+    (query-result-dependent — the no-op write's licensing derives from the
+    group's own observing find, a query result), so `compile` now answers the
+    DECLARED run-only envelope, never the incidentally-worded `error` an
+    ungrouped unobserved-version write used to produce. It stays OUT of
+    `WRITE_EXERCISED` (a run-only case never answers `ok`); the run lane
+    picks it up through the EXISTING uow-grouped run-only admission clause
+    (`test_run_sweep._reachable_write_cases`) — the same path `m-unit-work-005`
+    already passes through, with no test-code addition here.
     """
     (case,) = [c for c in _REACHABLE if c.case_id == "m-opt-lock-001"]
     assert case.case_id not in WRITE_EXERCISED
+    assert engine.eligibility(case) is not None
     envelope = adapter.compile_case(case.path, "postgres")
-    assert envelope["status"] == "error", envelope
+    assert envelope["status"] == "run-only", envelope
+    assert envelope["diagnostics"][0]["code"] == "compile-run-only", envelope

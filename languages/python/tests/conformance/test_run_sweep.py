@@ -193,6 +193,12 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # grades them, but NONE of them declare `uow` grouping (unlike
 # `m-opt-lock-012`) — `_case_uses_uow_grouping` alone would wrongly exclude
 # every one of them, so this is their own explicit admission clause.
+# `m-value-object-047` joins here too (a corpus amendment, not an increment-5
+# landing): its trailing verify find is now an `asOf` read pinned strictly
+# inside the closed window, the SAME find lane every OTHER `asOf` case already
+# lowers — the case's own fourth step is not itself a materializing read, but
+# it is run-only and NOT `uow`-grouped, so this explicit admission clause is
+# still the only membership path that reaches it (`_reachable_write_cases`).
 _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-003",
@@ -205,34 +211,9 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
         "m-bitemp-write-011",
         "m-bitemp-write-012",
         "m-bitemp-write-013",
+        "m-value-object-047",
     }
 )
-
-# `m-value-object-047`'s OWN increment-5 concern — the materializing predicate
-# write's resolving read (row-form, the `address` document OMITTED) and its
-# processing-only close — is CORRECT and directly verified (unit-pinned,
-# `test_transact.py::test_materializing_terminate_where_over_an_audit_only_target`
-# et al.; run against real Postgres via the debugging this deferral's own
-# investigation performed). The case stays a DIRECTED, REASONED deferral from
-# THIS SWEEP anyway: its FOURTH step — an ORDINARY, un-grouped "verify" find
-# carrying no `asOf` wrapper at all — has a golden pinned to the CLOSED
-# milestone's own finite `out_z` bind (`2024-10-01T00:00:00+00:00`,
-# `expectRows` non-empty), which the framework's own well-established
-# default-latest as-of injection (`inject_as_of` -> `_Current`,
-# `~parallax.core.temporal_read`) can only ever render as `out_z = infinity`
-# (matching the SAME rule TWO sibling terminate-materialization witnesses
-# pin for their OWN trailing verify finds — `m-audit-write-007`,
-# `m-bitemp-write-011` — and the reference harness's own independent
-# `_expected_asof_suffix` grading rule: "'now'/latest lowers to the single
-# equality bind, the axis's infinity"). This golden predates COR-3 Phase 8
-# increment 5 (commit `53f5f08`, "make value-object lifecycle-action reads
-# regression-sensitive") and appears to conflate "the row's OWN `out_z` field
-# now holds this value" with "a default-latest query would find this row" —
-# the two are NOT equivalent (a closed milestone is, by definition, no longer
-# `out_z = infinity`, hence no longer "current"). Reported as a discovered
-# corpus anomaly, not resolved here (`core/compatibility/` stays unedited);
-# the case is loudly excluded, never silently dropped.
-_TRAILING_FIND_GOLDEN_DEFERRED: Final[frozenset[str]] = frozenset({"m-value-object-047"})
 
 
 def _reachable_write_cases() -> list[case_format.Case]:
@@ -241,8 +222,7 @@ def _reachable_write_cases() -> list[case_format.Case]:
     return [
         c
         for c in sweep.reachable_cases()
-        if c.case_id not in _TRAILING_FIND_GOLDEN_DEFERRED
-        and (
+        if (
             c.case_id in WRITE_EXERCISED
             or c.case_id in _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED
             or (
