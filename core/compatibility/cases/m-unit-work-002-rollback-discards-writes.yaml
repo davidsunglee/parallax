@@ -4,14 +4,20 @@
 # m-unit-work-001 proves read-your-own-writes (a committed write is observed mid-transaction).
 # This proves the complementary ABORT contract: a write applied inside a unit of
 # work — even one force-flushed to serve a dependent read — MUST NOT survive the
-# abort. The scenario interleaves an aborted write between two identical finds:
-#   step 0 find  : cache MISS — read account 1 (Ada, balance 100.00, version 1), 1 round trip.
+# abort. account.version is an optimistic-lock column, so the keyed UPDATE requires a
+# PRIOR observation (`m-opt-lock`); steps 0-1 share ONE `uow` group (`doomed-update`)
+# so the write's version bind is the observing find's OWN transaction-scoped
+# observation, in the SAME doomed unit of work its `rollback: true` write step
+# dooms — the case is therefore `compileEligibility: run-only`
+# (query-result-dependent). The scenario interleaves the doomed group with an
+# UNGROUPED post-abort find:
+#   step 0 find  : observe account 1 (Ada, balance 100.00, version 1), 1 round trip.
 #   step 1 write : apply `balance = 999.00` for the OBSERVED account 1, advancing the
-#                  observed version 1 -> 2, then ROLL BACK (rollback: true) — the
-#                  write lands inside the atomic scope the abort discards, so it
-#                  never becomes durable.
-#   step 2 find  : the SAME find re-resolves (cache MISS) and MUST observe the
-#                  ORIGINAL balance 100.00, never the aborted 999.00.
+#                  observed version 1 -> 2 (`rollback: true` — dooms the group, which
+#                  ROLLS BACK after this, its last step).
+#   step 2 find  : the SAME find, UNGROUPED, re-resolves after the group's rollback
+#                  and MUST observe the ORIGINAL balance 100.00, never the aborted
+#                  999.00.
 # The teeth: step 2 cannot be a cache HIT — a hit would reuse step 0's rows, and
 # the aborted write must leave the row exactly as step 0 read it. The golden UPDATE
 # is the ungated version-advancing form (locking mode: no gate, `m-opt-lock` "The
@@ -23,29 +29,35 @@
 model: models/account.yaml
 tags: [m-unit-work, rollback, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the versioned write's version bind is the framework-owned advance of the version the unit of work's own observing find returned — a query result (m-opt-lock)"
 when:
   scenario:
-    - targetEntity: Account
+    - uow: doomed-update
+      targetEntity: Account
       find:
         eq:
           attr: Account.id
           value: 1
       roundTrips: 1
-      note: cache MISS — read account 1 (balance 100.00, version 1) before the aborted write
+      note: observe account 1 (balance 100.00, version 1) before the aborted write, inside the doomed unit of work
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-    - write:
+    - uow: doomed-update
+      write:
         - mutation: update
           entity: Account
           rows:
             - { id: 1, balance: 999.00 }
       rollback: true
       roundTrips: 1
-      note: apply a new balance for the OBSERVED account 1, then ROLL BACK — the write is discarded
+      note: "apply a new balance for the OBSERVED account 1 — dooms the group (rollback: true); it ROLLS BACK after this, its last step"
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
@@ -56,7 +68,7 @@ when:
           attr: Account.id
           value: 1
       roundTrips: 1
-      note: the SAME find re-resolves (cache MISS) and MUST observe 100.00, not 999.00
+      note: the SAME find, UNGROUPED, re-resolves after the group's rollback and MUST observe 100.00, not 999.00
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0

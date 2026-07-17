@@ -8,62 +8,76 @@
 # (`m-opt-lock`) — the unit of work first OBSERVES account 1 (the update target)
 # and account 3 (the delete target), then buffers three writes and, at the
 # boundary, flushes them grouped by kind (insert -> update -> delete) in a single
-# committed step, after which a dependent find proves the combined net state.
-# Unlike the keyed UPDATE (whose version gate is optimistic-only), the keyed
-# DELETE of an OBSERVED versioned row gates on that observed version in EITHER
-# concurrency mode (`m-batch-write-004`'s own default-mode witness; `python.md`
-# §5's asymmetric phrasing), so the golden DELETE carries `and version = ?` even
-# in the DEFAULT `locking` mode here:
+# committed step, after which a dependent find proves the combined net state. All
+# four steps share ONE `uow` group (`mixed-flush`): both observing finds, the
+# flush, and the dependent find run inside the SAME unit of work, which is what
+# lets the update's and delete's version binds be the observing finds' OWN
+# transaction-scoped observations (`m-opt-lock`) rather than oracle values the
+# compile lane could not otherwise derive — the case is therefore
+# `compileEligibility: run-only` (query-result-dependent). Unlike the keyed
+# UPDATE (whose version gate is optimistic-only), the keyed DELETE of an
+# OBSERVED versioned row gates on that observed version in EITHER concurrency
+# mode (`m-batch-write-004`'s own default-mode witness; `python.md` §5's
+# asymmetric phrasing), so the golden DELETE carries `and version = ?` even in
+# the DEFAULT `locking` mode here:
 #   step 0 find  : observe account 1 (Ada, 100.00, version 1), 1 round trip.
 #   step 1 find  : observe account 3 (Grace, 10.00, version 1), 1 round trip.
-#   step 2 write : COMMIT three buffered writes in flush order —
+#   step 2 write : three buffered writes in flush order —
 #                    (1) insert a new account 9 (Noether, 5.00),
 #                    (2) update the OBSERVED account 1's balance 100.00 -> 20.00,
 #                        advancing the observed version 1 -> 2,
 #                    (3) delete the OBSERVED account 3 (Grace, 10.00), gated on
 #                        its observed version 1.
-#   step 3 find  : `balance < 50` re-resolves (cache MISS) and MUST observe the
-#                  combined result — account 1 at 20.00 (the update landed), account 9
-#                  at 5.00 (the insert landed), and NOT account 3, which qualified at
-#                  10.00 before the flush but is gone (the delete landed). Account 2
-#                  (250.00) is excluded by the predicate.
+#   step 3 find  : `balance < 50` MUST observe the combined result — account 1 at
+#                  20.00 (the update landed), account 9 at 5.00 (the insert
+#                  landed), and NOT account 3, which qualified at 10.00 before the
+#                  flush but is gone (the delete landed). Account 2 (250.00) is
+#                  excluded by the predicate. The group COMMITS after this, its
+#                  last step.
 # Every find is a cache MISS and, in the DEFAULT `locking` mode, carries the
 # m-read-lock shared-row-lock suffix (`for share of t0`). roundTrips = 6 (the two
 # observing finds + the three flushed writes + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, m-sql, mixed-op-flush, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the versioned update's and delete's version binds are the framework-owned advance of the versions the unit of work's own observing finds returned — a query result (m-opt-lock)"
 given:
   fixtures: true
 when:
   scenario:
-    - targetEntity: Account
+    - uow: mixed-flush
+      targetEntity: Account
       find:
         eq:
           attr: Account.id
           value: 1
       roundTrips: 1
-      note: observe account 1 (Ada, balance 100.00, version 1) before the update
+      note: observe account 1 (Ada, balance 100.00, version 1) before the update, inside the SAME unit of work as the flush below
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-    - targetEntity: Account
+    - uow: mixed-flush
+      targetEntity: Account
       find:
         eq:
           attr: Account.id
           value: 3
       roundTrips: 1
-      note: observe account 3 (Grace, balance 10.00, version 1) before the delete
+      note: observe account 3 (Grace, balance 10.00, version 1) before the delete, inside the SAME unit of work as the flush below
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [3]
       expectRows:
         - { id: 3, owner: Grace, balance: 10.00, version: 1 }
-    - write:
+    - uow: mixed-flush
+      write:
         - mutation: insert
           entity: Account
           rows:
@@ -77,7 +91,7 @@ when:
           rows:
             - { id: 3 }
       roundTrips: 3
-      note: one flush, combined order — insert account 9, update the observed account 1, delete the observed account 3
+      note: one flush, combined order — insert account 9, update the observed account 1, delete the observed account 3; the unit of work commits at the group's last step below
       statements:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
@@ -88,13 +102,14 @@ when:
         - sql:
             postgres: delete from account where id = ? and version = ?
           binds: [3, 1]
-    - targetEntity: Account
+    - uow: mixed-flush
+      targetEntity: Account
       find:
         lessThan:
           attr: Account.balance
           value: 50.00
       roundTrips: 1
-      note: the combined net state — account 1 (20.00) + account 9 (5.00); account 3 was deleted, account 2 excluded
+      note: the combined net state — account 1 (20.00) + account 9 (5.00); account 3 was deleted, account 2 excluded. The group COMMITS after this, its last step.
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0

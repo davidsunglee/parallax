@@ -5,46 +5,100 @@
 # m-opt-lock-005 proves the conflict SIGNAL (a stale-version UPDATE affects 0 rows);
 # this composes it with the m-unit-work abort contract: when a versioned write in a
 # unit of work conflicts, the WHOLE unit of work rolls back, so an unrelated insert
-# buffered in the same UoW is discarded too. The scenario:
-#   step 0 write : a CONCURRENT transaction commits first, bumping account 2 to
-#                  balance 999.00 / version 2 (the classic optimistic race).
-#   step 1 write : OUR optimistic unit of work buffers TWO writes and flushes them,
-#                  then ABORTS (rollback: true — the observable form of the conflict
-#                  abort):
+# buffered in the same UoW is discarded too. The classic optimistic race is authored
+# as TWO INTERLEAVED `uow` groups — OUR unit of work (`ours`) and a CONCURRENT one
+# (`concurrent`) — because `m-opt-lock` forbids a caller-authored version value
+# (`CallerAuthoredVersionError`): every version bind here is instead the
+# framework-owned advance of a version its OWN group's observing find returned.
+# The scenario:
+#   step 0 find  : OUR unit of work (group `ours`) observes account 2 (Linus,
+#                  250.00, version 1) — optimistic mode takes no lock.
+#   step 1 find  : a CONCURRENT unit of work (group `concurrent`) observes the SAME
+#                  account 2 at the SAME version 1 — the classic race: both sides
+#                  read before either writes.
+#   step 2 write : the CONCURRENT unit of work commits FIRST — a GATED update of
+#                  account 2 (balance 999.00), advancing its OWN observed version
+#                  1 -> 2 (optimistic mode gates every keyed update). Group
+#                  `concurrent` COMMITS after this, its last step.
+#   step 3 write : OUR unit of work (group `ours`) buffers TWO writes and flushes
+#                  them, then ABORTS (`rollback: true` — the observable form of the
+#                  conflict abort):
 #                    (a) insert a brand-new account 9 (would succeed on its own), then
-#                    (b) a version-GATED update of account 2 on the version we OBSERVED
-#                        (1) — but the row is now version 2, so the gate matches ZERO
-#                        rows (updatedRows != 1). That conflict aborts the UoW, so (a)
-#                        is rolled back with it.
-#   step 2 find  : query account 9 — it MUST observe NO rows. The would-be-successful
-#                  insert never became durable: the conflict discarded the entire UoW
-#                  (no partial flush). This is the teeth.
+#                    (b) a version-GATED update of account 2 at OUR OWN observed
+#                        version (1) — but the row is now version 2 (the concurrent
+#                        commit above), so the gate matches ZERO rows
+#                        (updatedRows != 1). That conflict dooms the group, so (a)
+#                        is rolled back with it. Group `ours` ROLLS BACK after this,
+#                        its last step.
+#   step 4 find  : query account 9, UNGROUPED (after both groups have resolved) —
+#                  it MUST observe NO rows. The would-be-successful insert never
+#                  became durable: the conflict discarded the entire UoW (no
+#                  partial flush). This is the teeth.
 # The conflict is ASSERTED against real data, not merely simulated: then.affectedRows
-# (0) pins the gated update of account 2 to the 0-row conflict count, and the harness
-# makes the abort a CONSEQUENCE of detecting it — a gated write that affected 1 row
-# (no conflict) would fail this case rather than pass on the rollback alone.
-# roundTrips = 4 (the concurrent commit + the two aborted writes + the dependent find).
+# (0) pins the gated update of account 2 inside the doomed `ours` group to the 0-row
+# conflict count, and the harness makes the abort a CONSEQUENCE of detecting it — a
+# gated write that affected 1 row (no conflict) would fail this case rather than pass
+# on the rollback alone. Every version bind here is observation-derived (never a
+# literal caller-authored value), so the case is `compileEligibility: run-only`
+# (query-result-dependent) — the reference harness is its green gate; it stays out
+# of the Python exercised sets until increment 5's set-based/batch work flips it.
+# roundTrips = 6 (the two observing finds + the concurrent commit + the two aborted
+# writes + the dependent find).
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, optimistic-lock-conflict, abort, scenario, slice-mvp-1, slice-snapshot-1, slice-managed-1]
 shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "every version bind here is the framework-owned advance of the version each unit of work's own observing find returned — a query result (m-opt-lock)"
 given:
   fixtures: true
 when:
   uow:
     concurrency: optimistic
   scenario:
-    - write:
+    - uow: ours
+      targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 2
+      roundTrips: 1
+      note: OUR unit of work observes account 2 (Linus, 250.00, version 1); optimistic mode takes no lock
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+    - uow: concurrent
+      targetEntity: Account
+      find:
+        eq:
+          attr: Account.id
+          value: 2
+      roundTrips: 1
+      note: a CONCURRENT unit of work observes the SAME account 2 at the SAME version 1 — the classic race
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+    - uow: concurrent
+      write:
         - mutation: update
           entity: Account
           rows:
-            - { id: 2, balance: 999.00, version: 2 }
+            - { id: 2, balance: 999.00 }
       roundTrips: 1
-      note: a CONCURRENT transaction commits first — account 2 -> balance 999.00, version 2
+      note: the concurrent unit of work commits FIRST — a gated update of account 2, advancing its OWN observed version 1 -> 2; the group COMMITS after this, its last step
       statements:
         - sql:
-            postgres: update account set balance = ?, version = ? where id = ?
-          binds: [999.00, 2, 2]
-    - write:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: [999.00, 2, 2, 1]
+    - uow: ours
+      write:
         - mutation: insert
           entity: Account
           rows:
@@ -52,10 +106,10 @@ when:
         - mutation: update
           entity: Account
           rows:
-            - { id: 2, balance: 300.00, version: 2 }
+            - { id: 2, balance: 300.00 }
       rollback: true
       roundTrips: 2
-      note: our UoW inserts account 9 then hits a stale-version conflict on account 2 (0 rows) -> the whole UoW aborts
+      note: "our UoW inserts account 9 then hits a stale-version conflict on account 2 (gated on OUR OWN observed version 1, now stale) — 0 rows; dooms the group (rollback: true), which ROLLS BACK after this, its last step"
       statements:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
@@ -69,7 +123,7 @@ when:
           attr: Account.id
           value: 9
       roundTrips: 1
-      note: account 9 MUST be absent — the aborted UoW's insert never flushed (no partial flush)
+      note: account 9 MUST be absent, UNGROUPED — the aborted UoW's insert never flushed (no partial flush)
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
@@ -77,10 +131,11 @@ when:
       expectRows: []
 then:
   # The conflict is ASSERTED, not merely simulated: the version-gated update of
-  # account 2 (step 1's second statement) MUST affect 0 rows — the stale-version gate
-  # matched no row (`updatedRows != 1`, m-opt-lock). The harness detects that 0-row
-  # conflict and makes the abort its CONSEQUENCE; a gated write that instead affected
-  # 1 row (no real conflict) fails this case. This composes with the table-unchanged
-  # read-back (step 2: account 9 absent — the buffered insert never flushed).
+  # account 2 (the doomed `ours` group's second write statement) MUST affect 0
+  # rows — the stale-version gate matched no row (`updatedRows != 1`, m-opt-lock).
+  # The harness detects that 0-row conflict and makes the abort its CONSEQUENCE; a
+  # gated write that instead affected 1 row (no real conflict) fails this case.
+  # This composes with the table-unchanged read-back (step 4: account 9 absent —
+  # the buffered insert never flushed).
   affectedRows: 0
-  roundTrips: 4
+  roundTrips: 6
