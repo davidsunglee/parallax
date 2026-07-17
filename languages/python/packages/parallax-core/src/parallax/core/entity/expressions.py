@@ -24,7 +24,7 @@ relationship or value-object quantifier's ``where=`` scope.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, cast, overload
 
 from parallax.core.op_algebra import (
     And,
@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 __all__ = [
     "UNLOADED",
     "Attr",
+    "AttributeAssignment",
     "AttributeExpr",
     "AttributeRef",
     "ElementAttr",
@@ -140,6 +141,29 @@ class RelationshipRef:
 
     def __str__(self) -> str:
         return f"{self.entity}.{self.relationship}"
+
+
+@dataclass(frozen=True, slots=True)
+class AttributeAssignment:
+    """One typed ``_where``-verb assignment (``Attr.set(value)``, python.md §5):
+    the entity-scoped spelling of a predicate-write assignment — the ``.set(...)``
+    counterpart of ``model_copy(update={...})``'s dict-keyed spelling, built on
+    the SAME attribute-expression surface a predicate is built on.
+
+    This scope stays ``parallax.core.unit_work``-free (the
+    ``parallax.core.entity ↛ parallax.core.unit_work`` import contract), so
+    ``Transaction.update_where`` / ``.update_until_where``
+    (``parallax.snapshot.handle``, already cleared to import both) translate
+    this to the canonical ``~parallax.core.unit_work.WriteAssignment`` at the
+    write boundary — never carried past this module as anything but a plain,
+    ``Class.member``-addressed value pair.
+    """
+
+    attr: AttributeRef
+    value: object
+
+    def __str__(self) -> str:
+        return str(self.attr)
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +341,25 @@ class AttributeExpr:
         """A descending order-by key over this attribute."""
         return OrderKey(attr=str(self.ref), direction="desc")
 
+    def set(self, value: object) -> AttributeAssignment:
+        """A set-based ``_where``-verb assignment (``Account.balance.set(0)``,
+        python.md §5): only a TOP-LEVEL scalar attribute or value-object member
+        is assignable — mirroring ``model_copy``'s own ``assignable_py``
+        allow-list (`~parallax.core.entity.base._validate_copy_keys`), never a
+        NESTED value-object path (a value object always binds its WHOLE
+        document, `m-value-object`; there is no sparse write below its
+        boundary). A ``ValueObject`` instance (or a tuple of them, a ``many``
+        member) is serialized to its canonical document — the SAME translation
+        ``full_row`` / ``canonical_row`` apply to every other write input.
+        """
+        if self._path:
+            raise TypeError(
+                f"{self._dotted()}: only a top-level attribute or value-object member is "
+                "assignable via .set(...) — a value object binds its whole document, never "
+                "a nested path (m-value-object)"
+            )
+        return AttributeAssignment(attr=self.ref, value=_serialize_assignment_value(value))
+
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
 
@@ -328,6 +371,23 @@ def _as_scalar(value: object) -> Scalar:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     raise TypeError(f"expected a scalar literal, got {type(value).__name__}")
+
+
+def _serialize_assignment_value(value: object) -> object:
+    """A ``.set(...)`` assignment's write-serialized value: a ``ValueObject``
+    instance becomes its canonical document, a tuple of them a list of
+    documents (``cardinality: many``), everything else passes through
+    unchanged — the SAME translation ``parallax.core.entity.base._serialize_member``
+    applies to every other write input (a deferred import: ``entity.value_object``
+    has no reverse edge onto this module, so this stays a plain sibling import)."""
+    from parallax.core.entity.value_object import ValueObject, to_document
+
+    if isinstance(value, ValueObject):
+        return to_document(value)
+    if isinstance(value, tuple):
+        items = cast("tuple[object, ...]", value)
+        return [to_document(item) if isinstance(item, ValueObject) else item for item in items]
+    return value
 
 
 class Attr[T]:

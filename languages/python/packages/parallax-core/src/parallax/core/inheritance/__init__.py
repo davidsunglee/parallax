@@ -27,6 +27,7 @@ __all__ = [
     "family_of",
     "family_primary_key",
     "family_root",
+    "reject_predicate_write",
     "superset_value_objects",
     "validate",
     "validate_subtype_write",
@@ -551,6 +552,38 @@ def validate_subtype_write(meta: Metamodel, entity: Entity, row: Mapping[str, ob
             f"subtype, not the abstract {entity.inheritance.role}",
             entity=entity.name,
         )
+
+
+def reject_predicate_write(entity: Entity) -> None:
+    """Reject a predicate-selected (set-based) write on ANY inheritance-family
+    ``entity`` — root, abstract-subtype, or concrete-subtype alike — with the
+    SAME ``subtype-write-set-based-unsupported`` classification
+    :func:`validate_subtype_write`'s keyless-row branch raises (`m-inheritance`
+    "Per-object writes are keyed; set-based inheritance writes are out of
+    scope").
+
+    A deliberate, TARGET-ENTITY-ONLY call shape (COR-3 Phase 8 increment 5):
+    a predicate-selected write is set-based BY CONSTRUCTION (there is no row at
+    all, keyed or otherwise), so this needs no row inspection and never
+    synthesizes a fake keyless row just to trigger
+    :func:`validate_subtype_write`'s own branch — both the developer-facing
+    ``_where`` verb family (`python.md` §5) and the conformance engine's
+    predicate-write translation call this SAME function, so the two callers
+    can never classify an inheritance-family predicate write differently. A
+    no-op for a non-participant ``entity`` (every entity outside an
+    inheritance family accepts a predicate-selected write, subject to every
+    OTHER m-batch-write / m-opt-lock rule).
+    """
+    if entity.inheritance is None:
+        return
+    raise InheritanceError(
+        "subtype-write-set-based-unsupported",
+        f"{entity.name}: a predicate-selected (set-based) write on an inheritance-family "
+        "entity is unsupported (subtype-write-set-based-unsupported) — per-object writes "
+        "are keyed (m-inheritance 'Per-object writes are keyed; set-based inheritance "
+        "writes are out of scope')",
+        entity=entity.name,
+    )
 
 
 def _concrete_accepted_field_names(

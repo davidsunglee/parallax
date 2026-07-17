@@ -217,6 +217,31 @@ class Statement:
         ``snapshot-history-includes`` deferral boundary."""
         return isinstance(self.temporal, (AsOfRange, History))
 
+    def is_bare(self) -> bool:
+        """Whether this statement carries NOTHING but a predicate (python.md §5
+        "A statement becomes a write target only as a bare statement — one
+        carrying nothing but a predicate"): the single guard every ``_where``
+        verb shares. Every result-shaping / temporal / narrowing / deep-fetch
+        field must sit at its default — ``order_by``, ``limit``, ``as_of`` /
+        ``history`` / ``as_of_range``, ``include``, and ``narrow`` are each
+        checked (the spec's own enumeration), and ``.distinct()`` is caught the
+        SAME way (an explicit non-default field), even though the prose
+        enumeration omits it — resolving that gap by construction rather than
+        special-casing one flag. ``target`` / ``predicate`` / ``as_of_attributes``
+        are excluded: the first two are exactly what a bare statement legitimately
+        carries, and the third is metadata ``Entity.where`` always captures
+        (the entity's own declared temporal dimensions), never an authored
+        clause.
+        """
+        return (
+            self.order_keys == ()
+            and self.limit_count is None
+            and self.is_distinct is False
+            and self.temporal is None
+            and self.include_paths == ()
+            and self.is_narrowed is False
+        )
+
     def _with_temporal(self, op: Operation) -> Statement:
         if self.temporal is not None:
             raise ValueError(

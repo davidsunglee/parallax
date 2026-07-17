@@ -370,3 +370,30 @@ def test_versioned_root_and_root_owned_version_still_validates_cleanly() -> None
     # root-declared versioned families.
     inheritance.validate(_MODELS["vehicle"])
     inheritance.validate(_MODELS["appliance"])
+
+
+# --------------------------------------------------------------------------- #
+# `reject_predicate_write` (COR-3 Phase 8 increment 5): a predicate-selected  #
+# (set-based) write on ANY inheritance-family entity is unsupported before    #
+# any SQL, the SAME classification a keyless keyed write raises.              #
+# --------------------------------------------------------------------------- #
+def test_reject_predicate_write_raises_for_a_concrete_subtype() -> None:
+    animal = _MODELS["animal"]
+    dog = animal.entity("Dog")
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        inheritance.reject_predicate_write(dog)
+    assert caught.value.rule == "subtype-write-set-based-unsupported"
+    assert caught.value.entity == "Dog"
+
+
+def test_reject_predicate_write_raises_for_the_abstract_root() -> None:
+    animal = _MODELS["animal"]
+    root = animal.entity("Animal")
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        inheritance.reject_predicate_write(root)
+    assert caught.value.rule == "subtype-write-set-based-unsupported"
+
+
+def test_reject_predicate_write_is_a_no_op_for_a_non_participant() -> None:
+    account = _MODELS["account"].entity("Account")
+    inheritance.reject_predicate_write(account)  # no raise
