@@ -31,7 +31,7 @@ from typing import Any, cast
 
 import pytest
 
-from conftest import case_document, case_fixtures, compare_rows, instance_row
+from conftest import case_document, case_fixtures, compare_binds, compare_rows, instance_row
 from parallax.conformance import case_format, engine
 from parallax.conformance.graph_stories import (
     GRAPH_STORIES,
@@ -262,34 +262,93 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 # `story.concurrency` (COR-3 Phase 8 increment 6, the `m-read-lock` matrix)   #
 # opts a story into the TRANSACTIONAL half instead: `tx.find(build())` inside #
 # a `db.transact` of the declared participation mode, still graded against    #
-# the SAME `then.rows` oracle — the runtime proof that the mode actually      #
-# drives whether the emitted SQL carries the shared read-lock suffix          #
-# (unobservable from `then.rows` alone; the compile/run sweeps prove the      #
-# emitted SQL byte-exact, this proves the SAME mode reaches the SAME public   #
-# surface a developer drives).                                                #
+# the SAME `then.rows` oracle, PLUS the statements this story's own find      #
+# ACTUALLY executed (review remediation finding 3, `_StatementCapturePort`    #
+# below) — the runtime proof that the mode actually drives whether the        #
+# emitted SQL carries the shared read-lock suffix (unobservable from          #
+# `then.rows` alone: two stories can return identical rows while one holds a  #
+# lock and the other does not).                                               #
 # --------------------------------------------------------------------------- #
 _READ_STORY_IDS = [story.case_id for story in READ_STORIES]
+
+
+class _StatementCapturePort:
+    """A pass-through ``m-db-port`` decorator capturing every SQL statement +
+    binds a read story's find ACTUALLY executes — the SAME port-seam capture
+    point ``test_run_sweep._ReadCapturePort`` establishes, generalized to
+    record the statement text (not just its rows): `then.rows` alone cannot
+    distinguish whether a `m-read-lock` story's runtime DEVELOPER path
+    emitted the shared read-lock suffix, only the statement text can (review
+    remediation finding 3). ``transaction`` nests another capture wrapper
+    sharing this SAME ``statements`` list (mirroring ``_ReadCapturePort``'s
+    own ``transaction``), so a `tx.find` inside `db.transact` is captured
+    from the SAME single execution as a non-transactional `db.find`.
+    """
+
+    def __init__(
+        self, inner: Any, statements: list[tuple[str, tuple[object, ...]]] | None = None
+    ) -> None:
+        self._inner = inner
+        self.statements: list[tuple[str, tuple[object, ...]]] = (
+            statements if statements is not None else []
+        )
+
+    def execute(self, sql: str, binds: Any) -> list[dict[str, Any]]:
+        self.statements.append((sql, tuple(binds)))
+        return self._inner.execute(sql, binds)
+
+    def execute_write(self, sql: str, binds: Any) -> int:
+        return self._inner.execute_write(sql, binds)
+
+    def transaction(self, body: Any) -> Any:
+        statements = self.statements
+
+        def wrapped(conn: Any) -> Any:
+            return body(_StatementCapturePort(conn, statements=statements))
+
+        return self._inner.transaction(wrapped)
 
 
 @pytest.mark.parametrize("story", READ_STORIES, ids=_READ_STORY_IDS)
 def test_read_story_runs_through_the_shipped_surface(story: ReadStory, provisioner: Any) -> None:
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    port = _StatementCapturePort(provisioner.port)
+    db = connect(port, meta)
     if story.concurrency is not None:
         snapshot = db.transact(lambda tx: tx.find(story.build()), concurrency=story.concurrency)
     else:
         snapshot = db.find(story.build())
-    expected_rows = cast(
-        "list[dict[str, Any]]", case_document(_CASES[story.case_id])["then"]["rows"]
-    )
+    then = cast("dict[str, Any]", case_document(_CASES[story.case_id])["then"])
+    expected_rows = cast("list[dict[str, Any]]", then["rows"])
     expects_variant = any("familyVariant" in row for row in expected_rows)
     observed_rows = [
         instance_row(instance, family_variant=expects_variant) for instance in snapshot.results()
     ]
     compare_rows(observed_rows, expected_rows)
-    expected_round_trips = case_document(_CASES[story.case_id])["then"].get("roundTrips")
+    expected_round_trips = then.get("roundTrips")
     if expected_round_trips is not None:
         assert snapshot.execution.round_trips == expected_round_trips, story.case_id
+
+    # Review remediation finding 3: grade the statements this story's find
+    # ACTUALLY executed against the case's own authored golden (postgres
+    # dialect) — asserting the `for share of t0` lock suffix's presence
+    # (`m-read-lock-002`) or absence (`-003`/`-005`/every other read story)
+    # exactly as authored, reusing the SAME driver-SQL translation and
+    # exact-Decimal bind comparison every other run lane uses rather than an
+    # ad hoc string match.
+    golden_statements = then.get("statements")
+    assert golden_statements is not None, story.case_id
+    golden_statements = cast("list[dict[str, Any]]", golden_statements)
+    assert len(port.statements) == len(golden_statements), (story.case_id, port.statements)
+    for (sql, binds), entry in zip(port.statements, golden_statements, strict=True):
+        golden_sql = entry["sql"]
+        golden_text = (
+            cast("dict[str, str]", golden_sql)["postgres"]
+            if isinstance(golden_sql, dict)
+            else golden_sql
+        )
+        assert sql == POSTGRES.to_driver_sql(cast("str", golden_text)), story.case_id
+        compare_binds(binds, cast("list[object]", entry.get("binds", [])))
 
 
 def test_every_read_story_mirrors_an_active_case_exactly_once() -> None:
