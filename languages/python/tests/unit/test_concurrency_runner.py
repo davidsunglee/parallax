@@ -249,6 +249,71 @@ def test_run_rounds_closes_both_sessions_even_when_one_raises() -> None:
     assert b.closed
 
 
+def test_run_rounds_setup_failure_closes_the_already_open_first_session() -> None:
+    # Review remediation finding 4: a second-peer CONSTRUCTION failure must
+    # not leak the already-open first session — incremental `ExitStack`
+    # protection registers each session for close the moment it opens.
+    a = _FakeSession()
+    calls = {"n": 0}
+
+    def peer_factory() -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return a
+        raise RuntimeError("the second peer never opens")
+
+    with pytest.raises(RuntimeError, match="the second peer never opens"):
+        concurrency_runner.run_rounds(_rounds({}), POSTGRES, peer_factory)
+    assert a.closed
+
+
+def test_run_rounds_setup_failure_closes_both_sessions_when_tuning_the_second_fails() -> None:
+    # A session that opened successfully but fails its OWN lock-contention
+    # TUNING is still "successfully opened" — it and its already-tuned
+    # partner both close (the same incremental protection, one step later).
+    err = DatabaseError(category="connectionDead", native_code="XX000", message="tuning failed")
+    a = _FakeSession()
+    b = _FakeSession(raises_on="lock_timeout", error=err)
+    peers = iter([a, b])
+    with pytest.raises(DatabaseError):
+        concurrency_runner.run_rounds(_rounds({}), POSTGRES, lambda: next(peers))
+    assert a.closed
+    assert b.closed
+
+
+def test_run_rounds_raises_the_originating_failure_not_a_partners_barrier_break() -> None:
+    # Review remediation finding 4: when the SECOND-checked node (`B`) is the
+    # one with the genuine, unexpected defect and the FIRST-checked node
+    # (`A`) merely trips over the resulting `barrier.abort()` (a SECONDARY
+    # `BrokenBarrierError`, never a defect of its own — `A` has no round-0
+    # step, so it is already blocked at the round's own boundary when `B`
+    # aborts), the raised exception must be `B`'s genuine one — never `A`'s
+    # masking barrier break (the join/inspect-order bug this remediation
+    # fixes) — with the secondary chained as its own `__cause__`.
+    class _Broken:
+        def execute(self, sql: str, binds: Sequence[Any]) -> list[dict[str, Any]]:
+            if "lock_timeout" in sql:
+                return []
+            raise RuntimeError("B's own genuine defect")
+
+        def execute_write(self, sql: str, binds: Sequence[Any]) -> int:
+            return 0
+
+        def close(self) -> None:
+            pass
+
+    a = _FakeSession()
+    b = _Broken()
+    peers = iter([a, b])
+    rounds = _rounds(
+        {"B": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
+    )
+    with pytest.raises(RuntimeError, match="B's own genuine defect") as excinfo:
+        concurrency_runner.run_rounds(rounds, POSTGRES, lambda: next(peers))
+    assert isinstance(excinfo.value.__cause__, threading.BrokenBarrierError)
+    assert a.closed
+
+
 def test_run_rounds_reraises_an_unexpected_non_database_error() -> None:
     # An UNEXPECTED (never a witnessed path) non-`DatabaseError` failure —
     # never caught/recorded as a per-node outcome — aborts the barrier (so

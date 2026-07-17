@@ -46,6 +46,7 @@ test-side grading.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -228,10 +229,14 @@ def run_rounds(
     behavioral matrix; `m-case-format` "Error cases" / "concurrencySuccess").
 
     Opens exactly two sessions via ``peer_factory`` (never constructs a
-    connection itself), applies the session-scoped lock-contention tuning to
-    each, then runs one persistent worker thread per node: each thread walks
-    every round in order, executing its own node's step (when present) and
-    synchronizing with its partner at a `threading.Barrier(2)` BEFORE and
+    connection itself) with INCREMENTAL protection (`contextlib.ExitStack`,
+    review remediation finding 4): a session is registered for close the
+    MOMENT it opens, so a second-peer construction failure — or a
+    lock-contention-tuning failure on either session — closes every session
+    successfully opened so far rather than leaking the first. Once both are
+    open and tuned, runs one persistent worker thread per node: each thread
+    walks every round in order, executing its own node's step (when present)
+    and synchronizing with its partner at a `threading.Barrier(2)` BEFORE and
     AFTER each round — so a round with only one active node still waits for
     its idle partner to reach the SAME boundary (no round starts before the
     previous one is fully finished on BOTH sides), while a round where BOTH
@@ -241,51 +246,81 @@ def run_rounds(
     and never aborting the choreography — the whole point of the error
     shape is to observe exactly which node's statement raised, then finish
     the round cleanly); any OTHER exception aborts the barrier for the
-    partner thread and re-raises here, loudly, as a genuine harness defect.
-    Both sessions are closed unconditionally before returning (releasing
-    every lock so the caller's NEXT case can reset the schema).
+    partner thread — whose own `wait()` then raises a SECONDARY
+    `BrokenBarrierError`, never the genuine defect — and is recorded exactly
+    like the genuine one. Both sessions are closed unconditionally before
+    returning (releasing every lock so the caller's NEXT case can reset the
+    schema).
+
+    Once both workers join, the ORIGINATING failure — never a partner's
+    barrier-break echo — is what raises: if a node's own recorded failure is
+    itself a `BrokenBarrierError`, it is presumed secondary to the OTHER
+    node's own (whichever failure is not itself a `BrokenBarrierError` wins;
+    if both are, or neither is, `_NODES` order breaks the tie, matching the
+    prior behavior), with the secondary chained as its `__cause__` so it stays
+    visible in the traceback.
     """
-    sessions: dict[str, PeerSession] = {node: peer_factory() for node in _NODES}
-    for session in sessions.values():
-        session.execute(f"set lock_timeout = '{_LOCK_TIMEOUT}'", [])
+    with contextlib.ExitStack() as stack:
+        sessions: dict[str, PeerSession] = {}
+        for node in _NODES:
+            session = peer_factory()
+            stack.callback(session.close)
+            sessions[node] = session
+        for session in sessions.values():
+            session.execute(f"set lock_timeout = '{_LOCK_TIMEOUT}'", [])
 
-    barrier = threading.Barrier(len(_NODES))
-    results: dict[str, _WorkerResult] = {node: _WorkerResult() for node in _NODES}
+        barrier = threading.Barrier(len(_NODES))
+        results: dict[str, _WorkerResult] = {node: _WorkerResult() for node in _NODES}
 
-    def worker(node: str) -> None:
-        result = results[node]
-        session = sessions[node]
-        try:
-            for index, round_steps in enumerate(rounds):
-                barrier.wait()
-                step = round_steps.get(node)
-                if step is not None:
-                    try:
-                        rows = _execute_step(session, dialect, step)
-                        result.outcomes[index] = NodeOutcome(rows=rows)
-                    except DatabaseError as exc:
-                        result.outcomes[index] = NodeOutcome(error=exc)
-                barrier.wait()
-        except BaseException as exc:
-            result.failure = exc
-            barrier.abort()
+        def worker(node: str) -> None:
+            result = results[node]
+            session = sessions[node]
+            try:
+                for index, round_steps in enumerate(rounds):
+                    barrier.wait()
+                    step = round_steps.get(node)
+                    if step is not None:
+                        try:
+                            rows = _execute_step(session, dialect, step)
+                            result.outcomes[index] = NodeOutcome(rows=rows)
+                        except DatabaseError as exc:
+                            result.outcomes[index] = NodeOutcome(error=exc)
+                    barrier.wait()
+            except BaseException as exc:
+                result.failure = exc
+                barrier.abort()
 
-    threads = [
-        threading.Thread(target=worker, args=(node,), name=f"concurrency-{node}") for node in _NODES
-    ]
-    try:
+        threads = [
+            threading.Thread(target=worker, args=(node,), name=f"concurrency-{node}")
+            for node in _NODES
+        ]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
-    finally:
-        for session in sessions.values():
-            session.close()
 
+    failures: dict[str, BaseException] = {}
     for node in _NODES:
         failure = results[node].failure
         if failure is not None:
-            raise failure
+            failures[node] = failure
+    if failures:
+        originating_node = next(
+            (
+                node
+                for node in failures
+                if not isinstance(failures[node], threading.BrokenBarrierError)
+            ),
+            next(iter(failures)),
+        )
+        originating = failures[originating_node]
+        # `from None` when no OTHER node also failed (never reachable under
+        # this module's own 2-node barrier — any genuine failure always
+        # aborts the barrier for the partner too, `threading.Barrier.abort`'s
+        # own documented effect — kept for defensive honesty rather than
+        # assumed): explicit "no cause", never an implicit, confusing one.
+        secondary = next((exc for node, exc in failures.items() if node != originating_node), None)
+        raise originating from secondary
 
     return RoundsRun(
         rounds=tuple(
