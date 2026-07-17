@@ -13,7 +13,7 @@ import datetime as dt
 import decimal
 import uuid
 from collections.abc import Callable, Sequence
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -321,6 +321,157 @@ def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> N
     assert len(port.writes) == 1  # the DML executed before the abort
     assert port.rollbacks == 1 and port.commits == 0
     assert emissions[0].case_pointer == "/scenario/0/write"
+
+
+# --- `uow`-grouped scenario spans (amendment-review remediation) -------------
+#
+# `m-unit-work-005/006/009/012` and `m-unit-work-002` are `compileEligibility:
+# run-only` (their version binds are query-result-dependent), so they route
+# through `_run_uow_group` here — a whole `uow` span in ONE `db.transact` call,
+# never the ungrouped per-step path above. `FakeWritePort` returns the SAME
+# canned `find_rows` for every read, which is enough to prove the MECHANICS
+# (one transaction per group, the version advance derived from an observation
+# this SAME call recorded, no oracle) without needing per-call differentiated
+# rows — the exact observed values are pinned end-to-end against real
+# Postgres/MariaDB by the reference-harness suite and the Docker run sweep.
+
+
+def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -> None:
+    # m-unit-work-005: all three steps (observe find, versioned update,
+    # dependent find) share ONE `uow` group — a single `db.transact` call, not
+    # three separate ones, so exactly one port-level commit fires.
+    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    emissions, round_trips = engine.run_scenario_case(_case("m-unit-work-005"), "postgres", port)
+    assert round_trips == 3
+    assert [e.case_pointer for e in emissions] == [
+        "/scenario/0/find",
+        "/scenario/1/write",
+        "/scenario/2/find",
+    ]
+    # The write's SET version bind is the OBSERVED version (1) advanced to 2 —
+    # a genuine transaction-scoped observation this SAME group's own find
+    # recorded, never an authored value (`update ... set balance = ?,
+    # version = ? where id = ?`).
+    assert emissions[1].sql.startswith("update account set")
+    assert emissions[1].binds == (175.00, 2, 1)
+    assert len(port.writes) == 1 and len(port.reads) == 2
+    assert port.commits == 1 and port.rollbacks == 0
+
+
+def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
+    # m-unit-work-002: steps 0-1 share the doomed `doomed-update` group (its
+    # write declares `rollback: true`); step 2 is an UNGROUPED post-abort find.
+    # The GROUP rolls back as ONE unit (one port-level rollback, zero commits)
+    # — never a separate transaction per step.
+    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    emissions, round_trips = engine.run_scenario_case(_case("m-unit-work-002"), "postgres", port)
+    assert round_trips == 3
+    assert [e.case_pointer for e in emissions] == [
+        "/scenario/0/find",
+        "/scenario/1/write",
+        "/scenario/2/find",
+    ]
+    assert len(port.writes) == 1  # the doomed write's DML still executed (and counted)
+    assert len(port.reads) == 2  # the grouped observe find + the ungrouped post-abort find
+    assert port.commits == 0 and port.rollbacks == 1
+
+
+def test_run_scenario_case_rejects_a_noncontiguous_uow_group() -> None:
+    # `_scenario_uow_spans` raises loudly rather than silently mis-executing an
+    # INTERLEAVED group (the optimistic-lock race shape, `m-opt-lock-012`) —
+    # the Python run lane executes only CONTIGUOUS `uow` spans; a genuinely
+    # interleaved one stays reference-harness-only.
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {
+                "scenario": [
+                    {
+                        "uow": "a",
+                        "targetEntity": "Account",
+                        "find": {"eq": {"attr": "Account.id", "value": 1}},
+                        "roundTrips": 1,
+                        "statements": [
+                            {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [1]}
+                        ],
+                    },
+                    {
+                        "uow": "b",
+                        "targetEntity": "Account",
+                        "find": {"eq": {"attr": "Account.id", "value": 2}},
+                        "roundTrips": 1,
+                        "statements": [
+                            {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [2]}
+                        ],
+                    },
+                    {
+                        "uow": "a",
+                        "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 1}]}],
+                        "roundTrips": 1,
+                        "statements": [
+                            {
+                                "sql": {"postgres": "update account set balance = ? where id = ?"},
+                                "binds": [1.0, 1],
+                            }
+                        ],
+                    },
+                ]
+            },
+            "then": {"roundTrips": 3},
+        },
+    )
+    with pytest.raises(engine.EngineError, match="not contiguous"):
+        engine.run_scenario_case(case, "postgres", FakeWritePort())
+
+
+def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:
+    # A `uow` group of find-only steps (never reachable via the current corpus
+    # — every group this round has a write) has no write entry to derive an
+    # instant from, so the inert default stands in (ADR 0010: "a non-temporal
+    # entry's clock value is inert, pick something deterministic").
+    steps: list[dict[str, object]] = [
+        {"uow": "a", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
+        {"uow": "a", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
+    ]
+    assert (
+        engine._group_tx_instant(steps, 0, 1)  # pyright: ignore[reportPrivateUsage]
+        == engine._INERT_CLOCK_INSTANT  # pyright: ignore[reportPrivateUsage]
+    )
+
+
+def test_versioned_non_temporal_version_attribute_is_none_for_a_temporal_entity() -> None:
+    # A temporal entity's observation flows through `TemporalShadow`, never
+    # this map — `m-opt-lock`'s version column is a non-temporal-only concept.
+    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
+    assert (
+        engine._versioned_non_temporal_version_attribute(  # pyright: ignore[reportPrivateUsage]
+            meta, "Policy"
+        )
+        is None
+    )
+
+
+def test_observe_group_find_is_a_no_op_for_a_temporal_target() -> None:
+    # `_observe_group_find` returns before ever touching `tx` for a temporal
+    # (or unversioned) target, so passing no real transaction is safe here.
+    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
+    observations: engine.ScenarioObservations = {}
+    engine._observe_group_find(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", None), observations, meta, "Policy", [{"id": 1}]
+    )
+    assert observations == {}
+
+
+def test_observe_group_find_skips_a_row_missing_its_version_field() -> None:
+    # A row carrying the primary key but no version column (never reachable
+    # for a well-formed corpus find) is skipped, not a KeyError — this seam
+    # takes no data on faith.
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    observations: engine.ScenarioObservations = {}
+    engine._observe_group_find(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", None), observations, meta, "Account", [{"id": 1}]
+    )
+    assert observations == {}
 
 
 def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:

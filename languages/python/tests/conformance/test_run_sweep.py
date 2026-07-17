@@ -152,10 +152,47 @@ def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
             compare_graph(observed_entry["graph"], expected_entry["graph"])
 
 
+# `m-opt-lock-012`'s scenario ALSO declares `compileEligibility: run-only` and
+# ALSO uses `uow` grouping (:func:`_case_uses_uow_grouping`), but its two groups
+# INTERLEAVE (the classic optimistic-lock race — one unit of work's observing
+# find, a CONCURRENT unit of work's own observe-and-commit, then back to the
+# first) — the engine's `run_scenario_case` executes only CONTIGUOUS `uow`
+# groups (`engine._scenario_uow_spans`; a genuinely interleaved group needs a
+# SECOND, independent connection the engine's single-`DbPort` seam does not
+# expose yet). It stays OUT of this sweep; the reference harness (`just
+# oracle-test`, real Postgres/MariaDB, two independently held sessions) is its
+# green gate until a later increment gives the engine its own multi-connection
+# seam.
+_UOW_GROUPED_RUN_DEFERRED: Final[frozenset[str]] = frozenset({"m-opt-lock-012"})
+
+
+def _case_uses_uow_grouping(case: case_format.Case) -> bool:
+    """Whether a scenario case's own steps declare the `uow` grouping key
+    (`m-case-format`) — the amendment-review remediation's discriminator
+    between "this run-only case's observation is transaction-scoped, and the
+    engine's `uow`-grouping seam (`engine._run_uow_group`) is what makes it
+    runnable" and every OTHER run-only reason a scenario/writeSequence case
+    carries (single-connection materializing predicate writes, deep-fetch
+    deferred loads, pk-gen sequence batch reservations — none of which the
+    run lane is ready to grade yet, exactly like before this remediation)."""
+    when = cast("dict[str, Any]", case_document(case).get("when", {}))
+    steps = cast("list[dict[str, Any]]", when.get("scenario", []))
+    return any(isinstance(step.get("uow"), str) for step in steps)
+
+
 def _reachable_write_cases() -> list[case_format.Case]:
     from parallax.conformance import sweep
 
-    return [c for c in sweep.reachable_cases() if c.case_id in WRITE_EXERCISED]
+    return [
+        c
+        for c in sweep.reachable_cases()
+        if c.case_id in WRITE_EXERCISED
+        or (
+            c.case_id not in _UOW_GROUPED_RUN_DEFERRED
+            and engine.eligibility(c) is not None
+            and _case_uses_uow_grouping(c)
+        )
+    ]
 
 
 _WRITE_CASES = _reachable_write_cases()
@@ -171,11 +208,21 @@ class _ReadCapturePort:
     SAME single execution the envelope reports — a scenario's finds are exactly
     its ``execute`` calls, in step order (writes go through ``execute_write`` /
     ``transaction``).
+
+    A `uow`-GROUPED find (amendment-review remediation) runs on the
+    transaction's OWN connection (``tx._conn``, ``engine._run_uow_group``) —
+    the object ``database.transact``'s closure receives as its argument, which
+    a bare pass-through ``transaction(body)`` would hand ``body`` UNWRAPPED
+    (the underlying provider's ``PostgresAdapter.transaction`` passes ITSELF,
+    not this decorator). ``transaction`` therefore wraps that inner connection
+    in a NESTED ``_ReadCapturePort`` sharing this SAME ``reads`` list, so a
+    grouped find is captured from the SAME single execution as an ungrouped
+    one, in the SAME step order.
     """
 
-    def __init__(self, inner: Any) -> None:
+    def __init__(self, inner: Any, reads: list[list[dict[str, Any]]] | None = None) -> None:
         self._inner = inner
-        self.reads: list[list[dict[str, Any]]] = []
+        self.reads: list[list[dict[str, Any]]] = reads if reads is not None else []
 
     def execute(self, sql: str, binds: Any) -> list[dict[str, Any]]:
         rows = self._inner.execute(sql, binds)
@@ -186,7 +233,12 @@ class _ReadCapturePort:
         return self._inner.execute_write(sql, binds)
 
     def transaction(self, body: Any) -> Any:
-        return self._inner.transaction(body)
+        reads = self.reads
+
+        def wrapped(conn: Any) -> Any:
+            return body(_ReadCapturePort(conn, reads=reads))
+
+        return self._inner.transaction(wrapped)
 
 
 def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] | None]:

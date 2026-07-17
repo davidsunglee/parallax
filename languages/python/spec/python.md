@@ -593,7 +593,13 @@ never something an application developer hand-writes.
   `optimistic` mode takes none. A keyed `update` or `delete` of a versioned
   row this unit of work never observed **raises** in either mode; the
   framework never issues an implicit resolving `SELECT` on behalf of a keyed
-  write (which would add round trips no corpus golden represents). **Locking
+  write (which would add round trips no corpus golden represents). A keyed
+  write row that itself authors an explicit value for the entity's version
+  attribute **raises** `CallerAuthoredVersionError`, checked before the
+  observation-required rule above even runs: the version is framework-owned
+  end to end (ADR 0013), so a row-carried value is never a legitimate
+  alternative to the unit of work's own recorded observation, observed or
+  not. **Locking
   mode additionally requires that the observation be of the current
   milestone**: a temporal observation licenses a locking-mode write only when
   its read was **latest-pinned on the written (processing) axis** — a

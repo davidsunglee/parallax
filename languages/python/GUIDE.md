@@ -465,53 +465,39 @@ self-contained without a system `libpq`.
   down 1 exercised, up 1 reasoned-skip: `m-unit-work-012` joining the
   guide-only set); `just python-static` exit 0 (diff-cover 100%,
   Pyright/coverage clean); `gen-usage-guide --check` exit 0.
-- **Core amendment bundle (corpus) + Python re-enablement.** David approved
-  the upstream amendment the mid-phase review's confirmation pass named:
-  `m-bitemp-write-008` gets the `when.uow.concurrency: optimistic` field its
-  golden close always required, and `m-unit-work-005`/`-006`/`-009`/`-012`
-  each author the observing find(s) the `m-opt-lock` prior-observation rule
-  needs before their versioned keyed write(s) (dropping the M4-era literal
-  `version` row key `-005`/`-009` used to carry). Landed as one core-touching
-  series: a `fix(core):` corpus commit, then a `fix(python):` commit
-  retiring every stopgap the corpus gap forced. The engine gained a new
-  seam, a per-scenario find-derived `ObjectKey -> Observation` map
-  (`engine._record_find_observations`/`_row_object_key`) a keyed write
-  consults when its own row carries no `observedVersion` — mirroring how a
-  real `Transaction.find` records `uow.observe` on the production path.
-  `_lower_update`'s M4-era `carries_version` passthrough retired: every
-  versioned update now flows through the observation path unconditionally,
-  and a row that still authors the version attribute is refused outright
-  (`opt_lock.CallerAuthoredVersionError`) rather than silently trusted — a
-  discovery mid-series (`m-unit-work-002`'s own write row carried the SAME
-  M4-era literal shape despite already having a prior observing find) meant
-  the corpus commit also dropped its literal `version` key. A SECOND
-  discovery: a keyed DELETE of an observed versioned row gates on that
-  version in EITHER concurrency mode (unlike a keyed UPDATE's
-  optimistic-only gate, `m-batch-write-004`'s own precedent), so
-  `-006`/`-009`/`-012`'s golden deletes carry the version bind even under
-  the corpus's default locking mode — corrected in the same corpus commit.
-  The three sweep skips (`m-unit-work-006`/`-009`/`-012`) re-enabled;
-  `_CONCURRENCY_OVERRIDES` and the `GUIDE_ONLY_WRITE_STORY_IDS` carve-out
-  (the `Example.guide_only` field, its `build_skips`/`compute_partition`
-  filtering, and the two guide-only-only no-drift tests) retired outright —
-  every write story now grades byte-exact against its own mirrored case.
-  Measured post-round: unit lane (`pytest -m unit`) 1830 passed / 89
-  skipped (up 8 passed, down 3 skipped: +3 from the three re-enabled cases'
-  skip -> pass transition, +6 from `test_op_algebra.py`'s per-find-step
-  serde round-trip parametrize growing as the four amended cases gained
-  find steps, -1 from retiring `test_guide_only_write_stories_are_
-  reasoned_skips_not_exercised`; the no-drift guard's own guide-only ->
-  graded test churn and the `test_write_lowering.py` rename are each
-  net-zero); compile-sweep module (`pytest -m
-  compile_sweep`) 214 passed / 89 skipped (up 3 passed, down 3 skipped: the
-  three re-enabled cases); combined Docker lane
-  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 390
-  passed / 0 skipped (up 3: the three re-enabled cases join the run sweep);
-  rejected sweep (`test_rejected_sweep.py`) 39 passed / 0 skipped
-  (unchanged); API-suite partition exact over 311 active cases (48
-  exercised / 263 reasoned-skip — the pre-remediation split restored); `just
+- **Core amendment bundle (corpus) + Python re-enablement.** Landed the
+  corpus/spec conflict fix the mid-phase review's confirmation pass named:
+  `m-bitemp-write-008` gained its `when.uow.concurrency: optimistic`
+  declaration; `m-unit-work-005`/`-006`/`-009`/`-012` gained the observing
+  find(s) `m-opt-lock`'s prior-observation rule requires. Two commits
+  (`fix(core):` corpus, `fix(python):` engine re-enablement). Measured
+  post-round: unit lane (`pytest -m unit`) 1830 passed / 89 skipped;
+  compile-sweep module (`pytest -m compile_sweep`) 214 passed / 89 skipped;
+  combined Docker lane (`conformance`/`provider_contract`/`adapter_smoke`/
+  `api_conformance`) 390 passed / 0 skipped; rejected sweep
+  (`test_rejected_sweep.py`) 39 passed / 0 skipped; API-suite partition exact
+  over 311 active cases (48 exercised / 263 reasoned-skip); `just
   python-static` exit 0 (diff-cover 100%, Pyright/coverage clean);
-  `gen-usage-guide --check` exit 0.
+  `gen-usage-guide --check` exit 0. External review of this series returned
+  REWORK (2 blockers, 3 should-fix) — closed by the remediation below.
+- **Amendment-bundle review remediation.** Closed the external review's
+  findings via its own mandated resolution: scenario `uow` step grouping
+  (`core/schemas`, `core/spec`, the reference harness) plus
+  `compileEligibility: run-only` declarations on the five observation-
+  dependent `m-unit-work` cases and the re-authored `m-opt-lock-012`. Three
+  commits (`fix(core):` schema/spec/harness, `fix(core):` corpus,
+  `fix(python):` engine). Measured post-round: unit lane (`pytest -m unit`)
+  1834 passed / 94 skipped; compile-sweep module (`pytest -m compile_sweep`)
+  209 passed / 94 skipped; combined Docker lane
+  (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 390
+  passed / 0 skipped (the five `m-unit-work` cases graded via the run-only
+  selector; `m-opt-lock-012` stays out — its green gate is `just
+  oracle-test`); rejected sweep (`test_rejected_sweep.py`) 39 passed / 0
+  skipped; API-suite partition exact over 311 active cases (48 exercised /
+  263 reasoned-skip, unchanged); `just python-static` exit 0 (diff-cover
+  100%, Pyright/coverage clean); `gen-usage-guide --check` exit 0; `just
+  oracle-test` 1455 passed (real Postgres + MariaDB, +7 new harness unit
+  tests pinning the `uow` grouping semantics).
 
 ## Blockers
 

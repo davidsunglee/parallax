@@ -182,19 +182,23 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
 # (a scenario find carries the `for share of t0` read-lock suffix). The m-batch-write
 # coalescing witnesses (008/010) are unreachable under Option B; the remaining m-pk-gen
 # `sequence`-strategy writeSequence cases (query-result-dependent, run-only) and the
-# boundary abort case (m-opt-lock-012, deferred to increment 5) are reasoned-skipped.
+# optimistic-lock conflict-abort scenario (m-opt-lock-012, deferred to increment 5) are
+# reasoned-skipped — the latter now via its OWN declared `compileEligibility: run-only`
+# (query-result-dependent, amendment-review remediation), retiring the prior ugly
+# compile-"error" skip its literal-version rows used to trigger.
 #
-# `m-unit-work-005/006/009/012`: the core amendment bundle (COR-3 Phase 8) closed
-# the corpus/spec conflict the mid-phase review surfaced — each now authors an
-# observing find before its versioned keyed write(s), satisfying `m-opt-lock`'s
-# prior-observation rule (both UPDATE and DELETE), so the engine's find-derived
-# observation seam (`engine._record_find_observations`) resolves them honestly.
-# `-006`/`-009`/`-012` newly join the exercised set; `-005` was already here and
-# now grades through the SAME observation path (its literal-version row shape
-# retired alongside `_lower_update`'s M4-era passthrough).
-_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
-    f"m-unit-work-{n:03d}" for n in (1, 2, 5, 6, 9, 11, 12)
-)
+# `m-unit-work-002/005/006/009/012` LEFT this set (amendment-review remediation,
+# COR-3 Phase 8): each now authors its observing find(s) grouped with its
+# versioned keyed write(s) into ONE `uow` (m-case-format scenario grouping), so
+# the write's version bind is the group's own transaction-scoped observation —
+# a QUERY RESULT the compile lane cannot derive (`m-conformance-adapter`
+# "Compile eligibility"). All five are declared `compileEligibility: run-only`
+# (`query-result-dependent`) and fall through to the shape-agnostic run-only
+# skip (`_skip_reason`) instead; `run` (never `compile`) is the only lane that
+# grades them (`test_run_sweep.py`'s selector mirrors the read lane's own
+# run-only inclusion for write shapes). `-001`/`-011` stay here: both are
+# insert-only, so neither ever needed an observation.
+_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n in (1, 11))
 # COR-3 Phase 8 increment 3's 17 compile-eligible flips: the non-temporal opt-lock
 # versioned advance (m-opt-lock-002), the inheritance-family keyed write family
 # (table-per-hierarchy tag derivation/guard, table-per-concrete-subtype own-table

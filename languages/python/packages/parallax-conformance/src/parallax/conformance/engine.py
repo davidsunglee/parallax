@@ -534,8 +534,8 @@ def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Ob
     carrying them — the write-instruction schema forbids both,
     `instructions.deserialize` enforces it) and the :class:`Observation` they
     describe (``None`` when the row carries neither — an unobserved write, or
-    one whose observation instead comes from this SAME scenario's own prior
-    find step, consulted separately via :data:`ScenarioObservations`)."""
+    one whose observation instead comes from this SAME `uow` group's own
+    prior find step, consulted separately via :data:`ScenarioObservations`)."""
     clean = dict(row)
     version = clean.pop("observedVersion", None)
     in_z = clean.pop("observedInZ", None)
@@ -547,16 +547,21 @@ def _strip_observation(row: Mapping[str, object]) -> tuple[dict[str, object], Ob
     )
 
 
-# A per-scenario object-key -> Observation map, populated as a scenario's own
-# find steps execute and consulted by a later keyed write of the SAME object
-# (m-opt-lock; ADR 0013) — the seam a REAL `Transaction.find` builds on the
-# production path (`parallax.snapshot.handle._record_observations` ->
-# `uow.observe`), rebuilt here since the engine's scenario lane never opens a
-# real `UnitOfWork`. Scoped to ONE scenario/writeSequence case (never shared
-# across cases): a writeSequence carries no find steps at all, so its own map
-# stays permanently empty, harmlessly. Reladomo prior art (semantics, not
-# idioms): the transaction records the version at read time ("the shadow
-# value read earlier") and threads it into the UPDATE bind
+# An object-key -> Observation map (m-opt-lock; ADR 0013) — the same neutral
+# shape a REAL `Transaction.find` populates on the production path
+# (`parallax.snapshot.handle._record_observations` -> `uow.observe`).
+# `_write_sequence_lowered` / `run_write_sequence_case` pass a permanently
+# EMPTY instance (a writeSequence carries no find steps at all): every keyed
+# write's observation there comes solely from its own row's reserved
+# `observedVersion`/`observedInZ` control keys. The scenario RUN lane
+# (`_run_uow_group`) builds one FRESH instance per `uow` GROUP — never one
+# spanning the whole scenario or crossing a group boundary (COR-3 Phase 8
+# amendment-review remediation retires the prior scenario-wide map); the
+# scenario COMPILE lane (`_scenario_lowered`) never populates one at all, so
+# no compile path ever consults a query result (`m-conformance-adapter`
+# "Compile eligibility"). Reladomo prior art (semantics, not idioms): the
+# transaction records the version at read time ("the shadow value read
+# earlier") and threads it into the UPDATE bind
 # (`docs/research/reladomo/09-transactions-locking.md:55-59`).
 ScenarioObservations = dict[ObjectKey, Observation]
 
@@ -606,33 +611,42 @@ def _row_object_key(
     return (entity_name, tuple(pairs))
 
 
-def _record_find_observations(
+def _observe_group_find(
+    tx: handle.Transaction,
     observations: ScenarioObservations,
     meta: Metamodel,
     entity_name: str,
     rows: Sequence[Mapping[str, object]],
-    *,
-    by_column: bool,
 ) -> None:
-    """Record this scenario's own OBSERVED version for every row a find step
-    returns, when its target is a VERSIONED NON-TEMPORAL entity — the new
-    engine seam (COR-3 Phase 8 core amendment bundle) a subsequent keyed
-    write of the SAME object consults when its own row carries no
-    ``observedVersion`` (m-unit-work-002/005/006/009/012's versioned Account
-    scenarios: the corpus amendment prepends an observing find before each
-    keyed write that needs one). A no-op for a temporal or unversioned target
+    """Record a `uow` GROUP's own OBSERVED version for every row a grouped
+    find step returns, when its target is a VERSIONED NON-TEMPORAL entity —
+    into BOTH the group-local :data:`ScenarioObservations` map (this SAME
+    group's own pure re-lowering oracle, :func:`_lower_resolved` via
+    :func:`_run_uow_group`) and the REAL transaction's own unit of work
+    (``tx._uow.observe`` — the same neutral seam :func:`_execute_write_unit`
+    pokes at, mirroring the production path a real ``Transaction.find``
+    builds, `parallax.snapshot.handle._record_observations` -> `uow.observe`)
+    (COR-3 Phase 8 amendment-review remediation), so a later keyed write of
+    the SAME object in this SAME group derives its version bind from a
+    genuine transaction-scoped observation — never an oracle, never a
+    scenario-wide map. Rows are always COLUMN-named here (the real
+    ``port.execute`` row shape — the SAME convention
+    `parallax.snapshot.handle._record_observations` reads via
+    ``node.fields[attr.column]``); the scenario compile lane never calls this
+    at all. A no-op for a temporal or unversioned target
     (:func:`_versioned_non_temporal_version_attribute` returns ``None``) and
     for any row missing its primary key or version field — never reachable
     for a well-formed corpus find, but this seam takes no data on faith."""
     version_attr = _versioned_non_temporal_version_attribute(meta, entity_name)
     if version_attr is None:
         return
-    version_field = version_attr.column if by_column else version_attr.name
     for row in rows:
-        key = _row_object_key(meta, entity_name, row, by_column=by_column)
-        if key is None or version_field not in row:
+        key = _row_object_key(meta, entity_name, row, by_column=True)
+        if key is None or version_attr.column not in row:
             continue
-        observations[key] = Observation(version=cast("int", row[version_field]))
+        observation = Observation(version=cast("int", row[version_attr.column]))
+        observations[key] = observation
+        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
 
 
 def _entry_instant(entry: Mapping[str, object]) -> str:
@@ -915,10 +929,11 @@ def _build_instructions(
     ADR 0013) or stay ONE multi-row instruction (reaching `lower_write`'s own
     multi-row refusal, the honest increment-5 collapse deferral). A row whose
     own control keys yield NO observation falls back to
-    ``scenario_observations`` — this SAME scenario's own prior find step(s)
-    (:func:`_record_find_observations`), keyed consistently with
-    :func:`~parallax.core.unit_work.object_key` — mirroring how a temporal
-    entry falls back to :meth:`TemporalShadow.resolve` above.
+    ``scenario_observations`` — a writeSequence's own permanently-empty
+    instance, or (the scenario RUN lane only) a `uow` GROUP's own prior find
+    step(s) (:func:`_observe_group_find`, via :func:`_run_uow_group`), keyed
+    consistently with :func:`~parallax.core.unit_work.object_key` — mirroring
+    how a temporal entry falls back to :meth:`TemporalShadow.resolve` above.
     :func:`_check_statement_count_consistency` then verifies the entry's own
     authored ``statements`` count agrees, independently of that decision.
     """
@@ -969,9 +984,12 @@ def _resolve_entries(
     tracker advanced) twice for one unit. ``unit_inserted`` tracks this SAME
     buffer's own same-transaction coalescing candidates (see
     :func:`_build_temporal_instruction`) across the whole unit.
-    ``scenario_observations`` is the WHOLE scenario's own find-derived map
-    (:data:`ScenarioObservations`) — read-only here, populated by the find
-    steps that ran before this unit."""
+    ``scenario_observations`` is READ-ONLY here — an always-empty map for a
+    writeSequence entry or an ungrouped scenario write step (neither ever
+    consults a find-derived observation), or (the scenario RUN lane only) a
+    `uow` GROUP's own find-derived map (:func:`_run_uow_group`), populated by
+    that SAME group's find steps that ran before this unit — never one
+    spanning the whole scenario."""
     resolved: list[tuple[WriteInstruction, ObjectKey | None, Observation | None]] = []
     unit_inserted: set[ObjectKey] = set()
     for entry in entries:
@@ -1053,11 +1071,18 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
 
     One :class:`TemporalShadow` spans the whole scenario (COR-3 Phase 8
     increment 4): a later write step's temporal close/chain observes an
-    earlier step's own opened milestone(s), never the database. Likewise, one
-    :data:`ScenarioObservations` map spans the whole scenario (COR-3 Phase 8
-    core amendment bundle): a find step's own authored ``expectRows`` records
-    each versioned non-temporal row's observed version, consulted by a later
-    keyed write of the SAME object.
+    earlier step's own opened milestone(s), never the database. The compile
+    lane consults NO find-derived observation (COR-3 Phase 8 amendment-review
+    remediation): a keyed write whose version bind is the framework-owned
+    advance of a version this SAME scenario's own observing find returned is
+    query-result-dependent (`m-conformance-adapter` "Compile eligibility") and
+    is therefore declared `compileEligibility: run-only` in the corpus, so it
+    short-circuits at :func:`eligibility` before this function ever runs
+    (`adapter.compile_case`). :data:`ScenarioObservations` stays permanently
+    empty here — every keyed write this lane reaches resolves its observation
+    from its OWN row's reserved ``observedVersion``/``observedInZ`` control
+    keys only (:func:`_strip_observation`), exactly as a writeSequence entry
+    does.
     """
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
@@ -1077,16 +1102,6 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
             else:
                 statement = _lower_find(step, meta, dialect, concurrency)
-                target = cast("str", step["targetEntity"])
-                expect_rows = step.get("expectRows")
-                if isinstance(expect_rows, list):
-                    _record_find_observations(
-                        scenario_observations,
-                        meta,
-                        target,
-                        cast("list[Mapping[str, object]]", expect_rows),
-                        by_column=False,
-                    )
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -1340,13 +1355,159 @@ def _execute_write_unit(
         database.transact(body, concurrency=concurrency)
 
 
+def _scenario_uow_spans(
+    case_name: str, steps: Sequence[Mapping[str, object]]
+) -> dict[str, tuple[int, int]]:
+    """Every declared `uow` group label's CONTIGUOUS step-index span
+    ``(start, end)`` (inclusive) in this scenario (`m-case-format` scenario
+    `uow` grouping). The Python run lane executes only CONTIGUOUS groups —
+    every group it reaches this round is (`m-unit-work-002/005/006/009/012`);
+    a genuinely INTERLEAVED group (the optimistic-lock race shape,
+    `m-opt-lock-012`) stays reference-harness-only until the engine gains its
+    own multi-connection seam (a later increment), so this raises loudly
+    rather than silently mis-executing one."""
+    labels = [step.get("uow") if isinstance(step.get("uow"), str) else None for step in steps]
+    spans: dict[str, tuple[int, int]] = {}
+    for label in {cast("str", entry) for entry in labels if entry is not None}:
+        indices = [i for i, entry in enumerate(labels) if entry == label]
+        start, end = indices[0], indices[-1]
+        if indices != list(range(start, end + 1)):
+            raise EngineError(
+                f"{case_name}: uow group {label!r} is not contiguous — the engine's "
+                "scenario run lane executes only contiguous groups (an interleaved "
+                "group, the optimistic-lock race shape, is reference-harness-only "
+                "today)"
+            )
+        spans[label] = (start, end)
+    return spans
+
+
+def _group_tx_instant(steps: Sequence[Mapping[str, object]], start: int, end: int) -> str:
+    """The Clock instant a `uow` group's own choreography unit runs at — its
+    first write entry's own instant (m-audit-write/m-bitemp-write `at`; ADR
+    0010), or the inert default when the group carries no write (or every
+    write entry names none, i.e. every group this round targets a
+    non-temporal entity)."""
+    for i in range(start, end + 1):
+        step = steps[i]
+        if "write" in step:
+            entries = _write_entries(step["write"])
+            if entries:
+                return _entry_instant(entries[0])
+    return _INERT_CLOCK_INSTANT
+
+
+def _group_is_doomed(steps: Sequence[Mapping[str, object]], start: int, end: int) -> bool:
+    """Whether a `uow` group ROLLS BACK after its last step: at least one of
+    its OWN write steps declares `rollback: true` — the WHOLE group is then
+    the doomed unit of work (`m-case-format` scenario `uow` grouping), not
+    just that one step."""
+    return any(
+        "write" in steps[i] and steps[i].get("rollback") is True for i in range(start, end + 1)
+    )
+
+
+def _run_uow_group(
+    port: DbPort,
+    meta: Metamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    shadow: TemporalShadow,
+    steps: Sequence[Mapping[str, object]],
+    start: int,
+    end: int,
+) -> list[_LoweredStep]:
+    """Execute one CONTIGUOUS `uow` group's steps (index *start*..*end*
+    inclusive) inside ONE ``db.transact`` (COR-3 Phase 8 amendment-review
+    remediation): in step order, a grouped FIND reads THROUGH the
+    transaction's own connection (``tx._conn`` — force-flushing any pending
+    buffered write first, ``tx._uow.read``, exactly as a real
+    ``Transaction.find`` does) and records its own observation on the
+    transaction's unit of work (:func:`_observe_group_find`); a grouped WRITE
+    resolves against this SAME group's own observations (never a scenario-
+    wide map) and buffers via ``tx._buffer``, so the eventual ``flush()``
+    derives every version bind from ``self._observations`` alone — the SAME
+    neutral seam :func:`_execute_write_unit` uses for one step, generalized
+    here to a whole group. Emissions/round-trips still come from the SAME
+    pure re-lowering every other write path uses (:func:`_lower_resolved`),
+    fed this group's own observations — the oracle stays a pure function of
+    (instructions, observations, instant), only now the observations
+    themselves come from a REAL find this SAME call already executed, not an
+    authored value. `rollback: true` on any of the group's own write steps
+    dooms the WHOLE group: after its last step, the buffer is force-flushed
+    (a no-op if a trailing find already forced it via read-your-own-writes)
+    and the closure raises — the `m-unit-work` abort contract applied to the
+    group rather than one step.
+    """
+    tx_instant = _group_tx_instant(steps, start, end)
+    doomed = _group_is_doomed(steps, start, end)
+    group_observations: ScenarioObservations = {}
+    instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
+    database = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
+    lowered: list[_LoweredStep] = []
+
+    def body(tx: handle.Transaction) -> None:
+        for index in range(start, end + 1):
+            step = steps[index]
+            if "write" in step:
+                entries = _write_entries(step["write"])
+                resolved = _resolve_entries(entries, meta, shadow, tx_instant, group_observations)
+                statements = _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
+                for instruction, key, observation in resolved:
+                    assert isinstance(
+                        instruction, KeyedWrite
+                    )  # every resolved entry this lane buffers is keyed
+                    if key is not None and observation is not None:
+                        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage]
+                    tx._buffer(  # pyright: ignore[reportPrivateUsage]
+                        instruction.mutation,
+                        instruction.entity,
+                        dict(instruction.rows[0]),
+                        business_from=instruction.business_from,
+                        business_to=instruction.business_to,
+                    )
+                lowered.append(
+                    _LoweredStep(
+                        f"/scenario/{index}/write", statements, True, step.get("rollback") is True
+                    )
+                )
+            else:
+                statement = _lower_find(step, meta, dialect, concurrency)
+                target = cast("str", step["targetEntity"])
+                conn = tx._conn  # pyright: ignore[reportPrivateUsage]
+                rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage]
+                    lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
+                )
+                _observe_group_find(tx, group_observations, meta, target, rows)
+                lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
+        if doomed:
+            # Force any still-buffered DML onto the wire (and count its round
+            # trips) INSIDE the still-open atomic scope before the deliberate
+            # abort — a no-op when a trailing grouped find already forced the
+            # flush via read-your-own-writes (`m-unit-work-012`'s doomed group);
+            # otherwise (the group's last step is itself the doomed write, no
+            # find after it) this is what puts the DML on the wire at all
+            # (`m-unit-work` abort contract, mirroring `_execute_write_unit`).
+            tx._uow.flush()  # pyright: ignore[reportPrivateUsage]
+            raise _RollbackStep
+
+    with contextlib.suppress(_RollbackStep):
+        database.transact(body, concurrency=concurrency)
+    return lowered
+
+
 def run_scenario_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], int]:
-    """Run a scenario: each write step commits (or aborts) as its OWN unit of
-    work through ``db.transact`` (COR-3 Phase 8 increment 4, DQ4 re-route), each
-    find reads committed state. Reports the ordered emissions and total round
-    trips."""
+    """Run a scenario: an UNGROUPED write step commits (or aborts) as its OWN
+    unit of work through ``db.transact`` (COR-3 Phase 8 increment 4, DQ4
+    re-route) and an ungrouped find reads committed state, exactly as before.
+    A `uow`-GROUPED contiguous span of steps instead runs inside ONE
+    ``db.transact`` (COR-3 Phase 8 amendment-review remediation,
+    :func:`_run_uow_group`): the observing find and the versioned write it
+    licenses execute in the SAME unit of work, so the write's version bind is
+    a genuine transaction-scoped observation, never an oracle. Reports the
+    ordered emissions and total round trips."""
     steps = _scenario_steps(case)
     if _has_action_step(steps):
         return _run_snapshot_scenario(case, dialect_name, port, steps)
@@ -1354,17 +1515,26 @@ def run_scenario_case(
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
-    scenario_observations: ScenarioObservations = {}
+    spans = _scenario_uow_spans(case.path.name, steps)
+    span_start_labels = {start: label for label, (start, _end) in spans.items()}
     lowered: list[_LoweredStep] = []
     try:
         _seed_shadow_from_fixtures(case, meta, shadow)
-        for index, step in enumerate(steps):
+        index = 0
+        while index < len(steps):
+            label = span_start_labels.get(index)
+            if label is not None:
+                start, end = spans[label]
+                lowered.extend(
+                    _run_uow_group(port, meta, dialect, concurrency, shadow, steps, start, end)
+                )
+                index = end + 1
+                continue
+            step = steps[index]
             if "write" in step:
                 entries = _write_entries(step["write"])
                 tx_instant = _entry_instant(entries[0])
-                resolved = _resolve_entries(
-                    entries, meta, shadow, tx_instant, scenario_observations
-                )
+                resolved = _resolve_entries(entries, meta, shadow, tx_instant, {})
                 statements = _lower_resolved(resolved, meta, dialect, concurrency, tx_instant)
                 rollback = step.get("rollback") is True
                 _execute_write_unit(
@@ -1373,10 +1543,9 @@ def run_scenario_case(
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
             else:
                 statement = _lower_find(step, meta, dialect, concurrency)
-                rows = _execute_reads(port, dialect, (statement,))
-                target = cast("str", step["targetEntity"])
-                _record_find_observations(scenario_observations, meta, target, rows, by_column=True)
+                _execute_reads(port, dialect, (statement,))
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
+            index += 1
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions([(step.pointer, step.statements) for step in lowered])
@@ -1491,10 +1660,12 @@ def _table_column_order(meta: Metamodel, entity: Entity, table: str) -> list[str
 def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statement]) -> list[Row]:
     """Execute every statement and return the LAST one's rows — a scenario find
     step is always single-statement (:func:`_lower_find`), so ``statements`` is
-    always a one-tuple in practice; the raw, COLUMN-keyed rows are the run
-    lane's own source for :func:`_record_find_observations` (mirroring the
+    always a one-tuple in practice; the raw, COLUMN-keyed rows are a GROUPED
+    find's own source for :func:`_observe_group_find` (mirroring the
     production ``Transaction.find`` -> ``uow.observe`` seam, `parallax.
-    snapshot.handle._record_observations`)."""
+    snapshot.handle._record_observations`) when called on the transaction's
+    own connection (``tx._conn``, :func:`_run_uow_group`), and an ungrouped
+    find's plain read when called on the top-level ``port``."""
     rows: list[Row] = []
     for statement in statements:
         rows = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
