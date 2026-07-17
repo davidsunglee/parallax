@@ -265,6 +265,7 @@ Corpus case: `m-read-lock-002`
 
 ```python
 op = Account.where(Account.id == 2)
+db.transact(lambda tx: tx.find(op), concurrency="locking")
 ```
 
 ## A locking-mode projection read omits the shared read lock
@@ -273,6 +274,7 @@ Corpus case: `m-read-lock-003`
 
 ```python
 op = Account.where().distinct()
+db.transact(lambda tx: tx.find(op), concurrency="locking")
 ```
 
 ## An optimistic-mode read omits the shared read lock
@@ -281,6 +283,7 @@ Corpus case: `m-read-lock-005`
 
 ```python
 op = Account.where(Account.id == 2)
+db.transact(lambda tx: tx.find(op), concurrency="optimistic")
 ```
 
 ## Diamond identity: two include paths reaching the same rows share one node

@@ -23,7 +23,7 @@ from typing import Final
 from parallax.conformance import case_format
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
-from parallax.conformance.read_stories import READ_STORIES
+from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
 
 __all__ = [
@@ -79,18 +79,21 @@ class Partition:
 EXAMPLES: Final[list[Example]] = [
     # The op-algebra / temporal-read / navigate / single-concrete-inheritance
     # read examples: each is an executable read story
-    # (`parallax.conformance.read_stories`) — the snippet is the story's own
-    # authored source, and the real-Postgres suite executes the SAME `build()`
-    # through the shipped `parallax.snapshot.connect` + `parallax-postgres`
-    # (test_story_run's generic runner), grading the mirrored case's own
-    # `then.rows` (order-insensitive, exact-typed) and `then.roundTrips`. The
-    # `navigate`-tagged siblings (a corpus spelling redundancy for the
-    # identical correlated-EXISTS lowering `exists` already expresses —
-    # m-op-algebra), the deep-fetch-bearing temporal siblings, the
-    # multi-concrete polymorphic PROJECTING inheritance reads, and the
-    # Customer value-object family are reasoned-skipped; see
+    # (`parallax.conformance.read_stories`) — the snippet is `read_story_
+    # snippet(story)` (single-sourced from the story's own `concurrency`
+    # field, review remediation finding 2 — never the bare `snippet` alone,
+    # which would render a `m-read-lock` transactional story identically to
+    # its non-transactional siblings), and the real-Postgres suite executes
+    # the SAME `build()` through the shipped `parallax.snapshot.connect` +
+    # `parallax-postgres` (test_story_run's generic runner), grading the
+    # mirrored case's own `then.rows` (order-insensitive, exact-typed) and
+    # `then.roundTrips`. The `navigate`-tagged siblings (a corpus spelling
+    # redundancy for the identical correlated-EXISTS lowering `exists`
+    # already expresses — m-op-algebra), the deep-fetch-bearing temporal
+    # siblings, the multi-concrete polymorphic PROJECTING inheritance reads,
+    # and the Customer value-object family are reasoned-skipped; see
     # CASE_SKIP_REASONS.
-    *(Example(story.case_id, story.title, story.snippet) for story in READ_STORIES),
+    *(Example(story.case_id, story.title, read_story_snippet(story)) for story in READ_STORIES),
     # The developer transaction surface (m-unit-work, M4): each write example IS
     # an executable story (`parallax.conformance.stories`) — the snippet is the
     # story's own source, the real-Postgres suite executes it through the shipped

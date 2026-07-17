@@ -66,17 +66,21 @@ from parallax.core import Statement
 from parallax.core.temporal_read import LATEST
 from parallax.core.unit_work import Concurrency
 
-__all__ = ["READ_STORIES", "ReadStory"]
+__all__ = ["READ_STORIES", "ReadStory", "read_story_snippet"]
 
 
 @dataclass(frozen=True, slots=True)
 class ReadStory:
     """One case-driven idiomatic read example: build the statement, mirror one
     corpus ``read``-shape case whose oracle is ``then.rows``/``then.roundTrips``.
-    ``snippet`` is the Usage Guide's rendered source (a plain ``op = ...``
-    reading, matching every other example's presentation) — kept alongside
+    ``snippet`` is the bare ``op = ...`` reading every entry authors (a plain
+    assignment, matching every other example's presentation) — kept alongside
     ``build`` rather than derived via ``inspect.getsource`` (a lambda's own
     source line would render the dict-literal/comma noise around it).
+    :func:`read_story_snippet` is the Usage Guide's OWN rendered source: it
+    layers the participation-mode wrapper on top of ``snippet``, single-
+    sourced from ``concurrency`` below rather than a second, independently-
+    authored string (review remediation finding 2).
 
     ``concurrency`` (COR-3 Phase 8 increment 6, the `m-read-lock` matrix's
     -002/-003/-005) opts a story into the TRANSACTIONAL read half instead of
@@ -86,7 +90,11 @@ class ReadStory:
     participating `tx.find`, whose emitted SQL carries (or, `optimistic`,
     omits) the dialect's shared read-lock suffix per the SAME `m-read-lock`
     policy `Transaction.find` derives production-side
-    (`parallax.core.read_lock.mode_for`)."""
+    (`parallax.core.read_lock.mode_for`). `test_story_run.py`'s own generic
+    runner branches on this SAME field to build the executed callable — the
+    ONE place the mode is authored, flowing into both the rendered snippet
+    (:func:`read_story_snippet`) and the execution, so neither can drift from
+    the other."""
 
     case_id: str
     title: str
@@ -94,6 +102,23 @@ class ReadStory:
     build: Callable[[], Statement]
     snippet: str
     concurrency: Concurrency | None = None
+
+
+def read_story_snippet(story: ReadStory) -> str:
+    """The story's rendered Usage Guide source: ``story.snippet``'s bare
+    ``op = ...`` reading, PLUS — for a story whose own ``concurrency`` opts
+    into the transactional read half — the SAME
+    ``db.transact(lambda tx: tx.find(op), concurrency=...)`` wrapper
+    `test_story_run.py`'s generic runner actually executes, rendered from
+    that SAME field rather than a second, independently-typed copy of the
+    mode (review remediation finding 2: a `m-read-lock-002` vs. `-005`-style
+    pair renders IDENTICALLY otherwise, hiding the one thing the pair
+    exists to demonstrate)."""
+    if story.concurrency is None:
+        return story.snippet
+    return (
+        f'{story.snippet}\ndb.transact(lambda tx: tx.find(op), concurrency="{story.concurrency}")'
+    )
 
 
 READ_STORIES: Final[tuple[ReadStory, ...]] = (

@@ -10,7 +10,7 @@ import pytest
 from parallax.conformance import api_suite, case_format, usage_guide
 from parallax.conformance.api_suite import Example, Skip
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
-from parallax.conformance.read_stories import READ_STORIES
+from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 
 pytestmark = pytest.mark.unit
 
@@ -242,9 +242,36 @@ def test_read_and_graph_story_snippets_render_no_private_name() -> None:
     # story's rendered Usage Guide source is the SAME public surface the suite
     # executes — it must never leak a framework-internal `_`-prefixed name.
     for story in READ_STORIES:
-        assert not _PRIVATE_NAME.search(story.snippet), story.case_id
+        assert not _PRIVATE_NAME.search(read_story_snippet(story)), story.case_id
     for story in GRAPH_STORIES:
         assert not _PRIVATE_NAME.search(graph_story_snippet(story)), story.case_id
+
+
+def test_read_story_snippet_single_sources_the_concurrency_mode() -> None:
+    # Review remediation finding 2: `m-read-lock-002` (locking) and `-005`
+    # (optimistic) run the SAME `db.find` expression under DIFFERENT
+    # participation modes — the entire point of the pair. The rendered
+    # snippet must show the mode (never render the two identically), and it
+    # must be the SAME mode the story's own `concurrency` field drives
+    # execution with (`test_story_run.py`'s generic runner branches on that
+    # SAME field) — single-sourced, not a second, independently-typed string.
+    by_id = {story.case_id: story for story in READ_STORIES}
+    locking = by_id["m-read-lock-002"]
+    optimistic = by_id["m-read-lock-005"]
+    assert locking.concurrency == "locking"
+    assert optimistic.concurrency == "optimistic"
+    locking_snippet = read_story_snippet(locking)
+    optimistic_snippet = read_story_snippet(optimistic)
+    assert locking_snippet != optimistic_snippet
+    assert 'concurrency="locking"' in locking_snippet
+    assert 'concurrency="optimistic"' in optimistic_snippet
+    assert "db.transact(" in locking_snippet
+    # A story with no declared concurrency renders its bare `snippet` only —
+    # no transactional wrapper appears for the non-participating majority.
+    plain = by_id["m-op-algebra-002"]
+    assert plain.concurrency is None
+    assert read_story_snippet(plain) == plain.snippet
+    assert "db.transact(" not in read_story_snippet(plain)
 
 
 def test_generate_matches_render_of_registered_examples() -> None:
