@@ -251,8 +251,13 @@ def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] |
 def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     """Run each keyed unit-of-work write case end-to-end against a reset database.
 
-    A scenario's writes commit (or, `rollback: true`, abort) as separate units of work
-    and its finds read committed state; a writeSequence executes the whole FK-ordered
+    An UNGROUPED scenario write commits (or, `rollback: true`, aborts) as its own
+    separate unit of work, and an ungrouped find reads committed state — today's
+    legacy semantics. A `uow`-GROUPED span of steps instead shares ONE held
+    transaction: a grouped write applies on it without its own per-step commit, and
+    a grouped find reads THROUGH that SAME transaction (read-your-own-writes,
+    possibly uncommitted mid-transaction state), committing or rolling back only at
+    the group's own last step. A writeSequence executes the whole FK-ordered
     sequence in one transaction. Grading: the envelope's per-step emissions equal the
     golden DML and its total round trips the case's `then.roundTrips`; every scenario
     find step's observed wire rows equal its `expectRows` (captured at the port seam

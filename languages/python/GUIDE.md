@@ -497,7 +497,14 @@ self-contained without a system `libpq`.
   263 reasoned-skip, unchanged); `just python-static` exit 0 (diff-cover
   100%, Pyright/coverage clean); `gen-usage-guide --check` exit 0; `just
   oracle-test` 1455 passed (real Postgres + MariaDB, +7 new harness unit
-  tests pinning the `uow` grouping semantics).
+  tests pinning the `uow` grouping semantics). Confirmation-pass residuals
+  closed (two commits: `fix(core):` harness/schema/prose/corpus,
+  `fix(python):` docstring). Re-measured: `just oracle-test` 1456 passed
+  (+1); unit lane 1834 passed / 94 skipped; compile-sweep 209 passed / 94
+  skipped (unchanged); combined Docker lane 390 passed / 0 skipped
+  (unchanged); rejected sweep 39 passed / 0 skipped (unchanged); API-suite
+  partition unchanged (48 exercised / 263 reasoned-skip); `just
+  python-static` exit 0; `gen-usage-guide --check` exit 0.
 
 ## Blockers
 
