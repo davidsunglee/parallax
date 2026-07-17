@@ -9,6 +9,7 @@ reading and the engine's failure modes are pinned too.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import decimal
 import threading
@@ -804,46 +805,91 @@ def test_await_interleaved_workers_cancels_a_survivor_blocked_in_real_io_then_jo
     assert peer.closed
 
 
-def test_await_interleaved_workers_reports_a_genuinely_unkillable_worker_loudly() -> None:
-    # The terminal state stays honest even when the best-effort cancellation
-    # probe finds nothing to call (a fake connection with no `cancel()`
-    # capability at all, `main_connection` here): this function must NEVER
-    # raise the ordinary timeout error while it believes no cleanup remains
-    # and a worker is in fact still alive. It raises a DISTINCT, louder
-    # error instead, naming the leaked worker by thread name and declaring
-    # the caller-owned port unsafe to reuse — never a silent leak.
+class _TerminableBlockingConnection:
+    """A fake `DbPort` whose ``execute`` blocks (standing in for a real
+    driver call parked in socket I/O) and exposes NO :meth:`cancel`
+    capability at all — the shape the round-2 confirmation pass on review
+    remediation finding 4 needs: a survivor neither `_Turnstile.release_all`
+    nor :func:`~parallax.conformance.engine._cancel_in_flight_work`'s
+    duck-typed ``cancel()`` probe can reach, forcing the THIRD, destructive
+    escalation, :func:`~parallax.conformance.engine._terminate_connection`.
+    Its own :meth:`close` mirrors REAL closed-connection semantics closely
+    enough to prove that rung's own contract: the blocked ``execute`` call
+    wakes and RAISES once ``close`` fires (a closed connection can never
+    fulfil the in-flight call), and any LATER call raises immediately too,
+    as far as this fake allows — never silently executing against a
+    terminated connection."""
+
+    def __init__(self) -> None:
+        self._closed = threading.Event()
+        self.close_calls = 0
+        self.closed = False
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        self._closed.wait(timeout=5.0)  # self-bounded even if `close` is never called
+        raise RuntimeError("connection is closed")
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.closed = True
+        self._closed.set()
+
+
+def test_await_interleaved_workers_terminates_a_survivor_with_no_cancel_capability() -> None:
+    # Round-2 confirmation pass on review remediation finding 4: a survivor
+    # neither `release_all` nor the cancellation probe can reach (no
+    # `cancel()` capability at all, `main_connection` here — the
+    # CALLER-OWNED port) escalates to the THIRD, destructive rung —
+    # `_terminate_connection` closes its OWN connection outright — rather
+    # than this function ever raising while that worker remains alive; the
+    # corrected contract has no "loud leak" terminal state at all.
+    # `is_alive()` must be False for EVERY worker at the moment of the
+    # raise, and the raised error must report that the caller-owned port
+    # was itself terminated. The fake's own `close()` seam mirrors REAL
+    # close semantics closely enough to prove it: its blocked `execute`
+    # wakes and raises once closed, and a later call raises too (as far as
+    # the fake allows) rather than executing.
     turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
-    main_connection = _ScriptedPort()  # no `cancel()` capability at all
+    main_connection = _TerminableBlockingConnection()
     peer = _ScriptedPort()
-    released = threading.Event()
 
     def run_a() -> None:
-        released.wait()  # ignores the turnstile, the peer close, and the cancel probe alike
+        # expected collateral of the termination escalation itself
+        with contextlib.suppress(RuntimeError):
+            main_connection.execute("select 1", [])
 
     def run_b() -> None:
         turnstile.wait_for(100)  # an index this choreography never advances to
 
-    thread_a = threading.Thread(target=run_a, name="uow-ours", daemon=True)
-    thread_b = threading.Thread(target=run_b, name="uow-concurrent", daemon=True)
+    thread_a = threading.Thread(target=run_a, name="uow-ours")
+    thread_b = threading.Thread(target=run_b, name="uow-concurrent")
     thread_a.start()
     thread_b.start()
-    try:
-        with pytest.raises(engine.EngineError, match=r"uow-ours.*unsafe to reuse"):
-            engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
-                thread_a,
-                thread_b,
-                turnstile,
-                main_connection,
-                peer,
-                "m-unit-work-999-synthetic.yaml",
-                timeout=0.1,
-            )
-        assert thread_a.is_alive()
-        assert not thread_b.is_alive()
-        assert peer.closed
-    finally:
-        released.set()  # let the daemon thread finish so it never outlives this test
-        thread_a.join(timeout=5.0)
+
+    with pytest.raises(engine.EngineError, match=r"terminated \(closed\).*unsafe to reuse"):
+        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
+            thread_a,
+            thread_b,
+            turnstile,
+            main_connection,
+            peer,
+            "m-unit-work-999-synthetic.yaml",
+            timeout=0.1,
+        )
+
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+    assert main_connection.close_calls == 1
+    assert main_connection.closed
+    assert peer.closed
+    with pytest.raises(RuntimeError):
+        main_connection.execute("select 1", [])  # a terminated port raises, never executes
 
 
 def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:
