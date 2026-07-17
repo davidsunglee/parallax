@@ -240,7 +240,12 @@ class _Ctx:
 # Projection.                                                                  #
 # --------------------------------------------------------------------------- #
 def _projection(
-    entity: Entity, dialect: Dialect, alias: str, result_form: ResultForm
+    entity: Entity,
+    dialect: Dialect,
+    alias: str,
+    result_form: ResultForm,
+    *,
+    include_value_objects: bool = False,
 ) -> tuple[str, list[object]]:
     """The base read projection (m-sql *Read projection*), a function of the model.
 
@@ -258,7 +263,16 @@ def _projection(
     columns**, in declared value-object order — a json document is always a plain
     alias-qualified reference — so a value-object-bearing entity's whole document
     rides the owner's single statement (the one-round-trip materialization
-    contract, m-value-object). A row-form read omits them.
+    contract, m-value-object). A row-form read omits them by default.
+
+    ``include_value_objects`` opts a **row-form** read into slot 4 too, WITHOUT
+    becoming instance-form (`m-case-format.md:727`): a materializing predicate
+    write's own internal resolving read stays row-form (it constructs no
+    instance, `m-value-object-047`) but an assignment-bearing verb on a
+    temporal target still needs the raw VO document(s) a chained/carried-forward
+    row must preserve — the caller (`parallax.snapshot.handle.
+    Transaction._materialize_predicate_write`) derives this from the verb's own
+    needs, never from `result_form`.
     """
     by_column = {attr.column: attr for attr in entity.attributes}
     exprs: list[str] = []
@@ -271,7 +285,7 @@ def _projection(
         expr, extra = dialect.project(alias, column, attribute.type)
         exprs.append(expr)
         binds.extend(extra)
-    if result_form == "instance":
+    if result_form == "instance" or include_value_objects:
         exprs.extend(dialect.qualified(alias, vo.column) for vo in entity.value_objects)
     return ", ".join(exprs), binds
 
@@ -288,6 +302,7 @@ def compile_read(
     result_form: ResultForm = "row",
     lock: LockMode | None = None,
     relationship_order: bool = False,
+    include_value_objects: bool = False,
 ) -> Statement:
     """Compile a read operation to one canonical ``Statement`` for ``dialect``.
 
@@ -298,6 +313,16 @@ def compile_read(
     rows materialize into instances) additionally projects the value-object document
     columns. The conformance engine derives it from the case's asserted result
     member (`then.rows` = row-form; `then.graph` / `then.graphs` = instance-form).
+
+    ``include_value_objects`` opts a **row-form** read into the value-object
+    document columns too, independent of ``result_form`` (`m-case-format.md:727`
+    — a materializing predicate write's own resolving read projects need-
+    sensitively: terminate/delete never set it; an assignment-bearing verb on a
+    temporal target does, so the resolved row can carry the document(s) forward
+    into its chained/carried write). An inheritance-family target never reaches
+    this flag (a predicate-selected write on a family is rejected before this
+    compiler, `m-inheritance`), so it is not threaded into the inheritance
+    lowering below.
 
     ``lock`` renders the transactional read-lock suffix (m-sql *Read-lock suffix*,
     applied through the m-dialect seam): an in-transaction **object find** in
@@ -337,7 +362,9 @@ def compile_read(
         )
     ctx = _Ctx(meta=meta, dialect=dialect, entity=entity)
 
-    proj_sql, proj_binds = _projection(entity, dialect, ctx.alias, result_form)
+    proj_sql, proj_binds = _projection(
+        entity, dialect, ctx.alias, result_form, include_value_objects=include_value_objects
+    )
     ctx.binds.extend(proj_binds)
     select = f"select {'distinct ' if distinct else ''}{proj_sql}"
     parts = [select, f"from {entity.table} {ctx.alias}"]

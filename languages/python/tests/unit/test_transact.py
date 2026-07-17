@@ -25,10 +25,11 @@ import mirrored_models as mm
 from parallax.conformance import models
 from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, inheritance, opt_lock
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.db_port import Bind, DbPort, JsonDocument, Row
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import metamodel
+from parallax.core.entity.value_object import ValueObject, VoField
 from parallax.core.unit_work import (
     EscapedTransactionError,
     FixedClock,
@@ -84,6 +85,36 @@ class WherePosition(Entity, frozen=True):
 
 
 _WHERE_POSITION_META = metamodel([WherePosition])
+
+
+# A LOCAL audit-only, value-object-bearing entity — the `supplier.yaml` shape
+# (`m-value-object-047`'s own model) has no idiomatic mirror class yet (ledger
+# D-21), so the VO-bearing `update_where` carry-forward pin (finding 2, D-26)
+# builds its own minimal fixture rather than waiting on that mirror.
+class WhereLedgerAddress(ValueObject, frozen=True):
+    city: Attr[str] = VoField(type="string")
+
+
+class WhereLedger(Entity, frozen=True):
+    __parallax__ = EntityConfig(
+        table="where_ledger",
+        namespace="parallax.compatibility",
+        mutability="transactional",
+        as_of=(
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    name: Attr[str] = Field(max_length=64)
+    address: Attr[WhereLedgerAddress | None] = Field(nullable=True, default=None)
+    processing_from: Attr[dt.datetime] = Field(column="in_z")
+    processing_to: Attr[dt.datetime] = Field(column="out_z")
+
+
+_WHERE_LEDGER_META = metamodel([WhereLedger])
 
 _NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
 
@@ -1099,29 +1130,71 @@ def test_materializing_write_with_zero_resolved_rows_writes_nothing() -> None:
     assert not any(op[0] == "write" for op in port.ops)
 
 
+def _two_terminate_rows() -> list[Row]:
+    return [
+        {
+            "bal_id": 1,
+            "acct_num": "A",
+            "val": 150.00,
+            "in_z": "2024-01-01T00:00:00+00:00",
+            "out_z": "infinity",
+        },
+        {
+            "bal_id": 2,
+            "acct_num": "B",
+            "val": 50.00,
+            "in_z": "2024-02-01T00:00:00+00:00",
+            "out_z": "infinity",
+        },
+    ]
+
+
 def test_materializing_terminate_where_over_an_audit_only_target() -> None:
-    port = _RecordingPort(
-        rows=[
-            {
-                "bal_id": 1,
-                "acct_num": "A",
-                "val": 150.00,
-                "in_z": "2024-01-01T00:00:00+00:00",
-                "out_z": "infinity",
-            }
-        ]
-    )
+    # LOCKING mode (the default): every resolved row gets its own close, in
+    # the resolving read's own resolved-row order, and every close stays
+    # UNGATED (`m-audit-write` "a LOCKING-mode close stays ungated" —
+    # `~parallax.core.opt_lock.gates` only ever binds the observed-`in_z`
+    # candidate under optimistic concurrency).
+    port = _RecordingPort(rows=_two_terminate_rows())
 
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
 
     Database.connect(port, _BALANCE, clock=FixedClock(_FIXED)).transact(fn)
     writes = [op for op in port.ops if op[0] == "write"]
-    assert len(writes) == 1  # a processing-only close, no chain
-    assert writes[0][1] == POSTGRES.to_driver_sql(
+    assert len(writes) == 2  # one processing-only close per resolved row, no chain
+    close_sql = POSTGRES.to_driver_sql(
         "update balance set out_z = ? where bal_id = ? and out_z = ?"
     )
+    assert writes[0][1] == close_sql
     assert writes[0][2] == ("2024-06-01T00:00:00+00:00", 1, "infinity")
+    assert writes[1][1] == close_sql
+    assert writes[1][2] == ("2024-06-01T00:00:00+00:00", 2, "infinity")
+
+
+def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurrency() -> None:
+    # OPTIMISTIC mode: an audit-only close GATES on the observed `in_z`,
+    # binding LAST (`m-audit-write.md:65`, `m-opt-lock.md:87-99`) — every
+    # resolved row's own close carries THAT row's own observed `in_z`, in
+    # resolved-row order, mirroring the corpus's `m-audit-write-006` gated-
+    # close shape (`m-value-object-047`'s own re-gated step 2).
+    port = _RecordingPort(rows=_two_terminate_rows())
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
+
+    Database.connect(port, _BALANCE, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 2
+    gated_sql = POSTGRES.to_driver_sql(
+        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+    )
+    assert writes[0][1] == gated_sql
+    assert writes[0][2] == ("2024-06-01T00:00:00+00:00", 1, "infinity", "2024-01-01T00:00:00+00:00")
+    assert writes[1][1] == gated_sql
+    assert writes[1][2] == ("2024-06-01T00:00:00+00:00", 2, "infinity", "2024-02-01T00:00:00+00:00")
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
@@ -1153,6 +1226,54 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
     )
     assert chain_binds == (1, "A", 175.00, "2024-06-01T00:00:00+00:00", "infinity")
+
+
+def test_materializing_update_where_audit_only_carries_the_unassigned_value_object_forward() -> (
+    None
+):
+    # D-26 / finding 2 (`m-case-format.md:727`): an assignment-bearing
+    # `update_where` on an audit-only, VALUE-OBJECT-bearing target must carry
+    # the resolved row's OWN `address` document FORWARD into the chained row
+    # when the caller does not itself reassign it — so the resolving read
+    # must project the document column too (unlike a terminate/delete,
+    # `m-value-object-047`'s own row-form-omits-slot-4 witness, which stays
+    # byte-identical because it never reaches this assignment-bearing branch).
+    port = _RecordingPort(
+        rows=[
+            {
+                "id": 1,
+                "name": "Nordic Foods",
+                "address": {"city": "Bergen"},
+                "in_z": "2024-01-01T00:00:00+00:00",
+                "out_z": "infinity",
+            }
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WhereLedger.where(WhereLedger.id == 1), WhereLedger.name.set("Baltic Traders")
+        )
+
+    Database.connect(port, _WHERE_LEDGER_META, clock=FixedClock(_FIXED)).transact(fn)
+    reads = [op for op in port.ops if op[0] == "read"]
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert reads[0][1] == POSTGRES.to_driver_sql(
+        "select t0.id, t0.name, t0.in_z, t0.out_z, t0.address from where_ledger t0 "
+        "where t0.id = ? and t0.out_z = ? for share of t0"
+    )
+    assert len(writes) == 2  # close then chain
+    chain_sql, chain_binds = writes[1][1], writes[1][2]
+    assert chain_sql == POSTGRES.to_driver_sql(
+        "insert into where_ledger(id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)"
+    )
+    assert chain_binds == (
+        1,
+        "Baltic Traders",
+        "2024-06-01T00:00:00+00:00",
+        "infinity",
+        JsonDocument({"city": "Bergen"}),
+    )
 
 
 def _position_row() -> Row:

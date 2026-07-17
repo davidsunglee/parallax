@@ -1707,6 +1707,22 @@ class Transaction:
         """
         lock: LockMode | None = self._uow.settings.concurrency
         plan_ = deep_fetch.plan(instruction.target.entity, instruction.target.predicate, self._meta)
+        # Need-sensitive projection (`m-case-format.md:727`): terminate/delete
+        # never carry the resolved row's own value-object document(s) forward
+        # (`m-value-object-047`'s own row-form-omits-slot-4 witness stays
+        # byte-identical) — only an ASSIGNMENT-BEARING verb on an AUDIT-ONLY
+        # temporal target needs them, so its chain can carry forward whichever
+        # documents the caller did NOT itself reassign (`_materialize_row`'s
+        # own audit-only `full_row` merge). A BITEMPORAL target's chain
+        # instead derives its head/tail carry-forward from the observed
+        # payload (`_temporal_observation`), never this read's own row, so it
+        # stays out of this flag's scope.
+        needs_documents = (
+            version_attr is None
+            and declaring.is_temporal
+            and declaring.temporal != "bitemporal"
+            and instruction.mutation == "update"
+        )
         statement = compile_read(
             plan_.root_operation,
             self._meta,
@@ -1714,6 +1730,7 @@ class Transaction:
             instruction.target.entity,
             result_form="row",
             lock=lock,
+            include_value_objects=needs_documents,
         )
         rows = self._uow.read(lambda: self._resolve_rows(statement))
         assignments = {
@@ -1847,18 +1864,34 @@ def _temporal_observation(
 
 
 def _row_payload(
-    meta: Metamodel, declaring: Entity, fields: Mapping[str, object], excluded: set[str]
+    meta: Metamodel,
+    declaring: Entity,
+    fields: Mapping[str, object],
+    excluded: set[str],
+    *,
+    include_value_objects: bool = False,
 ) -> dict[str, object]:
-    """``fields``'s own SCALAR payload (every declared member besides
-    ``excluded`` axis-bound columns), value-object columns OMITTED (row-form
-    never projects one, `m-value-object-047`) — the observed-payload source
-    both a real bitemporal find's :class:`Observation` (above) and an
-    audit-only materializing resolve's CHAINED full row
-    (:func:`_materialize_row`) share."""
+    """``fields``'s own payload (every declared member besides ``excluded``
+    axis-bound columns) — the observed-payload source both a real bitemporal
+    find's :class:`Observation` (above) and an audit-only materializing
+    resolve's CHAINED full row (:func:`_materialize_row`) share.
+
+    Value-object columns are OMITTED by default (row-form never projects one,
+    `m-value-object-047`'s own byte-identical row-form witness).
+    ``include_value_objects`` opts in (`m-case-format.md:727`): the ONE caller
+    that sets it — `_materialize_row`'s audit-only chain merge — only reaches
+    here when its own resolving read actually projected the document column(s)
+    (`Transaction._materialize_predicate_write`'s need-sensitive projection),
+    so ``column in fields`` still gates every member exactly as it already does
+    for scalars; a VO-free entity's empty ``value_objects`` makes this flag a
+    no-op either way.
+    """
     return {
         name: fields[column]
         for name, (column, is_value_object) in _members(meta, declaring).items()
-        if not is_value_object and column in fields and column not in excluded
+        if (include_value_objects or not is_value_object)
+        and column in fields
+        and column not in excluded
     }
 
 
@@ -1904,13 +1937,15 @@ def _materialize_row(
 ) -> tuple[ObjectKey, Observation | None, dict[str, object] | None]:
     """One resolved row's materialized keyed write: its
     :class:`~parallax.core.unit_work.ObjectKey`, its recorded
-    :class:`Observation` (``None`` for an AUDIT-ONLY plain ``terminate`` — see
-    below), and the new row a keyed write of ``mutation`` carries — ``None``
-    for the new row when every assignment already equals the row's own value
-    (`m-opt-lock` "For assignment-bearing mutations, no-op elimination is per
-    resolved row"; `delete` / `terminate` / `terminateUntil` always write
-    every resolved row, no assignments to compare). ``row`` is the resolve's
-    OWN row-form row (never an implicit second read).
+    :class:`Observation` (every branch records one — a versioned row's version,
+    a temporal row's observed processing-from, `m-opt-lock` "observations are
+    mode-independent; only the gate is mode-dependent"), and the new row a
+    keyed write of ``mutation`` carries — ``None`` for the new row when every
+    assignment already equals the row's own value (`m-opt-lock` "For
+    assignment-bearing mutations, no-op elimination is per resolved row";
+    `delete` / `terminate` / `terminateUntil` always write every resolved row,
+    no assignments to compare). ``row`` is the resolve's OWN row-form row
+    (never an implicit second read).
     """
     pk_attrs = inheritance.family_primary_key(meta, entity)
     pk_row = {attr.name: row[attr.column] for attr in pk_attrs}
@@ -1941,27 +1976,36 @@ def _materialize_row(
     # merge happens HERE — the resolved row's own scalar payload (VO
     # documents omitted; row-form never projects one) with the assignments
     # overlaid.
-    if not assignment_bearing:
-        # A plain (chain-free) audit-only `terminate` records NO observation
-        # at all (`m-value-object-047`'s own witness): unlike a CHAINING
-        # close, whose optimistic `and in_z = ?` gate protects the chained
-        # INSERT from carrying stale merged data forward
-        # (`m-audit-write-006`), a bare terminate's predicate (`pk and
-        # out_z = infinity`) already matches — and correctly closes —
-        # whichever row is CURRENTLY open, achieving the SAME intended end
-        # state (no row left open) regardless of which exact milestone a
-        # concurrent writer may have chained in between; gating buys no
-        # additional protection, so `audit_write.plan` receives no
-        # observation to build a `gate_in_z` candidate from at all (contrast
-        # a BITEMPORAL plain terminate, `m-bitemp-write-011`, whose close
-        # gates unconditionally — its own head re-insert STRUCTURALLY needs
-        # the observed rectangle regardless of gating, so the gate composes
-        # as a side effect there, never a deliberate per-mutation choice).
-        return key, None, dict(pk_row)
     observation = Observation(in_z=in_z, latest_pinned=True)
+    if not assignment_bearing:
+        # A plain (chain-free) audit-only `terminate` records its resolved
+        # row's observed `in_z` exactly like every other materializing verb
+        # (`m-opt-lock` "Predicate-selected writes materialize when
+        # observations are needed" — observations are MODE-INDEPENDENT; only
+        # the GATE is mode-dependent, `m-audit-write.md:65`). The observed
+        # `in_z` is the temporal analogue of a versioned optimistic gate
+        # (`m-audit-write` "Affected-row conflict contract for closes"), so
+        # an OPTIMISTIC-mode close binds it (`and in_z = ?`, `m-opt-lock.md`
+        # "Temporal entities derive the version from the processing axis"),
+        # gate-last, exactly as a keyed temporal terminate already does
+        # (`m-audit-write-006`) — `audit_write.plan` composes the gate
+        # candidate straight from this SAME observation, no separate branch.
+        # A LOCKING-mode close still renders ungated (the render seam only
+        # ever BINDS the candidate under optimistic concurrency,
+        # `~parallax.core.opt_lock.gates`), so recording the observation here
+        # never changes locking mode's own ungated shape.
+        return key, observation, dict(pk_row)
+    # Reached only for an assignment-bearing (`update`) audit-only mutation —
+    # exactly when `_materialize_predicate_write`'s own resolving read
+    # requested the value-object document column(s) too
+    # (`include_value_objects`, `m-case-format.md:727`), so the merge below
+    # carries forward whichever documents `assignments` does NOT itself
+    # reassign, never dropping them from the chained row.
     full_row: dict[str, object] = {
         **pk_row,
-        **_row_payload(meta, declaring, row, {proc.from_column, proc.to_column}),
+        **_row_payload(
+            meta, declaring, row, {proc.from_column, proc.to_column}, include_value_objects=True
+        ),
     }
     new_row, changed = _apply_assignments(meta, declaring, full_row, row, assignments)
     return key, observation, (new_row if changed else None)
