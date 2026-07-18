@@ -38,19 +38,24 @@ from parallax.core.dialect import dialect_for
 
 pytestmark = pytest.mark.conformance
 
-# Multi-concrete polymorphic instance-form reads (COR-3 Phase 8 part C, DQ7b):
-# m-inheritance-106/-107/-108 compile byte-identical to their row-form siblings
-# (`test_compile_sweep.py` adds them to `COMPILE_EXERCISED`), but the per-variant
-# `then.graph` narrowing they pin is NOT yet implemented by the find executor
-# (`parallax.snapshot.materialize.decode_row` passes every projected column
-# through unchanged — the same padded-superset shape a row-form read carries,
-# never narrowed to the variant's own declared columns). COR-3 Phase 8
-# increment 7 (ledger D-22) implements the narrowing and joins these to
-# `RUN_EXERCISED`; carving them out here (rather than compiling them) keeps
-# this sweep from running them against a materialization the golden `then.graph`
-# does not yet match, honestly deferring the RUN half while COMPILE stays green.
-_INSTANCE_FORM_GRAPH_RUN_DEFERRED: Final[frozenset[str]] = frozenset(
-    {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108"}
+# Multi-concrete polymorphic INSTANCE-FORM reads (COR-3 Phase 8 part C, DQ7b):
+# m-inheritance-106/-107/-108/-109 compile byte-identical to their row-form
+# siblings (`test_compile_sweep.py`'s own `COMPILE_EXERCISED`) and are exercised
+# for real — but NOT through this file's own wire-level `_render_node`
+# rendering, permanently: that rendering shares the identical `materialize.Node`
+# the VALUES-lane witnesses (m-inheritance-003/-013/-015/-052, and OTHER
+# already-exercised multi-concrete graph levels like `m-snapshot-read-012`'s
+# own root-typed `animals` attachment) need PADDED, unnarrowed, so the SAME
+# `Node` cannot satisfy both oracles through one rendering path. Per-variant
+# narrowing is `parallax.snapshot.wrap`'s OWN job (it resolves each column
+# through the CONCRETE class's own declared members, skipping a sibling's) —
+# these four are the OBJECT-lane (developer-surface `db.find`) witnesses each
+# case's own comment names, graded by the API Conformance Suite instead
+# (`tests/api_conformance/test_story_run.py`, `type(node)` + `instance_row`).
+# A structural, PERMANENT lane split (DQ7b: both lanes of the same behavior
+# are now expressed, each through its own grader), never a forward promise.
+_INSTANCE_FORM_GRAPH_OBJECT_LANE_ONLY: Final[frozenset[str]] = frozenset(
+    {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108", "m-inheritance-109"}
 )
 
 # The reachable read cases whose fixtures + observation this phase runs end-to-
@@ -62,8 +67,9 @@ _INSTANCE_FORM_GRAPH_RUN_DEFERRED: Final[frozenset[str]] = frozenset(
 # `compile` can never emit their query-result-dependent child binds, so `run` is
 # the ONLY lane that ever grades them — derived from the corpus declaration at
 # collection time, never a hard-coded id list, m-conformance-adapter), MINUS the
-# instance-form graph reads whose RUN half is still increment 7 territory.
-RUN_EXERCISED = frozenset(COMPILE_EXERCISED) - _INSTANCE_FORM_GRAPH_RUN_DEFERRED
+# object-lane-only instance-form graph reads this file's own wire-level
+# rendering structurally cannot grade.
+RUN_EXERCISED = frozenset(COMPILE_EXERCISED) - _INSTANCE_FORM_GRAPH_OBJECT_LANE_ONLY
 
 
 def _reachable_run_cases() -> list[case_format.Case]:

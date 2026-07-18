@@ -385,64 +385,26 @@ _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
 )
 
 # Multi-concrete polymorphic PROJECTING inheritance reads (an abstract-root read,
-# or a narrow resolving to 2+ concretes): genuinely UNREACHABLE through
-# `db.find` today, for two independent reasons — (1) table-per-hierarchy: each
-# row's own typed instance carries only ITS OWN concrete class's fields, never a
-# sibling's nullable column the wire row's superset includes, so a flat
-# `then.rows` comparison cannot be reproduced from typed instances at all
-# (python.md §4 says the RIGHT observation is `type(node)`, not a flattened
-# dict); (2) table-per-concrete-subtype: instance-form projection over 2+
-# resolved concretes has no goldened lowering yet at all (`SqlGenError`,
-# `sql_gen.compile._compile_tpcs_read`) — a genuine engine gap. Distinct from
-# every other inheritance reasoned-skip above: those are spelling repeats of an
-# executed mechanism; these cannot be executed through the shipped surface at
-# all yet. Ledger D-22 is now RESOLVED at the core level (COR-3 Phase 8
-# increment 1, DQ7b Option C): the instance-form oracle for an abstract
-# multi-concrete read is defined (m-case-format "Read targeting", the
-# per-variant node shape) and witnessed by `then.graph` siblings
-# (m-inheritance-106/-107/-108/-109, own reasoned skips below,
-# `_INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON`). These four
-# ROW-FORM cases remain unreachable through `db.find` for the reason above —
-# `db.find` is instance-form, not row-form — and stay the values-lane
-# witnesses; the D-22 Python half (typed per-variant `db.find`) is increment 7.
+# or a narrow resolving to 2+ concretes) — the ROW-FORM (values-lane) originals
+# (m-inheritance-003/-013/-015/-052): `db.find` is instance-form, never row-form
+# (python.md §4: the right observation is `type(node)`, not a flattened dict),
+# so a flat `then.rows` comparison can never be reproduced from typed instances
+# for these — a permanent, structural non-fit, not a capability gap. Ledger
+# D-22 (COR-3 Phase 8 increment 7) closes the INSTANCE-FORM half: each of
+# these four now has an executed `then.graph` sibling proving the identical
+# capability through the shipped surface (m-inheritance-106/-107/-108/-109,
+# `graph_stories.py`, DQ7b "both lanes of the same behavior are now
+# expressed") — these four ROW-FORM originals stay the values-lane witnesses
+# permanently, cross-referencing their own instance-form sibling.
 _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "a multi-concrete polymorphic PROJECTING read (an abstract-root read, or a narrow "
-    "resolving to 2+ concretes) — genuinely unreachable through `db.find` today: a "
-    "table-per-hierarchy row's own typed instance carries only its OWN concrete class's "
-    "fields, never a sibling's nullable column the wire row's superset includes, so a "
-    "flat `then.rows` comparison cannot be reproduced from typed instances (python.md "
-    "§4: the right observation is `type(node)`, not a flattened dict); "
-    "table-per-concrete-subtype instance-form projection over 2+ resolved concretes has "
-    "no goldened lowering at all yet (`SqlGenError`) — a genuine engine gap, not a "
-    "partition-honesty concern to grade around"
-)
-
-# The four NEW instance-form (`then.graph`) siblings of the row-form multi-
-# concrete reads just above (m-inheritance-106/-107/-108 siblings of -003/
-# -013/-015; m-inheritance-109 sibling of -052): COR-3 Phase 8 part C authors
-# the corpus-level oracle these pin, but `db.find` does not yet MATERIALIZE it.
-# Table-per-hierarchy (106/107/108): the find executor's row decoding
-# (`parallax.snapshot.materialize.decode_row`) still passes every projected
-# column through unchanged — the SAME padded-superset shape a row-form read
-# carries, never narrowed to the variant's own declared columns (compile
-# already emits the correct, byte-identical golden SQL; only the RUN-time
-# graph assembly is unimplemented, `test_run_sweep.py`'s own carve-out).
-# Table-per-concrete-subtype (109): `_compile_tpcs_union_read` unconditionally
-# refuses instance-form with `SqlGenError` over a 2+-concrete union-all read —
-# a genuine engine gap, not model-specific. COR-3 Phase 8 increment 7 (ledger
-# D-22) implements the per-variant narrowing and lifts the TPCS refusal;
-# until then this is a forward-looking, honestly-reasoned skip, not the
-# permanent posture the descriptor-rejection group above carries.
-_INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON: Final[str] = (
-    "the then.graph instance-form oracle for a multi-concrete polymorphic read (the "
-    "per-variant node shape: own-branch members only, no null sibling padding, plus "
-    "familyVariant) — db.find on an abstract multi-concrete position does not yet "
-    "materialize typed per-variant instances (table-per-hierarchy: the find executor's "
-    "row decoding still passes the padded superset through unchanged; table-per-"
-    "concrete-subtype: instance-form projection over 2+ resolved concretes has no "
-    "goldened lowering at all yet, SqlGenError) — COR-3 Phase 8 increment 7 (ledger "
-    "D-22) implements the narrowing and lifts the TPCS refusal; the row-form siblings "
-    "(m-inheritance-003/-013/-015/-052) remain the values-lane witnesses"
+    "resolving to 2+ concretes) — the ROW-FORM (values-lane) original: `db.find` is "
+    "instance-form, never row-form (python.md §4: the right observation is "
+    "`type(node)`, not a flattened dict), so a flat `then.rows` comparison can never be "
+    "reproduced from typed instances — a permanent, structural non-fit. Its own "
+    "INSTANCE-FORM sibling (m-inheritance-106/-107/-108/-109 respectively) IS executed "
+    "through `db.find` (`graph_stories.py`), proving the identical capability the OTHER "
+    "way (DQ7b: both lanes of the same behavior are now expressed)"
 )
 
 # Temporal inheritance-family writes: COR-3 Phase 8 increment 3 lifted
@@ -884,18 +846,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
-    # -- m-inheritance: multi-concrete polymorphic PROJECTING reads (genuinely #
-    # unreachable through `db.find` today — see the reason's own comment) --- #
+    # -- m-inheritance: multi-concrete polymorphic PROJECTING reads, the       #
+    # ROW-FORM originals (their own instance-form sibling is now executed) --- #
     "m-inheritance-003": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-013": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-015": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-052": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
-    # -- m-inheritance: instance-form (`then.graph`) multi-concrete siblings — #
-    # COR-3 Phase 8 part C authors the oracle; increment 7 implements it ----- #
-    "m-inheritance-106": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
-    "m-inheritance-107": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
-    "m-inheritance-108": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
-    "m-inheritance-109": _INHERITANCE_INSTANCE_FORM_MULTI_CONCRETE_DEFERRED_REASON,
     # -- m-inheritance: non-temporal write family, conformance-lane covered -- #
     # (COR-3 Phase 8 increment 3; instance-native examples are increment 7) -- #
     "m-inheritance-007": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,

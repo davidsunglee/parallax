@@ -47,7 +47,16 @@ from parallax.conformance import case_format
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.read_models import Animal as AnimalRoot
-from parallax.conformance.read_models import Cat, Dog, Person, Pet, WildBoar
+from parallax.conformance.read_models import (
+    Cat,
+    Document,
+    Dog,
+    FinancialDocument,
+    Payment,
+    Person,
+    Pet,
+    WildBoar,
+)
 from parallax.conformance.read_stories import READ_STORIES
 from parallax.conformance.story_models import Order
 from parallax.conformance.vo_models import Branch, Supplier
@@ -136,6 +145,18 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
         business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     ),
+    # Multi-concrete polymorphic INSTANCE-FORM reads (ledger D-22): the SAME
+    # statement expression as their row-form values-lane siblings
+    # (m-inheritance-003/-013/-015/-052 above), but built over the INSTALLED
+    # `read_models` classes rather than the test-only `im`/`sm` mirrors — the
+    # object-lane witness a real `db.find` executes against.
+    "m-inheritance-106": lambda: Payment.where(),
+    "m-inheritance-107": lambda: AnimalRoot.where(AnimalRoot.narrow(Pet)),
+    "m-inheritance-108": lambda: AnimalRoot.where(
+        AnimalRoot.narrow(Dog, where=Dog.bark_volume > 5)
+        | AnimalRoot.narrow(Cat, where=Cat.indoor.is_(True))
+    ),
+    "m-inheritance-109": lambda: Document.where(Document.narrow(FinancialDocument)),
 }
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}

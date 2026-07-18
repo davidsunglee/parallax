@@ -141,22 +141,21 @@ _SNAPSHOT_READ_MILESTONE_SET_READS: Final[frozenset[str]] = frozenset(
 )
 # Multi-concrete polymorphic INSTANCE-FORM reads (COR-3 Phase 8 part C, DQ7b):
 # the `then.graph` siblings of the row-form abstract-multi-concrete reads above
-# (m-inheritance-003/-013/-015), pinning the per-variant node shape (own-branch
-# members only, no null sibling padding, plus `familyVariant`) `db.find` on an
-# abstract multi-concrete position must eventually produce. TABLE-PER-HIERARCHY
-# compiles BYTE-IDENTICAL to its row-form sibling (animal.yaml/payment.yaml
-# declare no value objects, so the instance-form slot-4 delta is empty) and
-# joins the compile-exercised set here; the actual per-variant RUN-time graph
-# materialization is COR-3 Phase 8 increment 7 (ledger D-22) — carved out of
-# `test_run_sweep.py`'s own exercised set, not here (compile only cares about
-# the SQL, which is already correct). The table-per-concrete-subtype sibling
-# (m-inheritance-109) stays OUT of this set: `_compile_tpcs_union_read`
-# unconditionally refuses instance-form with `SqlGenError` today (a genuine
-# engine gap, not a model-specific one — increment 7 lifts it too), so it is
-# reasoned-skipped exactly like every other refused reachable read
-# (`_skip_reason`).
+# (m-inheritance-003/-013/-015/-052), pinning the per-variant node shape
+# (own-branch members only, no null sibling padding, plus `familyVariant`)
+# `db.find` on an abstract multi-concrete position must eventually produce.
+# Every one of the four compiles BYTE-IDENTICAL to its row-form sibling
+# (animal.yaml/payment.yaml/document.yaml declare no value objects, so the
+# instance-form slot-4 delta is empty): table-per-hierarchy (106-108) always
+# did; table-per-concrete-subtype (109) joins here in COR-3 Phase 8 increment 7
+# (ledger D-22), which lifts `_compile_tpcs_read`'s unconditional instance-form
+# refusal for the witnessed VO-free shape (a VO-bearing TPCS multi-concrete
+# family keeps a narrowed refusal, still genuinely unwitnessed). The actual
+# per-variant RUN-time graph materialization for all four is this SAME
+# increment's own `materialize.decode_row` narrowing fix — no longer carved
+# out of `test_run_sweep.py`'s own exercised set either.
 _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
-    {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108"}
+    {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108", "m-inheritance-109"}
 )
 # The read-lock matrix's four IN-SLICE `read`-shape cases (COR-3 Phase 8
 # increment 6, m-read-lock): `m-read-lock-001` is the harness-lane single-

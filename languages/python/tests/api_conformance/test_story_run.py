@@ -393,6 +393,61 @@ def test_bitemporal_vo_owner_as_of_a_past_audit_point(provisioner: Any) -> None:
     assert snapshot.execution.round_trips == 1
 
 
+def _assert_typed_per_variant_graph(case_id: str, snapshot: Any, entity_name: str) -> None:
+    """ledger D-22: each materialized instance renders to its OWN concrete
+    class's declared members plus ``familyVariant`` (`instance_row`,
+    physical-column-keyed, spec §4 "observable as `type(node)`") — never a
+    sibling's null-padded column, matching the case's own per-variant
+    `then.graph` exactly (order-insensitive, `compare_rows`)."""
+    expected = cast(
+        "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"][entity_name]
+    )
+    observed = [instance_row(instance, family_variant=True) for instance in snapshot.results()]
+    compare_rows(observed, expected)
+
+
+def test_tph_abstract_root_read_materializes_typed_per_variant_instances(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-106"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_typed_per_variant_graph(story.case_id, snapshot, "Payment")
+    assert snapshot.execution.round_trips == 1
+
+
+def test_tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
+    provisioner: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-107"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_typed_per_variant_graph(story.case_id, snapshot, "Animal")
+    assert snapshot.execution.round_trips == 1
+
+
+def test_tph_or_across_branches_materializes_typed_per_variant_instances(
+    provisioner: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-108"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_typed_per_variant_graph(story.case_id, snapshot, "Animal")
+    assert snapshot.execution.round_trips == 1
+
+
+def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
+    provisioner: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-109"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_typed_per_variant_graph(story.case_id, snapshot, "Document")
+    assert snapshot.execution.round_trips == 1
+
+
 def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
     assert len(_GRAPH_STORIES_BY_ID) == len(GRAPH_STORIES)
     for story in GRAPH_STORIES:

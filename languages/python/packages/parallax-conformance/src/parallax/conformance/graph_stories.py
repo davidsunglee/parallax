@@ -51,7 +51,17 @@ from typing import Any
 
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_models import Policy
-from parallax.conformance.read_models import Cat, DepositRate, Dog, Person, Pet
+from parallax.conformance.read_models import (
+    Animal,
+    Cat,
+    DepositRate,
+    Document,
+    Dog,
+    FinancialDocument,
+    Payment,
+    Person,
+    Pet,
+)
 from parallax.conformance.story_models import Order
 from parallax.conformance.vo_models import Branch, Supplier
 from parallax.core.temporal_read import LATEST
@@ -208,6 +218,46 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     )
 
 
+def tph_abstract_root_read_materializes_typed_per_variant_instances(db: Database) -> Snapshot[Any]:
+    """The object-lane sibling of the row-form abstract-root read
+    (`m-inheritance-106`, `m-inheritance-003` its values-lane witness): each
+    materialized instance is its OWN concrete class — a `CardPayment` node
+    carries no `tendered` attribute at all, a `CashPayment` node no
+    `card_network` — never a sibling's null-padded column."""
+    return db.find(Payment.where())
+
+
+def tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
+    db: Database,
+) -> Snapshot[Any]:
+    """The object-lane sibling of the row-form narrow-to-abstract-subtype
+    read (`m-inheritance-107`, `m-inheritance-013` its values-lane witness):
+    each `Dog`/`Cat` instance carries only its own declared members."""
+    return db.find(Animal.where(Animal.narrow(Pet)))
+
+
+def tph_or_across_branches_materializes_typed_per_variant_instances(db: Database) -> Snapshot[Any]:
+    """The object-lane sibling of the row-form OR-across-branches read
+    (`m-inheritance-108`, `m-inheritance-015` its values-lane witness)."""
+    return db.find(
+        Animal.where(
+            Animal.narrow(Dog, where=Dog.bark_volume > 5)
+            | Animal.narrow(Cat, where=Cat.indoor.is_(True))
+        )
+    )
+
+
+def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
+    db: Database,
+) -> Snapshot[Any]:
+    """The object-lane sibling of the row-form TPCS narrow-to-abstract-subtype
+    read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness):
+    the union-all instance-form lowering ledger D-22 lifts (byte-identical to
+    row-form for this VO-free family) — each `Invoice`/`Receipt` instance
+    carries only its own declared members."""
+    return db.find(Document.where(Document.narrow(FinancialDocument)))
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
     GraphStory(
         "m-snapshot-read-001",
@@ -304,5 +354,30 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "A bitemporal audit read reconstructs the originally-believed document",
         "branch",
         bitemporal_vo_owner_as_of_a_past_audit_point,
+    ),
+    GraphStory(
+        "m-inheritance-106",
+        "A table-per-hierarchy abstract-root read materializes typed per-variant instances",
+        "payment",
+        tph_abstract_root_read_materializes_typed_per_variant_instances,
+    ),
+    GraphStory(
+        "m-inheritance-107",
+        "A narrow to an abstract subtype materializes typed per-variant instances",
+        "animal",
+        tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances,
+    ),
+    GraphStory(
+        "m-inheritance-108",
+        "An OR across two concrete-subtype branches materializes typed per-variant instances",
+        "animal",
+        tph_or_across_branches_materializes_typed_per_variant_instances,
+    ),
+    GraphStory(
+        "m-inheritance-109",
+        "A table-per-concrete-subtype narrow to an abstract subtype materializes "
+        "typed per-variant instances",
+        "document",
+        tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances,
     ),
 )

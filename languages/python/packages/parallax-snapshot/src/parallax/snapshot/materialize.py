@@ -124,6 +124,19 @@ def identity_key(
     non-participant. Returns ``None`` when the (resolved) entity declares no
     primary key at all (defensive; every corpus entity does).
 
+    TABLE-PER-CONCRETE-SUBTYPE is the one exception to root-normalization
+    (ledger D-22, COR-3 Phase 8 part C): each concrete owns its OWN physical
+    table with its OWN independent primary-key namespace (m-inheritance-109's
+    own fixture: "Primary keys are per-table, so id 1 recurs across
+    Invoice/Receipt/Memo — the rows are distinguished by their concrete
+    variant, never by id"), so normalizing to the bare family-root name would
+    wrongly conflate two DIFFERENT physical rows that merely share a PK
+    VALUE — identity is the row's own resolved CONCRETE name instead
+    (``familyVariant`` when the position is multi-concrete; a single-resolved-
+    position read's own ``entity_name`` is already that row's concrete, since
+    a table-per-concrete-subtype read never materializes an abstract-target
+    row at all).
+
     The coordinate component m-snapshot-read's identity triple names (the
     lowered as-of per axis) is intentionally omitted from this key: within ONE
     materialization every node represents the SAME whole-graph pin (m-snapshot-
@@ -144,7 +157,13 @@ def identity_key(
     if not declaring.primary_key:
         return None
     pk = tuple(row[attr.column] for attr in declaring.primary_key)
-    return (declaring.name, pk)
+    name = declaring.name
+    if declaring.inheritance is not None and declaring.inheritance.strategy == (
+        "table-per-concrete-subtype"
+    ):
+        variant = row.get("familyVariant")
+        name = variant if isinstance(variant, str) else entity_name
+    return (name, pk)
 
 
 def _pk_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
@@ -211,6 +230,19 @@ def decode_row(
     keyed by its own document column — the LAST-projected columns (`m-sql`
     *Read projection* slot 4), rendered here in whatever order the caller's own
     dict iterates (graph comparison is structural, never key-order-sensitive).
+
+    Deliberately UNNARROWED at this layer (ledger D-22, COR-3 Phase 8 part C):
+    a multi-concrete position's row keeps every sibling's own null-padded
+    column here — the SAME neutral `Node` this module's own callers share
+    between the row-form values-lane witnesses (whose `then.graph` / wire
+    rendering, `parallax.conformance.engine._render_node`, WANTS the padded
+    superset, e.g. `m-snapshot-read-012`'s own root-typed `animals` level) and
+    `parallax.snapshot.wrap`'s object-lane wrapping. Per-variant narrowing is
+    `wrap`'s OWN job (see its module docstring / `_wrap`): it already resolves
+    each column through the CONCRETE class's own `wire_names_of`, so a
+    sibling's column — absent from that class's own declared members — is
+    skipped, never assigned. Narrowing here would corrupt the values-lane
+    goldens that share this exact same `Node`.
     """
     position = _resolved_position(meta, entity_name, narrow_to)
     value_objects = _superset_value_objects(meta, position)

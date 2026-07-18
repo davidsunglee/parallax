@@ -389,7 +389,18 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self._conninfo = self._container.get_connection_url().replace(
             "postgresql+psycopg2://", "postgresql://"
         )
-        self._adapter = PostgresAdapter.connect(self._conninfo, autocommit=True)
+        # `prepare_threshold=None`: this ONE connection lives for the whole
+        # session across hundreds of per-case `DROP SCHEMA CASCADE` resets, so
+        # the SAME query text (e.g. two DIFFERENT corpus models both naming a
+        # `person` table) can legitimately see a changed result shape between
+        # two executions — server-side auto-preparation would otherwise raise
+        # Postgres's own "cached plan must not change result type" (a driver
+        # cache-invalidation quirk, not a Parallax-level concern; an ordinary
+        # long-lived application connection against one stable schema keeps
+        # the default).
+        self._adapter = PostgresAdapter.connect(
+            self._conninfo, autocommit=True, prepare_threshold=None
+        )
         self._peers: list[PostgresAdapter] = []
 
     @property

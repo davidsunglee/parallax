@@ -153,6 +153,66 @@ Corpus case: `m-inheritance-100`
 op = DepositRate.where().as_of(processing=datetime(2024, 1, 15, tzinfo=UTC))
 ```
 
+## A table-per-hierarchy abstract-root read materializes typed per-variant instances
+
+Corpus case: `m-inheritance-106`
+
+```python
+def tph_abstract_root_read_materializes_typed_per_variant_instances(db: Database) -> Snapshot[Any]:
+    """The object-lane sibling of the row-form abstract-root read
+    (`m-inheritance-106`, `m-inheritance-003` its values-lane witness): each
+    materialized instance is its OWN concrete class — a `CardPayment` node
+    carries no `tendered` attribute at all, a `CashPayment` node no
+    `card_network` — never a sibling's null-padded column."""
+    return db.find(Payment.where())
+```
+
+## A narrow to an abstract subtype materializes typed per-variant instances
+
+Corpus case: `m-inheritance-107`
+
+```python
+def tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
+    db: Database,
+) -> Snapshot[Any]:
+    """The object-lane sibling of the row-form narrow-to-abstract-subtype
+    read (`m-inheritance-107`, `m-inheritance-013` its values-lane witness):
+    each `Dog`/`Cat` instance carries only its own declared members."""
+    return db.find(Animal.where(Animal.narrow(Pet)))
+```
+
+## An OR across two concrete-subtype branches materializes typed per-variant instances
+
+Corpus case: `m-inheritance-108`
+
+```python
+def tph_or_across_branches_materializes_typed_per_variant_instances(db: Database) -> Snapshot[Any]:
+    """The object-lane sibling of the row-form OR-across-branches read
+    (`m-inheritance-108`, `m-inheritance-015` its values-lane witness)."""
+    return db.find(
+        Animal.where(
+            Animal.narrow(Dog, where=Dog.bark_volume > 5)
+            | Animal.narrow(Cat, where=Cat.indoor.is_(True))
+        )
+    )
+```
+
+## A table-per-concrete-subtype narrow to an abstract subtype materializes typed per-variant instances
+
+Corpus case: `m-inheritance-109`
+
+```python
+def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
+    db: Database,
+) -> Snapshot[Any]:
+    """The object-lane sibling of the row-form TPCS narrow-to-abstract-subtype
+    read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness):
+    the union-all instance-form lowering ledger D-22 lifts (byte-identical to
+    row-form for this VO-free family) — each `Invoice`/`Receipt` instance
+    carries only its own declared members."""
+    return db.find(Document.where(Document.narrow(FinancialDocument)))
+```
+
 ## Relationship existence (bare `.any()`)
 
 Corpus case: `m-navigate-002`

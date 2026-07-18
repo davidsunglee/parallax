@@ -799,10 +799,21 @@ def _compile_tpcs_read(
             "distinct / orderBy / limit / a read-lock suffix over a table-per-concrete-"
             "subtype union-all read (2+ effective concretes) has no goldened lowering yet"
         )
-    if result_form == "instance":
+    # Instance-form (ledger D-22, COR-3 Phase 8 part C): a VO-FREE family's
+    # union-all lowering is BYTE-IDENTICAL to its row-form sibling (no slot-4
+    # value-object columns to add either way — m-inheritance-109 witnesses
+    # this exact shape, verified against m-inheritance-052's own golden). A
+    # VO-BEARING family's union-all instance-form projection remains
+    # genuinely unwitnessed (no corpus golden authors what a value-object
+    # document column looks like split across `union all` branches whose
+    # owning concrete may not even declare it) — narrowed refusal, never a
+    # blanket one, and never a guessed lowering with no witness to check it
+    # against.
+    if result_form == "instance" and _superset_value_objects(meta, position):
         raise SqlGenError(
             "instance-form (value-object document) projection over a table-per-concrete-"
-            "subtype union-all read has no goldened lowering yet"
+            "subtype union-all read has no goldened lowering yet for a VALUE-OBJECT-"
+            "BEARING family (the VO-free shape is witnessed, m-inheritance-109)"
         )
 
     columns = _superset_columns(meta, position)

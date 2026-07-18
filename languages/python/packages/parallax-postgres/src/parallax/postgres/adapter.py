@@ -108,9 +108,24 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         connection.adapters.register_loader("timestamptz", _InfinityTimestamptzLoader)
 
     @classmethod
-    def connect(cls, conninfo: str, *, autocommit: bool = True) -> PostgresAdapter:
-        """Open a psycopg connection from documented connection configuration."""
-        return cls(psycopg.connect(conninfo, autocommit=autocommit))
+    def connect(
+        cls, conninfo: str, *, autocommit: bool = True, prepare_threshold: int | None = 5
+    ) -> PostgresAdapter:
+        """Open a psycopg connection from documented connection configuration.
+
+        ``prepare_threshold`` defaults to psycopg's own (server-side
+        auto-preparation after 5 identical executions) — the right default
+        for an ordinary long-lived application connection against one stable
+        schema. A caller whose SAME connection sees a table's shape change
+        underneath an identical query TEXT across its own lifetime (a
+        schema-reset-per-case test harness, never a deployed app) should pass
+        ``prepare_threshold=None`` to disable it: Postgres's own "cached plan
+        must not change result type" error is a server-side prepared-plan
+        cache invalidation, not a Parallax-level concern.
+        """
+        return cls(
+            psycopg.connect(conninfo, autocommit=autocommit, prepare_threshold=prepare_threshold)
+        )
 
     @property
     def connection(self) -> psycopg.Connection[TupleRow]:
