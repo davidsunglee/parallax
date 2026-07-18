@@ -416,3 +416,67 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
     runner.join(timeout=5)
     assert order == ["B-start", "B-end", "A"]
     assert outcome[0].rounds[1]["A"].rows == ()
+
+
+def test_run_rounds_isolation_override_runs_first_and_adds_a_commit_round() -> None:
+    # D-28: an `isolation=` override (`m-db-error-009`'s serializable SSI
+    # write-skew) must be each transaction's OWN first statement -- BEFORE the
+    # `lock_timeout` GUC -- and appends ONE synthetic, barrier-synchronized
+    # COMMIT round after the authored rounds (SSI surfaces the conflict at
+    # COMMIT, never during the writes). A clean commit records NO outcome:
+    # the synthetic round's dict stays empty on success.
+    a, b = _FakeSession(), _FakeSession()
+    peers = iter([a, b])
+    rounds = _rounds(
+        {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
+    )
+    run = concurrency_runner.run_rounds(
+        rounds, POSTGRES, lambda: next(peers), isolation="serializable"
+    )
+    for session in (a, b):
+        assert session.calls[0][1] == "set transaction isolation level serializable"
+        assert "lock_timeout" in session.calls[1][1]
+        assert session.calls[-1][1] == "commit"
+    assert len(run.rounds) == 2  # the authored round + the synthetic commit round
+    assert run.rounds[1] == {}
+
+
+def test_run_rounds_a_commit_time_error_lands_on_the_synthetic_round() -> None:
+    err = DatabaseError(category="deadlock", native_code="40001", message="ssi write-skew")
+    a = _FakeSession()
+    b = _FakeSession(raises_on="commit", error=err)
+    peers = iter([a, b])
+    rounds = _rounds(
+        {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
+    )
+    run = concurrency_runner.run_rounds(
+        rounds, POSTGRES, lambda: next(peers), isolation="serializable"
+    )
+    assert run.rounds[1]["B"].error is err
+    assert "A" not in run.rounds[1]
+
+
+def test_run_rounds_an_already_errored_node_skips_its_own_commit_attempt() -> None:
+    # A node whose transaction already aborted during an authored round must
+    # NOT attempt the synthetic commit (it would raise a spurious
+    # "transaction aborted" error, never the genuine one) -- while it still
+    # meets its partner at both synthetic-round barriers, and the healthy
+    # partner's own commit proceeds.
+    err = DatabaseError(category="deadlock", native_code="40P01", message="deadlock")
+    a = _FakeSession(raises_on="update", error=err)
+    b = _FakeSession()
+    peers = iter([a, b])
+    rounds = _rounds(
+        {
+            "A": ConcurrencyStep(
+                statements=(("update t set x = 1", ()),), kind=None, expect_rows=None
+            )
+        }
+    )
+    run = concurrency_runner.run_rounds(
+        rounds, POSTGRES, lambda: next(peers), isolation="serializable"
+    )
+    assert run.rounds[0]["A"].error is err
+    assert all(call[1] != "commit" for call in a.calls)
+    assert b.calls[-1][1] == "commit"
+    assert "A" not in run.rounds[1]

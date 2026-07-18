@@ -22,7 +22,7 @@ import pytest
 
 import inheritance_models as im
 import mirrored_models as mm
-from parallax.conformance import models
+from parallax.conformance import models, stale_web_edit
 from parallax.conformance.story_models import Order
 from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, inheritance, opt_lock
 from parallax.core.db_error import DatabaseError
@@ -2304,3 +2304,81 @@ def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -
             fn, concurrency="optimistic"
         )
     assert not any(op[0] in ("read", "write") for op in port.ops)  # never reached the resolve
+
+
+# --------------------------------------------------------------------------- #
+# The spec §3 stale-web-edit recipe module (`parallax.conformance.            #
+# stale_web_edit`) — the Docker-free halves of the api-conformance stories:   #
+# render captures the transported edge; submit replays it optimistically.     #
+# --------------------------------------------------------------------------- #
+def test_stale_web_edit_balance_render_then_submit_gates_on_the_transported_edge() -> None:
+    in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = _RecordingPort(rows=[_balance_row(in_z=in_z)])
+    db = _db_for(_BALANCE, port)
+
+    node, edge = stale_web_edit.render_balance_milestone(db, id=1)
+    assert node.value == Decimal("5.00")
+    assert edge.processing == in_z
+    assert edge.business_or_none is None  # audit-only: no business axis declared
+
+    stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    close_sql = cast("str", write_ops[0][1])
+    close_binds = cast("tuple[object, ...]", write_ops[0][2])
+    assert close_sql == POSTGRES.to_driver_sql(
+        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+    )
+    assert close_binds[-1] == in_z  # the TRANSPORTED edge, never a re-resolved latest
+    # The chained replacement row carries the UNTOUCHED field too (the D-30
+    # observed-payload merge, proven at the recipe's own altitude).
+    chain_binds = cast("tuple[object, ...]", write_ops[1][2])
+    assert "A-1" in chain_binds
+    assert Decimal("9.00") in chain_binds
+
+
+def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict() -> None:
+    # A concurrent writer chained a replacement between render and submit: the
+    # observed `in_z` is stale, the gated close matches ZERO rows.
+    in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = _RecordingPort(rows=[_balance_row(in_z=in_z)], write_affected=0)
+    db = _db_for(_BALANCE, port)
+    _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
+
+    with pytest.raises(opt_lock.OptimisticLockConflictError):
+        stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
+
+
+def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
+    from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
+    branch_row: Row = {
+        "br_id": 1,
+        "name": "Old Name",
+        "from_z": from_z,
+        "thru_z": _INFINITY_INSTANT,
+        "in_z": in_z,
+        "out_z": _INFINITY_INSTANT,
+        "address": None,
+    }
+    port = _RecordingPort(rows=[branch_row])
+    db = _db_for(models.load_models()["branch"], port)
+
+    node, edge = stale_web_edit.render_branch_milestone(db, id=1)
+    assert node.name == "Old Name"
+    assert edge.business == from_z
+    assert edge.processing == in_z
+
+    stale_web_edit.submit_branch_edit(
+        db,
+        id=1,
+        edge=edge,
+        fields={"name": "New Name"},
+        business_from=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+    )
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    close_sql = cast("str", write_ops[0][1])
+    close_binds = cast("tuple[object, ...]", write_ops[0][2])
+    assert close_sql.startswith("update branch set out_z = ")
+    assert in_z in close_binds  # the transported PROCESSING edge gates the close
+    # The correction's replacement rows carry the edited field.
+    assert any("New Name" in cast("tuple[object, ...]", op[2]) for op in write_ops[1:])
