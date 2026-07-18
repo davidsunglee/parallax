@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -27,7 +28,8 @@ def test_every_corpus_model_ingests_and_round_trips() -> None:
     for stem, metamodel in loaded.items():
         # The ingested records re-serialize to the canonical form of the raw file.
         raw = case_format.safe_load_yaml((_DIR / f"{stem}.yaml").read_text(encoding="utf-8"))
-        assert serialize(metamodel) == canonicalize(raw)
+        assert isinstance(raw, dict)
+        assert serialize(metamodel) == canonicalize(cast("dict[str, object]", raw))
 
 
 def test_load_model_rejects_a_non_mapping_document(tmp_path: Path) -> None:

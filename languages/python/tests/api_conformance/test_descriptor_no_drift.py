@@ -8,6 +8,8 @@ does not express — so both sides drop the ``indices`` array before comparing.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 import mirrored_models as mm
@@ -23,5 +25,6 @@ _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
 @pytest.mark.parametrize("stem, classes", mm.MIRRORED, ids=[stem for stem, _ in mm.MIRRORED])
 def test_idiomatic_class_export_has_no_drift_from_corpus(stem: str, classes: list[type]) -> None:
     raw = case_format.safe_load_yaml((_MODELS / f"{stem}.yaml").read_text(encoding="utf-8"))
-    corpus = mm.drop_indices(canonicalize(raw))
+    assert isinstance(raw, dict)
+    corpus = mm.drop_indices(canonicalize(cast("dict[str, object]", raw)))
     assert descriptor_document(classes) == corpus
