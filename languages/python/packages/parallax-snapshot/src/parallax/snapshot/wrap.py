@@ -67,7 +67,7 @@ from typing import cast
 
 from parallax.core import inheritance
 from parallax.core.descriptor import Entity, Metamodel, Relationship, ValueObject
-from parallax.core.entity import entity_registry, wire_names_of
+from parallax.core.entity import resolve_entity_class, wire_names_of
 from parallax.core.entity.expressions import UNLOADED
 from parallax.core.entity.value_object import ValueObject as ValueObjectBase
 from parallax.core.entity.value_object import wire_names_of as vo_wire_names_of
@@ -228,8 +228,7 @@ def _wrap(
     if cached is not None:
         return cached
 
-    registry = entity_registry()
-    cls = registry.get(concrete_name)
+    cls = resolve_entity_class(meta, concrete_name)
     if cls is None:
         raise LookupError(
             f"{concrete_name!r} has no registered Parallax entity class; import it before "
@@ -323,7 +322,7 @@ def _wrap_member(value: object, entity: Entity, column: str, meta: Metamodel) ->
     vo = next((v for v in _family_value_objects(meta, entity) if v.column == column), None)
     if vo is None:
         return value
-    vo_class = _vo_class_for(entity, vo.name)
+    vo_class = _vo_class_for(entity, vo.name, meta)
     if vo.cardinality == "many":
         items = cast("list[Mapping[str, object] | None]", value) if isinstance(value, list) else []
         return tuple(_wrap_vo(item, vo_class) for item in items if item is not None)
@@ -346,9 +345,8 @@ def _family_value_objects(meta: Metamodel, entity: Entity) -> tuple[ValueObject,
     return tuple(collected)
 
 
-def _vo_class_for(entity: Entity, vo_name: str) -> type[ValueObjectBase]:
-    registry = entity_registry()
-    cls = registry.get(entity.name)
+def _vo_class_for(entity: Entity, vo_name: str, meta: Metamodel) -> type[ValueObjectBase]:
+    cls = resolve_entity_class(meta, entity.name)
     if cls is not None:
         names = wire_names_of(cls)
         py_name = names.name_to_py.get(vo_name)

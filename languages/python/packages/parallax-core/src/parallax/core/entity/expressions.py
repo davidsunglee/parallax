@@ -23,7 +23,7 @@ relationship or value-object quantifier's ``where=`` scope.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast, overload
 
 from parallax.core.op_algebra import (
@@ -54,6 +54,8 @@ from parallax.core.op_algebra import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from parallax.core.entity.base import EntityRegistry
 
 __all__ = [
     "UNLOADED",
@@ -221,12 +223,19 @@ def conjoin(predicates: Sequence[Predicate]) -> Operation | None:
 class AttributeExpr:
     """A class-level attribute/value-object expression (the seed of a predicate)."""
 
-    __slots__ = ("_entity", "_head", "_path")
+    __slots__ = ("_entity", "_head", "_path", "_registry")
 
-    def __init__(self, entity: str, head: str, path: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        entity: str,
+        head: str,
+        path: tuple[str, ...] = (),
+        registry: EntityRegistry | None = None,
+    ) -> None:
         self._entity = entity
         self._head = head
         self._path = path
+        self._registry = registry
 
     @property
     def ref(self) -> AttributeRef:
@@ -237,7 +246,7 @@ class AttributeExpr:
         # A deeper value-object hop: Customer.address.city / .geo.country.
         if name.startswith("_"):
             raise AttributeError(name)
-        return AttributeExpr(self._entity, self._head, (*self._path, name))
+        return AttributeExpr(self._entity, self._head, (*self._path, name), self._registry)
 
     def _dotted(self) -> str:
         return ".".join((self._entity, self._head, *self._path))
@@ -373,12 +382,10 @@ class AttributeExpr:
                 "a nested path (m-value-object)"
             )
         from parallax.core import inheritance
-        from parallax.core.entity.base import (
-            ModelCopyError,
-            _current_metamodel,  # pyright: ignore[reportPrivateUsage]
-        )
+        from parallax.core.entity.base import ModelCopyError, default_registry
 
-        meta = _current_metamodel()
+        registry = self._registry if self._registry is not None else default_registry()
+        meta = registry.metamodel()
         serialized = _serialize_assignment_value(value)
         try:
             inheritance.validate_write_assignment(
@@ -421,11 +428,14 @@ def _serialize_assignment_value(value: object) -> object:
 class Attr[T]:
     """Typed attribute descriptor: class access → ``AttributeExpr``, instance → ``T``."""
 
-    __slots__ = ("_py_name", "_ref")
+    __slots__ = ("_py_name", "_ref", "_registry")
 
-    def __init__(self, ref: AttributeRef, py_name: str) -> None:
+    def __init__(
+        self, ref: AttributeRef, py_name: str, registry: EntityRegistry | None = None
+    ) -> None:
         self._ref = ref
         self._py_name = py_name
+        self._registry = registry
 
     @overload
     def __get__(self, obj: None, _owner: type, /) -> AttributeExpr: ...
@@ -433,7 +443,7 @@ class Attr[T]:
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
     def __get__(self, obj: object | None, _owner: type | None = None) -> AttributeExpr | T:
         if obj is None:
-            return AttributeExpr(self._ref.entity, self._ref.attribute)
+            return AttributeExpr(self._ref.entity, self._ref.attribute, registry=self._registry)
         value: T = obj.__dict__[self._py_name]
         return value
 
@@ -558,6 +568,13 @@ class RelationshipPath:
 
     segments: tuple[PathSegment, ...]
     target: str
+    # This path's own D-20 registration scope (captured at the FIRST hop, from
+    # the owning ``Rel[T]`` descriptor; never a public field, mirroring
+    # ``Statement._registry``): a dynamic hop and ``.narrow(...)`` both resolve
+    # within it, never the process-global registry. ``None`` only for a
+    # ``RelationshipPath`` built outside ``Rel.__get__`` (test-only direct
+    # construction) — falls back to the process default registry.
+    _registry: EntityRegistry | None = field(default=None, repr=False, compare=False)
 
     @property
     def ref(self) -> RelationshipRef:
@@ -568,10 +585,11 @@ class RelationshipPath:
     def __getattr__(self, name: str) -> RelationshipPath:
         if name.startswith("_"):
             raise AttributeError(name)
-        from parallax.core.entity.base import entity_records, snake_to_camel
+        from parallax.core.entity.base import default_registry, snake_to_camel
 
+        registry = self._registry if self._registry is not None else default_registry()
         canonical = snake_to_camel(name)
-        record = entity_records().get(self.target)
+        record = registry.records().get(self.target)
         if record is None:
             raise AttributeError(
                 f"{self.target!r} is not a registered Parallax entity class; import it "
@@ -582,6 +600,7 @@ class RelationshipPath:
                 return RelationshipPath(
                     segments=(*self.segments, PathSegment(rel=f"{self.target}.{canonical}")),
                     target=relationship.related_entity,
+                    _registry=registry,
                 )
         raise AttributeError(f"{self.target!r} declares no relationship {canonical!r}")
 
@@ -593,7 +612,9 @@ class RelationshipPath:
         *head, last = self.segments
         new_last = PathSegment(rel=last.rel, narrow=names)
         new_target = names[0] if len(names) == 1 else self.target
-        return RelationshipPath(segments=(*head, new_last), target=new_target)
+        return RelationshipPath(
+            segments=(*head, new_last), target=new_target, _registry=self._registry
+        )
 
     def any(self, *predicates: Predicate) -> Predicate:
         """The single-hop relationship quantifier: ``>= 1`` related row
@@ -622,12 +643,19 @@ class Rel[T]:
     registry round trip for the FIRST hop.
     """
 
-    __slots__ = ("_py_name", "_ref", "_related_entity")
+    __slots__ = ("_py_name", "_ref", "_registry", "_related_entity")
 
-    def __init__(self, ref: RelationshipRef, py_name: str, related_entity: str) -> None:
+    def __init__(
+        self,
+        ref: RelationshipRef,
+        py_name: str,
+        related_entity: str,
+        registry: EntityRegistry | None = None,
+    ) -> None:
         self._ref = ref
         self._py_name = py_name
         self._related_entity = related_entity
+        self._registry = registry
 
     @overload
     def __get__(self, obj: None, _owner: type, /) -> RelationshipPath: ...
@@ -636,7 +664,9 @@ class Rel[T]:
     def __get__(self, obj: object | None, _owner: type | None = None) -> RelationshipPath | T:
         if obj is None:
             return RelationshipPath(
-                segments=(PathSegment(rel=str(self._ref)),), target=self._related_entity
+                segments=(PathSegment(rel=str(self._ref)),),
+                target=self._related_entity,
+                _registry=self._registry,
             )
         value = obj.__dict__[self._py_name]
         if value is UNLOADED:

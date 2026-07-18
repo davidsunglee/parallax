@@ -8,6 +8,7 @@
     "Entity",
     "EntityConfig",
     "EntityDefinitionError",
+    "EntityRegistry",
     "FamilyRoot",
     "Field",
     "LATEST",

@@ -201,13 +201,13 @@ def test_future_annotation_explicit_type_survives_unresolvable_inner() -> None:
     class LocalOnly:
         pass
 
-    class Widget(Entity, frozen=True):
+    class WidgetWithUnresolvedInner(Entity, frozen=True):
         __parallax__ = EntityConfig(table="widget", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, type="int64")
         payload: Attr[LocalOnly] = Field(type="int64")
 
-    assert {attr.name for attr in meta(Widget).attributes} == {"id", "payload"}
+    assert {attr.name for attr in meta(WidgetWithUnresolvedInner).attributes} == {"id", "payload"}
 
 
 def _define_invalid_neutral_type() -> type:
@@ -304,7 +304,7 @@ def test_omitted_optional_pk_generator_field_defines_and_exports() -> None:
 
 
 def test_object_form_pk_generator_defines_and_exports() -> None:
-    class Seq(Entity, frozen=True):
+    class SeqObjectForm(Entity, frozen=True):
         __parallax__ = EntityConfig(table="seq", mutability="transactional")
 
         id: Attr[int] = Field(
@@ -319,7 +319,7 @@ def test_object_form_pk_generator_defines_and_exports() -> None:
             },
         )
 
-    exported = cast("dict[str, object]", meta(Seq).descriptor()["entity"])
+    exported = cast("dict[str, object]", meta(SeqObjectForm).descriptor()["entity"])
     attributes = cast("list[dict[str, object]]", exported["attributes"])
     assert attributes[0]["pkGenerator"] == {
         "strategy": "sequence",

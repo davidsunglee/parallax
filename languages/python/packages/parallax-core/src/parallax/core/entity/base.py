@@ -39,9 +39,11 @@ from parallax.core.descriptor import Relationship as RelationshipRecord
 from parallax.core.descriptor import ValueObject as ValueObjectRecord
 from parallax.core.descriptor.neutral_type import infer_neutral_type as _infer_neutral_type_lookup
 from parallax.core.descriptor.neutral_type import snake_to_camel
+from parallax.core.descriptor.records import Unset as _UnsetType
 from parallax.core.entity.errors import (
     EntityDefinitionError,
     NameCollisionError,
+    RegistryCollisionError,
     ReservedNameError,
 )
 from parallax.core.entity.expressions import (
@@ -67,19 +69,24 @@ __all__ = [
     "Entity",
     "EntityConfig",
     "EntityMeta",
+    "EntityRegistry",
     "FamilyRoot",
     "ModelCopyError",
     "ProvenanceError",
+    "ScopedMetamodel",
     "WireNames",
     "camel_to_snake",
     "canonical_row",
     "changed_fields",
+    "default_registry",
     "effective_change_set",
     "entity_record_of",
     "entity_records",
     "entity_registry",
     "full_row",
     "primary_key_row",
+    "registry_of",
+    "resolve_entity_class",
     "snake_to_camel",
     "wire_names_of",
 ]
@@ -94,11 +101,159 @@ _ATTR_STR = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_STR = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
-# The metamodel registry: canonical entity name -> the class that declared it,
-# and the class -> its compiled metamodel record (kept off the class itself so
-# the descriptor stays invisible to the public attribute surface).
-_REGISTRY: dict[str, type[BaseModel]] = {}
+# The metamodel registry (ledger D-20, design doc 37 DQ7a Option A): the class
+# -> its compiled metamodel record stays a single process-wide, CLASS-keyed map
+# (kept off the class itself so the descriptor stays invisible to the public
+# attribute surface) -- a Python class object is already collision-safe, no
+# scoping needed there. Canonical NAME -> class is where a collision is
+# possible (two DIFFERENT classes sharing one literal name), so THAT map is
+# scoped: every entity class registers into an explicit `EntityRegistry` (the
+# class-definition `registry=` keyword, `EntityMeta.__new__`), never a single
+# flat dict.
 _ENTITY_BY_CLASS: dict[type, EntityRecord] = {}
+_REGISTRY_OF_CLASS: dict[type, EntityRegistry] = {}
+
+
+class EntityRegistry:
+    """An explicit, independently-collision-checked entity class registration
+    scope (ledger D-20, design doc 37 DQ7a Option A, David-resolved).
+
+    Every entity class declares (or, for an inheritance-family subclass,
+    inherits from its family root) exactly one registry at class-definition
+    time: ``class Person(Entity, frozen=True, registry=animals)``. Omitting
+    ``registry=`` registers into the process :func:`default_registry` --
+    zero-ceremony apps are unaffected, since every class this frontend ever
+    compiled before D-20 landed there implicitly, under the same name.
+
+    A registry's own canonical-name space is independently collision-checked
+    (:class:`~parallax.core.entity.errors.RegistryCollisionError`): the SAME
+    name registered twice in the SAME registry raises immediately and loudly,
+    naming both classes -- the replacement for the historical silent
+    last-write-wins module-dict write -- but the SAME name in TWO DIFFERENT
+    registries coexists (the D-20 fix itself). :meth:`resolve` / :meth:`records`
+    walk only this registry and its own ``parent`` chain, so an unrelated
+    sibling registry's same-named class is never visible from here (never
+    "every class ever compiled" -- the scoping guarantee `Entity.where` /
+    ``.include`` / ``.narrow``, dynamic relationship hops, ``AttributeExpr.set``,
+    and `parallax.core.entity.graph_state` all now rely on).
+
+    ``parent`` (default: the process default registry) lets a scoped registry
+    inherit everything the default registry already sees: a new registry
+    typically exists to carve out ONE colliding canonical name (e.g. a second,
+    differently-shaped ``Person``), not to re-declare an app's whole
+    vocabulary from scratch. Pass ``parent=None`` for a fully isolated
+    registry sharing nothing with the default.
+    """
+
+    __slots__ = ("_by_name", "_parent")
+
+    def __init__(self, *, parent: EntityRegistry | None | _UnsetType = UNSET) -> None:
+        self._parent: EntityRegistry | None = (
+            default_registry() if isinstance(parent, _UnsetType) else parent
+        )
+        self._by_name: dict[str, type[BaseModel]] = {}
+
+    def _register(self, name: str, cls: type[BaseModel]) -> None:
+        """Register ``cls`` under canonical ``name`` in THIS registry's own
+        scope (never the ``parent`` chain): a same-named prior registration
+        in this SAME registry raises; the parent chain is never consulted or
+        mutated here (a coexisting parent/foreign entry is untouched)."""
+        existing = self._by_name.get(name)
+        if existing is not None:
+            raise RegistryCollisionError(
+                f"entity name {name!r} is already registered (by {existing!r}) in this "
+                f"registry; {cls!r} cannot reuse it here -- declare a distinct canonical "
+                "name, or register it in a separate EntityRegistry (ledger D-20)"
+            )
+        self._by_name[name] = cls
+
+    def resolve(self, name: str) -> type[BaseModel] | None:
+        """The class registered under ``name`` within this registry's own
+        scope: this registry's OWN registration if any, else its ``parent``'s
+        -- never a sibling registry's (the D-20 scoping guarantee)."""
+        cls = self._by_name.get(name)
+        if cls is not None:
+            return cls
+        return self._parent.resolve(name) if self._parent is not None else None
+
+    def own_names(self) -> dict[str, type[BaseModel]]:
+        """A copy of THIS registry's own name -> class map (never the
+        ``parent`` chain's) -- the module-scoped ``dict`` a pre-D-20 single-
+        registry app's ``entity_registry()`` observed."""
+        return dict(self._by_name)
+
+    def records(self) -> dict[str, EntityRecord]:
+        """Every entity record visible from this scope: the ``parent``
+        chain's own, merged with this registry's own (this registry's own
+        SHADOWS a same-named parent entry, mirroring :meth:`resolve`)."""
+        merged: dict[str, EntityRecord] = (
+            dict(self._parent.records()) if self._parent is not None else {}
+        )
+        merged.update(
+            {
+                name: _ENTITY_BY_CLASS[cls]
+                for name, cls in self._by_name.items()
+                if cls in _ENTITY_BY_CLASS
+            }
+        )
+        return merged
+
+    def metamodel(self) -> ScopedMetamodel:
+        """This scope's :class:`~parallax.core.descriptor.Metamodel`, tagged
+        with itself -- the D-20 wrap/meta bridge (correction 1): a caller that
+        wants `db.find` (`parallax.snapshot.wrap`) to resolve THROUGH this
+        registry connects a ``Database`` with THIS method's result, never a
+        bare, untagged one."""
+        return ScopedMetamodel(entities=tuple(self.records().values()), registry=self)
+
+
+_default_registry: EntityRegistry | None = None
+
+
+def default_registry() -> EntityRegistry:
+    """The process-wide default :class:`EntityRegistry`: where an entity
+    class lands when its declaration omits ``registry=`` (zero-ceremony)."""
+    global _default_registry
+    if _default_registry is None:
+        _default_registry = EntityRegistry(parent=None)
+    return _default_registry
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedMetamodel(MetamodelRecord):
+    """A :class:`~parallax.core.descriptor.Metamodel` tagged with the
+    :class:`EntityRegistry` that produced it (ledger D-20 correction 1's
+    wrap/meta bridge): `parallax.snapshot.wrap` resolves a decoded row's class
+    through THIS registry, never the process-global default, when a connected
+    ``Database``'s metamodel carries one. An untagged (plain -- e.g. a
+    YAML-ingested `~parallax.core.descriptor.deserialize` result, or a bare
+    `~parallax.core.entity.meta.metamodel(classes)`) ``Metamodel`` falls back
+    to :func:`default_registry` unchanged: zero-ceremony apps, and the
+    long-standing ingested-descriptor + installed-mirror pairing
+    (``Database.connect(port, ingested_meta)`` wrapping via a same-named class
+    the DEFAULT registry independently holds), both keep today's behavior.
+    Lives in ``parallax.core.entity`` (never ``parallax.core.descriptor``
+    itself, which must not grow a dependency on entity classes -- the import-
+    linter DAG constraint)."""
+
+    registry: EntityRegistry | None = None
+
+
+def registry_of(meta: MetamodelRecord) -> EntityRegistry:
+    """The :class:`EntityRegistry` scope a connected ``Metamodel`` resolves
+    classes through: its own tagged :class:`ScopedMetamodel` scope if it
+    carries one, else :func:`default_registry` (ledger D-20 correction 1)."""
+    if isinstance(meta, ScopedMetamodel) and meta.registry is not None:
+        return meta.registry
+    return default_registry()
+
+
+def resolve_entity_class(meta: MetamodelRecord, name: str) -> type[BaseModel] | None:
+    """The Python class ``name`` resolves to within ``meta``'s own D-20 scope
+    (:func:`registry_of`) -- the sole seam `parallax.snapshot.wrap` uses to
+    turn a decoded row's canonical entity name into a class, never the
+    process-global registry directly."""
+    return registry_of(meta).resolve(name)
 
 
 class ModelCopyError(EntityDefinitionError):
@@ -254,8 +409,13 @@ def camel_to_snake(name: str) -> str:
 
 
 def entity_registry() -> dict[str, type[BaseModel]]:
-    """A copy of the entity registry keyed by canonical entity name."""
-    return dict(_REGISTRY)
+    """A copy of the process :func:`default_registry`'s own entity registry,
+    keyed by canonical entity name (unaffected by a scoped ``registry=``
+    declared elsewhere -- ledger D-20). Identical to every pre-D-20 caller's
+    observed behavior for a single-registry app: every class this frontend
+    ever compiled without an explicit ``registry=`` lands here, exactly as
+    before."""
+    return default_registry().own_names()
 
 
 def entity_record_of(cls: type) -> EntityRecord | None:
@@ -264,20 +424,19 @@ def entity_record_of(cls: type) -> EntityRecord | None:
 
 
 def entity_records() -> dict[str, EntityRecord]:
-    """Every compiled metamodel record keyed by canonical entity name."""
-    return {
-        name: _ENTITY_BY_CLASS[cls] for name, cls in _REGISTRY.items() if cls in _ENTITY_BY_CLASS
-    }
+    """Every compiled metamodel record visible from the process
+    :func:`default_registry`, keyed by canonical entity name (ledger D-20)."""
+    return default_registry().records()
 
 
-def _current_metamodel() -> MetamodelRecord:
-    """The :class:`~parallax.core.descriptor.Metamodel` of every entity class
-    registered so far — the statement frontend's own validation surface
-    (``validate_operation`` needs a full metamodel, not a per-class record)."""
-    return MetamodelRecord(entities=tuple(entity_records().values()))
+def _registry_of_class(cls: type) -> EntityRegistry:
+    """``cls``'s own D-20 registration scope (:func:`default_registry` for a
+    class whose declaration omitted ``registry=``, defensively too for a class
+    this bookkeeping somehow never tracked)."""
+    return _REGISTRY_OF_CLASS.get(cls, default_registry())
 
 
-def _temporal_as_of_attributes(record: EntityRecord) -> tuple[AsOfAttribute, ...]:
+def _temporal_as_of_attributes(record: EntityRecord, cls: type) -> tuple[AsOfAttribute, ...]:
     """``record``'s EFFECTIVE as-of axes for the statement frontend's
     ``.as_of()`` / ``.as_of_range()`` / ``.history()`` axis resolution: the
     family root's declared axes for an inheritance participant (temporality is
@@ -285,11 +444,13 @@ def _temporal_as_of_attributes(record: EntityRecord) -> tuple[AsOfAttribute, ...
     ``record``'s own. A concrete-subtype class's own compiled record carries no
     ``as_of_attributes`` of its own when its family's axes live on the root, so
     reading it directly here would wrongly refuse ``ConcreteType.where().as_of(...)``
-    as "declares no temporal dimension" for an inherited axis.
+    as "declares no temporal dimension" for an inherited axis. Resolved within
+    ``cls``'s own D-20 registry scope (never every class ever compiled).
     """
     if record.inheritance is None:
         return record.as_of_attributes
-    return _inheritance.declaring_entity(_current_metamodel(), record).as_of_attributes
+    meta = _registry_of_class(cls).metamodel()
+    return _inheritance.declaring_entity(meta, record).as_of_attributes
 
 
 def _serialize_member(value: object) -> object:
@@ -444,6 +605,29 @@ def _family_parent(bases: tuple[type, ...]) -> type | None:
     return None
 
 
+def _resolve_registry(
+    cls_name: str, registry: EntityRegistry | None, family_parent: type | None
+) -> EntityRegistry:
+    """This class's own D-20 registration scope: an inheritance-family member
+    always shares its family root's registry (a family is one coherent
+    registration scope, the SAME root-ownership discipline
+    ``EntityConfig(as_of=...)`` / ``table`` already follow) — an explicit
+    ``registry=`` that names a DIFFERENT one is a loud class-definition-time
+    error, never a silent split-family bug. A non-family declaration uses its
+    own explicit ``registry=``, or :func:`default_registry` when omitted
+    (zero-ceremony)."""
+    if family_parent is not None:
+        parent_registry = _REGISTRY_OF_CLASS[family_parent]
+        if registry is not None and registry is not parent_registry:
+            raise EntityDefinitionError(
+                f"{cls_name}: a family SUBCLASS cannot declare a `registry=` different from "
+                "its family root's own — an inheritance family shares one registration scope "
+                "(ledger D-20)"
+            )
+        return parent_registry
+    return registry if registry is not None else default_registry()
+
+
 # The TPH family's shared table default, keyed by the ROOT entity's own name —
 # populated when the root compiles (its EntityConfig.table, possibly ``None``),
 # consumed by a concrete-subtype descendant that declares no table of its own.
@@ -451,7 +635,7 @@ _FAMILY_SHARED_TABLE: dict[str, str | None] = {}
 
 
 def _derive_inheritance(
-    cls_name: str, config: EntityConfig, family_parent: type | None
+    cls_name: str, config: EntityConfig, family_parent: type | None, registry: EntityRegistry
 ) -> tuple[InheritanceRecord | None, str | None]:
     """Derive the compiled ``Inheritance`` record and this entity's own resolved
     ``table`` from the Python class hierarchy + ``EntityConfig.inheritance``
@@ -487,7 +671,7 @@ def _derive_inheritance(
             "a Parallax entity always joins its family (ledger D-7)"
         )
     try:
-        temp_meta = MetamodelRecord(entities=tuple(entity_records().values()))
+        temp_meta = registry.metamodel()
         root_record = _inheritance.family_root(temp_meta, parent_record)
     except ValueError as exc:  # pragma: no cover - guards a malformed family
         raise EntityDefinitionError(f"{cls_name}: {exc}") from exc
@@ -626,6 +810,8 @@ class EntityMeta(ModelMetaclass):
         cls_name: str,
         bases: tuple[type, ...],
         namespace: dict[str, Any],
+        *,
+        registry: EntityRegistry | None = None,
         **kwargs: Any,
     ) -> type:
         if not any(isinstance(base, EntityMeta) for base in bases):
@@ -688,7 +874,10 @@ class EntityMeta(ModelMetaclass):
         value_objects = tuple(_value_object_of(decl) for decl in vo_decls)
         _reject_collisions(attributes, relationships, value_objects)
         family_parent = _family_parent(bases)
-        inheritance_record, resolved_table = _derive_inheritance(cls_name, config, family_parent)
+        resolved_registry = _resolve_registry(cls_name, registry, family_parent)
+        inheritance_record, resolved_table = _derive_inheritance(
+            cls_name, config, family_parent, resolved_registry
+        )
         entity = EntityRecord(
             name=cls_name,
             namespace=config.namespace,
@@ -728,7 +917,9 @@ class EntityMeta(ModelMetaclass):
         for py_name, _inner, spec in attr_decls:
             canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
             column = spec.column if spec.column is not None else py_name
-            setattr(cls, py_name, Attr(AttributeRef(cls_name, canonical), py_name))
+            setattr(
+                cls, py_name, Attr(AttributeRef(cls_name, canonical), py_name, resolved_registry)
+            )
             column_to_py[column] = py_name
             name_to_py[canonical] = py_name
             py_to_name[py_name] = canonical
@@ -740,7 +931,9 @@ class EntityMeta(ModelMetaclass):
         for py_name, vo_class, _card, spec in vo_decls:
             canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
             column = spec.column if spec.column is not None else py_name
-            setattr(cls, py_name, Attr(AttributeRef(cls_name, canonical), py_name))
+            setattr(
+                cls, py_name, Attr(AttributeRef(cls_name, canonical), py_name, resolved_registry)
+            )
             column_to_py[column] = py_name
             name_to_py[canonical] = py_name
             py_to_name[py_name] = canonical
@@ -749,11 +942,17 @@ class EntityMeta(ModelMetaclass):
         for py_name, _inner, rel_spec in rel_decls:
             canonical = rel_spec.name if rel_spec.name is not None else snake_to_camel(py_name)
             rel_descriptor: Rel[Any] = Rel(
-                RelationshipRef(cls_name, canonical), py_name, rel_spec.related_entity
+                RelationshipRef(cls_name, canonical),
+                py_name,
+                rel_spec.related_entity,
+                resolved_registry,
             )
             setattr(cls, py_name, rel_descriptor)
             relationship_py[canonical] = py_name
-        _REGISTRY[cls_name] = cast("type[BaseModel]", cls)
+        resolved_registry._register(  # pyright: ignore[reportPrivateUsage]
+            cls_name, cast("type[BaseModel]", cls)
+        )
+        _REGISTRY_OF_CLASS[cls] = resolved_registry
         _ENTITY_BY_CLASS[cls] = entity
         _WIRE_NAMES[cls] = WireNames(
             column_to_py=column_to_py,
@@ -815,9 +1014,12 @@ class Entity(BaseModel, metaclass=EntityMeta):
         record declares no axis locally.
         """
         record = entity_record_of(cls)
-        as_of = _temporal_as_of_attributes(record) if record is not None else ()
-        statement = build_statement(cls.__name__, predicates, as_of_attributes=as_of)
-        validate_operation(cls.__name__, statement.predicate, _current_metamodel())
+        registry = _registry_of_class(cls)
+        as_of = _temporal_as_of_attributes(record, cls) if record is not None else ()
+        statement = build_statement(
+            cls.__name__, predicates, as_of_attributes=as_of, registry=registry
+        )
+        validate_operation(cls.__name__, statement.predicate, registry.metamodel())
         return statement
 
     @classmethod

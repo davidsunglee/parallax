@@ -13,7 +13,8 @@ operation the corpus authors (the operation no-drift guard).
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from parallax.core.base import normalize_instant
 from parallax.core.descriptor import AsOfAttribute, Axis, Metamodel
@@ -36,6 +37,9 @@ from parallax.core.op_algebra import (
     validate_operation,
 )
 from parallax.core.temporal_read import Latest
+
+if TYPE_CHECKING:
+    from parallax.core.entity.base import EntityRegistry
 
 __all__ = ["Statement", "UnsupportedFeatureError"]
 
@@ -82,6 +86,14 @@ class Statement:
     # Whether the statement-level ``.narrow(...)`` clause already wrapped the
     # predicate (single-shot, like ``as_of``).
     is_narrowed: bool = False
+    # The target class's own D-20 registration scope, captured at ``Entity.where``
+    # (never a public field -- an implementation-private resolution seam,
+    # mirroring ``EntityMetaView._context``): ``.include`` / ``.narrow`` validate
+    # within THIS registry, never the process-global default, so a same-named
+    # class registered in an unrelated registry can never leak into scope here.
+    # ``None`` only for a ``Statement`` built outside ``Entity.where`` (test-only
+    # direct construction) -- falls back to the process default registry.
+    _registry: EntityRegistry | None = field(default=None, repr=False, compare=False)
 
     def order_by(self, *keys: OrderKey) -> Statement:
         """Order the result by one or more keys (``Attr.asc()`` / ``Attr.desc()``)."""
@@ -173,7 +185,7 @@ class Statement:
             )
         new_paths = self.include_paths + tuple(path.segments for path in paths)
         node = DeepFetch(operand=self.predicate, paths=new_paths)
-        validate_operation(self.target, node, _current_metamodel())
+        validate_operation(self.target, node, self._scoped_metamodel())
         return replace(self, include_paths=new_paths)
 
     def narrow(self, *subtypes: type) -> Statement:
@@ -191,7 +203,7 @@ class Statement:
             raise ValueError("a narrow clause is single-shot; derive from the un-narrowed base")
         to = tuple(_subtype_name(subtype) for subtype in subtypes)
         node = Narrow(entity=self.target, to=to, operand=self.predicate)
-        validate_operation(self.target, node, _current_metamodel())
+        validate_operation(self.target, node, self._scoped_metamodel())
         return replace(self, predicate=node, is_narrowed=True)
 
     def operation(self) -> Operation:
@@ -265,15 +277,19 @@ class Statement:
         )
         raise ValueError(f"{self.target} {detail}")
 
+    def _scoped_metamodel(self) -> Metamodel:
+        """``validate_operation``'s own input, resolved within THIS statement's
+        own D-20 registration scope (:attr:`_registry`, captured at
+        ``Entity.where``) — never the process-global registry (a same-named
+        class registered elsewhere must stay invisible here). A deferred
+        import (``parallax.core.entity.base`` imports THIS module for
+        :class:`Statement`; the reverse edge can only be resolved at call
+        time). Falls back to the process default registry for a ``Statement``
+        built outside ``Entity.where`` (``_registry`` unset)."""
+        from parallax.core.entity.base import default_registry
 
-def _current_metamodel() -> Metamodel:
-    """Every entity class registered so far, as a :class:`Metamodel` —
-    ``validate_operation``'s own input. A deferred import
-    (``parallax.core.entity.base`` imports THIS module for :class:`Statement`;
-    the reverse edge can only be resolved at call time)."""
-    from parallax.core.entity.base import entity_records
-
-    return Metamodel(entities=tuple(entity_records().values()))
+        registry = self._registry if self._registry is not None else default_registry()
+        return registry.metamodel()
 
 
 def _subtype_name(cls: type) -> str:
@@ -295,17 +311,28 @@ def build_statement(
     predicates: tuple[Predicate, ...],
     *,
     as_of_attributes: tuple[AsOfAttribute, ...] = (),
+    registry: EntityRegistry | None = None,
 ) -> Statement:
-    """Build a :class:`Statement` conjoining ``predicates`` (empty is find-all)."""
+    """Build a :class:`Statement` conjoining ``predicates`` (empty is find-all).
+    ``registry`` (ledger D-20) is the target class's own registration scope,
+    captured here so ``.include`` / ``.narrow`` validate within it later."""
     if not predicates:
-        return Statement(target=target, predicate=All(), as_of_attributes=as_of_attributes)
+        return Statement(
+            target=target, predicate=All(), as_of_attributes=as_of_attributes, _registry=registry
+        )
     if len(predicates) == 1:
         return Statement(
-            target=target, predicate=predicates[0].op, as_of_attributes=as_of_attributes
+            target=target,
+            predicate=predicates[0].op,
+            as_of_attributes=as_of_attributes,
+            _registry=registry,
         )
     operands: list[Operation] = []
     for predicate in predicates:
         operands.extend(and_terms(predicate))
     return Statement(
-        target=target, predicate=And(operands=tuple(operands)), as_of_attributes=as_of_attributes
+        target=target,
+        predicate=And(operands=tuple(operands)),
+        as_of_attributes=as_of_attributes,
+        _registry=registry,
     )

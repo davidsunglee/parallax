@@ -16,8 +16,7 @@ so the two can never drift.
 from __future__ import annotations
 
 from parallax.core import inheritance
-from parallax.core.descriptor import Metamodel
-from parallax.core.entity.base import entity_records, wire_names_of
+from parallax.core.entity.base import default_registry, wire_names_of
 from parallax.core.entity.expressions import (
     UNLOADED,
     RelationshipPath,
@@ -29,11 +28,16 @@ __all__ = ["is_loaded", "narrowed"]
 _NARROWED_ATTR = "__parallax_narrowed__"
 
 
-def _resolved_position(names: tuple[str, ...]) -> tuple[str, ...]:
+def _resolved_position(names: tuple[str, ...], path: RelationshipPath) -> tuple[str, ...]:
     """The RESOLVED effective concrete-subtype set for authored narrow
     ``names`` (mirrors ``m-deep-fetch``'s own ``_resolve_position``): a
-    narrowed view is keyed by the resolved set, never the authored names."""
-    meta = Metamodel(entities=tuple(entity_records().values()))
+    narrowed view is keyed by the resolved set, never the authored names.
+    Resolved within ``path``'s own D-20 registration scope (ledger D-20) --
+    never the process-global default -- falling back to it only when the
+    path carries none (a defensive, test-only construction)."""
+    path_registry = path._registry  # pyright: ignore[reportPrivateUsage]
+    registry = path_registry if path_registry is not None else default_registry()
+    meta = registry.metamodel()
     resolved: set[str] = set()
     for name in names:
         resolved.update(inheritance.effective_concrete_subtypes(meta, name))
@@ -50,7 +54,7 @@ def _view_key(path: str | RelationshipPath) -> str:
     _, _, rel_local = last.rel.partition(".")
     if not last.narrow:
         return rel_local
-    position = _resolved_position(last.narrow)
+    position = _resolved_position(last.narrow, path)
     return f"{rel_local}[{','.join(position)}]"
 
 
