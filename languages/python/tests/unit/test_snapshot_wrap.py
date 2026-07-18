@@ -381,104 +381,114 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
 # --------------------------------------------------------------------------- #
 def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -> None:
     registry_path = EntityRegistry(parent=None)
-
-    class Pet(  # pyright: ignore[reportRedeclaration]
-        Entity, frozen=True, registry=registry_path
-    ):
-        __parallax__ = EntityConfig(
-            table="pet_path",
-            mutability="transactional",
-            inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-        )
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-
-    class Dog(Pet, frozen=True):  # pyright: ignore[reportRedeclaration]
-        __parallax__ = EntityConfig(
-            table="dog_path", mutability="transactional", inheritance=Concrete()
-        )
-
-    path_dog = Dog
-
-    class CustomDog(Pet, frozen=True):  # pyright: ignore[reportUnusedClass]
-        __parallax__ = EntityConfig(
-            table="custom_dog_path", mutability="transactional", inheritance=Concrete()
-        )
-
-    class Owner(  # pyright: ignore[reportRedeclaration]
-        Entity, frozen=True, registry=registry_path
-    ):
-        __parallax__ = EntityConfig(table="owner_path", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-        pets: Rel[tuple[Pet, ...]] = Relationship(
-            cardinality="one-to-many",
-            join="this.id = Pet.ownerId",
-            related_entity="Pet",
-            reverse_name="owner",
-            foreign_key="owner_id",
-        )
-
-    path_owner = Owner
-
-    class Kennel(  # pyright: ignore[reportUnusedClass]
-        Entity, frozen=True, registry=registry_path
-    ):
-        __parallax__ = EntityConfig(table="kennel_path", mutability="transactional")
-
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-        owners: Rel[tuple[Owner, ...]] = Relationship(
-            cardinality="one-to-many",
-            join="this.id = Owner.kennelId",
-            related_entity="Owner",
-            reverse_name="kennel",
-            foreign_key="kennel_id",
-        )
-
-    # A genuine multi-hop path: `.pets` (a DYNAMIC second hop, `__getattr__`)
-    # and `.narrow(Pet)` both propagate the FIRST hop's own `registry_path`
-    # unchanged -- never re-derived from `Owner`'s own registration registry
-    # (which happens to be the SAME one here; the wrapped node below is
-    # deliberately registered in a DIFFERENT one instead).
-    path = Kennel.owners.pets.narrow(Pet)
-
-    # `Owner`'s (and its "Pet" family's) OWN, entirely separate registration
-    # registry -- this is what a wrapped `Owner` node's `type(node)` actually
-    # resolves through; its "Pet" family is NARROWER (`Dog` alone, no
-    # `CustomDog`) than `registry_path`'s.
     registry_actual = EntityRegistry(parent=None)
 
-    class Pet(  # pyright: ignore[reportRedeclaration]
-        Entity, frozen=True, registry=registry_actual
-    ):
-        __parallax__ = EntityConfig(
-            table="pet_actual",
-            mutability="transactional",
-            inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
-        )
+    def _build_wide_pet_family() -> tuple[RelationshipPath, type, type]:
+        """`registry_path`'s own "Pet"/"Owner"/"Kennel" family: a "Pet" family
+        WIDER (`CustomDog` beside `Dog`) than `registry_actual`'s own,
+        entirely separate family below -- what the multi-hop `path` returned
+        here is built through. A NESTED scope (never the enclosing test
+        function's own): each class's canonical name ("Pet"/"Dog"/"Owner")
+        is declared exactly ONCE per scope, the SAME canonical name
+        `_build_narrow_pet_family` below ALSO declares in its own, separate
+        scope (D-20: the SAME canonical name coexists across two registries)
+        -- a distinct SCOPE per family avoids Pyright's redeclaration check,
+        never a distinct NAME, which would defeat the very D-20 coexistence
+        this test proves."""
 
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+        class Pet(Entity, frozen=True, registry=registry_path):
+            __parallax__ = EntityConfig(
+                table="pet_path",
+                mutability="transactional",
+                inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
+            )
 
-    class Dog(Pet, frozen=True):
-        __parallax__ = EntityConfig(
-            table="dog_actual", mutability="transactional", inheritance=Concrete()
-        )
+            id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
-    dog_cls = Dog
+        class Dog(Pet, frozen=True):
+            __parallax__ = EntityConfig(
+                table="dog_path", mutability="transactional", inheritance=Concrete()
+            )
 
-    class Owner(Entity, frozen=True, registry=registry_actual):
-        __parallax__ = EntityConfig(table="owner_actual", mutability="transactional")
+        class CustomDog(Pet, frozen=True):
+            __parallax__ = EntityConfig(
+                table="custom_dog_path", mutability="transactional", inheritance=Concrete()
+            )
 
-        id: Attr[int] = Field(primary_key=True, pk_generator="none")
-        pets: Rel[tuple[Pet, ...]] = Relationship(
-            cardinality="one-to-many",
-            join="this.id = Pet.ownerId",
-            related_entity="Pet",
-            reverse_name="owner",
-            foreign_key="owner_id",
-        )
+        # Registered by the class statement's own side effect (widens this
+        # scope's "Pet" family beyond `registry_actual`'s, below): referenced
+        # here as proof of ITS OWN registry membership, never a dangling
+        # local.
+        assert registry_path.resolve("CustomDog") is CustomDog
 
-    owner_cls = Owner
+        class Owner(Entity, frozen=True, registry=registry_path):
+            __parallax__ = EntityConfig(table="owner_path", mutability="transactional")
+
+            id: Attr[int] = Field(primary_key=True, pk_generator="none")
+            pets: Rel[tuple[Pet, ...]] = Relationship(
+                cardinality="one-to-many",
+                join="this.id = Pet.ownerId",
+                related_entity="Pet",
+                reverse_name="owner",
+                foreign_key="owner_id",
+            )
+
+        class Kennel(Entity, frozen=True, registry=registry_path):
+            __parallax__ = EntityConfig(table="kennel_path", mutability="transactional")
+
+            id: Attr[int] = Field(primary_key=True, pk_generator="none")
+            owners: Rel[tuple[Owner, ...]] = Relationship(
+                cardinality="one-to-many",
+                join="this.id = Owner.kennelId",
+                related_entity="Owner",
+                reverse_name="kennel",
+                foreign_key="kennel_id",
+            )
+
+        # A genuine multi-hop path: `.pets` (a DYNAMIC second hop, `__getattr__`)
+        # and `.narrow(Pet)` both propagate the FIRST hop's own `registry_path`
+        # unchanged -- never re-derived from `Owner`'s own registration registry
+        # (which happens to be the SAME one here; the wrapped node below is
+        # deliberately registered in a DIFFERENT one instead).
+        path = Kennel.owners.pets.narrow(Pet)
+        return path, Dog, Owner
+
+    def _build_narrow_pet_family() -> tuple[type, type]:
+        """`Owner`'s (and its "Pet" family's) OWN, entirely separate
+        registration registry -- this is what a wrapped `Owner` node's
+        `type(node)` actually resolves through; its "Pet" family is NARROWER
+        (`Dog` alone, no `CustomDog`) than `registry_path`'s own above."""
+
+        class Pet(Entity, frozen=True, registry=registry_actual):
+            __parallax__ = EntityConfig(
+                table="pet_actual",
+                mutability="transactional",
+                inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
+            )
+
+            id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+        class Dog(Pet, frozen=True):
+            __parallax__ = EntityConfig(
+                table="dog_actual", mutability="transactional", inheritance=Concrete()
+            )
+
+        class Owner(Entity, frozen=True, registry=registry_actual):
+            __parallax__ = EntityConfig(table="owner_actual", mutability="transactional")
+
+            id: Attr[int] = Field(primary_key=True, pk_generator="none")
+            pets: Rel[tuple[Pet, ...]] = Relationship(
+                cardinality="one-to-many",
+                join="this.id = Pet.ownerId",
+                related_entity="Pet",
+                reverse_name="owner",
+                foreign_key="owner_id",
+            )
+
+        return Dog, Owner
+
+    path, path_dog, path_owner = _build_wide_pet_family()
+    dog_cls, owner_cls = _build_narrow_pet_family()
 
     # The wire's own narrowed-view key, exactly as `m-deep-fetch`'s planning
     # (`resolve_narrow_position` over the QUERY's own connected metamodel --
