@@ -467,3 +467,57 @@ def test_db_find_over_a_bare_metamodel_resolves_the_assembled_classs_own_registr
     assert type(result) is animal_owner.Person
     assert type(result) is not read_models.Person
     assert result.name == "Alice"
+
+
+# --------------------------------------------------------------------------- #
+# R1 (BLOCKING, COR-3 Phase 7 increment 7 round-2): S2's original mixed-      #
+# registry check confirmed only that the candidate REACHES every other       #
+# distinct registry, never that it actually RESOLVES every supplied class     #
+# back to itself -- a conflicting same-name pair across registries (or       #
+# shadowed within one registry chain) must reject loudly, never silently     #
+# emit two divergent records for one canonical name.                         #
+# --------------------------------------------------------------------------- #
+def test_bare_metamodel_over_conflicting_same_name_classes_rejects_loudly() -> None:
+    # Reproduces the reviewer's exact call verbatim: `animal_owner.Person`
+    # (`models/animal.yaml`'s polymorphic owner) and `read_models.Person`
+    # (`models/person.yaml`'s unrelated one-to-one Passport owner) share the
+    # literal canonical name "Person" but are UNRELATED classes with
+    # divergent descriptors (maxLength, relationships) -- pre-fix, S2's
+    # reachability-only check silently picked ANIMAL_OWNER_REGISTRY (it
+    # reaches the default registry `read_models.Person` lives in) without
+    # confirming that registry resolves EVERY supplied class back to itself,
+    # so the assembled Metamodel's own `entities` carried BOTH divergent
+    # "Person" records while class resolution silently returned only
+    # `animal_owner.Person` -- descriptor and class resolution selecting
+    # different definitions. Must reject loudly instead.
+    with pytest.raises(ValueError, match="conflicting same-name classes"):
+        metamodel([animal_owner.Person, read_models.Person])
+
+
+def test_bare_metamodel_over_a_same_name_pair_shadowed_within_one_registry_chain_rejects() -> None:
+    # A same-name pair rejects even when both classes' own registries form a
+    # SINGLE parent chain via shadowing (never only when the registries are
+    # genuinely incomparable) -- supplying BOTH the shadowing CHILD class and
+    # the shadowed PARENT class is the SAME conflict as the cross-registry
+    # reproduction above, just one level removed.
+    parent = EntityRegistry(parent=None)
+
+    class ShadowConflictProbe(  # pyright: ignore[reportRedeclaration]
+        Entity, frozen=True, registry=parent
+    ):
+        __parallax__ = EntityConfig(table="shadow_conflict_parent", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    parent_class = ShadowConflictProbe
+    child = EntityRegistry(parent=parent)
+
+    class ShadowConflictProbe(Entity, frozen=True, registry=child):
+        __parallax__ = EntityConfig(table="shadow_conflict_child", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    child_class = ShadowConflictProbe
+
+    with pytest.raises(ValueError, match="conflicting same-name classes"):
+        metamodel([parent_class, child_class])

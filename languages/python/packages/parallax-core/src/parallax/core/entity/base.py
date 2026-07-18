@@ -497,6 +497,20 @@ def registry_of_classes(classes: Sequence[type]) -> EntityRegistry | None:
     own registries are genuinely incomparable (no single member's own chain
     reaches every other) -- picking ANY one of them could silently
     mis-resolve one of the others, so this refuses to guess instead.
+
+    HARDENED (R1, COR-3 Phase 7 increment 7 round-2, BLOCKING): reachability
+    alone is not sufficient -- a reaching candidate's own ``parent`` chain may
+    SHADOW a supplied class's canonical name with a DIFFERENT class between
+    the candidate and that class's own registry (e.g. a same-name pair
+    spanning two registries where one reaches the other), so once a
+    reachability candidate is found, this ALSO verifies it resolves EVERY
+    supplied class's own canonical name back to THAT EXACT class object
+    (:meth:`EntityRegistry.resolve`) before returning it -- any mismatch
+    raises, naming both the supplied class and whichever class the candidate
+    actually resolves its name to (and both their own registries), rather
+    than silently letting `metamodel`'s assembled ``entities`` and its class
+    resolution (:func:`resolve_entity_class`) disagree about which class a
+    canonical name denotes.
     """
     classes = tuple(classes)
     distinct: dict[EntityRegistry, None] = {}
@@ -504,20 +518,38 @@ def registry_of_classes(classes: Sequence[type]) -> EntityRegistry | None:
         distinct.setdefault(registry_of_class(cls), None)
     if not distinct:
         return None
+    candidate: EntityRegistry | None = None
     if len(distinct) == 1:
-        return next(iter(distinct))
-    for candidate in distinct:
-        if all(candidate.reaches(other) for other in distinct):
-            return candidate
-    names = ", ".join(cls.__name__ for cls in classes)
-    raise ValueError(
-        f"metamodel(classes): {names} span {len(distinct)} incompatible EntityRegistry "
-        "scopes -- no single one's own parent chain resolves every other, so tagging the "
-        "assembled Metamodel with any one of them could silently mis-resolve another; "
-        "assemble a metamodel scoped to one explicit registry instead "
-        "(EntityRegistry.metamodel()), or pass a class set whose own registries form a "
-        "single parent chain (ledger D-20)"
-    )
+        candidate = next(iter(distinct))
+    else:
+        for maybe in distinct:
+            if all(maybe.reaches(other) for other in distinct):
+                candidate = maybe
+                break
+    if candidate is None:
+        names = ", ".join(cls.__name__ for cls in classes)
+        raise ValueError(
+            f"metamodel(classes): {names} span {len(distinct)} incompatible EntityRegistry "
+            "scopes -- no single one's own parent chain resolves every other, so tagging the "
+            "assembled Metamodel with any one of them could silently mis-resolve another; "
+            "assemble a metamodel scoped to one explicit registry instead "
+            "(EntityRegistry.metamodel()), or pass a class set whose own registries form a "
+            "single parent chain (ledger D-20)"
+        )
+    for cls in classes:
+        resolved = candidate.resolve(cls.__name__)
+        if resolved is not cls:
+            resolved_registry = registry_of_class(resolved) if resolved is not None else None
+            raise ValueError(
+                f"metamodel(classes): canonical name {cls.__name__!r} is ambiguous -- {cls!r} "
+                f"(registered in {registry_of_class(cls)!r}) was supplied, but the assembled "
+                f"Metamodel's own registry {candidate!r} resolves {cls.__name__!r} to "
+                f"{resolved!r} instead (registered in {resolved_registry!r}) -- conflicting "
+                "same-name classes can never share one assembled Metamodel; supply only one "
+                "of them, or assemble each through its own registry's "
+                "EntityRegistry.metamodel() separately (ledger D-20)"
+            )
+    return candidate
 
 
 def _temporal_as_of_attributes(record: EntityRecord, cls: type) -> tuple[AsOfAttribute, ...]:
