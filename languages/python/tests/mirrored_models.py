@@ -22,6 +22,7 @@ from parallax.conformance.read_models import Animal as AnimalRoot
 from parallax.conformance.read_models import Balance, Cat, Dog, Passport, Person, Pet
 from parallax.conformance.read_models import WildBoar as AnimalWildBoar
 from parallax.conformance.story_models import Account
+from parallax.conformance.vo_models import Branch, Contact, Shipment, Supplier
 from parallax.core import Attr, Entity, EntityConfig, Field
 
 _NS = "parallax.compatibility"
@@ -67,6 +68,10 @@ MIRRORED: list[tuple[str, list[type]]] = [
         [_im.Document, _im.FinancialDocument, _im.Invoice, _im.Receipt, _im.Memo, _im.Folder],
     ),
     ("animal", [AnimalRoot, Pet, Dog, Cat, AnimalWildBoar, AnimalOwnerPerson]),
+    ("supplier", [Supplier]),
+    ("branch", [Branch]),
+    ("contact", [Contact]),
+    ("shipment", [Shipment]),
 ]
 
 

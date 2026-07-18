@@ -53,6 +53,7 @@ from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.read_models import Cat, DepositRate, Dog, Person, Pet
 from parallax.conformance.story_models import Order
+from parallax.conformance.vo_models import Branch, Supplier
 from parallax.core.temporal_read import LATEST
 from parallax.snapshot.handle import Database, Snapshot
 
@@ -174,6 +175,39 @@ def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any
     )
 
 
+def unitemporal_vo_owner_as_of_now(db: Database) -> Snapshot[Any]:
+    """A value object rides its unitemporal-processing owner's milestone
+    (`m-value-object-028`): an as-of-now read returns each supplier's CURRENT
+    address document — no value-object-specific temporal machinery."""
+    return db.find(Supplier.where().as_of(processing=LATEST))
+
+
+def unitemporal_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
+    """The SAME owner read at a past processing instant returns the
+    SUPERSEDED address document (`m-value-object-029`) — the document rides
+    the milestone exactly like a scalar column."""
+    return db.find(Supplier.where().as_of(processing=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
+
+
+def bitemporal_vo_owner_as_of_now_both_axes(db: Database) -> Snapshot[Any]:
+    """A value object rides a FULL bitemporal owner's rectangle
+    (`m-value-object-030`): pinning both axes to now returns the
+    fully-current document."""
+    return db.find(Branch.where().as_of(business=LATEST, processing=LATEST))
+
+
+def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
+    """An audit read (both axes in the past, `m-value-object-031`)
+    reconstructs the ORIGINALLY-believed document, distinct from what the
+    system knows now (`bitemporal_vo_owner_as_of_now_both_axes`)."""
+    return db.find(
+        Branch.where().as_of(
+            business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+        )
+    )
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
     GraphStory(
         "m-snapshot-read-001",
@@ -246,5 +280,29 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "Two distinct narrowed views over the same relationship populate independently",
         "animal",
         distinct_narrowed_views_populate_independently,
+    ),
+    GraphStory(
+        "m-value-object-028",
+        "A value object rides its unitemporal-processing owner's current milestone",
+        "supplier",
+        unitemporal_vo_owner_as_of_now,
+    ),
+    GraphStory(
+        "m-value-object-029",
+        "A value object rides its unitemporal-processing owner's superseded milestone",
+        "supplier",
+        unitemporal_vo_owner_as_of_a_past_instant,
+    ),
+    GraphStory(
+        "m-value-object-030",
+        "A value object rides a full bitemporal owner's fully-current rectangle",
+        "branch",
+        bitemporal_vo_owner_as_of_now_both_axes,
+    ),
+    GraphStory(
+        "m-value-object-031",
+        "A bitemporal audit read reconstructs the originally-believed document",
+        "branch",
+        bitemporal_vo_owner_as_of_a_past_audit_point,
     ),
 )

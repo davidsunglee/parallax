@@ -29,10 +29,17 @@ from conftest import case_document, compare_binds
 from parallax.conformance import case_format, models
 from parallax.conformance.read_models import Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
+from parallax.conformance.vo_models import (
+    Contact,
+    ContactAddress,
+    ContactGeo,
+    ContactPoint,
+    Shipment,
+)
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import WriteRejectedError
-from parallax.snapshot.handle import Database
+from parallax.snapshot.handle import Database, Transaction
 
 pytestmark = [pytest.mark.unit, pytest.mark.api_conformance]
 
@@ -234,21 +241,80 @@ def test_every_write_story_mirrors_an_active_case_exactly_once() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Rejected-case build/buffer-time proof (m-inheritance, COR-3 Phase 8         #
-# increment 2): the write-side counterpart of                                 #
+# Rejected-case build/buffer-time proofs (m-inheritance/m-value-object): the   #
+# write-side counterpart of                                                   #
 # `test_operation_no_drift.test_idiomatic_statement_build_rejects_the_corpus_rule` #
 # — `tx.insert` refuses the SAME invalid write the corpus's own rejected      #
 # lane grades (`engine.run_rejected_case`), through the SAME model-aware      #
 # `validate_write` (`Transaction._buffer`), naming the SAME classified rule.  #
 # No golden DML: a rejected write never reaches the port (`api_suite.EXAMPLES`'#
-# own `m-inheritance-088` entry is this exact snippet).                       #
+# own entries are these exact snippets). The Contact/Shipment value-object    #
+# write-input rejects (`m-value-object-039..042/044`) construct a            #
+# STRUCTURALLY-incomplete instance directly (every inner VO field stays      #
+# Python-optional even though its DECLARED descriptor is non-nullable, see   #
+# `vo_models.ContactPoint`'s own docstring) — `validate_write`, never         #
+# Pydantic's own required-field enforcement, is what refuses it.             #
 # --------------------------------------------------------------------------- #
-def test_idiomatic_write_build_rejects_the_corpus_rule() -> None:
-    case = _CASES["m-inheritance-088"]
+REJECTED_WRITE_BUILDERS: dict[str, Callable[[Transaction], None]] = {
+    "m-inheritance-088": lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))),
+    "m-value-object-039": lambda tx: tx.insert(
+        Contact(
+            id=1,
+            name="Acme",
+            address=ContactAddress(
+                city="Oslo",
+                geo=ContactGeo(country="NO", point=ContactPoint(lat=59.9, lon=10.7)),
+            ),
+        )
+    ),
+    "m-value-object-040": lambda tx: tx.insert(
+        Contact(
+            id=2,
+            name="Beacon",
+            address=ContactAddress(
+                street="1 Main St",
+                city="Oslo",
+                geo=ContactGeo(point=ContactPoint(lat=59.9, lon=10.7)),
+            ),
+        )
+    ),
+    "m-value-object-041": lambda tx: tx.insert(
+        Contact(
+            id=3,
+            name="Cairn",
+            address=ContactAddress(
+                street="2 Fjord Vei",
+                city="Bergen",
+                geo=ContactGeo(country="NO", point=ContactPoint(lon=5.3)),
+            ),
+        )
+    ),
+    "m-value-object-042": lambda tx: tx.insert(
+        Contact(id=4, name="Delta", address=ContactAddress(street="3 Harbour Rd", city="Oslo"))
+    ),
+    "m-value-object-044": lambda tx: tx.insert(Shipment(id=5, name="Express")),
+}
+
+# case id -> the model `_RecordingPort` connects against.
+REJECTED_WRITE_MODELS: dict[str, str] = {
+    "m-inheritance-088": "payment",
+    "m-value-object-039": "contact",
+    "m-value-object-040": "contact",
+    "m-value-object-041": "contact",
+    "m-value-object-042": "contact",
+    "m-value-object-044": "shipment",
+}
+
+
+@pytest.mark.parametrize(
+    "case_id", sorted(REJECTED_WRITE_BUILDERS), ids=sorted(REJECTED_WRITE_BUILDERS)
+)
+def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
+    case = _CASES[case_id]
     expected_rule = case_document(case)["then"]["rejectedRule"]
     port = _RecordingPort()
-    db = Database.connect(port, _MODELS["payment"])
+    db = Database.connect(port, _MODELS[REJECTED_WRITE_MODELS[case_id]])
     with pytest.raises(WriteRejectedError) as exc_info:
-        db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))
+        db.transact(REJECTED_WRITE_BUILDERS[case_id])
     assert exc_info.value.rule == expected_rule
     assert not port.wrote

@@ -28,10 +28,12 @@ Deliberately ABSENT, each for its own reasoned-skip in ``api_suite.CASE_SKIP_REA
 
 - the ``customer.yaml`` value-object read examples
   (``m-value-object-001/002/007/015/016/017/019``): ``value_object_models.Customer``
-  already claims that canonical name in the single, global, process-wide
-  entity registry and is test-only — the SAME Person/AnimalOwner-style
-  collision ``read_models``'s own docstring documents for the animal family's
-  owner side, just for a different family (ledger D-20);
+  is test-only and no installed mirror exists yet — ledger D-20's structural
+  registry-collision block is resolved (an installed mirror COULD now coexist
+  with the test-only one, the same way the animal family's real owner does,
+  ``parallax.conformance.animal_owner``), but building one is a
+  coverage-surface breadth item this increment's own scale judgment
+  deprioritized (Part D item 4);
 - the multi-concrete polymorphic PROJECTING reads (``m-inheritance-003``/
   ``-013``/``-015``/``-052``): a table-per-hierarchy multi-concrete row's own
   typed instance carries only its OWN concrete class's fields, never a

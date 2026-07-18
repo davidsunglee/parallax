@@ -50,6 +50,7 @@ from parallax.conformance.read_models import Animal as AnimalRoot
 from parallax.conformance.read_models import Cat, Dog, Person, Pet, WildBoar
 from parallax.conformance.read_stories import READ_STORIES
 from parallax.conformance.story_models import Order
+from parallax.conformance.vo_models import Branch, Supplier
 from parallax.core import Entity, OperationRejectedError, Predicate, Statement
 from parallax.core.op_algebra import serialize
 from parallax.core.temporal_read import LATEST
@@ -123,6 +124,17 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     ),
     "m-inheritance-067": lambda: AnimalOwnerPerson.where().include(
         AnimalOwnerPerson.pets.narrow(Dog), AnimalOwnerPerson.pets.narrow(Cat)
+    ),
+    # Value-object-bearing temporal reads over the now-installed Supplier/
+    # Branch mirrors (ledger D-21).
+    "m-value-object-028": lambda: Supplier.where().as_of(processing=LATEST),
+    "m-value-object-029": lambda: Supplier.where().as_of(
+        processing=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    ),
+    "m-value-object-030": lambda: Branch.where().as_of(business=LATEST, processing=LATEST),
+    "m-value-object-031": lambda: Branch.where().as_of(
+        business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     ),
 }
 

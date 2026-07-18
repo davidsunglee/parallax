@@ -1,13 +1,15 @@
 """D-7 value-object class frontend: unit-level no-drift proof against
 ``models/customer.yaml``'s recursive ``Address`` / ``Geo`` / ``Point`` /
-``Phone`` composite (COR-3 Phase 7 increment 6a). The full API-conformance
-no-drift guard extension is blocked by the SAME single, global, process-wide
-entity-registry constraint `read_models.py`/`read_stories.py` document
-(ledger D-20 — no installed Customer mirror can share that canonical name
-with the test-only `value_object_models.Customer`; D-21 covers the
-Supplier/Branch value-object families separately); this is the build-time
-proof that the ``ValueObject`` class frontend threads its declared structure
-into the compiled entity record exactly as an ingested descriptor would.
+``Phone`` composite (COR-3 Phase 7 increment 6a). Ledger D-20's structural
+registry-collision block is resolved (an installed Customer mirror could now
+coexist with this test-only one via a separate ``EntityRegistry``, or simply
+redeclare it under the default registry the same way ``vo_models.Supplier``/
+``Branch``/``Contact``/``Shipment`` now do, D-21); no installed Customer
+mirror exists yet, a coverage-surface breadth item this increment's own
+scale judgment deprioritized (Part D item 4). This file's own proof stays
+scoped to the build-time structural comparison: the ``ValueObject`` class
+frontend threads its declared structure into the compiled entity record
+exactly as an ingested descriptor would.
 """
 
 from __future__ import annotations

@@ -155,6 +155,51 @@ EXAMPLES: Final[list[Example]] = [
         'db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))\n'
         '# raises WriteRejectedError(rule="abstract-write-target")',
     ),
+    Example(
+        "m-value-object-039",
+        "A write missing a required value-object attribute at depth 1",
+        "db.transact(lambda tx: tx.insert(Contact(\n"
+        '    id=1, name="Acme",\n'
+        '    address=ContactAddress(city="Oslo", geo=ContactGeo(\n'
+        '        country="NO", point=ContactPoint(lat=59.9, lon=10.7))),\n'
+        ")))\n"
+        '# raises WriteRejectedError(rule="write-required-attribute-missing")',
+    ),
+    Example(
+        "m-value-object-040",
+        "A write missing a required value-object attribute at depth 2",
+        "db.transact(lambda tx: tx.insert(Contact(\n"
+        '    id=2, name="Beacon",\n'
+        '    address=ContactAddress(street="1 Main St", city="Oslo",\n'
+        "        geo=ContactGeo(point=ContactPoint(lat=59.9, lon=10.7))),\n"
+        ")))\n"
+        '# raises WriteRejectedError(rule="write-required-attribute-missing")',
+    ),
+    Example(
+        "m-value-object-041",
+        "A write missing a required value-object attribute at depth 3",
+        "db.transact(lambda tx: tx.insert(Contact(\n"
+        '    id=3, name="Cairn",\n'
+        '    address=ContactAddress(street="2 Fjord Vei", city="Bergen",\n'
+        '        geo=ContactGeo(country="NO", point=ContactPoint(lon=5.3))),\n'
+        ")))\n"
+        '# raises WriteRejectedError(rule="write-required-attribute-missing")',
+    ),
+    Example(
+        "m-value-object-042",
+        "A write missing a required NESTED value object entirely",
+        "db.transact(lambda tx: tx.insert(Contact(\n"
+        '    id=4, name="Delta",\n'
+        '    address=ContactAddress(street="3 Harbour Rd", city="Oslo"),\n'
+        ")))\n"
+        '# raises WriteRejectedError(rule="write-required-value-object-missing")',
+    ),
+    Example(
+        "m-value-object-044",
+        "A write missing a required TOP-LEVEL value object entirely",
+        'db.transact(lambda tx: tx.insert(Shipment(id=5, name="Express")))\n'
+        '# raises WriteRejectedError(rule="write-required-value-object-missing")',
+    ),
     # Snapshot/graph semantics (m-snapshot-read, m-navigate x m-temporal-read):
     # each example IS an executable graph story
     # (`parallax.conformance.graph_stories`) — the snippet is the story's own
@@ -710,19 +755,6 @@ _CUSTOMER_UNREACHABLE_REASON: Final[str] = (
     "build-out (Part D item 4)"
 )
 
-# Supplier/Branch value-object-bearing temporal reads: genuinely exercisable in
-# principle (temporal as-of and value-object materialization are each already
-# proven independently), but no suite mirror or story exists yet for these two
-# families — new coverage surface this increment's explicit item list did not
-# build, not a structural block. Deferred: ledger D-21 (add the Supplier/Branch
-# mirror and story — a coverage-surface gap, distinct from D-20's structural
-# registry constraint).
-_VO_TEMPORAL_GRAPH_DEFERRED_REASON: Final[str] = (
-    "combines two independently-proven capabilities (temporal as-of reads, "
-    "value-object composite materialization) over Supplier/Branch, families with no "
-    "suite mirror or story yet — new coverage surface this increment did not build, "
-    "not a structural block; a future increment can add the mirror and story"
-)
 _VO_TEMPORAL_WRITE_PHASE8_REASON: Final[str] = (
     "an audit-write / bitemp-write temporal write over a value-object-bearing entity "
     "(the document rides every chained/split row whole, at its columnOrder slot, "
@@ -763,24 +795,21 @@ _VO_FIND_ROOT_REASON: Final[str] = (
     "itself prevents rooting a find at a value object"
 )
 
-# Value-object write-input validation rejects (m-value-object-039..044,
-# COR-3 Phase 8 increment 2): `validate_write` now grades every one of these
-# through the rejected sweep AND through `Transaction._buffer`'s own unit
-# tests (`test_transact.py`, driven over `Contact`/`Shipment` loaded directly
-# from `core/compatibility/models/` — no Python mirror needed for a plain
-# `_buffer` call) — but no `Contact` / `Shipment` mirror CLASS exists yet in
-# the production-reachable `parallax.conformance` surface (`read_models.py`)
-# to drive an idiomatic `tx.insert` proof through, the SAME missing-mirror
-# deferral this registry's own Supplier/Branch entries already carry.
-_VO_WRITE_VALIDATION_MIRROR_MISSING_REASON: Final[str] = (
-    "a write-INPUT validation rule (required-attribute-missing at depth 1/2/3, a missing "
-    "required value object, a value-type mismatch, a non-nullable top-level null) is now "
-    "graded end-to-end by the rejected sweep (`validate_write`, COR-3 Phase 8 increment 2) "
-    "and by `Transaction._buffer`'s own unit tests at the neutral seam — but no `Contact` / "
-    "`Shipment` mirror class exists yet in the production-reachable `parallax.conformance` "
-    "surface (`read_models.py`) to drive an idiomatic `tx.insert` proof through: ledger D-21 "
-    "(the SAME missing-mirror deferral this registry's Supplier/Branch entries already carry), "
-    "landing with increment 7's mirror build-out"
+# Value-type mismatch (m-value-object-043): empirically confirmed (a REPL
+# probe against the shipped surface) to have NO idiomatic spelling through
+# `tx.insert` — `ContactAddress(street=42, ...)` raises Pydantic's own
+# `ValidationError` (a `str` field never coerces an `int`) before the
+# instance can even be constructed, let alone reach `validate_write`. Its
+# four Contact/Shipment siblings (`-039..042`/`-044`) DO have an idiomatic
+# spelling (ledger D-21's now-installed mirror, `vo_models.py`) and are
+# exercised as build-time proofs above.
+_VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
+    "`ContactAddress(street=42, ...)` raises Pydantic's own `ValidationError` (a `str` "
+    "field never coerces an `int`) before the instance can even be constructed, let alone "
+    "reach `validate_write` — the type system itself prevents authoring the corpus's "
+    "invalid value-type-mismatch shape through `tx.insert`; its four Contact/Shipment "
+    "siblings (`-039..042`/`-044`) DO have an idiomatic spelling and are exercised as "
+    "build-time proofs (ledger D-21's installed mirror)"
 )
 
 # The three remaining m-value-object write-family siblings, each a DIFFERENT
@@ -963,11 +992,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-025": _CUSTOMER_UNREACHABLE_REASON,
     "m-value-object-026": _CUSTOMER_UNREACHABLE_REASON,
     "m-value-object-027": _CUSTOMER_UNREACHABLE_REASON,
-    # -- m-value-object: Supplier/Branch temporal VO (deferred, not blocked) - #
-    "m-value-object-028": _VO_TEMPORAL_GRAPH_DEFERRED_REASON,
-    "m-value-object-029": _VO_TEMPORAL_GRAPH_DEFERRED_REASON,
-    "m-value-object-030": _VO_TEMPORAL_GRAPH_DEFERRED_REASON,
-    "m-value-object-031": _VO_TEMPORAL_GRAPH_DEFERRED_REASON,
+    # -- m-value-object: Supplier/Branch temporal VO writes (D-23, pending the #
+    # typed temporal window verb `-033` needs) ------------------------------ #
     "m-value-object-032": _VO_TEMPORAL_WRITE_PHASE8_REASON,
     "m-value-object-033": _VO_TEMPORAL_WRITE_PHASE8_REASON,
     # -- m-value-object: structural rejects (no idiomatic spelling exists) --- #
@@ -975,13 +1001,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-035": _VO_DEEPFETCH_SEGMENT_REASON,
     "m-value-object-036": _VO_NAVIGATE_TARGET_REASON,
     "m-value-object-037": _VO_FIND_ROOT_REASON,
-    # -- m-value-object: write-input validation rejects (COR-3 Phase 8) ------ #
-    "m-value-object-039": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
-    "m-value-object-040": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
-    "m-value-object-041": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
-    "m-value-object-042": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
-    "m-value-object-043": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
-    "m-value-object-044": _VO_WRITE_VALIDATION_MIRROR_MISSING_REASON,
+    # -- m-value-object: write-input validation rejects ---------------------- #
+    "m-value-object-043": _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON,
     # -- m-value-object: the remaining write-family siblings (COR-3 Phase 8) - #
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,

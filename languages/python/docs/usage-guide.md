@@ -631,6 +631,59 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Row]:
     return _as_rows(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))))
 ```
 
+## A value object rides its unitemporal-processing owner's current milestone
+
+Corpus case: `m-value-object-028`
+
+```python
+def unitemporal_vo_owner_as_of_now(db: Database) -> Snapshot[Any]:
+    """A value object rides its unitemporal-processing owner's milestone
+    (`m-value-object-028`): an as-of-now read returns each supplier's CURRENT
+    address document — no value-object-specific temporal machinery."""
+    return db.find(Supplier.where().as_of(processing=LATEST))
+```
+
+## A value object rides its unitemporal-processing owner's superseded milestone
+
+Corpus case: `m-value-object-029`
+
+```python
+def unitemporal_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
+    """The SAME owner read at a past processing instant returns the
+    SUPERSEDED address document (`m-value-object-029`) — the document rides
+    the milestone exactly like a scalar column."""
+    return db.find(Supplier.where().as_of(processing=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
+```
+
+## A value object rides a full bitemporal owner's fully-current rectangle
+
+Corpus case: `m-value-object-030`
+
+```python
+def bitemporal_vo_owner_as_of_now_both_axes(db: Database) -> Snapshot[Any]:
+    """A value object rides a FULL bitemporal owner's rectangle
+    (`m-value-object-030`): pinning both axes to now returns the
+    fully-current document."""
+    return db.find(Branch.where().as_of(business=LATEST, processing=LATEST))
+```
+
+## A bitemporal audit read reconstructs the originally-believed document
+
+Corpus case: `m-value-object-031`
+
+```python
+def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
+    """An audit read (both axes in the past, `m-value-object-031`)
+    reconstructs the ORIGINALLY-believed document, distinct from what the
+    system knows now (`bitemporal_vo_owner_as_of_now_both_axes`)."""
+    return db.find(
+        Branch.where().as_of(
+            business=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+        )
+    )
+```
+
 ## A nested comparison whose literal type mismatches the declared attribute
 
 Corpus case: `m-value-object-038`
@@ -638,4 +691,64 @@ Corpus case: `m-value-object-038`
 ```python
 Customer.where(Customer.address.city == 42)
 # raises OperationRejectedError(rule="nested-literal-type-mismatch")
+```
+
+## A write missing a required value-object attribute at depth 1
+
+Corpus case: `m-value-object-039`
+
+```python
+db.transact(lambda tx: tx.insert(Contact(
+    id=1, name="Acme",
+    address=ContactAddress(city="Oslo", geo=ContactGeo(
+        country="NO", point=ContactPoint(lat=59.9, lon=10.7))),
+)))
+# raises WriteRejectedError(rule="write-required-attribute-missing")
+```
+
+## A write missing a required value-object attribute at depth 2
+
+Corpus case: `m-value-object-040`
+
+```python
+db.transact(lambda tx: tx.insert(Contact(
+    id=2, name="Beacon",
+    address=ContactAddress(street="1 Main St", city="Oslo",
+        geo=ContactGeo(point=ContactPoint(lat=59.9, lon=10.7))),
+)))
+# raises WriteRejectedError(rule="write-required-attribute-missing")
+```
+
+## A write missing a required value-object attribute at depth 3
+
+Corpus case: `m-value-object-041`
+
+```python
+db.transact(lambda tx: tx.insert(Contact(
+    id=3, name="Cairn",
+    address=ContactAddress(street="2 Fjord Vei", city="Bergen",
+        geo=ContactGeo(country="NO", point=ContactPoint(lon=5.3))),
+)))
+# raises WriteRejectedError(rule="write-required-attribute-missing")
+```
+
+## A write missing a required NESTED value object entirely
+
+Corpus case: `m-value-object-042`
+
+```python
+db.transact(lambda tx: tx.insert(Contact(
+    id=4, name="Delta",
+    address=ContactAddress(street="3 Harbour Rd", city="Oslo"),
+)))
+# raises WriteRejectedError(rule="write-required-value-object-missing")
+```
+
+## A write missing a required TOP-LEVEL value object entirely
+
+Corpus case: `m-value-object-044`
+
+```python
+db.transact(lambda tx: tx.insert(Shipment(id=5, name="Express")))
+# raises WriteRejectedError(rule="write-required-value-object-missing")
 ```

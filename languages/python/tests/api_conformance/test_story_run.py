@@ -31,7 +31,14 @@ from typing import Any, cast
 
 import pytest
 
-from conftest import case_document, case_fixtures, compare_binds, compare_rows, instance_row
+from conftest import (
+    case_document,
+    case_fixtures,
+    compare_binds,
+    compare_graph,
+    compare_rows,
+    instance_row,
+)
 from parallax.conformance import animal_owner, case_format, engine
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_stories import (
@@ -46,6 +53,7 @@ from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity.base import EntityRegistry
 from parallax.core.entity.expressions import UnloadedRelationshipError
+from parallax.core.entity.value_object import to_document
 from parallax.snapshot import connect
 
 pytestmark = pytest.mark.api_conformance
@@ -324,6 +332,65 @@ def test_distinct_narrowed_views_populate_independently(provisioner: Any) -> Non
     assert [pet.name for pet in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
     assert [pet.name for pet in cast("tuple[Any, ...]", alice_cats)] == ["Whiskers"]
     assert snapshot.execution.round_trips == 3
+
+
+def _vo_owner_row(instance: Any, vo_py_name: str = "address") -> dict[str, Any]:
+    """A materialized VO-bearing owner's own row, PHYSICAL-column-keyed
+    (``instance_row``), with its value-object member serialized to its
+    canonical document (``to_document``) so ``compare_graph`` can recurse
+    into it exactly like the wire-level engine's own `then.graph` grading."""
+    row = instance_row(instance)
+    row[vo_py_name] = to_document(getattr(instance, vo_py_name))
+    return row
+
+
+def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_column: str) -> None:
+    expected_by_pk = {
+        row[pk_column]: row
+        for row in cast(
+            "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"][entity_name]
+        )
+    }
+    observed = snapshot.results()
+    assert {instance.id for instance in observed} == set(expected_by_pk)
+    for instance in observed:
+        compare_graph(_vo_owner_row(instance), expected_by_pk[instance.id])
+
+
+def test_unitemporal_vo_owner_as_of_now(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-028"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "sup_id")
+    assert snapshot.execution.round_trips == 1
+
+
+def test_unitemporal_vo_owner_as_of_a_past_instant(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-029"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_vo_owner_graph(story.case_id, snapshot, "Supplier", "sup_id")
+    assert snapshot.execution.round_trips == 1
+
+
+def test_bitemporal_vo_owner_as_of_now_both_axes(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-030"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "br_id")
+    assert snapshot.execution.round_trips == 1
+
+
+def test_bitemporal_vo_owner_as_of_a_past_audit_point(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-031"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_vo_owner_graph(story.case_id, snapshot, "Branch", "br_id")
+    assert snapshot.execution.round_trips == 1
 
 
 def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
