@@ -1991,8 +1991,12 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
 
 def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -> None:
     # The SAME sparse-update no-op rule `update` applies (spec §3/§5): a
-    # `model_copy()` whose Change Record nets to zero issues no DML at all,
-    # BEFORE the business-window bound is even considered.
+    # `model_copy()` whose Change Record nets to zero issues no DML at all --
+    # but only AFTER its (here, valid) business window is validated (R2,
+    # COR-3 Phase 7 increment 7 round-2: window validation runs BEFORE the
+    # no-op return, for every window verb, never the reverse -- see the
+    # sibling equal-bounds pin immediately below for the corrected
+    # precedence made visible).
     port = _RecordingPort()
     fetched = WherePosition(
         id=1,
@@ -2014,6 +2018,64 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
         fn, concurrency="optimistic"
     )
     assert not any(op[0] in ("read", "write") for op in port.ops)
+
+
+def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds() -> None:
+    # R2 (COR-3 Phase 7 increment 7 round-2): window validation runs BEFORE
+    # the empty-effective-change-set no-op return -- equal bounds reject even
+    # when the edited copy's own Change Record nets to zero. The prior round
+    # deliberately kept the no-op-first ordering, matching what it believed
+    # was the existing test's documented precedence (the sibling test above,
+    # pre-fix); the reviewer ruled that precedence WRONG per spec §5 ("all
+    # validated at build") -- this is the corrected behavior.
+    port = _RecordingPort()
+    fetched = WherePosition(
+        id=1,
+        acct_num="A",
+        value=Decimal("100.00"),
+        business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        business_to=_INFINITY_INSTANT,
+        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        processing_to=_INFINITY_INSTANT,
+    )
+    edited = fetched.model_copy(update={"value": Decimal("100.00")})  # net-zero touch
+    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.update_until(edited, business_from=business_from, until=business_from)  # EQUAL bounds
+
+    with pytest.raises(ValueError, match="requires business_from < until"):
+        Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+    assert not any(op[0] in ("read", "write") for op in port.ops)  # never reached the no-op check
+
+
+def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -> None:
+    # R2: a naive `until` (no tzinfo) must raise the SAME `ValueError` shape
+    # `_validate_business_from`'s own `instant_literal` normalization raises
+    # for a naive `business_from` (never a bare `TypeError` leaked by
+    # comparing a naive `until` against an already-aware `business_from`,
+    # the pre-fix defect: comparison ran before normalization).
+    port = _RecordingPort(rows=[_position_row_dt()])
+    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    naive_until = dt.datetime(2024, 9, 1)  # NAIVE -- no tzinfo
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.update_until(
+            fetched.model_copy(update={"value": Decimal("200.00")}),
+            business_from=business_from,
+            until=naive_until,
+        )
+
+    # `pytest.raises(ValueError, ...)` itself is the pin against the pre-fix
+    # leak: `TypeError` is not a `ValueError`, so an un-normalized comparison
+    # would escape uncaught here rather than silently satisfy this block.
+    with pytest.raises(ValueError, match="naive datetime"):
+        Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
 
 
 def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:

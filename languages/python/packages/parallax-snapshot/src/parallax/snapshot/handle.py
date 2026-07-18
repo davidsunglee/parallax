@@ -60,7 +60,7 @@ from parallax.core import (
     read_lock,
 )
 from parallax.core.auto_retry import run_with_retry
-from parallax.core.base import INFINITY_LITERAL
+from parallax.core.base import INFINITY_LITERAL, normalize_instant
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.descriptor import AsOfAttribute, Attribute, Entity, Metamodel, column_order
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
@@ -1505,19 +1505,22 @@ class Transaction:
         keyed ``update``), bounded to ``[business_from, until)``
         (`m-bitemp-write` "The rectangle split") — bitemporal-only (mirrors
         ``update_until_where``'s own required, non-optional ``business_from``
-        / ``until``). An EMPTY effective change set issues no DML at all,
-        exactly like keyed ``update`` — checked BEFORE the window-order
-        validation below, so the no-op-first rule (spec §3/§5) takes
-        precedence. A window that does not satisfy ``business_from < until``
+        / ``until``). A window that does not satisfy ``business_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
-        (:func:`_validate_until`, `python.md` §5)."""
+        (:func:`_validate_until`, `python.md` §5 "all validated at build") —
+        checked BEFORE the empty-effective-change-set no-op return below (R2,
+        COR-3 Phase 7 increment 7 round-2: window validation runs first for
+        every window verb, never after; equal bounds reject even when the
+        edited copy's own Change Record nets to zero). An EMPTY effective
+        change set (once the window is confirmed valid) issues no DML at all,
+        exactly like keyed ``update``."""
         record, declaring, business_from_literal = self._prepare_keyed_write(
             copy, "updateUntil", business_from
         )
+        until_literal = _validate_until(declaring, "updateUntil", business_from, until)
         row = _prepare_sparse_row(copy)
         if row is None:
             return
-        until_literal = _validate_until(declaring, "updateUntil", business_from, until)
         self._buffer(
             "updateUntil",
             record.name,
@@ -2133,9 +2136,12 @@ def _prepare_sparse_row(copy: EntityBase) -> dict[str, object] | None:
     """The sparse keyed ``update``/``updateUntil`` row (N2, COR-3 Phase 8
     increment 7 remediation): primary key + the edited copy's own effective
     change set (:func:`effective_change_set`) — ``None`` for an EMPTY
-    effective set (the no-op-first rule, spec §3/§5): both keyed verbs return
-    immediately on ``None``, BEFORE ``updateUntil``'s own window-order
-    validation ever runs (:func:`_validate_until`)."""
+    effective set (the no-op-first rule, spec §3/§5): ``update`` returns
+    immediately on ``None`` (no window to validate); ``updateUntil`` calls
+    this AFTER its own window-order validation already ran (R2, COR-3 Phase 7
+    increment 7 round-2 — :func:`_validate_until` runs BEFORE this no-op
+    check, never after, so an equal or reversed window still rejects even
+    when the effective change set would otherwise have been empty)."""
     effective = effective_change_set(copy)
     if not effective:
         return None
@@ -2148,20 +2154,33 @@ def _validate_until(
     declaring: Entity, mutation: str, business_from: dt.datetime, until: dt.datetime
 ) -> str:
     """Validate + render a ``*Until`` verb's window bound (`python.md` §5:
-    "the `*_until` trio additionally requires `until`, with `business_from <
+    "both aware-UTC-microsecond datetimes, all validated at build" ... "the
+    `*_until` trio additionally requires `until`, with `business_from <
     until` ... all validated at build"): reject an equal or reversed window
     — ``until`` must be STRICTLY later than ``business_from`` — at the verb
     call, before any buffering (never at flush time). Shared by every keyed
     AND ``_where`` ``*Until`` verb (``update_until`` / ``terminate_until`` /
     ``update_until_where`` / ``terminate_until_where``, S4 COR-3 Phase 8
     increment 7 remediation) — one validator, so none of the four can drift
-    from the others."""
-    if until <= business_from:
+    from the others.
+
+    NORMALIZES both bounds BEFORE comparing them (R2, COR-3 Phase 7 increment
+    7 round-2): comparing raw, un-normalized datetimes let a naive ``until``
+    (compared against an already-aware ``business_from``, since
+    ``_validate_business_from`` — this verb's own sibling, called first —
+    already normalizes/rejects a naive ``business_from``) leak a bare
+    ``TypeError`` from the ``<=`` comparison itself, rather than the proper
+    ``ValueError`` :func:`~parallax.core.base.normalize_instant` raises for
+    any naive datetime (mirroring ``_validate_business_from``'s own
+    ``instant_literal``-based handling exactly)."""
+    business_from_normalized = normalize_instant(business_from)
+    until_normalized = normalize_instant(until)
+    if until_normalized <= business_from_normalized:
         raise ValueError(
             f"{declaring.name}: {mutation!r} requires business_from < until "
             f"(python.md §5) — got business_from={business_from!r}, until={until!r}"
         )
-    return instant_literal(until)
+    return until_normalized.isoformat()
 
 
 def _materialize_row(
