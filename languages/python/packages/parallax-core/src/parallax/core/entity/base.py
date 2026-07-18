@@ -84,10 +84,9 @@ __all__ = [
     "entity_records",
     "entity_registry",
     "full_row",
+    "metamodel",
     "primary_key_row",
     "registry_of",
-    "registry_of_class",
-    "registry_of_classes",
     "resolve_entity_class",
     "snake_to_camel",
     "wire_names_of",
@@ -221,20 +220,6 @@ class EntityRegistry:
         bare, untagged one."""
         return ScopedMetamodel(entities=tuple(self.records().values()), registry=self)
 
-    def reaches(self, other: EntityRegistry) -> bool:
-        """Whether ``other`` is this registry itself or somewhere in its own
-        ``parent`` chain -- i.e. whether THIS registry already resolves
-        everything ``other`` does (S2, COR-3 Phase 7 increment 7 round-2):
-        the narrow query :func:`registry_of_classes`'s mixed-registry-set walk
-        needs, so a module-level caller asks this rather than reaching into
-        ``parent`` directly."""
-        current: EntityRegistry | None = self
-        while current is not None:
-            if current is other:
-                return True
-            current = current._parent
-        return False
-
 
 _default_registry: EntityRegistry | None = None
 
@@ -254,16 +239,23 @@ class ScopedMetamodel(MetamodelRecord):
     :class:`EntityRegistry` that produced it (ledger D-20 correction 1's
     wrap/meta bridge): `parallax.snapshot.wrap` resolves a decoded row's class
     through THIS registry, never the process-global default, when a connected
-    ``Database``'s metamodel carries one. An untagged (plain -- e.g. a
-    YAML-ingested `~parallax.core.descriptor.deserialize` result, or a bare
-    `~parallax.core.entity.meta.metamodel(classes)`) ``Metamodel`` falls back
-    to :func:`default_registry` unchanged: zero-ceremony apps, and the
-    long-standing ingested-descriptor + installed-mirror pairing
-    (``Database.connect(port, ingested_meta)`` wrapping via a same-named class
-    the DEFAULT registry independently holds), both keep today's behavior.
-    Lives in ``parallax.core.entity`` (never ``parallax.core.descriptor``
-    itself, which must not grow a dependency on entity classes -- the import-
-    linter DAG constraint)."""
+    ``Database``'s metamodel carries one. A class-authored assembly
+    (:func:`metamodel` over a NON-EMPTY class list) is ALWAYS tagged this way
+    (S2, COR-3 Phase 7 increment 7 round-1 -- R4 residue fixed round-2: this
+    docstring previously, incorrectly, still described a bare
+    ``metamodel(classes)`` call as untagged, the pre-round-1 behavior). The
+    genuinely UNSCOPED (untagged, plain) cases are narrower: a YAML-ingested
+    `~parallax.core.descriptor.deserialize` result, :func:`metamodel`'s own
+    EMPTY-list call (``metamodel([])`` -- no class/registry context to derive
+    a scope from at all), and the introspection surface's bare-name lookup
+    (`~parallax.core.entity.meta.meta("Name")`, which likewise has no class in
+    hand). All three fall back to :func:`default_registry` unchanged:
+    zero-ceremony apps, and the long-standing ingested-descriptor +
+    installed-mirror pairing (``Database.connect(port, ingested_meta)``
+    wrapping via a same-named class the DEFAULT registry independently
+    holds), both keep today's behavior. Lives in ``parallax.core.entity``
+    (never ``parallax.core.descriptor`` itself, which must not grow a
+    dependency on entity classes -- the import-linter DAG constraint)."""
 
     registry: EntityRegistry | None = None
 
@@ -458,98 +450,151 @@ def entity_records() -> dict[str, EntityRecord]:
     return default_registry().records()
 
 
-def registry_of_class(cls: type) -> EntityRegistry:
+def _registry_of_class(cls: type) -> EntityRegistry:
     """``cls``'s own D-20 registration scope (:func:`default_registry` for a
     class whose declaration omitted ``registry=``, defensively too for a class
-    this bookkeeping somehow never tracked). PUBLIC (S2, COR-3 Phase 7
-    increment 7 round-2): class-authored metamodel assembly
-    (:func:`~parallax.core.entity.meta.metamodel`) derives its own scope from
-    THIS per-class lookup, never the process default, whenever the classes
-    given are in hand."""
+    this bookkeeping somehow never tracked). PRIVATE (R3, COR-3 Phase 7
+    increment 7 round-2 -- internal machinery, never public): class-authored
+    metamodel assembly (:func:`metamodel`, THIS module) derives its own scope
+    from THIS per-class lookup, never the process default, whenever the
+    classes given are in hand."""
     return _REGISTRY_OF_CLASS.get(cls, default_registry())
 
 
-def registry_of_classes(classes: Sequence[type]) -> EntityRegistry | None:
+def _conflicting_classes_error(name: str, first: type, second: type) -> ValueError:
+    """The shared conflicting-same-name-classes ``ValueError`` (R1, COR-3
+    Phase 7 increment 7 round-2): ``first``/``second`` are two DIFFERENT
+    classes that both resolve to canonical entity name ``name`` -- naming
+    both classes and their own D-20 registries, since assembling one
+    Metamodel from both would let EITHER'S descriptor silently stand in for
+    the other's (the reviewer's exact reproduction, ``animal_owner.Person`` +
+    ``read_models.Person``)."""
+    return ValueError(
+        f"metamodel(classes): {first!r} (registry {_registry_of_class(first)!r}) and "
+        f"{second!r} (registry {_registry_of_class(second)!r}) both resolve to canonical "
+        f"entity name {name!r} -- conflicting same-name classes can never share one "
+        "assembled Metamodel; supply only one of them, or assemble each through its own "
+        "registry's EntityRegistry.metamodel() separately (ledger D-20)"
+    )
+
+
+def _registry_of_classes(classes: Sequence[type]) -> EntityRegistry | None:
     """The single :class:`EntityRegistry` that resolves EVERY one of
-    ``classes`` correctly (S2, COR-3 Phase 7 increment 7 round-2): the seam
-    :func:`~parallax.core.entity.meta.metamodel` uses to auto-scope its own
-    result, so tagging is automatic wherever the classes are in hand, never a
-    caller's own reminder to reach for a specific registry's
+    ``classes`` back to THAT EXACT class (R1/R3, COR-3 Phase 7 increment 7
+    round-2): the seam :func:`metamodel` uses to auto-scope its own result, so
+    tagging is automatic wherever the classes are in hand, never a caller's
+    own reminder to reach for a specific registry's
     :meth:`EntityRegistry.metamodel` instead.
 
     - ``classes`` empty: ``None`` -- no class/registry context to derive a
-      scope from at all (:func:`~parallax.core.entity.meta.metamodel`'s own
-      documented UNSCOPED case).
-    - Every class's own :func:`registry_of_class` identical (the common,
-      zero-ceremony shape, and every single-registry app): that registry.
-    - The classes span MORE than one registry: the single member whose own
-      ``parent`` chain reaches every OTHER member -- a registry already
-      resolves everything its own ``parent`` chain does (:meth:`EntityRegistry.
-      resolve`/:meth:`records`), so this is never a guess, only the unique
-      registry PROVABLY resolving every given class correctly (e.g.
-      ``animal_owner.Person``'s own scope alongside its related
-      ``read_models`` siblings' default registry resolves through the
-      NARROWER, ``Person``-owning scope -- the identical tag a caller
-      assembling the SAME class set through THAT registry's own
+      scope from at all (:func:`metamodel`'s own documented UNSCOPED case).
+    - Otherwise: the single member of ``classes``' own DISTINCT
+      :func:`_registry_of_class` set that resolves EVERY supplied class's own
+      canonical name back to THAT EXACT class object (:meth:`EntityRegistry.
+      resolve`) -- never merely whether it "reaches" every other registry in
+      the abstract (S2's original check confirmed reachability but never that
+      the reaching registry's OWN resolution agreed with what was actually
+      supplied, letting a same-name shadow between the classes' own
+      registries silently swap in a DIFFERENT class than the one given, R1):
+      this is never a guess, only the unique registry PROVABLY resolving
+      every given class correctly (e.g. ``animal_owner.Person``'s own scope
+      alongside its related ``read_models`` siblings' default registry
+      resolves through the NARROWER, ``Person``-owning scope -- the identical
+      tag a caller assembling the SAME class set through THAT registry's own
       :meth:`EntityRegistry.metamodel` would get).
 
-    Raises :class:`ValueError`, naming every given class, when the classes'
-    own registries are genuinely incomparable (no single member's own chain
-    reaches every other) -- picking ANY one of them could silently
-    mis-resolve one of the others, so this refuses to guess instead.
-
-    HARDENED (R1, COR-3 Phase 7 increment 7 round-2, BLOCKING): reachability
-    alone is not sufficient -- a reaching candidate's own ``parent`` chain may
-    SHADOW a supplied class's canonical name with a DIFFERENT class between
-    the candidate and that class's own registry (e.g. a same-name pair
-    spanning two registries where one reaches the other), so once a
-    reachability candidate is found, this ALSO verifies it resolves EVERY
-    supplied class's own canonical name back to THAT EXACT class object
-    (:meth:`EntityRegistry.resolve`) before returning it -- any mismatch
-    raises, naming both the supplied class and whichever class the candidate
-    actually resolves its name to (and both their own registries), rather
-    than silently letting `metamodel`'s assembled ``entities`` and its class
-    resolution (:func:`resolve_entity_class`) disagree about which class a
-    canonical name denotes.
+    Raises :class:`ValueError`, naming every given class, when NO single
+    member's own scope resolves every supplied class back to itself --
+    whether the classes' own registries are genuinely incomparable (no chain
+    relation at all) or share a name via shadowing (a chain relation exists,
+    but the reaching registry's own resolution disagrees with the shadowed
+    supplied class) -- picking ANY one of them could silently mis-resolve
+    one of the others, so this refuses to guess instead.
     """
     classes = tuple(classes)
     distinct: dict[EntityRegistry, None] = {}
     for cls in classes:
-        distinct.setdefault(registry_of_class(cls), None)
+        distinct.setdefault(_registry_of_class(cls), None)
     if not distinct:
         return None
-    candidate: EntityRegistry | None = None
-    if len(distinct) == 1:
-        candidate = next(iter(distinct))
-    else:
-        for maybe in distinct:
-            if all(maybe.reaches(other) for other in distinct):
-                candidate = maybe
-                break
-    if candidate is None:
-        names = ", ".join(cls.__name__ for cls in classes)
-        raise ValueError(
-            f"metamodel(classes): {names} span {len(distinct)} incompatible EntityRegistry "
-            "scopes -- no single one's own parent chain resolves every other, so tagging the "
-            "assembled Metamodel with any one of them could silently mis-resolve another; "
-            "assemble a metamodel scoped to one explicit registry instead "
-            "(EntityRegistry.metamodel()), or pass a class set whose own registries form a "
-            "single parent chain (ledger D-20)"
-        )
+    for candidate in distinct:
+        if all(candidate.resolve(cls.__name__) is cls for cls in classes):
+            return candidate
+    names = ", ".join(cls.__name__ for cls in classes)
+    raise ValueError(
+        f"metamodel(classes): {names} span {len(distinct)} incompatible EntityRegistry "
+        "scopes -- no single one resolves every supplied class back to itself, so tagging "
+        "the assembled Metamodel with any one of them could silently mis-resolve another "
+        "(genuinely unrelated registries, or a same-name shadow between them); assemble a "
+        "metamodel scoped to one explicit registry instead (EntityRegistry.metamodel()), or "
+        "pass a class set whose own registries form a single, non-shadowing parent chain "
+        "(ledger D-20)"
+    )
+
+
+def _entity_record_for(cls: type) -> EntityRecord:
+    """``cls``'s compiled metamodel record, or a loud ``TypeError`` naming
+    ``cls`` -- the class-branch of :func:`~parallax.core.entity.meta._entity_of`,
+    duplicated here (never imported FROM ``meta.py``, which itself imports
+    from THIS module -- importing back would cycle) since :func:`metamodel`
+    needs it and lives here (R1/R3, COR-3 Phase 7 increment 7 round-2)."""
+    record = entity_record_of(cls)
+    if record is None:
+        raise TypeError(f"{cls!r} is not a Parallax entity class")
+    return record
+
+
+def metamodel(classes: Sequence[type]) -> MetamodelRecord:
+    """Assemble one :class:`~parallax.core.descriptor.Metamodel` from a set of
+    related entity classes.
+
+    Automatically SCOPED (S2, COR-3 Phase 7 increment 7 round-2): tagged as a
+    :class:`ScopedMetamodel` resolving through the given classes' own registry
+    (:func:`_registry_of_classes`) -- tagging is automatic wherever the
+    classes are in hand, so `wrap`/`resolve_entity_class` resolve a decoded
+    row's class through THIS scope, never the process default, once a
+    connected ``Database`` carries the result. Without this, an owner class
+    declared in its own registry (e.g. ``animal_owner.Person``) would resolve
+    through the process default instead, landing on that DEFAULT registry's
+    own, unrelated same-named entity (``read_models.Person``) the moment it
+    also happened to be imported. ``classes`` empty -- no class/registry
+    context at all -- stays UNSCOPED: a bare, untagged ``Metamodel``, for
+    which :func:`registry_of`'s own documented fallback resolves through the
+    process default registry instead (the same untagged shape a bare
+    descriptor-ingested metamodel already carries).
+
+    Rejects loudly (R1, COR-3 Phase 7 increment 7 round-2, BLOCKING) rather
+    than silently emitting two records for one canonical name: a conflicting
+    same-name pair in ``classes`` -- two DIFFERENT classes that both resolve
+    to the same canonical entity name -- is structurally conflicting
+    regardless of which registries are involved (checked here, independently
+    of :func:`_registry_of_classes`'s own registry-selection hardening, which
+    additionally catches a same-name conflict shadowed between the classes'
+    own registries even when the two conflicting classes are not BOTH in
+    ``classes`` directly).
+
+    Physically relocated here from ``parallax.core.entity.meta`` (R3, COR-3
+    Phase 7 increment 7 round-2): its own auto-scoping needs
+    :func:`_registry_of_classes`, now module-private -- a cross-module
+    consumer touching it would need a public re-export of purely internal
+    registry machinery, exactly what R3 removes. ``meta.py`` re-exports this
+    SAME function unchanged (``from parallax.core.entity.base import
+    metamodel``); the public import path (``parallax.core.entity.metamodel``)
+    and signature are unaffected.
+    """
+    classes = tuple(classes)
+    seen: dict[str, type] = {}
     for cls in classes:
-        resolved = candidate.resolve(cls.__name__)
-        if resolved is not cls:
-            resolved_registry = registry_of_class(resolved) if resolved is not None else None
-            raise ValueError(
-                f"metamodel(classes): canonical name {cls.__name__!r} is ambiguous -- {cls!r} "
-                f"(registered in {registry_of_class(cls)!r}) was supplied, but the assembled "
-                f"Metamodel's own registry {candidate!r} resolves {cls.__name__!r} to "
-                f"{resolved!r} instead (registered in {resolved_registry!r}) -- conflicting "
-                "same-name classes can never share one assembled Metamodel; supply only one "
-                "of them, or assemble each through its own registry's "
-                "EntityRegistry.metamodel() separately (ledger D-20)"
-            )
-    return candidate
+        name = cls.__name__
+        conflicting = seen.get(name)
+        if conflicting is not None and conflicting is not cls:
+            raise _conflicting_classes_error(name, conflicting, cls)
+        seen.setdefault(name, cls)
+    entities = tuple(_entity_record_for(cls) for cls in classes)
+    scope = _registry_of_classes(classes)
+    if scope is None:
+        return MetamodelRecord(entities=entities)
+    return ScopedMetamodel(entities=entities, registry=scope)
 
 
 def _temporal_as_of_attributes(record: EntityRecord, cls: type) -> tuple[AsOfAttribute, ...]:
@@ -565,7 +610,7 @@ def _temporal_as_of_attributes(record: EntityRecord, cls: type) -> tuple[AsOfAtt
     """
     if record.inheritance is None:
         return record.as_of_attributes
-    meta = registry_of_class(cls).metamodel()
+    meta = _registry_of_class(cls).metamodel()
     return _inheritance.declaring_entity(meta, record).as_of_attributes
 
 
@@ -1155,7 +1200,7 @@ class Entity(BaseModel, metaclass=EntityMeta):
         record declares no axis locally.
         """
         record = entity_record_of(cls)
-        registry = registry_of_class(cls)
+        registry = _registry_of_class(cls)
         as_of = _temporal_as_of_attributes(record, cls) if record is not None else ()
         statement = build_statement(
             cls.__name__, predicates, as_of_attributes=as_of, registry=registry

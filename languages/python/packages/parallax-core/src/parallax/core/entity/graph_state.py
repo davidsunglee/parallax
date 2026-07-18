@@ -9,13 +9,13 @@ carrying a ``.narrow(...)`` hop — checks the node's own private narrowed-view
 mapping instead, keyed by the SAME derived view key
 (``rel[Concrete,…]``, the RESOLVED effective concrete-subtype set, never the
 authored subtype names verbatim) ``m-deep-fetch``'s own view-key derivation
-produces — computed here the identical way (``effective_concrete_subtypes``)
-so the two can never drift.
+produces — resolved via ``RelationshipPath.effective_narrow_position()``
+(``parallax.core.entity.expressions``) the identical way
+(``effective_concrete_subtypes``), so the two can never drift.
 """
 
 from __future__ import annotations
 
-from parallax.core import inheritance
 from parallax.core.entity.base import wire_names_of
 from parallax.core.entity.expressions import (
     UNLOADED,
@@ -28,34 +28,23 @@ __all__ = ["is_loaded", "narrowed"]
 _NARROWED_ATTR = "__parallax_narrowed__"
 
 
-def _resolved_position(names: tuple[str, ...], path: RelationshipPath) -> tuple[str, ...]:
-    """The RESOLVED effective concrete-subtype set for authored narrow
-    ``names`` (mirrors ``m-deep-fetch``'s own ``_resolve_position``): a
-    narrowed view is keyed by the resolved set, never the authored names.
-    Resolved within ``path``'s own D-20 registration scope (ledger D-20) --
-    never the process-global default -- falling back to it only when the
-    path carries none (a defensive, test-only construction) -- via ``path``'s
-    own ``resolution_registry()`` accessor (N1, COR-3 Phase 8 increment 7
-    remediation), never a private-field reach."""
-    registry = path.resolution_registry()
-    meta = registry.metamodel()
-    resolved: set[str] = set()
-    for name in names:
-        resolved.update(inheritance.effective_concrete_subtypes(meta, name))
-    return tuple(sorted(resolved))
-
-
 def _view_key(path: str | RelationshipPath) -> str:
     """The relationship-name-or-narrowed-view key ``path`` names: a bare
     string passes through unchanged; a :class:`RelationshipPath` derives it
-    from its own LAST segment."""
+    from its own LAST segment. A narrowed hop's view key is keyed by the
+    RESOLVED effective concrete-subtype set, never the authored names
+    (mirrors ``m-deep-fetch``'s own ``_resolve_position`` so the two can
+    never drift) -- via ``path``'s own ``effective_narrow_position()``
+    (R3/N1, COR-3 Phase 7 increment 7 round-2), which resolves entirely
+    within ``path``'s own D-20 registration scope without ever handing this
+    module the raw registry itself."""
     if isinstance(path, str):
         return path
     last = path.segments[-1]
     _, _, rel_local = last.rel.partition(".")
     if not last.narrow:
         return rel_local
-    position = _resolved_position(last.narrow, path)
+    position = path.effective_narrow_position(last.narrow)
     return f"{rel_local}[{','.join(position)}]"
 
 
