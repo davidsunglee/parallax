@@ -2009,11 +2009,14 @@ def _temporal_observation(
     latest_pinned: bool,
 ) -> Observation:
     """The :class:`Observation` a materialized TEMPORAL row licenses: the
-    observed processing-from (``in_z``) plus pin provenance always; the
-    observed business bounds and payload too when ``declaring`` is
-    bitemporal — the same fields temporal lowering (`~parallax.core.
-    bitemp_write.plan`) already consumes, so a transaction-scoped find ->
-    temporal write sequence works end-to-end, not just the licensing check.
+    observed processing-from (``in_z``) plus pin provenance always, PLUS the
+    observed payload (D-30, COR-3 Phase 8 increment 7 completion round — every
+    real ``Transaction.find`` of a temporal row now carries one, audit-only
+    included) — the same fields temporal lowering (`~parallax.core.
+    audit_write.plan` / `~parallax.core.bitemp_write.plan`) already consumes,
+    so a transaction-scoped find -> temporal write sequence works end-to-end,
+    not just the licensing check. The observed business bounds are bitemporal-
+    only (an audit-only entity has no business axis to bound).
 
     ``fields`` is a plain column-keyed mapping — a materialized
     :class:`~parallax.snapshot.materialize.Node`'s own ``.fields`` (a real
@@ -2048,7 +2051,15 @@ def _temporal_observation(
     """
     in_z = cast("str", fields[proc.from_column])
     if declaring.temporal != "bitemporal":
-        return Observation(in_z=in_z, latest_pinned=latest_pinned)
+        # Audit-only (D-30): the observed payload every other member besides
+        # the sole processing axis — `audit_write.plan`'s own update-branch
+        # merge (`_merged_row`) overlays a public `tx.update(copy)`'s SPARSE
+        # row onto it, so an unauthored field carries forward from THIS
+        # observation rather than being silently dropped.
+        payload = _row_payload(
+            meta, declaring, fields, {proc.from_column, proc.to_column}, include_value_objects=True
+        )
+        return Observation(in_z=in_z, payload=payload, latest_pinned=latest_pinned)
     biz = _business_axis(declaring)
     if biz.from_column not in fields or biz.to_column not in fields:  # pragma: no cover
         return Observation(in_z=in_z, latest_pinned=latest_pinned)  # malformed model/projection
@@ -2072,17 +2083,17 @@ def _row_payload(
     include_value_objects: bool = False,
 ) -> dict[str, object]:
     """``fields``'s own payload (every declared member besides ``excluded``
-    axis-bound columns) — the observed-payload source both a real bitemporal
-    find's :class:`Observation` (`_temporal_observation`, above) and an
-    audit-only materializing resolve's CHAINED full row (:func:`_materialize_row`)
-    share.
+    axis-bound columns) — the observed-payload source a real TEMPORAL find's
+    :class:`Observation` (`_temporal_observation`, above — audit-only and
+    bitemporal alike, D-30) and an audit-only materializing resolve's CHAINED
+    full row (:func:`_materialize_row`) share.
 
     Value-object columns are OMITTED by default (row-form never projects one,
     `m-value-object-047`'s own byte-identical row-form witness).
-    ``include_value_objects`` opts in (`m-case-format.md:727`): its TWO
-    callers — `_temporal_observation`'s bitemporal branch (every real
-    ``Transaction.find``, always INSTANCE-form, so ``fields`` always carries
-    one; a bitemporal materializing resolve only when its own need-sensitive
+    ``include_value_objects`` opts in (`m-case-format.md:727`): its callers —
+    `_temporal_observation`'s audit-only and bitemporal branches alike (every
+    real ``Transaction.find``, always INSTANCE-form, so ``fields`` always
+    carries one; a materializing resolve only when its own need-sensitive
     projection requested it) and `_materialize_row`'s audit-only chain merge
     (an audit-only materializing resolve, same gate) — so ``column in
     fields`` still gates every member exactly as it already does for

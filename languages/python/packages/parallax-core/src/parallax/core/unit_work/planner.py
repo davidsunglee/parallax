@@ -88,15 +88,19 @@ class Observation:
     :mod:`parallax.core.bitemp_write`'s planning) the business lower bound the head
     rectangle's upper bound derives from; ``business_to`` is the observed rectangle's
     own business-axis upper bound — the tail rectangle's own upper bound; ``payload``
-    is the observed row's OTHER business columns (every scalar / value-object member
-    besides the milestone interval bounds), the "prior rectangle" values a bitemporal
-    split's head/tail carry forward (`m-bitemp-write` "Head/tail old values come from
-    the observed prior rectangle"). All three are ``None`` for a non-temporal or
-    audit-only observation (an audit-only chain uses the instruction's own authored
-    full row, never an observed payload, `m-audit-write`). This is Python-internal
-    vocabulary, NOT the serialized instruction (ADR 0013 stands): the reserved
-    ``observedVersion`` / ``observedInZ`` control keys stay forbidden on a write row;
-    an observation attaches per row at flush, never carried on the instruction.
+    is the observed row's OTHER columns (every scalar / value-object member besides
+    the milestone interval bounds) — the "prior rectangle" values a bitemporal split's
+    head/tail carry forward (`m-bitemp-write` "Head/tail old values come from the
+    observed prior rectangle"), and (D-30, COR-3 Phase 8 increment 7 completion round)
+    the values an audit-only chaining ``update`` merges a SPARSE authored row onto
+    (`~parallax.core.audit_write.plan`'s own ``_merged_row``) so an unauthored field
+    is never silently dropped. ``business_from`` / ``business_to`` stay ``None`` for
+    a non-temporal or audit-only observation (neither declares a business axis to
+    bound); all three are ``None`` for a non-temporal observation. This is
+    Python-internal vocabulary, NOT the serialized instruction (ADR 0013 stands): the
+    reserved ``observedVersion`` / ``observedInZ`` control keys stay forbidden on a
+    write row; an observation attaches per row at flush, never carried on the
+    instruction.
 
     ``latest_pinned`` (`m-opt-lock` "Locking mode additionally requires that the
     observation be of the current milestone") is the historical-observation

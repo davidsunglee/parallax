@@ -93,7 +93,9 @@ def test_audit_only_insert_opens_a_current_milestone() -> None:
 
 def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
     # m-audit-write-002: an ungated (locking-mode) close, then a chain carrying
-    # the instruction's OWN authored full row (never an observed payload).
+    # the instruction's OWN authored FULL row — merged onto the observation
+    # (D-30), which here carries no `payload` at all, so the merge is an
+    # identity and the chain is exactly the authored row.
     update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
     observation = Observation(in_z="2024-01-01T00:00:00+00:00")
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
@@ -130,6 +132,69 @@ def test_audit_only_update_carries_every_new_attribute() -> None:
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
         (1, "B", 250.00, "2024-06-01T00:00:00+00:00", "infinity"),
     )
+
+
+def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> None:
+    # D-30 (COR-3 Phase 8 increment 7 completion round): a SPARSE row (a
+    # public `tx.update(copy)`'s own primary-key-plus-effective-change-set
+    # shape — never authored by the conformance engine, which always supplies
+    # a full row) merges onto the observed payload, so the chained row still
+    # carries `acctNum` even though the instruction's own row never named it.
+    sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
+    observation = Observation(
+        in_z="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
+    )
+    statements = _lower(
+        sparse_update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation
+    )
+    assert statements[1] == (
+        "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
+        (1, "A", 150.00, "2024-06-01T00:00:00+00:00", "infinity"),
+    )
+
+
+def test_audit_only_plan_merges_the_sparse_row_at_the_planner_seam() -> None:
+    # The SAME D-30 merge, pinned directly at the pure planning seam
+    # (`parallax.core.audit_write.plan`) rather than through the full
+    # `lower_write` composition — `MilestoneOpen.row` carries the merged
+    # payload, never the caller's sparse row alone.
+    from parallax.core import audit_write
+
+    sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
+    observation = Observation(
+        in_z="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
+    )
+    plan = audit_write.plan(
+        sparse_update, BALANCE.entity("Balance"), "2024-06-01T00:00:00+00:00", observation
+    )
+    close, opened = plan.steps
+    assert isinstance(close, audit_write.MilestoneClose)
+    assert isinstance(opened, audit_write.MilestoneOpen)
+    assert opened.row == {
+        "id": 1,
+        "acctNum": "A",
+        "value": 150.00,
+        "processingFrom": "2024-06-01T00:00:00+00:00",
+        "processingTo": "infinity",
+    }
+
+
+def test_audit_only_plan_carries_a_full_row_unchanged_when_no_payload_is_observed() -> None:
+    # The compile-sweep/case-driven engine never populates `Observation.payload`
+    # for an audit-only write (it authors FULL rows directly, `_strip_
+    # observation`) — the merge is then a strict identity, so no exercised
+    # compile-lane emission can ever change (the Part 2 byte-identical guard).
+    full_update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
+    observation = Observation(in_z="2024-01-01T00:00:00+00:00")  # no payload at all
+    from parallax.core import audit_write
+
+    plan = audit_write.plan(
+        full_update, BALANCE.entity("Balance"), "2024-06-01T00:00:00+00:00", observation
+    )
+    _close, opened = plan.steps
+    assert isinstance(opened, audit_write.MilestoneOpen)
+    assert opened.row["acctNum"] == "A"
+    assert opened.row["value"] == 150.00
 
 
 def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -> None:

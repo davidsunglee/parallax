@@ -560,6 +560,40 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
     )
 
 
+def test_audit_only_update_via_a_sparse_edited_copy_carries_the_untouched_field() -> None:
+    # D-30 (COR-3 Phase 8 increment 7 completion round) — the revert-to-red
+    # regression pin: a real, PUBLIC `tx.update` of a SPARSE edited copy
+    # (`model_copy` touching ONLY `value`, never `acct_num`) against a genuine
+    # in-transaction observation (`tx.find`, same as every other keyed-write
+    # story here) still chains a row carrying `acct_num` — the merge onto the
+    # observed payload (`audit_write.plan`'s own `_merged_row`), never a
+    # silent drop of the untouched field. Reverting the D-30 fix (chaining
+    # `instruction.rows[0]` verbatim instead of the merged row) makes this
+    # assertion fail with `chain_binds[1] is None` (the sparse row carries no
+    # `acctNum` at all) instead of `"A-1"` — proven by hand against the
+    # pre-fix `audit_write.plan` during development of this pin.
+    port = _RecordingPort(rows=[_balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = _db_for(_BALANCE, port)
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
+        tx.update(fetched.model_copy(update={"value": Decimal("150.00")}))
+
+    db.transact(fn)
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 2  # the ungated close, then the merged chain
+    close_sql, close_binds = write_ops[0][1], write_ops[0][2]
+    assert close_sql == POSTGRES.to_driver_sql(
+        "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    )
+    assert close_binds == ("2024-06-01T00:00:00+00:00", 1, "infinity")
+    chain_sql, chain_binds = write_ops[1][1], write_ops[1][2]
+    assert chain_sql == POSTGRES.to_driver_sql(
+        "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
+    )
+    assert chain_binds == (1, "A-1", Decimal("150.00"), "2024-06-01T00:00:00+00:00", "infinity")
+
+
 def test_record_observations_captures_bitemporal_business_bounds_and_payload() -> None:
     # Finding B's completeness half ("record the observation fields temporal
     # lowering already consumes ... so a transaction-scoped find -> temporal

@@ -18,11 +18,17 @@ Three mutations, one shape each (`m-audit-write.md` "Milestone-chaining writes")
   (``out_z = txInstant``) and chain nothing — the terminated state is the
   ABSENCE of any ``out_z = infinity`` row.
 - **update** — a :class:`MilestoneClose` immediately followed by a
-  :class:`MilestoneOpen` carrying the instruction's own authored FULL row (never
-  the observed payload — audit-only chains the CALLER's new values, contrast the
-  bitemporal rectangle split's observed-payload carry-forward,
-  `m-bitemp-write` "Head/tail old values come from the observed prior rectangle").
-  Close-before-chain, the pair adjacent (`m-audit-write.md` L96-109).
+  :class:`MilestoneOpen` carrying the instruction's own row MERGED onto the
+  observed payload (D-30, COR-3 Phase 8 increment 7 completion round; mirrors
+  the bitemporal rectangle split's own observed-payload carry-forward,
+  `m-bitemp-write` "Head/tail old values come from the observed prior
+  rectangle") — a public ``tx.update(copy)`` authors a SPARSE row (primary key
+  plus effective change set only, `python.md` §3/§5), so an unauthored field
+  carries FORWARD from the observed current milestone unchanged, exactly like
+  its bitemporal sibling; a caller-authored FULL row (every conformance-engine
+  writeSequence witness) merges to itself (an identity, since every member the
+  merge could overlay is already present in the caller's own row). Close-
+  before-chain, the pair adjacent (`m-audit-write.md` L96-109).
 
 The close's gate CANDIDATES (:attr:`MilestoneClose.gate_in_z`) come straight from
 the caller-supplied ``observed`` :class:`~parallax.core.unit_work.Observation` —
@@ -166,6 +172,18 @@ def _open_row(entity: Entity, tx_instant: str, payload: Mapping[str, object]) ->
     return {**payload, in_name: tx_instant, out_name: INFINITY_LITERAL}
 
 
+def _merged_row(observed: Observation | None, row: Mapping[str, object]) -> Mapping[str, object]:
+    """The chained current row an audit-only ``update`` opens (D-30): the
+    instruction's own (possibly SPARSE) row overlaid onto the observed
+    payload — the audit-only analogue of
+    :func:`~parallax.core.bitemp_write._merged_payload`. ``None`` when this
+    write carries no observation (nothing to merge onto — the instruction's
+    row rides through unchanged, exactly as it did before this fix)."""
+    if observed is None or observed.payload is None:
+        return row
+    return {**observed.payload, **row}
+
+
 def plan(
     instruction: KeyedWrite, entity: Entity, tx_instant: str, observed: Observation | None
 ) -> MilestonePlan:
@@ -187,6 +205,7 @@ def plan(
     )
     if mutation in _TERMINATE_MUTATIONS:
         return MilestonePlan(steps=(close,))
-    # update: chain the instruction's OWN authored full row (never the observed
-    # payload — the audit-only contrast to the bitemporal rectangle split).
-    return MilestonePlan(steps=(close, MilestoneOpen(row=_open_row(entity, tx_instant, row))))
+    # update: chain the MERGED row (D-30) — the instruction's own row overlaid
+    # onto the observed payload, mirroring the bitemporal rectangle split.
+    new_row = _merged_row(observed, row)
+    return MilestonePlan(steps=(close, MilestoneOpen(row=_open_row(entity, tx_instant, new_row))))
