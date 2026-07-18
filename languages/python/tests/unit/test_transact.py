@@ -23,6 +23,7 @@ import pytest
 import inheritance_models as im
 import mirrored_models as mm
 from parallax.conformance import models
+from parallax.conformance.story_models import Order
 from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, inheritance, opt_lock
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, DbPort, JsonDocument, Row
@@ -54,6 +55,7 @@ _CONTACT = models.load_models()["contact"]
 _SHIPMENT = models.load_models()["shipment"]
 _PAYMENT = models.load_models()["payment"]
 _PERSON = models.load_models()["person"]
+_ORDERS = models.load_models()["orders"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
@@ -1244,6 +1246,47 @@ def test_readless_delete_where_buffers_one_statement_no_read() -> None:
     ]
 
 
+def test_readless_update_where_reorders_assignments_to_column_order() -> None:
+    # Round-6 remaining (c): the SET clause orders by descriptor column order
+    # (`_lower_predicate_write`'s own `_ordered_cells` reuse), never the
+    # AUTHORED assignment order -- reversing the two `.set(...)` calls below
+    # (price before name, the opposite of Order's own declared column order)
+    # emits BYTE-IDENTICAL SQL to the natural order (mirrors `test_insert_
+    # orders_columns_by_column_order_not_row_order`'s own insert-side proof).
+    forward_port = _RecordingPort()
+
+    def forward(tx: Transaction) -> None:
+        tx.update_where(
+            Order.where(Order.id == 100),
+            Order.name.set("Hopper"),
+            Order.price.set(Decimal("9.99")),
+        )
+
+    Database.connect(forward_port, _ORDERS, clock=FixedClock(_FIXED)).transact(forward)
+
+    reordered_port = _RecordingPort()
+
+    def reordered(tx: Transaction) -> None:
+        tx.update_where(
+            Order.where(Order.id == 100),
+            Order.price.set(Decimal("9.99")),
+            Order.name.set("Hopper"),
+        )
+
+    Database.connect(reordered_port, _ORDERS, clock=FixedClock(_FIXED)).transact(reordered)
+
+    assert forward_port.ops == reordered_port.ops
+    assert forward_port.ops == [
+        ("begin",),
+        (
+            "write",
+            POSTGRES.to_driver_sql("update orders set name = ?, price = ? where id = ?"),
+            ("Hopper", Decimal("9.99"), 100),
+        ),
+        ("commit",),
+    ]
+
+
 def test_where_verb_rejects_a_non_bare_statement() -> None:
     port = _RecordingPort()
 
@@ -1604,6 +1647,31 @@ def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
     )
     writes = [op for op in port.ops if op[0] == "write"]
     assert len(writes) == 3  # close + head + tail (no middle)
+
+
+def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
+    # Round-6 remaining (a): the single-row pin above proves the PER-ROW shape
+    # (close + head + tail); this proves the MATERIALIZE loop itself resolves
+    # and writes MULTIPLE rows, exactly like `update_where`'s / `delete_where`'s
+    # own multi-row pins -- N resolved rows -> 3*N keyed writes, no cross-row
+    # elision (`m-opt-lock.md` "Predicate-selected writes materialize when
+    # observations are needed").
+    port = _RecordingPort(rows=[_position_row(), {**_position_row(), "id": 2}])
+    business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_until_where(
+            WherePosition.where(WherePosition.value < 999),
+            business_from=business_from,
+            until=until,
+        )
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 6  # 2 resolved rows * (close + head + tail)
 
 
 def _rectangle_row(*, address: dict[str, object] | None) -> Row:

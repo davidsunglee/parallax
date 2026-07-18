@@ -334,6 +334,24 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
             "MUST NOT carry `assignments`",
         ),
         (
+            {
+                "mutation": "terminate",
+                "target": {"entity": "Balance", "predicate": {"all": {}}},
+                "assignments": [{"attr": "Balance.value", "value": 0}],
+            },
+            "MUST NOT carry `assignments`",
+        ),
+        (
+            {
+                "mutation": "terminateUntil",
+                "target": {"entity": "Position", "predicate": {"all": {}}},
+                "assignments": [{"attr": "Position.value", "value": 0}],
+                "businessFrom": _B1,
+                "businessTo": _B2,
+            },
+            "MUST NOT carry `assignments`",
+        ),
+        (
             {"mutation": "insert", "target": {"entity": "Account", "predicate": {"all": {}}}},
             "`mutation` must be one of",
         ),
