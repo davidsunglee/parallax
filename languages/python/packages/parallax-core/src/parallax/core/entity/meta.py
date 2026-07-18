@@ -220,11 +220,20 @@ def meta(target: type | str) -> EntityMetaView:
     class to derive a scope from at all, so it stays UNSCOPED: the process
     default registry's own records, an explicit, documented fallback (S2) --
     never a silent guess -- for that one no-class-in-hand case.
+
+    ``target`` is validated via :func:`_entity_of` FIRST, before deriving the
+    class-branch's scope: an unregistered name or a non-entity class raises
+    THIS module's own ``KeyError``/``TypeError`` (unchanged shape), never
+    :func:`metamodel`'s -- both raise the identical exception type for an
+    invalid class, but validating here first keeps the error a property of
+    ``meta()`` itself rather than an incidental side effect of how its scope
+    happens to be derived.
     """
+    entity = _entity_of(target)
     if isinstance(target, str):
-        return EntityMetaView(_entity_of(target), tuple(entity_records().values()))
+        return EntityMetaView(entity, tuple(entity_records().values()))
     registry = registry_of(metamodel([target]))
-    return EntityMetaView(_entity_of(target), tuple(registry.records().values()))
+    return EntityMetaView(entity, tuple(registry.records().values()))
 
 
 def meta_of(descriptor: Metamodel, name: str) -> EntityMetaView:

@@ -136,6 +136,16 @@ def test_metamodel_of_no_classes_stays_unscoped() -> None:
     assert assembled.entities == ()
 
 
+def test_metamodel_rejects_a_non_entity_class() -> None:
+    # R3 (COR-3 Phase 7 increment 7 round-2): `metamodel(classes)`'s own
+    # entity-lookup (relocated into `entity/base.py` alongside the
+    # now-private registry machinery it needs) raises the SAME shape
+    # `meta(int)` raises for a non-entity class, whether or not a caller
+    # ever validates the class through `meta()` first.
+    with pytest.raises(TypeError, match="is not a Parallax entity class"):
+        metamodel([int])
+
+
 def test_attribute_descriptor_get_on_class_and_instance() -> None:
     account = mm.Account(id=1, owner="alice", balance=Decimal("9.99"), version=1)
     descriptor = mm.Account.__dict__["owner"]
