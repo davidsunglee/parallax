@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 
 from parallax.core import inheritance, navigate
 from parallax.core.descriptor import Axis, Entity, Metamodel, Relationship
+from parallax.core.inheritance._position import resolve_narrow_position
 from parallax.core.op_algebra import (
     And,
     DeepFetch,
@@ -358,15 +359,16 @@ def _resolve_position(
     """The hop's resolved effective concrete-subtype set (m-deep-fetch dedup
     identity's second component): the segment's own narrow when authored, else
     the relationship target's own effective set — a non-polymorphic target's
-    trivial one-name set either way."""
+    trivial one-name set either way. The narrowed branch calls the SHARED
+    ``resolve_narrow_position`` seam (COR-3 Phase 7 increment 7 round-3, P2) --
+    the entity frontend's narrowed-view key derivation
+    (``parallax.core.entity.graph_state``) calls the identical function, so
+    the two can never drift."""
     related = meta.entity(relationship.related_entity)
     if related.inheritance is None:
         return (relationship.related_entity,)
     if segment.narrow:
-        resolved: set[str] = set()
-        for name in segment.narrow:
-            resolved.update(inheritance.effective_concrete_subtypes(meta, name))
-        return tuple(sorted(resolved))
+        return resolve_narrow_position(meta, segment.narrow)
     return tuple(inheritance.effective_concrete_subtypes(meta, relationship.related_entity))
 
 

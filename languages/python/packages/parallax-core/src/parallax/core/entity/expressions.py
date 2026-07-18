@@ -582,37 +582,6 @@ class RelationshipPath:
         owner, _, relationship = self.segments[0].rel.partition(".")
         return RelationshipRef(owner, relationship)
 
-    def effective_narrow_position(self, names: tuple[str, ...]) -> tuple[str, ...]:
-        """The EFFECTIVE concrete-subtype set the AUTHORED narrow ``names``
-        resolve to, within THIS path's own D-20 resolution scope (this path's
-        own captured ``_registry``, or the process default when it carries
-        none — a ``RelationshipPath`` built outside ``Rel.__get__``, test-only
-        direct construction). Mirrors ``m-deep-fetch``'s own
-        ``_resolve_position`` derivation (`parallax.core.deep_fetch`) so the
-        two can never drift — the SAME computation
-        `parallax.core.entity.graph_state`'s narrowed-view key derivation
-        needs.
-
-        R3/N1 (COR-3 Phase 7 increment 7 round-2): replaces the round-1
-        ``resolution_registry()`` accessor, which returned the raw
-        :class:`~parallax.core.entity.base.EntityRegistry` itself — internal
-        machinery, and "INTERNAL" in its own docstring did not make it any
-        less a new public surface (prompt 87's own "no new public API
-        surface" scrutiny). This narrower, DATA-ONLY replacement resolves
-        entirely within this method (never handing the registry itself back
-        to a caller) and returns only the resolved canonical NAMES a
-        same-package consumer's narrowed-view key derivation needs — the
-        registry type never crosses this class's own public surface at all."""
-        from parallax.core import inheritance
-        from parallax.core.entity.base import default_registry
-
-        registry = self._registry if self._registry is not None else default_registry()
-        meta = registry.metamodel()
-        resolved: set[str] = set()
-        for name in names:
-            resolved.update(inheritance.effective_concrete_subtypes(meta, name))
-        return tuple(sorted(resolved))
-
     def __getattr__(self, name: str) -> RelationshipPath:
         if name.startswith("_"):
             raise AttributeError(name)
