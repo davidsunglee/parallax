@@ -103,6 +103,24 @@ class _RecordingPort:
             if op[0] in ("read", "write")
         ]
 
+    def writes(self) -> list[tuple[str, tuple[object, ...]]]:
+        """The executed WRITE statements alone, in wire order (D-29's own
+        writeSequence-story grading rule, below)."""
+        return [
+            (cast("str", op[1]), cast("tuple[object, ...]", op[2]))
+            for op in self.ops
+            if op[0] == "write"
+        ]
+
+    def reads(self) -> list[tuple[str, tuple[object, ...]]]:
+        """The executed READ statements alone, in wire order (D-29's own
+        writeSequence-story grading rule, below)."""
+        return [
+            (cast("str", op[1]), cast("tuple[object, ...]", op[2]))
+            for op in self.ops
+            if op[0] == "read"
+        ]
+
     @property
     def wrote(self) -> bool:
         return any(op[0] == "write" for op in self.ops)
@@ -132,10 +150,41 @@ def _scenario_goldens(
     return out
 
 
+def _assert_reads_are_proper_selects(port: _RecordingPort) -> None:
+    """The read/write partition :func:`_observed_statements` relies on is
+    exhaustive and correctly classified: every op the port recorded as a READ
+    genuinely is one (a ``select``), never a write emission miscategorized —
+    the structural half of D-29's own writeSequence-story grading rule, so a
+    story's own observation reads (a genuine ``tx.find`` before a temporal
+    ``tx.update``/``tx.terminate``, needed for the D-30 merge to have a real
+    payload to merge onto) are PROVEN to have executed, even though they are
+    graded separately from the byte-exact DML compare below (a writeSequence
+    case's own `then.statements` vocabulary is WRITE-ONLY — the corpus format
+    never authors a read step there, contrast a `scenario` shape's own
+    per-step statements, which DO include find goldens)."""
+    for sql, _binds in port.reads():
+        assert sql.strip().lower().startswith("select"), sql
+
+
+def _observed_statements(
+    port: _RecordingPort, case_id: str
+) -> list[tuple[str, tuple[object, ...]]]:
+    """The statements this case's golden ``then.statements``/``statements``
+    grades against (D-29): a ``writeSequence`` case's own golden vocabulary is
+    WRITE-ONLY, so a writeSequence STORY's own observation reads are excluded
+    here (and proven separately, :func:`_assert_reads_are_proper_selects`) —
+    never folded into the byte-exact DML compare. A ``scenario`` case's own
+    per-step goldens already include find steps, so nothing changes there."""
+    _assert_reads_are_proper_selects(port)
+    if _CASES[case_id].shape == "writeSequence":
+        return port.writes()
+    return port.statements()
+
+
 def _assert_statements(
     port: _RecordingPort, goldens: list[tuple[str, list[object]]], case_id: str
 ) -> None:
-    observed = port.statements()
+    observed = _observed_statements(port, case_id)
     assert len(observed) == len(goldens), (case_id, observed, goldens)
     for (sql, binds), (golden_sql, golden_binds) in zip(observed, goldens, strict=True):
         assert sql == golden_sql, (case_id, sql, golden_sql)
@@ -147,7 +196,10 @@ def _assert_statements(
 
 
 def _db(port: _RecordingPort, story: WriteStory) -> Database:
-    return Database.connect(port, _MODELS[story.model])
+    # D-29: a story's own scripted-clock FACTORY (never a shared instance) —
+    # this consumer's fresh clock, independent of `test_story_run.py`'s own.
+    clock = story.clock() if story.clock is not None else None
+    return Database.connect(port, _MODELS[story.model], clock=clock)
 
 
 # The no-drift guard grades every EXERCISED story (`m-api-conformance.md`) —

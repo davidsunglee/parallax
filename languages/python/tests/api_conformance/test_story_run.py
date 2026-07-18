@@ -107,7 +107,10 @@ _STORY_IDS = [story.case_id for story in _EXECUTED_STORIES]
 @pytest.mark.parametrize("story", _EXECUTED_STORIES, ids=_STORY_IDS)
 def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: Any) -> None:
     meta = _reset_for(story.case_id, provisioner)
-    db = connect(provisioner.port, meta)
+    # D-29: a story's own scripted-clock FACTORY (never a shared instance) —
+    # this consumer's fresh clock, independent of `test_write_no_drift.py`'s.
+    clock = story.clock() if story.clock is not None else None
+    db = connect(provisioner.port, meta, clock=clock)
 
     result = story.run(db)
     if result is not None:

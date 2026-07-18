@@ -58,6 +58,7 @@ from typing import Any, Final, Literal
 from parallax.conformance.story_models import Account, Order, OrderItem
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity, canonical_row, wire_names_of
+from parallax.core.unit_work import Clock
 from parallax.snapshot.handle import Database, Snapshot, Transaction
 
 __all__ = ["WRITE_STORIES", "WriteStory", "story_snippet"]
@@ -71,13 +72,27 @@ StoryKind = Literal["commit", "abort", "boundary"]
 
 @dataclass(frozen=True, slots=True)
 class WriteStory:
-    """One executable public-API story mirroring a corpus write case."""
+    """One executable public-API story mirroring a corpus write case.
+
+    ``clock`` (D-29, COR-3 Phase 8 increment 7 completion round) is an
+    OPTIONAL zero-argument :class:`~parallax.core.unit_work.Clock` factory: a
+    temporal writeSequence story needing successive distinct processing
+    instants across its own choreography (one corpus writeSequence entry, one
+    flushing ``db.transact`` call, one Clock read each) sets it to something
+    like ``lambda: ScriptedClock([...])``
+    (:class:`~parallax.conformance.scripted_clock.ScriptedClock`) — a FACTORY,
+    not a shared instance, so each harness consumer (the fake-port no-drift
+    guard, the real-Postgres story runner) drives its own fresh clock rather
+    than exhausting a script the other consumer already advanced. ``None``
+    (every pre-D-29 story, unchanged) connects with no explicit clock at all —
+    the system clock (`Database.connect`'s own default)."""
 
     case_id: str
     title: str
     kind: StoryKind
     model: str
     run: Callable[[Database], list[Row] | None]
+    clock: Callable[[], Clock] | None = None
 
 
 def story_snippet(story: WriteStory) -> str:

@@ -232,6 +232,21 @@ def test_observe_binds_the_recorded_observation_into_the_flush_plan() -> None:
     assert recorder.plans[0].writes[0].observation == observation
 
 
+def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
+    # D-29's own empirical read-only/empty-transact truth: `flush()` returns
+    # before ever computing `_processing_instant_literal()` when the buffer is
+    # empty (`UnitOfWork.flush`), so a transaction that never buffers anything
+    # (a pure read, or an empty body) never calls `Clock.now()` at all — the
+    # commit-time flush at the outermost boundary is a no-op for it.
+    clock = _CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
+
+    def body(tx: UnitOfWork) -> str:
+        return tx.read(lambda: "row")
+
+    assert _run(body, clock=clock) == "row"
+    assert clock.calls == 0
+
+
 def test_processing_instant_is_captured_once_per_transaction() -> None:
     clock = _CountingClock(
         [dt.datetime(2024, 6, 1, tzinfo=dt.UTC), dt.datetime(2025, 1, 1, tzinfo=dt.UTC)]
