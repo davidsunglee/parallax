@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast, overload
 
+from parallax.core.entity._relationship_scope import register_scope
 from parallax.core.op_algebra import (
     And,
     Between,
@@ -549,7 +550,7 @@ def _subtype_entity_name(subtype: type) -> str:
     return record.name if record is not None else subtype.__name__
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class RelationshipPath:
     """A chained class-level relationship reference (``Order.items``,
     ``Order.items.statuses``) — the seed of the ``.include(...)`` deep-fetch
@@ -564,6 +565,14 @@ class RelationshipPath:
     hop, since Python attribute access has no other place to look it up. The
     first hop is statically typed via the ``Rel[T]`` descriptor overload;
     deeper hops resolve dynamically through ``__getattr__``.
+
+    ``weakref_slot=True`` (alongside ``slots=True``) lets
+    ``parallax.core.entity._relationship_scope`` hold this instance's
+    registered scope in an identity-keyed, GC-safe side table — the seam
+    ``parallax.core.entity.graph_state`` reads this path's own captured
+    registry through (COR-3 Phase 7 increment 7 round-4, P2), since a
+    class-private field can never be read from outside this class's own
+    methods, regardless of file or convention.
     """
 
     segments: tuple[PathSegment, ...]
@@ -571,10 +580,17 @@ class RelationshipPath:
     # This path's own D-20 registration scope (captured at the FIRST hop, from
     # the owning ``Rel[T]`` descriptor; never a public field, mirroring
     # ``Statement._registry``): a dynamic hop and ``.narrow(...)`` both resolve
-    # within it, never the process-global registry. ``None`` only for a
-    # ``RelationshipPath`` built outside ``Rel.__get__`` (test-only direct
-    # construction) — falls back to the process default registry.
+    # within it, never the process-global registry — and it is this SAME
+    # captured scope (never ``type(node)``'s own, round-4 P2) that
+    # ``graph_state``'s narrowed-view key derivation resolves a ``.narrow(...)``
+    # position within, via ``_relationship_scope.register_scope`` below.
+    # ``None`` only for a ``RelationshipPath`` built outside ``Rel.__get__``
+    # (test-only direct construction) — falls back to the process default
+    # registry.
     _registry: EntityRegistry | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        register_scope(self, self._registry)
 
     @property
     def ref(self) -> RelationshipRef:

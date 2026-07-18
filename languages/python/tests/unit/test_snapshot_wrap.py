@@ -21,12 +21,23 @@ from parallax.conformance.story_models import Order as _soOrder
 from parallax.conformance.story_models import OrderItem as _soOrderItem
 from parallax.conformance.story_models import OrderStatus as _soOrderStatus
 from parallax.conformance.story_models import OrderTag as _soOrderTag
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field, is_loaded, narrowed
+from parallax.core import (
+    AsOfAttribute,
+    Attr,
+    Entity,
+    EntityConfig,
+    Field,
+    Rel,
+    Relationship,
+    is_loaded,
+    narrowed,
+)
 from parallax.core.descriptor import Entity as EntityDescriptor
 from parallax.core.descriptor import Inheritance
 from parallax.core.entity import metamodel
-from parallax.core.entity.base import Concrete, FamilyRoot
-from parallax.core.entity.expressions import UnloadedRelationshipError
+from parallax.core.entity.base import Concrete, EntityRegistry, FamilyRoot
+from parallax.core.entity.expressions import RelationshipPath, UnloadedRelationshipError
+from parallax.core.op_algebra import PathSegment
 from parallax.core.temporal_read import Pin, edge_of, pin_of
 from parallax.snapshot import wrap
 from parallax.snapshot.handle import Execution, NoResultFound, Snapshot, TooManyResultsFound
@@ -352,6 +363,159 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
     cats = cast("tuple[object, ...]", narrowed(root, sm.AnimalOwner.pets.narrow(sm.Cat)))
     assert type(dogs[0]) is sm.Dog
     assert type(cats[0]) is sm.Cat
+
+
+# --------------------------------------------------------------------------- #
+# Round-4 P2 (COR-3 Phase 7 increment 7): the PATH's own captured D-20        #
+# registration scope is AUTHORITATIVE for a narrowed view's key derivation,   #
+# never `type(node)`'s own. A multi-hop path (`Kennel.owners.pets`) carries   #
+# its FIRST hop's own registry through the SECOND hop unchanged               #
+# (`RelationshipPath.__getattr__` / `.narrow()` both propagate `_registry`,   #
+# never re-derive it from the second hop's own owning entity) -- a registry  #
+# whose "Pet" family is WIDER (`CustomDog` beside `Dog`) than the WRAPPED     #
+# `Owner` node's OWN, entirely separate registration registry (`Dog` alone).  #
+# Single-hop can never exhibit this: a single hop's `_registry` is always     #
+# the immediate owner's OWN registration registry, the SAME class `type(node)`#
+# resolves to when `node` is that same owner -- provably identical by        #
+# construction, never just "untested" (round-3's claim, now proven exactly). #
+# --------------------------------------------------------------------------- #
+def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -> None:
+    registry_path = EntityRegistry(parent=None)
+
+    class Pet(  # pyright: ignore[reportRedeclaration]
+        Entity, frozen=True, registry=registry_path
+    ):
+        __parallax__ = EntityConfig(
+            table="pet_path",
+            mutability="transactional",
+            inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
+        )
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    class Dog(Pet, frozen=True):  # pyright: ignore[reportRedeclaration]
+        __parallax__ = EntityConfig(
+            table="dog_path", mutability="transactional", inheritance=Concrete()
+        )
+
+    path_dog = Dog
+
+    class CustomDog(Pet, frozen=True):  # pyright: ignore[reportUnusedClass]
+        __parallax__ = EntityConfig(
+            table="custom_dog_path", mutability="transactional", inheritance=Concrete()
+        )
+
+    class Owner(  # pyright: ignore[reportRedeclaration]
+        Entity, frozen=True, registry=registry_path
+    ):
+        __parallax__ = EntityConfig(table="owner_path", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+        pets: Rel[tuple[Pet, ...]] = Relationship(
+            cardinality="one-to-many",
+            join="this.id = Pet.ownerId",
+            related_entity="Pet",
+            reverse_name="owner",
+            foreign_key="owner_id",
+        )
+
+    path_owner = Owner
+
+    class Kennel(  # pyright: ignore[reportUnusedClass]
+        Entity, frozen=True, registry=registry_path
+    ):
+        __parallax__ = EntityConfig(table="kennel_path", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+        owners: Rel[tuple[Owner, ...]] = Relationship(
+            cardinality="one-to-many",
+            join="this.id = Owner.kennelId",
+            related_entity="Owner",
+            reverse_name="kennel",
+            foreign_key="kennel_id",
+        )
+
+    # A genuine multi-hop path: `.pets` (a DYNAMIC second hop, `__getattr__`)
+    # and `.narrow(Pet)` both propagate the FIRST hop's own `registry_path`
+    # unchanged -- never re-derived from `Owner`'s own registration registry
+    # (which happens to be the SAME one here; the wrapped node below is
+    # deliberately registered in a DIFFERENT one instead).
+    path = Kennel.owners.pets.narrow(Pet)
+
+    # `Owner`'s (and its "Pet" family's) OWN, entirely separate registration
+    # registry -- this is what a wrapped `Owner` node's `type(node)` actually
+    # resolves through; its "Pet" family is NARROWER (`Dog` alone, no
+    # `CustomDog`) than `registry_path`'s.
+    registry_actual = EntityRegistry(parent=None)
+
+    class Pet(  # pyright: ignore[reportRedeclaration]
+        Entity, frozen=True, registry=registry_actual
+    ):
+        __parallax__ = EntityConfig(
+            table="pet_actual",
+            mutability="transactional",
+            inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
+        )
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    class Dog(Pet, frozen=True):
+        __parallax__ = EntityConfig(
+            table="dog_actual", mutability="transactional", inheritance=Concrete()
+        )
+
+    dog_cls = Dog
+
+    class Owner(Entity, frozen=True, registry=registry_actual):
+        __parallax__ = EntityConfig(table="owner_actual", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+        pets: Rel[tuple[Pet, ...]] = Relationship(
+            cardinality="one-to-many",
+            join="this.id = Pet.ownerId",
+            related_entity="Pet",
+            reverse_name="owner",
+            foreign_key="owner_id",
+        )
+
+    owner_cls = Owner
+
+    # The wire's own narrowed-view key, exactly as `m-deep-fetch`'s planning
+    # (`resolve_narrow_position` over the QUERY's own connected metamodel --
+    # `registry_path`'s wide "Pet" family) would have baked into the neutral
+    # graph: `pets[CustomDog,Dog]`, never `pets[Dog]`.
+    dog_row = Node(fields={"id": 1, "owner_id": 10, "familyVariant": "Dog"}, pk_columns=("id",))
+    owner_node = Node(fields={"id": 10, "pets[CustomDog,Dog]": [dog_row]}, pk_columns=("id",))
+    (root,) = wrap.wrap_graph((owner_node,), "Owner", registry_actual.metamodel(), Pin())
+    # `registry_actual`'s OWN classes -- distinct objects from `registry_path`'s
+    # same-named "Owner"/"Dog", never the ones the multi-hop `path` was built
+    # through (D-20: the SAME canonical name coexists across two registries).
+    assert type(root) is owner_cls
+    assert owner_cls is not path_owner
+
+    assert is_loaded(root, path) is True
+    view = cast("tuple[object, ...]", narrowed(root, path))
+    assert len(view) == 1
+    assert type(view[0]) is dog_cls
+    assert dog_cls is not path_dog
+
+
+def test_narrowed_view_key_falls_back_to_the_default_registry_when_the_path_captures_none() -> None:
+    """A ``RelationshipPath`` built outside ``Rel.__get__`` (test-only direct
+    construction, ``_registry`` omitted) falls back to the process default
+    registry for narrow-position resolution -- mirroring ``RelationshipPath``'s
+    own documented fallback (COR-3 Phase 7 increment 7 round-4, P2)."""
+    owner = Node(
+        fields={"id": 10, "name": "Alice", "pets[Dog]": [_dog()]},
+        pk_columns=("id",),
+    )
+    (root,) = wrap.wrap_graph((owner,), "AnimalOwner", _ANIMAL, Pin())
+    path = RelationshipPath(
+        segments=(PathSegment(rel="AnimalOwner.pets", narrow=("Dog",)),), target="Dog"
+    )
+    assert is_loaded(root, path) is True
+    view = cast("tuple[object, ...]", narrowed(root, path))
+    assert type(view[0]) is sm.Dog
 
 
 def test_wrap_raises_lookup_error_for_an_unregistered_concrete_class() -> None:
