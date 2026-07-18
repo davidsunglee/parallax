@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, Self, cast, get_args, get_origin
 
@@ -87,6 +87,7 @@ __all__ = [
     "primary_key_row",
     "registry_of",
     "registry_of_class",
+    "registry_of_classes",
     "resolve_entity_class",
     "snake_to_camel",
     "wire_names_of",
@@ -219,6 +220,20 @@ class EntityRegistry:
         registry connects a ``Database`` with THIS method's result, never a
         bare, untagged one."""
         return ScopedMetamodel(entities=tuple(self.records().values()), registry=self)
+
+    def reaches(self, other: EntityRegistry) -> bool:
+        """Whether ``other`` is this registry itself or somewhere in its own
+        ``parent`` chain -- i.e. whether THIS registry already resolves
+        everything ``other`` does (S2, COR-3 Phase 7 increment 7 round-2):
+        the narrow query :func:`registry_of_classes`'s mixed-registry-set walk
+        needs, so a module-level caller asks this rather than reaching into
+        ``parent`` directly."""
+        current: EntityRegistry | None = self
+        while current is not None:
+            if current is other:
+                return True
+            current = current._parent
+        return False
 
 
 _default_registry: EntityRegistry | None = None
@@ -452,6 +467,57 @@ def registry_of_class(cls: type) -> EntityRegistry:
     THIS per-class lookup, never the process default, whenever the classes
     given are in hand."""
     return _REGISTRY_OF_CLASS.get(cls, default_registry())
+
+
+def registry_of_classes(classes: Sequence[type]) -> EntityRegistry | None:
+    """The single :class:`EntityRegistry` that resolves EVERY one of
+    ``classes`` correctly (S2, COR-3 Phase 7 increment 7 round-2): the seam
+    :func:`~parallax.core.entity.meta.metamodel` uses to auto-scope its own
+    result, so tagging is automatic wherever the classes are in hand, never a
+    caller's own reminder to reach for a specific registry's
+    :meth:`EntityRegistry.metamodel` instead.
+
+    - ``classes`` empty: ``None`` -- no class/registry context to derive a
+      scope from at all (:func:`~parallax.core.entity.meta.metamodel`'s own
+      documented UNSCOPED case).
+    - Every class's own :func:`registry_of_class` identical (the common,
+      zero-ceremony shape, and every single-registry app): that registry.
+    - The classes span MORE than one registry: the single member whose own
+      ``parent`` chain reaches every OTHER member -- a registry already
+      resolves everything its own ``parent`` chain does (:meth:`EntityRegistry.
+      resolve`/:meth:`records`), so this is never a guess, only the unique
+      registry PROVABLY resolving every given class correctly (e.g.
+      ``animal_owner.Person``'s own scope alongside its related
+      ``read_models`` siblings' default registry resolves through the
+      NARROWER, ``Person``-owning scope -- the identical tag a caller
+      assembling the SAME class set through THAT registry's own
+      :meth:`EntityRegistry.metamodel` would get).
+
+    Raises :class:`ValueError`, naming every given class, when the classes'
+    own registries are genuinely incomparable (no single member's own chain
+    reaches every other) -- picking ANY one of them could silently
+    mis-resolve one of the others, so this refuses to guess instead.
+    """
+    classes = tuple(classes)
+    distinct: dict[EntityRegistry, None] = {}
+    for cls in classes:
+        distinct.setdefault(registry_of_class(cls), None)
+    if not distinct:
+        return None
+    if len(distinct) == 1:
+        return next(iter(distinct))
+    for candidate in distinct:
+        if all(candidate.reaches(other) for other in distinct):
+            return candidate
+    names = ", ".join(cls.__name__ for cls in classes)
+    raise ValueError(
+        f"metamodel(classes): {names} span {len(distinct)} incompatible EntityRegistry "
+        "scopes -- no single one's own parent chain resolves every other, so tagging the "
+        "assembled Metamodel with any one of them could silently mis-resolve another; "
+        "assemble a metamodel scoped to one explicit registry instead "
+        "(EntityRegistry.metamodel()), or pass a class set whose own registries form a "
+        "single parent chain (ledger D-20)"
+    )
 
 
 def _temporal_as_of_attributes(record: EntityRecord, cls: type) -> tuple[AsOfAttribute, ...]:

@@ -20,11 +20,14 @@ from typing import Any
 
 import pytest
 
+from parallax.conformance import animal_owner, read_models
 from parallax.core import Attr, Concrete, Entity, EntityConfig, FamilyRoot, Field, Rel, Relationship
 from parallax.core.db_port import DbPort, Row
+from parallax.core.entity import metamodel
 from parallax.core.entity.base import (
     EntityRegistry,
     ModelCopyError,
+    ScopedMetamodel,
     default_registry,
     entity_record_of,
     entity_records,
@@ -398,3 +401,69 @@ def test_child_registry_entry_shadows_a_same_named_parent_entry() -> None:
     # ... while the parent registry itself is entirely unaffected.
     assert parent.resolve("ShadowProbe") is parent_class
     assert parent.records()["ShadowProbe"] is entity_record_of(parent_class)
+
+
+# --------------------------------------------------------------------------- #
+# S2 (BLOCKING, COR-3 Phase 7 increment 7 round-2): class-authored metamodel  #
+# assembly (the bare `metamodel(classes)` helper, never only                 #
+# `EntityRegistry.metamodel()`) auto-scopes from the classes it is given, so  #
+# `db.find` resolves through the assembled classes' own registry -- never    #
+# the process default -- even when a same-named foreign class is ALSO        #
+# imported in the same process.                                              #
+# --------------------------------------------------------------------------- #
+def test_bare_metamodel_auto_scopes_from_a_single_registrys_classes() -> None:
+    meta = metamodel([animal_owner.Person])
+    assert isinstance(meta, ScopedMetamodel)
+    assert meta.registry is animal_owner.ANIMAL_OWNER_REGISTRY
+
+
+def test_bare_metamodel_over_a_mixed_registry_set_scopes_to_the_narrower_child() -> None:
+    # `animal_owner.Person`'s own `ANIMAL_OWNER_REGISTRY` already resolves
+    # everything its `parent` (the process default, where `Animal`/`Pet` are
+    # registered) does -- so mixing the owner class with its related
+    # default-registry siblings scopes to the NARROWER, `Person`-owning
+    # registry: the identical tag `ANIMAL_OWNER_REGISTRY.metamodel()` itself
+    # would produce, never a guess.
+    meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Pet])
+    assert isinstance(meta, ScopedMetamodel)
+    assert meta.registry is animal_owner.ANIMAL_OWNER_REGISTRY
+
+
+def test_bare_metamodel_over_an_incompatible_mixed_set_raises() -> None:
+    registry_a = EntityRegistry(parent=None)
+    registry_b = EntityRegistry(parent=None)
+
+    class IncompatibleProbeA(  # pyright: ignore[reportUnusedClass]
+        Entity, frozen=True, registry=registry_a
+    ):
+        __parallax__ = EntityConfig(table="incompatible_probe_a", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    class IncompatibleProbeB(  # pyright: ignore[reportUnusedClass]
+        Entity, frozen=True, registry=registry_b
+    ):
+        __parallax__ = EntityConfig(table="incompatible_probe_b", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    with pytest.raises(ValueError, match="incompatible EntityRegistry"):
+        metamodel([IncompatibleProbeA, IncompatibleProbeB])
+
+
+def test_db_find_over_a_bare_metamodel_resolves_the_assembled_classs_own_registry() -> None:
+    # Reproduces the reviewer's defect verbatim: pre-fix, `metamodel(...)`
+    # produced a bare, UNTAGGED `Metamodel`, so `resolve_entity_class` fell
+    # back to the process default registry -- landing on that registry's OWN,
+    # unrelated `read_models.Person` (`models/person.yaml`) instead of the
+    # assembled `animal_owner.Person` (`models/animal.yaml`'s real polymorphic
+    # owner), the moment both happened to be imported in the same process.
+    meta = metamodel([animal_owner.Person])
+    port = _CannedPort([{"id": 1, "name": "Alice"}])
+    db = Database.connect(port, meta)
+    snapshot = db.find(animal_owner.Person.where(animal_owner.Person.id == 1))
+    result = snapshot.result()
+
+    assert type(result) is animal_owner.Person
+    assert type(result) is not read_models.Person
+    assert result.name == "Alice"

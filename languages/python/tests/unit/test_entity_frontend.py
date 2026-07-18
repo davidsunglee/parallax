@@ -12,9 +12,12 @@ import mirrored_models as mm
 from parallax.conformance import case_format
 from parallax.core import (
     Attr,
+    Concrete,
     Entity,
     EntityConfig,
     EntityDefinitionError,
+    EntityRegistry,
+    FamilyRoot,
     Field,
     NameCollisionError,
     Rel,
@@ -40,6 +43,7 @@ from parallax.core.descriptor import (
 from parallax.core.entity import (
     AttributeRef,
     RelationshipRef,
+    ScopedMetamodel,
     camel_to_snake,
     descriptor_document,
     meta_of,
@@ -118,6 +122,18 @@ def test_meta_rejects_unknown_name_and_non_entity() -> None:
 def test_metamodel_assembles_related_classes() -> None:
     assembled = metamodel([mm.Person, mm.Passport])
     assert tuple(e.name for e in assembled.entities) == ("Person", "Passport")
+    assert isinstance(assembled, ScopedMetamodel)
+    assert assembled.registry is not None
+
+
+def test_metamodel_of_no_classes_stays_unscoped() -> None:
+    # S2 (COR-3 Phase 7 increment 7 round-2): no class/registry context at all
+    # -- the one documented case the untagged, UNSCOPED shape legitimately
+    # survives in (never a silent guess at a scope with nothing to derive it
+    # from).
+    assembled = metamodel([])
+    assert not isinstance(assembled, ScopedMetamodel)
+    assert assembled.entities == ()
 
 
 def test_attribute_descriptor_get_on_class_and_instance() -> None:
@@ -428,6 +444,36 @@ def test_family_view_tolerates_unresolved_root() -> None:
     orphan_family = meta_of(descriptor, "Orphan").family  # parent absent from the descriptor
     assert orphan_family is not None
     assert orphan_family.root is None
+
+
+def test_meta_of_a_scoped_class_resolves_family_siblings_from_its_own_registry() -> None:
+    # S2 (COR-3 Phase 7 increment 7 round-2): `meta(Class)` must derive its
+    # sibling/resolution context from THAT class's own registry, never the
+    # process default -- pre-fix, `meta`'s context came from `entity_records()`
+    # (the process default registry's own records), which never contains a
+    # class declared in a SCOPED (non-default) registry at all, so a scoped
+    # family's own root resolved to NO concrete subtypes whatsoever.
+    registry = EntityRegistry()
+
+    class ScopedFamilyRoot(Entity, frozen=True, registry=registry):
+        __parallax__ = EntityConfig(
+            table="scoped_family_root",
+            mutability="transactional",
+            inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
+        )
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    class ScopedFamilyLeaf(  # pyright: ignore[reportUnusedClass]
+        ScopedFamilyRoot, frozen=True
+    ):
+        __parallax__ = EntityConfig(
+            mutability="transactional", inheritance=Concrete(tag_value="leaf")
+        )
+
+    family = meta(ScopedFamilyRoot).family
+    assert family is not None
+    assert family.subtypes == ("ScopedFamilyLeaf",)
 
 
 def test_meta_temporal_is_the_family_effective_classification() -> None:

@@ -27,7 +27,14 @@ from parallax.core.descriptor import (
     effective_temporal,
     serialize,
 )
-from parallax.core.entity.base import entity_record_of, entity_records, entity_registry
+from parallax.core.entity.base import (
+    ScopedMetamodel,
+    entity_record_of,
+    entity_records,
+    entity_registry,
+    registry_of_class,
+    registry_of_classes,
+)
 
 __all__ = [
     "EntityMetaView",
@@ -201,8 +208,20 @@ class EntityMetaView:
 
 
 def meta(target: type | str) -> EntityMetaView:
-    """The introspection view for an entity class or a registered entity name."""
-    return EntityMetaView(_entity_of(target), tuple(entity_records().values()))
+    """The introspection view for an entity class or a registered entity name.
+
+    A CLASS's own sibling/resolution context is derived from ITS OWN D-20
+    registration scope (S2, COR-3 Phase 7 increment 7 round-2 --
+    :func:`~parallax.core.entity.base.registry_of_class`), never the process
+    default, so ``family``'s cross-entity resolution can never cross into a
+    foreign registry's same-named sibling. A bare canonical NAME has no class
+    to derive a scope from at all, so it stays UNSCOPED: the process default
+    registry's own records, an explicit, documented fallback (S2) -- never a
+    silent guess -- for that one no-class-in-hand case.
+    """
+    if isinstance(target, str):
+        return EntityMetaView(_entity_of(target), tuple(entity_records().values()))
+    return EntityMetaView(_entity_of(target), tuple(registry_of_class(target).records().values()))
 
 
 def meta_of(descriptor: Metamodel, name: str) -> EntityMetaView:
@@ -216,8 +235,30 @@ def meta_of(descriptor: Metamodel, name: str) -> EntityMetaView:
 
 
 def metamodel(classes: Sequence[type]) -> Metamodel:
-    """Assemble one :class:`Metamodel` from a set of related entity classes."""
-    return Metamodel(entities=tuple(_entity_of(cls) for cls in classes))
+    """Assemble one :class:`Metamodel` from a set of related entity classes.
+
+    Automatically SCOPED (S2, COR-3 Phase 7 increment 7 round-2): tagged as a
+    :class:`~parallax.core.entity.base.ScopedMetamodel` resolving through the
+    given classes' own registry (:func:`~parallax.core.entity.base.
+    registry_of_classes`) -- tagging is automatic wherever the classes are in
+    hand, so `wrap`/`resolve_entity_class` resolve a decoded row's class
+    through THIS scope, never the process default, once a connected
+    ``Database`` carries the result. Without this, an owner class declared in
+    its own registry (e.g. ``animal_owner.Person``) would resolve through the
+    process default instead, landing on that DEFAULT registry's own,
+    unrelated same-named entity (``read_models.Person``) the moment it also
+    happened to be imported. ``classes`` empty -- no class/registry context at
+    all -- stays UNSCOPED: a bare, untagged ``Metamodel``, for which
+    :func:`~parallax.core.entity.base.registry_of`'s own documented fallback
+    resolves through the process default registry instead (the same untagged
+    shape a bare descriptor-ingested metamodel already carries).
+    """
+    classes = tuple(classes)
+    entities = tuple(_entity_of(cls) for cls in classes)
+    scope = registry_of_classes(classes)
+    if scope is None:
+        return Metamodel(entities=entities)
+    return ScopedMetamodel(entities=entities, registry=scope)
 
 
 def descriptor_document(classes: Sequence[type]) -> dict[str, object]:
