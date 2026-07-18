@@ -594,6 +594,78 @@ def test_audit_only_update_via_a_sparse_edited_copy_carries_the_untouched_field(
     assert chain_binds == (1, "A-1", Decimal("150.00"), "2024-06-01T00:00:00+00:00", "infinity")
 
 
+# --------------------------------------------------------------------------- #
+# D-31 (COR-3 Phase 8 increment 7 completion round): axis-attribute           #
+# construction optionality + `tx.insert_until`, through the PUBLIC verbs.     #
+# --------------------------------------------------------------------------- #
+def test_bitemporal_insert_constructs_cleanly_and_stamps_the_business_from() -> None:
+    branch = mm.Branch(id=1, name="Central", address=None)  # no placeholder axis values
+    port = _RecordingPort()
+    db = _db_for(models.load_models()["branch"], port)
+
+    db.transact(lambda tx: tx.insert(branch, business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)))
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 1
+    sql = write_ops[0][1]
+    binds = cast("tuple[object, ...]", write_ops[0][2])
+    assert sql == POSTGRES.to_driver_sql(
+        "insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) "
+        "values (?, ?, ?, ?, ?, ?, ?)"
+    )
+    assert binds[2:6] == (
+        "2024-01-01T00:00:00+00:00",
+        "infinity",
+        "2024-06-01T00:00:00+00:00",
+        "infinity",
+    )
+
+
+def test_bitemporal_insert_until_opens_a_single_bounded_rectangle() -> None:
+    branch = mm.Branch(id=1, name="Central", address=None)
+    port = _RecordingPort()
+    db = _db_for(models.load_models()["branch"], port)
+
+    db.transact(
+        lambda tx: tx.insert_until(
+            branch,
+            business_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        )
+    )
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 1
+    binds = cast("tuple[object, ...]", write_ops[0][2])
+    assert binds[2:6] == (
+        "2024-03-01T00:00:00+00:00",
+        "2024-09-01T00:00:00+00:00",
+        "2024-06-01T00:00:00+00:00",
+        "infinity",
+    )
+
+
+def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
+    branch = mm.Branch(id=1, name="Central", address=None)
+    port = _RecordingPort()
+    db = _db_for(models.load_models()["branch"], port)
+    same_instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    with pytest.raises(ValueError, match="business_from < until"):
+        db.transact(
+            lambda tx: tx.insert_until(branch, business_from=same_instant, until=same_instant)
+        )
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_a_materialized_temporal_node_still_populates_real_axis_values() -> None:
+    # D-31's construction optionality only affects a FRESH instance — a
+    # materialized read explicitly passes every fetched column, so the
+    # resulting node's axis fields are the row's own REAL values, never `None`.
+    port = _RecordingPort(rows=[_balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = _db_for(_BALANCE, port)
+    fetched = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
+    assert fetched.processing_from == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    assert fetched.processing_to is not None
+
+
 def test_record_observations_captures_bitemporal_business_bounds_and_payload() -> None:
     # Finding B's completeness half ("record the observation fields temporal
     # lowering already consumes ... so a transaction-scoped find -> temporal

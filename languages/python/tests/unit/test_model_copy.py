@@ -9,6 +9,7 @@ shape it reproduced; see ``test_write_lowering.py`` / ``test_opt_lock.py``.
 
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 
 import pytest
@@ -16,6 +17,7 @@ import pytest
 import mirrored_models as mm
 import snapshot_models as sm
 import value_object_models as vm
+from parallax.core.descriptor import UNSET
 from parallax.core.entity import (
     EntityDefinitionError,
     ModelCopyError,
@@ -23,10 +25,12 @@ from parallax.core.entity import (
     canonical_row,
     changed_fields,
     effective_change_set,
+    entity_record_of,
     full_row,
     primary_key_row,
     wire_names_of,
 )
+from parallax.core.entity.base import FrameworkOwnedAxisError
 
 pytestmark = pytest.mark.unit
 
@@ -167,3 +171,59 @@ def test_full_row_serializes_a_cardinality_many_value_object_member_to_a_list_of
 def test_wire_names_of_rejects_a_non_compiled_entity_class() -> None:
     with pytest.raises(EntityDefinitionError, match="not a compiled Parallax entity class"):
         wire_names_of(int)
+
+
+# --------------------------------------------------------------------------- #
+# D-31 (COR-3 Phase 8 increment 7 completion round): axis-governed attributes #
+# are optional at construction, and a caller-supplied one on a fresh instance #
+# raises loudly at `full_row` (the `insert`/`insert_until` Create Payload     #
+# seam) rather than being silently discarded downstream.                     #
+# --------------------------------------------------------------------------- #
+def test_an_audit_only_instance_constructs_cleanly_without_axis_values() -> None:
+    balance = mm.Balance(id=1, acct_num="A", value=Decimal("100.00"))
+    assert balance.processing_from is None
+    assert balance.processing_to is None
+    assert full_row(balance) == {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
+
+
+def test_a_bitemporal_instance_constructs_cleanly_without_axis_values() -> None:
+    branch = mm.Branch(id=1, name="Central", address=None)
+    assert branch.business_from is None
+    assert branch.business_to is None
+    assert branch.processing_from is None
+    assert branch.processing_to is None
+    assert full_row(branch) == {"id": 1, "name": "Central", "address": None}
+
+
+def test_supplying_a_processing_axis_value_at_construction_raises_on_full_row() -> None:
+    balance = mm.Balance(
+        id=1,
+        acct_num="A",
+        value=Decimal("100.00"),
+        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    )
+    with pytest.raises(FrameworkOwnedAxisError, match="processing_from"):
+        full_row(balance)
+
+
+def test_supplying_a_business_axis_value_at_construction_raises_on_full_row() -> None:
+    branch = mm.Branch(
+        id=1, name="Central", address=None, business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    )
+    with pytest.raises(FrameworkOwnedAxisError, match="business_from"):
+        full_row(branch)
+
+
+def test_a_non_temporal_class_declares_no_axis_governed_fields() -> None:
+    assert wire_names_of(mm.Account).axis_governed_py == frozenset()
+
+
+def test_the_exported_descriptor_carries_no_default_for_an_axis_attribute() -> None:
+    # D-31's Pydantic-level `None` default is a frontend construction
+    # affordance ONLY — the compiled descriptor stays byte-identical (the
+    # descriptor no-drift guard is the proof; this pin is the unit-level
+    # half of it).
+    record = entity_record_of(mm.Balance)
+    assert record is not None
+    processing_from = next(a for a in record.attributes if a.name == "processingFrom")
+    assert processing_from.default is UNSET

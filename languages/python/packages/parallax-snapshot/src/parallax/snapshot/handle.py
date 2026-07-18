@@ -1421,11 +1421,56 @@ class Transaction:
         self._meta = meta
         self._dialect = dialect
 
-    def insert(self, instance: EntityBase) -> None:
+    def insert(self, instance: EntityBase, *, business_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
-        spec §5): every member the instance actually SET."""
-        record = _entity_record_of_instance(instance)
-        self._buffer("insert", record.name, full_row(instance))
+        spec §5): every member the instance actually SET. Raises
+        :class:`~parallax.core.entity.base.FrameworkOwnedAxisError` (D-31,
+        COR-3 Phase 8 increment 7 completion round) when ``instance`` itself
+        SET an axis-governed attribute (``in_z``/``out_z``, bitemporal
+        ``from_z``/``thru_z``) — those columns are framework-stamped at flush
+        (the Clock Strategy), never caller-authored (:func:`full_row`'s own
+        construction-time rejection replaces the pre-D-31 silent discard).
+
+        ``business_from`` is the PLAIN (unbounded) bitemporal insert's own
+        business instant — the open rectangle's lower bound
+        ``[business_from, infinity)`` (`m-bitemp-write` "insert /
+        insertUntil — a single open rectangle, no close"); mirrors ``update``'s
+        own bitemporal-only-required :func:`_validate_business_from`: an
+        audit-only or non-temporal target takes none (no business axis to
+        bound)."""
+        record, _declaring, business_from_literal = self._prepare_keyed_write(
+            instance, "insert", business_from
+        )
+        self._buffer("insert", record.name, full_row(instance), business_from=business_from_literal)
+
+    def insert_until(
+        self, instance: EntityBase, *, business_from: dt.datetime, until: dt.datetime
+    ) -> None:
+        """Buffer a keyed, business-window-BOUNDED ``insertUntil`` (D-31, COR-3
+        Phase 8 increment 7 completion round; ``m-bitemp-write-003`` — the
+        *Until trio's third member): open a single bitemporal rectangle
+        bounded to ``[business_from, until)`` at the fresh processing
+        milestone, with no prior row to close — the bitemporal analogue of an
+        audit-only ``insert``, business-bounded — bitemporal-only (mirrors
+        ``update_until``'s own required, non-optional ``business_from`` /
+        ``until``). A window that does not satisfy ``business_from < until``
+        (equal or reversed bounds) raises at THIS call, before any buffering
+        (:func:`_validate_until`, `python.md` §5 "all validated at build").
+        Raises :class:`~parallax.core.entity.base.FrameworkOwnedAxisError`
+        when ``instance`` itself SET an axis-governed attribute — the window
+        bounds come from THESE verb arguments, never from instance fields
+        (the Reladomo verb-argument precedent, decision 2)."""
+        record, declaring, business_from_literal = self._prepare_keyed_write(
+            instance, "insertUntil", business_from
+        )
+        until_literal = _validate_until(declaring, "insertUntil", business_from, until)
+        self._buffer(
+            "insertUntil",
+            record.name,
+            full_row(instance),
+            business_from=business_from_literal,
+            business_to=until_literal,
+        )
 
     def update(self, copy: EntityBase, *, business_from: dt.datetime | None = None) -> None:
         """Buffer a sparse keyed ``update``: primary key + the effective change
@@ -1465,18 +1510,14 @@ class Transaction:
         self._buffer("delete", record.name, primary_key_row(node_or_instance))
 
     # --- typed keyed temporal-window verbs (python.md §5; COR-3 Phase 8      #
-    # increment 7). Every mutation kind below is already a valid             #
+    # increment 7; ``insertUntil`` landed by the increment 7 completion      #
+    # round, D-31). Every mutation kind below is already a valid             #
     # ``KeyedMutation`` and already fully lowered (``bitemp_write`` /        #
     # ``audit_write`` / ``planner``) — only the DEVELOPER-facing verb was    #
     # missing: a typed ``Transaction`` method that builds the SAME           #
     # instruction through the SAME `_buffer` seam `insert`/`update`/`delete` #
     # already share, so a hand-written program and the engine's corpus      #
-    # replay can never diverge in behavior. ``insertUntil`` (the *Until      #
-    # trio's third member, `m-bitemp-write-003`) is DEFERRED — it needs a    #
-    # Create Payload whose axis columns (``businessTo`` / ``processingFrom``#
-    # / ``processingTo``) are framework-derived rather than caller-supplied,#
-    # which is a real Pydantic-construction-time design question this       #
-    # increment does not resolve (see the increment 7 report).              #
+    # replay can never diverge in behavior.                                 #
     def terminate(
         self, node_or_instance: EntityBase, *, business_from: dt.datetime | None = None
     ) -> None:
@@ -1555,9 +1596,10 @@ class Transaction:
     def _prepare_keyed_write(
         self, node_or_instance: EntityBase, mutation: str, business_from: dt.datetime | None
     ) -> tuple[Entity, Entity, str | None]:
-        """The keyed-verb prep every verb above (``insert``/``delete``
-        excepted — neither takes a business-window bound) opens with (N2,
-        COR-3 Phase 8 increment 7 remediation): resolve the written
+        """The keyed-verb prep every verb above (``delete`` excepted — it takes
+        no business-window bound) opens with (N2, COR-3 Phase 8 increment 7
+        remediation; ``insert``/``insert_until`` joined at D-31, increment 7
+        completion round): resolve the written
         instance's own :class:`~parallax.core.descriptor.Entity` record and
         its family's DECLARING entity
         (:func:`~parallax.core.inheritance.declaring_entity` — the entity
@@ -1642,11 +1684,12 @@ class Transaction:
         # target's caller never passes them (every pre-increment-7 call site is
         # unaffected). The typed temporal developer verbs (COR-3 Phase 8
         # increment 7 — ``update``'s own optional bitemporal ``business_from``,
-        # ``terminate``, ``update_until``, ``terminate_until``) and the
-        # conformance engine's own temporal write translation both pass them
-        # the SAME way (`m-audit-write` / `m-bitemp-write` — the axis-explicit
-        # `businessFrom` / `businessTo` instruction fields, never smuggled onto
-        # `row`, ADR 0010/0013).
+        # ``terminate``, ``update_until``, ``terminate_until``; ``insert``'s own
+        # optional bitemporal ``business_from`` and ``insert_until`` joined at
+        # D-31, increment 7 completion round) and the conformance engine's own
+        # temporal write translation both pass them the SAME way (`m-audit-write`
+        # / `m-bitemp-write` — the axis-explicit `businessFrom` / `businessTo`
+        # instruction fields, never smuggled onto `row`, ADR 0010/0013).
         doc: dict[str, object] = {"mutation": mutation, "entity": entity, "rows": [dict(row)]}
         if business_from is not None:
             doc["businessFrom"] = business_from

@@ -72,6 +72,7 @@ __all__ = [
     "EntityMeta",
     "EntityRegistry",
     "FamilyRoot",
+    "FrameworkOwnedAxisError",
     "ModelCopyError",
     "ProvenanceError",
     "ScopedMetamodel",
@@ -288,6 +289,21 @@ class ProvenanceError(ValueError):
     and cannot drive a sparse ``tx.update`` (spec §5)."""
 
 
+class FrameworkOwnedAxisError(ValueError):
+    """A fresh instance names an axis-governed attribute at construction (D-31,
+    COR-3 Phase 8 increment 7 completion round): ``in_z``/``out_z`` (and,
+    bitemporal, ``from_z``/``thru_z``) are stamped by the temporal write path
+    itself — the milestone director derives every bound from the Clock
+    Strategy and the verb's own window arguments (``business_from``/``until``
+    on `insert_until`/`update_until`/`terminate_until`), never from
+    caller-authored instance data. ``tx.insert``/``tx.insert_until`` raise
+    this the moment the offending field is actually SET on the instance
+    (``model_fields_set``) — replacing the pre-D-31 behavior of silently
+    discarding it at the write path — naming the framework-owned attribute so
+    the fix is obvious: omit it and let the verb stamp it (mirrors
+    :class:`ModelCopyError`'s own framework-owned-field rejection tone)."""
+
+
 @dataclass(frozen=True, slots=True)
 class WireNames:
     """Per-class canonical <-> python-field-name maps the snapshot node wrapper,
@@ -303,7 +319,16 @@ class WireNames:
     name) is what the frozen-node wrapper attaches relationship values under;
     ``assignable_py`` is the ``model_copy(update=...)`` allow-list (every
     scalar/value-object python field name except ``pk_py`` and
-    ``framework_owned_py``).
+    ``framework_owned_py``). ``axis_governed_py`` (D-31, COR-3 Phase 8
+    increment 7 completion round) is the python field name(s) of the
+    entity's OWN declared axis-interval scalar attributes (``in_z``/``out_z``,
+    and bitemporal ``from_z``/``thru_z``) -- populated only on the family ROOT
+    that actually declares ``EntityConfig(as_of=...)`` (empty for a
+    non-temporal class, or a family subclass, which never declares axes
+    itself -- m-inheritance "Inherited members"); :func:`full_row`'s own
+    construction-time rejection consults it, never ``assignable_py`` (which
+    stays UNCHANGED -- an axis field remains a legal ``model_copy`` target,
+    out of this decision's scope).
     """
 
     column_to_py: dict[str, str]
@@ -313,6 +338,7 @@ class WireNames:
     assignable_py: frozenset[str]
     pk_py: frozenset[str]
     framework_owned_py: frozenset[str]
+    axis_governed_py: frozenset[str]
     vo_classes: dict[str, type]
 
 
@@ -336,6 +362,7 @@ def wire_names_of(cls: type) -> WireNames:
     assignable_py: set[str] = set()
     pk_py: set[str] = set()
     framework_owned_py: set[str] = set()
+    axis_governed_py: set[str] = set()
     vo_classes: dict[str, type] = {}
     for ancestor in reversed(cls.__mro__):
         names = _WIRE_NAMES.get(ancestor)
@@ -348,6 +375,7 @@ def wire_names_of(cls: type) -> WireNames:
         assignable_py.update(names.assignable_py)
         pk_py.update(names.pk_py)
         framework_owned_py.update(names.framework_owned_py)
+        axis_governed_py.update(names.axis_governed_py)
         vo_classes.update(names.vo_classes)
     return WireNames(
         column_to_py=column_to_py,
@@ -357,6 +385,7 @@ def wire_names_of(cls: type) -> WireNames:
         assignable_py=frozenset(assignable_py),
         pk_py=frozenset(pk_py),
         framework_owned_py=frozenset(framework_owned_py),
+        axis_governed_py=frozenset(axis_governed_py),
         vo_classes=vo_classes,
     )
 
@@ -637,17 +666,44 @@ def _serialize_member(value: object) -> object:
     return value
 
 
+def _reject_axis_governed_fields(cls_name: str, names: WireNames, fields_set: set[str]) -> None:
+    """Loud construction-time rejection (D-31, COR-3 Phase 8 increment 7
+    completion round): a fresh instance handed to ``tx.insert``/
+    ``tx.insert_until`` may not itself SET an axis-governed attribute
+    (``in_z``/``out_z``, bitemporal ``from_z``/``thru_z``) — the temporal
+    write path stamps every milestone bound itself (the Clock Strategy plus,
+    for the bounded ``*Until`` forms, the verb's own window arguments), so a
+    caller-supplied value is never a legitimate alternative. This REPLACES the
+    pre-D-31 behavior of silently discarding it at the write path (the fresh
+    row's caller-authored axis value was always overwritten unconditionally
+    by the milestone open/insert step, never surfaced as an error)."""
+    supplied = sorted(names.axis_governed_py & fields_set)
+    if supplied:
+        py_name = supplied[0]
+        canonical = names.py_to_name[py_name]
+        raise FrameworkOwnedAxisError(
+            f"{cls_name}.{py_name} ({canonical!r}): axis-governed attributes are "
+            "framework-stamped at write time (the temporal write path derives every "
+            "milestone bound itself) — omit it at construction and let "
+            "tx.insert/tx.insert_until stamp it (D-31)"
+        )
+
+
 def full_row(instance: Entity) -> dict[str, object]:
     """Every member of ``instance`` the caller actually SET, keyed by CANONICAL
-    name — the ``insert`` Create Payload row (spec §5). Filtered by Pydantic's
-    own ``model_fields_set`` (not every declared member unconditionally): a
-    nullable member the caller never populated (relying on its declared
-    default) is OMITTED, producing the narrower ``INSERT`` the corpus goldens
-    pin (never an explicit bound ``NULL``) — the same distinction the ingested
-    write-instruction row already expresses structurally.
+    name — the ``insert``/``insert_until`` Create Payload row (spec §5).
+    Filtered by Pydantic's own ``model_fields_set`` (not every declared member
+    unconditionally): a nullable member the caller never populated (relying
+    on its declared default) is OMITTED, producing the narrower ``INSERT``
+    the corpus goldens pin (never an explicit bound ``NULL``) — the same
+    distinction the ingested write-instruction row already expresses
+    structurally. Raises :class:`FrameworkOwnedAxisError` (D-31) when the
+    caller SET an axis-governed attribute (:func:`_reject_axis_governed_fields`) —
+    checked before the row is built, so a rejected instance emits no DML at all.
     """
     names = wire_names_of(type(instance))
     fields_set = instance.model_fields_set
+    _reject_axis_governed_fields(type(instance).__name__, names, fields_set)
     return {
         canonical: _serialize_member(getattr(instance, py_name))
         for canonical, py_name in names.name_to_py.items()
@@ -1014,6 +1070,16 @@ class EntityMeta(ModelMetaclass):
             raise EntityDefinitionError("`__parallax__` must be an EntityConfig")
         config = config if isinstance(config, EntityConfig) else EntityConfig()
 
+        # D-31 (COR-3 Phase 8 increment 7 completion round): the columns this
+        # class's OWN declared `as_of` axes govern (empty for a non-temporal
+        # class or a family subclass, which never declares `as_of` itself —
+        # m-inheritance "Inherited members") — every axis-interval scalar
+        # attribute below (`in_z`/`out_z`, bitemporal `from_z`/`thru_z`)
+        # becomes optional at construction, never caller-required.
+        axis_columns: frozenset[str] = frozenset(
+            column for aoa in config.as_of for column in (aoa.from_column, aoa.to_column)
+        )
+
         annotations: dict[str, Any] = dict(namespace.get("__annotations__", {}))
         globalns = _module_globalns(namespace)
         attr_decls: list[_AttrDecl] = []
@@ -1029,8 +1095,22 @@ class EntityMeta(ModelMetaclass):
             if kind == "attr":
                 spec = value if isinstance(value, FieldSpec) else FieldSpec()
                 annotations[py_name] = inner  # Attr[T] -> T for Pydantic
+                column = spec.column if spec.column is not None else py_name
                 if spec.default is not UNSET:
                     namespace[py_name] = spec.default
+                elif column in axis_columns:
+                    # D-31: axis-governed attributes are optional at
+                    # construction — a Pydantic default of `None`, never
+                    # validated (`model_config` sets no `validate_default`),
+                    # so the DECLARED attribute type is unaffected; only an
+                    # unpopulated instance's runtime value is `None` until a
+                    # read materializes a real one (mirrors the established
+                    # PYTHON-optional/DESCRIPTOR-required split, e.g.
+                    # `ContactPoint`'s own docstring). The exported descriptor
+                    # itself carries NO `default` for this attribute (`spec.default`
+                    # stays `UNSET`, read by `_attribute_of` below, untouched
+                    # here) — a frontend affordance only, byte-identical export.
+                    namespace[py_name] = None
                 else:
                     namespace.pop(py_name, None)
                 vo_info = vo_field_info(inner)
@@ -1111,6 +1191,7 @@ class EntityMeta(ModelMetaclass):
         py_to_name: dict[str, str] = {}
         pk_py: set[str] = set()
         framework_owned_py: set[str] = set()
+        axis_governed_py: set[str] = set()
         for py_name, _inner, spec in attr_decls:
             canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
             column = spec.column if spec.column is not None else py_name
@@ -1124,6 +1205,8 @@ class EntityMeta(ModelMetaclass):
                 pk_py.add(py_name)
             if spec.optimistic_locking:
                 framework_owned_py.add(py_name)
+            if column in axis_columns:
+                axis_governed_py.add(py_name)
         vo_classes: dict[str, type] = {}
         for py_name, vo_class, _card, spec in vo_decls:
             canonical = spec.name if spec.name is not None else snake_to_camel(py_name)
@@ -1159,6 +1242,7 @@ class EntityMeta(ModelMetaclass):
             assignable_py=frozenset(py_to_name) - pk_py - framework_owned_py,
             pk_py=frozenset(pk_py),
             framework_owned_py=frozenset(framework_owned_py),
+            axis_governed_py=frozenset(axis_governed_py),
             vo_classes=vo_classes,
         )
         return cls

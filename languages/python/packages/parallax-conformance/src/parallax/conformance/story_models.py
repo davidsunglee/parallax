@@ -25,11 +25,20 @@ mirror racing it. This module deliberately avoids
 import datetime as dt
 from decimal import Decimal
 
-from parallax.core import Attr, Entity, EntityConfig, Field, OrderByTerm, Rel, Relationship
+from parallax.core import (
+    AsOfAttribute,
+    Attr,
+    Entity,
+    EntityConfig,
+    Field,
+    OrderByTerm,
+    Rel,
+    Relationship,
+)
 
 _NS = "parallax.compatibility"
 
-__all__ = ["Account", "Order", "OrderItem", "OrderStatus", "OrderTag"]
+__all__ = ["Account", "Order", "OrderItem", "OrderStatus", "OrderTag", "Position"]
 
 
 class Account(Entity, frozen=True):
@@ -41,6 +50,38 @@ class Account(Entity, frozen=True):
     owner: Attr[str] = Field(max_length=64)
     balance: Attr[Decimal] = Field(type="decimal(18,2)")
     version: Attr[int] = Field(type="int32", optimistic_locking=True)
+
+
+class Position(Entity, frozen=True):
+    """Mirror of ``models/position.yaml`` (full bitemporal — the Phase 8
+    signature shape): the write-family stories' own bitemporal-insert /
+    ``insertUntil`` / ``updateUntil`` witness (``m-bitemp-write-001/-003``,
+    D-31, COR-3 Phase 8 increment 7 completion round). Every axis-governed
+    attribute (``business_from``/``business_to``/``processing_from``/
+    ``processing_to``) is optional at construction (D-31): a fresh instance
+    names only its business payload, and the write path stamps the rest."""
+
+    __parallax__ = EntityConfig(
+        table="position",
+        namespace=_NS,
+        mutability="transactional",
+        as_of=(
+            AsOfAttribute(
+                name="businessDate", from_column="from_z", to_column="thru_z", axis="business"
+            ),
+            AsOfAttribute(
+                name="processingDate", from_column="in_z", to_column="out_z", axis="processing"
+            ),
+        ),
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", column="pos_id", type="int64")
+    acct_num: Attr[str] = Field(max_length=32, column="acct_num")
+    value: Attr[Decimal] = Field(type="decimal(18,2)", column="val")
+    business_from: Attr[dt.datetime] = Field(column="from_z")
+    business_to: Attr[dt.datetime] = Field(column="thru_z")
+    processing_from: Attr[dt.datetime] = Field(column="in_z")
+    processing_to: Attr[dt.datetime] = Field(column="out_z")
 
 
 class Order(Entity, frozen=True):
