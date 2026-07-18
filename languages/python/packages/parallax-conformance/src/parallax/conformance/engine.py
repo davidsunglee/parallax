@@ -15,6 +15,8 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import decimal
+import os
+import socket
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -2125,17 +2127,6 @@ def _run_interleaved_group(
 # rather than the production bound actually elapsing twice.
 _INTERLEAVED_GROUP_JOIN_TIMEOUT: Final[float] = 30.0
 
-# The FINAL rung's own rejoin, after a survivor's own connection has been
-# TERMINATED (closed) outright (:func:`_terminate_connection`): kept
-# independent of the (deliberately test-shrinkable, see above) ``timeout``
-# parameter used for every earlier, cooperative rejoin, because a closed
-# connection's blocked driver call is guaranteed to raise almost
-# immediately — this bound exists only to turn a violation of THAT
-# guarantee into a loud, internal ``AssertionError`` rather than an
-# indefinite hang, so it stays fixed and generous no matter what (possibly
-# tiny) ``timeout`` a caller supplies for the earlier rungs.
-_INTERLEAVED_GROUP_TERMINATION_JOIN_TIMEOUT: Final[float] = 5.0
-
 
 def _cancel_in_flight_work(connection: object) -> None:
     """Best-effort, non-destructive interruption of whatever ``connection``
@@ -2154,7 +2145,8 @@ def _cancel_in_flight_work(connection: object) -> None:
     tears a session down, whether it is the peer's or the caller's own
     ``ours`` session. A survivor this rung cannot reach (cancellation fails
     or is unavailable) escalates one rung further, to
-    :func:`_terminate_connection`, which DOES close it — cancellation
+    :func:`_terminate_connection` — round 3's own GUARANTEED close ladder,
+    never best-effort like this rung — which DOES close it; cancellation
     staying non-destructive only means a session that wakes here is never
     needlessly destroyed, not that it can never be destroyed at all. A fake
     port (unit lane) legally carries no psycopg connection; it instead
@@ -2181,33 +2173,133 @@ def _cancel_in_flight_work(connection: object) -> None:
             cancel()
 
 
-def _terminate_connection(connection: object) -> None:
-    """Escalation rung three (:func:`_await_interleaved_workers`'s FINAL,
-    round-2 confirmation-pass escalation on review remediation finding 4):
-    unlike :func:`_cancel_in_flight_work` (best-effort, non-destructive),
-    this rung is deliberately destructive — it closes ``connection``
-    outright, INCLUDING the caller-owned ``main_connection`` when its own
-    worker is the survivor. This supersedes the earlier "never destroy the
-    caller-owned port" invariant: the round-2 confirmation reproduced a live
-    worker racing the caller on that port after the helper had already
-    raised, which is strictly worse than a terminated port that fails loudly
-    on its next use. Closing a real psycopg connection makes its blocked
-    driver call raise INSIDE the worker thread, which then exits —
-    ``Connection.close()`` is documented thread-safe for exactly this
-    purpose (callable from a thread other than the one running the blocked
-    query). ``main_connection`` is typed as the abstract ``DbPort`` (no
-    ``close()`` in that protocol; only :class:`_PeerConnection` promises
-    one), so — mirroring :func:`_cancel_in_flight_work`'s own ``cancel()``
-    probe — this duck-types a ``close()`` capability rather than assuming
-    one; a connection exposing neither is left alone (nothing further this
-    rung can do to it, and the caller's own final join then discharges the
-    contract or reports honestly). Swallows a raise from ``close()`` itself
-    so a driver's own close-time complaint never masks the timeout error
-    this whole escalation exists to raise."""
-    close = getattr(connection, "close", None)
-    if callable(close):
+def _terminate_underlying_socket(  # pragma: no cover - real transport only, Docker-lane exercised
+    underlying: object, label: str
+) -> list[str]:
+    """The termination ladder's LAST rung (:func:`_terminate_connection`'s
+    own final escalation, reached only once BOTH ``underlying``'s own
+    ``close()`` is missing or has already raised): genuine OS-level socket
+    teardown on ``underlying``'s raw connection fd (``underlying.fileno()``
+    — psycopg's own documented seam for exactly this, normally used for
+    ``selectors``-based readiness waiting, reused here as the escalation's
+    own reach into the transport). ``shutdown(SHUT_RDWR)`` is the
+    thread-safe way to force a DIFFERENT thread's blocking
+    read/write/recv syscall on that SAME fd to return with an OS-level
+    error — the standard "unstick a blocked peer" trick, safe to call
+    concurrently with a blocking call on the same fd (unlike a bare
+    ``close()`` of that fd from another thread, which POSIX leaves
+    unsafe/undefined while a syscall on it is in flight elsewhere). The fd
+    is unconditionally closed afterward regardless of whether
+    ``shutdown()`` itself succeeded (``finally``): this connection is
+    already condemned by the time this rung runs, so closing it too is
+    never a new loss, and a ``shutdown()`` failure alone (e.g. the socket
+    was already disconnected) must never leave the fd itself still open.
+    Unreachable from any test fake — no fake in this module's unit lane
+    carries a real OS fd — so this rung is exercised only informally by the
+    Docker-backed conformance lanes, the SAME reasoning
+    :func:`_cancel_in_flight_work`'s own ``PostgresAdapter``-only
+    ``cancel_safe`` rung already carries."""
+    failures: list[str] = []
+    fileno = getattr(underlying, "fileno", None)
+    if not callable(fileno):
+        failures.append(f"{label}: underlying connection exposes no fileno() for OS-level teardown")
+        return failures
+    try:
+        fd = cast("int", fileno())
+    except Exception as exc:
+        failures.append(f"{label}: underlying connection.fileno() raised {exc!r}")
+        return failures
+    try:
+        sock = socket.socket(fileno=fd)
+    except Exception as exc:  # a misbehaving fileno() must never crash this rung
+        failures.append(f"{label}: OS-level socket(fileno={fd}) raised {exc!r}")
         with contextlib.suppress(Exception):
+            os.close(fd)
+        return failures
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except Exception as exc:
+        failures.append(f"{label}: OS-level shutdown(fd={fd}) raised {exc!r}")
+    finally:
+        with contextlib.suppress(Exception):
+            sock.close()
+    return failures
+
+
+def _terminate_connection(connection: object, label: str) -> list[str]:
+    """Escalation rung three (:func:`_await_interleaved_workers`'s FINAL
+    escalation) — a round-3 confirmation pass's own correction on review
+    remediation finding 4: unlike :func:`_cancel_in_flight_work`
+    (best-effort, non-destructive), this rung is GUARANTEED, never
+    best-effort. Round 2 shipped a single, silently-swallowed ``close()``
+    probe on the assumption that closing always works; the round-3 pass
+    forced BOTH ``cancel()`` and ``close()`` to fail on the SAME survivor
+    and reproduced exactly the failure that assumption was covering for — a
+    live worker still racing the caller after this rung had already run and
+    :func:`_await_interleaved_workers` had already raised.
+
+    The corrected ladder, each rung attempted only once the one above it is
+    missing or itself raises (never silently — every miss and every raise is
+    RECORDED and returned, so the caller can attach the full trail to the
+    timeout error as context rather than masking it):
+
+    1. ``connection``'s own duck-typed ``close()`` (``main_connection`` is
+       typed as the abstract ``DbPort``, with no ``close()`` in that
+       protocol — mirroring :func:`_cancel_in_flight_work`'s own
+       ``cancel()`` probe, this duck-types rather than assumes the
+       capability; :class:`_PeerConnection`, `PostgresAdapter`, and every
+       termination-rung test fake all expose one).
+    2. The UNDERLYING transport, reached the SAME duck-typed way — a
+       ``connection`` attribute (:attr:`~parallax.postgres.PostgresAdapter.
+       connection`, the wrapped psycopg ``Connection``), closed directly.
+       Unlike :func:`_cancel_in_flight_work`'s own ``cancel_safe`` rung,
+       this is NOT ``isinstance``-gated to the concrete adapter: ``close()``
+       is a universal enough capability name that a test fake can
+       legitimately expose the SAME seam a real adapter does, so this rung
+       reaches both alike. This is the documented seam a termination-rung
+       test fake must expose once its own OUTER ``close()`` is made to fail
+       — the round-3 confirmation pass's own adversarial pin proves the
+       escalation reaches it.
+    3. :func:`_terminate_underlying_socket` — genuine OS-level socket
+       teardown on the underlying connection's raw fd, real-transport only.
+
+    The guarantee this ladder exists to satisfy: for every connection type
+    actually wired into this path today (the real ``PostgresAdapter``,
+    escalating through rungs 1-3; a test fake, via whichever rung its own
+    documented seam answers), the ladder's last successful rung
+    deterministically unblocks a worker parked in that connection's I/O. A
+    fake whose documented seam the ladder genuinely cannot reach is a
+    defect in that fake, not in this function — it hangs the suite, which
+    is this module's own documented contract for an unreachable fake, not a
+    bug this rung papers over."""
+    failures: list[str] = []
+
+    def _attempt(target: object, rung: str) -> bool:
+        close = getattr(target, "close", None)
+        if not callable(close):
+            failures.append(f"{label}: {rung} exposes no close() capability")
+            return False
+        try:
             close()
+        except Exception as exc:  # escalate; recorded, never masks the timeout error below
+            failures.append(f"{label}: {rung}.close() raised {exc!r}")
+            return False
+        return True
+
+    if _attempt(connection, "connection"):
+        return failures
+
+    underlying = getattr(connection, "connection", None)
+    if underlying is None:
+        failures.append(f"{label}: connection exposes no underlying `connection` escalation seam")
+        return failures
+    if _attempt(underlying, "underlying connection"):
+        return failures
+
+    failures.extend(  # pragma: no cover - real transport only; Docker-lane exercised
+        _terminate_underlying_socket(underlying, label)
+    )
+    return failures
 
 
 def _await_interleaved_workers(
@@ -2235,47 +2327,63 @@ def _await_interleaved_workers(
     ``turnstile.wait_for``, and closing ``peer_connection`` touches only the
     ``concurrent`` group's session, never ``main_connection``. So any thread
     STILL alive after that rejoin gets a SECOND escalation:
-    :func:`_cancel_in_flight_work` (best-effort, non-destructive) on its OWN
-    connection (``main_connection`` for ``thread_a``, ``peer_connection`` for
-    ``thread_b``), then one more bounded rejoin of both.
+    :func:`_cancel_in_flight_work` — best-effort, non-destructive, and
+    (round 3's own explicit call) ALLOWED to stay that way, because the
+    guarantee below lives entirely in the rung after it — on its OWN
+    connection (``main_connection`` for ``thread_a``, ``peer_connection``
+    for ``thread_b``), then one more bounded rejoin of both.
 
-    A round-2 confirmation pass on this same finding found THAT escalation
-    still partial: cancellation can itself fail, or a connection may expose
-    no ``cancel()`` capability at all, leaving a worker genuinely alive even
-    after every non-destructive rung — and this function used to raise
-    anyway, with that worker (and the caller-owned port it was still
-    touching) left alive. THE CORRECTED, FINAL CONTRACT: this function must
-    never return OR raise while any started worker is alive; there is no
-    supported "loud leak" terminal state. So any thread STILL alive after the
-    cancel rejoin gets a THIRD, deliberately destructive escalation:
-    :func:`_terminate_connection` closes its OWN connection outright,
-    INCLUDING ``main_connection`` (the caller's own port) when its worker is
-    the survivor — superseding the earlier "never close the caller-owned
-    port" invariant, since a live worker still racing the caller on that
-    port is strictly worse than a terminated port that fails loudly on next
-    use. Closing guarantees the blocked driver call raises inside the
-    worker, which then exits, so the rejoin after this rung uses its OWN
-    fixed, generous bound
-    (:data:`_INTERLEAVED_GROUP_TERMINATION_JOIN_TIMEOUT`) rather than the
-    (possibly test-shrunk) ``timeout`` — expected to always resolve well
-    inside it, but bounded rather than unbounded so a violation of that
-    guarantee still fails LOUDLY (an ``AssertionError``, this function's own
-    internal invariant) instead of wedging the whole process. Worker
-    exceptions the termination itself provokes (a close-induced driver error
-    inside the worker) are expected collateral, captured on the worker's own
-    ``_InterleavedGroupResult.failure`` and never consulted once this
-    function has already raised — the caller only reaches that check on the
-    ordinary, non-timeout path, so the timeout error below is always what a
-    caller here actually sees.
+    ROUND-3 CORRECTED, FINAL CONTRACT (supersedes rounds 1-2's own terminal
+    designs): this function has NO code path — return, raise, or assert —
+    that runs while any started worker is alive. Round 1 raised a loud
+    "could not stop" error with a worker potentially still running; round 2
+    replaced that with a bounded rejoin behind an assumed-guaranteed
+    ``close()`` and an internal ``AssertionError`` safety net for when that
+    assumption failed — and a round-3 confirmation pass reproduced exactly
+    that failure: BOTH ``cancel()`` and ``close()`` forced to fail on the
+    same survivor, a live worker at the very point this function used to
+    raise. So any thread STILL alive after the cancel rejoin gets a THIRD
+    escalation that is no longer best-effort: :func:`_terminate_connection`'s
+    own GUARANTEED close ladder (duck-typed ``close()`` -> the underlying
+    driver connection -> OS-level socket teardown for the real adapter
+    shape; a documented underlying seam for a test fake — see that
+    function) on its OWN connection, INCLUDING ``main_connection`` (the
+    caller's own port) when its worker is the survivor — superseding the
+    earlier "never close the caller-owned port" invariant, since a live
+    worker still racing the caller on that port is strictly worse than a
+    terminated port that fails loudly on next use.
 
-    The terminal state is always honest, never a silent leak: once every
-    worker is joined (the only outcome this function returns to its caller —
-    whichever escalation reached it) this raises the SAME timeout error this
-    function has always raised, except now it also names whether
-    ``main_connection`` (the caller's own port) was itself terminated, so the
-    caller knows its next use will fail loudly rather than race a worker
-    that is, in fact, gone. The caller's own ``finally`` still closes
-    ``peer_connection`` unconditionally (idempotent,
+    The join AFTER this rung is DELIBERATELY UNBOUNDED (``thread.join()``,
+    no ``timeout=``): this retires round 2's own separate, fixed
+    termination-join bound and its ``AssertionError`` safety net entirely —
+    there is no longer a second, narrower timeout to violate. The trade,
+    made explicit: against a hypothetical FUTURE connection whose own close
+    ladder is defeated all the way down (a rung this module cannot reach,
+    or one that itself blocks), the failure mode is a diagnosable hang at
+    THIS join — a stuck process a maintainer can inspect and attribute to
+    this exact line — never a live worker racing the caller on a port the
+    caller already believes is theirs. Every connection type actually wired
+    into this path today (the real ``PostgresAdapter``; every
+    termination-rung test fake, via its documented seam) satisfies the
+    ladder's guarantee, so in practice this join returns promptly; the
+    unbounded wait is insurance against a violation of that guarantee, not
+    evidence one is expected. Worker exceptions the termination itself
+    provokes (a close-induced driver error inside the worker) are expected
+    collateral, captured on the worker's own ``_InterleavedGroupResult.
+    failure`` and never consulted once this function has already raised —
+    the caller only reaches that check on the ordinary, non-timeout path, so
+    the timeout error below is always what a caller here actually sees.
+
+    The terminal state is always honest, never a silent leak: because the
+    join above cannot return while a worker remains alive, EVERY path past
+    it raises the SAME timeout error this function has always raised,
+    naming whether ``main_connection`` (the caller's own port) was itself
+    terminated (closed) — the caller's next use must treat it as unsafe to
+    reuse either way — and now also carrying every close-ladder failure the
+    termination rung recorded (a missing capability, a raised ``close()``,
+    …) as `~BaseException.add_note` context: recorded, never silently
+    suppressed, never masking this error. The caller's own ``finally`` still
+    closes ``peer_connection`` unconditionally (idempotent,
     `parallax.postgres.PostgresAdapter.close`), so a double close here is
     harmless."""
     thread_a.join(timeout=timeout)
@@ -2298,43 +2406,34 @@ def _await_interleaved_workers(
 
     survivors = [(thread, connection) for thread, connection in workers if thread.is_alive()]
     terminated_caller_port = False
-    if survivors:
-        for _thread, connection in survivors:
-            if connection is main_connection:
-                terminated_caller_port = True
-            _terminate_connection(connection)
-        thread_a.join(timeout=_INTERLEAVED_GROUP_TERMINATION_JOIN_TIMEOUT)
-        thread_b.join(timeout=_INTERLEAVED_GROUP_TERMINATION_JOIN_TIMEOUT)
+    termination_failures: list[str] = []
+    for thread, connection in survivors:
+        if connection is main_connection:
+            terminated_caller_port = True
+        termination_failures.extend(_terminate_connection(connection, thread.name))
 
-    if not thread_a.is_alive() and not thread_b.is_alive():
-        if terminated_caller_port:
-            raise EngineError(
-                f"{case_name}: the interleaved-group choreography did not "
-                "finish within its bound — the caller-owned port was "
-                "terminated (closed) to unstick it and must be treated as "
-                "unsafe to reuse"
-            )
-        raise EngineError(
+    # UNBOUNDED — see docstring: a diagnosable hang here beats ever raising
+    # (or returning) while a worker is still alive; this retires round 2's
+    # own separate, fixed termination-join bound and its `AssertionError`
+    # safety net.
+    thread_a.join()
+    thread_b.join()
+
+    if terminated_caller_port:
+        error = EngineError(
+            f"{case_name}: the interleaved-group choreography did not "
+            "finish within its bound — the caller-owned port was "
+            "terminated (closed) to unstick it and must be treated as "
+            "unsafe to reuse"
+        )
+    else:
+        error = EngineError(
             f"{case_name}: the interleaved-group choreography did not "
             "finish within its bound — a turnstile hand-off is missing"
         )
-    # Defensive: unreachable under this function's own documented contract.
-    # Closing a connection guarantees its blocked driver call raises, so the
-    # rejoin above should always have discharged every survivor; every fake
-    # `DbPort` this module's own unit lane wires for the termination rung
-    # honors that guarantee (its own blocked call wakes and raises once
-    # closed). A worker still alive here means the guarantee itself was
-    # violated elsewhere — a defect this function refuses to leak silently,
-    # so it fails loudly instead of returning or raising the ordinary
-    # timeout error while a worker is, in fact, still alive.
-    leaked = ", ".join(  # pragma: no cover - defensive: see above
-        thread.name for thread, _connection in workers if thread.is_alive()
-    )
-    raise AssertionError(  # pragma: no cover - defensive: see above
-        f"{case_name}: {leaked} still alive after its own connection was "
-        "terminated — _await_interleaved_workers must never return or raise "
-        "while a worker is alive"
-    )
+    for failure in termination_failures:
+        error.add_note(f"termination ladder: {failure}")
+    raise error
 
 
 def run_interleaved_scenario_case(

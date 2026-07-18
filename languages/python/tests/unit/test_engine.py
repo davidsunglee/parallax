@@ -892,6 +892,186 @@ def test_await_interleaved_workers_terminates_a_survivor_with_no_cancel_capabili
         main_connection.execute("select 1", [])  # a terminated port raises, never executes
 
 
+class _UnderlyingConnectionSeam:
+    """The termination ladder's documented underlying-transport escalation
+    seam for a test fake (round-3 confirmation pass on review remediation
+    finding 4) — mirrors `PostgresAdapter.connection`, the wrapped psycopg
+    ``Connection`` a real adapter's own outer ``close()`` failure escalates
+    to (:func:`~parallax.conformance.engine._terminate_connection`'s rung
+    two). Closing THIS is what actually unblocks the survivor's blocked
+    call; its own ``close()`` succeeding is what proves the ladder reaches
+    PAST a broken outer ``close()`` rather than stopping there."""
+
+    def __init__(self, released: threading.Event) -> None:
+        self._released = released
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self._released.set()
+
+
+class _TerminableOnlyViaUnderlyingSeamConnection:
+    """A fake `DbPort` whose own OUTER ``close()`` FAILS (mirroring a real
+    driver's own close-time complaint) and whose ``cancel()`` capability is
+    absent entirely — the round-3 confirmation pass's own adversarial shape
+    on review remediation finding 4 (the reviewer's own reproduction: BOTH
+    ``cancel()`` and ``close()`` forced to fail on the same survivor). The
+    escalation's first two rungs (:func:`~parallax.conformance.engine.
+    _cancel_in_flight_work`'s probe, then ``connection.close()`` itself)
+    both come up empty — round 2's own "close always works" assumption does
+    not hold here BY DESIGN — forcing :func:`~parallax.conformance.engine.
+    _terminate_connection` past the failing outer ``close()`` to the
+    documented underlying seam (``self.connection``, mirroring
+    `PostgresAdapter.connection`)."""
+
+    def __init__(self) -> None:
+        self._released = threading.Event()
+        self.close_calls = 0
+        self.connection = _UnderlyingConnectionSeam(self._released)
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        self._released.wait(timeout=5.0)  # self-bounded even if the ladder never reaches it
+        raise RuntimeError("connection is closed")
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+    def close(self) -> None:
+        self.close_calls += 1
+        raise RuntimeError("outer close failed")
+
+
+def test_await_interleaved_workers_escalates_past_a_failing_close_to_the_underlying_seam() -> None:
+    # Round-3 confirmation pass on review remediation finding 4 (the
+    # reviewer's own reproduction): `cancel()` absent AND `close()` raising
+    # on the SAME survivor — `_terminate_connection`'s corrected, GUARANTEED
+    # ladder must escalate past the failing outer `close()` to the fake's
+    # documented underlying seam, unblock it there, join both workers, and
+    # raise the SAME terminated-caller-port timeout error the close-succeeds
+    # pin above raises — never a live worker at the raise, and the failing
+    # outer `close()` itself must never be silently swallowed: it must
+    # surface as recorded context on the raised error rather than masked.
+    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage]
+    main_connection = _TerminableOnlyViaUnderlyingSeamConnection()
+    peer = _ScriptedPort()
+
+    def run_a() -> None:
+        # expected collateral of the termination escalation itself
+        with contextlib.suppress(RuntimeError):
+            main_connection.execute("select 1", [])
+
+    def run_b() -> None:
+        turnstile.wait_for(100)  # an index this choreography never advances to
+
+    thread_a = threading.Thread(target=run_a, name="uow-ours")
+    thread_b = threading.Thread(target=run_b, name="uow-concurrent")
+    thread_a.start()
+    thread_b.start()
+
+    with pytest.raises(
+        engine.EngineError, match=r"terminated \(closed\).*unsafe to reuse"
+    ) as exc_info:
+        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage]
+            thread_a,
+            thread_b,
+            turnstile,
+            main_connection,
+            peer,
+            "m-unit-work-999-synthetic.yaml",
+            timeout=0.1,
+        )
+
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+    assert main_connection.close_calls == 1  # the failing outer close was still attempted
+    assert main_connection.connection.close_calls == 1  # the underlying seam is what unblocked it
+    assert peer.closed
+    notes = "\n".join(exc_info.value.__notes__)
+    assert "outer close failed" in notes  # the swallowed-by-round-2 failure is now recorded context
+
+
+class _NoCloseNoUnderlyingConnection:
+    """A connection shape exposing NEITHER a ``close()`` NOR a
+    ``connection`` (underlying-transport) attribute at all —
+    :func:`~parallax.conformance.engine._terminate_connection`'s own two
+    "nothing more this rung can do" terminal branches, one per probe. A
+    live worker parked on a connection this shape describes would never
+    unblock — this module's own documented contract for an unreachable
+    fake, not something a test should ever actually trigger through
+    :func:`~parallax.conformance.engine._await_interleaved_workers` (that
+    would hang the whole suite) — so this pin calls
+    :func:`~parallax.conformance.engine._terminate_connection` directly and
+    asserts on its own recorded return value instead."""
+
+
+def test_terminate_connection_records_every_missing_capability() -> None:
+    # `_terminate_connection`'s own two "nothing more this rung can do"
+    # terminal branches: a connection exposing NEITHER `close()` NOR the
+    # underlying `connection` escalation seam records BOTH misses (never
+    # silently doing nothing, matching the ladder's own "every failure is
+    # recorded" contract) rather than raising or hanging. See
+    # `_NoCloseNoUnderlyingConnection` for why this calls the rung directly.
+    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
+        _NoCloseNoUnderlyingConnection(), "uow-ours"
+    )
+    assert len(failures) == 2
+    assert failures[0] == "uow-ours: connection exposes no close() capability"
+    assert failures[1] == "uow-ours: connection exposes no underlying `connection` escalation seam"
+
+
+class _FailingUnderlyingSeam:
+    """An underlying-transport seam (:func:`~parallax.conformance.engine.
+    _terminate_connection`'s rung two) whose OWN ``close()`` also fails and
+    which exposes no ``fileno()`` either — forces the ladder all the way to
+    (and back out of) rung three,
+    :func:`~parallax.conformance.engine._terminate_underlying_socket`,
+    without a real OS fd (that rung is real-transport only; see its own
+    docstring)."""
+
+    def close(self) -> None:
+        raise RuntimeError("underlying close failed too")
+
+
+class _FailingOuterCloseWithFailingUnderlyingSeam:
+    """A connection whose OUTER ``close()`` fails AND whose own underlying
+    ``connection`` seam ALSO fails to close —
+    :func:`~parallax.conformance.engine._terminate_connection`'s own full
+    ladder, every rung attempted and every rung's own failure recorded. A
+    live worker parked on this shape would never unblock (see
+    `_NoCloseNoUnderlyingConnection`'s own docstring for why this is
+    exercised by calling the rung directly rather than end to end)."""
+
+    def __init__(self) -> None:
+        self.connection = _FailingUnderlyingSeam()
+
+    def close(self) -> None:
+        raise RuntimeError("outer close failed too")
+
+
+def test_terminate_connection_escalates_through_every_rung_when_all_fail() -> None:
+    # `_terminate_connection`'s own full ladder when EVERY rung fails: the
+    # outer `close()`, the underlying seam's own `close()`, and rung
+    # three's own `fileno()` probe (real-transport only) all miss or raise —
+    # every one of them recorded, never silently dropped.
+    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
+        _FailingOuterCloseWithFailingUnderlyingSeam(), "uow-ours"
+    )
+    assert len(failures) == 3
+    assert (
+        failures[0] == "uow-ours: connection.close() raised RuntimeError('outer close failed too')"
+    )
+    assert failures[1] == (
+        "uow-ours: underlying connection.close() raised RuntimeError('underlying close failed too')"
+    )
+    assert (
+        failures[2] == "uow-ours: underlying connection exposes no fileno() for OS-level teardown"
+    )
+
+
 def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:
     # A `uow` group of find-only steps (never reachable via the current corpus
     # — every group this round has a write) has no write entry to derive an
