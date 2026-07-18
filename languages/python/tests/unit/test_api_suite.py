@@ -274,8 +274,14 @@ def test_read_story_snippet_single_sources_the_concurrency_mode() -> None:
     assert "db.transact(" not in read_story_snippet(plain)
 
 
-def test_generate_matches_render_of_registered_examples() -> None:
-    assert usage_guide.generate() == api_suite.render_usage_guide(api_suite.EXAMPLES)
+def test_generate_matches_render_of_registered_examples_and_recipes() -> None:
+    assert usage_guide.generate() == api_suite.render_usage_guide(
+        api_suite.EXAMPLES, api_suite.RECIPES
+    )
+    # The recipes render as their own case-free section (checkpoint-4 Spec
+    # finding 2) — present in the generated guide, absent when omitted.
+    assert "## Recipes" in usage_guide.generate()
+    assert "## Recipes" not in api_suite.render_usage_guide(api_suite.EXAMPLES)
 
 
 def test_guide_path_points_at_docs() -> None:

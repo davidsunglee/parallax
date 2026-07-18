@@ -800,8 +800,8 @@ _CUSTOMER_VO_WRITE_SERIALIZATION_REASON: Final[str] = (
     "filtering) — an idiomatic write would bind an extra `elevation`/`point: null` the "
     "corpus's own narrower document never authors; Supplier/Branch's own VO write "
     "stories (m-value-object-032/-033) never exercise this path because their `Geo` "
-    "composite has no optional inner member to omit — closing it is a value-object "
-    "write-serialization change outside this round's charter"
+    "composite has no optional inner member to omit — closing it is the value-object "
+    "write-serialization change ledger D-33 records"
 )
 
 
