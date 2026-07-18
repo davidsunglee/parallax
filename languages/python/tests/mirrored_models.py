@@ -14,25 +14,23 @@ targets use string forward references (``Rel["Passport"]``).
 """
 
 import copy
-from decimal import Decimal
 from typing import Any
 
 import inheritance_models as _im
 from parallax.conformance.read_models import Balance
+from parallax.conformance.story_models import Account
 from parallax.core import Attr, Entity, EntityConfig, Field, Rel, Relationship
 
 _NS = "parallax.compatibility"
 
-
-class Account(Entity, frozen=True):
-    """Mirror of ``models/account.yaml`` (plain transactional entity)."""
-
-    __parallax__ = EntityConfig(table="account", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none")
-    owner: Attr[str] = Field(max_length=64)
-    balance: Attr[Decimal] = Field(type="decimal(18,2)")
-    version: Attr[int] = Field(type="int32", optimistic_locking=True)
+# ``Account`` (mirror of ``models/account.yaml``) is **re-exported** from
+# ``parallax.conformance.story_models`` -- the installed package's own mirror,
+# which the API Conformance Suite's write/graph stories execute against
+# `db.find`/`db.transact` -- following the SAME ``Balance`` discipline below:
+# this module's own no-drift proof and the API-suite's execution resolve the
+# exact SAME registered class, never a second, differently-scoped copy racing
+# it in the same registry (ledger D-20 fixed the silent version of this bug;
+# the fix here is to stop declaring a duplicate at all).
 
 
 class Attendee(Entity, frozen=True):
