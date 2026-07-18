@@ -813,6 +813,12 @@ def test_buffer_rejects_a_required_value_object_missing() -> None:
 
 def test_buffer_rejects_a_value_type_mismatch() -> None:
     # m-value-object-043's own payload: `address.street` bound the number 42.
+    # This corpus case's own idiomatic-surface spelling is unreachable through
+    # `tx.insert` (Pydantic's own field coercion raises first, constructing
+    # `ContactAddress(street=42, ...)` never even completes) — a SANCTIONED
+    # exception, ledger D-32 (S5, COR-3 Phase 8 increment 7 remediation), so
+    # this proof exercises the shared validator directly through the private
+    # `_buffer` seam instead, exactly like its two siblings above.
     port = _RecordingPort()
     with pytest.raises(WriteRejectedError) as exc_info:
         _db_for(_CONTACT, port).transact(

@@ -764,14 +764,19 @@ _VO_FIND_ROOT_REASON: Final[str] = (
 # instance can even be constructed, let alone reach `validate_write`. Its
 # four Contact/Shipment siblings (`-039..042`/`-044`) DO have an idiomatic
 # spelling (ledger D-21's now-installed mirror, `vo_models.py`) and are
-# exercised as build-time proofs above.
+# exercised as build-time proofs above. This single case's own skip is a
+# SANCTIONED exception, ledger D-32 (S5, COR-3 Phase 8 increment 7
+# remediation) — not an unreviewed gap.
 _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
     "`ContactAddress(street=42, ...)` raises Pydantic's own `ValidationError` (a `str` "
     "field never coerces an `int`) before the instance can even be constructed, let alone "
     "reach `validate_write` — the type system itself prevents authoring the corpus's "
     "invalid value-type-mismatch shape through `tx.insert`; its four Contact/Shipment "
     "siblings (`-039..042`/`-044`) DO have an idiomatic spelling and are exercised as "
-    "build-time proofs (ledger D-21's installed mirror)"
+    "build-time proofs (ledger D-21's installed mirror). This case's own skip is a "
+    "sanctioned exception, ledger D-32: Pydantic's own field-level coercion makes the "
+    "corpus's invalid shape structurally unrepresentable through the typed surface, not "
+    "a coverage gap this frontend can idiomatically close"
 )
 
 # The three remaining m-value-object write-family siblings, each a DIFFERENT
