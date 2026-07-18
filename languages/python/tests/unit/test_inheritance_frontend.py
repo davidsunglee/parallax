@@ -22,7 +22,6 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
-import yaml
 
 import inheritance_models as im
 from parallax.conformance import case_format
@@ -47,7 +46,7 @@ def _drop_indices(document: dict[str, object]) -> dict[str, object]:
 
 
 def _corpus(stem: str) -> dict[str, object]:
-    raw = yaml.safe_load((_MODELS_DIR / f"{stem}.yaml").read_text(encoding="utf-8"))
+    raw = case_format.safe_load_yaml((_MODELS_DIR / f"{stem}.yaml").read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
     return _drop_indices(canonicalize(cast("dict[str, object]", raw)))
 

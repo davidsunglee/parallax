@@ -37,7 +37,7 @@ _SCHEMA = cast(
 
 
 def _raw(path: Path) -> dict[str, Any]:
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loaded = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     return cast("dict[str, Any]", loaded)
 

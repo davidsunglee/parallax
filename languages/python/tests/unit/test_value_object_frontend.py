@@ -33,10 +33,8 @@ pytestmark = pytest.mark.unit
 
 
 def _customer_yaml() -> dict[str, object]:
-    import yaml
-
     path = case_format.find_repo_root() / "core" / "compatibility" / "models" / "customer.yaml"
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loaded = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     return cast("dict[str, object]", loaded)
 

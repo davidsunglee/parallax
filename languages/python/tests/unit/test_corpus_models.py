@@ -26,9 +26,7 @@ def test_every_corpus_model_ingests_and_round_trips() -> None:
     assert loaded  # non-empty
     for stem, metamodel in loaded.items():
         # The ingested records re-serialize to the canonical form of the raw file.
-        import yaml
-
-        raw = yaml.safe_load((_DIR / f"{stem}.yaml").read_text(encoding="utf-8"))
+        raw = case_format.safe_load_yaml((_DIR / f"{stem}.yaml").read_text(encoding="utf-8"))
         assert serialize(metamodel) == canonicalize(raw)
 
 

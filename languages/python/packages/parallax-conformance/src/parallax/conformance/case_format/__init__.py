@@ -41,8 +41,9 @@ class _Yaml12BoolLoader(yaml.SafeLoader):
     (``country: NO`` for Norway, ``core/compatibility/fixtures/
     customer.yaml``) — a genuine string under any modern YAML reading, but
     silently ``False`` under PyYAML's own default resolver (empirically
-    confirmed): every ``yaml.safe_load`` call over the compatibility corpus
-    (models/cases/fixtures) uses THIS loader instead, so an ISO code (or any
+    confirmed): every compatibility-corpus YAML read (models/cases/fixtures)
+    — the package's own loaders AND the test-side verification reads alike —
+    routes through :func:`safe_load_yaml` below, so an ISO code (or any
     other bare corpus scalar) that happens to collide with the YAML 1.1
     yes/no/on/off vocabulary parses as the STRING the corpus author wrote,
     never a silently-wrong boolean."""

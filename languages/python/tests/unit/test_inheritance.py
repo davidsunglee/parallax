@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-import yaml
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
@@ -36,7 +35,7 @@ def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
     # are the first `when.model` cases numbered past 099, so the glob must not
     # assume every id stays in the 0xx range.
     for path in sorted(_CASES.glob("m-inheritance-*-rejected-*.yaml")):
-        loaded = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        loaded = case_format.safe_load_yaml(Path(path).read_text(encoding="utf-8"))
         document = cast("dict[str, Any]", loaded)
         when = document.get("when")
         if isinstance(when, dict) and "model" in when:
