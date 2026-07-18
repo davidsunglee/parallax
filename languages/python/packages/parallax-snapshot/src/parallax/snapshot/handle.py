@@ -1417,7 +1417,7 @@ class Transaction:
         record = _entity_record_of_instance(instance)
         self._buffer("insert", record.name, full_row(instance))
 
-    def update(self, copy: EntityBase) -> None:
+    def update(self, copy: EntityBase, *, business_from: dt.datetime | None = None) -> None:
         """Buffer a sparse keyed ``update``: primary key + the effective change
         set of an edited copy (touched fields whose current value differs from
         the recorded original, spec §3/§5). An EMPTY effective change set
@@ -1429,14 +1429,25 @@ class Transaction:
         any, is never authored here — it is framework-owned end to end
         (`m-opt-lock`; ADR 0013): the write seam derives its advance from this
         unit of work's own recorded observation at lowering
-        (`parallax.snapshot.handle.lower_write`), never from the edited copy."""
+        (`parallax.snapshot.handle.lower_write`), never from the edited copy.
+
+        ``business_from`` is the PLAIN (unbounded) bitemporal correction's own
+        business instant (`m-bitemp-write-006` "plain-update-split" —
+        inactivates the original on the processing axis, then chains head
+        (the old value) + a new tail (the new value) running to infinity, the
+        two-way degenerate of ``update_until``'s three-way rectangle split).
+        Mirrors ``update_where``'s own bitemporal-only-required
+        :func:`_validate_business_from`: an audit-only or non-temporal target
+        takes none (no business axis to bound)."""
         record = _entity_record_of_instance(copy)
+        declaring = inheritance.declaring_entity(self._meta, record)
+        business_from_literal = _validate_business_from(declaring, "update", business_from)
         effective = effective_change_set(copy)
         if not effective:
             return
         row: dict[str, object] = primary_key_row(copy)
         row.update(canonical_row(copy, effective))
-        self._buffer("update", record.name, row)
+        self._buffer("update", record.name, row, business_from=business_from_literal)
 
     def delete(self, node_or_instance: EntityBase) -> None:
         """Buffer a keyed ``delete``, keyed off ``node_or_instance``'s primary
@@ -1444,6 +1455,84 @@ class Transaction:
         all carry valid primary-key values, spec §5)."""
         record = _entity_record_of_instance(node_or_instance)
         self._buffer("delete", record.name, primary_key_row(node_or_instance))
+
+    # --- typed keyed temporal-window verbs (python.md §5; COR-3 Phase 8      #
+    # increment 7). Every mutation kind below is already a valid             #
+    # ``KeyedMutation`` and already fully lowered (``bitemp_write`` /        #
+    # ``audit_write`` / ``planner``) — only the DEVELOPER-facing verb was    #
+    # missing: a typed ``Transaction`` method that builds the SAME           #
+    # instruction through the SAME `_buffer` seam `insert`/`update`/`delete` #
+    # already share, so a hand-written program and the engine's corpus      #
+    # replay can never diverge in behavior. ``insertUntil`` (the *Until      #
+    # trio's third member, `m-bitemp-write-003`) is DEFERRED — it needs a    #
+    # Create Payload whose axis columns (``businessTo`` / ``processingFrom``#
+    # / ``processingTo``) are framework-derived rather than caller-supplied,#
+    # which is a real Pydantic-construction-time design question this       #
+    # increment does not resolve (see the increment 7 report).              #
+    def terminate(
+        self, node_or_instance: EntityBase, *, business_from: dt.datetime | None = None
+    ) -> None:
+        """Buffer a keyed ``terminate``: close ``node_or_instance``'s current
+        milestone (the temporal delete-equivalent, `python.md` §5) — keyed off
+        its primary key alone, no chained row (close-only, `m-audit-write` /
+        `m-bitemp-write`). Audit-only takes no ``business_from`` (no business
+        axis to bound); bitemporal REQUIRES it (the mutation's own business
+        instant, mirrors ``terminate_where``'s own
+        :func:`_validate_business_from`)."""
+        record = _entity_record_of_instance(node_or_instance)
+        declaring = inheritance.declaring_entity(self._meta, record)
+        business_from_literal = _validate_business_from(declaring, "terminate", business_from)
+        self._buffer(
+            "terminate",
+            record.name,
+            primary_key_row(node_or_instance),
+            business_from=business_from_literal,
+        )
+
+    def update_until(
+        self, copy: EntityBase, *, business_from: dt.datetime, until: dt.datetime
+    ) -> None:
+        """Buffer a sparse keyed, business-window-BOUNDED ``updateUntil``:
+        primary key + the effective change set of an edited copy (mirrors
+        keyed ``update``), bounded to ``[business_from, until)``
+        (`m-bitemp-write` "The rectangle split") — bitemporal-only (mirrors
+        ``update_until_where``'s own required, non-optional ``business_from``
+        / ``until``). An EMPTY effective change set issues no DML at all,
+        exactly like keyed ``update``."""
+        record = _entity_record_of_instance(copy)
+        declaring = inheritance.declaring_entity(self._meta, record)
+        business_from_literal = _validate_business_from(declaring, "updateUntil", business_from)
+        effective = effective_change_set(copy)
+        if not effective:
+            return
+        row: dict[str, object] = primary_key_row(copy)
+        row.update(canonical_row(copy, effective))
+        self._buffer(
+            "updateUntil",
+            record.name,
+            row,
+            business_from=business_from_literal,
+            business_to=instant_literal(until),
+        )
+
+    def terminate_until(
+        self, node_or_instance: EntityBase, *, business_from: dt.datetime, until: dt.datetime
+    ) -> None:
+        """Buffer a keyed, business-window-BOUNDED ``terminateUntil``: close a
+        single business window ``[business_from, until)`` on
+        ``node_or_instance``'s current milestone, keyed off its primary key
+        alone (`m-bitemp-write`) — bitemporal-only (mirrors
+        ``terminate_until_where``)."""
+        record = _entity_record_of_instance(node_or_instance)
+        declaring = inheritance.declaring_entity(self._meta, record)
+        business_from_literal = _validate_business_from(declaring, "terminateUntil", business_from)
+        self._buffer(
+            "terminateUntil",
+            record.name,
+            primary_key_row(node_or_instance),
+            business_from=business_from_literal,
+            business_to=instant_literal(until),
+        )
 
     def find(self, statement: EntityStatement) -> Snapshot[Any]:
         """Run a participating read for ``statement`` and return ``Snapshot[T]``
@@ -1510,12 +1599,15 @@ class Transaction:
         # (it walks only DECLARED members, never flags a stray key itself).
         #
         # `business_from` / `business_to` extend this neutral seam for a TEMPORAL
-        # keyed write (COR-3 Phase 8 increment 4): the typed verbs above never
-        # pass them (temporal developer verbs are COR-3 Phase 8 increment 7), so
-        # every existing call site is unaffected; the conformance engine's own
-        # temporal write translation is the sole caller that does (`m-audit-write`
-        # / `m-bitemp-write` — the axis-explicit `businessFrom` / `businessTo`
-        # instruction fields, never smuggled onto `row`, ADR 0010/0013).
+        # keyed write (COR-3 Phase 8 increment 4): a non-temporal or audit-only
+        # target's caller never passes them (every pre-increment-7 call site is
+        # unaffected). The typed temporal developer verbs (COR-3 Phase 8
+        # increment 7 — ``update``'s own optional bitemporal ``business_from``,
+        # ``terminate``, ``update_until``, ``terminate_until``) and the
+        # conformance engine's own temporal write translation both pass them
+        # the SAME way (`m-audit-write` / `m-bitemp-write` — the axis-explicit
+        # `businessFrom` / `businessTo` instruction fields, never smuggled onto
+        # `row`, ADR 0010/0013).
         doc: dict[str, object] = {"mutation": mutation, "entity": entity, "rows": [dict(row)]}
         if business_from is not None:
             doc["businessFrom"] = business_from

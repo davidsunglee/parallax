@@ -474,9 +474,8 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
 # Phase-8 mid-phase review remediation, finding B: `Transaction.find` records #
 # a TEMPORAL observation (not just a versioned one) so a locking-mode write's #
 # historical-observation license (`m-opt-lock`) is REAL, not a permanent      #
-# no-op — wired through `tx._buffer`'s neutral seam (the same route the       #
-# conformance engine uses; the developer-facing typed temporal verbs are      #
-# COR-3 Phase 8 increment 7).                                                 #
+# no-op — exercised through the typed `tx.terminate` verb (COR-3 Phase 8      #
+# increment 7), the SAME `_buffer` neutral seam the conformance engine uses.  #
 # --------------------------------------------------------------------------- #
 _INFINITY_INSTANT: Final[dt.datetime] = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
 
@@ -502,12 +501,12 @@ def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_obser
     db = _db_for(_BALANCE, port)
 
     def fn(tx: Transaction) -> None:
-        tx.find(
+        fetched = tx.find(
             mm.Balance.where(mm.Balance.id == 1).as_of(
                 processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
-        )
-        tx._buffer("terminate", "Balance", {"id": 1})  # pyright: ignore[reportPrivateUsage]
+        ).result()
+        tx.terminate(fetched)
 
     with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
         db.transact(fn)  # locking is the default concurrency
@@ -521,12 +520,12 @@ def test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in
     db = _db_for(_BALANCE, port)
 
     def fn(tx: Transaction) -> None:
-        tx.find(
+        fetched = tx.find(
             mm.Balance.where(mm.Balance.id == 1).as_of(
                 processing=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
-        )
-        tx._buffer("terminate", "Balance", {"id": 1})  # pyright: ignore[reportPrivateUsage]
+        ).result()
+        tx.terminate(fetched)
 
     db.transact(fn, concurrency="optimistic")
     write_ops = [op for op in port.ops if op[0] == "write"]
@@ -547,8 +546,8 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
     db = _db_for(_BALANCE, port)
 
     def fn(tx: Transaction) -> None:
-        tx.find(mm.Balance.where(mm.Balance.id == 1))
-        tx._buffer("terminate", "Balance", {"id": 1})  # pyright: ignore[reportPrivateUsage]
+        fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
+        tx.terminate(fetched)
 
     db.transact(fn)  # locking (default) — must not raise
     write_ops = [op for op in port.ops if op[0] == "write"]
@@ -1521,6 +1520,23 @@ def _position_row() -> Row:
     }
 
 
+def _position_row_dt() -> Row:
+    """The KEYED-verb tests' own row fixture: real ``datetime`` values (never
+    the bare ISO strings :func:`_position_row` uses) — a KEYED verb's own
+    first read runs through the ordinary developer-facing ``tx.find`` (wrap
+    into a real node, milestone-edge computation, `parallax.snapshot.wrap`),
+    unlike a ``_where`` verb's internal resolving read, which never wraps."""
+    return {
+        "id": 1,
+        "acct_num": "A",
+        "value": Decimal("100.00"),
+        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "thru_z": _INFINITY_INSTANT,
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": _INFINITY_INSTANT,
+    }
+
+
 def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
     port = _RecordingPort(rows=[_position_row()])
     business_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
@@ -1829,3 +1845,140 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
     assert reads[0][1] == POSTGRES.to_driver_sql(
         "select t0.id, t0.version, t0.address from where_subscriber t0 where t0.id = ?"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Typed KEYED temporal-window verbs (COR-3 Phase 8 increment 7): `update`'s    #
+# own optional bitemporal `business_from`, `terminate`, `update_until`, and    #
+# `terminate_until` — the KEYED siblings of `update_where` / `terminate_where` #
+# / `update_until_where` / `terminate_until_where`, sharing the SAME           #
+# `_buffer` seam and the SAME `_validate_business_from` gate, so a keyed and a #
+# predicate-selected write over the identical bitemporal correction lower to  #
+# the identical rectangle split (`m-bitemp-write-001/002/006/007`'s own       #
+# witnessed shape, replayed here through the KEYED verb instead of `_where`). #
+# --------------------------------------------------------------------------- #
+def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
+    # m-bitemp-write-006 "plain-update-split", replayed through the KEYED verb:
+    # close + head (old) + new tail.
+    port = _RecordingPort(rows=[_position_row_dt()])
+    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.update(
+            fetched.model_copy(update={"value": Decimal("200.00")}), business_from=business_from
+        )
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 3  # close + head (old) + new tail
+
+
+def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
+    # m-bitemp-write-007 "plain-terminate", replayed through the KEYED verb:
+    # close + head only (no tail).
+    port = _RecordingPort(rows=[_position_row_dt()])
+    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.terminate(fetched, business_from=business_from)
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 2  # close + head only
+
+
+def test_keyed_update_until_lowers_the_rectangle_split() -> None:
+    # m-bitemp-write-001 "update-until-rectangle-split", replayed through the
+    # KEYED verb: close + head + middle + tail.
+    port = _RecordingPort(rows=[_position_row_dt()])
+    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.update_until(
+            fetched.model_copy(update={"value": Decimal("200.00")}),
+            business_from=business_from,
+            until=until,
+        )
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 4  # close + head + middle + tail
+
+
+def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -> None:
+    # The SAME sparse-update no-op rule `update` applies (spec §3/§5): a
+    # `model_copy()` whose Change Record nets to zero issues no DML at all,
+    # BEFORE the business-window bound is even considered.
+    port = _RecordingPort()
+    fetched = WherePosition(
+        id=1,
+        acct_num="A",
+        value=Decimal("100.00"),
+        business_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        business_to=_INFINITY_INSTANT,
+        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        processing_to=_INFINITY_INSTANT,
+    )
+    edited = fetched.model_copy(update={"value": Decimal("100.00")})  # net-zero touch
+    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.update_until(edited, business_from=business_from, until=until)
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    assert not any(op[0] in ("read", "write") for op in port.ops)
+
+
+def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
+    # m-bitemp-write-002 "terminate-until", replayed through the KEYED verb:
+    # close + head + tail (no middle).
+    port = _RecordingPort(rows=[_position_row_dt()])
+    business_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.terminate_until(fetched, business_from=business_from, until=until)
+
+    Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 3  # close + head + tail
+
+
+def test_keyed_update_on_a_bitemporal_target_without_business_from_raises() -> None:
+    port = _RecordingPort(rows=[_position_row_dt()])
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.update(fetched.model_copy(update={"value": Decimal("200.00")}))
+
+    with pytest.raises(ValueError, match="requires business_from"):
+        Database.connect(port, _WHERE_POSITION_META, clock=FixedClock(_FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+
+
+def test_keyed_terminate_on_a_non_temporal_target_forbids_business_from() -> None:
+    port = _RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+
+    def fn(tx: Transaction) -> None:
+        fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
+        tx.terminate(fetched, business_from=_FIXED)
+
+    with pytest.raises(ValueError, match="takes no business_from"):
+        _db(port).transact(fn)
