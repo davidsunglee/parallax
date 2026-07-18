@@ -26,7 +26,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast, overload
 
-from parallax.core.entity._relationship_scope import register_scope
 from parallax.core.op_algebra import (
     And,
     Between,
@@ -550,7 +549,7 @@ def _subtype_entity_name(subtype: type) -> str:
     return record.name if record is not None else subtype.__name__
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True)
+@dataclass(frozen=True, slots=True)
 class RelationshipPath:
     """A chained class-level relationship reference (``Order.items``,
     ``Order.items.statuses``) — the seed of the ``.include(...)`` deep-fetch
@@ -566,31 +565,39 @@ class RelationshipPath:
     first hop is statically typed via the ``Rel[T]`` descriptor overload;
     deeper hops resolve dynamically through ``__getattr__``.
 
-    ``weakref_slot=True`` (alongside ``slots=True``) lets
-    ``parallax.core.entity._relationship_scope`` hold this instance's
-    registered scope in an identity-keyed, GC-safe side table — the seam
-    ``parallax.core.entity.graph_state`` reads this path's own captured
-    registry through (COR-3 Phase 7 increment 7 round-4, P2), since a
-    class-private field can never be read from outside this class's own
-    methods, regardless of file or convention.
+    ``__parallax_registry__`` is a DUNDER-named field (COR-3 Phase 7
+    increment 7 round-5, P2 fix): Pyright's ``reportPrivateUsage`` flags a
+    single-underscore field read from outside this class's own methods, but
+    never a name that both starts AND ends with a double underscore (Python's
+    own name-mangling rule already exempts it, the same reason
+    ``entity/base.py``'s ``__parallax__`` / ``__parallax_changes__`` cross the
+    same boundary without one) — so ``graph_state``'s narrowed-view key
+    derivation reads ``path.__parallax_registry__`` directly, no side table
+    needed. Storing the captured scope as an ordinary dataclass field (rather
+    than an identity-keyed side table entry populated by ``__post_init__``)
+    means it travels WITH the instance's own stored state: ``copy.copy``,
+    ``copy.deepcopy``, and pickling all reconstruct a ``RelationshipPath``
+    from that state directly, never through ``__init__``/``__post_init__``,
+    so a side table keyed by ``id(path)`` would silently lose the entry (the
+    round-5 regression the side-table design had) — an intrinsic field
+    cannot diverge from the object it describes, by construction.
     """
 
     segments: tuple[PathSegment, ...]
     target: str
     # This path's own D-20 registration scope (captured at the FIRST hop, from
     # the owning ``Rel[T]`` descriptor; never a public field, mirroring
-    # ``Statement._registry``): a dynamic hop and ``.narrow(...)`` both resolve
-    # within it, never the process-global registry — and it is this SAME
-    # captured scope (never ``type(node)``'s own, round-4 P2) that
+    # ``Statement._registry`` — dunder-named instead of single-underscored so
+    # it can travel intrinsically; ``compare=False``/``repr=False`` so it
+    # never affects equality/hash/repr, exactly as the single-underscored
+    # field it replaces never did): a dynamic hop and ``.narrow(...)`` both
+    # resolve within it, never the process-global registry — and it is this
+    # SAME captured scope (never ``type(node)``'s own, round-4 P2) that
     # ``graph_state``'s narrowed-view key derivation resolves a ``.narrow(...)``
-    # position within, via ``_relationship_scope.register_scope`` below.
-    # ``None`` only for a ``RelationshipPath`` built outside ``Rel.__get__``
-    # (test-only direct construction) — falls back to the process default
-    # registry.
-    _registry: EntityRegistry | None = field(default=None, repr=False, compare=False)
-
-    def __post_init__(self) -> None:
-        register_scope(self, self._registry)
+    # position within. ``None`` only for a ``RelationshipPath`` built outside
+    # ``Rel.__get__`` (test-only direct construction) — falls back to the
+    # process default registry.
+    __parallax_registry__: EntityRegistry | None = field(default=None, repr=False, compare=False)
 
     @property
     def ref(self) -> RelationshipRef:
@@ -603,7 +610,11 @@ class RelationshipPath:
             raise AttributeError(name)
         from parallax.core.entity.base import default_registry, snake_to_camel
 
-        registry = self._registry if self._registry is not None else default_registry()
+        registry = (
+            self.__parallax_registry__
+            if self.__parallax_registry__ is not None
+            else default_registry()
+        )
         canonical = snake_to_camel(name)
         record = registry.records().get(self.target)
         if record is None:
@@ -616,7 +627,7 @@ class RelationshipPath:
                 return RelationshipPath(
                     segments=(*self.segments, PathSegment(rel=f"{self.target}.{canonical}")),
                     target=relationship.related_entity,
-                    _registry=registry,
+                    __parallax_registry__=registry,
                 )
         raise AttributeError(f"{self.target!r} declares no relationship {canonical!r}")
 
@@ -629,7 +640,9 @@ class RelationshipPath:
         new_last = PathSegment(rel=last.rel, narrow=names)
         new_target = names[0] if len(names) == 1 else self.target
         return RelationshipPath(
-            segments=(*head, new_last), target=new_target, _registry=self._registry
+            segments=(*head, new_last),
+            target=new_target,
+            __parallax_registry__=self.__parallax_registry__,
         )
 
     def any(self, *predicates: Predicate) -> Predicate:
@@ -682,7 +695,7 @@ class Rel[T]:
             return RelationshipPath(
                 segments=(PathSegment(rel=str(self._ref)),),
                 target=self._related_entity,
-                _registry=self._registry,
+                __parallax_registry__=self._registry,
             )
         value = obj.__dict__[self._py_name]
         if value is UNLOADED:

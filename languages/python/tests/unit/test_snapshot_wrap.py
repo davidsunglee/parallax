@@ -7,8 +7,10 @@ introspection (``is_loaded`` / ``narrowed`` / ``UnloadedRelationshipError``).
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import datetime as dt
+import pickle
 from decimal import Decimal
 from typing import cast
 
@@ -508,6 +510,86 @@ def test_narrowed_view_key_derives_from_the_paths_own_registry_not_types_own() -
     assert len(view) == 1
     assert type(view[0]) is dog_cls
     assert dog_cls is not path_dog
+
+
+# --------------------------------------------------------------------------- #
+# Round-5 P2 (COR-3 Phase 7 increment 7): `RelationshipPath`'s captured D-20  #
+# registration scope is now an INTRINSIC dataclass field                     #
+# (`__parallax_registry__`), never a side table keyed by `id(path)` -- so    #
+# `copy.copy` / `copy.deepcopy` / pickling a path (each reconstructs a       #
+# `RelationshipPath` straight from its own stored state, never through       #
+# `__init__`/`__post_init__`) can never lose the captured scope the way an   #
+# identity-keyed side table silently did: a `copy.copy` of a path built      #
+# under a registry OTHER than the process default used to fall back to the  #
+# default registry instead, and `is_loaded`/`narrowed` raised looking up a   #
+# canonical name the default registry never heard of.                       #
+# --------------------------------------------------------------------------- #
+_COPY_SURVIVAL_REGISTRY = EntityRegistry(parent=None)
+
+
+class _CopySurvivalPet(Entity, frozen=True, registry=_COPY_SURVIVAL_REGISTRY):
+    __parallax__ = EntityConfig(
+        table="copy_survival_pet",
+        mutability="transactional",
+        inheritance=FamilyRoot(strategy="table-per-concrete-subtype"),
+    )
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+
+class _CopySurvivalDog(_CopySurvivalPet, frozen=True):
+    __parallax__ = EntityConfig(
+        table="copy_survival_dog", mutability="transactional", inheritance=Concrete()
+    )
+
+
+class _CopySurvivalOwner(Entity, frozen=True, registry=_COPY_SURVIVAL_REGISTRY):
+    __parallax__ = EntityConfig(table="copy_survival_owner", mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none")
+    pets: Rel[tuple[_CopySurvivalPet, ...]] = Relationship(
+        cardinality="one-to-many",
+        join="this.id = Pet.ownerId",
+        related_entity="Pet",
+        reverse_name="owner",
+        foreign_key="owner_id",
+    )
+
+
+def test_narrowed_view_key_survives_copy_deepcopy_and_pickle_of_the_path() -> None:
+    """The captured registry travels WITH the path through every reconstruction
+    route that bypasses ``__init__``/``__post_init__`` -- proof the intrinsic
+    dunder field (never a side table) cannot diverge from the object it
+    describes (COR-3 Phase 7 increment 7 round-5, P2)."""
+    path = _CopySurvivalOwner.pets.narrow(_CopySurvivalDog)
+    assert path.__parallax_registry__ is _COPY_SURVIVAL_REGISTRY
+
+    owner_node = Node(
+        fields={
+            "id": 10,
+            "pets[_CopySurvivalDog]": [
+                Node(
+                    fields={"id": 1, "owner_id": 10, "familyVariant": "_CopySurvivalDog"},
+                    pk_columns=("id",),
+                ),
+            ],
+        },
+        pk_columns=("id",),
+    )
+    (root,) = wrap.wrap_graph(
+        (owner_node,), "_CopySurvivalOwner", _COPY_SURVIVAL_REGISTRY.metamodel(), Pin()
+    )
+
+    for reconstructed in (
+        copy.copy(path),
+        copy.deepcopy(path),
+        pickle.loads(pickle.dumps(path)),
+    ):
+        assert reconstructed == path  # equality/hash/repr are untouched by this fix
+        assert is_loaded(root, reconstructed) is True
+        view = cast("tuple[object, ...]", narrowed(root, reconstructed))
+        assert len(view) == 1
+        assert type(view[0]) is _CopySurvivalDog
 
 
 def test_narrowed_view_key_falls_back_to_the_default_registry_when_the_path_captures_none() -> None:

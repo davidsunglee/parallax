@@ -16,7 +16,6 @@ drift (COR-3 Phase 7 increment 7 round-3, P2).
 
 from __future__ import annotations
 
-from parallax.core.entity._relationship_scope import scope_of
 from parallax.core.entity.base import default_registry, wire_names_of
 from parallax.core.entity.expressions import (
     UNLOADED,
@@ -38,27 +37,28 @@ def _view_key(path: str | RelationshipPath) -> str:
     (mirrors ``m-deep-fetch``'s own ``_resolve_position`` so the two can
     never drift, via the shared ``resolve_narrow_position`` seam, COR-3
     Phase 7 increment 7 round-3): resolved within ``path``'s OWN captured D-20
-    registration scope — read back through the
-    ``parallax.core.entity._relationship_scope`` seam (COR-3 Phase 7
-    increment 7 round-4, P2), never the checked node's own class. A
-    multi-hop path propagates its FIRST hop's registry through every later
-    hop unchanged (``RelationshipPath.__getattr__`` / ``.narrow()``), so
-    ``path``'s own scope can resolve a WIDER effective concrete-subtype set
-    than the node's own, independent registration registry would — deriving
-    from the node's own class (round-3's shape) computed the narrower set
-    and silently under-reported load state; the path's own scope is
-    authoritative, exactly the scope ``m-deep-fetch``'s own planning resolved
-    the SAME position within when it built the node's wire key in the first
-    place. ``None`` (a ``RelationshipPath`` built outside ``Rel.__get__`` —
-    test-only direct construction) falls back to the process default
-    registry, mirroring ``RelationshipPath``'s own fallback."""
+    registration scope — read directly off ``path.__parallax_registry__``
+    (COR-3 Phase 7 increment 7 round-5, P2 — an intrinsic dunder-named field,
+    never a side table keyed by identity), never the checked node's own
+    class. A multi-hop path propagates its FIRST hop's registry through
+    every later hop unchanged (``RelationshipPath.__getattr__`` /
+    ``.narrow()``), so ``path``'s own scope can resolve a WIDER effective
+    concrete-subtype set than the node's own, independent registration
+    registry would — deriving from the node's own class (round-3's shape)
+    computed the narrower set and silently under-reported load state; the
+    path's own scope is authoritative, exactly the scope ``m-deep-fetch``'s
+    own planning resolved the SAME position within when it built the node's
+    wire key in the first place. ``None`` (a ``RelationshipPath`` built
+    outside ``Rel.__get__`` — test-only direct construction, or any copy/
+    deepcopy/unpickle of one) falls back to the process default registry,
+    mirroring ``RelationshipPath``'s own fallback."""
     if isinstance(path, str):
         return path
     last = path.segments[-1]
     _, _, rel_local = last.rel.partition(".")
     if not last.narrow:
         return rel_local
-    registry = scope_of(path)
+    registry = path.__parallax_registry__
     if registry is None:
         registry = default_registry()
     position = resolve_narrow_position(registry.metamodel(), last.narrow)
