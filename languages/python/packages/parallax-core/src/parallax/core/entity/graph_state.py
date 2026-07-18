@@ -16,7 +16,7 @@ so the two can never drift.
 from __future__ import annotations
 
 from parallax.core import inheritance
-from parallax.core.entity.base import default_registry, wire_names_of
+from parallax.core.entity.base import wire_names_of
 from parallax.core.entity.expressions import (
     UNLOADED,
     RelationshipPath,
@@ -34,9 +34,10 @@ def _resolved_position(names: tuple[str, ...], path: RelationshipPath) -> tuple[
     narrowed view is keyed by the resolved set, never the authored names.
     Resolved within ``path``'s own D-20 registration scope (ledger D-20) --
     never the process-global default -- falling back to it only when the
-    path carries none (a defensive, test-only construction)."""
-    path_registry = path._registry  # pyright: ignore[reportPrivateUsage]
-    registry = path_registry if path_registry is not None else default_registry()
+    path carries none (a defensive, test-only construction) -- via ``path``'s
+    own ``resolution_registry()`` accessor (N1, COR-3 Phase 8 increment 7
+    remediation), never a private-field reach."""
+    registry = path.resolution_registry()
     meta = registry.metamodel()
     resolved: set[str] = set()
     for name in names:

@@ -582,6 +582,21 @@ class RelationshipPath:
         owner, _, relationship = self.segments[0].rel.partition(".")
         return RelationshipRef(owner, relationship)
 
+    def resolution_registry(self) -> EntityRegistry:
+        """This path's own D-20 resolution scope: the registry every dynamic
+        hop and ``.narrow(...)`` above already resolve within (this path's own
+        captured ``_registry``, or the process default when it carries none —
+        a ``RelationshipPath`` built outside ``Rel.__get__``, test-only direct
+        construction). INTERNAL (N1, COR-3 Phase 8 increment 7 remediation):
+        a narrow accessor for a same-package consumer's OWN within-scope
+        resolution need (`parallax.core.entity.graph_state`'s narrowed-view
+        key derivation) — never a general public navigation API, so this asks
+        for the scope it needs instead of reaching into ``_registry``
+        directly."""
+        from parallax.core.entity.base import default_registry
+
+        return self._registry if self._registry is not None else default_registry()
+
     def __getattr__(self, name: str) -> RelationshipPath:
         if name.startswith("_"):
             raise AttributeError(name)
