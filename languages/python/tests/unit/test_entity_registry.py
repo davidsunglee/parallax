@@ -15,12 +15,13 @@ class (the design-doc reproduction, inverted into a regression pin).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import pytest
 
 from parallax.core import Attr, Concrete, Entity, EntityConfig, FamilyRoot, Field, Rel, Relationship
-from parallax.core.db_port import Row
+from parallax.core.db_port import DbPort, Row
 from parallax.core.entity.base import (
     EntityRegistry,
     ModelCopyError,
@@ -49,7 +50,7 @@ class _CannedPort:
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
 
-    def transaction(self, body: object) -> object:  # pragma: no cover
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -57,14 +58,18 @@ class _CannedPort:
 # Duplicate registration is a loud error EVERYWHERE (default registry too).   #
 # --------------------------------------------------------------------------- #
 def test_duplicate_registration_in_the_default_registry_raises() -> None:
-    class DuplicateRegistrationDefaultProbe(Entity, frozen=True):
+    class DuplicateRegistrationDefaultProbe(  # pyright: ignore[reportUnusedClass, reportRedeclaration]
+        Entity, frozen=True
+    ):
         __parallax__ = EntityConfig(table="dup_default_probe_1", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
     with pytest.raises(RegistryCollisionError, match="DuplicateRegistrationDefaultProbe"):
 
-        class DuplicateRegistrationDefaultProbe(Entity, frozen=True):  # noqa: F811
+        class DuplicateRegistrationDefaultProbe(  # pyright: ignore[reportUnusedClass]
+            Entity, frozen=True
+        ):
             __parallax__ = EntityConfig(table="dup_default_probe_2", mutability="transactional")
 
             id: Attr[int] = Field(primary_key=True, pk_generator="none")
@@ -73,14 +78,18 @@ def test_duplicate_registration_in_the_default_registry_raises() -> None:
 def test_duplicate_registration_in_a_scoped_registry_raises() -> None:
     scoped = EntityRegistry()
 
-    class DuplicateRegistrationScopedProbe(Entity, frozen=True, registry=scoped):
+    class DuplicateRegistrationScopedProbe(  # pyright: ignore[reportUnusedClass, reportRedeclaration]
+        Entity, frozen=True, registry=scoped
+    ):
         __parallax__ = EntityConfig(table="dup_scoped_probe_1", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
     with pytest.raises(RegistryCollisionError, match="DuplicateRegistrationScopedProbe"):
 
-        class DuplicateRegistrationScopedProbe(Entity, frozen=True, registry=scoped):  # noqa: F811
+        class DuplicateRegistrationScopedProbe(  # pyright: ignore[reportUnusedClass]
+            Entity, frozen=True, registry=scoped
+        ):
             __parallax__ = EntityConfig(table="dup_scoped_probe_2", mutability="transactional")
 
             id: Attr[int] = Field(primary_key=True, pk_generator="none")
@@ -93,7 +102,9 @@ def test_same_name_in_two_registries_coexists() -> None:
     registry_a = EntityRegistry()
     registry_b = EntityRegistry()
 
-    class CoexistingProbe(Entity, frozen=True, registry=registry_a):
+    class CoexistingProbe(  # pyright: ignore[reportRedeclaration]
+        Entity, frozen=True, registry=registry_a
+    ):
         __parallax__ = EntityConfig(table="coexist_probe_a", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
@@ -101,7 +112,7 @@ def test_same_name_in_two_registries_coexists() -> None:
 
     class_a = CoexistingProbe
 
-    class CoexistingProbe(Entity, frozen=True, registry=registry_b):  # noqa: F811
+    class CoexistingProbe(Entity, frozen=True, registry=registry_b):
         __parallax__ = EntityConfig(table="coexist_probe_b", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
@@ -119,7 +130,7 @@ def test_same_name_in_two_registries_coexists() -> None:
 # Scoped resolution: a same-named foreign class in another registry is        #
 # invisible to `.where`/`.include`/dynamic hops/`AttributeExpr.set`/wrap.     #
 # --------------------------------------------------------------------------- #
-def _build_hub_family(registry: EntityRegistry) -> tuple[type, type, type]:
+def _build_hub_family(registry: EntityRegistry) -> tuple[Any, Any, Any]:
     class Detail(Entity, frozen=True, registry=registry):
         __parallax__ = EntityConfig(table="detail", mutability="transactional")
 
@@ -161,7 +172,7 @@ def test_dynamic_relationship_hop_resolves_within_the_declaring_registry() -> No
     # `registry_x`'s, but declares NO relationship at all -- a same-named
     # foreign class registered elsewhere must be INVISIBLE to the dynamic hop
     # resolving `Hub.spokes.extra` inside `registry_x`'s own scope.
-    class Spoke(Entity, frozen=True, registry=registry_y):  # noqa: F811
+    class Spoke(Entity, frozen=True, registry=registry_y):  # pyright: ignore[reportUnusedClass]
         __parallax__ = EntityConfig(table="spoke_y", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
@@ -180,7 +191,7 @@ def test_where_and_include_validate_within_the_declaring_registry() -> None:
     # An undeclared hop still raises (never silently resolves against a
     # foreign, same-named registry elsewhere).
     with pytest.raises(AttributeError, match="declares no relationship"):
-        spoke_x.extra.bogus_hop  # type: ignore[attr-defined]
+        _ = spoke_x.extra.bogus_hop  # type: ignore[attr-defined]
 
 
 def test_narrow_resolves_subtype_names_regardless_of_registry() -> None:
@@ -200,7 +211,9 @@ def test_narrow_resolves_subtype_names_regardless_of_registry() -> None:
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
 
     class NarrowLeafProbe(NarrowRootProbe, frozen=True):
-        __parallax__ = EntityConfig(mutability="transactional", inheritance=Concrete(tag_value="leaf"))
+        __parallax__ = EntityConfig(
+            mutability="transactional", inheritance=Concrete(tag_value="leaf")
+        )
 
         detail: Attr[str] = Field(nullable=True, default=None)
 
@@ -232,7 +245,9 @@ def test_db_find_instantiates_the_connected_registrys_own_class() -> None:
     registry_a = EntityRegistry()
     registry_b = EntityRegistry()
 
-    class Sample(Entity, frozen=True, registry=registry_a):
+    class Sample(  # pyright: ignore[reportRedeclaration]
+        Entity, frozen=True, registry=registry_a
+    ):
         __parallax__ = EntityConfig(table="sample_a", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
@@ -240,7 +255,7 @@ def test_db_find_instantiates_the_connected_registrys_own_class() -> None:
 
     sample_a = Sample
 
-    class Sample(Entity, frozen=True, registry=registry_b):  # noqa: F811
+    class Sample(Entity, frozen=True, registry=registry_b):
         __parallax__ = EntityConfig(table="sample_b", mutability="transactional")
 
         id: Attr[int] = Field(primary_key=True, pk_generator="none")
@@ -289,7 +304,9 @@ def test_family_subclass_registry_mismatch_raises() -> None:
     other = EntityRegistry()
     with pytest.raises(EntityDefinitionError, match="registry"):
 
-        class FamilyLeafProbe(FamilyRootProbe, frozen=True, registry=other):
+        class FamilyLeafProbe(  # pyright: ignore[reportUnusedClass]
+            FamilyRootProbe, frozen=True, registry=other
+        ):
             __parallax__ = EntityConfig(
                 mutability="transactional", inheritance=Concrete(tag_value="leaf")
             )
