@@ -249,8 +249,8 @@ def _compile_statement(
 ) -> tuple[str, Statement, Metamodel, Operation]:
     if case.shape != "read":
         raise EngineError(
-            f"{case.path.name}: only `read`-shape compile is implemented (COR-3 Phase 5 scope; "
-            f"shape={case.shape})"
+            f"{case.path.name}: only `read`-shape compile is implemented (a write/rejected/"
+            f"scenario case compiles through its own dedicated lane; shape={case.shape})"
         )
     target, operation_doc = _read_target_and_operation(case)
     meta = load_case_metamodel(case)
@@ -1211,6 +1211,19 @@ def _lower_find(
     (:func:`_run_materializing_pair`), not a separate pure re-lowering (its
     binds are query-result-dependent, so no pure oracle exists to compute them
     from).
+
+    D-18 disposition (COR-3 Phase 8 increment 7, the engine-thinning audit):
+    this composition — `compile_read` + `read_lock.mode_for`, mirroring
+    `Transaction.find`'s own derivation — is IRREDUCIBLE adapter content, not
+    a residual "mirrors production" gap to close. The case-driven engine has
+    no typed Python entity classes at all (a scenario step is a raw,
+    case-authored dict naming `targetEntity` + a serialized operation), so
+    there is no `Statement` to hand a production seam — `Transaction.find`
+    itself REQUIRES one. Re-routing through a production API would mean
+    inventing a new one solely to serve this untyped input, the opposite of
+    engine-thinning; this function stays the adapter's own translation from
+    "raw case step" to "compiled Statement", composing production's `m-sql` /
+    `m-read-lock` building blocks rather than duplicating their logic.
     """
     target = step.get("targetEntity")
     find_doc = step.get("find")
