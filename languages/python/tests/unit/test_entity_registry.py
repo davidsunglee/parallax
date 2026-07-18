@@ -521,3 +521,45 @@ def test_bare_metamodel_over_a_same_name_pair_shadowed_within_one_registry_chain
 
     with pytest.raises(ValueError, match="conflicting same-name classes"):
         metamodel([parent_class, child_class])
+
+
+# --------------------------------------------------------------------------- #
+# P1 (BLOCKING, COR-3 Phase 7 increment 7 round-3): the IDENTICAL class object #
+# repeated in `classes` is harmless repetition, never a conflict -- prompt 89 #
+# requires `metamodel()` "must never emit two records for one canonical       #
+# name," and pre-fix it silently did (`entities` carried the SAME class's     #
+# record twice). The distinct-same-name rejection above (R1) is unaffected:  #
+# TWO DIFFERENT classes sharing a name still raises loudly; only the SAME     #
+# class object repeated dedupes.                                             #
+# --------------------------------------------------------------------------- #
+def test_bare_metamodel_over_an_identical_class_repeated_dedupes_to_one_record() -> None:
+    meta = metamodel([read_models.Person, read_models.Person])
+    assert len(meta.entities) == 1
+    assert meta.entities[0].name == "Person"
+
+
+def test_bare_metamodel_over_an_identical_class_repeated_round_trips_normally() -> None:
+    # The assembled (deduped) Metamodel is still a well-formed, correctly
+    # SCOPED `ScopedMetamodel` -- `db.find` resolves `animal_owner.Person`
+    # exactly as it would from a single, non-repeated supply.
+    meta = metamodel([animal_owner.Person, animal_owner.Person])
+    assert isinstance(meta, ScopedMetamodel)
+    assert meta.registry is animal_owner.ANIMAL_OWNER_REGISTRY
+    assert len(meta.entities) == 1
+
+    port = _CannedPort([{"id": 1, "name": "Alice"}])
+    db = Database.connect(port, meta)
+    snapshot = db.find(animal_owner.Person.where(animal_owner.Person.id == 1))
+    result = snapshot.result()
+
+    assert type(result) is animal_owner.Person
+    assert result.name == "Alice"
+
+
+def test_bare_metamodel_over_a_mixed_set_with_a_repeated_class_dedupes_only_the_repeat() -> None:
+    # A legitimate mixed set (COR-3 Phase 7 increment 7 round-2's own
+    # reproduction, `animal_owner.Person` + its related default-registry
+    # siblings) still dedupes an identical repetition within it, preserving
+    # FIRST-occurrence order for the surviving, non-repeated members.
+    meta = metamodel([animal_owner.Person, read_models.Animal, read_models.Animal])
+    assert [entity.name for entity in meta.entities] == ["Person", "Animal"]

@@ -571,7 +571,13 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
     of :func:`_registry_of_classes`'s own registry-selection hardening, which
     additionally catches a same-name conflict shadowed between the classes'
     own registries even when the two conflicting classes are not BOTH in
-    ``classes`` directly).
+    ``classes`` directly). The IDENTICAL class object repeated in ``classes``
+    is never such a conflict -- merely harmless repetition -- and is
+    DEDUPLICATED (P1, COR-3 Phase 7 increment 7 round-3): the assembled
+    ``entities`` carries exactly ONE record per distinct class, in FIRST-
+    occurrence order, never a second copy for a repeated supplied class (a
+    caller composing its own class list from several sources, some of which
+    may legitimately overlap, never has to de-duplicate it by hand first).
 
     Physically relocated here from ``parallax.core.entity.meta`` (R3, COR-3
     Phase 7 increment 7 round-2): its own auto-scoping needs
@@ -584,14 +590,18 @@ def metamodel(classes: Sequence[type]) -> MetamodelRecord:
     """
     classes = tuple(classes)
     seen: dict[str, type] = {}
+    deduped: list[type] = []
     for cls in classes:
         name = cls.__name__
         conflicting = seen.get(name)
-        if conflicting is not None and conflicting is not cls:
-            raise _conflicting_classes_error(name, conflicting, cls)
-        seen.setdefault(name, cls)
-    entities = tuple(_entity_record_for(cls) for cls in classes)
-    scope = _registry_of_classes(classes)
+        if conflicting is not None:
+            if conflicting is not cls:
+                raise _conflicting_classes_error(name, conflicting, cls)
+            continue  # the identical class object repeated -- harmless, dedupe (P1)
+        seen[name] = cls
+        deduped.append(cls)
+    entities = tuple(_entity_record_for(cls) for cls in deduped)
+    scope = _registry_of_classes(deduped)
     if scope is None:
         return MetamodelRecord(entities=entities)
     return ScopedMetamodel(entities=entities, registry=scope)
