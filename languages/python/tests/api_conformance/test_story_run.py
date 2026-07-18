@@ -115,10 +115,11 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
     result = story.run(db)
     if result is not None:
         # Commit and abort stories both conclude with an observing find; its
-        # rows must equal the mirrored case's final `expectRows`.
-        compare_rows(
-            [engine.wire_row(row) for row in result], _final_find_expect_rows(story.case_id)
-        )
+        # rows must equal the mirrored case's final `expectRows` (D-23,
+        # instance-native grading: a scenario's own `expectRows` is
+        # INSTANCE-form, m-case-format — physical-column-keyed, `instance_row`,
+        # never the canonical camelCase `engine.wire_row` used to render).
+        compare_rows([instance_row(row) for row in result], _final_find_expect_rows(story.case_id))
         return
 
     # A writeSequence story observes no rows; the committed table state must

@@ -38,7 +38,7 @@ from parallax.core import (
 
 _NS = "parallax.compatibility"
 
-__all__ = ["Account", "Order", "OrderItem", "OrderStatus", "OrderTag", "Position"]
+__all__ = ["Account", "Order", "OrderItem", "OrderStatus", "OrderTag", "Position", "Wallet"]
 
 
 class Account(Entity, frozen=True):
@@ -50,6 +50,21 @@ class Account(Entity, frozen=True):
     owner: Attr[str] = Field(max_length=64)
     balance: Attr[Decimal] = Field(type="decimal(18,2)")
     version: Attr[int] = Field(type="int32", optimistic_locking=True)
+
+
+class Wallet(Entity, frozen=True):
+    """Mirror of ``models/wallet.yaml``: Account minus the optimistic-lock
+    ``version`` column and no temporal axis — the readless set-based write
+    family's own witness (``m-batch-write-005``, COR-3 Phase 8 increment 7
+    completion round): a predicate write over an unversioned, non-temporal
+    entity has nothing to gate per row, so it lowers to ONE predicate-shaped
+    statement, no materializing read."""
+
+    __parallax__ = EntityConfig(table="wallet", namespace=_NS, mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none")
+    owner: Attr[str] = Field(max_length=64)
+    balance: Attr[Decimal] = Field(type="decimal(18,2)")
 
 
 class Position(Entity, frozen=True):

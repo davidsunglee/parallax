@@ -103,7 +103,11 @@ def compare_binds(observed: Sequence[object], expected: Sequence[object]) -> Non
     fallback ``compare_rows`` uses (m-case-format): an authored golden literal
     (``5.00``, a plain YAML float) and a real ``decimal``-typed bind
     (``Decimal("5.00")``, e.g. an idiomatic entity instance's own field value)
-    reconcile in Decimal space; everything else is exact wire equality.
+    reconcile in Decimal space; a value-object document write's own bind (a
+    ``JsonDocument`` carrier, `m-db-port`) unwraps to its underlying JSON
+    document before comparing, so it reconciles against the golden's plain
+    dict/list literal exactly like `parallax.conformance.engine._json_bind`'s
+    own emission-wire rendering; everything else is exact wire equality.
     """
     obs = [_wire_value(value) for value in observed]
     exp = [_wire_value(value) for value in expected]
@@ -114,7 +118,10 @@ def compare_binds(observed: Sequence[object], expected: Sequence[object]) -> Non
 
 def _wire_value(value: object) -> object:
     from parallax.conformance import engine
+    from parallax.core.db_port import JsonDocument
 
+    if isinstance(value, JsonDocument):
+        return value.value
     return engine.wire_value(value)
 
 

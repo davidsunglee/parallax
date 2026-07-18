@@ -19,6 +19,7 @@ to the unit-lane branch-coverage gate — the story bodies' only DB-free driver.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Any, Final, cast
@@ -36,6 +37,7 @@ from parallax.conformance.vo_models import (
     ContactPoint,
     Shipment,
 )
+from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import WriteRejectedError
@@ -47,29 +49,131 @@ _MODELS = models.load_models()
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 _STORIES = {story.case_id: story for story in WRITE_STORIES}
 
-# The Account fixture rows every story's own finds may need — id 1 (Ada) and
-# id 3 (Grace), the SAME two rows the corpus's own m-unit-work Account
-# fixtures seed (`core/compatibility/fixtures/account.yaml`). A story reading
-# BOTH in one transaction (e.g. `one_flush_combined_mixed_verb_order`) needs
-# both seeded at once.
-_SEED_ROWS: Final[list[Row]] = [
+# The driver-native infinity sentinel (`m-core`/`m-dialect`): a real Postgres
+# open upper bound renders through `engine.wire_value` as the literal
+# `"infinity"` string every golden binds/asserts — a plain far-future
+# `datetime` (as `test_transact.py`'s own gate-focused pins use, which never
+# compare THIS column) would instead render as an ordinary ISO instant and
+# fail the byte-exact DML compare here.
+_INFINITY: Final[TemporalBound] = INFINITY
+
+# Per-model seed rows every registered story's own finds may need, COLUMN-keyed
+# (the real driver-row convention `parallax.snapshot.wrap` decodes) — one small
+# fixed row set per model, keyed by `story.model` (D-29/D-30 completion round:
+# the temporal stories' own observing finds need model-shaped seed data too,
+# not just Account's). Id 2 (Linus, balance 250.00) joins ids 1/3 here for
+# `m-opt-lock-002` (the versioned, locking-mode keyed update) — the SAME triple
+# `core/compatibility/fixtures/account.yaml` seeds.
+_ACCOUNT_SEED_ROWS: Final[list[Row]] = [
     {"id": 1, "owner": "Ada", "balance": 100.00, "version": 1},
+    {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1},
     {"id": 3, "owner": "Grace", "balance": 10.00, "version": 1},
 ]
+_BALANCE_SEED_ROWS: Final[list[Row]] = [
+    {
+        "bal_id": 1,
+        "acct_num": "A",
+        "val": Decimal("100.00"),
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": _INFINITY,
+    }
+]
+_POSITION_SEED_ROWS: Final[list[Row]] = [
+    {
+        "pos_id": 1,
+        "acct_num": "A",
+        "val": Decimal("100.00"),
+        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "thru_z": _INFINITY,
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": _INFINITY,
+    }
+]
+_SUPPLIER_D1_ADDRESS: Final[dict[str, Any]] = {
+    "street": "1 Old Street",
+    "city": "Oslo",
+    "geo": {"country": "NO"},
+    "phones": [{"type": "home", "number": "555-0100"}],
+}
+_SUPPLIER_SEED_ROWS: Final[list[Row]] = [
+    {
+        "sup_id": 1,
+        "name": "Nordic Foods",
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": _INFINITY,
+        "address": _SUPPLIER_D1_ADDRESS,
+    }
+]
+_BRANCH_D1_ADDRESS: Final[dict[str, Any]] = {
+    "street": "10 Old Road",
+    "city": "Helsinki",
+    "geo": {"country": "FI"},
+    "phones": [{"type": "main", "number": "555-1000"}],
+}
+_BRANCH_SEED_ROWS: Final[list[Row]] = [
+    {
+        "br_id": 1,
+        "name": "Central Branch",
+        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "thru_z": _INFINITY,
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": _INFINITY,
+        "address": _BRANCH_D1_ADDRESS,
+    }
+]
+_SEED_ROWS_BY_MODEL: Final[dict[str, list[Row]]] = {
+    "account": _ACCOUNT_SEED_ROWS,
+    "balance": _BALANCE_SEED_ROWS,
+    "position": _POSITION_SEED_ROWS,
+    "supplier": _SUPPLIER_SEED_ROWS,
+    "branch": _BRANCH_SEED_ROWS,
+}
+
+# `m-audit-write-005` starts from EXISTING history (`given.fixtures: true`),
+# never its own fresh insert: id 1's CURRENT milestone is already value 150.00
+# at in_z 2024-06-01 (a superseded 100.00 prior on record too, per the fixture
+# — irrelevant to this port double, which serves only the ONE row the story's
+# own find actually needs) — a per-CASE override, since the shared per-MODEL
+# `_BALANCE_SEED_ROWS` above instead represents "immediately after this OTHER
+# story's own fresh insert" (100.00 at 2024-01-01).
+_SEED_ROWS_BY_CASE: Final[dict[str, list[Row]]] = {
+    "m-audit-write-005": [
+        {
+            "bal_id": 1,
+            "acct_num": "A",
+            "val": Decimal("150.00"),
+            "in_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+            "out_z": _INFINITY,
+        }
+    ],
+}
+
+
+def _seed_rows_for(story: WriteStory) -> list[Row]:
+    if story.case_id in _SEED_ROWS_BY_CASE:
+        return _SEED_ROWS_BY_CASE[story.case_id]
+    return _SEED_ROWS_BY_MODEL.get(story.model, [])
 
 
 class _RecordingPort:
     """An in-memory ``m-db-port`` recording every call in order (no Docker).
 
-    ``rows`` seeds a small keyed row set; each ``execute`` filters it by the
-    query's OWN bind values (a pk-bind-aware selection) so a story finding
-    id 1 vs id 3 — or both, in the SAME transaction — gets the matching
-    seeded row, not a fixed stand-in (the graded binds/versions depend on
-    it: m-unit-work-006/009/012's own delete gates bind the OBSERVED
-    version, which must come from the RIGHT seeded row). A query whose binds
-    match no seeded row (an insert-then-find on a fresh id, or a non-id
-    predicate) falls back to the FIRST seeded row — a type-correct stand-in
-    whose own content the calling story never checks.
+    ``rows`` seeds a small keyed row set, each row's OWN PRIMARY-KEY value
+    ordered FIRST in its dict (every seed row below follows this convention);
+    each ``execute`` filters it by whether that FIRST value appears among the
+    query's bind values (a pk-bind-aware selection, model-agnostic — every
+    registered story's own primary-key python name is ``id``, but its
+    PHYSICAL column varies, e.g. ``bal_id``/``pos_id``, so matching on a
+    literal ``"id"`` key would only ever work by Account's own coincidence;
+    matching on EVERY value would falsely multi-match rows sharing an
+    unrelated column value, e.g. two Accounts both carrying ``version: 1``) so
+    a story finding id 1 vs id 3 — or both, in the SAME transaction — gets the
+    matching seeded row, not a fixed stand-in (the graded binds/versions
+    depend on it: m-unit-work-006/009/012's own delete gates bind the
+    OBSERVED version, which must come from the RIGHT seeded row). A query
+    whose binds match no seeded row (an insert-then-find on a fresh id, or a
+    non-id predicate) falls back to the FIRST seeded row — a type-correct
+    stand-in whose own content the calling story never checks.
     """
 
     def __init__(self, *, rows: Sequence[Row] = ()) -> None:
@@ -78,7 +182,7 @@ class _RecordingPort:
 
     def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
         self.ops.append(("read", sql, tuple(binds)))
-        matched = [row for row in self._rows if row.get("id") in binds]
+        matched = [row for row in self._rows if next(iter(row.values())) in binds]
         return [dict(row) for row in (matched or self._rows[:1])]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
@@ -225,7 +329,7 @@ _PLAIN_DISCARD_ABORT_IDS = sorted(set(_ABORT_IDS) - _FORCE_FLUSHED_ABORT_IDS)
 @pytest.mark.parametrize("case_id", _COMMIT_IDS, ids=_COMMIT_IDS)
 def test_commit_story_emits_the_golden_dml(case_id: str) -> None:
     story = _STORIES[case_id]
-    port = _RecordingPort(rows=_SEED_ROWS)
+    port = _RecordingPort(rows=_seed_rows_for(story))
     story.run(_db(port, story))
     _assert_statements(port, _scenario_goldens(case_id), case_id)
     assert port.ops[0] == ("begin",)
@@ -240,7 +344,7 @@ def test_abort_story_discards_the_buffer_and_keeps_the_reads_golden(case_id: str
     # buffered write is discarded before it reaches the wire, so the guard here
     # is the abort CONTRACT: nothing written, the abort rolled back, reads golden.
     story = _STORIES[case_id]
-    port = _RecordingPort(rows=_SEED_ROWS)
+    port = _RecordingPort(rows=_seed_rows_for(story))
     story.run(_db(port, story))
     assert not port.wrote, (case_id, port.ops)
     _assert_statements(port, _scenario_goldens(case_id, skip_rollback=True), case_id)
@@ -261,7 +365,7 @@ def test_force_flushed_abort_story_reaches_the_wire_then_rolls_back(case_id: str
     post-abort find still committed).
     """
     story = _STORIES[case_id]
-    port = _RecordingPort(rows=_SEED_ROWS)
+    port = _RecordingPort(rows=_seed_rows_for(story))
     story.run(_db(port, story))
     _assert_statements(port, _scenario_goldens(case_id, skip_rollback=False), case_id)
     assert ("rollback",) in port.ops
@@ -275,7 +379,7 @@ def test_boundary_story_withholds_the_callback_value() -> None:
     # closure throws. The abort discards even the force-flushed write (the
     # port rolls back) and `transact` raises instead of returning the value.
     story = _STORIES["m-unit-work-004"]
-    port = _RecordingPort(rows=_SEED_ROWS)
+    port = _RecordingPort(rows=_seed_rows_for(story))
     with pytest.raises(RuntimeError, match="abort"):
         story.run(_db(port, story))
     kinds = [op[0] for op in port.ops]
