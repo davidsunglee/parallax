@@ -2129,113 +2129,125 @@ _INTERLEAVED_GROUP_JOIN_TIMEOUT: Final[float] = 30.0
 
 
 def _underlying_connection(connection: object) -> object | None:
-    """The termination ladder's rung-two/rung-three shared reach target: the
-    duck-typed underlying transport (mirroring
-    :attr:`~parallax.postgres.PostgresAdapter.connection`, the wrapped
-    psycopg ``Connection``), or ``None`` when ``connection`` exposes no such
-    escalation seam at all. Round 4's own single-sourcing seam: both
-    :data:`_TERMINATION_RUNGS` (consulted by the pre-start validator,
-    :func:`_validate_termination_capability`) and :func:`_terminate_connection`
-    (the ladder itself) reach the underlying transport through this SAME
-    function, so the two can never observe a different "underlying
-    connection" for the same ``connection``."""
+    """The termination ladder's rung-two/rung-three shared reach target
+    (:func:`_terminate_connection`): the duck-typed underlying transport
+    (mirroring :attr:`~parallax.postgres.PostgresAdapter.connection`, the
+    wrapped psycopg ``Connection``), or ``None`` when ``connection`` exposes
+    no such escalation seam at all. Round 4 single-sourced this helper with
+    a since-retired pre-start SHAPE validator too; round 5 (the corrected
+    contract on the interleaved-uow join-timeout residual) narrows that
+    scope back to the ladder alone — preflight
+    (:func:`_require_interleaved_termination_capability`) no longer inspects
+    a connection's shape at all, so this function's "single source" promise
+    is exactly what :func:`_terminate_connection`'s own rungs two and three
+    need and nothing more."""
     return getattr(connection, "connection", None)
 
 
-@dataclass(frozen=True, slots=True)
-class _TerminationRung:
-    """One escalation rung of the termination ladder
-    (:func:`_terminate_connection`), reduced to its purely STRUCTURAL shape
-    (round 4, the corrected contract on the interleaved-uow join-timeout
-    residual): the target object this rung inspects (``reach``, applied to
-    the connection under test) and the ONE callable attribute name
-    (``capability``) that rung relies on. The pre-start capability validator
-    (:func:`_validate_termination_capability`) and the ladder itself
-    (:func:`_terminate_connection` / :func:`_terminate_underlying_socket`)
-    both walk :data:`_TERMINATION_RUNGS` — the SAME tuple — to decide
-    whether a rung is reachable, so a rung the ladder would attempt is, by
-    construction, a rung the validator accepts, and vice versa; neither
-    duplicates the other's reach/capability logic."""
-
-    label: str
-    reach: Callable[[object], object | None]
-    capability: str
-
-
-# The termination ladder's own rung definitions (round 4's single source of
-# truth): rung one is `connection` itself; rungs two and three both reach the
-# SAME underlying transport (`_underlying_connection`) but probe a DIFFERENT
-# capability on it — `close()` for the driver-level rung, `fileno()` for the
-# real-transport-only OS-socket rung `_terminate_underlying_socket` performs.
-# `_terminate_connection` (which ACTS on a rung once reached) and
-# `_validate_termination_capability` (which only INSPECTS whether a rung is
-# reachable, before either worker thread starts) both derive from this ONE
-# tuple, so they cannot drift apart.
-_TERMINATION_RUNGS: Final[tuple[_TerminationRung, ...]] = (
-    _TerminationRung(label="connection", reach=lambda c: c, capability="close"),
-    _TerminationRung(
-        label="underlying connection", reach=_underlying_connection, capability="close"
-    ),
-    _TerminationRung(
-        label="underlying connection (OS-level socket)",
-        reach=_underlying_connection,
-        capability="fileno",
-    ),
-)
+# ---------------------------------------------------------------------------
+# The round-5 corrected contract's own trust marker (the interleaved-uow
+# join-timeout residual, FIFTH confirmation pass on the same helper block).
+# Round 4 deepened the original best-effort design into a pre-start
+# preflight, but validated STRUCTURE only — whether `close()` / `fileno()`
+# were CALLABLE — never whether termination was RELIABLE. The reviewer
+# reproduced exactly the gap that leaves open: a port whose cancellation,
+# close, underlying close, and socket teardown are all CALLABLE yet all
+# RAISE at runtime passed round 4's structural check
+# (`preflight=('validated',)`) and then hung the unbounded post-ladder join
+# forever (`helper_completed=False`). Runtime reliability of an arbitrary
+# duck-typed object this module does not itself construct is not provable
+# by inspection — round 4's own reproduction is the proof — so preflight
+# stops inferring a guarantee from shape and starts REQUIRING an explicit,
+# truthful GRANT of trust instead.
+# ---------------------------------------------------------------------------
+_TERMINATION_LADDER_TRUST_ATTR: Final[str] = "termination_ladder_trusted"
+"""The documented trust marker's attribute name (round 5's own design
+choice: a named boolean rather than a separate ABC/Protocol, kept a plain
+duck-typed attribute so a test fake needs no extra base class to declare
+it). A connection type this module does not itself construct DECLARES the
+deterministic-termination contract by setting this attribute truthy on
+itself — a class attribute (inherited by every instance) is the natural
+place, but an instance attribute counts identically — asserting EXACTLY
+that the termination ladder's own escalation
+(:func:`_terminate_connection` — outer ``close()``, then the underlying
+``connection``'s own ``close()``, then real OS-level socket teardown)
+deterministically unblocks whatever this connection's own I/O is doing.
+Declaring the marker IS taking responsibility for it: a truthful
+declaration means :func:`_await_interleaved_workers`'s own unbounded
+post-ladder join can never hang past this connection; an UNTRUTHFUL
+declaration is a bug in the DECLARING type, diagnosable at that exact join
+line, never a defect this preflight could have caught — this module's own
+contract is discharged the moment a truthful declaration exists, never by
+attempting to verify one is true (verifying it is exactly round 4's own
+retired mistake: a declaration this module never actually asked for, only
+a shape it hoped implied one)."""
 
 
-def _termination_rung_reachable(connection: object, rung: _TerminationRung) -> bool:
-    """Whether ``rung`` is STRUCTURALLY reachable on ``connection`` — its own
-    ``reach`` target exists and exposes ``rung.capability`` as a CALLABLE
-    attribute. Inspection only (this never invokes anything it inspects),
-    which is exactly what the ladder itself effectively tests
-    (``callable(close)`` / ``callable(fileno)``) immediately before
-    attempting a rung — so this predicate and the ladder's own behavior can
-    never disagree about which rungs a connection offers."""
-    target = rung.reach(connection)
-    return target is not None and callable(getattr(target, rung.capability, None))
+def _validate_termination_trust(connection: object, label: str) -> list[str]:
+    """Round 5's own pre-start refusal check (the corrected contract on the
+    interleaved-uow join-timeout residual, deepening round 4's own
+    structural-only check into a TRUSTED, DECLARED contract): ``connection``
+    passes ONLY when it grants that trust explicitly, by exactly one of —
 
+    1. Being the KNOWN-DETERMINISTIC real type,
+       :class:`~parallax.postgres.PostgresAdapter` — the concrete shape
+       ``provision.py``'s own ``Provisioner.port`` AND ``Provisioner.peer()``
+       both construct (the SAME class serves the caller's own connection
+       and its peer alike). Trusted BY CONSTRUCTION, never inferred: its
+       own ``close()`` tears down the wrapped psycopg connection, whose own
+       ``close()`` tears down the underlying OS-level socket fd — an OS
+       guarantee, not a hope, that any driver call blocked on that fd's I/O
+       unblocks.
+    2. Carrying a truthy :data:`_TERMINATION_LADDER_TRUST_ATTR` attribute —
+       this module's own documented marker (see its own module-level
+       docstring for exactly what declaring it promises) — by which the
+       declarer takes on the SAME responsibility the real adapter carries
+       by construction.
 
-def _validate_termination_capability(connection: object, label: str) -> list[str]:
-    """Round 4's own pre-start refusal check (the corrected contract on the
-    interleaved-uow join-timeout residual): ``connection`` is usable by
-    :func:`_terminate_connection`'s own GUARANTEED ladder when AT LEAST ONE
-    of :data:`_TERMINATION_RUNGS` is reachable
-    (:func:`_termination_rung_reachable`) — the SAME rungs the ladder itself
-    walks, so a defect this function misses is, by construction, a rung the
-    ladder could not have reached either (the no-drift invariant this round
-    exists to guarantee).
-
-    STRUCTURAL only, never behavioral: this inspects for a callable
-    capability, it never CALLS ``close()``, ``cancel()``, or ``fileno()`` —
-    validating a connection never terminates, mutates, or probe-connects it.
+    A CALLABLE ``close()`` / ``fileno()`` — even a whole structurally
+    plausible ladder of them — is NEVER sufficient on its own: the
+    reviewer's own reproduction is exactly a port with every rung callable
+    and every rung RAISING at runtime, which this check refuses WITHOUT
+    CALLING any of them (a pure trust check, never a behavioral probe —
+    nothing here is invoked, only inspected, exactly as round 4's own
+    structural check never invoked anything either).
 
     Returns every defect found (empty when ``connection`` validates) rather
     than raising itself — the caller
     (:func:`_require_interleaved_termination_capability`) combines BOTH
     connections' own defects into one loud refusal rather than stopping at
     the first one."""
-    if any(_termination_rung_reachable(connection, rung) for rung in _TERMINATION_RUNGS):
+    from parallax.postgres import PostgresAdapter  # local: keep the unit lane psycopg-import-light
+
+    if isinstance(connection, PostgresAdapter):
+        return []
+    if getattr(connection, _TERMINATION_LADDER_TRUST_ATTR, False) is True:
         return []
     return [
-        f"{label} exposes no termination capability the join-timeout ladder could ever "
-        "reach: no callable close(), no underlying `connection` with a callable close(), "
-        "and no underlying `connection` with a callable fileno()"
+        f"{label} declares no trusted termination contract — it is neither the "
+        "known-deterministic PostgresAdapter shape (whose close() tears down an "
+        "OS-level socket fd, an OS-level guarantee) nor does it carry a truthy "
+        f"`{_TERMINATION_LADDER_TRUST_ATTR}` attribute, the documented marker "
+        "promising that the termination ladder deterministically unblocks its "
+        "own I/O; a callable close()/fileno() alone is never sufficient"
     ]
 
 
 def _require_interleaved_termination_capability(
     main_connection: DbPort, peer_connection: _PeerConnection, case_name: str
 ) -> None:
-    """The corrected contract's own entry point (round 4 on the interleaved-
-    uow join-timeout residual — the reviewer's own reproduction: every
-    termination-ladder rung failing on EVERY worker leaves
+    """The corrected contract's own entry point (round 5, the FIFTH
+    confirmation pass on the interleaved-uow join-timeout residual). Round 4
+    validated only that a connection's ``close()`` / ``fileno()`` were
+    CALLABLE — the reviewer reproduced a port that passes that structural
+    check yet whose every runtime rung RAISES, leaving
     :func:`_await_interleaved_workers`'s own deliberately UNBOUNDED
-    post-ladder join (round 3's design) hanging indefinitely, requiring
-    external termination). BEFORE either interleaved-group worker thread
+    post-ladder join (round 3's design) hanging indefinitely with no live
+    process able to unstick it. So this pass deepens the check from
+    STRUCTURE to TRUST: BEFORE either interleaved-group worker thread
     starts, BOTH ``main_connection`` (the caller-owned port) and
-    ``peer_connection`` must validate
-    (:func:`_validate_termination_capability`) — refusing loudly, naming
+    ``peer_connection`` must carry a DECLARED deterministic-termination
+    contract (:func:`_validate_termination_trust`) — refusing loudly, naming
     EVERY defective connection at once (main, peer, or both; never
     first-failure-only) rather than letting a defect surface only much
     later as that indefinite hang.
@@ -2246,11 +2258,11 @@ def _require_interleaved_termination_capability(
     inspected only, never called, exactly as untouched as if this function
     had never run at all. (The caller is responsible for ``peer_connection``,
     which it opened via its own ``peer_factory``; this function neither
-    closes it nor assumes anything about it beyond the same structural
-    inspection ``main_connection`` gets.)"""
-    defects = _validate_termination_capability(
+    closes it nor assumes anything about it beyond the same trust check
+    ``main_connection`` gets.)"""
+    defects = _validate_termination_trust(
         main_connection, "main connection"
-    ) + _validate_termination_capability(peer_connection, "peer connection")
+    ) + _validate_termination_trust(peer_connection, "peer connection")
     if not defects:
         return
     raise EngineError(
@@ -2403,14 +2415,19 @@ def _terminate_connection(connection: object, label: str) -> list[str]:
     is this module's own documented contract for an unreachable fake, not a
     bug this rung papers over.
 
-    Round 4 (the corrected contract on the interleaved-uow join-timeout
-    residual) single-sources rungs 1 and 2's own reach — the underlying
-    transport below is fetched through :func:`_underlying_connection`, the
-    SAME helper :data:`_TERMINATION_RUNGS` carries — so this ladder and the
-    pre-start capability validator (:func:`_validate_termination_capability`)
-    can never observe a different "underlying connection" for the same
-    ``connection``; only the ACTUAL escalation behavior below (attempting
-    and recording each rung) stays bespoke to this function."""
+    Round 4 single-sourced rungs 1 and 2's own reach — the underlying
+    transport below is fetched through :func:`_underlying_connection` — with
+    a pre-start SHAPE validator that round 5 (the corrected contract on the
+    interleaved-uow join-timeout residual) has since retired: this ladder's
+    OWN mechanics are untouched by that correction (the round-3 guaranteed
+    escalation below stays exactly as it was), only the GATE above it
+    changed, from re-deriving a guarantee by inspecting this ladder's own
+    rung shapes to requiring a caller-visible, DECLARED trust contract
+    instead (:func:`_require_interleaved_termination_capability`,
+    :data:`_TERMINATION_LADDER_TRUST_ATTR`) — this function no longer has a
+    validator counterpart walking the SAME reach helper for the SAME
+    reason; it is simply this ladder's own single-sourced reach for rungs
+    two and three."""
     failures: list[str] = []
 
     def _attempt(target: object, rung: str) -> bool:
@@ -2513,22 +2530,32 @@ def _await_interleaved_workers(
     the caller only reaches that check on the ordinary, non-timeout path, so
     the timeout error below is always what a caller here actually sees.
 
-    Round 4 (the corrected contract on this SAME join-timeout residual)
-    strengthens that trade from implicit to EXPLICIT: the reviewer
+    Round 4 (a confirmation pass on this SAME join-timeout residual)
+    strengthened that trade from implicit to EXPLICIT: the reviewer
     reproduced every rung above failing on every worker, leaving this join
-    hanging indefinitely with no live process able to unstick it.
-    :func:`run_interleaved_scenario_case` now calls
+    hanging indefinitely with no live process able to unstick it, so
+    :func:`run_interleaved_scenario_case` was made to call
     :func:`_require_interleaved_termination_capability` on BOTH
     ``main_connection`` and ``peer_connection`` before either worker thread
-    even starts, refusing loudly up front when a connection cannot satisfy
-    any rung of :data:`_TERMINATION_RUNGS` — the SAME rungs this ladder
-    walks. Past that validation, a hang at the join below can only mean a
-    connection MISREPRESENTED its validated capability (every rung the
-    validator confirmed reachable failing anyway at runtime): a contract
-    violation by that connection type, diagnosable at this exact line,
-    never an ordinary or expected outcome. The requirement was always real;
-    validation only makes it explicit instead of leaving it implicit in an
-    unbounded join a maintainer would otherwise have to reverse-engineer.
+    even starts. Round 4's OWN check validated only that a connection's
+    ``close()`` / ``fileno()`` were CALLABLE — and the reviewer reproduced
+    exactly the gap that leaves: a port with every one of those callable,
+    passing that structural check, and every one RAISING at runtime, hanging
+    this SAME join anyway (round 5, the fifth confirmation pass on this
+    block: ``preflight=('validated',)``, ``helper_completed=False``). So
+    round 5 deepened the check from STRUCTURE to TRUST — a connection now
+    passes only by carrying a DECLARED deterministic-termination contract
+    (:func:`_validate_termination_trust`: the known-deterministic
+    ``PostgresAdapter`` shape, trusted by construction, or an explicit
+    :data:`_TERMINATION_LADDER_TRUST_ATTR` marker declaring the SAME
+    responsibility). Past that validation, a hang at the join below can only
+    mean a connection's trust grant was UNTRUTHFUL — a lying declaration (or
+    a `PostgresAdapter` whose own OS-level guarantee was somehow defeated):
+    a contract violation by that connection type, diagnosable at this exact
+    line, never an ordinary or expected outcome. The requirement was always
+    real; the declaration only makes it explicit and caller-visible instead
+    of leaving it implicit in an unbounded join a maintainer would otherwise
+    have to reverse-engineer.
 
     The terminal state is always honest, never a silent leak: because the
     join above cannot return while a worker remains alive, EVERY path past
@@ -2622,11 +2649,12 @@ def run_interleaved_scenario_case(
     runner's own dispatch follows.
 
     Before either worker thread starts, both ``port`` and the connection
-    ``peer_factory`` produces are validated for termination capability
-    (:func:`_require_interleaved_termination_capability`, round 4 on the
-    join-timeout residual) — a defective connection refuses loudly here,
-    rather than surfacing only much later as an indefinite hang at
-    :func:`_await_interleaved_workers`'s own unbounded post-ladder join.
+    ``peer_factory`` produces must carry a TRUSTED deterministic-termination
+    contract (:func:`_require_interleaved_termination_capability`, round 5
+    on the join-timeout residual) — a connection with no declared trust
+    refuses loudly here, rather than surfacing only much later as an
+    indefinite hang at :func:`_await_interleaved_workers`'s own unbounded
+    post-ladder join.
     """
     steps = _scenario_steps(case)
     meta = load_case_metamodel(case)

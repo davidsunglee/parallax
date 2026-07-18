@@ -468,7 +468,20 @@ class _ScriptedPort:
     `execute`, `write_affected` always `1`), a genuinely two-session
     choreography's own conflict needs each connection scripted with its OWN,
     call-ordered sequence to reproduce a real stale-version mismatch
-    deterministically, with no real database involved."""
+    deterministically, with no real database involved.
+
+    Carries round 5's own documented trust marker
+    (`engine._TERMINATION_LADDER_TRUST_ATTR`): every method here is a plain
+    synchronous, in-memory call that never blocks on real I/O at all, so
+    there is nothing for the termination ladder to unblock in the first
+    place — a genuinely truthful declaration, not a shortcut around it. This
+    is what lets every entry-point pin below run through
+    `run_interleaved_scenario_case`'s own preflight
+    (`_require_interleaved_termination_capability`) unchanged; the same
+    class also stands in directly for `_await_interleaved_workers`'s own
+    pins, which bypass preflight entirely and so never consult this marker
+    either way. Set via `setattr` below (never a hardcoded attribute name
+    here) so this fake can never drift from `engine`'s own marker name."""
 
     def __init__(
         self,
@@ -499,6 +512,16 @@ class _ScriptedPort:
 
     def close(self) -> None:
         self.closed = True
+
+
+# Round 5's own documented trust marker, declared on the class itself (every
+# instance inherits it) rather than hardcoding `engine`'s own private
+# attribute name as a string literal here.
+setattr(
+    _ScriptedPort,
+    engine._TERMINATION_LADDER_TRUST_ATTR,  # pyright: ignore[reportPrivateUsage]
+    True,
+)
 
 
 def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abort() -> None:
@@ -1073,16 +1096,14 @@ def test_terminate_connection_escalates_through_every_rung_when_all_fail() -> No
 
 
 class _CapabilityLessConnection:
-    """A connection exposing NONE of `_TERMINATION_RUNGS`' three rungs — no
-    `close()`, no underlying `connection` attribute (so rung two's own
-    reach target is unreachable too), and no `fileno()` anywhere — round
-    4's own refusal shape (the corrected contract on the interleaved-uow
-    join-timeout residual): the pre-start capability validator must name
-    and refuse a connection like this BEFORE either worker thread starts,
-    never let it surface only later as the indefinite join hang the
-    reviewer reproduced. `execute_calls` is this pin's own observable for
-    "no thread ever started": a defect here refuses before either worker
-    is even constructed, so nothing ever calls it."""
+    """A connection exposing NEITHER `close()`, NOR an underlying
+    `connection` attribute, NOR `fileno()` anywhere, NOR round 5's own trust
+    marker — the most defective refusal shape: preflight must name and
+    refuse a connection like this BEFORE either worker thread starts, never
+    let it surface only later as the indefinite join hang round 4's own
+    confirmation pass first reproduced. `execute_calls` is this pin's own
+    observable for "no thread ever started": a defect here refuses before
+    either worker is even constructed, so nothing ever calls it."""
 
     def __init__(self) -> None:
         self.execute_calls = 0
@@ -1110,12 +1131,14 @@ class _CapabilityLessConnection:
 def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_capability_less(
     main_defective: bool, peer_defective: bool, expected_labels: tuple[str, ...]
 ) -> None:
-    # Round 4's own refusal pin (the corrected contract on the
-    # interleaved-uow join-timeout residual): a capability-less connection
-    # — no `close()`, no underlying transport, no `fileno()` — must be
-    # refused loudly BEFORE either worker thread starts, all defects
-    # reported at once rather than first-failure-only. Covers both
-    # positions individually and together (main only / peer only / both).
+    # A capability-less connection — no `close()`, no underlying transport,
+    # no `fileno()`, no trust marker — must be refused loudly BEFORE either
+    # worker thread starts, all defects reported at once rather than
+    # first-failure-only. Covers both positions individually and together
+    # (main only / peer only / both). `_ScriptedPort` stands in for the
+    # HEALTHY side because it carries round 5's own trust marker (see its
+    # own docstring) — the SAME reason it passes preflight everywhere else
+    # in this module.
     case = _load_case("m-opt-lock-012")
     healthy_row: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
     main_connection: _CapabilityLessConnection | _ScriptedPort = (
@@ -1150,13 +1173,91 @@ def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_capabili
                 assert connection.closed
 
 
+class _AllRungsRaiseConnection:
+    """The reviewer's own reproduction (the finding that forced the
+    corrected contract to deepen from round 4's structural-only check to
+    round 5's TRUSTED, DECLARED one): a structurally-plausible port — a
+    CALLABLE `close()`, a CALLABLE `cancel()`, and an underlying
+    `connection` seam with a CALLABLE `close()` AND `fileno()` too — that
+    would have PASSED round 4's own structural check (every one of those IS
+    callable) yet whose EVERY runtime rung RAISES (`preflight=
+    ('validated',)`, `helper_completed=False` before this fix). No trust
+    marker, not a `PostgresAdapter` — round 5's preflight must refuse it
+    WITHOUT EVER CALLING a single one of the raising methods below (a pure
+    trust check, never a behavioral probe): `calls` staying empty is this
+    pin's own proof that no worker thread ever got far enough to discover
+    any of this."""
+
+    class _Underlying:
+        def __init__(self, calls: list[str]) -> None:
+            self._calls = calls
+
+        def close(self) -> None:  # pragma: no cover - never reached; preflight refuses first
+            self._calls.append("underlying.close")
+            raise RuntimeError("underlying close raises")
+
+        def fileno(self) -> int:  # pragma: no cover - never reached; preflight refuses first
+            self._calls.append("underlying.fileno")
+            raise RuntimeError("underlying fileno raises")
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.connection = self._Underlying(self.calls)
+
+    def close(self) -> None:  # pragma: no cover - never reached; preflight refuses first
+        self.calls.append("close")
+        raise RuntimeError("close raises")
+
+    def cancel(self) -> None:  # pragma: no cover - never reached; preflight refuses first
+        self.calls.append("cancel")
+        raise RuntimeError("cancel raises")
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:  # pragma: no cover
+        self.calls.append("execute")
+        return []
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        self.calls.append("execute_write")
+        return 1
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        self.calls.append("transaction")
+        return body(self)
+
+
+def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_all_rungs_raising() -> None:
+    # The reviewer's demanded pin: a structurally-plausible port whose EVERY
+    # runtime termination rung raises — a shape that PASSED round 4's own
+    # structural preflight check and hung the unbounded post-ladder join —
+    # must be refused BEFORE either worker thread starts, and the refusal
+    # must never invoke a single one of its raising methods.
+    case = _load_case("m-opt-lock-012")
+    healthy_row: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    main_connection = _AllRungsRaiseConnection()
+    peer_connection = _ScriptedPort(read_rows=[[healthy_row]])
+
+    with pytest.raises(engine.EngineError, match="refuses to start") as exc_info:
+        engine.run_interleaved_scenario_case(
+            case, "postgres", cast("Any", main_connection), lambda: cast("Any", peer_connection)
+        )
+
+    assert "main connection" in str(exc_info.value)
+    # No worker thread ever started: not one of this port's structurally
+    # -plausible-but-lying methods was ever invoked, and the healthy peer
+    # (still opened via `peer_factory`) never executed anything either.
+    assert main_connection.calls == []
+    assert peer_connection.reads == []
+    assert peer_connection.closed
+
+
 class _RungOneOnlyConnection:
-    """Exposes ONLY the termination ladder's rung-one capability: a
-    callable `close()` on the connection itself, nothing else (no
-    underlying `connection` attribute at all) — round 4's own no-drift
-    pin, pinning that the shape rung one of `_TERMINATION_RUNGS` describes
-    is exactly what both the pre-start validator accepts and the ladder
-    itself (`_terminate_connection`) can act on."""
+    """A connection exposing a CALLABLE `close()` and nothing else — round
+    4's own retired structural check accepted a shape like this alone;
+    round 5 (the corrected contract) refuses it anyway, because a callable
+    capability was never the same as a DECLARED trust contract. Reused
+    directly by `_terminate_connection`'s own ladder-mechanics pins below,
+    which bypass preflight entirely — proving the ladder itself is
+    untouched by round 5's correction."""
 
     def __init__(self) -> None:
         self.close_calls = 0
@@ -1167,9 +1268,11 @@ class _RungOneOnlyConnection:
 
 class _RungTwoOnlyConnection:
     """Exposes NO outer `close()` at all, only an underlying `connection`
-    seam whose OWN `close()` is callable — round 4's own no-drift pin for
-    rung two, mirroring `PostgresAdapter.connection`'s own escalation
-    seam."""
+    seam whose OWN `close()` is callable — mirrors
+    `PostgresAdapter.connection`'s own escalation seam, WITHOUT declaring
+    round 5's own trust contract: refused by preflight for that reason
+    alone, even though `_terminate_connection`'s own ladder (bypassing
+    preflight, below) can act on it."""
 
     class _Underlying:
         def __init__(self) -> None:
@@ -1184,9 +1287,9 @@ class _RungTwoOnlyConnection:
 
 class _RungThreeOnlyConnection:
     """Exposes NO outer `close()`, and an underlying `connection` seam
-    with NEITHER a `close()` NOR anything but a callable `fileno()` —
-    round 4's own no-drift pin for rung three, the OS-socket-only shape.
-    Structural only: real OS-level socket teardown
+    with NEITHER a `close()` NOR anything but a callable `fileno()` — the
+    OS-socket-only shape, undeclared and so refused by preflight the same
+    way. Structural only: real OS-level socket teardown
     (`_terminate_underlying_socket`) is real-transport-only and exercised
     solely by the Docker lane, mirroring that function's own documented
     scope."""
@@ -1201,68 +1304,44 @@ class _RungThreeOnlyConnection:
 
 class _CancelOnlyConnection:
     """Exposes ONLY `cancel()` — `_cancel_in_flight_work`'s own
-    best-effort rung, never one of `_TERMINATION_RUNGS` — round 4's own
-    no-drift pin in the OTHER direction: a capability the validator must
-    NOT mistake for a termination rung the GUARANTEED ladder can act on."""
+    best-effort rung, never a termination-ladder rung at all — refused by
+    preflight for the SAME reason every undeclared shape here is: no trust
+    grant, regardless of which capability it happens to carry."""
 
     def cancel(self) -> None:  # pragma: no cover - structural probe, never invoked
         pass
 
 
-def test_termination_rungs_are_pinned_to_the_three_documented_escalation_shapes() -> None:
-    # `_TERMINATION_RUNGS` is round 4's own single-sourcing seam: both the
-    # pre-start validator and the termination ladder derive from this SAME
-    # tuple. Pinning its own shape here catches a future rung added to one
-    # without the other.
-    rungs = engine._TERMINATION_RUNGS  # pyright: ignore[reportPrivateUsage]
-    assert [(rung.label, rung.capability) for rung in rungs] == [
-        ("connection", "close"),
-        ("underlying connection", "close"),
-        ("underlying connection (OS-level socket)", "fileno"),
-    ]
-
-
 @pytest.mark.parametrize(
     "connection",
-    [_RungOneOnlyConnection(), _RungTwoOnlyConnection(), _RungThreeOnlyConnection()],
+    [
+        _RungOneOnlyConnection(),
+        _RungTwoOnlyConnection(),
+        _RungThreeOnlyConnection(),
+        _CancelOnlyConnection(),
+    ],
 )
-def test_validate_termination_capability_accepts_exactly_the_ladder_rung_shapes(
+def test_validate_termination_trust_refuses_an_undeclared_but_healthy_shape(
     connection: object,
 ) -> None:
-    # No-drift pin: each minimal shape here exposes EXACTLY one
-    # `_TERMINATION_RUNGS` rung and nothing more — the validator must
-    # accept every one of them ("a rung the ladder would try is a rung the
-    # validator accepts").
-    assert (
-        engine._validate_termination_capability(  # pyright: ignore[reportPrivateUsage]
-            connection, "main connection"
-        )
-        == []
-    )
-
-
-def test_validate_termination_capability_rejects_a_cancel_only_shape() -> None:
-    # No-drift pin in the other direction: `cancel()` is never a rung of
-    # `_TERMINATION_RUNGS`, so a connection offering only it must still be
-    # refused — the validator's "accept" boundary is exactly the ladder's
-    # own rungs, no wider.
-    defects = engine._validate_termination_capability(  # pyright: ignore[reportPrivateUsage]
-        _CancelOnlyConnection(), "main connection"
+    # Round 5's own deepened contract: a WORKING capability — even exactly
+    # the shape the termination ladder itself can act on — is refused when
+    # nothing DECLARES the trust contract. Trust is never inferred from
+    # shape or behavior, only granted by `PostgresAdapter`'s own
+    # known-deterministic type or an explicit marker.
+    defects = engine._validate_termination_trust(  # pyright: ignore[reportPrivateUsage]
+        connection, "main connection"
     )
     assert len(defects) == 1
     assert "main connection" in defects[0]
 
 
-def test_terminate_connection_succeeds_on_the_rung_one_only_shape_the_validator_accepts() -> None:
-    # The other half of "no drift": a shape the validator accepts must be a
-    # shape the ladder can actually act on. Rung one (outer `close()`).
+def test_terminate_connection_succeeds_on_the_rung_one_only_shape() -> None:
+    # `_terminate_connection`'s own ladder mechanics are untouched by round
+    # 5's correction: this bypasses preflight entirely (mirroring
+    # `_await_interleaved_workers`'s own direct pins above) and exercises
+    # rung one (outer `close()`) directly.
     connection = _RungOneOnlyConnection()
-    assert (
-        engine._validate_termination_capability(  # pyright: ignore[reportPrivateUsage]
-            connection, "main connection"
-        )
-        == []
-    )
     failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
         connection, "main connection"
     )
@@ -1270,26 +1349,85 @@ def test_terminate_connection_succeeds_on_the_rung_one_only_shape_the_validator_
     assert connection.close_calls == 1
 
 
-def test_terminate_connection_succeeds_on_the_rung_two_only_shape_the_validator_accepts() -> None:
-    # Rung two (the underlying `connection` seam's own `close()`). The
-    # ladder still RECORDS rung one's own miss (no outer `close()`) as
-    # trail context even though rung two succeeds and actually terminates
-    # the connection — `_terminate_connection`'s own documented contract
-    # ("every miss and every raise is RECORDED", never a bare success/
-    # failure flag) — so what proves the ladder ACTED on this shape is the
-    # underlying seam's own `close()` firing, not an empty trail.
+def test_terminate_connection_succeeds_on_the_rung_two_only_shape() -> None:
+    # Rung two (the underlying `connection` seam's own `close()`), bypassing
+    # preflight the same way. The ladder still RECORDS rung one's own miss
+    # (no outer `close()`) as trail context even though rung two succeeds
+    # and actually terminates the connection — `_terminate_connection`'s
+    # own documented contract ("every miss and every raise is RECORDED",
+    # never a bare success/failure flag) — so what proves the ladder ACTED
+    # on this shape is the underlying seam's own `close()` firing, not an
+    # empty trail.
     connection = _RungTwoOnlyConnection()
-    assert (
-        engine._validate_termination_capability(  # pyright: ignore[reportPrivateUsage]
-            connection, "main connection"
-        )
-        == []
-    )
     failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
         connection, "main connection"
     )
     assert failures == ["main connection: connection exposes no close() capability"]
     assert connection.connection.close_calls == 1
+
+
+class _FakeAdaptersRegistry:
+    """A `connection.adapters` stand-in — just enough for
+    `PostgresAdapter.__init__`'s own `register_loader` call — mirroring
+    `test_postgres_adapter.py`'s own `_FakeAdapters`."""
+
+    def register_loader(self, name: str, loader: object) -> None:
+        pass
+
+
+class _FakePsycopgConnection:
+    """A minimal `psycopg.Connection` stand-in carrying only what
+    `PostgresAdapter.__init__` touches — proving round 5's own real-type
+    trust rule needs no live database at all: `isinstance` against the
+    concrete `PostgresAdapter` class is what grants trust, never anything
+    this fake's own connection does."""
+
+    def __init__(self) -> None:
+        self.adapters = _FakeAdaptersRegistry()
+
+
+def test_validate_termination_trust_accepts_the_postgres_adapter_shape() -> None:
+    # The known-deterministic real type (round 5's OTHER trust path,
+    # alongside the documented marker): the SAME concrete class
+    # `provision.py`'s own `Provisioner.port` constructs, trusted BY
+    # CONSTRUCTION — no marker required, nothing beyond `isinstance`
+    # inspected.
+    from parallax.postgres import PostgresAdapter
+
+    adapter = PostgresAdapter(cast("Any", _FakePsycopgConnection()))
+    assert (
+        engine._validate_termination_trust(  # pyright: ignore[reportPrivateUsage]
+            adapter, "main connection"
+        )
+        == []
+    )
+
+
+def test_require_interleaved_termination_capability_trusts_the_postgres_adapter_peer_too() -> None:
+    # `provision.py`'s own `Provisioner.port` AND `Provisioner.peer()` both
+    # construct this SAME concrete class (COR-3 Phase 8 increment 6's own
+    # peer seam) — the preflight entry point trusts BOTH positions without
+    # a marker, never raising.
+    from parallax.postgres import PostgresAdapter
+
+    main_connection = PostgresAdapter(cast("Any", _FakePsycopgConnection()))
+    peer_connection = PostgresAdapter(cast("Any", _FakePsycopgConnection()))
+    engine._require_interleaved_termination_capability(  # pyright: ignore[reportPrivateUsage]
+        main_connection, peer_connection, "m-unit-work-999-synthetic.yaml"
+    )
+
+
+def test_require_interleaved_termination_capability_accepts_a_marked_fake() -> None:
+    # The documented marker mechanism (round 5): a fake that DECLARES the
+    # deterministic-termination contract passes preflight even though this
+    # module never inspects its close()/fileno() shape at all — proven with
+    # `_ScriptedPort`, which carries the marker (see its own docstring).
+    # `run_interleaved_scenario_case`'s own entry-point pins above already
+    # exercise the full helper path past this preflight; this pin isolates
+    # the marker's own acceptance at the entry point itself.
+    engine._require_interleaved_termination_capability(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", _ScriptedPort()), cast("Any", _ScriptedPort()), "m-unit-work-999-synthetic.yaml"
+    )
 
 
 def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:
