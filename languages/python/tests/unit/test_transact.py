@@ -16,7 +16,7 @@ import contextlib
 import datetime as dt
 from collections.abc import Callable, Sequence
 from decimal import Decimal
-from typing import Final, cast
+from typing import Any, Final, cast
 
 import pytest
 
@@ -2382,3 +2382,63 @@ def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
     assert in_z in close_binds  # the transported PROCESSING edge gates the close
     # The correction's replacement rows carry the edited field.
     assert any("New Name" in cast("tuple[object, ...]", op[2]) for op in write_ops[1:])
+
+
+# --------------------------------------------------------------------------- #
+# The §5 prior-observation license for keyed TEMPORAL update/terminate        #
+# (checkpoint-4 Spec finding 1): the temporal sibling of the versioned        #
+# `require_observed` rule, enforced at the developer verb.                    #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
+def test_unobserved_temporal_terminate_raises_before_any_dml(concurrency: str) -> None:
+    # A keyed temporal close of a milestone this unit of work never observed
+    # is a read-before-write programming error in EITHER mode: in locking
+    # mode the observing find's shared lock is the ungated close's ONLY
+    # protection; in optimistic mode there is no observed `in_z` to gate on.
+    port = _RecordingPort(rows=[_balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = _db_for(_BALANCE, port)
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate(mm.Balance(id=1, acct_num="A-1", value=Decimal("5.00")))
+
+    with pytest.raises(opt_lock.UnobservedMilestoneError, match="transaction-scoped find"):
+        db.transact(fn, concurrency=cast("Any", concurrency))
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_unobserved_temporal_update_from_a_cross_transaction_copy_raises() -> None:
+    # Provenance alone is not a license: a copy edited from a node ANOTHER
+    # scope's read materialized (a plain `db.find`, no unit of work) reaches
+    # `tx.update` with no transaction-scoped observation — the §5 rule names
+    # "the milestone THIS unit of work observed", so it raises (the
+    # stale-web-edit recipe's in-transaction re-fetch is the sanctioned
+    # spelling for transported coordinates).
+    port = _RecordingPort(rows=[_balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = _db_for(_BALANCE, port)
+    node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
+
+    def fn(tx: Transaction) -> None:
+        tx.update(node.model_copy(update={"value": Decimal("9.00")}))
+
+    with pytest.raises(opt_lock.UnobservedMilestoneError, match="transaction-scoped find"):
+        db.transact(fn)
+    assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
+    # Read-your-own-writes exemption: this transaction's OWN buffered insert
+    # IS the provenance (`m-audit-write-008`'s same-transaction coalescing
+    # shape) — no observation lookup applies, and the planner folds the pair
+    # into the single INSERT carrying the updated value.
+    port = _RecordingPort()
+    db = _db_for(_BALANCE, port)
+
+    def fn(tx: Transaction) -> None:
+        fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
+        tx.insert(fresh)
+        tx.update(fresh.model_copy(update={"value": Decimal("2.00")}))
+
+    db.transact(fn)
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 1  # coalesced to one INSERT
+    assert Decimal("2.00") in cast("tuple[object, ...]", write_ops[0][2])

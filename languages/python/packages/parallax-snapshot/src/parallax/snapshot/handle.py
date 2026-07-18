@@ -1407,7 +1407,7 @@ class Transaction:
     delegates to the unit of work, which fences use-after-scope).
     """
 
-    __slots__ = ("_conn", "_dialect", "_meta", "_uow")
+    __slots__ = ("_conn", "_dialect", "_inserted_keys", "_meta", "_uow")
 
     def __init__(
         self,
@@ -1420,6 +1420,11 @@ class Transaction:
         self._conn = conn
         self._meta = meta
         self._dialect = dialect
+        # The object keys THIS transaction buffered an insert for — the
+        # read-your-own-writes exemption from the §5 prior-observation license
+        # (`_require_observed_milestone`): a same-transaction insert IS the
+        # provenance a subsequent keyed temporal close builds on.
+        self._inserted_keys: set[ObjectKey] = set()
 
     def insert(self, instance: EntityBase, *, business_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
@@ -1438,10 +1443,11 @@ class Transaction:
         own bitemporal-only-required :func:`_validate_business_from`: an
         audit-only or non-temporal target takes none (no business axis to
         bound)."""
-        record, _declaring, business_from_literal = self._prepare_keyed_write(
+        record, declaring, business_from_literal = self._prepare_keyed_write(
             instance, "insert", business_from
         )
         self._buffer("insert", record.name, full_row(instance), business_from=business_from_literal)
+        self._inserted_keys.add(_observation_key(record, declaring, instance))
 
     def insert_until(
         self, instance: EntityBase, *, business_from: dt.datetime, until: dt.datetime
@@ -1471,6 +1477,7 @@ class Transaction:
             business_from=business_from_literal,
             business_to=until_literal,
         )
+        self._inserted_keys.add(_observation_key(record, declaring, instance))
 
     def update(self, copy: EntityBase, *, business_from: dt.datetime | None = None) -> None:
         """Buffer a sparse keyed ``update``: primary key + the effective change
@@ -1494,12 +1501,13 @@ class Transaction:
         Mirrors ``update_where``'s own bitemporal-only-required
         :func:`_validate_business_from`: an audit-only or non-temporal target
         takes none (no business axis to bound)."""
-        record, _declaring, business_from_literal = self._prepare_keyed_write(
+        record, declaring, business_from_literal = self._prepare_keyed_write(
             copy, "update", business_from
         )
         row = _prepare_sparse_row(copy)
         if row is None:
             return
+        self._require_observed_milestone(record, declaring, copy)
         self._buffer("update", record.name, row, business_from=business_from_literal)
 
     def delete(self, node_or_instance: EntityBase) -> None:
@@ -1528,9 +1536,10 @@ class Transaction:
         axis to bound); bitemporal REQUIRES it (the mutation's own business
         instant, mirrors ``terminate_where``'s own
         :func:`_validate_business_from`)."""
-        record, _declaring, business_from_literal = self._prepare_keyed_write(
+        record, declaring, business_from_literal = self._prepare_keyed_write(
             node_or_instance, "terminate", business_from
         )
+        self._require_observed_milestone(record, declaring, node_or_instance)
         self._buffer(
             "terminate",
             record.name,
@@ -1562,6 +1571,7 @@ class Transaction:
         row = _prepare_sparse_row(copy)
         if row is None:
             return
+        self._require_observed_milestone(record, declaring, copy)
         self._buffer(
             "updateUntil",
             record.name,
@@ -1585,6 +1595,7 @@ class Transaction:
             node_or_instance, "terminateUntil", business_from
         )
         until_literal = _validate_until(declaring, "terminateUntil", business_from, until)
+        self._require_observed_milestone(record, declaring, node_or_instance)
         self._buffer(
             "terminateUntil",
             record.name,
@@ -1614,6 +1625,31 @@ class Transaction:
         declaring = inheritance.declaring_entity(self._meta, record)
         business_from_literal = _validate_business_from(declaring, mutation, business_from)
         return record, declaring, business_from_literal
+
+    def _require_observed_milestone(
+        self, record: Entity, declaring: Entity, instance: EntityBase
+    ) -> None:
+        """The `python.md` §5 prior-observation license for a keyed TEMPORAL
+        update/terminate (:func:`opt_lock.require_observed_milestone` — the
+        temporal sibling of the versioned ``require_observed`` seam in
+        ``_lower_update``): the close must target a milestone THIS unit of
+        work observed via a transaction-scoped find. Enforced HERE at the
+        developer verb, never in ``_lower_temporal_write`` — the shared
+        lowering also serves the neutral engine lane, whose case documents
+        author their observation control keys (or legitimately none) and are
+        graded against their own goldens. An object this SAME transaction
+        buffered an insert for is exempt (read-your-own-writes: the buffered
+        insert IS the provenance; the planner coalesces or orders the pair,
+        `m-unit-work`). Callers invoke this AFTER a sparse update's
+        empty-change-set no-op return (the no-op-first ordering `m-opt-lock`
+        fixes: a no-op is dropped before any observation concern) and AFTER
+        window validation (R2: the window rejects first)."""
+        if not declaring.is_temporal:
+            return
+        key = _observation_key(record, declaring, instance)
+        if key in self._inserted_keys:
+            return
+        opt_lock.require_observed_milestone(record.name, self._uow.observation_for(key))
 
     def find(self, statement: EntityStatement) -> Snapshot[Any]:
         """Run a participating read for ``statement`` and return ``Snapshot[T]``
@@ -1990,6 +2026,17 @@ class Transaction:
 
     def _resolve_rows(self, statement: Statement) -> list[Row]:
         return self._conn.execute(self._dialect.to_driver_sql(statement.sql), list(statement.binds))
+
+
+def _observation_key(record: Entity, declaring: Entity, instance: object) -> ObjectKey:
+    """The ``(entity name, ordered pk pairs)`` observation key for a WRITTEN
+    instance — the same shape :func:`_record_observations` records under (the
+    instance's OWN entity name, never family-normalized; pk pairs by canonical
+    attribute name, in the declaring entity's primary-key order) and
+    `unit_work.object_key` computes at flush, so a verb-time license lookup
+    and the flush-time attach can never diverge."""
+    row = primary_key_row(instance)
+    return (record.name, tuple((attr.name, row[attr.name]) for attr in declaring.primary_key))
 
 
 def _record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pin: Pin) -> None:

@@ -155,6 +155,14 @@ class UnitOfWork:
         self._ensure_open()
         self._observations[key] = observation
 
+    def observation_for(self, key: ObjectKey) -> Observation | None:
+        """The transaction observation recorded for one object, if any — the
+        read side of :meth:`observe`. `Transaction`'s keyed temporal verbs
+        consult it for the `python.md` §5 prior-observation license
+        (`opt_lock.require_observed_milestone`) before buffering a close."""
+        self._ensure_open()
+        return self._observations.get(key)
+
     def read[T](self, read_fn: Callable[[], T]) -> T:
         """Serve a call-time read, force-flushing pending writes first.
 

@@ -287,10 +287,13 @@ def audit_only_terminate_closes_the_current_milestone(db: Database) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     def close(tx: Transaction) -> None:
-        # `terminate` keys off the primary key alone (D-31: no placeholder axis
-        # values, and none are needed — a terminate never observes a prior
-        # milestone to chain forward).
-        tx.terminate(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+        # Observe the current milestone FIRST (`python.md` §5: temporal
+        # update/terminate follow the same prior-observation rule as versioned
+        # writes — in the default locking mode, the find's shared lock is
+        # exactly what licenses the ungated close), then close it keyed off
+        # the primary key alone (close-only, no chained row).
+        current = tx.find(Balance.where(Balance.id == 1)).result()
+        tx.terminate(current)
 
     db.transact(insert)
     db.transact(close)

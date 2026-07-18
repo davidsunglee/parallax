@@ -74,6 +74,7 @@ __all__ = [
     "HistoricalObservationError",
     "OptimisticLockConflictError",
     "StaleWriteError",
+    "UnobservedMilestoneError",
     "UnobservedVersionError",
     "advance",
     "check_locking_license",
@@ -81,6 +82,7 @@ __all__ = [
     "gates",
     "reject_caller_authored_version",
     "require_observed",
+    "require_observed_milestone",
 ]
 
 # The derived initial version every versioned INSERT carries, ignoring any
@@ -113,6 +115,23 @@ class UnobservedVersionError(RuntimeError):
     resolving ``SELECT`` on behalf of a keyed write (`m-opt-lock` "Version values
     are framework-owned"; ADR 0013): this is a read-before-write programming
     error, raised before any DML runs, in EITHER concurrency mode.
+    """
+
+
+class UnobservedMilestoneError(RuntimeError):
+    """A keyed temporal update/terminate of a milestone this unit of work never
+    observed.
+
+    Temporal ``update``/``terminate`` (and their ``*Until`` window forms)
+    follow the SAME prior-observation rule as versioned writes (`python.md` §5):
+    the close targets — and, under optimistic mode, gates on — the milestone
+    this unit of work observed via a transaction-scoped read, and in locking
+    mode that read's shared lock is the ungated close's only protection. The
+    framework never issues an implicit resolving ``SELECT`` on behalf of a
+    keyed write: this is a read-before-write programming error, raised before
+    any DML runs, in EITHER concurrency mode. (The neutral conformance lane is
+    unaffected — a case document authors its observation control keys
+    explicitly, and its choreography is graded against its own goldens.)
     """
 
 
@@ -214,6 +233,28 @@ def require_observed(entity: str, observation: Observation | None) -> int:
             "framework never issues an implicit resolving read on behalf of a keyed write"
         )
     return observation.version
+
+
+def require_observed_milestone(entity: str, observation: Observation | None) -> None:
+    """The transaction-scoped-observation license for a keyed temporal
+    update/terminate (`python.md` §5 "Temporal `update`/`terminate` follow the
+    same prior-observation rule as versioned writes").
+
+    Raises :class:`UnobservedMilestoneError` when this unit of work never
+    observed the row's milestone via a transaction-scoped find — the temporal
+    sibling of :func:`require_observed`, enforced at the DEVELOPER verb
+    (`parallax.snapshot.handle.Transaction`'s keyed temporal writes), never at
+    the shared lowering: the neutral conformance engine legitimately lowers
+    case-authored unobserved instructions (a writeSequence row's own
+    ``observedInZ`` control key, or none), and its choreography is graded
+    against its own goldens.
+    """
+    if observation is None or observation.in_z is None:
+        raise UnobservedMilestoneError(
+            f"{entity}: a keyed temporal update/terminate requires a milestone this "
+            "unit of work already observed (a prior transaction-scoped find) — the "
+            "framework never issues an implicit resolving read on behalf of a keyed write"
+        )
 
 
 def advance(observed: int) -> int:
