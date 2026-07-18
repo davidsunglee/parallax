@@ -464,64 +464,30 @@ def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
     compare_rows(observed, expected)
 
 
-def test_customer_nested_eq_city_selects_matching_owners(provisioner: Any) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-value-object-001"]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
-    db = connect(provisioner.port, meta)
-    snapshot = story.run(db)
-    _assert_customer_predicate_rows(story.case_id, snapshot)
-    assert snapshot.execution.round_trips == 1
-
-
-def test_customer_deep_nested_eq_country_selects_the_matching_owner(provisioner: Any) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-value-object-002"]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
-    db = connect(provisioner.port, meta)
-    snapshot = story.run(db)
-    _assert_customer_predicate_rows(story.case_id, snapshot)
-    assert snapshot.execution.round_trips == 1
-
-
-def test_customer_nested_is_null_collapses_every_not_present_state(provisioner: Any) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-value-object-007"]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
-    db = connect(provisioner.port, meta)
-    snapshot = story.run(db)
-    _assert_customer_predicate_rows(story.case_id, snapshot)
-    assert snapshot.execution.round_trips == 1
-
-
-def test_customer_to_many_nested_exists_is_a_nonempty_test(provisioner: Any) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-value-object-015"]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
-    db = connect(provisioner.port, meta)
-    snapshot = story.run(db)
-    _assert_customer_predicate_rows(story.case_id, snapshot)
-    assert snapshot.execution.round_trips == 1
-
-
-def test_customer_to_many_nested_not_exists_folds_every_not_present_state(provisioner: Any) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-value-object-016"]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
-    db = connect(provisioner.port, meta)
-    snapshot = story.run(db)
-    _assert_customer_predicate_rows(story.case_id, snapshot)
-    assert snapshot.execution.round_trips == 1
-
-
-def test_customer_to_many_any_element_eq_matches_some_element(provisioner: Any) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-value-object-017"]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
-    db = connect(provisioner.port, meta)
-    snapshot = story.run(db)
-    _assert_customer_predicate_rows(story.case_id, snapshot)
-    assert snapshot.execution.round_trips == 1
-
-
-def test_customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
-    provisioner: Any,
+# The seven Customer nested-predicate stories share ONE execution shape
+# (reset, run, `then.rows`, one round trip), so a single parametrized runner
+# drives them — the READ-story generic-runner precedent below — with the
+# behavior each case witnesses preserved as the parameter id.
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        pytest.param("m-value-object-001", id="nested-eq-city-selects-matching-owners"),
+        pytest.param("m-value-object-002", id="deep-nested-eq-country-selects-the-matching-owner"),
+        pytest.param("m-value-object-007", id="nested-is-null-collapses-every-not-present-state"),
+        pytest.param("m-value-object-015", id="to-many-nested-exists-is-a-nonempty-test"),
+        pytest.param(
+            "m-value-object-016", id="to-many-nested-not-exists-folds-every-not-present-state"
+        ),
+        pytest.param("m-value-object-017", id="to-many-any-element-eq-matches-some-element"),
+        pytest.param(
+            "m-value-object-019", id="to-many-scoped-exists-requires-one-element-to-satisfy-both"
+        ),
+    ],
+)
+def test_customer_nested_predicate_story_selects_the_golden_owners(
+    case_id: str, provisioner: Any
 ) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-value-object-019"]
+    story = _GRAPH_STORIES_BY_ID[case_id]
     meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
@@ -529,17 +495,15 @@ def test_customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
     assert snapshot.execution.round_trips == 1
 
 
-def test_customer_owner_materializes_its_whole_nested_composite(provisioner: Any) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-value-object-023"]
-    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
-    db = connect(provisioner.port, meta)
-    snapshot = story.run(db)
-    _assert_vo_owner_graph(story.case_id, snapshot, "Customer", "id")
-    assert snapshot.execution.round_trips == 1
-
-
-def test_customer_owner_materializes_its_composite_under_a_filter(provisioner: Any) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-value-object-024"]
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        pytest.param("m-value-object-023", id="whole-nested-composite"),
+        pytest.param("m-value-object-024", id="composite-under-a-filter"),
+    ],
+)
+def test_customer_owner_materializes_its_composite(case_id: str, provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID[case_id]
     meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
