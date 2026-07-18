@@ -217,29 +217,17 @@ EXAMPLES: Final[list[Example]] = [
 # partition (see module docstring). Each reason names the COR-3 phase that brings
 # the module's developer surface online; the entry is dropped when that lands.
 #
-# The instance-native API story build-out (ledger D-23): the developer-facing
-# KEYED temporal-window verbs themselves landed (`Transaction.terminate` /
-# `.update_until` / `.terminate_until`, and an optional bitemporal
-# `business_from` on the existing `.update`) — every bucket below that cites
-# this deferral is a capability the shipped surface can now express. The
-# STORIES demonstrating them through the API Conformance Suite remain
-# unbuilt: authoring one for a temporal write needs per-story processing-
-# instant control in the `WriteStory` test harnesses
-# (`tests/api_conformance/test_write_no_drift.py`'s `_db()`,
-# `tests/api_conformance/test_story_run.py`'s `connect()` calls), which
-# default to the system clock today and have no way to pin a corpus write-
-# sequence case's own authored `at` instant(s) — an open prerequisite this
-# ledger entry's own verb landing did not itself resolve, named here rather
-# than left an unexplained absence.
-_STORY_BUILD_OUT_DEFERRAL: Final[str] = (
-    "no idiomatic TYPED-verb example exists yet: the underlying verb landed (ledger "
-    "D-23), but the story demonstrating it does not — building one needs per-story "
-    "processing-instant control in the `WriteStory` test harnesses (`test_write_no_"
-    "drift.py` / `test_story_run.py`), which default to the system clock and cannot "
-    "pin a corpus case's own authored instant(s); an open prerequisite, not a dated "
-    "promise"
-)
-
+# The per-story clock control gap this registry's own reasons used to cite is
+# CLOSED (D-29, COR-3 Phase 8 increment 7 completion round):
+# `WriteStory.clock` is now a zero-argument Clock factory
+# (`parallax.conformance.scripted_clock.ScriptedClock`), so a temporal
+# writeSequence story can drive successive distinct processing instants
+# through the public verbs. Every module bucket below that used to cite the
+# now-closed clock-control gap instead names its OWN remaining, genuine
+# blocker for the cases still unexercised (a two-session conflict shape with
+# no single-callback spelling, a materializing predicate-write scenario not
+# yet authored, or a breadth item deprioritized behind this round's flagship
+# witnesses) — never a stale, already-resolved prerequisite.
 SKIP_REASONS: Final[dict[str, str]] = {
     "m-core": (
         "m-core neutral-type behaviour has no standalone developer surface; it is "
@@ -259,70 +247,98 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "class-frontend axis declaration landed in M4); the remaining temporal-read cases "
         "— including the optimistic-lock temporal-close conflict/retry witnesses "
         "(`m-temporal-read-009`..`-012`: gated success, stale-`in_z` conflict, the "
-        "`when.attempts` 0-then-1 retry, and the locking-mode non-retriable stale close, "
-        "COR-3 Phase 8 increment 4) — are graded end-to-end by the compile/run "
-        f"conformance lanes now; {_STORY_BUILD_OUT_DEFERRAL}"
+        "`when.attempts` 0-then-1 retry, and the locking-mode non-retriable stale close) "
+        "— are graded end-to-end by the D-17 case-driven boundary runner "
+        "(`tests/api_conformance/test_boundary_run.py`, driving the REAL db.transact "
+        "against the provisioned database through a fault-injecting port decorator): a "
+        "gated-retry/conflict choreography has no single-callback idiomatic spelling "
+        "distinct from what the boundary runner already exercises directly"
     ),
     "m-db-error": (
         "the m-db-error corpus cases are graded end-to-end by the M4 run lanes — the "
         "single-connection triggers by the error run sweep, the two-connection "
-        "choreography by the provider deadlock proof; the neutral DatabaseError surface "
-        "the developer sees is exercised through the transact abort/retry unit tests"
+        "choreography by the case-driven concurrency rounds runner "
+        "(`parallax.conformance.concurrency_runner`, COR-3 Phase 8 increment 7 "
+        "completion round, D-28); the neutral DatabaseError surface the developer sees "
+        "is exercised through the transact abort/retry unit tests"
     ),
     "m-pk-gen": (
         "write-side id allocation (`max`/`sequence`) is graded end-to-end by the "
-        "compile/run conformance lanes now (COR-3 Phase 8 increment 3) — "
-        f"{_STORY_BUILD_OUT_DEFERRAL}. `m-pk-gen-014` (a "
-        "temporal pk-generated insert) landed in increment 4 and has its own "
-        "case-scoped entry below (`_PK_GEN_TEMPORAL_INSERT_REASON`)"
+        "compile/run conformance lanes; no idiomatic story was authored this round — a "
+        "pk-generated column (`pkGenerator: max`/`sequence`) needs the SAME "
+        "construction-optionality treatment axis-governed columns received this round "
+        "(D-31: a caller cannot honestly construct a fresh instance naming a "
+        "server-computed id), which this round scoped to axis columns only "
+        "(`m-pk-gen-014`'s own case-scoped entry below names the same blocker) — a "
+        "breadth item for a future round"
     ),
     "m-auto-retry": (
         "the bounded retry loop is implemented (parallax.core.auto_retry) and proven "
         "by fake-port unit tests of db.transact (test_transact), including the "
-        "optimistic-lock opt-in classification (COR-3 Phase 8 increment 6); the five "
-        "boundary-shape cases (transient retry with the opt-in unset/set, the opt-in "
-        "inert in locking mode, `retries: 0` disabling the loop, and bound exhaustion) "
-        "are now graded end-to-end by the D-17 case-driven boundary runner "
-        "(`tests/api_conformance/test_boundary_run.py`, driving the REAL db.transact "
-        "against the provisioned database through a fault-injecting port decorator); "
-        f"{_STORY_BUILD_OUT_DEFERRAL}"
+        "optimistic-lock opt-in classification; the five boundary-shape cases (transient "
+        "retry with the opt-in unset/set, the opt-in inert in locking mode, `retries: 0` "
+        "disabling the loop, and bound exhaustion) are graded end-to-end by the D-17 "
+        "case-driven boundary runner (`tests/api_conformance/test_boundary_run.py`, "
+        "driving the REAL db.transact against the provisioned database through a "
+        "fault-injecting port decorator): a retry/backoff choreography has no "
+        "single-callback idiomatic developer spelling distinct from what the boundary "
+        "runner already exercises directly"
     ),
     "m-opt-lock": (
         "the predicate-selected / materializing write forms (the readless "
         "unversioned/non-temporal exception, and the versioned materialize-then-lower "
-        "family) landed in COR-3 Phase 8 increment 5 — graded end-to-end by the "
-        "compile/run conformance lanes now (the readless forms) or the run lane alone "
-        f"(the materializing ones, query-result-dependent); {_STORY_BUILD_OUT_DEFERRAL}. "
-        "The non-temporal keyed gate/advance/"
-        "conflict forms landed in increment 3; the auto-retry conflict-lane witness "
-        "(`-009`), the D-17 boundary runner's conflict-opt-in pair (`-010`/`-011`), and "
-        "the interleaved two-session race (`-012`, over the increment 6 `peer` seam) "
-        "each landed in increment 6 — every one its own case-scoped entry below"
+        "family) are graded end-to-end by the compile/run conformance lanes (the "
+        "readless forms) or the run lane alone (the materializing ones, "
+        "query-result-dependent). The versioned keyed LOCKING-mode advance now has an "
+        "idiomatic story (`m-opt-lock-002`, COR-3 Phase 8 increment 7 completion round); "
+        "the OPTIMISTIC-mode gate/conflict/multi-attribute forms (`-005`/`-006`/`-007`/"
+        "`-013`) were not authored as idiomatic stories this round — a breadth item "
+        "deprioritized behind the temporal write-family/stale-web-edit build-out. The "
+        "auto-retry conflict-lane witness (`-009`), the D-17 boundary runner's "
+        "conflict-opt-in pair (`-010`/`-011`), and the interleaved two-session race "
+        "(`-012`, over the `peer` seam) each have their own case-scoped entry below"
     ),
     "m-audit-write": (
         "the milestone-chaining write forms (insert / close-and-chain update / "
-        "terminate, plus the TPH/TPCS and value-object compositions) landed in COR-3 "
-        "Phase 8 increment 4 — graded end-to-end by the compile/run conformance lanes "
-        f"now; {_STORY_BUILD_OUT_DEFERRAL}. "
-        "The materializing predicate-write scenarios (`m-audit-write-007`/`-009`) "
-        "landed in increment 5 — run-lane covered (query-result-dependent), same "
-        "deferral"
+        "terminate, plus the TPH/TPCS and value-object compositions) are graded "
+        "end-to-end by the compile/run conformance lanes. Idiomatic stories now exist "
+        "for the insert / terminate / close-and-chain-update family "
+        "(`m-audit-write-001`..`-005`, COR-3 Phase 8 increment 7 completion round: the "
+        "per-story scripted clock, D-29, plus the D-30 observed-payload merge fix, made "
+        "a genuine multi-instant milestone chain over the public verbs possible for the "
+        "first time). The optimistic-gated close (`-006`, a `conflict`-shape case "
+        "forcing a stale observed `in_z` — no natural single-session spelling, the SAME "
+        "posture as the `m-opt-lock` conflict-shape cases) and the materializing "
+        "predicate-write scenarios (`-007`/`-009`) were not authored as idiomatic "
+        "stories this round — graded end-to-end by the compile/run conformance lanes "
+        "(`-006`) or the run lane alone (`-007`/`-009`, query-result-dependent) meanwhile"
     ),
     "m-bitemp-write": (
-        "the rectangle-split write forms (insert / updateUntil / terminateUntil / "
-        "plain update / plain terminate, the optimistic business-discriminator gate, "
-        "and the TPH/TPCS compositions) landed in COR-3 Phase 8 increment 4 — graded "
-        f"end-to-end by the compile/run conformance lanes now; {_STORY_BUILD_OUT_DEFERRAL}. "
-        "The materializing predicate-write "
-        "scenarios (`m-bitemp-write-010`..`-013`) landed in increment 5 — run-lane "
-        "covered (query-result-dependent), same deferral"
+        "the rectangle-split write forms (insert / updateUntil / terminateUntil / plain "
+        "update / plain terminate, the optimistic business-discriminator gate, and the "
+        "TPH/TPCS compositions) are graded end-to-end by the compile/run conformance "
+        "lanes. Idiomatic stories now exist for the flagship insert / updateUntil "
+        "rectangle split (`-001`), `insertUntil` (`-003`), the plain-update two-way "
+        "degenerate (`-006`), and the plain insert (`-009`) (COR-3 Phase 8 increment 7 "
+        "completion round, D-29/D-30/D-31). The remaining rectangle-split/terminate/"
+        "plain-terminate compositions (`-002`/`-007`), the optimistic-gate conflict "
+        "shapes (`-004`/`-005`/`-008`, the SAME `conflict`-shape posture as `m-opt-lock`), "
+        "and the materializing predicate-write scenarios (`-010`..`-013`) were not "
+        "authored as idiomatic stories this round — a breadth item deprioritized behind "
+        "the Customer/Location/Depot mirror family and the stale-web-edit recipe; graded "
+        "end-to-end by the compile/run conformance lanes (or the run lane alone for the "
+        "materializing ones, query-result-dependent) meanwhile"
     ),
     "m-batch-write": (
         "the set-based collapse / readless / materialize forms (multi-row INSERT "
         "collapse, batched UPDATE, IN-list DELETE, readless predicate update/delete, "
-        "and the versioned materialize-then-lower family) landed in COR-3 Phase 8 "
-        f"increment 5 — graded end-to-end by the compile/run conformance lanes now; "
-        f"{_STORY_BUILD_OUT_DEFERRAL}"
+        "and the versioned materialize-then-lower family) are graded end-to-end by the "
+        "compile/run conformance lanes. The readless predicate delete now has an "
+        "idiomatic story (`m-batch-write-005`, COR-3 Phase 8 increment 7 completion "
+        "round); the remaining set-based collapse / readless-update / versioned-"
+        "materialize forms (`-001`/`-002`/`-003`/`-006`) were not authored as idiomatic "
+        "stories this round — a breadth item deprioritized behind the temporal "
+        "write-family build-out"
     ),
 }
 
@@ -334,9 +350,10 @@ SKIP_REASONS: Final[dict[str, str]] = {
 _COALESCING_WITNESS_REASON: Final[str] = (
     "a same-transaction coalescing witness: it buffers an insert+update / insert+delete "
     "pair whose one-statement / zero-statement collapse is m-batch-write behavior — the "
-    "planner folding is unit-pinned (test_write_lowering) and, since COR-3 Phase 8 "
-    "increment 5, graded end-to-end by the compile/run conformance lanes too; "
-    f"{_STORY_BUILD_OUT_DEFERRAL}"
+    "planner folding is unit-pinned (test_write_lowering) and graded end-to-end by the "
+    "compile/run conformance lanes too; no idiomatic story was authored for this exact "
+    "same-transaction coalescing shape, a breadth item behind the m-batch-write bucket's "
+    "own reason above"
 )
 
 # --------------------------------------------------------------------------- #
@@ -430,35 +447,38 @@ _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
 # remaining TEMPORAL inheritance-family refusal too (an audit/bitemporal
 # close or chain over a table-per-hierarchy or table-per-concrete-subtype
 # family) — both groups are now graded end-to-end by the compile/run
-# conformance lanes, and share the SAME instance-native-story deferral.
+# conformance lanes; neither has an idiomatic instance-native story yet.
 _INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
     "a TEMPORAL inheritance-family write (an audit/bitemporal milestone close or chain "
     "over a table-per-hierarchy or table-per-concrete-subtype family): graded "
-    "end-to-end by the compile/run conformance lanes now (COR-3 Phase 8 increment 4) — "
-    f"{_STORY_BUILD_OUT_DEFERRAL}, the "
-    "SAME deferral the non-temporal inheritance-family write forms carry "
-    "(`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`, landed in increment 3)"
+    "end-to-end by the compile/run conformance lanes; no idiomatic story was authored "
+    "for an inheritance-family temporal write — a breadth item behind the plain-entity "
+    "temporal write-family build-out (the SAME posture the non-temporal inheritance-"
+    "family write forms carry, `_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
 )
 # The 11 NON-temporal inheritance-family keyed writes COR-3 Phase 8 increment 3
 # landed (TPH/TPCS insert/update/delete, the deep-chain and sibling-branch
 # create witnesses, and the opt-lock composition pair): graded end-to-end by
-# the compile/run conformance lanes now; the instance-native story build-out
-# remains open (see `_STORY_BUILD_OUT_DEFERRAL`).
+# the compile/run conformance lanes now; no idiomatic instance-native story
+# exists for this family yet.
 _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal inheritance-family keyed write (table-per-hierarchy or table-per-"
     "concrete-subtype insert/update/delete, including the opt-lock composition pair): "
-    "graded end-to-end by the compile/run conformance lanes now (COR-3 Phase 8 "
-    f"increment 3) — {_STORY_BUILD_OUT_DEFERRAL}"
+    "graded end-to-end by the compile/run conformance lanes; no idiomatic story was "
+    "authored for an inheritance-family write — a breadth item behind the plain-entity "
+    "write-family build-out"
 )
 # The non-temporal `m-opt-lock` keyed write family COR-3 Phase 8 increment 3
 # landed (the conflict-shape gate/success/retry witnesses, the versioned
 # locking-mode advance, and the versioned batched-delete materialize-per-key
-# witness): graded end-to-end by the compile/run conformance lanes now, same
-# deferral shape as the inheritance write family just above.
+# witness): graded end-to-end by the compile/run conformance lanes now.
 _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal optimistic-lock keyed write (the version gate/advance/conflict, or "
     "a versioned batched delete's per-key materialize): graded end-to-end by the "
-    f"compile/run conformance lanes now (COR-3 Phase 8 increment 3) — {_STORY_BUILD_OUT_DEFERRAL}"
+    "compile/run conformance lanes; no idiomatic story was authored for this exact "
+    "optimistic-mode conflict/advance shape — a breadth item behind the flagship "
+    "temporal write-family build-out (the locking-mode advance sibling is now "
+    "exercised, `m-opt-lock-002`)"
 )
 # The auto-retry optimistic-conflict opt-in's OWN conflict-lane witness (COR-3
 # Phase 8 increment 6, `m-opt-lock` "Retry contract"): `retryOptimisticConflicts:
@@ -469,10 +489,12 @@ _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
 _OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON: Final[str] = (
     "the auto-retry optimistic-conflict opt-in's own conflict-lane witness "
     "(`retryOptimisticConflicts: true` over a two-attempt, 0-then-1 `when.attempts` "
-    "choreography) lands in COR-3 Phase 8 increment 6 — graded end-to-end by the run "
-    "lane now (the SAME caller-visible `when.attempts` choreography `m-opt-lock-007` "
-    "already exercises; the runtime auto-retry loop itself is `m-opt-lock-011`'s own "
-    f"boundary witness); {_STORY_BUILD_OUT_DEFERRAL}"
+    "choreography) is graded end-to-end by the run lane (the SAME caller-visible "
+    "`when.attempts` choreography `m-opt-lock-007` already exercises; the runtime "
+    "auto-retry loop itself is `m-opt-lock-011`'s own boundary witness); no idiomatic "
+    "story was authored for this opt-in choreography — a retry/backoff choreography "
+    "has no single-callback idiomatic developer spelling distinct from what the run "
+    "lane already exercises directly"
 )
 # The auto-retry optimistic-conflict opt-in's OWN boundary pair (COR-3 Phase 8
 # increment 6, D-17): the conflict surfacing after one attempt without the
@@ -481,11 +503,12 @@ _OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON: Final[str] = (
 _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
     "the auto-retry optimistic-conflict opt-in's own boundary witness (the conflict "
     "surfacing after one attempt without the opt-in, or auto-retried to success with "
-    "it) lands in COR-3 Phase 8 increment 6 — graded end-to-end by the D-17 "
-    "case-driven boundary runner (`tests/api_conformance/test_boundary_run.py`) "
-    "against the real, provisioned database now (the boundary runner's own generic "
-    "action mapping is deliberately not itself an idiomatic developer surface, D-17); "
-    f"{_STORY_BUILD_OUT_DEFERRAL}"
+    "it) is graded end-to-end by the D-17 case-driven boundary runner "
+    "(`tests/api_conformance/test_boundary_run.py`) against the real, provisioned "
+    "database (the boundary runner's own generic action mapping is deliberately not "
+    "itself an idiomatic developer surface, D-17); a retry/backoff choreography has no "
+    "single-callback idiomatic developer spelling distinct from what the boundary "
+    "runner already exercises directly"
 )
 # The interleaved two-session optimistic-lock race (COR-3 Phase 8 increment 6,
 # `m-opt-lock-012`, `m-case-format` uow grouping): two concurrently-held
@@ -541,10 +564,10 @@ _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
 # story.
 _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
     "a `sequence`-strategy primary-key allocation on a TEMPORAL entity (a non-temporal "
-    "registry UPDATE composed with an audit-only INSERT in one writeSequence): pk-gen's "
-    "non-temporal insert forms landed in COR-3 Phase 8 increment 3 (the module-bucket "
-    "reason above), and this temporal composition landed in increment 4 — graded "
-    f"end-to-end by the compile/run conformance lanes now; {_STORY_BUILD_OUT_DEFERRAL}"
+    "registry UPDATE composed with an audit-only INSERT in one writeSequence): this "
+    "temporal composition landed in increment 4 — graded end-to-end by the compile/run "
+    "conformance lanes; no idiomatic story exists — the SAME pk-generated-column "
+    "construction-optionality blocker the `m-pk-gen` module-bucket reason above names"
 )
 ####################################################################################
 # Subtype-write payload-shape rejects (COR-3 Phase 8 increment 2, `validate_write`  #
@@ -719,13 +742,6 @@ _CUSTOMER_UNREACHABLE_REASON: Final[str] = (
     "build-out (Part D item 4)"
 )
 
-_VO_TEMPORAL_WRITE_PHASE8_REASON: Final[str] = (
-    "an audit-write / bitemp-write temporal write over a value-object-bearing entity "
-    "(the document rides every chained/split row whole, at its columnOrder slot, "
-    "absent from every close): graded end-to-end by the compile/run conformance lanes "
-    f"now (COR-3 Phase 8 increment 4) — {_STORY_BUILD_OUT_DEFERRAL}, matching this "
-    "registry's own m-audit-write/m-bitemp-write bucket reason"
-)
 
 # Value-object STRUCTURE rejects: each empirically confirmed (a REPL probe
 # against the shipped surface) to have NO idiomatic spelling that reaches
@@ -783,34 +799,32 @@ _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
 # Phase-8 concern already named by an existing module bucket above.
 _VO_BATCH_WRITE_REASON: Final[str] = (
     "a multi-row (batched) insert, each row's whole value-object document binding "
-    "atomically in columnOrder position — the set-based flush collapse landed in "
-    "COR-3 Phase 8 increment 5 (m-batch-write) and is graded end-to-end by the "
-    "compile/run conformance lanes now, matching this registry's own m-batch-write "
-    f"bucket reason; {_STORY_BUILD_OUT_DEFERRAL}"
+    "atomically in columnOrder position — the set-based flush collapse is graded "
+    "end-to-end by the compile/run conformance lanes, matching this registry's own "
+    "m-batch-write bucket reason; no idiomatic story was authored for this VO-bearing "
+    "batched shape"
 )
 _VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
     "a versioned write under an optimistic-lock gate over a value-object-bearing "
-    "entity: the m-opt-lock keyed-write machinery landed in COR-3 Phase 8 increment 3, "
-    "and this case joins the exercised conflict set in increment 4 (already "
-    "tag-reachable) — graded end-to-end by the compile/run conformance lanes now; "
-    f"{_STORY_BUILD_OUT_DEFERRAL}, matching this registry's own m-opt-lock bucket reason"
+    "entity: the m-opt-lock keyed-write machinery is graded end-to-end by the "
+    "compile/run conformance lanes; no idiomatic story was authored for this VO-bearing "
+    "optimistic-conflict shape, matching this registry's own m-opt-lock bucket reason"
 )
 _VO_SCENARIO_COMBO_REASON: Final[str] = (
     "a scenario combining a managed (instance-form) find, a MATERIALIZING "
     "predicate-write resolving read (row-form, the VO document omitted — the "
     "result-form contrast this case pins), and an audit-write terminate under an "
-    "optimistic-lock gate: the materializing predicate-write machinery landed in "
-    "COR-3 Phase 8 increment 5 (m-audit-write / m-opt-lock / m-batch-write's "
-    "readless/materialize split) and is run-lane covered now (query-result-dependent, "
-    f"`compileEligibility: run-only`); {_STORY_BUILD_OUT_DEFERRAL}"
+    "optimistic-lock gate: the materializing predicate-write machinery (m-audit-write / "
+    "m-opt-lock / m-batch-write's readless/materialize split) is run-lane covered "
+    "(query-result-dependent, `compileEligibility: run-only`); no idiomatic story was "
+    "authored for this multi-capability combination scenario"
 )
 
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
-    # (COR-3 Phase 8 increment 3; instance-native examples remain undelivered) - #
-    "m-opt-lock-002": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    # (the locking-mode advance is now its own idiomatic story, m-opt-lock-002) #
     "m-opt-lock-005": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     "m-opt-lock-006": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     "m-opt-lock-007": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
@@ -948,10 +962,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-025": _CUSTOMER_UNREACHABLE_REASON,
     "m-value-object-026": _CUSTOMER_UNREACHABLE_REASON,
     "m-value-object-027": _CUSTOMER_UNREACHABLE_REASON,
-    # -- m-value-object: Supplier/Branch temporal VO writes (D-23, pending the #
-    # typed temporal window verb `-033` needs) ------------------------------ #
-    "m-value-object-032": _VO_TEMPORAL_WRITE_PHASE8_REASON,
-    "m-value-object-033": _VO_TEMPORAL_WRITE_PHASE8_REASON,
     # -- m-value-object: structural rejects (no idiomatic spelling exists) --- #
     "m-value-object-034": _VO_UNKNOWN_NESTED_FIELD_REASON,
     "m-value-object-035": _VO_DEEPFETCH_SEGMENT_REASON,
