@@ -1072,6 +1072,226 @@ def test_terminate_connection_escalates_through_every_rung_when_all_fail() -> No
     )
 
 
+class _CapabilityLessConnection:
+    """A connection exposing NONE of `_TERMINATION_RUNGS`' three rungs — no
+    `close()`, no underlying `connection` attribute (so rung two's own
+    reach target is unreachable too), and no `fileno()` anywhere — round
+    4's own refusal shape (the corrected contract on the interleaved-uow
+    join-timeout residual): the pre-start capability validator must name
+    and refuse a connection like this BEFORE either worker thread starts,
+    never let it surface only later as the indefinite join hang the
+    reviewer reproduced. `execute_calls` is this pin's own observable for
+    "no thread ever started": a defect here refuses before either worker
+    is even constructed, so nothing ever calls it."""
+
+    def __init__(self) -> None:
+        self.execute_calls = 0
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:  # pragma: no cover
+        self.execute_calls += 1
+        return []
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        self.execute_calls += 1
+        return 1
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+
+@pytest.mark.parametrize(
+    "main_defective, peer_defective, expected_labels",
+    [
+        (True, False, ("main connection",)),
+        (False, True, ("peer connection",)),
+        (True, True, ("main connection", "peer connection")),
+    ],
+)
+def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_capability_less(
+    main_defective: bool, peer_defective: bool, expected_labels: tuple[str, ...]
+) -> None:
+    # Round 4's own refusal pin (the corrected contract on the
+    # interleaved-uow join-timeout residual): a capability-less connection
+    # — no `close()`, no underlying transport, no `fileno()` — must be
+    # refused loudly BEFORE either worker thread starts, all defects
+    # reported at once rather than first-failure-only. Covers both
+    # positions individually and together (main only / peer only / both).
+    case = _load_case("m-opt-lock-012")
+    healthy_row: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    main_connection: _CapabilityLessConnection | _ScriptedPort = (
+        _CapabilityLessConnection() if main_defective else _ScriptedPort(read_rows=[[healthy_row]])
+    )
+    peer_connection: _CapabilityLessConnection | _ScriptedPort = (
+        _CapabilityLessConnection() if peer_defective else _ScriptedPort(read_rows=[[healthy_row]])
+    )
+
+    with pytest.raises(engine.EngineError, match="refuses to start") as exc_info:
+        engine.run_interleaved_scenario_case(
+            case, "postgres", cast("Any", main_connection), lambda: cast("Any", peer_connection)
+        )
+
+    message = str(exc_info.value)
+    for label in expected_labels:
+        assert label in message
+
+    # No worker thread ever started: a capability-less connection's own
+    # `execute` was never called, and a HEALTHY counterpart (`_ScriptedPort`)
+    # never executed anything either — the refusal happens strictly before
+    # either thread is even constructed.
+    for connection in (main_connection, peer_connection):
+        if isinstance(connection, _CapabilityLessConnection):
+            assert connection.execute_calls == 0
+        else:
+            assert connection.reads == []
+            # A healthy peer opened via `peer_factory` is still cleaned up
+            # on refusal even though nothing ran; a healthy MAIN connection
+            # is the caller's own port and is left untouched either way.
+            if connection is peer_connection:
+                assert connection.closed
+
+
+class _RungOneOnlyConnection:
+    """Exposes ONLY the termination ladder's rung-one capability: a
+    callable `close()` on the connection itself, nothing else (no
+    underlying `connection` attribute at all) — round 4's own no-drift
+    pin, pinning that the shape rung one of `_TERMINATION_RUNGS` describes
+    is exactly what both the pre-start validator accepts and the ladder
+    itself (`_terminate_connection`) can act on."""
+
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+class _RungTwoOnlyConnection:
+    """Exposes NO outer `close()` at all, only an underlying `connection`
+    seam whose OWN `close()` is callable — round 4's own no-drift pin for
+    rung two, mirroring `PostgresAdapter.connection`'s own escalation
+    seam."""
+
+    class _Underlying:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    def __init__(self) -> None:
+        self.connection = self._Underlying()
+
+
+class _RungThreeOnlyConnection:
+    """Exposes NO outer `close()`, and an underlying `connection` seam
+    with NEITHER a `close()` NOR anything but a callable `fileno()` —
+    round 4's own no-drift pin for rung three, the OS-socket-only shape.
+    Structural only: real OS-level socket teardown
+    (`_terminate_underlying_socket`) is real-transport-only and exercised
+    solely by the Docker lane, mirroring that function's own documented
+    scope."""
+
+    class _Underlying:
+        def fileno(self) -> int:  # pragma: no cover - structural probe, never invoked
+            raise NotImplementedError
+
+    def __init__(self) -> None:
+        self.connection = self._Underlying()
+
+
+class _CancelOnlyConnection:
+    """Exposes ONLY `cancel()` — `_cancel_in_flight_work`'s own
+    best-effort rung, never one of `_TERMINATION_RUNGS` — round 4's own
+    no-drift pin in the OTHER direction: a capability the validator must
+    NOT mistake for a termination rung the GUARANTEED ladder can act on."""
+
+    def cancel(self) -> None:  # pragma: no cover - structural probe, never invoked
+        pass
+
+
+def test_termination_rungs_are_pinned_to_the_three_documented_escalation_shapes() -> None:
+    # `_TERMINATION_RUNGS` is round 4's own single-sourcing seam: both the
+    # pre-start validator and the termination ladder derive from this SAME
+    # tuple. Pinning its own shape here catches a future rung added to one
+    # without the other.
+    rungs = engine._TERMINATION_RUNGS  # pyright: ignore[reportPrivateUsage]
+    assert [(rung.label, rung.capability) for rung in rungs] == [
+        ("connection", "close"),
+        ("underlying connection", "close"),
+        ("underlying connection (OS-level socket)", "fileno"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "connection",
+    [_RungOneOnlyConnection(), _RungTwoOnlyConnection(), _RungThreeOnlyConnection()],
+)
+def test_validate_termination_capability_accepts_exactly_the_ladder_rung_shapes(
+    connection: object,
+) -> None:
+    # No-drift pin: each minimal shape here exposes EXACTLY one
+    # `_TERMINATION_RUNGS` rung and nothing more — the validator must
+    # accept every one of them ("a rung the ladder would try is a rung the
+    # validator accepts").
+    assert (
+        engine._validate_termination_capability(  # pyright: ignore[reportPrivateUsage]
+            connection, "main connection"
+        )
+        == []
+    )
+
+
+def test_validate_termination_capability_rejects_a_cancel_only_shape() -> None:
+    # No-drift pin in the other direction: `cancel()` is never a rung of
+    # `_TERMINATION_RUNGS`, so a connection offering only it must still be
+    # refused — the validator's "accept" boundary is exactly the ladder's
+    # own rungs, no wider.
+    defects = engine._validate_termination_capability(  # pyright: ignore[reportPrivateUsage]
+        _CancelOnlyConnection(), "main connection"
+    )
+    assert len(defects) == 1
+    assert "main connection" in defects[0]
+
+
+def test_terminate_connection_succeeds_on_the_rung_one_only_shape_the_validator_accepts() -> None:
+    # The other half of "no drift": a shape the validator accepts must be a
+    # shape the ladder can actually act on. Rung one (outer `close()`).
+    connection = _RungOneOnlyConnection()
+    assert (
+        engine._validate_termination_capability(  # pyright: ignore[reportPrivateUsage]
+            connection, "main connection"
+        )
+        == []
+    )
+    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
+        connection, "main connection"
+    )
+    assert failures == []
+    assert connection.close_calls == 1
+
+
+def test_terminate_connection_succeeds_on_the_rung_two_only_shape_the_validator_accepts() -> None:
+    # Rung two (the underlying `connection` seam's own `close()`). The
+    # ladder still RECORDS rung one's own miss (no outer `close()`) as
+    # trail context even though rung two succeeds and actually terminates
+    # the connection — `_terminate_connection`'s own documented contract
+    # ("every miss and every raise is RECORDED", never a bare success/
+    # failure flag) — so what proves the ladder ACTED on this shape is the
+    # underlying seam's own `close()` firing, not an empty trail.
+    connection = _RungTwoOnlyConnection()
+    assert (
+        engine._validate_termination_capability(  # pyright: ignore[reportPrivateUsage]
+            connection, "main connection"
+        )
+        == []
+    )
+    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage]
+        connection, "main connection"
+    )
+    assert failures == ["main connection: connection exposes no close() capability"]
+    assert connection.connection.close_calls == 1
+
+
 def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:
     # A `uow` group of find-only steps (never reachable via the current corpus
     # — every group this round has a write) has no write entry to derive an

@@ -2128,6 +2128,136 @@ def _run_interleaved_group(
 _INTERLEAVED_GROUP_JOIN_TIMEOUT: Final[float] = 30.0
 
 
+def _underlying_connection(connection: object) -> object | None:
+    """The termination ladder's rung-two/rung-three shared reach target: the
+    duck-typed underlying transport (mirroring
+    :attr:`~parallax.postgres.PostgresAdapter.connection`, the wrapped
+    psycopg ``Connection``), or ``None`` when ``connection`` exposes no such
+    escalation seam at all. Round 4's own single-sourcing seam: both
+    :data:`_TERMINATION_RUNGS` (consulted by the pre-start validator,
+    :func:`_validate_termination_capability`) and :func:`_terminate_connection`
+    (the ladder itself) reach the underlying transport through this SAME
+    function, so the two can never observe a different "underlying
+    connection" for the same ``connection``."""
+    return getattr(connection, "connection", None)
+
+
+@dataclass(frozen=True, slots=True)
+class _TerminationRung:
+    """One escalation rung of the termination ladder
+    (:func:`_terminate_connection`), reduced to its purely STRUCTURAL shape
+    (round 4, the corrected contract on the interleaved-uow join-timeout
+    residual): the target object this rung inspects (``reach``, applied to
+    the connection under test) and the ONE callable attribute name
+    (``capability``) that rung relies on. The pre-start capability validator
+    (:func:`_validate_termination_capability`) and the ladder itself
+    (:func:`_terminate_connection` / :func:`_terminate_underlying_socket`)
+    both walk :data:`_TERMINATION_RUNGS` — the SAME tuple — to decide
+    whether a rung is reachable, so a rung the ladder would attempt is, by
+    construction, a rung the validator accepts, and vice versa; neither
+    duplicates the other's reach/capability logic."""
+
+    label: str
+    reach: Callable[[object], object | None]
+    capability: str
+
+
+# The termination ladder's own rung definitions (round 4's single source of
+# truth): rung one is `connection` itself; rungs two and three both reach the
+# SAME underlying transport (`_underlying_connection`) but probe a DIFFERENT
+# capability on it — `close()` for the driver-level rung, `fileno()` for the
+# real-transport-only OS-socket rung `_terminate_underlying_socket` performs.
+# `_terminate_connection` (which ACTS on a rung once reached) and
+# `_validate_termination_capability` (which only INSPECTS whether a rung is
+# reachable, before either worker thread starts) both derive from this ONE
+# tuple, so they cannot drift apart.
+_TERMINATION_RUNGS: Final[tuple[_TerminationRung, ...]] = (
+    _TerminationRung(label="connection", reach=lambda c: c, capability="close"),
+    _TerminationRung(
+        label="underlying connection", reach=_underlying_connection, capability="close"
+    ),
+    _TerminationRung(
+        label="underlying connection (OS-level socket)",
+        reach=_underlying_connection,
+        capability="fileno",
+    ),
+)
+
+
+def _termination_rung_reachable(connection: object, rung: _TerminationRung) -> bool:
+    """Whether ``rung`` is STRUCTURALLY reachable on ``connection`` — its own
+    ``reach`` target exists and exposes ``rung.capability`` as a CALLABLE
+    attribute. Inspection only (this never invokes anything it inspects),
+    which is exactly what the ladder itself effectively tests
+    (``callable(close)`` / ``callable(fileno)``) immediately before
+    attempting a rung — so this predicate and the ladder's own behavior can
+    never disagree about which rungs a connection offers."""
+    target = rung.reach(connection)
+    return target is not None and callable(getattr(target, rung.capability, None))
+
+
+def _validate_termination_capability(connection: object, label: str) -> list[str]:
+    """Round 4's own pre-start refusal check (the corrected contract on the
+    interleaved-uow join-timeout residual): ``connection`` is usable by
+    :func:`_terminate_connection`'s own GUARANTEED ladder when AT LEAST ONE
+    of :data:`_TERMINATION_RUNGS` is reachable
+    (:func:`_termination_rung_reachable`) — the SAME rungs the ladder itself
+    walks, so a defect this function misses is, by construction, a rung the
+    ladder could not have reached either (the no-drift invariant this round
+    exists to guarantee).
+
+    STRUCTURAL only, never behavioral: this inspects for a callable
+    capability, it never CALLS ``close()``, ``cancel()``, or ``fileno()`` —
+    validating a connection never terminates, mutates, or probe-connects it.
+
+    Returns every defect found (empty when ``connection`` validates) rather
+    than raising itself — the caller
+    (:func:`_require_interleaved_termination_capability`) combines BOTH
+    connections' own defects into one loud refusal rather than stopping at
+    the first one."""
+    if any(_termination_rung_reachable(connection, rung) for rung in _TERMINATION_RUNGS):
+        return []
+    return [
+        f"{label} exposes no termination capability the join-timeout ladder could ever "
+        "reach: no callable close(), no underlying `connection` with a callable close(), "
+        "and no underlying `connection` with a callable fileno()"
+    ]
+
+
+def _require_interleaved_termination_capability(
+    main_connection: DbPort, peer_connection: _PeerConnection, case_name: str
+) -> None:
+    """The corrected contract's own entry point (round 4 on the interleaved-
+    uow join-timeout residual — the reviewer's own reproduction: every
+    termination-ladder rung failing on EVERY worker leaves
+    :func:`_await_interleaved_workers`'s own deliberately UNBOUNDED
+    post-ladder join (round 3's design) hanging indefinitely, requiring
+    external termination). BEFORE either interleaved-group worker thread
+    starts, BOTH ``main_connection`` (the caller-owned port) and
+    ``peer_connection`` must validate
+    (:func:`_validate_termination_capability`) — refusing loudly, naming
+    EVERY defective connection at once (main, peer, or both; never
+    first-failure-only) rather than letting a defect surface only much
+    later as that indefinite hang.
+
+    Called from :func:`run_interleaved_scenario_case` before either worker
+    thread is even constructed: a refusal here leaves nothing running and
+    nothing to clean up on ``main_connection`` — the caller's own port is
+    inspected only, never called, exactly as untouched as if this function
+    had never run at all. (The caller is responsible for ``peer_connection``,
+    which it opened via its own ``peer_factory``; this function neither
+    closes it nor assumes anything about it beyond the same structural
+    inspection ``main_connection`` gets.)"""
+    defects = _validate_termination_capability(
+        main_connection, "main connection"
+    ) + _validate_termination_capability(peer_connection, "peer connection")
+    if not defects:
+        return
+    raise EngineError(
+        f"{case_name}: the interleaved-group choreography refuses to start — {'; '.join(defects)}"
+    )
+
+
 def _cancel_in_flight_work(connection: object) -> None:
     """Best-effort, non-destructive interruption of whatever ``connection``
     is blocked on right now (:func:`_await_interleaved_workers`'s second
@@ -2271,7 +2401,16 @@ def _terminate_connection(connection: object, label: str) -> list[str]:
     fake whose documented seam the ladder genuinely cannot reach is a
     defect in that fake, not in this function — it hangs the suite, which
     is this module's own documented contract for an unreachable fake, not a
-    bug this rung papers over."""
+    bug this rung papers over.
+
+    Round 4 (the corrected contract on the interleaved-uow join-timeout
+    residual) single-sources rungs 1 and 2's own reach — the underlying
+    transport below is fetched through :func:`_underlying_connection`, the
+    SAME helper :data:`_TERMINATION_RUNGS` carries — so this ladder and the
+    pre-start capability validator (:func:`_validate_termination_capability`)
+    can never observe a different "underlying connection" for the same
+    ``connection``; only the ACTUAL escalation behavior below (attempting
+    and recording each rung) stays bespoke to this function."""
     failures: list[str] = []
 
     def _attempt(target: object, rung: str) -> bool:
@@ -2289,7 +2428,7 @@ def _terminate_connection(connection: object, label: str) -> list[str]:
     if _attempt(connection, "connection"):
         return failures
 
-    underlying = getattr(connection, "connection", None)
+    underlying = _underlying_connection(connection)
     if underlying is None:
         failures.append(f"{label}: connection exposes no underlying `connection` escalation seam")
         return failures
@@ -2373,6 +2512,23 @@ def _await_interleaved_workers(
     failure`` and never consulted once this function has already raised —
     the caller only reaches that check on the ordinary, non-timeout path, so
     the timeout error below is always what a caller here actually sees.
+
+    Round 4 (the corrected contract on this SAME join-timeout residual)
+    strengthens that trade from implicit to EXPLICIT: the reviewer
+    reproduced every rung above failing on every worker, leaving this join
+    hanging indefinitely with no live process able to unstick it.
+    :func:`run_interleaved_scenario_case` now calls
+    :func:`_require_interleaved_termination_capability` on BOTH
+    ``main_connection`` and ``peer_connection`` before either worker thread
+    even starts, refusing loudly up front when a connection cannot satisfy
+    any rung of :data:`_TERMINATION_RUNGS` — the SAME rungs this ladder
+    walks. Past that validation, a hang at the join below can only mean a
+    connection MISREPRESENTED its validated capability (every rung the
+    validator confirmed reachable failing anyway at runtime): a contract
+    violation by that connection type, diagnosable at this exact line,
+    never an ordinary or expected outcome. The requirement was always real;
+    validation only makes it explicit instead of leaving it implicit in an
+    unbounded join a maintainer would otherwise have to reverse-engineer.
 
     The terminal state is always honest, never a silent leak: because the
     join above cannot return while a worker remains alive, EVERY path past
@@ -2464,6 +2620,13 @@ def run_interleaved_scenario_case(
     `adapter.run_case` — this shape's own peer requirement has no seat in the
     ordinary shape-dispatched entry points, the SAME reasoning the rounds
     runner's own dispatch follows.
+
+    Before either worker thread starts, both ``port`` and the connection
+    ``peer_factory`` produces are validated for termination capability
+    (:func:`_require_interleaved_termination_capability`, round 4 on the
+    join-timeout residual) — a defective connection refuses loudly here,
+    rather than surfacing only much later as an indefinite hang at
+    :func:`_await_interleaved_workers`'s own unbounded post-ladder join.
     """
     steps = _scenario_steps(case)
     meta = load_case_metamodel(case)
@@ -2483,6 +2646,18 @@ def run_interleaved_scenario_case(
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     main_db = handle.Database(port, meta, dialect=dialect, clock=FixedClock(instant))
     peer_connection = peer_factory()
+    try:
+        _require_interleaved_termination_capability(port, peer_connection, case.path.name)
+    except BaseException:
+        # Refusing here means neither worker thread ever started, so there is
+        # nothing to unstick — only the peer connection this function itself
+        # opened via `peer_factory` to release. Best-effort and swallowed
+        # (never let a broken `close()` on an already-refused connection mask
+        # the loud refusal above): a connection that failed validation may
+        # have no working `close()` at all, by definition.
+        with contextlib.suppress(Exception):
+            peer_connection.close()
+        raise
     peer_db = handle.Database(peer_connection, meta, dialect=dialect, clock=FixedClock(instant))
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
