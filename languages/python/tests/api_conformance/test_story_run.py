@@ -48,6 +48,7 @@ from parallax.conformance.graph_stories import (
 from parallax.conformance.read_models import Cat, Dog
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
+from parallax.conformance.vo_models import CUSTOMER_REGISTRY
 from parallax.core import LATEST, edge_of, is_loaded, narrowed, pin_of
 from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES
@@ -450,6 +451,126 @@ def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instance
     snapshot = story.run(db)
     _assert_typed_per_variant_graph(story.case_id, snapshot, "Document")
     assert snapshot.execution.round_trips == 1
+
+
+def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
+    """The row-form predicate original's own ``then.rows`` oracle — id/name
+    only, never the exact SQL the corpus's row-form classification would
+    otherwise demand (`graph_stories`'s own module docstring explains why
+    this grades here, bespoke, rather than through ``ReadStory``'s
+    byte-exact generic runner)."""
+    expected = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["rows"])
+    observed = [{"id": customer.id, "name": customer.name} for customer in snapshot.results()]
+    compare_rows(observed, expected)
+
+
+def test_customer_nested_eq_city_selects_matching_owners(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-001"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_customer_predicate_rows(story.case_id, snapshot)
+    assert snapshot.execution.round_trips == 1
+
+
+def test_customer_deep_nested_eq_country_selects_the_matching_owner(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-002"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_customer_predicate_rows(story.case_id, snapshot)
+    assert snapshot.execution.round_trips == 1
+
+
+def test_customer_nested_is_null_collapses_every_not_present_state(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-007"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_customer_predicate_rows(story.case_id, snapshot)
+    assert snapshot.execution.round_trips == 1
+
+
+def test_customer_to_many_nested_exists_is_a_nonempty_test(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-015"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_customer_predicate_rows(story.case_id, snapshot)
+    assert snapshot.execution.round_trips == 1
+
+
+def test_customer_to_many_nested_not_exists_folds_every_not_present_state(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-016"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_customer_predicate_rows(story.case_id, snapshot)
+    assert snapshot.execution.round_trips == 1
+
+
+def test_customer_to_many_any_element_eq_matches_some_element(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-017"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_customer_predicate_rows(story.case_id, snapshot)
+    assert snapshot.execution.round_trips == 1
+
+
+def test_customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
+    provisioner: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-019"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_customer_predicate_rows(story.case_id, snapshot)
+    assert snapshot.execution.round_trips == 1
+
+
+def test_customer_owner_materializes_its_whole_nested_composite(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-023"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_vo_owner_graph(story.case_id, snapshot, "Customer", "id")
+    assert snapshot.execution.round_trips == 1
+
+
+def test_customer_owner_materializes_its_composite_under_a_filter(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-value-object-024"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_vo_owner_graph(story.case_id, snapshot, "Customer", "id")
+    assert snapshot.execution.round_trips == 1
+
+
+def _assert_customer_locations_graph(case_id: str, snapshot: Any) -> None:
+    expected_by_id = {
+        row["id"]: row
+        for row in cast(
+            "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"]["Customer"]
+        )
+    }
+    observed = snapshot.results()
+    assert {customer.id for customer in observed} == set(expected_by_id)
+    for customer in observed:
+        row = _vo_owner_row(customer)
+        row["locations"] = [_vo_owner_row(location) for location in customer.locations]
+        compare_graph(row, expected_by_id[customer.id])
+
+
+def test_customer_locations_deep_fetch_materializes_the_child_document_too(
+    provisioner: Any,
+) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-deep-fetch-018"]
+    meta = _reset_for_registry(story.case_id, provisioner, CUSTOMER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    _assert_customer_locations_graph(story.case_id, snapshot)
+    assert snapshot.execution.round_trips == 2
 
 
 def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:

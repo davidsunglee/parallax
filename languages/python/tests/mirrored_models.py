@@ -22,7 +22,15 @@ from parallax.conformance.read_models import Animal as AnimalRoot
 from parallax.conformance.read_models import Balance, Cat, Dog, Passport, Person, Pet
 from parallax.conformance.read_models import WildBoar as AnimalWildBoar
 from parallax.conformance.story_models import Account
-from parallax.conformance.vo_models import Branch, Contact, Shipment, Supplier
+from parallax.conformance.vo_models import (
+    Branch,
+    Contact,
+    Customer,
+    Depot,
+    Location,
+    Shipment,
+    Supplier,
+)
 from parallax.core import Attr, Entity, EntityConfig, Field
 
 _NS = "parallax.compatibility"
@@ -53,10 +61,12 @@ class Attendee(Entity, frozen=True):
 
 # corpus model stem -> the idiomatic classes assembled into that descriptor.
 #
-# "customer" is deliberately ABSENT: customer.yaml's own descriptor spans
-# three entities (Customer, Location, Depot), all installed in
-# `parallax.conformance.vo_models` now (ledger D-20/D-21) with their own
-# no-drift entry there.
+# "customer" spans THREE entities (customer.yaml's own descriptor): the
+# non-temporal `Customer` root plus its two VO-bearing to-many children,
+# `Location` (reusing Customer's own recursive `address` composite verbatim)
+# and `Depot` (a deliberately DIVERGENT flat `address` composite in the same
+# column) — all installed together in `parallax.conformance.vo_models`
+# (ledger D-20/D-21).
 MIRRORED: list[tuple[str, list[type]]] = [
     ("account", [Account]),
     ("pk-max", [Attendee]),
@@ -72,6 +82,7 @@ MIRRORED: list[tuple[str, list[type]]] = [
     ("branch", [Branch]),
     ("contact", [Contact]),
     ("shipment", [Shipment]),
+    ("customer", [Customer, Location, Depot]),
 ]
 
 

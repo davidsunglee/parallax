@@ -24,16 +24,19 @@ statements the Usage Guide's coverage-partition machinery (``api_suite.py``)
 and the real-database runner both need resolvable at ordinary import time, not
 only under pytest's test-path magic.
 
-Deliberately ABSENT, each for its own reasoned-skip in ``api_suite.CASE_SKIP_REASONS``:
+Deliberately ABSENT, each for its own reasoned-skip in ``api_suite.CASE_SKIP_REASONS``
+or its own ``graph_stories.GraphStory`` instead:
 
-- the ``customer.yaml`` value-object read examples
-  (``m-value-object-001/002/007/015/016/017/019``): ``value_object_models.Customer``
-  is test-only and no installed mirror exists yet — ledger D-20's structural
-  registry-collision block is resolved (an installed mirror COULD now coexist
-  with the test-only one, the same way the animal family's real owner does,
-  ``parallax.conformance.animal_owner``), but building one is a
-  coverage-surface breadth item this increment's own scale judgment
-  deprioritized (Part D item 4);
+- the ``customer.yaml`` value-object predicate reads
+  (``m-value-object-001/002/007/015/016/017/019``) and its materialization/
+  deep-fetch siblings (``m-value-object-023/024``, ``m-deep-fetch-018``): now
+  installed (``parallax.conformance.vo_models.Customer``, D-20 residue, COR-3
+  Phase 8 increment 7 completion round) and executed, but as
+  ``graph_stories.GraphStory`` entries rather than here — the corpus classifies
+  the predicate reads ROW-FORM (``then.rows`` alone), while `db.find` is
+  ALWAYS instance-form (python.md §4), so this module's byte-exact generic
+  runner cannot grade them; ``graph_stories``'s own module docstring explains
+  the bespoke rule that grades them instead;
 - the multi-concrete polymorphic PROJECTING reads (``m-inheritance-003``/
   ``-013``/``-015``/``-052``): a table-per-hierarchy multi-concrete row's own
   typed instance carries only its OWN concrete class's fields, never a

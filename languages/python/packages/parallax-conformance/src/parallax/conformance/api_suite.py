@@ -91,8 +91,9 @@ EXAMPLES: Final[list[Example]] = [
     # redundancy for the identical correlated-EXISTS lowering `exists`
     # already expresses — m-op-algebra), the deep-fetch-bearing temporal
     # siblings, the multi-concrete polymorphic PROJECTING inheritance reads,
-    # and the Customer value-object family are reasoned-skipped; see
-    # CASE_SKIP_REASONS.
+    # and the Customer value-object predicate-read SIBLINGS (the family's own
+    # flagship reads are now executed graph stories, see GRAPH_STORIES below)
+    # are reasoned-skipped; see CASE_SKIP_REASONS.
     *(Example(story.case_id, story.title, read_story_snippet(story)) for story in READ_STORIES),
     # The developer transaction surface (m-unit-work, M4): each write example IS
     # an executable story (`parallax.conformance.stories`) — the snippet is the
@@ -707,39 +708,48 @@ _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON: Final[str] = (
 )
 
 # Value-object nested/absence/cast/array-traversal PREDICATE reads: rows-form,
-# representative siblings of the Customer.address predicate BUILD-TIME proofs
-# (m-value-object-001/002/007/015/016/017/019 — themselves case-scoped skips
-# below, never executed for real either) — the SAME nested-path resolution /
-# absence-collapse / any-element lowering, a different operator, depth, or
-# dialect-cast variant, and the SAME reachability block a real execution of
-# any of them would hit.
+# representative siblings of the Customer.address predicate graph stories NOW
+# EXECUTED for real (m-value-object-001/002/007/015/016/017/019, D-20 residue,
+# COR-3 Phase 8 increment 7 completion round — `graph_stories.py`, via the
+# installed `vo_models.Customer`/`Location`/`Depot` mirror) — the SAME
+# nested-path resolution / absence-collapse / any-element lowering, a
+# different operator, depth, or dialect-cast variant: no distinct developer-
+# facing shape to add, the SAME mechanism already proven against Postgres.
 _VO_PREDICATE_SIBLING_REASON: Final[str] = (
-    "a representative sibling of the Customer.address predicate build-time proofs "
-    "(m-value-object-001/002/007/015/016/017/019 — themselves case-scoped skips below): "
+    "a representative sibling of the Customer.address predicate graph stories now "
+    "executed for real (m-value-object-001/002/007/015/016/017/019, `graph_stories.py`): "
     "the SAME nested-path resolution / absence-collapse / any-element lowering, a "
     "different operator, depth, or dialect-cast variant — no distinct developer-facing "
-    "shape to add, and the SAME reachability block a real execution would hit"
+    "shape to add, the SAME mechanism already proven against Postgres"
 )
 
-# Customer-model cases needing a REAL execution (a `db.find`/`db.transact`
-# story, not a build-only statement): `value_object_models.Customer` is
-# test-only, and no installed `parallax.conformance` mirror of
-# Customer/Location/Depot exists YET to drive these for real — ledger D-20's
-# structural registry-collision block that used to make this unreachable is
-# RESOLVED (an installed mirror could coexist with the test-only one via a
-# separate registry, or simply redeclare Customer under the default registry
-# the same way Supplier/Branch/Contact/Shipment now do); building that mirror
-# is a coverage-surface BREADTH item this increment's own scale judgment (Part
-# D item 4) deprioritized behind the Supplier/Branch temporal-VO flips, the
-# Contact/Shipment write-validation flips, and the typed-verb story build-out.
-_CUSTOMER_UNREACHABLE_REASON: Final[str] = (
-    "needs a REAL execution (a `db.find`/`db.transact` story) over the Customer "
-    "entity, but `value_object_models.Customer` is test-only and no installed "
-    "`parallax.conformance` mirror of Customer/Location/Depot exists yet — the "
-    "structural registry-collision block ledger D-20 fixed no longer applies; building "
-    "the mirror is a breadth item this increment's own scale judgment deprioritized "
-    "behind the Supplier/Branch/Contact/Shipment flips and the typed-verb story "
-    "build-out (Part D item 4)"
+# Customer VO-document WRITE cases (m-value-object-025/026/027): the
+# Customer/Location/Depot mirror now exists and drives the family's READ
+# cases for real (D-20 residue, COR-3 Phase 8 increment 7 completion round —
+# `vo_models.Customer`, `graph_stories.py`), but these three writeSequence
+# cases hit a DIFFERENT, genuine blocker: `CustomerGeo` declares OPTIONAL
+# inner members (`elevation`/`point`) Supplier/Branch's own simpler `Geo`
+# composite does not, and the value-object write serializer
+# (`parallax.core.entity.value_object.to_document`) renders EVERY declared
+# inner member unconditionally — never filtered by that value object's OWN
+# `model_fields_set`, unlike `full_row`'s own top-level filtering (empirically
+# confirmed: `CustomerGeo(country="NO")` serializes to `{"country": "NO",
+# "elevation": None, "point": None}`, never the corpus's own narrower
+# `{"country": "NO"}` these three cases author). Supplier/Branch's own VO
+# write stories (m-value-object-032/-033) never exercise this path because
+# their `Geo` composite has no optional inner member to omit — closing this
+# gap is a value-object write-serialization change no part of this round's
+# charter touches.
+_CUSTOMER_VO_WRITE_SERIALIZATION_REASON: Final[str] = (
+    "the Customer/Location/Depot mirror now drives this family's READ cases for real, "
+    "but `CustomerGeo` declares OPTIONAL inner members (`elevation`/`point`) the "
+    "value-object write serializer (`to_document`) renders unconditionally rather than "
+    "omitting when unset (unlike `full_row`'s own top-level `model_fields_set` "
+    "filtering) — an idiomatic write would bind an extra `elevation`/`point: null` the "
+    "corpus's own narrower document never authors; Supplier/Branch's own VO write "
+    "stories (m-value-object-032/-033) never exercise this path because their `Geo` "
+    "composite has no optional inner member to omit — closing it is a value-object "
+    "write-serialization change outside this round's charter"
 )
 
 
@@ -908,8 +918,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-099": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-102": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-103": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    # -- m-deep-fetch: the Customer mirror breadth deferral ------------------ #
-    "m-deep-fetch-018": _CUSTOMER_UNREACHABLE_REASON,
     # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #
     "m-navigate-001": _NAVIGATE_TAG_REDUNDANT_REASON,
     "m-navigate-005": _NAVIGATE_TAG_REDUNDANT_REASON,
@@ -949,19 +957,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-020": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-021": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-022": _VO_PREDICATE_SIBLING_REASON,
-    # -- m-value-object: the Customer-registry collision (read + write) ------ #
-    "m-value-object-001": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-002": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-007": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-015": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-016": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-017": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-019": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-023": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-024": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-025": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-026": _CUSTOMER_UNREACHABLE_REASON,
-    "m-value-object-027": _CUSTOMER_UNREACHABLE_REASON,
+    # -- m-value-object: Customer VO-document WRITE cases (m-value-object-025/ #
+    # 026/027 only -- the family's 10 read cases are now executed for real,   #
+    # `graph_stories.py`) -------------------------------------------------- #
+    "m-value-object-025": _CUSTOMER_VO_WRITE_SERIALIZATION_REASON,
+    "m-value-object-026": _CUSTOMER_VO_WRITE_SERIALIZATION_REASON,
+    "m-value-object-027": _CUSTOMER_VO_WRITE_SERIALIZATION_REASON,
     # -- m-value-object: structural rejects (no idiomatic spelling exists) --- #
     "m-value-object-034": _VO_UNKNOWN_NESTED_FIELD_REASON,
     "m-value-object-035": _VO_DEEPFETCH_SEGMENT_REASON,

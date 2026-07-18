@@ -39,6 +39,23 @@ and grades directly (never through the ``GraphStory``/``Example`` machinery),
 proving a capability alongside a case's own exercised example without being
 counted toward that (or any) case's exercised status — see
 `history_of_a_concrete_temporal_node_distinguishes_milestones`.
+
+The Customer/Location/Depot predicate reads (`m-value-object-001/002/007/
+015/016/017/019`, COR-3 Phase 8 increment 7 completion round, D-20 residue)
+land HERE rather than as ``read_stories.ReadStory`` entries, despite being
+plain single-statement filters: each is classified ROW-FORM by the corpus
+engine (`then.rows` alone, no `then.graph`) — the values-lane original whose
+own golden SQL omits the `address` document column — but `db.find` is ALWAYS
+instance-form (python.md §4: "observable as `type(node)`"), so it necessarily
+projects `address` too, exactly the SAME structural non-fit
+`api_suite._INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON` names
+for the row-form inheritance family. Rather than leave them permanently
+unreachable the way that family's row-form originals stay, the grading rule
+here asserts the id/name SET the filter selects (the behavior genuinely under
+test) through the real, always-instance-form developer surface, never
+insisting on the now-inapplicable minimal row-form projection — a graph
+story's bespoke per-case assertion (unlike a `ReadStory`'s generic runner,
+which DOES require byte-exact golden SQL) is exactly the seam this needs.
 """
 
 from __future__ import annotations
@@ -63,7 +80,7 @@ from parallax.conformance.read_models import (
     Pet,
 )
 from parallax.conformance.story_models import Order
-from parallax.conformance.vo_models import Branch, Supplier
+from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
 from parallax.core.temporal_read import LATEST
 from parallax.snapshot.handle import Database, Snapshot
 
@@ -258,6 +275,90 @@ def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     return db.find(Document.where(Document.narrow(FinancialDocument)))
 
 
+def customer_nested_eq_city_selects_matching_owners(db: Database) -> Snapshot[Any]:
+    """A nested equality predicate through a value-object attribute
+    (`m-value-object-001`): the id/name SET this filter selects is the
+    behavior under test — see the module docstring's own note on why this
+    lands here, not as a `ReadStory`."""
+    return db.find(Customer.where(Customer.address.city == "Oslo"))
+
+
+def customer_deep_nested_eq_country_selects_the_matching_owner(db: Database) -> Snapshot[Any]:
+    """A DEEP nested equality predicate, two levels into the composite
+    (`m-value-object-002`): only Grace (Boston, US) qualifies."""
+    return db.find(Customer.where(Customer.address.geo.country == "US"))
+
+
+def customer_nested_is_null_collapses_every_not_present_state(db: Database) -> Snapshot[Any]:
+    """A nested is-null presence test (`m-value-object-007`): the null
+    column, the missing key, and the explicit JSON-null leaf all collapse to
+    the SAME not-present state."""
+    return db.find(Customer.where(Customer.address.city.is_null()))
+
+
+def customer_to_many_nested_exists_is_a_nonempty_test(db: Database) -> Snapshot[Any]:
+    """A to-many nested existence test (`m-value-object-015`): true for a row
+    whose `phones` array has at least one element; every not-present state
+    (empty, absent, or non-array) is excluded."""
+    return db.find(Customer.where(Customer.address.phones.any()))
+
+
+def customer_to_many_nested_not_exists_folds_every_not_present_state(db: Database) -> Snapshot[Any]:
+    """A to-many nested absence test (`m-value-object-016`): empty, absent,
+    and non-array `phones` states are all INDISTINGUISHABLE to the algebra —
+    the negated sibling of `customer_to_many_nested_exists_is_a_nonempty_test`."""
+    return db.find(Customer.where(Customer.address.phones.none()))
+
+
+def customer_to_many_any_element_eq_matches_some_element(db: Database) -> Snapshot[Any]:
+    """A flat predicate through a `many` segment is ANY-ELEMENT
+    (`m-value-object-017`): true iff SOME `phones` element has `type` =
+    "home"."""
+    return db.find(Customer.where(Customer.address.phones.type == "home"))
+
+
+def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
+    db: Database,
+) -> Snapshot[Any]:
+    """A scoped `where` requires ONE element to satisfy the WHOLE compound —
+    SAME-element, not the unscoped AND (`m-value-object-019`): Linus's single
+    phone carries both fields; Ada's carry them on DIFFERENT elements."""
+    return db.find(
+        Customer.where(
+            Customer.address.phones.any(
+                CustomerPhone.type == "home", CustomerPhone.number == "555-9999"
+            )
+        )
+    )
+
+
+def customer_owner_materializes_its_whole_nested_composite(db: Database) -> Snapshot[Any]:
+    """The whole nested composite arrives WITH the owner in ONE round trip
+    (`m-value-object-023`): no deep-fetch, no per-value-object fetch — the
+    positive proof of the getter-navigation contract to arbitrary depth."""
+    return db.find(Customer.where())
+
+
+def customer_owner_materializes_its_composite_under_a_filter(db: Database) -> Snapshot[Any]:
+    """The SAME materialization rides a FILTERED owner read too
+    (`m-value-object-024`, the SAME `nestedEq` as
+    `customer_nested_eq_city_selects_matching_owners`): materialization is
+    independent of whether the owner's own read is filtered."""
+    return db.find(Customer.where(Customer.address.city == "Oslo"))
+
+
+def customer_locations_deep_fetch_materializes_the_child_document_too(
+    db: Database,
+) -> Snapshot[Any]:
+    """Both the root (Customer) and the child (Location) levels of a deep
+    fetch materialize their OWN value-object document (`m-deep-fetch-018`,
+    design note 14 §3): the child level projects Location's own instance-form
+    list (id, customer_id, label, address), decoded with LOCATION's
+    descriptor — never the root's — and a null child document (Location 101)
+    collapses to null exactly like a null-address Customer does at the root."""
+    return db.find(Customer.where().include(Customer.locations))
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
     GraphStory(
         "m-snapshot-read-001",
@@ -379,5 +480,65 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "typed per-variant instances",
         "document",
         tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances,
+    ),
+    GraphStory(
+        "m-value-object-001",
+        "A nested equality predicate through a value-object attribute",
+        "customer",
+        customer_nested_eq_city_selects_matching_owners,
+    ),
+    GraphStory(
+        "m-value-object-002",
+        "A DEEP nested equality predicate, two levels into the composite",
+        "customer",
+        customer_deep_nested_eq_country_selects_the_matching_owner,
+    ),
+    GraphStory(
+        "m-value-object-007",
+        "A nested is-null presence test collapsing every not-present state",
+        "customer",
+        customer_nested_is_null_collapses_every_not_present_state,
+    ),
+    GraphStory(
+        "m-value-object-015",
+        "A to-many nested existence test (non-empty)",
+        "customer",
+        customer_to_many_nested_exists_is_a_nonempty_test,
+    ),
+    GraphStory(
+        "m-value-object-016",
+        "A to-many nested absence test folding every not-present state",
+        "customer",
+        customer_to_many_nested_not_exists_folds_every_not_present_state,
+    ),
+    GraphStory(
+        "m-value-object-017",
+        "An any-element predicate through a to-many nested member",
+        "customer",
+        customer_to_many_any_element_eq_matches_some_element,
+    ),
+    GraphStory(
+        "m-value-object-019",
+        "A scoped to-many predicate requiring ONE element to satisfy both fields",
+        "customer",
+        customer_to_many_scoped_exists_requires_one_element_to_satisfy_both,
+    ),
+    GraphStory(
+        "m-value-object-023",
+        "The whole nested composite materializes with its owner in one round trip",
+        "customer",
+        customer_owner_materializes_its_whole_nested_composite,
+    ),
+    GraphStory(
+        "m-value-object-024",
+        "The same materialization rides a filtered owner read too",
+        "customer",
+        customer_owner_materializes_its_composite_under_a_filter,
+    ),
+    GraphStory(
+        "m-deep-fetch-018",
+        "A deep fetch materializes the child's own value-object document too",
+        "customer",
+        customer_locations_deep_fetch_materializes_the_child_document_too,
     ),
 )

@@ -25,11 +25,15 @@ real-database generic runner (``test_story_run.py``) executes against real
 Postgres, so this guard's no-drift proof and that execution share one source,
 never a second, hand-duplicated expression that could drift from it. The
 remaining hand-authored entries are the ones that genuinely have no executable
-real-database story yet (a graph-story's own bare-statement half; a
-multi-concrete polymorphic read `db.find` cannot grade as flat rows; the
-Customer value-object family's registry collision) — see
-``read_stories``'s own module docstring and ``api_suite.CASE_SKIP_REASONS``
-for exactly why each one stays build-only.
+real-database story yet, OR that pair with a `graph_stories.GraphStory` (a
+graph story's own bare-statement half — including the Customer value-object
+family, D-20 residue, COR-3 Phase 8 increment 7 completion round: `db.find`'s
+always-instance-form materialization means these grade bespoke there rather
+than through `read_stories.ReadStory`'s byte-exact generic runner, see that
+module's own docstring), OR that genuinely cannot: a multi-concrete
+polymorphic read `db.find` cannot grade as flat rows — see ``read_stories``'s
+own module docstring and ``api_suite.CASE_SKIP_REASONS`` for exactly why each
+remaining one stays build-only.
 """
 
 from __future__ import annotations
@@ -59,7 +63,7 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.read_stories import READ_STORIES
 from parallax.conformance.story_models import Order
-from parallax.conformance.vo_models import Branch, Supplier
+from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
 from parallax.core import Entity, OperationRejectedError, Predicate, Statement
 from parallax.core.op_algebra import serialize
 from parallax.core.temporal_read import LATEST
@@ -100,24 +104,25 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
         | sm.Animal.narrow(sm.Cat, where=sm.Cat.indoor.is_(True))
     ),
     "m-inheritance-052": lambda: im.Document.where().narrow(im.FinancialDocument),
-    # Value-object traversal (m-value-object): build-only — `value_object_
-    # models.Customer` is test-only and no installed-package `Customer`
-    # mirror exists yet to drive these as a real story. Ledger D-20 (COR-3
-    # Phase 8 increment 7) removed the STRUCTURAL registry-collision block
-    # the animal family's owner side once carried (see `read_models`'s own
-    # docstring); an installed Customer/Location/Depot mirror is a
-    # coverage-surface breadth item this increment's own scale judgment
-    # (Part D item 4) deprioritized behind the Supplier/Branch/Contact/
-    # Shipment flips and the typed-verb story build-out.
-    "m-value-object-001": lambda: vm.Customer.where(vm.Customer.address.city == "Oslo"),
-    "m-value-object-002": lambda: vm.Customer.where(vm.Customer.address.geo.country == "US"),
-    "m-value-object-007": lambda: vm.Customer.where(vm.Customer.address.city.is_null()),
-    "m-value-object-015": lambda: vm.Customer.where(vm.Customer.address.phones.any()),
-    "m-value-object-016": lambda: vm.Customer.where(vm.Customer.address.phones.none()),
-    "m-value-object-017": lambda: vm.Customer.where(vm.Customer.address.phones.type == "home"),
-    "m-value-object-019": lambda: vm.Customer.where(
-        vm.Customer.address.phones.any(vm.Phone.type == "home", vm.Phone.number == "555-9999")
+    # Value-object traversal over the now-installed Customer mirror (D-20
+    # residue, COR-3 Phase 8 increment 7 completion round) — the query-shape
+    # no-drift half of the executable graph stories in `graph_stories.py`
+    # (see that module's own docstring for why these land as `GraphStory`
+    # entries, bespoke-graded, rather than `read_stories.ReadStory` ones).
+    "m-value-object-001": lambda: Customer.where(Customer.address.city == "Oslo"),
+    "m-value-object-002": lambda: Customer.where(Customer.address.geo.country == "US"),
+    "m-value-object-007": lambda: Customer.where(Customer.address.city.is_null()),
+    "m-value-object-015": lambda: Customer.where(Customer.address.phones.any()),
+    "m-value-object-016": lambda: Customer.where(Customer.address.phones.none()),
+    "m-value-object-017": lambda: Customer.where(Customer.address.phones.type == "home"),
+    "m-value-object-019": lambda: Customer.where(
+        Customer.address.phones.any(
+            CustomerPhone.type == "home", CustomerPhone.number == "555-9999"
+        )
     ),
+    "m-value-object-023": lambda: Customer.where(),
+    "m-value-object-024": lambda: Customer.where(Customer.address.city == "Oslo"),
+    "m-deep-fetch-018": lambda: Customer.where().include(Customer.locations),
     # Deep-fetch include paths over the now-installed Person/Passport and
     # animal-owner mirrors (ledger D-20/D-21) — the query-shape no-drift
     # half of the executable graph stories in `graph_stories.py`.

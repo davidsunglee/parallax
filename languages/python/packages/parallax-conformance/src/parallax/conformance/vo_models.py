@@ -29,16 +29,44 @@ class is looked up by Python object reference through its owning entity's
 ``WireNames.vo_classes``, never by canonical name in a shared namespace), so
 the identical simple names (``Geo``, ``Phone``, ``Point``) recur freely
 across ``value_object_models``/this module without any collision.
+
+``Customer``/``Location``/``Depot`` (D-20 residue, COR-3 Phase 8 increment 7
+completion round) mirror ``models/customer.yaml``. ``value_object_models.py``
+ALREADY declares its own test-only ``Customer`` (an ENTITY class, unlike the
+bare VOs above) in the process :func:`~parallax.core.entity.base.default_registry`
+under the SAME canonical name — a genuine
+:class:`~parallax.core.entity.errors.RegistryCollisionError` the moment both
+modules import in one process (empirically confirmed), the exact shape ledger
+D-20 fixed for the animal family's owner (`parallax.conformance.animal_owner`).
+The fix is identical: ``CUSTOMER_REGISTRY`` is a SEPARATE
+:class:`~parallax.core.entity.base.EntityRegistry` (parent defaults to the
+process default, needed for nothing here since ``Customer``/``Location``/
+``Depot`` reference only each other) that SHADOWS the default registry's own
+``Customer`` with THIS family's real, installed one, never colliding with it.
+A ``Database`` exercising this family connects with
+``CUSTOMER_REGISTRY.metamodel()`` (never the bare ingested corpus descriptor),
+mirroring ``animal_owner.ANIMAL_OWNER_REGISTRY``'s own precedent exactly.
 """
 
 import datetime as dt
 
-from parallax.core import AsOfAttribute, Attr, Entity, EntityConfig, Field
+from parallax.core import (
+    AsOfAttribute,
+    Attr,
+    Entity,
+    EntityConfig,
+    Field,
+    OrderByTerm,
+    Rel,
+    Relationship,
+)
+from parallax.core.entity.base import EntityRegistry
 from parallax.core.entity.value_object import ValueObject, VoField
 
 _NS = "parallax.compatibility"
 
 __all__ = [
+    "CUSTOMER_REGISTRY",
     "Address",
     "Branch",
     "Contact",
@@ -46,8 +74,16 @@ __all__ = [
     "ContactGeo",
     "ContactPhone",
     "ContactPoint",
+    "Customer",
+    "CustomerAddress",
+    "CustomerGeo",
+    "CustomerPhone",
+    "CustomerPoint",
+    "Depot",
+    "DepotAddress",
     "Destination",
     "Geo",
+    "Location",
     "Phone",
     "Shipment",
     "Supplier",
@@ -193,3 +229,139 @@ class Shipment(Entity, frozen=True):
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     name: Attr[str] = Field(max_length=64)
     destination: Attr[Destination | None] = Field(default=None)
+
+
+# --------------------------------------------------------------------------- #
+# Customer / Location / Depot (models/customer.yaml, D-20 residue, COR-3      #
+# Phase 8 increment 7 completion round): a non-temporal parent (Customer)     #
+# with TWO VO-bearing to-many children reached the same way — Location reuses #
+# Customer's OWN recursive address composite (street/city, geo{country,       #
+# elevation}, geo.point{lat,lon}, phones{type,number}) VERBATIM, while Depot  #
+# declares a DIFFERENT, flat composite ({line, postcode}) in the SAME         #
+# `address` column — a deliberate descriptor divergence the corpus's own      #
+# cases pin (decoding a Depot row with Customer's recursive descriptor would  #
+# yield observably wrong keys). ``CustomerAddress``/``CustomerGeo``/          #
+# ``CustomerPoint``/``CustomerPhone`` get their own names (never reusing      #
+# ``Address``/``Geo``/``Phone`` above): Customer's ``Geo`` carries            #
+# ``elevation``/``point`` Supplier/Branch's simpler composite does not — a    #
+# DIFFERENT shape, the same ``ContactAddress``-style naming discipline.       #
+# --------------------------------------------------------------------------- #
+class CustomerPoint(ValueObject, frozen=True):
+    lat: Attr[float | None] = VoField(type="float64", nullable=True, default=None)
+    lon: Attr[float | None] = VoField(type="float64", nullable=True, default=None)
+
+
+class CustomerGeo(ValueObject, frozen=True):
+    # `country` stays Python-optional (accepts and defaults to `None`) even
+    # though the DECLARED descriptor is non-nullable — the SAME
+    # `ContactGeo.country`/`ContactPoint` discipline (this module's own
+    # docstring): the corpus's own fixture rows materialize a missing key
+    # (id 5 Kavi) or an explicit JSON-null leaf (id 7 Nils) as a null
+    # PROJECTED field on read (the declared-projection absence collapse,
+    # `models/customer.yaml`'s own commentary), which the wrap construction
+    # must be able to build; `validate_write` — never Pydantic's own
+    # required-field enforcement — is what refuses an incomplete WRITE.
+    country: Attr[str | None] = VoField(type="string", default=None)
+    elevation: Attr[float | None] = VoField(type="float64", nullable=True, default=None)
+    point: Attr[CustomerPoint | None] = VoField(nullable=True, default=None)
+
+
+class CustomerPhone(ValueObject, frozen=True):
+    type: Attr[str | None] = VoField(type="string", nullable=True, default=None)
+    number: Attr[str | None] = VoField(type="string", nullable=True, default=None)
+
+
+class CustomerAddress(ValueObject, frozen=True):
+    street: Attr[str] = VoField(type="string")
+    # `city` stays Python-optional for the SAME reason `CustomerGeo.country`
+    # does (see its own comment above): a missing key (ids 5/8/9/10) or an
+    # explicit JSON-null leaf (id 7) materializes as a null projected field.
+    city: Attr[str | None] = VoField(type="string", default=None)
+    geo: Attr[CustomerGeo | None] = VoField(nullable=True, default=None)
+    phones: Attr[tuple[CustomerPhone, ...]] = VoField(nullable=True, default=())
+
+
+class DepotAddress(ValueObject, frozen=True):
+    line: Attr[str | None] = VoField(type="string", nullable=True, default=None)
+    postcode: Attr[str | None] = VoField(type="string", nullable=True, default=None)
+
+
+# A SEPARATE registry (ledger D-20's fix, mirroring `animal_owner.
+# ANIMAL_OWNER_REGISTRY`): `value_object_models.Customer` already claims the
+# canonical name "Customer" in the process default registry, so this family's
+# real, installed classes shadow it from their OWN scope rather than colliding
+# with it. Parent defaults to the process default (needed for nothing here —
+# Customer/Location/Depot reference only each other).
+CUSTOMER_REGISTRY = EntityRegistry()
+
+
+class Customer(Entity, frozen=True, registry=CUSTOMER_REGISTRY):
+    """Mirror of ``models/customer.yaml``'s ``Customer``: the recursive
+    ``address`` value object, plus TWO VO-bearing to-many children reached by
+    a distinct relationship each (``locations`` / ``depots``)."""
+
+    __parallax__ = EntityConfig(table="customer", namespace=_NS, mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    name: Attr[str] = Field(max_length=64)
+    address: Attr[CustomerAddress | None] = Field(nullable=True, default=None)
+    locations: Rel[tuple["Location", ...]] = Relationship(
+        cardinality="one-to-many",
+        join="this.id = Location.customerId",
+        related_entity="Location",
+        reverse_name="customer",
+        dependent=True,
+        foreign_key="customer_id",
+        order_by=[OrderByTerm(attr="id", direction="asc")],
+    )
+    depots: Rel[tuple["Depot", ...]] = Relationship(
+        cardinality="one-to-many",
+        join="this.id = Depot.customerId",
+        related_entity="Depot",
+        reverse_name="customer",
+        dependent=True,
+        foreign_key="customer_id",
+        order_by=[OrderByTerm(attr="id", direction="asc")],
+    )
+
+
+class Location(Entity, frozen=True, registry=CUSTOMER_REGISTRY):
+    """Mirror of ``models/customer.yaml``'s ``Location``: Customer's OWN
+    recursive ``address`` composite, reused VERBATIM (never redeclared) —
+    the deep-fetch x value-object composition witness AT DEPTH."""
+
+    __parallax__ = EntityConfig(table="location", namespace=_NS, mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    customer_id: Attr[int] = Field(column="customer_id", type="int64")
+    label: Attr[str] = Field(max_length=64)
+    address: Attr[CustomerAddress | None] = Field(nullable=True, default=None)
+    customer: Rel["Customer"] = Relationship(
+        cardinality="many-to-one",
+        join="this.customerId = Customer.id",
+        related_entity="Customer",
+        reverse_name="locations",
+        foreign_key="customer_id",
+    )
+
+
+class Depot(Entity, frozen=True, registry=CUSTOMER_REGISTRY):
+    """Mirror of ``models/customer.yaml``'s ``Depot``: a DIFFERENT, FLAT
+    ``address`` composite (``{line, postcode}``) in the SAME column name
+    Customer/Location use for their own recursive one — the wrong-descriptor
+    decode hazard the corpus's own commentary explains (`customer.yaml`
+    `:37-47,220-230`)."""
+
+    __parallax__ = EntityConfig(table="depot", namespace=_NS, mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
+    customer_id: Attr[int] = Field(column="customer_id", type="int64")
+    label: Attr[str] = Field(max_length=64)
+    address: Attr[DepotAddress | None] = Field(nullable=True, default=None)
+    customer: Rel["Customer"] = Relationship(
+        cardinality="many-to-one",
+        join="this.customerId = Customer.id",
+        related_entity="Customer",
+        reverse_name="depots",
+        foreign_key="customer_id",
+    )
