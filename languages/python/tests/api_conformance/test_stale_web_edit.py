@@ -9,10 +9,11 @@ optimistic-gate machinery is a SYNTHETIC, single-connection injection —
 compile/run conformance lanes; none of them expresses the genuine two-read
 render-then-submit developer choreography this recipe is), so these stay
 standalone Docker-backed proofs (`parallax.conformance.stale_web_edit`) rather
-than registered `api_suite.EXAMPLES` entries — force-registering under a
-borrowed case id would misrepresent what that case's own goldens grade
-(review by a human maintainer may choose to promote this differently; see the
-implementer's report).
+than case-keyed `api_suite.EXAMPLES` entries — force-registering under a
+borrowed case id would misrepresent what that case's own goldens grade. The
+Usage Guide renders both variants through the case-free `api_suite.RECIPES`
+section instead (checkpoint-4 Spec finding 2), citing spec §3 plus THESE
+tests as the grading surface — one source, guide and grading alike.
 
 Every `Database` here connects with a :class:`~parallax.conformance.
 scripted_clock.ScriptedClock` (D-29): the system clock's microsecond

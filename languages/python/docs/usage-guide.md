@@ -47,10 +47,13 @@ def audit_only_terminate_closes_the_current_milestone(db: Database) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     def close(tx: Transaction) -> None:
-        # `terminate` keys off the primary key alone (D-31: no placeholder axis
-        # values, and none are needed — a terminate never observes a prior
-        # milestone to chain forward).
-        tx.terminate(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+        # Observe the current milestone FIRST (`python.md` §5: temporal
+        # update/terminate follow the same prior-observation rule as versioned
+        # writes — in the default locking mode, the find's shared lock is
+        # exactly what licenses the ungated close), then close it keyed off
+        # the primary key alone (close-only, no chained row).
+        current = tx.find(Balance.where(Balance.id == 1)).result()
+        tx.terminate(current)
 
     db.transact(insert)
     db.transact(close)
@@ -1245,4 +1248,81 @@ Corpus case: `m-value-object-044`
 ```python
 db.transact(lambda tx: tx.insert(Shipment(id=5, name="Express")))
 # raises WriteRejectedError(rule="write-required-value-object-missing")
+```
+
+## Recipes
+
+Spec-level idioms whose choreography spans more than any single corpus
+case: each recipe cites its normative spec section and the tests that
+grade it end-to-end (never a borrowed case id).
+
+### Stale web edit — audit-only (Balance)
+
+Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api_conformance/test_stale_web_edit.py` (real Postgres: the clean submit, the concurrent-supersession conflict, and both negative pins) and `tests/unit/test_transact.py`'s Docker-free recipe halves.
+
+```python
+def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
+    """RENDER time (audit-only): a plain, non-transactional find — the
+    displayed milestone plus its edge (the processing axis's own from-instant,
+    ``in_z``), the whole of what the form needs to transport."""
+    node = db.find(Balance.where(Balance.id == id)).result()
+    return node, edge_of(node)
+
+def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any]) -> None:
+    """SUBMIT time (audit-only): re-fetch pinned at the transported edge,
+    inside an OPTIMISTIC transaction (`python.md` §5: an edge-pinned
+    observation is never latest-pinned, so a locking-mode write over it
+    raises ``HistoricalObservationError`` before any DML), apply ``fields``
+    via ``model_copy``, and update. A concurrent chain since the render
+    leaves the observed row's ``in_z`` stale — the gated close matches zero
+    rows, ``OptimisticLockConflictError``; an untouched row's gate matches,
+    and the edit lands."""
+
+    def fn(tx: Transaction) -> None:
+        current = tx.find(
+            Balance.where(Balance.id == id).as_of(processing=edge.processing)
+        ).result()
+        tx.update(current.model_copy(update=dict(fields)))
+
+    db.transact(fn, concurrency="optimistic")
+```
+
+### Stale web edit — bitemporal (Branch, both axes transported)
+
+Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api_conformance/test_stale_web_edit.py` (real Postgres) and `tests/unit/test_transact.py`'s Docker-free recipe halves.
+
+```python
+def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
+    """RENDER time (bitemporal): a plain, non-transactional find — the
+    displayed rectangle plus its edge on BOTH declared axes (business AND
+    processing)."""
+    node = db.find(Branch.where(Branch.id == id)).result()
+    return node, edge_of(node)
+
+def submit_branch_edit(
+    db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any], business_from: dt.datetime
+) -> None:
+    """SUBMIT time (bitemporal): re-fetch with EVERY declared axis pinned at
+    the transported edge (`as_of(processing=..., business=...)` — the DISPLAY
+    coordinate, licensing the optimistic re-fetch) inside an OPTIMISTIC
+    transaction, apply ``fields`` via ``model_copy``, and issue a PLAIN
+    (unbounded) bitemporal correction effective from ``business_from`` (the
+    mutation's OWN business instant `B` — the everyday "this correction takes
+    effect from B onward" idiom, `m-bitemp-write-006`; independent of the
+    displayed edge's own business coordinate, which only licenses the
+    re-fetch: ``business_from`` equal to the displayed rectangle's own
+    `from_z` degenerates the head interval to empty and is a build-time
+    caller error, out of this recipe's scope). A concurrent split since the
+    render leaves the observed row's ``in_z`` stale (and, when the key's
+    current rows share an ``in_z``, the business discriminator too) — the
+    gated close matches zero rows, ``OptimisticLockConflictError``; an
+    untouched rectangle's gate matches, and the edit lands."""
+
+    def fn(tx: Transaction) -> None:
+        current = tx.find(
+            Branch.where(Branch.id == id).as_of(processing=edge.processing, business=edge.business)
+        ).result()
+        tx.update(current.model_copy(update=dict(fields)), business_from=business_from)
+
+    db.transact(fn, concurrency="optimistic")
 ```

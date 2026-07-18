@@ -23,8 +23,9 @@ def guide_path() -> Path:
 
 
 def generate() -> str:
-    """The Usage Guide markdown for the currently registered examples."""
-    return api_suite.render_usage_guide(api_suite.EXAMPLES)
+    """The Usage Guide markdown for the currently registered examples and
+    spec recipes."""
+    return api_suite.render_usage_guide(api_suite.EXAMPLES, api_suite.RECIPES)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -16,11 +16,12 @@ stale. Entries are removed as each module's idiomatic examples land.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Final
 
-from parallax.conformance import case_format
+from parallax.conformance import case_format, stale_web_edit
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
@@ -29,9 +30,11 @@ from parallax.conformance.stories import WRITE_STORIES, story_snippet
 __all__ = [
     "CASE_SKIP_REASONS",
     "EXAMPLES",
+    "RECIPES",
     "SKIP_REASONS",
     "Example",
     "Partition",
+    "Recipe",
     "Skip",
     "active_slice",
     "build_skips",
@@ -49,6 +52,55 @@ class Example:
     case_id: str
     title: str
     snippet: str
+
+
+@dataclass(frozen=True, slots=True)
+class Recipe:
+    """A spec-recipe rendering for the Usage Guide (COR-3 Phase 8 increment 7
+    completion round, checkpoint-4 Spec finding 2).
+
+    Unlike an :class:`Example`, a recipe maps to a SPEC section rather than
+    one corpus case — its choreography (e.g. the §3 stale-web-edit two-read
+    render-then-submit round trip) is larger than any single case's goldens,
+    and force-registering it under a borrowed case id would misrepresent what
+    that case grades. It renders under its own Usage-Guide heading with a
+    spec citation plus the tests that grade it end-to-end."""
+
+    title: str
+    spec: str
+    graded_by: str
+    snippet: str
+
+
+RECIPES: Final[list[Recipe]] = [
+    Recipe(
+        title="Stale web edit — audit-only (Balance)",
+        spec="`python.md` §3 (the recipe) and §5 (why it runs optimistic)",
+        graded_by=(
+            "`tests/api_conformance/test_stale_web_edit.py` (real Postgres: the clean "
+            "submit, the concurrent-supersession conflict, and both negative pins) and "
+            "`tests/unit/test_transact.py`'s Docker-free recipe halves"
+        ),
+        snippet=(
+            inspect.getsource(stale_web_edit.render_balance_milestone)
+            + "\n"
+            + inspect.getsource(stale_web_edit.submit_balance_edit)
+        ),
+    ),
+    Recipe(
+        title="Stale web edit — bitemporal (Branch, both axes transported)",
+        spec="`python.md` §3 (the recipe) and §5 (why it runs optimistic)",
+        graded_by=(
+            "`tests/api_conformance/test_stale_web_edit.py` (real Postgres) and "
+            "`tests/unit/test_transact.py`'s Docker-free recipe halves"
+        ),
+        snippet=(
+            inspect.getsource(stale_web_edit.render_branch_milestone)
+            + "\n"
+            + inspect.getsource(stale_web_edit.submit_branch_edit)
+        ),
+    ),
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1107,8 +1159,9 @@ _GUIDE_HEADER: Final[str] = (
 )
 
 
-def render_usage_guide(examples: list[Example]) -> str:
-    """Render the Usage Guide markdown from the registered examples."""
+def render_usage_guide(examples: list[Example], recipes: list[Recipe] | None = None) -> str:
+    """Render the Usage Guide markdown from the registered examples, plus the
+    spec-recipe section (:data:`RECIPES`) when supplied."""
     lines: list[str] = [
         _GUIDE_HEADER,
         "",
@@ -1142,6 +1195,22 @@ def render_usage_guide(examples: list[Example]) -> str:
             lines.append("")
             lines.append("```python")
             lines.append(example.snippet)
+            lines.append("```")
+            lines.append("")
+    if recipes:
+        lines.append("## Recipes")
+        lines.append("")
+        lines.append("Spec-level idioms whose choreography spans more than any single corpus")
+        lines.append("case: each recipe cites its normative spec section and the tests that")
+        lines.append("grade it end-to-end (never a borrowed case id).")
+        lines.append("")
+        for recipe in recipes:
+            lines.append(f"### {recipe.title}")
+            lines.append("")
+            lines.append(f"Spec: {recipe.spec}. Graded by {recipe.graded_by}.")
+            lines.append("")
+            lines.append("```python")
+            lines.append(recipe.snippet.rstrip("\n"))
             lines.append("```")
             lines.append("")
     # Collapse the trailing separator blank(s) into a single terminating newline
