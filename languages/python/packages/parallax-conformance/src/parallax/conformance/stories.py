@@ -338,17 +338,17 @@ def audit_only_chain_update_from_existing_history(db: Database) -> None:
 # --------------------------------------------------------------------------- #
 # m-opt-lock: Account (versioned, non-temporal) keyed-write stories.          #
 # --------------------------------------------------------------------------- #
-def versioned_update_advances_the_version_ungated_in_locking_mode(db: Database) -> list[Entity]:
+def versioned_update_advances_the_version_ungated_in_locking_mode(db: Database) -> None:
     # m-opt-lock-002: the DEFAULT `locking` mode's in-transaction read already
     # took a shared row lock, so the keyed update needs no version check — it
     # advances the version with NO `and version = ?` gate (contrast optimistic
-    # mode, m-opt-lock-005/-006).
-    def fn(tx: Transaction) -> list[Entity]:
+    # mode, m-opt-lock-005/-006). A writeSequence story (the corpus case's own
+    # shape): no trailing find, the committed table state is the oracle.
+    def fn(tx: Transaction) -> None:
         current = tx.find(Account.where(Account.id == 2)).result()  # observe the version
         tx.update(current.model_copy(update={"balance": Decimal("500.00")}))
-        return list(tx.find(Account.where(Account.id == 2)).results())
 
-    return db.transact(fn)
+    db.transact(fn)
 
 
 # --------------------------------------------------------------------------- #
