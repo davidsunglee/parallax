@@ -26,6 +26,7 @@ from parallax.core.entity.base import (
     EntityRegistry,
     ModelCopyError,
     default_registry,
+    entity_record_of,
     entity_records,
     entity_registry,
 )
@@ -310,3 +311,90 @@ def test_family_subclass_registry_mismatch_raises() -> None:
             __parallax__ = EntityConfig(
                 mutability="transactional", inheritance=Concrete(tag_value="leaf")
             )
+
+
+# --------------------------------------------------------------------------- #
+# S1 (BLOCKING, COR-3 Phase 7 increment 7 round-2): two-registry TPH          #
+# regression -- a table-per-hierarchy family's SHARED-TABLE default must      #
+# never cross a registry boundary, even for two SAME-NAMED roots.            #
+# --------------------------------------------------------------------------- #
+def test_family_shared_table_does_not_leak_across_registries() -> None:
+    """Reproduces the reviewer's defect verbatim: a bare-canonical-name-keyed
+    shared-table cache let a SECOND registry's same-named TPH root overwrite
+    the FIRST's entry, so a concrete-subtype descendant compiled afterward
+    silently inherited the WRONG registry's table. Re-keyed by the root's own
+    CLASS object (never the bare name) -- collision-proof like
+    `_ENTITY_BY_CLASS` -- so this can never happen regardless of compile
+    order."""
+    registry_a = EntityRegistry()
+    registry_b = EntityRegistry()
+
+    class Animal(  # pyright: ignore[reportRedeclaration]
+        Entity, frozen=True, registry=registry_a
+    ):
+        __parallax__ = EntityConfig(
+            table="animals_a",
+            mutability="transactional",
+            inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
+        )
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    animal_a = Animal
+
+    # A SAME-NAMED root in a DIFFERENT registry, compiled AFTER `animal_a` but
+    # BEFORE its own concrete subtype below -- exactly the interleaving that
+    # let the bare-name-keyed bookkeeping overwrite registry A's entry pre-fix.
+    class Animal(Entity, frozen=True, registry=registry_b):
+        __parallax__ = EntityConfig(
+            table="animals_b",
+            mutability="transactional",
+            inheritance=FamilyRoot(strategy="table-per-hierarchy", tag="kind"),
+        )
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    class Dog(animal_a, frozen=True):
+        __parallax__ = EntityConfig(
+            mutability="transactional", inheritance=Concrete(tag_value="dog")
+        )
+
+    record = entity_record_of(Dog)
+    assert record is not None
+    assert record.table == "animals_a"  # registry A's own root table, never B's
+
+
+# --------------------------------------------------------------------------- #
+# Shadowing precedence (S1's scrutiny-item-1 pin): a child registry declaring #
+# a name that ALSO exists in its own `parent` chain is never a collision --   #
+# the child's own entry shadows the parent's, the parent itself unaffected.   #
+# --------------------------------------------------------------------------- #
+def test_child_registry_entry_shadows_a_same_named_parent_entry() -> None:
+    parent = EntityRegistry(parent=None)
+
+    class ShadowProbe(  # pyright: ignore[reportRedeclaration]
+        Entity, frozen=True, registry=parent
+    ):
+        __parallax__ = EntityConfig(table="shadow_probe_parent", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    parent_class = ShadowProbe
+    child = EntityRegistry(parent=parent)
+
+    # Declaring the SAME name in the CHILD raises no `RegistryCollisionError`
+    # at all -- `_register`'s own collision check looks only at the
+    # registering registry's OWN scope, never its `parent` chain.
+    class ShadowProbe(Entity, frozen=True, registry=child):
+        __parallax__ = EntityConfig(table="shadow_probe_child", mutability="transactional")
+
+        id: Attr[int] = Field(primary_key=True, pk_generator="none")
+
+    child_class = ShadowProbe
+
+    # The child's own entry shadows the parent's from here on...
+    assert child.resolve("ShadowProbe") is child_class
+    assert child.records()["ShadowProbe"] is entity_record_of(child_class)
+    # ... while the parent registry itself is entirely unaffected.
+    assert parent.resolve("ShadowProbe") is parent_class
+    assert parent.records()["ShadowProbe"] is entity_record_of(parent_class)

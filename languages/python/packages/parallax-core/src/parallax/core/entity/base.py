@@ -86,6 +86,7 @@ __all__ = [
     "full_row",
     "primary_key_row",
     "registry_of",
+    "registry_of_class",
     "resolve_entity_class",
     "snake_to_camel",
     "wire_names_of",
@@ -143,6 +144,19 @@ class EntityRegistry:
     differently-shaped ``Person``), not to re-declare an app's whole
     vocabulary from scratch. Pass ``parent=None`` for a fully isolated
     registry sharing nothing with the default.
+
+    SHADOWING (S1, COR-3 Phase 7 increment 7 round-2 -- the pin the D-20
+    design left implicit): declaring a name in a CHILD registry that ALSO
+    exists somewhere in its own ``parent`` chain is never a collision --
+    :meth:`_register`'s own collision check looks only at THIS registry's
+    ``_by_name``, never the ``parent`` chain -- and the child's own entry
+    SHADOWS the parent's from then on, the natural lexical-scope answer (an
+    inner scope's own binding always wins over an outer one's same-named
+    binding, never an error): :meth:`resolve` / :meth:`records` return the
+    child's own registration; the PARENT registry itself is entirely
+    unaffected (still resolves its own class under that name, to any OTHER
+    caller holding a reference to it directly) -- only a lookup THROUGH the
+    child sees the shadow.
     """
 
     __slots__ = ("_by_name", "_parent")
@@ -429,10 +443,14 @@ def entity_records() -> dict[str, EntityRecord]:
     return default_registry().records()
 
 
-def _registry_of_class(cls: type) -> EntityRegistry:
+def registry_of_class(cls: type) -> EntityRegistry:
     """``cls``'s own D-20 registration scope (:func:`default_registry` for a
     class whose declaration omitted ``registry=``, defensively too for a class
-    this bookkeeping somehow never tracked)."""
+    this bookkeeping somehow never tracked). PUBLIC (S2, COR-3 Phase 7
+    increment 7 round-2): class-authored metamodel assembly
+    (:func:`~parallax.core.entity.meta.metamodel`) derives its own scope from
+    THIS per-class lookup, never the process default, whenever the classes
+    given are in hand."""
     return _REGISTRY_OF_CLASS.get(cls, default_registry())
 
 
@@ -449,7 +467,7 @@ def _temporal_as_of_attributes(record: EntityRecord, cls: type) -> tuple[AsOfAtt
     """
     if record.inheritance is None:
         return record.as_of_attributes
-    meta = _registry_of_class(cls).metamodel()
+    meta = registry_of_class(cls).metamodel()
     return _inheritance.declaring_entity(meta, record).as_of_attributes
 
 
@@ -628,10 +646,20 @@ def _resolve_registry(
     return registry if registry is not None else default_registry()
 
 
-# The TPH family's shared table default, keyed by the ROOT entity's own name —
-# populated when the root compiles (its EntityConfig.table, possibly ``None``),
-# consumed by a concrete-subtype descendant that declares no table of its own.
-_FAMILY_SHARED_TABLE: dict[str, str | None] = {}
+# The TPH family's shared table default, keyed by the ROOT entity's own CLASS
+# OBJECT (S1, COR-3 Phase 7 increment 7 round-2 — never the bare canonical
+# NAME: two DIFFERENT registries' same-named TPH roots would otherwise
+# overwrite each other's entry here, letting registry A's concrete-subtype
+# descendant silently inherit registry B's table, the collision `_ENTITY_BY_
+# CLASS` / `_REGISTRY_OF_CLASS` already avoid by keying on the class object —
+# this map now follows the same collision-proof shape). Populated when the
+# root compiles (its EntityConfig.table, possibly ``None``, written AFTER
+# `cls` exists — the root's OWN `EntityMeta.__new__` call, never
+# `_derive_inheritance`, which runs before `cls` is built), consumed by a
+# concrete-subtype descendant that declares no table of its own (resolved to
+# the root's CLASS via THIS family's own D-20 registry — never a foreign
+# one, `EntityRegistry.resolve`'s own scoping guarantee).
+_FAMILY_SHARED_TABLE: dict[type, str | None] = {}
 
 
 def _derive_inheritance(
@@ -644,7 +672,9 @@ def _derive_inheritance(
     """
     if family_parent is None:
         if isinstance(config.inheritance, FamilyRoot):
-            _FAMILY_SHARED_TABLE[cls_name] = config.table
+            # `_FAMILY_SHARED_TABLE` is populated by the CALLER (`EntityMeta.
+            # __new__`, once the root's own `cls` exists to key it by) — never
+            # here, which runs before `cls` is built.
             record = InheritanceRecord(
                 role="root",
                 strategy=config.inheritance.strategy,
@@ -699,7 +729,15 @@ def _derive_inheritance(
         if config.table is not None:
             table = config.table
         elif root_record.inheritance.strategy == "table-per-hierarchy":
-            shared = _FAMILY_SHARED_TABLE.get(root_record.name)
+            # Resolved through THIS family's own D-20 registry scope (never
+            # `_ENTITY_BY_CLASS`/a bare name lookup directly): the root is
+            # ALWAYS already registered here by the time any of its
+            # descendants compile (a Python subclass statement cannot name a
+            # base class that has not finished executing), so this can never
+            # cross into a foreign registry's same-named root (S1).
+            root_cls = registry.resolve(root_record.name)
+            assert root_cls is not None  # the root always registers into this scope
+            shared = _FAMILY_SHARED_TABLE.get(root_cls)
             table = shared if shared is not None else camel_to_snake(root_record.name)
         else:  # table-per-concrete-subtype: every concrete owns its own table
             table = camel_to_snake(cls_name)
@@ -909,6 +947,11 @@ class EntityMeta(ModelMetaclass):
             raise EntityDefinitionError(str(exc)) from exc
 
         cls = super().__new__(mcs, cls_name, bases, namespace, **kwargs)
+        if entity.inheritance is not None and entity.inheritance.role == "root":
+            # S1: keyed by `cls` itself (never the bare `cls_name`) — only
+            # possible here, once `cls` exists; `_derive_inheritance` runs
+            # before it does.
+            _FAMILY_SHARED_TABLE[cls] = config.table
         column_to_py: dict[str, str] = {}
         name_to_py: dict[str, str] = {}
         py_to_name: dict[str, str] = {}
@@ -1014,7 +1057,7 @@ class Entity(BaseModel, metaclass=EntityMeta):
         record declares no axis locally.
         """
         record = entity_record_of(cls)
-        registry = _registry_of_class(cls)
+        registry = registry_of_class(cls)
         as_of = _temporal_as_of_attributes(record, cls) if record is not None else ()
         statement = build_statement(
             cls.__name__, predicates, as_of_attributes=as_of, registry=registry
