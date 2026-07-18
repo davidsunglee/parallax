@@ -810,10 +810,13 @@ never something an application developer hand-writes.
   `parallax-postgres` adapter against the real Testcontainers Postgres.
 - **Coverage partition and no-drift guards.** An assertion computes
   `exercised ∪ reasoned-skipped == active slice` from corpus data at runtime,
-  failing on stale case IDs or empty skip reasons. Three no-drift guards
+  failing on stale case IDs or empty skip reasons. Four no-drift guards
   close the loop. Two run per example: the idiomatic statement's
   serialization equals the corpus operation, and idiomatic class descriptors
-  equal corpus descriptors. The third is a Docker-free, unit-lane
+  equal corpus descriptors. A third, scoped to every registered write story,
+  drives it against a recording fake port and asserts its wire DML equals its
+  corpus golden byte-exact (a commit story the golden DML, an abort story
+  nothing for the discarded buffer). The fourth is a Docker-free, unit-lane
   **copy-to-row contract test** (`uv run pytest -m unit`), scoped to the
   write shapes that actually pass through edited-copy lowering — keyed
   non-temporal updates and keyed temporal updates driven by an edited copy;
@@ -825,11 +828,11 @@ never something an application developer hand-writes.
   version or `in_z` the unit of work supplies at flush) as an explicit input:
   the test supplies a synthetic observation and asserts the lowered
   row-shaped write input (sparse row non-temporal, full row temporal) binds
-  exactly that observation, and a companion assertion lowers a copy carrying
-  a *different* version value and proves the node/copy-carried value is
-  ignored — so the copy-provenance lowering (ADR 0003) and the
-  framework-owned observation rule (§5) cannot drift while the other two
-  proof paths stay green.
+  exactly that observation, and a companion assertion lowers the SAME edited
+  copy against a *different* observation and proves the bound value tracks
+  the observation, never anything the copy itself carries — so the
+  copy-provenance lowering (ADR 0003) and the framework-owned observation
+  rule (§5) cannot drift while the other three proof paths stay green.
 - **Usage Guide.** Generated from suite source (`uv run gen-usage-guide`) into
   `languages/python/docs/usage-guide.md`; CI runs `--check` and fails on
   drift. The guide and suite are additive to conformance-adapter proof, never
