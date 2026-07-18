@@ -1337,7 +1337,24 @@ class Entity(BaseModel, metaclass=EntityMeta):
         merged instance is fully re-validated through the ordinary
         constructor), so an invalid edit raises at copy time, never at the
         database.
-        """
+
+        An axis-governed attribute (``in_z``/``out_z``, bitemporal
+        ``from_z``/``thru_z``) this copy's own ``update`` never NAMES is
+        carried forward WITHOUT re-validation (discovered building the COR-3
+        Phase 8 increment 7 completion round's temporal write-family
+        stories): a materialized CURRENT milestone's real value there may be
+        the framework's own open-interval sentinel
+        (:data:`~parallax.core.base.TemporalBound.INFINITY` — every real
+        Postgres current row's `out_z`/`thru_z` decodes to exactly this,
+        `parallax.postgres.adapter._InfinityTimestamptzLoader`), which the
+        WRAP construction that first produced this node never validated
+        either (`model_construct`, `parallax.snapshot.wrap`) — the declared
+        ``Attr[dt.datetime]`` type was never meant to admit it at the
+        Pydantic level, so passing it back through the validating
+        constructor below would reject an entirely ordinary "edit one field
+        of the CURRENT row" copy. A caller who DOES name an axis field in
+        ``update`` still validates normally through the constructor (an axis
+        field remains a legal ``model_copy`` target, D-31)."""
         if not update:
             copied = super().model_copy(update=None, deep=deep)
             carried = dict(changed_fields(self) or {})
@@ -1348,7 +1365,13 @@ class Entity(BaseModel, metaclass=EntityMeta):
         declared = set(names.py_to_name)
         merged = {k: v for k, v in self.__dict__.items() if k in declared}
         merged.update(update)
+        untouched_axis = names.axis_governed_py - set(update)
+        carry_forward = {
+            py_name: merged.pop(py_name) for py_name in untouched_axis if py_name in merged
+        }
         validated = type(self)(**merged)  # re-validates the WHOLE instance (§2 scalar policies)
+        for py_name, value in carry_forward.items():
+            object.__setattr__(validated, py_name, value)
         changes = dict(changed_fields(self) or {})
         for py_name in update:
             if py_name not in changes:

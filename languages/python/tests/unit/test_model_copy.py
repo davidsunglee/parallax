@@ -17,6 +17,7 @@ import pytest
 import mirrored_models as mm
 import snapshot_models as sm
 import value_object_models as vm
+from parallax.core.base import INFINITY
 from parallax.core.descriptor import UNSET
 from parallax.core.entity import (
     EntityDefinitionError,
@@ -227,3 +228,39 @@ def test_the_exported_descriptor_carries_no_default_for_an_axis_attribute() -> N
     assert record is not None
     processing_from = next(a for a in record.attributes if a.name == "processingFrom")
     assert processing_from.default is UNSET
+
+
+# --------------------------------------------------------------------------- #
+# Discovered building the COR-3 Phase 8 increment 7 completion round's        #
+# temporal write-family stories: a materialized CURRENT milestone's real      #
+# `out_z`/`thru_z` value is the framework's own open-interval sentinel        #
+# (`TemporalBound.INFINITY` — every real Postgres current row decodes to      #
+# exactly this, `parallax.postgres.adapter._InfinityTimestamptzLoader`),      #
+# which the WRAP construction that materializes it never validates           #
+# (`model_construct`) — so `model_copy`'s own untouched-field revalidation    #
+# must carry an axis-governed field's CURRENT value forward WITHOUT ever     #
+# passing it back through the validating constructor.                        #
+# --------------------------------------------------------------------------- #
+def test_model_copy_carries_forward_an_untouched_axis_fields_infinity_sentinel() -> None:
+    balance = mm.Balance.model_construct(
+        id=1,
+        acct_num="A",
+        value=Decimal("100.00"),
+        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        processing_to=INFINITY,
+    )
+    copy = balance.model_copy(update={"value": Decimal("150.00")})
+    assert copy.value == Decimal("150.00")
+    assert copy.processing_to is INFINITY  # carried forward, never re-validated
+
+
+def test_model_copy_still_validates_an_explicitly_touched_axis_field() -> None:
+    balance = mm.Balance.model_construct(
+        id=1,
+        acct_num="A",
+        value=Decimal("100.00"),
+        processing_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        processing_to=INFINITY,
+    )
+    with pytest.raises(ValueError, match="processing_to"):
+        balance.model_copy(update={"processing_to": "not-a-datetime"})
