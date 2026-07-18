@@ -44,7 +44,10 @@ import snapshot_models as sm
 import value_object_models as vm
 from conftest import case_document
 from parallax.conformance import case_format
+from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_models import Policy
+from parallax.conformance.read_models import Animal as AnimalRoot
+from parallax.conformance.read_models import Cat, Dog, Person, Pet, WildBoar
 from parallax.conformance.read_stories import READ_STORIES
 from parallax.conformance.story_models import Order
 from parallax.core import Entity, OperationRejectedError, Predicate, Statement
@@ -88,11 +91,14 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     ),
     "m-inheritance-052": lambda: im.Document.where().narrow(im.FinancialDocument),
     # Value-object traversal (m-value-object): build-only — `value_object_
-    # models.Customer` already claims that canonical name in the single,
-    # global, process-wide entity registry and is test-only, so no
-    # installed-package mirror can drive these as a real story (the SAME
-    # Person/AnimalOwner-style collision `read_models`'s own docstring
-    # documents for the animal family's owner side).
+    # models.Customer` is test-only and no installed-package `Customer`
+    # mirror exists yet to drive these as a real story. Ledger D-20 (COR-3
+    # Phase 8 increment 7) removed the STRUCTURAL registry-collision block
+    # the animal family's owner side once carried (see `read_models`'s own
+    # docstring); an installed Customer/Location/Depot mirror is a
+    # coverage-surface breadth item this increment's own scale judgment
+    # (Part D item 4) deprioritized behind the Supplier/Branch/Contact/
+    # Shipment flips and the typed-verb story build-out.
     "m-value-object-001": lambda: vm.Customer.where(vm.Customer.address.city == "Oslo"),
     "m-value-object-002": lambda: vm.Customer.where(vm.Customer.address.geo.country == "US"),
     "m-value-object-007": lambda: vm.Customer.where(vm.Customer.address.city.is_null()),
@@ -101,6 +107,22 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     "m-value-object-017": lambda: vm.Customer.where(vm.Customer.address.phones.type == "home"),
     "m-value-object-019": lambda: vm.Customer.where(
         vm.Customer.address.phones.any(vm.Phone.type == "home", vm.Phone.number == "555-9999")
+    ),
+    # Deep-fetch include paths over the now-installed Person/Passport and
+    # animal-owner mirrors (ledger D-20/D-21) — the query-shape no-drift
+    # half of the executable graph stories in `graph_stories.py`.
+    "m-snapshot-read-007": lambda: Person.where().include(Person.passport),
+    "m-snapshot-read-012": lambda: AnimalOwnerPerson.where(AnimalOwnerPerson.id == 10).include(
+        AnimalOwnerPerson.animals, AnimalOwnerPerson.pets.narrow(Dog)
+    ),
+    "m-inheritance-065": lambda: AnimalOwnerPerson.where().include(
+        AnimalOwnerPerson.pets.narrow(Dog)
+    ),
+    "m-inheritance-066": lambda: AnimalOwnerPerson.where().include(
+        AnimalOwnerPerson.pets.narrow(Pet), AnimalOwnerPerson.pets.narrow(Cat, Dog)
+    ),
+    "m-inheritance-067": lambda: AnimalOwnerPerson.where().include(
+        AnimalOwnerPerson.pets.narrow(Dog), AnimalOwnerPerson.pets.narrow(Cat)
     ),
 }
 
@@ -137,15 +159,26 @@ REJECTED_BUILDERS: dict[str, Callable[[], Predicate]] = {
     "m-inheritance-040": lambda: sm.Pet.narrow(sm.WildBoar),
     "m-inheritance-041": lambda: sm.Dog.bark_volume > 5,
     "m-inheritance-042": lambda: sm.Pet.narrow(sm.Dog, where=sm.Animal.narrow(sm.Cat)),
+    # `Person.pets` targets the abstract subtype Pet; narrowing past its
+    # reachable set (WildBoar, a sibling branch) or naming the wrong `entity`
+    # (Animal instead of Pet) both raise `narrow-outside-relationship-target`
+    # over the now-installed animal-owner mirror (ledger D-20).
+    "m-inheritance-064": lambda: AnimalOwnerPerson.pets.any(Pet.narrow(WildBoar)),
+    "m-inheritance-072": lambda: AnimalOwnerPerson.pets.any(AnimalRoot.narrow(Dog)),
 }
 
 # case id -> the entity `Entity.where(...)` is called on to trigger validation
 # (the rejected case's own target: the model's family root when it declares
-# one, matching `engine._rejected_target`'s default).
+# one, matching `engine._rejected_target`'s default; the animal-owner pair
+# below targets `Person` itself instead — the predicate is fundamentally
+# about `Person.pets`, and `Person`'s own registry scope is the one that
+# resolves BOTH `Person` and `Pet`/`WildBoar`/`Animal` coherently, ledger D-20).
 REJECTED_TARGETS: dict[str, type[Entity]] = {
     "m-value-object-038": vm.Customer,
     "m-inheritance-040": sm.Animal,
     "m-inheritance-041": sm.Animal,
+    "m-inheritance-064": AnimalOwnerPerson,
+    "m-inheritance-072": AnimalOwnerPerson,
     "m-inheritance-042": sm.Animal,
 }
 

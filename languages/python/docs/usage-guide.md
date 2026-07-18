@@ -57,6 +57,60 @@ Animal.where(Pet.narrow(Dog, where=Animal.narrow(Cat)))
 # raises OperationRejectedError(rule="narrow-outside-position")
 ```
 
+## A relationship-scope narrow past its target's reachable set
+
+Corpus case: `m-inheritance-064`
+
+```python
+Person.pets.any(Pet.narrow(WildBoar))
+# raises OperationRejectedError(rule="narrow-outside-relationship-target")
+```
+
+## A single narrowed subtype view over a table-per-hierarchy family
+
+Corpus case: `m-inheritance-065`
+
+```python
+def narrowed_pets_view_populates_per_owner(db: Database) -> Snapshot[Any]:
+    """A single narrowed ``pets[Dog]`` view over every owner (`m-inheritance-065`):
+    the narrowed hop populates a distinct view keyed by the derived name,
+    never marking the broad ``pets`` relationship loaded."""
+    return db.find(AnimalOwnerPerson.where().include(AnimalOwnerPerson.pets.narrow(Dog)))
+```
+
+## Equivalent authored narrowings dedupe to the same derived view
+
+Corpus case: `m-inheritance-066`
+
+```python
+def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any]:
+    """Two DIFFERENT authored narrowings resolving to the SAME effective
+    concrete set dedupe to ONE hop (`m-inheritance-066`): ``narrow(Pet)`` and
+    ``narrow(Cat, Dog)`` both derive the view key ``pets[Cat,Dog]``."""
+    return db.find(
+        AnimalOwnerPerson.where().include(
+            AnimalOwnerPerson.pets.narrow(Pet), AnimalOwnerPerson.pets.narrow(Cat, Dog)
+        )
+    )
+```
+
+## Two distinct narrowed views over the same relationship populate independently
+
+Corpus case: `m-inheritance-067`
+
+```python
+def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any]:
+    """Two narrowings to DIFFERENT concrete sets stay two distinct views
+    (`m-inheritance-067`): ``pets[Dog]`` and ``pets[Cat]`` populate
+    independently (dedup identity is the effective concrete set, not the
+    bare relationship hop)."""
+    return db.find(
+        AnimalOwnerPerson.where().include(
+            AnimalOwnerPerson.pets.narrow(Dog), AnimalOwnerPerson.pets.narrow(Cat)
+        )
+    )
+```
+
 ## Polymorphic navigation over table-per-concrete-subtype (grouped OR)
 
 Corpus case: `m-inheritance-070`
@@ -71,6 +125,15 @@ Corpus case: `m-inheritance-071`
 
 ```python
 op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))
+```
+
+## A relationship-scope narrow naming the wrong position
+
+Corpus case: `m-inheritance-072`
+
+```python
+Person.pets.any(Animal.narrow(Dog))
+# raises OperationRejectedError(rule="narrow-outside-relationship-target")
 ```
 
 ## A keyed write aimed at an abstract inheritance position
@@ -313,6 +376,18 @@ def empty_intermediate_level_short_circuits(db: Database) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 4).include(Order.items.statuses))
 ```
 
+## A one-to-one peer attaches as a single object, not a collection
+
+Corpus case: `m-snapshot-read-007`
+
+```python
+def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
+    """Every ``Person`` materializes with its single ``Passport`` peer — a
+    to-one relationship attaches as ONE object, not a collection, and a
+    person with no passport (id 3) gets a null peer."""
+    return db.find(Person.where().include(Person.passport))
+```
+
 ## Closed-world: an un-included relationship raises with zero SQL
 
 Corpus case: `m-snapshot-read-009`
@@ -341,6 +416,24 @@ Corpus case: `m-snapshot-read-011`
 ```python
 def back_reference_cycle_resolves_to_the_root(db: Database) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 1).include(Order.items.order))
+```
+
+## Family-normalized, projection-independent diamond over a real animal-family owner
+
+Corpus case: `m-snapshot-read-012`
+
+```python
+def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapshot[Any]:
+    """The animal family's REAL owner (ledger D-20): a root-typed
+    ``animals`` path (reaching any concrete subtype) and a leaf-typed
+    ``pets[Dog]`` narrowed view both reach the SAME row (Alice's Rex) with
+    DIFFERENT fetched projections — the family-normalized,
+    projection-independent diamond (`m-snapshot-read-012`)."""
+    return db.find(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.id == 10).include(
+            AnimalOwnerPerson.animals, AnimalOwnerPerson.pets.narrow(Dog)
+        )
+    )
 ```
 
 ## As-of read at a past instant

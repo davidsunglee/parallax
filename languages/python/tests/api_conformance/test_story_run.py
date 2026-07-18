@@ -32,15 +32,19 @@ from typing import Any, cast
 import pytest
 
 from conftest import case_document, case_fixtures, compare_binds, compare_rows, instance_row
-from parallax.conformance import case_format, engine
+from parallax.conformance import animal_owner, case_format, engine
+from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_stories import (
     GRAPH_STORIES,
     history_of_a_concrete_temporal_node_distinguishes_milestones,
 )
+from parallax.conformance.read_models import Cat, Dog
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
-from parallax.core import LATEST, edge_of, is_loaded, pin_of
+from parallax.core import LATEST, edge_of, is_loaded, narrowed, pin_of
+from parallax.core.descriptor import Metamodel
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity.base import EntityRegistry
 from parallax.core.entity.expressions import UnloadedRelationshipError
 from parallax.snapshot import connect
 
@@ -60,6 +64,21 @@ def _final_find_expect_rows(case_id: str) -> list[dict[str, Any]]:
 def _reset_for(case_id: str, provisioner: Any) -> Any:
     case = _CASES[case_id]
     meta = engine.load_case_metamodel(case)
+    provisioner.reset(meta, case_fixtures(case))
+    return meta
+
+
+def _reset_for_registry(case_id: str, provisioner: Any, registry: EntityRegistry) -> Metamodel:
+    """Like :func:`_reset_for`, but provisions from ``registry``'s OWN
+    :meth:`~parallax.core.entity.base.EntityRegistry.metamodel` rather than
+    the ingested corpus descriptor (ledger D-20): needed whenever `db.find`'s
+    wrap must resolve through a registry OTHER than the process default (the
+    animal family's REAL owner, scoped to
+    `animal_owner.ANIMAL_OWNER_REGISTRY`) — structurally equivalent to the
+    ingested descriptor (proven by the descriptor no-drift guard), so
+    provisioning from it is exactly as sound."""
+    case = _CASES[case_id]
+    meta = registry.metamodel()
     provisioner.reset(meta, case_fixtures(case))
     return meta
 
@@ -236,6 +255,75 @@ def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisione
     # abstract-subtype position).
     pin_of(historical)
     pin_of(current)
+
+
+def test_one_to_one_peer_attaches_as_a_single_object(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-007"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    by_id = {person.id: person for person in snapshot.results()}
+    assert by_id[1].passport is not None
+    assert by_id[1].passport.number == "P-AAA"
+    assert by_id[2].passport is not None
+    assert by_id[2].passport.number == "P-BBB"
+    assert by_id[3].passport is None  # no passport on record -> a null peer
+    assert snapshot.execution.round_trips == 2
+
+
+def test_animal_owner_reaches_root_and_narrowed_subtype_view(provisioner: Any) -> None:
+    # The animal family's REAL owner (ledger D-20): provisioned from its OWN
+    # scoped registry, never the ingested descriptor (`_reset_for_registry`).
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-012"]
+    meta = _reset_for_registry(story.case_id, provisioner, animal_owner.ANIMAL_OWNER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    alice = snapshot.result()
+    assert isinstance(alice, AnimalOwnerPerson)
+    assert alice.name == "Alice"
+    assert {pet.name for pet in alice.animals} == {"Rex", "Whiskers"}
+    dogs = narrowed(alice, AnimalOwnerPerson.pets.narrow(Dog))
+    assert [dog.name for dog in cast("tuple[Any, ...]", dogs)] == ["Rex"]
+    assert snapshot.execution.round_trips == 3
+
+
+def test_narrowed_pets_view_populates_per_owner(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-065"]
+    meta = _reset_for_registry(story.case_id, provisioner, animal_owner.ANIMAL_OWNER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    by_name = {person.name: person for person in snapshot.results()}
+    alice_dogs = narrowed(by_name["Alice"], AnimalOwnerPerson.pets.narrow(Dog))
+    assert [dog.name for dog in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
+    bob_dogs = narrowed(by_name["Bob"], AnimalOwnerPerson.pets.narrow(Dog))
+    assert [dog.name for dog in cast("tuple[Any, ...]", bob_dogs)] == ["Fido"]
+    carol_dogs = narrowed(by_name["Carol"], AnimalOwnerPerson.pets.narrow(Dog))
+    assert carol_dogs == ()
+    assert snapshot.execution.round_trips == 2
+
+
+def test_equivalent_narrow_spellings_dedupe_to_one_view(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-066"]
+    meta = _reset_for_registry(story.case_id, provisioner, animal_owner.ANIMAL_OWNER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    by_name = {person.name: person for person in snapshot.results()}
+    alice_view = narrowed(by_name["Alice"], AnimalOwnerPerson.pets.narrow(Cat, Dog))
+    assert {pet.name for pet in cast("tuple[Any, ...]", alice_view)} == {"Rex", "Whiskers"}
+    assert snapshot.execution.round_trips == 2
+
+
+def test_distinct_narrowed_views_populate_independently(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-inheritance-067"]
+    meta = _reset_for_registry(story.case_id, provisioner, animal_owner.ANIMAL_OWNER_REGISTRY)
+    db = connect(provisioner.port, meta)
+    snapshot = story.run(db)
+    alice = next(person for person in snapshot.results() if person.name == "Alice")
+    alice_dogs = narrowed(alice, AnimalOwnerPerson.pets.narrow(Dog))
+    alice_cats = narrowed(alice, AnimalOwnerPerson.pets.narrow(Cat))
+    assert [pet.name for pet in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
+    assert [pet.name for pet in cast("tuple[Any, ...]", alice_cats)] == ["Whiskers"]
+    assert snapshot.execution.round_trips == 3
 
 
 def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:

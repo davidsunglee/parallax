@@ -5,10 +5,12 @@ audit-only temporal entity), ``models/payment.yaml`` (table-per-hierarchy:
 (table-per-concrete-subtype: ``Document`` / ``FinancialDocument`` / ``Invoice``
 / ``Receipt`` / ``Memo`` / ``Folder``), the NON-owner portion of
 ``models/animal.yaml`` (table-per-hierarchy: ``Animal`` / ``Pet`` / ``Dog`` /
-``Cat``), and ``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL:
+``Cat``), ``models/rate.yaml`` (table-per-concrete-subtype BITEMPORAL:
 ``Rate`` / ``DepositRate`` / ``LoanRate`` — the root ALONE declares the
 family's as-of axes; the concrete subtypes declare none of their own, per the
-binding root-ownership decision, m-inheritance "Inherited members").
+binding root-ownership decision, m-inheritance "Inherited members"), and
+``models/person.yaml`` (``Person`` / ``Passport``, a one-to-one dependent
+relationship).
 
 Owned by ``parallax.conformance`` for the same reason ``story_models`` /
 ``graph_models`` are: ``read_stories.py`` is a real dev-only package module
@@ -18,13 +20,20 @@ outside pytest entirely) and whose statements execute through the shipped
 import time, not only under pytest's test-path magic — `tests/mirrored_models.py`
 / `tests/inheritance_models.py` / `tests/snapshot_models.py` (test-only, moved
 there for exactly this package-boundary reason) cannot be imported from here.
+`tests/mirrored_models.py` RE-EXPORTS ``Person``/``Passport`` from here (the
+``Balance`` discipline), rather than redeclaring them.
 
-``models/animal.yaml``'s own polymorphic owner (``Person``) is DELIBERATELY
-absent: it would collide with ``mirrored_models.Person`` (``models/person.yaml``)
-in the single, global, process-wide entity registry — the exact collision
-`snapshot_models.AnimalOwner`'s own docstring documents; the owner-relationship
-cases stay case-scoped-skipped (`api_suite.CASE_SKIP_REASONS`). None of the
-read-story case ids this module serves reference the owner side.
+``models/animal.yaml``'s own polymorphic owner is ALSO named ``Person`` — a
+literal canonical-name collision with THIS module's ``Person``
+(``models/person.yaml``). Ledger D-20 (COR-3 Phase 8 increment 7) resolves the
+structural constraint that used to make this collision fatal: an explicit,
+independently-collision-checked :class:`~parallax.core.entity.base.EntityRegistry`
+scope now lets the SAME canonical name coexist across two registries. The
+animal family's own owner accordingly lives in a SEPARATE installed module,
+`parallax.conformance.animal_owner`, scoped to its own registry (whose parent
+is this module's own DEFAULT registry, so it still resolves ``Animal`` /
+``Pet`` / ``Dog`` / ``Cat`` below without redeclaring them) — never here,
+where it would immediately collide with this module's OWN ``Person``.
 
 This module deliberately avoids ``from __future__ import annotations`` so the
 metaclass reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
@@ -51,10 +60,13 @@ __all__ = [
     "Invoice",
     "LoanRate",
     "Memo",
+    "Passport",
     "Payment",
+    "Person",
     "Pet",
     "Rate",
     "Receipt",
+    "WildBoar",
 ]
 
 
@@ -179,27 +191,46 @@ class Animal(Entity, frozen=True):
 
     id: Attr[int] = Field(primary_key=True, pk_generator="none", type="int64")
     name: Attr[str] = Field(max_length=32)
-    owner_id: Attr[int | None] = Field(type="int64", column="owner_id", nullable=True, default=None)
+    owner_id: Attr[int | None] = Field(type="int64", column="owner_id", nullable=True)
 
 
 class Pet(Animal, frozen=True):
+    __parallax__ = EntityConfig(namespace=_NS)
+
     license_id: Attr[str | None] = Field(
-        type="string", max_length=16, column="license_id", nullable=True, default=None
+        type="string", max_length=16, column="license_id", nullable=True
     )
 
 
 class Dog(Pet, frozen=True):
-    __parallax__ = EntityConfig(inheritance=Concrete(tag_value="dog"))
-
-    bark_volume: Attr[int | None] = Field(
-        type="int32", column="bark_volume", nullable=True, default=None
+    __parallax__ = EntityConfig(
+        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="dog")
     )
+
+    bark_volume: Attr[int | None] = Field(type="int32", column="bark_volume", nullable=True)
 
 
 class Cat(Pet, frozen=True):
-    __parallax__ = EntityConfig(inheritance=Concrete(tag_value="cat"))
+    __parallax__ = EntityConfig(
+        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="cat")
+    )
 
-    indoor: Attr[bool | None] = Field(type="boolean", column="indoor", nullable=True, default=None)
+    indoor: Attr[bool | None] = Field(type="boolean", column="indoor", nullable=True)
+
+
+class WildBoar(Animal, frozen=True):
+    """A concrete SIBLING branch directly under ``Animal`` (not a ``Pet``):
+    proves narrowing a read of ``Animal`` to ``Pet`` cannot broaden back out
+    to ``WildBoar`` — its effective concrete set is ``[Dog, Cat]``, never
+    ``WildBoar`` (``m-inheritance-064``/``-072``'s own rejected narrows)."""
+
+    __parallax__ = EntityConfig(
+        namespace=_NS, mutability="transactional", inheritance=Concrete(tag_value="boar")
+    )
+
+    tusk_length: Attr[Decimal | None] = Field(
+        type="decimal(18,2)", column="tusk_length", nullable=True
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -241,3 +272,40 @@ class LoanRate(Rate, frozen=True):
     __parallax__ = EntityConfig(namespace=_NS, mutability="transactional", inheritance=Concrete())
 
     spread: Attr[Decimal | None] = Field(type="decimal(18,2)", nullable=True)
+
+
+# --------------------------------------------------------------------------- #
+# Person/Passport: a one-to-one dependent relationship (models/person.yaml).   #
+# Installed here (ledger D-20/D-21, COR-3 Phase 8 increment 7): the FIRST      #
+# production-reachable mirror of this model (`m-snapshot-read-007`).          #
+# `mirrored_models.Person`/`.Passport` RE-EXPORT these (the `Balance`          #
+# discipline) rather than redeclaring them.                                   #
+# --------------------------------------------------------------------------- #
+class Person(Entity, frozen=True):
+    __parallax__ = EntityConfig(table="person", namespace=_NS, mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none")
+    name: Attr[str] = Field(max_length=64)
+    passport: Rel["Passport"] = Relationship(
+        cardinality="one-to-one",
+        join="this.id = Passport.personId",
+        related_entity="Passport",
+        reverse_name="holder",
+        dependent=True,
+        foreign_key="person_id",
+    )
+
+
+class Passport(Entity, frozen=True):
+    __parallax__ = EntityConfig(table="passport", namespace=_NS, mutability="transactional")
+
+    id: Attr[int] = Field(primary_key=True, pk_generator="none")
+    person_id: Attr[int]
+    number: Attr[str] = Field(max_length=32)
+    holder: Rel["Person"] = Relationship(
+        cardinality="one-to-one",
+        join="this.personId = Person.id",
+        related_entity="Person",
+        reverse_name="passport",
+        foreign_key="person_id",
+    )

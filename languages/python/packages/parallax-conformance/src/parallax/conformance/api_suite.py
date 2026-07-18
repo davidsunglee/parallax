@@ -130,6 +130,18 @@ EXAMPLES: Final[list[Example]] = [
         "Animal.where(Pet.narrow(Dog, where=Animal.narrow(Cat)))\n"
         '# raises OperationRejectedError(rule="narrow-outside-position")',
     ),
+    Example(
+        "m-inheritance-064",
+        "A relationship-scope narrow past its target's reachable set",
+        "Person.pets.any(Pet.narrow(WildBoar))\n"
+        '# raises OperationRejectedError(rule="narrow-outside-relationship-target")',
+    ),
+    Example(
+        "m-inheritance-072",
+        "A relationship-scope narrow naming the wrong position",
+        "Person.pets.any(Animal.narrow(Dog))\n"
+        '# raises OperationRejectedError(rule="narrow-outside-relationship-target")',
+    ),
     # Rejected-case build/buffer-time proof (m-inheritance, COR-3 Phase 8
     # increment 2): the write-side counterpart of the read-side proofs above —
     # `tx.insert` refuses the SAME invalid write the corpus's own rejected
@@ -640,42 +652,17 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
     "assembler + frozen-node wrap already proven for real against Postgres"
 )
 
-# `models/person.yaml`'s own Person/Passport pair (the one-to-one graph case)
-# lives in `tests/mirrored_models.py` — a test-only module, unreachable from
-# the installed `parallax-conformance` distribution `graph_stories.py` needs
-# (package-boundary rule, spec §7/§8): no parallax.conformance-scoped Person
-# mirror exists, so this case cannot be driven through a real db.find story
-# today. Deferred: ledger D-20 (the single, global, process-wide entity-registry
-# constraint — closing it needs a registry/naming refactor, not this suite).
-_PERSON_MIRROR_UNREACHABLE_REASON: Final[str] = (
-    "`models/person.yaml`'s Person/Passport pair lives in `tests/mirrored_models.py` — "
-    "test-only, unreachable from the installed `parallax-conformance` distribution "
-    "`graph_stories.py` needs (the package-boundary rule, spec §7/§8) — no "
-    "parallax.conformance-scoped Person mirror exists to drive this as a real story"
-)
-
-# `models/animal.yaml`'s own polymorphic owner is ALSO named `Person` — the
-# same literal canonical name `mirrored_models.Person` already claims in the
-# single, global, process-wide entity registry (see `snapshot_models`'s own
-# module docstring, which renamed its OWN animal-family owner to `AnimalOwner`
-# for exactly this reason). Any proof needing the EXACT corpus operation text
-# (`rel: Person.pets`) or a real db.find over the animal family's owner
-# relationship is unreachable: `snapshot_models`/`inheritance_models` are
-# themselves test-only (same package-boundary rule as Person above), so even a
-# renamed mirror cannot be driven from `parallax.conformance`. Deferred: ledger
-# D-20 (the SAME single, global, process-wide entity-registry constraint the
-# Person-mirror reason above defers).
-_ANIMAL_OWNER_COLLISION_REASON: Final[str] = (
-    "`models/animal.yaml`'s own polymorphic owner is ALSO named `Person` — the same "
-    "canonical name `mirrored_models.Person` claims in the single, global, "
-    "process-wide entity registry (`snapshot_models` renames its own mirror to "
-    "`AnimalOwner` for exactly this reason); the exact corpus operation text names the "
-    "real `Person.pets` relationship, and `snapshot_models`/`inheritance_models` are "
-    "themselves test-only (unreachable from the installed `parallax-conformance` "
-    "distribution `graph_stories.py` needs) — no reachable mirror can reproduce this "
-    "case's operation or drive it as a real story today"
-)
-
+# `models/person.yaml`'s own Person/Passport pair and `models/animal.yaml`'s
+# own polymorphic owner (ALSO named `Person`) were both unreachable through a
+# single, global, process-wide entity registry sharing one flat namespace
+# (`mirrored_models.Person` claimed the name first). Ledger D-20 (COR-3 Phase
+# 8 increment 7) resolves this with explicit, scoped `EntityRegistry`
+# instances: `read_models.Person`/`.Passport` are now installed (the DEFAULT
+# registry), and `animal_owner.Person` (the animal family's REAL owner) is
+# installed in its OWN registry (parent-chained to the default, so it also
+# resolves `Animal`/`Pet`/`Dog`/`Cat`/`WildBoar`) — both flip to executable
+# graph stories (`graph_stories.py`); no case-scoped reason remains for either.
+#
 # `.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT,
 # documented deferral (spec §3 `snapshot-history-includes`): `Statement`
 # refuses the combination with `UnsupportedFeatureError` naming it. Not a gap —
@@ -690,43 +677,37 @@ _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON: Final[str] = (
 # Value-object nested/absence/cast/array-traversal PREDICATE reads: rows-form,
 # representative siblings of the Customer.address predicate BUILD-TIME proofs
 # (m-value-object-001/002/007/015/016/017/019 — themselves case-scoped skips
-# below, the Customer registry collision, never executed for real either) —
-# the SAME nested-path resolution / absence-collapse / any-element lowering, a
-# different operator, depth, or dialect-cast variant, and the SAME
-# reachability block a real execution of any of them would hit.
+# below, never executed for real either) — the SAME nested-path resolution /
+# absence-collapse / any-element lowering, a different operator, depth, or
+# dialect-cast variant, and the SAME reachability block a real execution of
+# any of them would hit.
 _VO_PREDICATE_SIBLING_REASON: Final[str] = (
     "a representative sibling of the Customer.address predicate build-time proofs "
-    "(m-value-object-001/002/007/015/016/017/019 — themselves case-scoped skips, the "
-    "Customer registry collision below): the SAME nested-path resolution / "
-    "absence-collapse / any-element lowering, a different operator, depth, or "
-    "dialect-cast variant — no distinct developer-facing shape to add, and the SAME "
-    "reachability block a real execution would hit"
+    "(m-value-object-001/002/007/015/016/017/019 — themselves case-scoped skips below): "
+    "the SAME nested-path resolution / absence-collapse / any-element lowering, a "
+    "different operator, depth, or dialect-cast variant — no distinct developer-facing "
+    "shape to add, and the SAME reachability block a real execution would hit"
 )
 
 # Customer-model cases needing a REAL execution (a `db.find`/`db.transact`
-# story, not a build-only statement): `value_object_models.Customer` — the
-# SAME canonical name this case's model declares — already claims "Customer"
-# in the single, global, process-wide entity registry, and it is test-only
-# (unreachable from the installed `parallax-conformance` distribution
-# `stories.py`/`graph_stories.py`/`read_stories.py` need, the SAME
-# package-boundary rule `snapshot_models`'s own docstring documents for
-# animal.yaml's owner). A purpose-built, differently-named mirror could
-# reproduce the WRITE DML, GRAPH shape, or ROW result but never the exact
-# corpus operation/wire text this suite's no-drift guards compare, since the
-# case's own `targetEntity`/`entity` names the real "Customer" — this covers
-# the row-form predicate reads (m-value-object-001/002/007/015/016/017/019)
-# exactly as it already covered the graph/write cases. Deferred: ledger D-20
-# (the SAME single, global, process-wide entity-registry constraint the
-# Person/AnimalOwner reasons above defer).
+# story, not a build-only statement): `value_object_models.Customer` is
+# test-only, and no installed `parallax.conformance` mirror of
+# Customer/Location/Depot exists YET to drive these for real — ledger D-20's
+# structural registry-collision block that used to make this unreachable is
+# RESOLVED (an installed mirror could coexist with the test-only one via a
+# separate registry, or simply redeclare Customer under the default registry
+# the same way Supplier/Branch/Contact/Shipment now do); building that mirror
+# is a coverage-surface BREADTH item this increment's own scale judgment (Part
+# D item 4) deprioritized behind the Supplier/Branch temporal-VO flips, the
+# Contact/Shipment write-validation flips, and the typed-verb story build-out.
 _CUSTOMER_UNREACHABLE_REASON: Final[str] = (
     "needs a REAL execution (a `db.find`/`db.transact` story) over the Customer "
-    "entity, but `value_object_models.Customer` already claims that canonical name in "
-    "the single, global, process-wide entity registry and is test-only — unreachable "
-    "from the installed `parallax-conformance` distribution `stories.py`/"
-    "`graph_stories.py`/`read_stories.py` need (the same package-boundary collision "
-    "`snapshot_models`'s own docstring documents for animal.yaml's owner); a "
-    "differently-named mirror could run the SQL but could never reproduce this case's "
-    "own `Customer`-named operation/wire text"
+    "entity, but `value_object_models.Customer` is test-only and no installed "
+    "`parallax.conformance` mirror of Customer/Location/Depot exists yet — the "
+    "structural registry-collision block ledger D-20 fixed no longer applies; building "
+    "the mirror is a breadth item this increment's own scale judgment deprioritized "
+    "behind the Supplier/Branch/Contact/Shipment flips and the typed-verb story "
+    "build-out (Part D item 4)"
 )
 
 # Supplier/Branch value-object-bearing temporal reads: genuinely exercisable in
@@ -928,14 +909,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-099": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-102": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-103": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    # -- m-inheritance / m-navigate: the Person/AnimalOwner collision -------- #
-    "m-inheritance-064": _ANIMAL_OWNER_COLLISION_REASON,
-    "m-inheritance-072": _ANIMAL_OWNER_COLLISION_REASON,
-    "m-inheritance-065": _ANIMAL_OWNER_COLLISION_REASON,
-    "m-inheritance-066": _ANIMAL_OWNER_COLLISION_REASON,
-    "m-inheritance-067": _ANIMAL_OWNER_COLLISION_REASON,
-    "m-snapshot-read-012": _ANIMAL_OWNER_COLLISION_REASON,
-    # -- m-deep-fetch: the Customer-registry collision ----------------------- #
+    # -- m-deep-fetch: the Customer mirror breadth deferral ------------------ #
     "m-deep-fetch-018": _CUSTOMER_UNREACHABLE_REASON,
     # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #
     "m-navigate-001": _NAVIGATE_TAG_REDUNDANT_REASON,
@@ -958,8 +932,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-snapshot-read-003": _ORDERS_GRAPH_SIBLING_REASON,
     "m-snapshot-read-006": _ORDERS_GRAPH_SIBLING_REASON,
     "m-snapshot-read-008": _ORDERS_GRAPH_SIBLING_REASON,
-    # -- m-snapshot-read: Person mirror unreachable / history+include -------- #
-    "m-snapshot-read-007": _PERSON_MIRROR_UNREACHABLE_REASON,
+    # -- m-snapshot-read: history+include (an explicit, designed-in deferral) #
     "m-snapshot-read-013": _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON,
     "m-snapshot-read-014": _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON,
     # -- m-value-object: predicate-read representative siblings ------------- #

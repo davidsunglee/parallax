@@ -49,8 +49,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_models import Policy
-from parallax.conformance.read_models import DepositRate
+from parallax.conformance.read_models import Cat, DepositRate, Dog, Person, Pet
 from parallax.conformance.story_models import Order
 from parallax.core.temporal_read import LATEST
 from parallax.snapshot.handle import Database, Snapshot
@@ -123,6 +124,56 @@ def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -
     return db.find(DepositRate.where().history(axis="processing"))
 
 
+def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
+    """Every ``Person`` materializes with its single ``Passport`` peer — a
+    to-one relationship attaches as ONE object, not a collection, and a
+    person with no passport (id 3) gets a null peer."""
+    return db.find(Person.where().include(Person.passport))
+
+
+def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapshot[Any]:
+    """The animal family's REAL owner (ledger D-20): a root-typed
+    ``animals`` path (reaching any concrete subtype) and a leaf-typed
+    ``pets[Dog]`` narrowed view both reach the SAME row (Alice's Rex) with
+    DIFFERENT fetched projections — the family-normalized,
+    projection-independent diamond (`m-snapshot-read-012`)."""
+    return db.find(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.id == 10).include(
+            AnimalOwnerPerson.animals, AnimalOwnerPerson.pets.narrow(Dog)
+        )
+    )
+
+
+def narrowed_pets_view_populates_per_owner(db: Database) -> Snapshot[Any]:
+    """A single narrowed ``pets[Dog]`` view over every owner (`m-inheritance-065`):
+    the narrowed hop populates a distinct view keyed by the derived name,
+    never marking the broad ``pets`` relationship loaded."""
+    return db.find(AnimalOwnerPerson.where().include(AnimalOwnerPerson.pets.narrow(Dog)))
+
+
+def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any]:
+    """Two DIFFERENT authored narrowings resolving to the SAME effective
+    concrete set dedupe to ONE hop (`m-inheritance-066`): ``narrow(Pet)`` and
+    ``narrow(Cat, Dog)`` both derive the view key ``pets[Cat,Dog]``."""
+    return db.find(
+        AnimalOwnerPerson.where().include(
+            AnimalOwnerPerson.pets.narrow(Pet), AnimalOwnerPerson.pets.narrow(Cat, Dog)
+        )
+    )
+
+
+def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any]:
+    """Two narrowings to DIFFERENT concrete sets stay two distinct views
+    (`m-inheritance-067`): ``pets[Dog]`` and ``pets[Cat]`` populate
+    independently (dedup identity is the effective concrete set, not the
+    bare relationship hop)."""
+    return db.find(
+        AnimalOwnerPerson.where().include(
+            AnimalOwnerPerson.pets.narrow(Dog), AnimalOwnerPerson.pets.narrow(Cat)
+        )
+    )
+
+
 GRAPH_STORIES: tuple[GraphStory, ...] = (
     GraphStory(
         "m-snapshot-read-001",
@@ -165,5 +216,35 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "Mutating a snapshot node never writes back",
         "orders",
         mutation_has_no_writeback,
+    ),
+    GraphStory(
+        "m-snapshot-read-007",
+        "A one-to-one peer attaches as a single object, not a collection",
+        "person",
+        one_to_one_peer_attaches_as_a_single_object,
+    ),
+    GraphStory(
+        "m-snapshot-read-012",
+        "Family-normalized, projection-independent diamond over a real animal-family owner",
+        "animal",
+        animal_owner_reaches_root_and_narrowed_subtype_view,
+    ),
+    GraphStory(
+        "m-inheritance-065",
+        "A single narrowed subtype view over a table-per-hierarchy family",
+        "animal",
+        narrowed_pets_view_populates_per_owner,
+    ),
+    GraphStory(
+        "m-inheritance-066",
+        "Equivalent authored narrowings dedupe to the same derived view",
+        "animal",
+        equivalent_narrow_spellings_dedupe_to_one_view,
+    ),
+    GraphStory(
+        "m-inheritance-067",
+        "Two distinct narrowed views over the same relationship populate independently",
+        "animal",
+        distinct_narrowed_views_populate_independently,
     ),
 )

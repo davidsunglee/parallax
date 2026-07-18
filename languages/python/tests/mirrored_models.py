@@ -17,20 +17,28 @@ import copy
 from typing import Any
 
 import inheritance_models as _im
-from parallax.conformance.read_models import Balance
+from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
+from parallax.conformance.read_models import Animal as AnimalRoot
+from parallax.conformance.read_models import Balance, Cat, Dog, Passport, Person, Pet
+from parallax.conformance.read_models import WildBoar as AnimalWildBoar
 from parallax.conformance.story_models import Account
-from parallax.core import Attr, Entity, EntityConfig, Field, Rel, Relationship
+from parallax.core import Attr, Entity, EntityConfig, Field
 
 _NS = "parallax.compatibility"
 
-# ``Account`` (mirror of ``models/account.yaml``) is **re-exported** from
-# ``parallax.conformance.story_models`` -- the installed package's own mirror,
-# which the API Conformance Suite's write/graph stories execute against
-# `db.find`/`db.transact` -- following the SAME ``Balance`` discipline below:
-# this module's own no-drift proof and the API-suite's execution resolve the
-# exact SAME registered class, never a second, differently-scoped copy racing
-# it in the same registry (ledger D-20 fixed the silent version of this bug;
-# the fix here is to stop declaring a duplicate at all).
+# ``Account`` / ``Person`` / ``Passport`` / ``Balance`` / the whole ``Animal``
+# family are all **re-exported** from the installed ``parallax.conformance``
+# package (the API Conformance Suite's own write/read/graph stories execute
+# the SAME classes against `db.find`/`db.transact`) rather than redeclared
+# here — the discipline every installed mirror follows so this module's own
+# no-drift proof and the API-suite's execution resolve the exact SAME
+# registered class, never a second, differently-scoped copy racing it in the
+# same registry. `animal_owner.Person` (the animal family's REAL owner) lives
+# in its OWN `EntityRegistry` (ledger D-20): a DIFFERENT class than THIS
+# module's own `Person` (`models/person.yaml`) despite sharing the identical
+# canonical name — the descriptor no-drift proof below is purely class-list-
+# based (`descriptor_document`), so combining classes from two different
+# registries into one "animal" entry is exactly as sound as any other.
 
 
 class Attendee(Entity, frozen=True):
@@ -42,60 +50,12 @@ class Attendee(Entity, frozen=True):
     name: Attr[str] = Field(max_length=64)
 
 
-class Person(Entity, frozen=True):
-    """Mirror of ``models/person.yaml`` Person (one-to-one dependent relationship)."""
-
-    __parallax__ = EntityConfig(table="person", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none")
-    name: Attr[str] = Field(max_length=64)
-    passport: Rel["Passport"] = Relationship(
-        cardinality="one-to-one",
-        join="this.id = Passport.personId",
-        related_entity="Passport",
-        reverse_name="holder",
-        dependent=True,
-        foreign_key="person_id",
-    )
-
-
-class Passport(Entity, frozen=True):
-    """Mirror of ``models/person.yaml`` Passport (the one-to-one peer)."""
-
-    __parallax__ = EntityConfig(table="passport", namespace=_NS, mutability="transactional")
-
-    id: Attr[int] = Field(primary_key=True, pk_generator="none")
-    person_id: Attr[int]
-    number: Attr[str] = Field(max_length=32)
-    holder: Rel["Person"] = Relationship(
-        cardinality="one-to-one",
-        join="this.personId = Person.id",
-        related_entity="Person",
-        reverse_name="passport",
-        foreign_key="person_id",
-    )
-
-
-# ``Balance`` (mirror of ``models/balance.yaml``, audit-only / processing-
-# temporal, the D-7 temporal class spelling) is **re-exported** from
-# ``parallax.conformance.read_models`` — the installed package's own mirror,
-# which the API Conformance Suite's real-database read stories execute
-# against `db.find` — so this module's own no-drift proof and the API-suite's
-# execution resolve the exact SAME registered class, never a second,
-# differently-scoped copy silently racing it in the shared, global,
-# process-wide entity registry.
-
 # corpus model stem -> the idiomatic classes assembled into that descriptor.
 #
-# "animal" and "customer" are deliberately ABSENT: animal.yaml's own polymorphic
-# owner entity is ALSO named "Person" — the same literal canonical name
-# `person.yaml`'s own Person/Passport pair above already claims in this shared,
-# single, process-wide class registry — so a full descriptor mirror of
-# animal.yaml cannot coexist with this module's own Person; see
-# `snapshot_models`'s module docstring. customer.yaml's own descriptor spans
-# three entities (Customer, Location, Depot); `value_object_models.Customer`
-# mirrors only the first (no example needs Location/Depot), so a full-model
-# entry would fail this proof by omission, not drift.
+# "customer" is deliberately ABSENT: customer.yaml's own descriptor spans
+# three entities (Customer, Location, Depot), all installed in
+# `parallax.conformance.vo_models` now (ledger D-20/D-21) with their own
+# no-drift entry there.
 MIRRORED: list[tuple[str, list[type]]] = [
     ("account", [Account]),
     ("pk-max", [Attendee]),
@@ -106,6 +66,7 @@ MIRRORED: list[tuple[str, list[type]]] = [
         "document",
         [_im.Document, _im.FinancialDocument, _im.Invoice, _im.Receipt, _im.Memo, _im.Folder],
     ),
+    ("animal", [AnimalRoot, Pet, Dog, Cat, AnimalWildBoar, AnimalOwnerPerson]),
 ]
 
 
